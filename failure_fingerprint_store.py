@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 from vector_service import SharedVectorService
 from vector_utils import cosine_similarity
@@ -27,6 +27,7 @@ class FailureFingerprint:
     stack_trace: str
     prompt: str
     embedding: List[float] = field(default_factory=list)
+    embedding_metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class FailureFingerprintStore:
@@ -38,6 +39,7 @@ class FailureFingerprintStore:
         *,
         similarity_threshold: float | None = None,
         vector_service: SharedVectorService | None = None,
+        compact_interval: int | None = 100,
     ) -> None:
         settings = None
         if SandboxSettings is not None:
@@ -66,6 +68,7 @@ class FailureFingerprintStore:
             )
         )
         self.vector_service = vector_service or SharedVectorService()
+        self.compact_interval = compact_interval or 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, FailureFingerprint] = {}
         if self.path.exists():
@@ -92,9 +95,13 @@ class FailureFingerprintStore:
 
     def _ensure_embedding(self, fingerprint: FailureFingerprint) -> None:
         if not fingerprint.embedding:
-            fingerprint.embedding = self.vector_service.vectorise(
-                "text", {"text": fingerprint.stack_trace}
-            )
+            vec = self.vector_service.vectorise("text", {"text": fingerprint.stack_trace})
+            fingerprint.embedding = vec
+            embedder = getattr(self.vector_service, "text_embedder", None)
+            model_name = None
+            if embedder is not None:
+                model_name = getattr(embedder, "name_or_path", embedder.__class__.__name__)
+            fingerprint.embedding_metadata = {"model": model_name, "dim": len(vec)}
 
     # ----------------------------------------------------------------- public
     def log(self, fingerprint: FailureFingerprint) -> None:
@@ -110,9 +117,15 @@ class FailureFingerprintStore:
             "failure_fingerprint",
             record_id,
             fingerprint.embedding,
-            metadata={"filename": fingerprint.filename, "function": fingerprint.function},
+            metadata={
+                "filename": fingerprint.filename,
+                "function": fingerprint.function,
+                "embedding_meta": fingerprint.embedding_metadata,
+            },
         )
         self._cache[record_id] = fingerprint
+        if self.compact_interval and len(self._cache) % self.compact_interval == 0:
+            self.compact()
 
     def find_similar(
         self,
@@ -148,6 +161,64 @@ class FailureFingerprintStore:
             if sim > best:
                 best = sim
         return best
+
+    # -------------------------------------------------------------- maintenance
+    def compact(self) -> None:
+        """Rewrite JSONL and rebuild vector index from current cache."""
+
+        tmp_path = self.path.with_suffix(".tmp")
+        with tmp_path.open("w", encoding="utf-8") as fh:
+            for record_id, fp in self._cache.items():
+                data = asdict(fp)
+                data["id"] = record_id
+                fh.write(json.dumps(data) + "\n")
+        tmp_path.replace(self.path)
+
+        store = self.vector_service.vector_store
+        if store is None:
+            return
+        dim = 0
+        if self._cache:
+            dim = len(next(iter(self._cache.values())).embedding)
+        try:
+            path = Path(getattr(store, "path"))
+            meta_path = Path(getattr(store, "meta_path", path.with_suffix(".meta.json")))
+            if path.exists():
+                path.unlink()
+            if meta_path.exists():
+                meta_path.unlink()
+            kwargs: Dict[str, Any] = {}
+            if hasattr(store, "metric"):
+                kwargs["metric"] = getattr(store, "metric")
+            new_store = type(store)(dim, path, **kwargs)
+            self.vector_service.vector_store = new_store
+            for record_id, fp in self._cache.items():
+                new_store.add(
+                    "failure_fingerprint",
+                    record_id,
+                    fp.embedding,
+                    metadata={
+                        "filename": fp.filename,
+                        "function": fp.function,
+                        "embedding_meta": fp.embedding_metadata,
+                    },
+                )
+        except Exception:  # pragma: no cover - best effort
+            store.load()
+            for record_id, fp in self._cache.items():
+                try:
+                    store.add(
+                        "failure_fingerprint",
+                        record_id,
+                        fp.embedding,
+                        metadata={
+                            "filename": fp.filename,
+                            "function": fp.function,
+                            "embedding_meta": fp.embedding_metadata,
+                        },
+                    )
+                except Exception:
+                    continue
 
 
 __all__ = ["FailureFingerprint", "FailureFingerprintStore"]
