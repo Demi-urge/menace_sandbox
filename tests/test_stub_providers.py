@@ -2,16 +2,23 @@ import sys
 from pathlib import Path
 
 import importlib.metadata as metadata
+import importlib.util
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import os
+import pytest
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-sys.modules.pop("sandbox_runner", None)
 
-import sandbox_runner.stub_providers as sp
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+sp = _load("stub_providers", ROOT / "sandbox_runner" / "stub_providers.py")
 from sandbox_settings import SandboxSettings
 
 
@@ -77,5 +84,5 @@ def test_invalid_and_failing_providers(monkeypatch):
         return []
 
     monkeypatch.setattr(metadata, "entry_points", fake_entry_points)
-    providers = sp.discover_stub_providers()
-    assert providers == [good]
+    with pytest.raises(RuntimeError):
+        sp.discover_stub_providers()

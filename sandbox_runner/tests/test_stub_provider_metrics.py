@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import types
+import pytest
 
 MODULE_DIR = Path(__file__).resolve().parents[1]
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -65,7 +66,8 @@ def test_discover_stub_providers_success_and_failure(monkeypatch):
     assert providers == [good]
 
     monkeypatch.setattr(stub_providers, "_load_entry_point", lambda ep: None)
-    assert stub_providers.discover_stub_providers(settings=settings) == []
+    with pytest.raises(RuntimeError):
+        stub_providers.discover_stub_providers(settings=settings)
 
 
 def test_load_metrics_plugins_and_errors(tmp_path):
