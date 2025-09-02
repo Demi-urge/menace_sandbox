@@ -11,11 +11,15 @@ from typing import Any, Dict
 from filelock import FileLock
 
 try:  # pragma: no cover - optional dependency
-    from prompt_types import Prompt
-except Exception as exc:  # pragma: no cover - explicit failure
-    raise ImportError(
-        "prompt_types.Prompt is required for PromptEvolutionMemory"
-    ) from exc
+    from llm_interface import Prompt  # type: ignore
+except Exception:  # pragma: no cover - llm_interface unavailable
+    try:  # pragma: no cover - optional dependency
+        from prompt_types import Prompt  # type: ignore
+    except Exception as exc:  # pragma: no cover - explicit failure
+        raise ImportError(
+            "Prompt dataclass is required for PromptEvolutionMemory. "
+            "Install 'prompt_types' or ensure 'llm_interface' is available."
+        ) from exc
 
 
 _ROOT = Path(__file__).resolve().parent
