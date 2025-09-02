@@ -153,6 +153,31 @@ def _load_engine():
 
     sys.modules["sandbox_runner"] = types.ModuleType("sandbox_runner")
     sys.modules["sandbox_runner.environment"] = types.ModuleType("environment")
+    boot_mod = types.ModuleType("sandbox_runner.bootstrap")
+    boot_mod.initialize_autonomous_sandbox = lambda *a, **k: None
+    sys.modules["sandbox_runner.bootstrap"] = boot_mod
+    sys.modules["sandbox_runner.cycle"] = types.ModuleType("sandbox_runner.cycle")
+    sys.modules["analytics"] = types.ModuleType("analytics")
+    sys.modules["analytics.adaptive_roi_model"] = types.ModuleType(
+        "analytics.adaptive_roi_model"
+    )
+    ss_mod = types.ModuleType("sandbox_settings")
+    class SandboxSettingsStub:
+        def __init__(self, *a, **k):
+            pass
+
+        def __getattr__(self, name):
+            return 1
+
+    ss_mod.SandboxSettings = SandboxSettingsStub
+    ss_mod.load_sandbox_settings = lambda *a, **k: SandboxSettingsStub()
+    class ROISettings:
+        def __init__(self, *a, **k):
+            pass
+
+    ss_mod.ROISettings = ROISettings
+    sys.modules["sandbox_settings"] = ss_mod
+    sys.modules["menace.sandbox_settings"] = ss_mod
 
     spec = importlib.util.spec_from_file_location(
         "menace.self_improvement",
@@ -215,13 +240,15 @@ def test_growth_class_alters_action_selection():
 
     async def run_once(growth):
         eng = sie.SelfImprovementEngine.__new__(sie.SelfImprovementEngine)
-        eng.energy_threshold = 0.5
         eng.interval = 0
         eng._cycle_running = False
         eng.capital_bot = None
         eng.use_adaptive_roi = True
         eng.roi_predictor = Predictor(growth)
         eng._collect_action_features = lambda: [[0.5, 0.0]]
+        eng.baseline_margin = 0.0
+        from menace.self_improvement.engine import BaselineTracker
+        eng.baseline_tracker = BaselineTracker(window=3, scores=[0.5])
         called = {"run": False}
 
         def run_cycle(self, *, energy=1):
@@ -244,4 +271,4 @@ def test_growth_class_alters_action_selection():
 
     exp = asyncio.run(run_once("exponential"))
     marg = asyncio.run(run_once("marginal"))
-    assert exp and not marg
+    assert not exp and marg

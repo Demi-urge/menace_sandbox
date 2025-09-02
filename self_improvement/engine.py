@@ -162,6 +162,7 @@ import numpy as np
 import socket
 import contextlib
 import subprocess
+from collections import deque
 from ..error_cluster_predictor import ErrorClusterPredictor
 from ..error_logger import TelemetryEvent
 from .. import mutation_logger as MutationLogger
@@ -400,6 +401,23 @@ from .learners import (
     SACSynergyLearner,
     TD3SynergyLearner,
 )
+class BaselineTracker:
+    """Track recent sandbox scores with a sliding window."""
+
+    def __init__(self, window: int = 10, scores: Iterable[float] | None = None) -> None:
+        self.window = window
+        self.scores = deque([float(s) for s in (scores or [])], maxlen=window)
+
+    def add(self, score: float) -> None:
+        self.scores.append(float(score))
+
+    @property
+    def moving_average(self) -> float:
+        return sum(self.scores) / len(self.scores) if self.scores else 0.0
+
+    def to_list(self) -> list[float]:
+        return list(self.scores)
+
 
 POLICY_STATE_LEN = 21
 
@@ -407,6 +425,7 @@ __all__ = [
     "SelfImprovementEngine",
     "SACSynergyLearner",
     "TD3SynergyLearner",
+    "BaselineTracker",
 ]
 class SelfImprovementEngine:
     """Run the automation pipeline on a configurable bot."""
@@ -421,6 +440,8 @@ class SelfImprovementEngine:
         info_db: InfoDB | None = None,
         capital_bot: "CapitalManagementBot" | None = None,
         energy_threshold: float = 0.5,
+        baseline_window: int = 10,
+        baseline_margin: float = 0.0,
         learning_engine: LearningEngine | None = None,
         self_coding_engine: SelfCodingEngine | None = None,
         action_planner: "ActionPlanner" | None = None,
@@ -487,6 +508,9 @@ class SelfImprovementEngine:
         self.last_run = 0.0
         self.capital_bot = capital_bot
         self.energy_threshold = energy_threshold
+        self.baseline_window = baseline_window
+        self.baseline_tracker = BaselineTracker(baseline_window)
+        self.baseline_margin = baseline_margin
         self.learning_engine = learning_engine
         self.self_coding_engine = self_coding_engine
         self.event_bus = event_bus
@@ -1432,6 +1456,8 @@ class SelfImprovementEngine:
             }
             self.last_run = float(data.get("last_run", self.last_run))
             self.roi_delta_ema = float(data.get("roi_delta_ema", self.roi_delta_ema))
+            scores = [float(x) for x in data.get("sandbox_scores", [])]
+            self.baseline_tracker = BaselineTracker(self.baseline_window, scores)
         except Exception as exc:
             self.logger.exception("failed to load state: %s", exc)
 
@@ -1451,6 +1477,7 @@ class SelfImprovementEngine:
                         "roi_group_history": self.roi_group_history,
                         "last_run": self.last_run,
                         "roi_delta_ema": self.roi_delta_ema,
+                        "sandbox_scores": self.baseline_tracker.to_list(),
                     },
                     fh,
                 )
@@ -7026,7 +7053,11 @@ class SelfImprovementEngine:
                     current_energy *= 0.8
             else:
                 self._last_growth_type = None
-            if current_energy >= self.energy_threshold and not self._cycle_running:
+            moving_avg = self.baseline_tracker.moving_average
+            delta = current_energy - moving_avg
+            self.baseline_tracker.add(current_energy)
+            self._save_state()
+            if delta < -self.baseline_margin and not self._cycle_running:
                 try:
                     await asyncio.to_thread(
                         self.run_cycle, energy=int(round(current_energy * 5))
@@ -7038,12 +7069,14 @@ class SelfImprovementEngine:
                         exc,
                     )
             else:
-                if current_energy < self.energy_threshold:
+                if delta >= -self.baseline_margin:
                     self.logger.info(
-                        "energy below threshold - skipping cycle",
+                        "score above baseline - skipping cycle",
                         extra=log_record(
-                            energy=current_energy,
-                            threshold=self.energy_threshold,
+                            score=current_energy,
+                            baseline=moving_avg,
+                            delta=delta,
+                            margin=self.baseline_margin,
                         ),
                     )
             await asyncio.sleep(self.interval)

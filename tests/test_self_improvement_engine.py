@@ -179,6 +179,33 @@ for _fn in (
     setattr(od_stub, _fn, lambda *a, **k: None)
 sys.modules.setdefault("sandbox_runner.orphan_discovery", od_stub)
 sys.modules.setdefault("orphan_discovery", od_stub)
+sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
+boot_mod = types.ModuleType("sandbox_runner.bootstrap")
+boot_mod.initialize_autonomous_sandbox = lambda *a, **k: None
+sys.modules.setdefault("sandbox_runner.bootstrap", boot_mod)
+sys.modules.setdefault(
+    "sandbox_runner.cycle", types.ModuleType("sandbox_runner.cycle")
+)
+sys.modules.setdefault(
+    "sandbox_runner.environment", types.ModuleType("sandbox_runner.environment")
+)
+ss_mod = types.ModuleType("sandbox_settings")
+class SandboxSettingsStub:
+    def __init__(self, *a, **k):
+        pass
+
+    def __getattr__(self, name):
+        return 1
+
+ss_mod.SandboxSettings = SandboxSettingsStub
+ss_mod.load_sandbox_settings = lambda *a, **k: SandboxSettingsStub()
+class ROISettings:
+    def __init__(self, *a, **k):
+        pass
+
+ss_mod.ROISettings = ROISettings
+sys.modules["sandbox_settings"] = ss_mod
+sys.modules["menace.sandbox_settings"] = ss_mod
 
 gpt_mem_mod = types.ModuleType("gpt_memory")
 
@@ -348,9 +375,14 @@ sys.modules["vector_service"] = vs_mod
 sub = types.ModuleType("vector_service.cognition_layer")
 sub.CognitionLayer = object
 sys.modules["vector_service.cognition_layer"] = sub
+analytics_mod = types.ModuleType("analytics")
+analytics_mod.adaptive_roi_model = types.ModuleType("analytics.adaptive_roi_model")
+sys.modules["analytics"] = analytics_mod
+sys.modules["analytics.adaptive_roi_model"] = analytics_mod.adaptive_roi_model
 pytest.importorskip("pandas")
 
 import menace.self_improvement as sie
+from menace.self_improvement.engine import BaselineTracker
 import menace.diagnostic_manager as dm
 import menace.error_bot as eb
 import menace.data_bot as db
@@ -482,7 +514,7 @@ def test_run_all_cycles_respects_workflow_stability():
     assert res2["bot"].workflow_evolution[0]["status"] == "stable"
 
 
-def test_schedule_energy_threshold(tmp_path, monkeypatch):
+def test_schedule_baseline_deviation(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
@@ -506,14 +538,17 @@ def test_schedule_energy_threshold(tmp_path, monkeypatch):
         diagnostics=diag,
         info_db=info,
         capital_bot=DummyCapitalBot(0.2),
-        energy_threshold=0.5,
+        baseline_margin=0.1,
     )
 
+    engine.baseline_tracker = BaselineTracker(window=3, scores=[0.8])
     monkeypatch.setattr(engine, "_should_trigger", lambda: True)
-    calls: list[int] = []
-    monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls.append(energy))
+    calls_low: list[int] = []
+    monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls_low.append(energy))
+
     async def fake_sleep(_: float) -> None:
         raise SystemExit
+
     monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
 
     async def run():
@@ -522,9 +557,10 @@ def test_schedule_energy_threshold(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit):
         asyncio.run(run())
-    assert calls == []
+    assert calls_low == [int(round(0.2 * 5))]
 
     engine.capital_bot = DummyCapitalBot(0.8)
+    engine.baseline_tracker = BaselineTracker(window=3, scores=[0.2])
     calls_high: list[int] = []
     monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls_high.append(energy))
     monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
@@ -535,10 +571,10 @@ def test_schedule_energy_threshold(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit):
         asyncio.run(run_high())
-    assert calls_high == [int(round(0.8 * 5))]
+    assert calls_high == []
 
 
-def test_schedule_high_energy_autoruns(tmp_path, monkeypatch):
+def test_schedule_deviation_autoruns(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
@@ -562,14 +598,17 @@ def test_schedule_high_energy_autoruns(tmp_path, monkeypatch):
         diagnostics=diag,
         info_db=info,
         capital_bot=DummyCapitalBot(0.9),
-        energy_threshold=0.5,
+        baseline_margin=0.05,
     )
 
+    engine.baseline_tracker = BaselineTracker(window=3, scores=[1.0])
     monkeypatch.setattr(engine, "_should_trigger", lambda: False)
     calls: list[int] = []
     monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls.append(energy))
+
     async def fake_sleep(_: float) -> None:
         raise SystemExit
+
     monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
 
     async def run_task():
