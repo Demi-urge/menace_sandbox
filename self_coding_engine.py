@@ -13,6 +13,7 @@ import tempfile
 import py_compile
 import re
 import traceback
+import hashlib
 from datetime import datetime
 
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
@@ -125,6 +126,7 @@ except Exception:  # pragma: no cover - graceful degradation
 from .prompt_engine import PromptEngine, _ENCODER
 from .prompt_memory_trainer import PromptMemoryTrainer
 from chunking import chunk_file, summarize_code
+from prompt_chunker import split_into_chunks
 from chunk_summary_cache import ChunkSummaryCache
 try:
     from .prompt_optimizer import PromptOptimizer
@@ -727,8 +729,16 @@ class SelfCodingEngine:
         *,
         path: Path | None = None,
         metadata: Dict[str, Any] | None = None,
+        chunk_index: int | None = None,
     ) -> str:
-        """Create helper text by asking an LLM using snippet context and retrieval context."""
+        """Create helper text using snippet and retrieval context.
+
+        When ``path`` points to a file larger than
+        :attr:`prompt_chunk_token_threshold`, the file is split via
+        :func:`split_into_chunks`.  ``chunk_index`` selects the chunk whose raw
+        code is provided to the model; other chunks are represented by their
+        summaries.
+        """
         snippets = self.suggest_snippets(description, limit=3)
         snippet_context = "\n\n".join(s.code for s in snippets)
         summaries: List[str] | None = None
@@ -738,32 +748,49 @@ class SelfCodingEngine:
                 code = path.read_text(encoding="utf-8")
             except Exception:
                 code = ""
-            if code and _count_tokens(code) > self.chunk_token_threshold:
+            threshold = self.prompt_chunk_token_threshold
+            if code and threshold and _count_tokens(code) > threshold:
                 self.logger.debug("using chunk summaries for %s", path)
                 try:
                     path_hash = self.chunk_cache.hash_path(path)
                     cached = self.chunk_cache.get(path_hash) or {}
                     cached_summaries = list(cached.get("summaries", [])) if cached else []
                     cache_map = {c.get("hash"): c for c in cached_summaries}
-                    chunks = chunk_file(path, self.chunk_token_threshold)
+                    chunks = split_into_chunks(code, threshold)
                     summaries = []
+                    selected_source = ""
+                    selected_lines: tuple[int, int] | None = None
                     updated = False
-                    for ch in chunks:
-                        entry = cache_map.get(ch.hash)
+                    for idx, ch in enumerate(chunks):
+                        ch_hash = hashlib.sha256(ch.source.encode("utf-8")).hexdigest()
+                        entry = cache_map.get(ch_hash)
                         if entry is None:
-                            summary_text = summarize_code(ch.text, self.llm_client)
+                            summary_text = summarize_code(ch.source, self.llm_client)
                             entry = {
                                 "start_line": ch.start_line,
                                 "end_line": ch.end_line,
-                                "hash": ch.hash,
+                                "hash": ch_hash,
                                 "summary": summary_text,
                             }
                             cached_summaries.append(entry)
                             updated = True
-                        summaries.append(entry.get("summary", ""))
+                        if chunk_index is not None and idx == chunk_index:
+                            selected_source = ch.source
+                            selected_lines = (ch.start_line, ch.end_line)
+                        else:
+                            summaries.append(f"Chunk {idx}: {entry.get('summary', '')}")
                     if updated or not cached:
                         self.chunk_cache.set(path_hash, cached_summaries)
-                    file_context = "\n".join(summaries)
+                    if chunk_index is not None and selected_source:
+                        if selected_lines:
+                            start, end = selected_lines
+                            file_context = (
+                                f"# Chunk {chunk_index} lines {start}-{end}\n" f"{selected_source}"
+                            )
+                        else:
+                            file_context = selected_source
+                    else:
+                        file_context = "\n".join(summaries)
                 except Exception:
                     self.logger.exception("failed to summarise %s", path)
             else:
@@ -986,11 +1013,24 @@ class SelfCodingEngine:
         return _fallback()
 
     def patch_file(
-        self, path: Path, description: str, *, context_meta: Dict[str, Any] | None = None
+        self,
+        path: Path,
+        description: str,
+        *,
+        context_meta: Dict[str, Any] | None = None,
+        chunk_index: int | None = None,
     ) -> tuple[str, bool]:
-        """Generate helper code and append it to ``path`` if it passes verification."""
+        """Generate helper code and append it to ``path`` if it passes verification.
+
+        When ``chunk_index`` is provided and the file exceeds
+        :attr:`prompt_chunk_token_threshold`, only the selected chunk's raw
+        source is included in the prompt.  Other chunks are represented by their
+        summaries to keep the prompt size below token limits.
+        """
         try:
-            code = self.generate_helper(description, path=path, metadata=context_meta)
+            code = self.generate_helper(
+                description, path=path, metadata=context_meta, chunk_index=chunk_index
+            )
         except TypeError:
             code = self.generate_helper(description)
         self.logger.info(

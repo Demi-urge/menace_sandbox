@@ -102,7 +102,7 @@ _setmod("roi_tracker", roi_mod)
 
 
 import menace_sandbox.self_coding_engine as sce  # noqa: E402
-from chunking import CodeChunk  # noqa: E402
+from prompt_chunker import Chunk  # noqa: E402
 
 
 def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
@@ -111,14 +111,14 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
 
     called: dict[str, int] = {}
 
-    def fake_chunk_file(path: Path, limit: int):
+    def fake_chunk_file(code: str, limit: int):
         called["limit"] = limit
         return [
-            CodeChunk(1, 2, "code1", "h1"),
-            CodeChunk(3, 4, "code2", "h2"),
+            Chunk(source="code1", start_line=1, end_line=2, token_count=5),
+            Chunk(source="code2", start_line=3, end_line=4, token_count=5),
         ]
 
-    monkeypatch.setattr(sce, "chunk_file", fake_chunk_file)
+    monkeypatch.setattr(sce, "split_into_chunks", fake_chunk_file)
     monkeypatch.setattr(sce, "summarize_code", lambda text, llm: f"sum:{text}")
 
     captured: dict[str, object] = {}
