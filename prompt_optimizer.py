@@ -125,10 +125,11 @@ class PromptOptimizer:
         Optional :class:`FailureFingerprintStore` instance providing access to
         previously recorded failure fingerprints. When supplied, prompts that
         belong to high-frequency failure clusters receive a score penalty.
-    failure_fingerprints_path:
-        Deprecated path to a ``failure_fingerprints.jsonl`` file. If provided
-        and ``failure_store`` is ``None`` the file will be read directly for
-        backwards compatibility.
+        failure_fingerprints_path:
+        Optional path to a ``failure_fingerprints.jsonl`` file. The fingerprints
+        contained in this file are treated as additional failure log entries and
+        are also used to apply score penalties when ``failure_store`` is
+        unavailable.
     fingerprint_threshold:
         Minimum number of fingerprints before a penalty is applied.
     """
@@ -146,6 +147,8 @@ class PromptOptimizer:
         fingerprint_threshold: int = 3,
     ) -> None:
         self.log_paths = [Path(success_log), Path(failure_log)]
+        if failure_fingerprints_path:
+            self.log_paths.append(Path(failure_fingerprints_path))
         self.stats_path = Path(stats_path)
         self.weight_by = weight_by
         self.roi_weight = roi_weight
@@ -228,6 +231,16 @@ class PromptOptimizer:
                         entry = json.loads(line)
                     except Exception:
                         continue
+                    if "module" not in entry and "filename" in entry:
+                        entry["module"] = entry.get("filename")
+                    if "action" not in entry and (
+                        "function" in entry or "function_name" in entry
+                    ):
+                        entry["action"] = entry.get("function") or entry.get(
+                            "function_name"
+                        )
+                    if "prompt" not in entry and "prompt_text" in entry:
+                        entry["prompt"] = entry.get("prompt_text")
                     # If success flag is missing, infer from log type
                     entry.setdefault("success", idx == 0)
                     entries.append(entry)
@@ -393,22 +406,22 @@ class PromptOptimizer:
                     )
                     counts[key] += 1
             for key, count in counts.items():
+                stat = self.stats.get(key)
+                if not stat:
+                    stat = _Stat(
+                        module=key[0],
+                        action=key[1],
+                        tone=key[2],
+                        header_set=key[3],
+                        example_placement=key[4],
+                        has_code=key[5],
+                        has_bullets=key[6],
+                        has_system=key[7],
+                    )
+                    self.stats[key] = stat
+                stat.success = max(0, stat.success - count)
                 if count > self.fingerprint_threshold:
                     penalty = count - self.fingerprint_threshold
-                    stat = self.stats.get(key)
-                    if not stat:
-                        stat = _Stat(
-                            module=key[0],
-                            action=key[1],
-                            tone=key[2],
-                            header_set=key[3],
-                            example_placement=key[4],
-                            has_code=key[5],
-                            has_bullets=key[6],
-                            has_system=key[7],
-                        )
-                        self.stats[key] = stat
-                    stat.success = max(0, stat.success - penalty)
                     factor = 1 / (1 + penalty)
                     stat.penalty_factor *= factor
         self.persist_statistics()
@@ -426,12 +439,8 @@ class PromptOptimizer:
             cache = getattr(store, "_cache", {})
         except Exception:  # pragma: no cover - best effort
             return
+        counts: Counter[Tuple[Any, ...]] = Counter()
         for cid, ids in clusters.items():
-            count = len(ids)
-            if count <= self.fingerprint_threshold:
-                continue
-            penalty = count - self.fingerprint_threshold
-            factor = 1 / (1 + penalty)
             for record_id in ids:
                 fp = cache.get(record_id)
                 if not fp:
@@ -466,7 +475,16 @@ class PromptOptimizer:
                         has_system=has_system,
                     )
                     self.stats[key] = stat
-                stat.penalty_factor *= factor
+                stat.total += 1
+                counts[key] += 1
+        for key, count in counts.items():
+            stat = self.stats.get(key)
+            if not stat:
+                continue
+            stat.success = max(0, stat.success - count)
+            if count > self.fingerprint_threshold:
+                penalty = count - self.fingerprint_threshold
+                stat.penalty_factor *= 1 / (1 + penalty)
 
     # ------------------------------------------------------------------
     def persist_statistics(self) -> None:
