@@ -117,7 +117,6 @@ except Exception:  # pragma: no cover - defensive fallback
 
 from .roi_tracker import ROITracker
 from .prompt_evolution_logger import PromptEvolutionLogger
-from .prompt_evolution_memory import PromptEvolutionMemory
 try:  # pragma: no cover - optional dependency
     from .patch_provenance import record_patch_metadata
 except Exception:  # pragma: no cover - graceful degradation
@@ -300,13 +299,6 @@ class SelfCodingEngine:
             except Exception:
                 prompt_evolution_logger = None
         self.prompt_evolution_logger = prompt_evolution_logger
-        try:
-            self.prompt_logger = PromptEvolutionMemory(
-                success_path=Path(_settings.prompt_success_log_path),
-                failure_path=Path(_settings.prompt_failure_log_path),
-            )
-        except Exception:
-            self.prompt_logger = None
         self._last_prompt_metadata: Dict[str, Any] = {}
         self._last_prompt: Prompt | None = None
         self.router = kwargs.get("router")
@@ -433,12 +425,19 @@ class SelfCodingEngine:
             result["runtime"] = runtime
         meta = dict(getattr(prompt, "metadata", {}))
         meta.update(getattr(self.prompt_engine, "last_metadata", {}))
+        meta.update(getattr(self, "_last_prompt_metadata", {}))
         prompt.metadata = meta
         roi: Dict[str, Any] = {"roi_delta": roi_delta, "coverage": coverage}
         if roi_meta:
             roi.update(roi_meta)
         try:
-            self.prompt_evolution_logger.log(prompt, success, result, roi)
+            self.prompt_evolution_logger.log(
+                prompt,
+                success,
+                result,
+                roi,
+                format_meta=getattr(self, "_last_prompt_metadata", {}),
+            )
         except Exception:
             self.logger.exception("prompt evolution logging failed")
         else:
@@ -1687,21 +1686,9 @@ class SelfCodingEngine:
             "apply_patch_result",
             {"path": str(path), "success": not reverted, "patch_id": patch_id},
         )
-        try:
-            if self.prompt_logger and self._last_prompt:
-                self.prompt_logger.log_prompt(
-                    self._last_prompt,
-                    success=not reverted,
-                    exec_result={
-                        "ci": ci_result.success,
-                        "stdout": ci_result.stdout,
-                        "stderr": ci_result.stderr,
-                    },
-                    roi={"roi_delta": roi_delta, "roi_deltas": roi_deltas_map},
-                    format_meta=self._last_prompt_metadata,
-                )
-        except Exception:
-            self.logger.exception("prompt logging failed")
+        # Detailed prompt logging handled by ``_log_prompt_evolution`` above.
+        # The unified ``PromptEvolutionLogger`` captures all necessary data so
+        # no additional logging is required here.
         self._last_prompt = None
         self._record_prompt_metadata(not reverted)
         if not reverted and getattr(self, "prompt_engine", None):

@@ -29,8 +29,9 @@ class PromptEvolutionLogger:
 
     Successful executions are written to ``prompt_success_log.json`` while
     failures are appended to ``prompt_failure_log.json``.  Each record captures
-    the prompt contents, formatting metadata, execution results and ROI
-    metrics.
+    the prompt contents, optional formatting metadata, execution results and
+    ROI metrics.  The files are JSONL formatted regardless of the ``.json``
+    extension.
     """
 
     success_path: Path = _ROOT / "prompt_success_log.json"
@@ -55,8 +56,23 @@ class PromptEvolutionLogger:
         success: bool,
         result: Dict[str, Any],
         roi: Dict[str, Any] | None = None,
+        format_meta: Dict[str, Any] | None = None,
     ) -> None:
-        """Record details of a prompt execution."""
+        """Record details of a prompt execution.
+
+        Parameters
+        ----------
+        prompt:
+            Prompt object containing ``system``/``user`` text and examples.
+        success:
+            Whether the execution succeeded.
+        result:
+            Structured information about the execution outcome.
+        roi:
+            Optional ROI metrics describing impact of the execution.
+        format_meta:
+            Optional formatting metadata produced while building the prompt.
+        """
 
         record: Dict[str, Any] = {
             "timestamp": int(time.time()),
@@ -70,6 +86,8 @@ class PromptEvolutionLogger:
             "roi": roi or {},
             "success": success,
         }
+        if format_meta:
+            record["format"] = format_meta
         path = self.success_path if success else self.failure_path
         try:  # pragma: no cover - defensive
             self._append(path, record)
