@@ -74,6 +74,7 @@ class StubProviderConfig:
     cache_max: int
     cache_path: Path
     fallback_model: str
+    save_timeout: float = 5.0
     max_concurrency: int = 1
     enabled_backends: Tuple[str, ...] = ()
     rate_limit: asyncio.Semaphore = field(init=False)
@@ -178,6 +179,9 @@ def _load_config(settings: SandboxSettings) -> StubProviderConfig:
         cache_path=cache_path,
         fallback_model=os.getenv(
             "SANDBOX_STUB_FALLBACK_MODEL", settings.stub_fallback_model
+        ),
+        save_timeout=_float_env(
+            "SANDBOX_STUB_SAVE_TIMEOUT", settings.stub_save_timeout
         ),
         max_concurrency=_int_env("SANDBOX_STUB_MAX_CONCURRENCY", 1),
     )
@@ -670,15 +674,20 @@ def flush_caches(config: StubProviderConfig | None = None) -> None:
         if not tasks:
             return
         try:
-            results = await asyncio.gather(
-                *(asyncio.shield(t) for t in tasks), return_exceptions=True
-            )
+            done, pending = await asyncio.wait(tasks, timeout=cfg.save_timeout)
         except Exception as exc:
             logger.exception("cache save task await failed", exc_info=exc)
         else:
-            for res in results:
-                if isinstance(res, Exception):
-                    logger.exception("cache save task failed", exc_info=res)
+            for t in done:
+                if (exc := t.exception()) is not None:
+                    logger.exception("cache save task failed", exc_info=exc)
+            if pending:
+                for t in pending:
+                    logger.warning(
+                        "cache save task exceeded timeout of %s seconds", cfg.save_timeout
+                    )
+                    t.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
 
     try:
         try:

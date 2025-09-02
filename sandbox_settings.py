@@ -602,6 +602,11 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_STUB_TIMEOUT",
         description="Timeout for stub generation in seconds.",
     )
+    stub_save_timeout: float = Field(
+        5.0,
+        env="SANDBOX_STUB_SAVE_TIMEOUT",
+        description="Maximum time to await pending stub cache save tasks.",
+    )
     stub_retries: int = Field(
         2,
         env="SANDBOX_STUB_RETRIES",
