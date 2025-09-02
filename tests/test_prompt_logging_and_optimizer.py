@@ -3,7 +3,7 @@ from pathlib import Path
 
 from menace_sandbox.prompt_types import Prompt
 from menace_sandbox.prompt_optimizer import PromptOptimizer
-from menace_sandbox.prompt_evolution_logger import PromptEvolutionLogger
+from menace_sandbox.prompt_evolution_memory import PromptEvolutionMemory
 from menace_sandbox.self_coding_engine import SelfCodingEngine
 
 
@@ -21,12 +21,12 @@ def make_engine(tmp_path: Path):
     success_log = tmp_path / "success.json"
     failure_log = tmp_path / "failure.json"
     stats_path = tmp_path / "stats.json"
-    logger = PromptEvolutionLogger(success_path=success_log, failure_path=failure_log)
+    logger = PromptEvolutionMemory(success_path=success_log, failure_path=failure_log)
     optimizer = PromptOptimizer(success_log, failure_log, stats_path=stats_path)
     engine = SelfCodingEngine(
         DummyCodeDB(),
         DummyMemory(),
-        prompt_evolution_logger=logger,
+        prompt_evolution_memory=logger,
         prompt_optimizer=optimizer,
         audit_trail_path=str(tmp_path / "audit.log"),
     )

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from prompt_types import Prompt
-from prompt_evolution_logger import PromptEvolutionLogger
+from prompt_evolution_memory import PromptEvolutionMemory
 
 
 class DummyRetriever:
@@ -30,7 +30,7 @@ def read_lines(path: Path):
 def test_log_prompt_records_success_and_failure(tmp_path: Path):
     success = tmp_path / "success.json"
     failure = tmp_path / "failure.json"
-    logger = PromptEvolutionLogger(success_path=success, failure_path=failure)
+    logger = PromptEvolutionMemory(success_path=success, failure_path=failure)
 
     prompt = Prompt(system="sys", user="u", examples=["e"])
     logger.log(

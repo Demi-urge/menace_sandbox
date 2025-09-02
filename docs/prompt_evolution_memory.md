@@ -1,6 +1,6 @@
-# Prompt Evolution Logger
+# Prompt Evolution Memory
 
-`PromptEvolutionLogger` persists structured records for prompt experiments so
+`PromptEvolutionMemory` persists structured records for prompt experiments so
 that optimisation tools can learn from past executions. Each call to `log`
 writes a JSON object to either a success or failure log, allowing subsequent
 runs to analyse what formatting strategies yield the best return on investment
@@ -61,11 +61,11 @@ rates and weighted ROI.  Suggested formats can then be fed back into a prompt
 engine.
 
 ```python
-from prompt_evolution_logger import PromptEvolutionLogger
+from prompt_evolution_memory import PromptEvolutionMemory
 from prompt_optimizer import PromptOptimizer
 from prompt_engine import PromptEngine
 
-logger = PromptEvolutionLogger()
+logger = PromptEvolutionMemory()
 # record prompt executions ...
 
 optimizer = PromptOptimizer(
@@ -85,7 +85,7 @@ prompts, continually improving style and section ordering.
 
 ## Configuration options
 
-### PromptEvolutionLogger
+### PromptEvolutionMemory
 
 * `success_path` – destination for successful execution logs
   (default: `prompt_success_log.json`).

@@ -116,7 +116,7 @@ except Exception:  # pragma: no cover - defensive fallback
             )
 
 from .roi_tracker import ROITracker
-from .prompt_evolution_logger import PromptEvolutionLogger
+from .prompt_evolution_memory import PromptEvolutionMemory
 try:  # pragma: no cover - optional dependency
     from .patch_provenance import record_patch_metadata
 except Exception:  # pragma: no cover - graceful degradation
@@ -178,7 +178,7 @@ class SelfCodingEngine:
         knowledge_service: GPTKnowledgeService | None = None,
         prompt_memory: PromptMemoryTrainer | None = None,
         prompt_optimizer: PromptOptimizer | None = None,
-        prompt_evolution_logger: PromptEvolutionLogger | None = None,
+        prompt_evolution_memory: PromptEvolutionMemory | None = None,
         prompt_tone: str = "neutral",
         **kwargs: Any,
     ) -> None:
@@ -290,15 +290,15 @@ class SelfCodingEngine:
             trainer=self.prompt_memory,
             optimizer=self.prompt_optimizer,
         )
-        if prompt_evolution_logger is None:
+        if prompt_evolution_memory is None:
             try:
-                prompt_evolution_logger = PromptEvolutionLogger(
+                prompt_evolution_memory = PromptEvolutionMemory(
                     success_path=Path(_settings.prompt_success_log_path),
                     failure_path=Path(_settings.prompt_failure_log_path),
                 )
             except Exception:
-                prompt_evolution_logger = None
-        self.prompt_evolution_logger = prompt_evolution_logger
+                prompt_evolution_memory = None
+        self.prompt_evolution_memory = prompt_evolution_memory
         self._last_prompt_metadata: Dict[str, Any] = {}
         self._last_prompt: Prompt | None = None
         self.router = kwargs.get("router")
@@ -407,8 +407,8 @@ class SelfCodingEngine:
         module: str = "self_coding_engine",
         action: str = "apply_patch",
     ) -> None:
-        """Record prompt execution details via :class:`PromptEvolutionLogger`."""
-        if not self.prompt_evolution_logger:
+        """Record prompt execution details via :class:`PromptEvolutionMemory`."""
+        if not self.prompt_evolution_memory:
             return
         prompt = getattr(self, "_last_prompt", None)
         if not isinstance(prompt, Prompt):
@@ -436,7 +436,7 @@ class SelfCodingEngine:
         if roi_meta:
             roi.update(roi_meta)
         try:
-            self.prompt_evolution_logger.log(
+            self.prompt_evolution_memory.log(
                 prompt,
                 success,
                 result,
@@ -1705,7 +1705,7 @@ class SelfCodingEngine:
             {"path": str(path), "success": not reverted, "patch_id": patch_id},
         )
         # Detailed prompt logging handled by ``_log_prompt_evolution`` above.
-        # The unified ``PromptEvolutionLogger`` captures all necessary data so
+        # The unified ``PromptEvolutionMemory`` captures all necessary data so
         # no additional logging is required here.
         self._last_prompt = None
         self._record_prompt_metadata(not reverted)
