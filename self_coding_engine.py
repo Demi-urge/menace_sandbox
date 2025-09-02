@@ -141,7 +141,10 @@ except Exception:  # pragma: no cover - fallback for flat layout
         def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
             return None
 from .failure_fingerprint import FailureFingerprint, log_fingerprint, find_similar
-from .self_improvement.baseline_tracker import BaselineTracker
+from .self_improvement.baseline_tracker import (
+    BaselineTracker,
+    TRACKER as METRIC_BASELINES,
+)
 try:  # pragma: no cover - optional dependency
     from .self_improvement.init import FileLock, _atomic_write
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -209,6 +212,7 @@ class SelfCodingEngine:
         failure_similarity_k: float = 1.0,
         skip_retry_on_similarity: bool = False,
         baseline_window: int | None = None,
+        delta_tracker: BaselineTracker | None = None,
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -253,6 +257,7 @@ class SelfCodingEngine:
         self.failure_similarity_tracker = BaselineTracker(
             window=int(baseline_window), metrics=["similarity"]
         )
+        self.baseline_tracker = delta_tracker or METRIC_BASELINES
         data_dir = getattr(_settings, "sandbox_data_dir", ".")
         self._state_path = Path(data_dir) / "self_coding_engine_state.json"
         self.safety_monitor = safety_monitor
@@ -1364,7 +1369,6 @@ class SelfCodingEngine:
         path: Path,
         description: str,
         *,
-        threshold: float = 0.0,
         trending_topic: str | None = None,
         parent_patch_id: int | None = None,
         reason: str | None = None,
@@ -1799,19 +1803,46 @@ class SelfCodingEngine:
             except Exception:
                 self.logger.exception("roi tracker update failed")
         complexity_delta = after_complexity - before_complexity
+        err_delta = after_err - before_err
         pred_roi_delta = pred_after_roi - pred_before_roi
         pred_err_delta = pred_after_err - pred_before_err
+
+        # Compare current deltas against historical baselines
+        tracker = self.baseline_tracker
+        roi_mean = tracker.get("roi_delta")
+        roi_std = tracker.std("roi_delta")
+        err_mean = tracker.get("error_delta")
+        err_std = tracker.std("error_delta")
+        comp_mean = tracker.get("complexity_delta")
+        comp_std = tracker.std("complexity_delta")
+        proi_mean = tracker.get("pred_roi_delta")
+        proi_std = tracker.std("pred_roi_delta")
+        perr_mean = tracker.get("pred_err_delta")
+        perr_std = tracker.std("pred_err_delta")
+
+        roi_drop = roi_delta < (roi_mean - roi_std)
+        err_spike = err_delta > (err_mean + err_std)
+        comp_spike = complexity_delta > (comp_mean + comp_std)
+        proi_drop = pred_roi_delta < (proi_mean - proi_std)
+        perr_spike = pred_err_delta > (perr_mean + perr_std)
+
         reverted = False
-        if (
-            roi_delta < -threshold
-            or (after_err - before_err) > threshold
-            or complexity_delta > threshold
-            or pred_roi_delta < -threshold
-            or pred_err_delta > threshold
-        ):
+        if roi_drop or err_spike or comp_spike or proi_drop or perr_spike:
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             reverted = True
+
+        # Update baselines after evaluating revert condition
+        try:
+            tracker.update(
+                roi_delta=roi_delta,
+                error_delta=err_delta,
+                complexity_delta=complexity_delta,
+                pred_roi_delta=pred_roi_delta,
+                pred_err_delta=pred_err_delta,
+            )
+        except Exception:
+            self.logger.exception("baseline tracker update failed")
         patch_id: int | None = None
         if self.patch_db:
             try:

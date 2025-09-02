@@ -1,3 +1,4 @@
+# flake8: noqa
 import sys
 import types
 
@@ -83,12 +84,15 @@ from menace.advanced_error_management import AutomatedRollbackManager
 def test_multi_node_auto_rollback(tmp_path, monkeypatch):
     rb = AutomatedRollbackManager(str(tmp_path / "rb.db"))
     patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
+    tracker_a = sce.BaselineTracker()
+    tracker_b = sce.BaselineTracker()
     eng_a = sce.SelfCodingEngine(
         cd.CodeDB(tmp_path / "c.db"),
         mm.MenaceMemoryManager(tmp_path / "m1.db"),
         patch_db=patch_db,
         bot_name="A",
         rollback_mgr=rb,
+        delta_tracker=tracker_a,
     )
     eng_b = sce.SelfCodingEngine(
         cd.CodeDB(tmp_path / "c.db"),
@@ -96,6 +100,7 @@ def test_multi_node_auto_rollback(tmp_path, monkeypatch):
         patch_db=patch_db,
         bot_name="B",
         rollback_mgr=rb,
+        delta_tracker=tracker_b,
     )
 
     for eng in (eng_a, eng_b):
@@ -128,7 +133,7 @@ def test_multi_node_auto_rollback(tmp_path, monkeypatch):
     pa.write_text("def a():\n    pass\n")
     pb.write_text("def b():\n    pass\n")
 
-    results = orch.apply_patch_all({"A": pa, "B": pb}, "helper", threshold=0.1)
+    results = orch.apply_patch_all({"A": pa, "B": pb}, "helper")
 
     assert results["B"][1]
     assert "#patch" not in pa.read_text()
@@ -136,4 +141,3 @@ def test_multi_node_auto_rollback(tmp_path, monkeypatch):
     assert auto_calls
     assert auto_calls[0][1] == ("A", "B")
     assert not rb.applied_patches()
-
