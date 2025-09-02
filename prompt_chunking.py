@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import hashlib
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict
@@ -72,17 +73,18 @@ def chunk_code(path: Path, token_limit: int) -> List[str]:
             end = getattr(node, "end_lineno", start)
             # Include any intervening top-level statements
             if start > prev_end:
-                segment = "\n".join(lines[prev_end - 1 : start - 1]).rstrip()
+                segment = "\n".join(lines[prev_end - 1:start - 1]).rstrip()
                 if segment:
                     chunks.extend(_split_to_limit(segment, token_limit))
-            block = "\n".join(lines[start - 1 : end]).rstrip()
+            block = "\n".join(lines[start - 1:end]).rstrip()
             chunks.extend(_split_to_limit(block, token_limit))
             prev_end = end + 1
     # Trailing statements
     if prev_end <= len(lines):
-        segment = "\n".join(lines[prev_end - 1 :]).rstrip()
+        segment = "\n".join(lines[prev_end - 1:]).rstrip()
         if segment:
             chunks.extend(_split_to_limit(segment, token_limit))
+    logger.debug("split %s into %d chunks", path, len(chunks))
     return chunks
 
 
@@ -101,6 +103,8 @@ def summarize_code(code: str) -> str:
 
 CACHE_DIR = Path(__file__).resolve().parent / "chunk_summary_cache"
 
+logger = logging.getLogger(__name__)
+
 
 def get_chunk_summaries(path: Path, token_limit: int) -> List[Dict[str, str]]:
     """Return cached or freshly generated summaries for ``path`` chunks."""
@@ -114,10 +118,12 @@ def get_chunk_summaries(path: Path, token_limit: int) -> List[Dict[str, str]]:
             try:
                 data = json.loads(cache_file.read_text())
                 if data.get("code") == chunk:
+                    logger.debug("using cached summary for %s", h)
                     out.append(data)
                     continue
             except Exception:
-                pass
+                logger.warning("failed to load cache file %s", cache_file, exc_info=True)
+        logger.debug("cache miss for chunk %s", h)
         summary = summarize_code(chunk)
         data = {
             "hash": h,
@@ -133,4 +139,3 @@ def get_chunk_summaries(path: Path, token_limit: int) -> List[Dict[str, str]]:
 
 
 __all__ = ["chunk_code", "summarize_code", "get_chunk_summaries"]
-

@@ -150,6 +150,8 @@ VA_PROMPT_PREFIX = _settings.va_prompt_prefix
 VA_REPO_LAYOUT_LINES = _settings.va_repo_layout_lines
 
 # Reuse prompt encoder for token counting if available
+
+
 def _count_tokens(text: str) -> int:
     if _ENCODER is not None:
         try:
@@ -625,6 +627,7 @@ class SelfCodingEngine:
         except Exception:
             return ""
         if _count_tokens(code) > self.token_threshold:
+            self.logger.debug("using chunk summaries for %s", path)
             try:
                 chunks = get_chunk_summaries(
                     path,
@@ -637,7 +640,9 @@ class SelfCodingEngine:
                     )
                 return summary
             except Exception:
-                pass
+                self.logger.exception("failed to summarise %s", path)
+        else:
+            self.logger.debug("using full source for %s", path)
         if self.prompt_engine:
             return self.prompt_engine._trim_tokens(code, self.token_threshold)
         return code
