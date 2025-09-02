@@ -428,6 +428,7 @@ class SelfImprovementEngine:
         energy_threshold: float | None = None,
         baseline_window: int | None = None,
         baseline_margin: float = 0.0,
+        recovery_threshold: float = 0.0,
         learning_engine: LearningEngine | None = None,
         self_coding_engine: SelfCodingEngine | None = None,
         action_planner: "ActionPlanner" | None = None,
@@ -506,6 +507,7 @@ class SelfImprovementEngine:
         self.baseline_tracker = GLOBAL_BASELINE_TRACKER
         self.baseline_tracker.window = self.baseline_window
         self.baseline_margin = baseline_margin
+        self.urgency_recovery_threshold = recovery_threshold
         self.mae_dev_multiplier = getattr(cfg, "mae_deviation", 1.0)
         self.acc_dev_multiplier = getattr(cfg, "acc_deviation", 1.0)
         self.borderline_dev_multiplier = getattr(cfg, "roi_deviation", 1.0)
@@ -765,7 +767,6 @@ class SelfImprovementEngine:
         self.raroi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
-        self._roi_delta_window: deque[float] = deque(maxlen=3)
         self.success_history: deque[bool] = deque(maxlen=baseline_window)
         self.urgency_tier: int = 0
         self._last_growth_type: str | None = None
@@ -1896,6 +1897,30 @@ class SelfImprovementEngine:
                 )
             except Exception:
                 self.logger.exception("failed to dispatch ROI chain alert")
+
+    # ------------------------------------------------------------------
+    def _check_roi_stagnation(self, min_window: int = 3) -> None:
+        """Escalate urgency when recent ROI deltas are non-positive."""
+
+        deltas = self.baseline_tracker.delta_history("roi")
+        if len(deltas) >= min_window and all(d <= 0 for d in deltas[-min_window:]):
+            self.urgency_tier += 1
+            self.logger.warning(
+                "ROI momentum non-positive; increasing urgency tier",
+                extra=log_record(tier=self.urgency_tier, window=deltas[-min_window:]),
+            )
+            try:
+                dispatch_alert(
+                    "roi_negative_trend",
+                    2,
+                    "ROI momentum non-positive; increasing urgency tier",
+                    {"tier": self.urgency_tier, "window": deltas[-min_window:]},
+                )
+            except Exception:
+                self.logger.exception("failed to dispatch ROI trend alert")
+        elif self.urgency_tier > 0 and deltas:
+            if deltas[-1] > self.urgency_recovery_threshold:
+                self.urgency_tier = 0
 
     # ------------------------------------------------------------------
     def _alignment_review_last_commit(self, description: str) -> None:
@@ -6735,23 +6760,7 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("alignment review agent failed to start")
             delta = after_roi - before_roi
-            self._roi_delta_window.append(delta)
             self.success_history.append(delta > 0)
-            if len(self._roi_delta_window) == self._roi_delta_window.maxlen:
-                window_sum = sum(self._roi_delta_window)
-                if window_sum <= 0:
-                    self.urgency_tier += 1
-                    try:
-                        dispatch_alert(
-                            "roi_negative_trend",
-                            2,
-                            "ROI momentum non-positive; increasing urgency tier",
-                            {"tier": self.urgency_tier, "window": list(self._roi_delta_window)},
-                        )
-                    except Exception:
-                        self.logger.exception("failed to dispatch ROI trend alert")
-                elif self.urgency_tier > 0 and window_sum > 0:
-                    self.urgency_tier = 0
             self._check_chain_stagnation()
             warnings: dict[str, list[dict[str, Any]]] = {}
             if delta > 0:
@@ -7095,6 +7104,7 @@ class SelfImprovementEngine:
             self.baseline_tracker.update(
                 score=score, roi=roi_realish, entropy=entropy, energy=energy
             )
+            self._check_roi_stagnation()
             score_delta = score - score_avg
             roi_delta = roi_realish - roi_avg
             entropy_delta = entropy - entropy_avg
