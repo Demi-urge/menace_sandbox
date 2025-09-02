@@ -46,8 +46,8 @@ Outcome: works (tests passed)
   included as context.
 * `chunk_token_threshold` – Token limit for individual code chunks when large files
   are summarised (defaults to `PROMPT_CHUNK_TOKEN_THRESHOLD`).
-* `chunk_summary_cache_dir` – Directory used to store cached summaries of
-  chunked code (`CHUNK_SUMMARY_CACHE_DIR`).
+* `prompt_chunk_cache_dir` – Directory used to store cached summaries of
+  chunked code (`PROMPT_CHUNK_CACHE_DIR`).
 * `success_header` and `failure_header` – control the section titles for
   successful and failing examples.  The defaults are
   `"Given the following pattern:"` and

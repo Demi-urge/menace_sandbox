@@ -11,7 +11,7 @@ configuration. The generated file includes stub values for critical settings:
 - `OPENAI_API_KEY` and `STRIPE_API_KEY` placeholders
 - `SANDBOX_DATA_DIR` defaults to `sandbox_data`
 - `SANDBOX_LOG_LEVEL` defaults to `INFO` (use `--log-level` to override)
-- `PROMPT_CHUNK_TOKEN_THRESHOLD` and `CHUNK_SUMMARY_CACHE_DIR` control code
+- `PROMPT_CHUNK_TOKEN_THRESHOLD` and `PROMPT_CHUNK_CACHE_DIR` control code
   chunking token limits and caching for large file summaries
 
 Bootstrap verifies these variables before launching and raises a clear error if
