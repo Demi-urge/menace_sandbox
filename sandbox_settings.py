@@ -53,6 +53,7 @@ class ROISettings(BaseModel):
     entropy_ceiling_threshold: float | None = None
     entropy_ceiling_consecutive: int | None = None
     baseline_window: int = 5
+    momentum_window: int = 5
     deviation_tolerance: float = 0.0
     stagnation_cycles: int = 3
 
@@ -96,6 +97,12 @@ class ROISettings(BaseModel):
     def _check_stagnation(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("stagnation_cycles must be a positive integer")
+        return v
+
+    @field_validator("momentum_window")
+    def _check_momentum_window(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("momentum_window must be a positive integer")
         return v
 
 
@@ -335,6 +342,12 @@ class SandboxSettings(BaseSettings):
     def _roi_baseline_window_positive(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("roi_baseline_window must be positive")
+        return v
+
+    @field_validator("roi_momentum_window")
+    def _roi_momentum_window_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("roi_momentum_window must be positive")
         return v
 
     @field_validator("roi_stagnation_cycles")
@@ -1550,6 +1563,7 @@ class SandboxSettings(BaseSettings):
     roi_ema_alpha: float = Field(0.1, env="ROI_EMA_ALPHA")
     roi_compounding_weight: float = Field(1.0, env="ROI_COMPOUNDING_WEIGHT")
     roi_baseline_window: int = Field(5, env="ROI_BASELINE_WINDOW")
+    roi_momentum_window: int = Field(5, env="ROI_MOMENTUM_WINDOW")
     roi_stagnation_cycles: int = Field(3, env="ROI_STAGNATION_CYCLES")
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(
@@ -1952,6 +1966,7 @@ class SandboxSettings(BaseSettings):
             entropy_window=self.entropy_window,
             entropy_weight=self.entropy_weight,
             baseline_window=self.roi_baseline_window,
+            momentum_window=self.roi_momentum_window,
             stagnation_cycles=self.roi_stagnation_cycles,
             min_integration_roi=self.min_integration_roi,
             entropy_threshold=self.entropy_threshold,

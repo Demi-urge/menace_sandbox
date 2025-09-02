@@ -540,6 +540,7 @@ class SelfImprovementEngine:
         )
         self.baseline_tracker = GLOBAL_BASELINE_TRACKER
         self.baseline_tracker.window = self.baseline_window
+        self.momentum_window = getattr(getattr(cfg, "roi", None), "momentum_window", self.baseline_window)
         self.roi_baseline_window = (
             roi_baseline_window
             if roi_baseline_window is not None
@@ -819,10 +820,10 @@ class SelfImprovementEngine:
         self.raroi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
-        self.success_history: deque[bool] = deque(maxlen=baseline_window)
+        self.success_history: deque[bool] = deque(maxlen=self.momentum_window)
         self._last_momentum: float = 0.0
         self.urgency_tier: int = 0
-        self.stagnation_cycles: int = getattr(settings.roi, "stagnation_cycles", 3)
+        self.stagnation_cycles: int = getattr(cfg.roi, "stagnation_cycles", 3)
         self._stagnation_streak: int = 0
         self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
@@ -1534,7 +1535,7 @@ class SelfImprovementEngine:
             for v in roi_scores:
                 self.roi_baseline.append(v)
             successes = [bool(x) for x in data.get("success_history", [])]
-            self.success_history = deque(successes, maxlen=self.baseline_window)
+            self.success_history = deque(successes, maxlen=self.momentum_window)
         except Exception as exc:
             self.logger.exception("failed to load state: %s", exc)
 
@@ -1569,7 +1570,9 @@ class SelfImprovementEngine:
     @property
     def momentum_coefficient(self) -> float:
         """Return recent success ratio for scheduling momentum."""
-        return self.baseline_tracker.momentum
+        if not self.success_history:
+            return 0.0
+        return sum(1 for s in self.success_history if s) / self.momentum_window
 
     # ------------------------------------------------------------------
     def _load_synergy_weights(self) -> None:
@@ -1995,6 +1998,18 @@ class SelfImprovementEngine:
                 and last_delta > self.urgency_recovery_threshold
             ):
                 self.urgency_tier = 0
+
+    # ------------------------------------------------------------------
+    def _check_momentum(self, threshold: float = 0.5) -> None:
+        """Raise urgency when recent improvement momentum is low."""
+
+        momentum = self.momentum_coefficient
+        if momentum < threshold:
+            self.urgency_tier += 1
+            self.logger.warning(
+                "low ROI momentum; increasing urgency tier",
+                extra=log_record(tier=self.urgency_tier, momentum=momentum),
+            )
 
     # ------------------------------------------------------------------
     def _alignment_review_last_commit(self, description: str) -> None:
@@ -5882,6 +5897,12 @@ class SelfImprovementEngine:
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
         try:
+            momentum = self.momentum_coefficient
+            if self.policy:
+                try:
+                    self.policy.adjust_for_momentum(momentum)
+                except Exception:
+                    self.logger.exception("policy momentum adjustment failed")
             workflow_evolution_details: list[dict[str, object]] = []
             evo_allowed = self._should_trigger()
             planner_chains: list[list[str]] = []
@@ -6846,6 +6867,7 @@ class SelfImprovementEngine:
             delta = after_roi - before_roi
             self.success_history.append(delta > 0)
             self._check_chain_stagnation()
+            self._check_momentum()
             warnings: dict[str, list[dict[str, Any]]] = {}
             if delta > 0:
                 try:
