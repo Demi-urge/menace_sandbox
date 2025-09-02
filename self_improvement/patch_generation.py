@@ -6,10 +6,16 @@ import logging
 
 from .utils import _load_callable, _call_with_retries
 from ..sandbox_settings import SandboxSettings
+from ..metrics_exporter import self_improvement_failure_total
 
 try:  # pragma: no cover - simplified environments
     from ..logging_utils import log_record
-except Exception:  # pragma: no cover - best effort
+except (ImportError, AttributeError) as exc:  # pragma: no cover - best effort
+    logging.getLogger(__name__).warning(
+        "log_record unavailable", extra={"component": __name__}, exc_info=exc
+    )
+    self_improvement_failure_total.labels(reason="log_record_import").inc()
+
     def log_record(**fields: object) -> dict[str, object]:  # type: ignore
         return fields
 

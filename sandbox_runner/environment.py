@@ -22,6 +22,7 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     setup_logging()
 
 from logging_utils import get_logger, log_record
+from metrics_exporter import sandbox_crashes_total
 from alert_dispatcher import dispatch_alert
 import re
 
@@ -133,11 +134,17 @@ class _RadarWorker:
         try:
             self.thread.start()
             logger.info("radar worker started")
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("radar worker failed to start", exc_info=exc)
+        except RuntimeError as exc:  # pragma: no cover - targeted
+            sandbox_crashes_total.inc()
+            logger.exception(
+                "radar worker failed to start",
+                exc_info=exc,
+                extra=log_record(component="radar_worker"),
+            )
             self.thread = None
             self.stop_event = None
             self.queue = None
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -147,13 +154,25 @@ class _RadarWorker:
             self.stop_event.set()
         try:
             self.queue.put(None)
-        except queue.Full as exc:  # pragma: no cover - best effort
-            logger.exception("radar worker queue full on shutdown", exc_info=exc)
+        except queue.Full as exc:  # pragma: no cover - targeted
+            sandbox_crashes_total.inc()
+            logger.exception(
+                "radar worker queue full on shutdown",
+                exc_info=exc,
+                extra=log_record(component="radar_worker"),
+            )
+            raise
         if self.thread and self.thread.is_alive():
             try:
                 self.thread.join(timeout=1.0)
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception("failed joining radar worker", exc_info=exc)
+            except RuntimeError as exc:  # pragma: no cover - targeted
+                sandbox_crashes_total.inc()
+                logger.exception(
+                    "failed joining radar worker",
+                    exc_info=exc,
+                    extra=log_record(component="radar_worker"),
+                )
+                raise
             if self.thread.is_alive():
                 logger.warning("radar worker did not terminate before timeout")
             else:
@@ -165,9 +184,13 @@ class _RadarWorker:
         try:
             self.queue.put_nowait(module)
         except queue.Full as exc:
-            logger.exception("radar worker queue full", exc_info=exc)
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("radar worker queue error", exc_info=exc)
+            sandbox_crashes_total.inc()
+            logger.exception(
+                "radar worker queue full",
+                exc_info=exc,
+                extra=log_record(module=module, component="radar_worker"),
+            )
+            raise RuntimeError("radar worker queue full") from exc
 
 
 def _radar_worker(q: "queue.Queue[str]", stop: threading.Event) -> None:
