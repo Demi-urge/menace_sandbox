@@ -191,3 +191,61 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
 
     # Cache file created
     assert list(engine.chunk_cache.cache_dir.glob("*.json"))
+
+
+def test_generate_helper_resummarizes_cached_chunks(monkeypatch, tmp_path):
+    monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
+
+    def fake_chunk_file(code: str, limit: int):
+        return [
+            CodeChunk(start_line=1, end_line=2, text="code1", hash="h1", token_count=5),
+            CodeChunk(start_line=3, end_line=4, text="code2", hash="h2", token_count=5),
+        ]
+
+    monkeypatch.setattr(sce, "split_into_chunks", fake_chunk_file)
+
+    calls = {"n": 0}
+
+    def fake_summary(text: str, llm):
+        calls["n"] += 1
+        return f"sum:{text}".strip()
+
+    monkeypatch.setattr(sce, "summarize_code", fake_summary)
+
+    class DummyPrompt:
+        def __init__(self, text: str = "") -> None:
+            self.text = text
+            self.system = ""
+            self.examples: list[str] = []
+
+    class DummyPromptEngine:
+        def build_prompt(self, *a, **k):
+            return DummyPrompt()
+
+    monkeypatch.setattr(sce, "PromptEngine", lambda *a, **k: DummyPromptEngine())
+
+    class DummyLLM:
+        gpt_memory = None
+
+        def generate(self, prompt):
+            return types.SimpleNamespace(text="")
+
+    engine = sce.SelfCodingEngine(
+        object(),
+        object(),
+        llm_client=DummyLLM(),
+        prompt_chunk_token_threshold=50,
+        chunk_summary_cache_dir=tmp_path,
+    )
+
+    monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
+    monkeypatch.setattr(engine, "_get_repo_layout", lambda lines: "")
+    monkeypatch.setattr(engine, "_build_file_context", lambda path: "raw context")
+
+    target = tmp_path / "big.py"
+    target.write_text("print('hi')\n")
+
+    engine.generate_helper("do something", path=target)
+    engine.generate_helper("do something", path=target)
+
+    assert calls["n"] == 4  # two chunks per call, called twice

@@ -177,6 +177,24 @@ def summarize_code(text: str, llm: LLMClient | None = None) -> str:
         except Exception:
             pass
 
+    try:
+        import ast
+        import io
+        import tokenize
+
+        tree = ast.parse(text)
+        lines = text.splitlines()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                return lines[node.lineno - 1].strip()[:80]
+    except Exception:
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+                if tok.type == tokenize.NAME and tok.string in {"def", "class"}:
+                    return tok.line.strip()[:80]
+        except Exception:
+            pass
+
     for line in text.strip().splitlines():
         line = line.strip()
         if line:
@@ -197,25 +215,33 @@ def get_chunk_summaries(
     file_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
     cache_file = CACHE_DIR / f"{file_hash}.json"
 
+    cached: Dict[str, Dict[str, str]] = {}
     if cache_file.exists():
         try:
             data = json.loads(cache_file.read_text())
             if data.get("hash") == file_hash:
-                chunks = data.get("chunks", [])
-                if isinstance(chunks, list):
-                    return [dict(c) for c in chunks]
+                for c in data.get("chunks", []):
+                    if isinstance(c, dict) and "hash" in c:
+                        cached[c["hash"]] = c
         except Exception:  # pragma: no cover - corrupted cache
             pass
 
     chunks = chunk_file(path, max_tokens)
     summaries: List[Dict[str, str]] = []
+    updated = False
     for ch in chunks:
         summary = summarize_code(ch.text, llm)
+        entry = cached.get(ch.hash)
+        if entry is None or entry.get("summary") != summary:
+            entry = {"hash": ch.hash, "summary": summary}
+            cached[ch.hash] = entry
+            updated = True
         summaries.append({"hash": ch.hash, "summary": summary})
 
-    cache_file.write_text(
-        json.dumps({"hash": file_hash, "chunks": summaries}, indent=2, sort_keys=True)
-    )
+    if updated or not cache_file.exists():
+        cache_file.write_text(
+            json.dumps({"hash": file_hash, "chunks": summaries}, indent=2, sort_keys=True)
+        )
     return summaries
 
 

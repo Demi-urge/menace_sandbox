@@ -49,13 +49,13 @@ def test_get_chunk_summaries_cache(tmp_path: Path, monkeypatch) -> None:
 
     second = pc.get_chunk_summaries(file, 5)
     assert len(second) == len(chunks)
-    assert len(calls) == len(chunks)  # cache hit
+    assert len(calls) == len(chunks) * 2  # summaries recomputed
 
     # modify file -> one chunk changes
     file.write_text(file.read_text().replace("return 1", "return 42"))
     third = pc.get_chunk_summaries(file, 5)
     assert len(third) == len(chunks)
-    assert len(calls) == len(chunks) * 2  # all summaries recomputed
+    assert len(calls) == len(chunks) * 3  # all summaries recomputed again
     assert len(list(cache.glob("*.json"))) == 2
 
 
@@ -94,10 +94,10 @@ def test_large_file_chunking_and_cache(tmp_path: Path, monkeypatch) -> None:
 
     second = pc.get_chunk_summaries(file, token_limit)
     assert len(second) == len(chunks)
-    assert len(calls) == len(chunks)
+    assert len(calls) == len(chunks) * 2
 
     file.write_text(file.read_text().replace("v_0_0 = 0", "v_0_0 = -1"))
     third = pc.get_chunk_summaries(file, token_limit)
     assert len(third) == len(chunks)
-    assert len(calls) == len(chunks) * 2
+    assert len(calls) == len(chunks) * 3
     assert len(list(cache.glob("*.json"))) == 2

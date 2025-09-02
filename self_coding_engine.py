@@ -762,9 +762,9 @@ class SelfCodingEngine:
                     updated = False
                     for idx, ch in enumerate(chunks):
                         ch_hash = hashlib.sha256(ch.text.encode("utf-8")).hexdigest()
+                        summary_text = summarize_code(ch.text, self.llm_client)
                         entry = cache_map.get(ch_hash)
                         if entry is None:
-                            summary_text = summarize_code(ch.text, self.llm_client)
                             entry = {
                                 "start_line": ch.start_line,
                                 "end_line": ch.end_line,
@@ -772,12 +772,22 @@ class SelfCodingEngine:
                                 "summary": summary_text,
                             }
                             cached_summaries.append(entry)
+                            cache_map[ch_hash] = entry
+                            updated = True
+                        elif entry.get("summary") != summary_text or entry.get("start_line") != ch.start_line or entry.get("end_line") != ch.end_line:
+                            entry.update(
+                                {
+                                    "start_line": ch.start_line,
+                                    "end_line": ch.end_line,
+                                    "summary": summary_text,
+                                }
+                            )
                             updated = True
                         if chunk_index is not None and idx == chunk_index:
                             selected_source = ch.text
                             selected_lines = (ch.start_line, ch.end_line)
                         else:
-                            summaries.append(f"Chunk {idx}: {entry.get('summary', '')}")
+                            summaries.append(f"Chunk {idx}: {summary_text}")
                     if updated or not cached:
                         self.chunk_cache.set(path_hash, cached_summaries)
                     if chunk_index is not None and selected_source:

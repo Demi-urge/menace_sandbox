@@ -1,5 +1,4 @@
 import types
-
 from code_summarizer import summarize_code
 
 
@@ -46,3 +45,20 @@ def test_summarize_code_llm_client(monkeypatch):
 
     summary = summarize_code("print('hi')", max_summary_tokens=5)
     assert summary.split() == ["alpha", "beta", "gamma", "delta", "epsilon"]
+
+
+def test_summarize_code_heuristic(monkeypatch):
+    monkeypatch.setattr("micro_models.diff_summarizer.summarize_diff", lambda *a, **k: "")
+
+    class DummyClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def generate(self, prompt):
+            return types.SimpleNamespace(text="")
+
+    monkeypatch.setattr("local_client.OllamaClient", DummyClient)
+
+    code = "# header\n\nclass Foo:\n    pass\n"
+    summary = summarize_code(code, max_summary_tokens=10)
+    assert summary.startswith("class Foo")
