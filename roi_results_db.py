@@ -37,6 +37,8 @@ class ROIResult:
     bottleneck_index: float
     patchability_score: float
     module_deltas: Dict[str, Dict[str, float]]
+    code_entropy: float = 0.0
+    entropy_delta: float = 0.0
     failure_reason: str | None = None
 
 
@@ -78,6 +80,8 @@ class ROIResultsDB:
                 workflow_synergy_score REAL,
                 bottleneck_index REAL,
                 patchability_score REAL,
+                code_entropy REAL DEFAULT 0.0,
+                entropy_delta REAL DEFAULT 0.0,
                 module_deltas TEXT,
                 failure_reason TEXT
             )
@@ -170,6 +174,14 @@ class ROIResultsDB:
         existing = {
             r[1] for r in cur.execute("PRAGMA table_info(workflow_results)").fetchall()
         }
+        if "code_entropy" not in existing:
+            cur.execute(
+                "ALTER TABLE workflow_results ADD COLUMN code_entropy REAL DEFAULT 0.0"
+            )
+        if "entropy_delta" not in existing:
+            cur.execute(
+                "ALTER TABLE workflow_results ADD COLUMN entropy_delta REAL DEFAULT 0.0"
+            )
         if "failure_reason" not in existing:
             cur.execute("ALTER TABLE workflow_results ADD COLUMN failure_reason TEXT")
         self.conn.commit()
@@ -186,6 +198,8 @@ class ROIResultsDB:
         workflow_synergy_score: float,
         bottleneck_index: float,
         patchability_score: float,
+        code_entropy: float = 0.0,
+        entropy_delta: float = 0.0,
         module_deltas: Dict[str, Dict[str, float]] | None = None,
         timestamp: str | None = None,
         failure_reason: str | None = None,
@@ -198,8 +212,8 @@ class ROIResultsDB:
                 INSERT INTO workflow_results(
                     workflow_id, run_id, timestamp, runtime, success_rate,
                     roi_gain, workflow_synergy_score, bottleneck_index,
-                    patchability_score, module_deltas, failure_reason
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                    patchability_score, code_entropy, entropy_delta, module_deltas, failure_reason
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     workflow_id,
@@ -211,6 +225,8 @@ class ROIResultsDB:
                     workflow_synergy_score,
                     bottleneck_index,
                     patchability_score,
+                    code_entropy,
+                    entropy_delta,
                     json.dumps(module_deltas or {}, sort_keys=True),
                     failure_reason,
                 ),

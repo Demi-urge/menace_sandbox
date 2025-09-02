@@ -43,6 +43,12 @@ class BaselineTracker:
                     "roi_delta", deque(maxlen=self.window)
                 )
                 delta_hist.append(float(value) - prev)
+            elif name == "entropy":
+                avg = sum(hist) / len(hist) if hist else 0.0
+                delta_hist = self._history.setdefault(
+                    "entropy_delta", deque(maxlen=self.window)
+                )
+                delta_hist.append(float(value) - avg)
             hist.append(float(value))
 
     # ------------------------------------------------------------------
