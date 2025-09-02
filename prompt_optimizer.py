@@ -113,6 +113,10 @@ class PromptOptimizer:
         weighting.
     roi_weight:
         Exponent applied to the ROI component when ranking configurations.
+    failure_fingerprint_path:
+        Optional path to a ``failure_fingerprints.jsonl`` file. Entries from
+        this file are used to penalise prompt configurations associated with
+        frequent failures.
     """
 
     def __init__(
@@ -123,11 +127,15 @@ class PromptOptimizer:
         stats_path: str | Path = "prompt_optimizer_stats.json",
         weight_by: str | None = None,
         roi_weight: float = 1.0,
+        failure_fingerprint_path: str | Path | None = None,
     ) -> None:
         self.log_paths = [Path(success_log), Path(failure_log)]
         self.stats_path = Path(stats_path)
         self.weight_by = weight_by
         self.roi_weight = roi_weight
+        self.failure_fingerprint_path = (
+            Path(failure_fingerprint_path) if failure_fingerprint_path else None
+        )
         self._sentiment = (
             SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
         )
@@ -327,6 +335,50 @@ class PromptOptimizer:
                 )
                 self.stats[key] = stat
             stat.update(success, roi, weight, runtime_val)
+
+        # Apply penalties from failure fingerprints if provided
+        if self.failure_fingerprint_path and self.failure_fingerprint_path.exists():
+            with self.failure_fingerprint_path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except Exception:
+                        continue
+                    prompt = str(data.get("prompt_text", ""))
+                    if not prompt:
+                        continue
+                    feats = self._extract_features(prompt)
+                    module = data.get("filename", "unknown")
+                    action = data.get("function_name", "unknown")
+                    has_system = prompt.lstrip().lower().startswith("system:")
+                    key = (
+                        module,
+                        action,
+                        feats["tone"],
+                        feats["header_set"],
+                        feats["example_placement"],
+                        feats["has_code"],
+                        feats["has_bullets"],
+                        has_system,
+                    )
+                    stat = self.stats.get(key)
+                    if not stat:
+                        stat = _Stat(
+                            module=module,
+                            action=action,
+                            tone=feats["tone"],
+                            header_set=feats["header_set"],
+                            example_placement=feats["example_placement"],
+                            has_code=feats["has_code"],
+                            has_bullets=feats["has_bullets"],
+                            has_system=has_system,
+                        )
+                        self.stats[key] = stat
+                    # treat fingerprint as a negative outcome
+                    stat.update(False, -1.0, 1.0)
         self.persist_statistics()
         return self.stats
 
