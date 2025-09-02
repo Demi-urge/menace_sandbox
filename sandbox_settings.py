@@ -599,6 +599,16 @@ class SandboxSettings(BaseSettings):
         env="PROMPT_CHUNK_CACHE_DIR",
         description="Directory for cached summaries of code chunks.",
     )
+    chunk_token_threshold: int = Field(
+        3500,
+        env="CHUNK_TOKEN_THRESHOLD",
+        description="Token limit for chunked prompting operations.",
+    )
+    chunk_summary_cache_dir: Path = Field(
+        Path("chunk_summary_cache"),
+        env="CHUNK_SUMMARY_CACHE_DIR",
+        description="Directory for cached summaries used in chunked prompting.",
+    )
     stub_timeout: float = Field(
         10.0,
         env="SANDBOX_STUB_TIMEOUT",
