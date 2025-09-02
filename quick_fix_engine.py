@@ -24,6 +24,13 @@ from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
 from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
 from patch_provenance import PatchLogger
+try:  # pragma: no cover - optional dependency
+    from .prompt_chunking import get_chunk_summaries
+except Exception:  # pragma: no cover - fallback for older helper
+    try:
+        from .prompt_chunker import get_chunk_summaries  # type: ignore
+    except Exception:  # pragma: no cover - chunking unavailable
+        get_chunk_summaries = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
     from .self_coding_engine import SelfCodingEngine
@@ -121,6 +128,7 @@ def generate_patch(
             vectors = []
         if context_block:
             description += "\n\n" + context_block
+    base_description = description
 
     if patch_logger is None:
         try:
@@ -149,17 +157,51 @@ def generate_patch(
             before_target = Path(before_dir) / rel
             before_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, before_target)
-            try:
-                patch_id, _, _ = engine.apply_patch(
-                    path,
-                    description,
-                    reason="preemptive_fix",
-                    trigger="quick_fix_engine",
-                    context_meta=context_meta,
-                )
-            except AttributeError:
-                engine.patch_file(path, "preemptive_fix", context_meta=context_meta)
-                patch_id = None
+            chunks: List[Any] = []
+            if get_chunk_summaries is not None:
+                token_limit = getattr(engine, "prompt_chunk_token_threshold", 1000)
+                try:
+                    chunks = get_chunk_summaries(path, token_limit)
+                except Exception:
+                    chunks = []
+            patch_ids: List[int | None] = []
+            if chunks:
+                for chunk in chunks:
+                    summary = (
+                        chunk.get("summary", "")
+                        if isinstance(chunk, dict)
+                        else str(chunk)
+                    )
+                    chunk_desc = base_description
+                    if summary:
+                        chunk_desc = f"{base_description}\n\n{summary}"
+                    try:
+                        pid, _, _ = engine.apply_patch(
+                            path,
+                            chunk_desc,
+                            reason="preemptive_fix",
+                            trigger="quick_fix_engine",
+                            context_meta=context_meta,
+                        )
+                    except AttributeError:
+                        engine.patch_file(
+                            path, "preemptive_fix", context_meta=context_meta
+                        )
+                        pid = None
+                    patch_ids.append(pid)
+                patch_id = patch_ids[-1] if patch_ids else None
+            else:
+                try:
+                    patch_id, _, _ = engine.apply_patch(
+                        path,
+                        base_description,
+                        reason="preemptive_fix",
+                        trigger="quick_fix_engine",
+                        context_meta=context_meta,
+                    )
+                except AttributeError:
+                    engine.patch_file(path, "preemptive_fix", context_meta=context_meta)
+                    patch_id = None
             after_target = Path(after_dir) / rel
             after_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, after_target)
