@@ -3,6 +3,10 @@ enable_meta_planner: false
 optional_service_versions:
   relevancy_radar: "1.0.0"
   quick_fix_engine: "1.0.0"
+sandbox_required_db_files:
+  - metrics.db
+  - patch_history.db
+  - visual_agent_queue.db
 roi:
   threshold: null
   confidence: null
