@@ -15,7 +15,10 @@ methods = [
     for n in sie_cls.body
     if isinstance(n, ast.FunctionDef) and n.name in ("_check_momentum", "momentum_coefficient")
 ]
-engine_module = ast.Module([future, ast.ClassDef("SelfImprovementEngine", [], [], methods, [])], type_ignores=[])
+engine_module = ast.Module(
+    [future, ast.ClassDef("SelfImprovementEngine", [], [], methods, [])],
+    type_ignores=[],
+)
 engine_module = ast.fix_missing_locations(engine_module)
 ns: Dict[str, Any] = {"log_record": lambda **k: k}
 exec(compile(engine_module, "<engine>", "exec"), ns)
@@ -28,10 +31,15 @@ def _make_engine():
     eng.momentum_window = 4
     eng.urgency_tier = 0
     eng.logger = types.SimpleNamespace(warning=lambda *a, **k: None)
+    eng.baseline_tracker = types.SimpleNamespace(momentum=0.75)
+    eng.stagnation_cycles = 2
+    eng._momentum_streak = 0
     return eng
 
 
-def test_low_momentum_escalates():
+def test_momentum_stagnation_escalates():
     eng = _make_engine()
+    eng._check_momentum()
+    assert eng.urgency_tier == 0
     eng._check_momentum()
     assert eng.urgency_tier == 1

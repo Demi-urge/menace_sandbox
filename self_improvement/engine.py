@@ -825,6 +825,7 @@ class SelfImprovementEngine:
         self.urgency_tier: int = 0
         self.stagnation_cycles: int = getattr(cfg.roi, "stagnation_cycles", 3)
         self._stagnation_streak: int = 0
+        self._momentum_streak: int = 0
         self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
         self.alignment_flagger = HumanAlignmentFlagger()
@@ -2000,16 +2001,28 @@ class SelfImprovementEngine:
                 self.urgency_tier = 0
 
     # ------------------------------------------------------------------
-    def _check_momentum(self, threshold: float = 0.5) -> None:
-        """Raise urgency when recent improvement momentum is low."""
+    def _check_momentum(self) -> None:
+        """Escalate urgency when momentum stays below baseline."""
 
-        momentum = self.momentum_coefficient
-        if momentum < threshold:
-            self.urgency_tier += 1
-            self.logger.warning(
-                "low ROI momentum; increasing urgency tier",
-                extra=log_record(tier=self.urgency_tier, momentum=momentum),
-            )
+        current_momentum = self.momentum_coefficient
+        baseline_momentum = self.baseline_tracker.momentum
+        delta = current_momentum - baseline_momentum
+        if delta < 0:
+            self._momentum_streak += 1
+            if self._momentum_streak >= self.stagnation_cycles:
+                self.urgency_tier += 1
+                self.logger.warning(
+                    "momentum below baseline; increasing urgency tier",
+                    extra=log_record(
+                        tier=self.urgency_tier,
+                        momentum=current_momentum,
+                        baseline=baseline_momentum,
+                        delta=delta,
+                        streak=self._momentum_streak,
+                    ),
+                )
+        else:
+            self._momentum_streak = 0
 
     # ------------------------------------------------------------------
     def _alignment_review_last_commit(self, description: str) -> None:
