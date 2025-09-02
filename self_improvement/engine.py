@@ -2007,23 +2007,23 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _check_momentum(self) -> None:
-        """Escalate urgency when momentum stays below baseline."""
+        """Escalate urgency when momentum trails the moving average."""
 
-        current_momentum = self.momentum_coefficient
-        base = self.baseline_tracker.get("momentum")
-        std = self.baseline_tracker.std("momentum")
-        threshold = base - self.momentum_dev_multiplier * std
+        current_momentum = self.baseline_tracker.momentum
+        moving_avg = self.baseline_tracker.get("momentum")
+        deviation = self.momentum_dev_multiplier * self.baseline_tracker.std("momentum")
+        threshold = moving_avg - deviation
         if current_momentum < threshold:
             self._momentum_streak += 1
             if self._momentum_streak >= self.stagnation_cycles:
                 self.urgency_tier += 1
                 self.logger.warning(
-                    "momentum below baseline; increasing urgency tier",
+                    "momentum below moving average; increasing urgency tier",
                     extra=log_record(
                         tier=self.urgency_tier,
                         momentum=current_momentum,
-                        base=base,
-                        std=std,
+                        moving_avg=moving_avg,
+                        deviation=deviation,
                         streak=self._momentum_streak,
                     ),
                 )
