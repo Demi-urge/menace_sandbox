@@ -19,8 +19,10 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-from llm_interface import Prompt
+from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
+from chunking import split_into_chunks
+from chunk_summarizer import summarize_code
 
 try:  # pragma: no cover - optional settings dependency
     from sandbox_settings import SandboxSettings  # type: ignore
@@ -171,6 +173,7 @@ class PromptEngine:
         if _SETTINGS
         else Path("chunk_summary_cache")
     )
+    llm: LLMClient | None = None
     roi_weight: float = 1.0
     recency_weight: float = 0.1
     roi_tag_weights: Dict[str, float] = field(
@@ -723,6 +726,18 @@ class PromptEngine:
             records = result[0]
         else:
             records = result
+        if (
+            context
+            and summaries is None
+            and self.chunk_token_threshold
+            and self._count_tokens(context) > self.chunk_token_threshold
+        ):
+            chunks = split_into_chunks(context, self.chunk_token_threshold)
+            summaries = [
+                f"Chunk {i}: {summarize_code(ch.text, self.llm) if self.llm else ch.text.splitlines()[0][:80]}"
+                for i, ch in enumerate(chunks)
+            ]
+            context = None
         scores = [float(rec.get("score") or 0.0) for rec in records]
         confidence = sum(scores) / len(scores) if scores else 0.0
 
@@ -908,6 +923,26 @@ class PromptEngine:
             + self.recency_weight * recency_component
             + tag_weight
         )
+
+    # ------------------------------------------------------------------
+    def _count_tokens(self, text: str) -> int:
+        """Return token count for ``text`` using available tokenizers."""
+
+        counter = None
+        if self.context_builder is not None:
+            counter = getattr(self.context_builder, "_count_tokens", None)
+        if counter is None:
+            if _ENCODER is not None:
+                def _token_counter(s: Any) -> int:
+                    return len(_ENCODER.encode(str(s)))
+
+                counter = _token_counter
+            else:
+                def _default_counter(s: Any) -> int:
+                    return len(str(s).split())
+
+                counter = _default_counter
+        return counter(text)
 
     # ------------------------------------------------------------------
     def _trim_tokens(self, text: str, limit: int) -> str:
