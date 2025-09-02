@@ -348,7 +348,14 @@ class SelfCodingEngine:
         self._last_retry_trace: str | None = None
         self._failure_cache = FailureCache()
 
+    @property
+    def last_prompt_text(self) -> str:
+        """Return the text of the last prompt."""
+        prompt = self._last_prompt
+        return prompt.text if prompt else ""
+
     # ------------------------------------------------------------------
+
     def scan_repo(self) -> list["EnhancementSuggestion"]:
         """Run the enhancement classifier and queue suggestions."""
         classifier = getattr(self, "enhancement_classifier", None)
@@ -667,7 +674,7 @@ class SelfCodingEngine:
                 entry = summary_entries[chunk_index]
                 start = int(entry.get("start_line", 1))
                 end = int(entry.get("end_line", start))
-                selected = "\n".join(lines[start - 1 : end])
+                selected = "\n".join(lines[start - 1:end])
                 context = f"# Chunk {chunk_index} lines {start}-{end}\n{selected}"
                 summaries = [
                     f"Chunk {i}: {e.get('summary', '')}"
@@ -2160,7 +2167,8 @@ class SelfCodingEngine:
                     try:
                         conn = self.patch_db.router.get_connection("patch_history")
                         conn.execute(
-                            "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
+                            "INSERT INTO patch_history(filename, description, outcome) "
+                            "VALUES(?,?,?)",
                             (str(path), description, "retry_skipped"),
                         )
                         conn.commit()
@@ -2170,7 +2178,8 @@ class SelfCodingEngine:
             if matches:
                 prior = matches[0]
                 warning = (
-                    f"Previous similar failure '{prior.error_message}' in {prior.filename}:{prior.function_name}"
+                    f"Previous similar failure '{prior.error_message}' "
+                    f"in {prior.filename}:{prior.function_name}"
                 )
                 description = description + f"\n\nWARNING: {warning}"
                 try:
@@ -2181,7 +2190,8 @@ class SelfCodingEngine:
                     try:
                         conn = self.patch_db.router.get_connection("patch_history")
                         conn.execute(
-                            "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
+                            "INSERT INTO patch_history(filename, description, outcome) "
+                            "VALUES(?,?,?)",
                             (str(path), description, "retry_adjusted"),
                         )
                         conn.commit()

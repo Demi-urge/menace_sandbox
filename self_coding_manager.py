@@ -326,6 +326,27 @@ class SelfCodingManager:
                             self.engine.patch_suggestion_db.add_failed_strategy(tag)
                         except Exception:  # pragma: no cover - best effort
                             self.logger.exception("failed to store failed strategy tag")
+                function_name = ""
+                error_msg = ""
+                m = re.findall(r'File "[^"]+", line \d+, in ([^\n]+)', trace)
+                if m:
+                    function_name = m[-1]
+                m_err = re.findall(r'([\w.]+(?:Error|Exception):.*)', trace)
+                if m_err:
+                    error_msg = m_err[-1]
+                fingerprint = FailureFingerprint(
+                    path.name,
+                    function_name,
+                    error_msg,
+                    trace,
+                    self.engine.last_prompt_text,
+                )
+                last_fp = fingerprint
+                if self.failure_store:
+                    try:
+                        self.failure_store.log(fingerprint)
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to log failure fingerprint")
                 self.logger.info(
                     "rebuilding context",
                     extra={"tags": tags, "attempt": attempt},
@@ -342,20 +363,7 @@ class SelfCodingManager:
                     self.logger.error("context rebuild failed: %s", exc)
                     raise RuntimeError("patch tests failed")
 
-                filename = function_name = error_msg = ""
-                m = re.findall(r'File "([^"]+)", line \d+, in ([^\n]+)', trace)
-                if m:
-                    filename, function_name = m[-1]
-                m_err = re.findall(r'([\w.]+(?:Error|Exception):.*)', trace)
-                if m_err:
-                    error_msg = m_err[-1]
-                last_fp = FailureFingerprint(
-                    filename,
-                    function_name,
-                    error_msg,
-                    trace,
-                    desc,
-                )
+                # failure fingerprint logged above
 
             description = desc
             path.write_text(cloned_path.read_text(encoding="utf-8"), encoding="utf-8")
