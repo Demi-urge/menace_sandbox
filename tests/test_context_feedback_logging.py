@@ -115,7 +115,9 @@ sys.modules['menace.sandbox_settings'] = types.SimpleNamespace(
         'SandboxSettings',
         (object,),
         {
-            'score_threshold': 0.0,
+            'baseline_window': 5,
+            'stagnation_iters': 10,
+            'delta_margin': 0.0,
             'score_weights': (1, 1, 1, 1, 1, 1),
             'merge_threshold': 0.0,
             'flakiness_runs': 1,
