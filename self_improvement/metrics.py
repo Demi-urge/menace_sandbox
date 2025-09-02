@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
 import yaml
+from statistics import fmean
 
 try:  # pragma: no cover - radon is an optional dependency
     from radon.complexity import cc_visit
@@ -129,7 +130,12 @@ def _collect_metrics(
                 if volume > 0 and sloc > 0:
                     file_mi = max(
                         0.0,
-                        (171 - 5.2 * math.log(volume) - 0.23 * file_complexity - 16.2 * math.log(sloc))
+                        (
+                            171
+                            - 5.2 * math.log(volume)
+                            - 0.23 * file_complexity
+                            - 16.2 * math.log(sloc)
+                        )
                         * 100
                         / 171,
                     )
@@ -159,6 +165,55 @@ def get_alignment_metrics(settings: SandboxSettings | None = None) -> Dict[str, 
     except (OSError, yaml.YAMLError) as exc:  # pragma: no cover - best effort
         logger.warning("Failed to load baseline metrics: %s", exc)
         return {}
+
+
+def record_entropy(
+    code_diversity: float,
+    token_complexity: float,
+    *,
+    roi: float | None = None,
+    settings: SandboxSettings | None = None,
+) -> None:
+    """Append an entropy record to the baseline metrics file.
+
+    Parameters
+    ----------
+    code_diversity:
+        Shannon entropy of code changes for the cycle.
+    token_complexity:
+        Token level complexity observed in the cycle.
+    roi:
+        Optional ROI associated with the cycle so entropy history can be
+        correlated with investment data.
+    settings:
+        Sandbox settings providing the baseline metrics path. When omitted the
+        default :class:`SandboxSettings` is used.
+    """
+
+    try:
+        settings = settings or SandboxSettings()
+        path_str = getattr(settings, "alignment_baseline_metrics_path", "")
+        if not path_str:
+            return
+        baseline_path = Path(path_str)
+        try:
+            data = yaml.safe_load(baseline_path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            data = {}
+
+        history = list(data.get("entropy_history", []))
+        history.append(
+            {
+                "code_diversity": float(code_diversity),
+                "token_complexity": float(token_complexity),
+                "roi": float(roi) if roi is not None else None,
+                "entropy": fmean([float(code_diversity), float(token_complexity)]),
+            }
+        )
+        data["entropy_history"] = history
+        baseline_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("Failed to record entropy: %s", exc)
 
 
 def _update_alignment_baseline(
@@ -213,6 +268,8 @@ def _update_alignment_baseline(
             "maintainability": avg_mi,
             "files": files_data,
         }
+        if "entropy_history" in existing:
+            data["entropy_history"] = existing["entropy_history"]
         baseline_path.write_text(yaml.safe_dump(data), encoding="utf-8")
         return data
     except Exception as exc:  # pragma: no cover - best effort
@@ -243,7 +300,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         logger.info(yaml.safe_dump(get_alignment_metrics()))
 
 
-__all__ = ["_update_alignment_baseline", "get_alignment_metrics", "main"]
+__all__ = [
+    "_update_alignment_baseline",
+    "get_alignment_metrics",
+    "record_entropy",
+    "main",
+]
 
 
 if __name__ == "__main__":  # pragma: no cover - manual invocation
