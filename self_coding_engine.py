@@ -125,8 +125,7 @@ except Exception:  # pragma: no cover - graceful degradation
         return None
 from .prompt_engine import PromptEngine, _ENCODER
 from .prompt_memory_trainer import PromptMemoryTrainer
-from chunking import summarize_code
-from prompt_chunker import split_into_chunks
+from chunking import summarize_code, split_into_chunks
 from chunk_summary_cache import ChunkSummaryCache
 try:
     from .prompt_optimizer import PromptOptimizer
@@ -762,10 +761,10 @@ class SelfCodingEngine:
                     selected_lines: tuple[int, int] | None = None
                     updated = False
                     for idx, ch in enumerate(chunks):
-                        ch_hash = hashlib.sha256(ch.source.encode("utf-8")).hexdigest()
+                        ch_hash = hashlib.sha256(ch.text.encode("utf-8")).hexdigest()
                         entry = cache_map.get(ch_hash)
                         if entry is None:
-                            summary_text = summarize_code(ch.source, self.llm_client)
+                            summary_text = summarize_code(ch.text, self.llm_client)
                             entry = {
                                 "start_line": ch.start_line,
                                 "end_line": ch.end_line,
@@ -775,7 +774,7 @@ class SelfCodingEngine:
                             cached_summaries.append(entry)
                             updated = True
                         if chunk_index is not None and idx == chunk_index:
-                            selected_source = ch.source
+                            selected_source = ch.text
                             selected_lines = (ch.start_line, ch.end_line)
                         else:
                             summaries.append(f"Chunk {idx}: {entry.get('summary', '')}")

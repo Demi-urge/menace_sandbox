@@ -25,12 +25,9 @@ from .knowledge_graph import KnowledgeGraph
 from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
 from patch_provenance import PatchLogger
 try:  # pragma: no cover - optional dependency
-    from .prompt_chunking import get_chunk_summaries
-except Exception:  # pragma: no cover - fallback for older helper
-    try:
-        from .prompt_chunker import get_chunk_summaries  # type: ignore
-    except Exception:  # pragma: no cover - chunking unavailable
-        get_chunk_summaries = None  # type: ignore
+    from chunking import get_chunk_summaries
+except Exception:  # pragma: no cover - chunking unavailable
+    get_chunk_summaries = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
     from .self_coding_engine import SelfCodingEngine

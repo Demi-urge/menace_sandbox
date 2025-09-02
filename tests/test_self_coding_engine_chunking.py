@@ -67,15 +67,30 @@ know_mod.recent_improvement_path = lambda *a, **k: None
 _setmod("knowledge_retriever", know_mod)
 _setmod("rollback_manager", types.SimpleNamespace(RollbackManager=object))
 audit_mod = types.ModuleType("audit_trail")
-audit_mod.AuditTrail = lambda *a, **k: types.SimpleNamespace(record=lambda self, payload: None)
+audit_mod.AuditTrail = lambda *a, **k: types.SimpleNamespace(
+    record=lambda self, payload: None
+)
 _setmod("audit_trail", audit_mod)
-access_mod = types.SimpleNamespace(READ="r", WRITE="w", check_permission=lambda *a, **k: None)
+access_mod = types.SimpleNamespace(
+    READ="r",
+    WRITE="w",
+    check_permission=lambda *a, **k: None,
+)
 _setmod("access_control", access_mod)
-_setmod("patch_suggestion_db", types.SimpleNamespace(PatchSuggestionDB=object, SuggestionRecord=object))
-_setmod("sandbox_runner.workflow_sandbox_runner", types.SimpleNamespace(WorkflowSandboxRunner=object))
+_setmod(
+    "patch_suggestion_db",
+    types.SimpleNamespace(PatchSuggestionDB=object, SuggestionRecord=object),
+)
+_setmod(
+    "sandbox_runner.workflow_sandbox_runner",
+    types.SimpleNamespace(WorkflowSandboxRunner=object),
+)
 _setmod(
     "sandbox_runner.test_harness",
-    types.SimpleNamespace(run_tests=lambda *a, **k: None, TestHarnessResult=types.SimpleNamespace(success=False, stdout="")),
+    types.SimpleNamespace(
+        run_tests=lambda *a, **k: None,
+        TestHarnessResult=types.SimpleNamespace(success=False, stdout=""),
+    ),
 )
 
 _setmod(
@@ -102,7 +117,7 @@ _setmod("roi_tracker", roi_mod)
 
 
 import menace_sandbox.self_coding_engine as sce  # noqa: E402
-from prompt_chunker import Chunk  # noqa: E402
+from chunking import CodeChunk  # noqa: E402
 
 
 def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
@@ -114,8 +129,8 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
     def fake_chunk_file(code: str, limit: int):
         called["limit"] = limit
         return [
-            Chunk(source="code1", start_line=1, end_line=2, token_count=5),
-            Chunk(source="code2", start_line=3, end_line=4, token_count=5),
+            CodeChunk(start_line=1, end_line=2, text="code1", hash="h1", token_count=5),
+            CodeChunk(start_line=3, end_line=4, text="code2", hash="h2", token_count=5),
         ]
 
     monkeypatch.setattr(sce, "split_into_chunks", fake_chunk_file)
@@ -130,7 +145,16 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
             self.examples: list[str] = []
 
     class DummyPromptEngine:
-        def build_prompt(self, goal, *, context=None, retrieval_context=None, retry_trace=None, tone=None, summaries=None):
+        def build_prompt(
+            self,
+            goal,
+            *,
+            context=None,
+            retrieval_context=None,
+            retry_trace=None,
+            tone=None,
+            summaries=None,
+        ):
             captured["context"] = context
             captured["summaries"] = summaries
             return DummyPrompt()
@@ -167,4 +191,3 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
 
     # Cache file created
     assert list(engine.chunk_cache.cache_dir.glob("*.json"))
-

@@ -66,7 +66,7 @@ Populate the summary cache ahead of time to avoid first‑run latency:
 
 ```python
 from pathlib import Path
-from prompt_chunking import get_chunk_summaries
+from chunking import get_chunk_summaries
 
 # Writes JSON files into chunk_summary_cache/
 get_chunk_summaries(Path("bots/example.py"), 800)
@@ -76,7 +76,7 @@ When building prompts the self‑coding engine loads these summaries and passes
 them to the prompt engine:
 
 ```python
-from prompt_chunking import get_chunk_summaries
+from chunking import get_chunk_summaries
 from prompt_engine import PromptEngine
 
 engine = PromptEngine()
