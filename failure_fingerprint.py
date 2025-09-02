@@ -2,11 +2,12 @@ from __future__ import annotations
 
 """Utilities for logging and querying failure fingerprints."""
 
+import hashlib
 import json
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from time import time
-from typing import Iterable, List
+from typing import Iterable, List, Dict, Any
 
 from error_vectorizer import ErrorVectorizer
 from vector_utils import persist_embedding, cosine_similarity
@@ -21,11 +22,19 @@ class FailureFingerprint:
 
     filename: str
     function_name: str
-    stack_trace: str
     error_message: str
+    stack_trace: str
     prompt_text: str
-    timestamp: float = field(default_factory=lambda: time())
+    hash: str = field(init=False)
     embedding: List[float] = field(default_factory=list)
+    embedding_metadata: Dict[str, Any] = field(default_factory=dict)
+    timestamp: float = field(default_factory=lambda: time())
+
+    # ``function`` is used by ``FailureFingerprintStore``; keep ``function_name`` for
+    # backwards compatibility with existing callers.
+    @property
+    def function(self) -> str:  # pragma: no cover - trivial
+        return self.function_name
 
     @classmethod
     def from_failure(
@@ -39,14 +48,19 @@ class FailureFingerprint:
         """Create a fingerprint with an embedding derived from ``stack_trace``."""
 
         vec = _VECTOR.transform({"stack_trace": stack_trace})
-        return cls(
+        fp = cls(
             filename=filename,
             function_name=function_name,
-            stack_trace=stack_trace,
             error_message=error_message,
+            stack_trace=stack_trace,
             prompt_text=prompt_text,
             embedding=vec,
         )
+        return fp
+
+    def __post_init__(self) -> None:
+        # ``hash`` uniquely identifies the stack trace for quick comparisons.
+        self.hash = hashlib.sha256(self.stack_trace.encode("utf-8")).hexdigest()
 
 
 def _embedding_path(path: Path) -> Path:
@@ -97,8 +111,10 @@ def find_similar(
             emb = data.get("embedding") or []
             sim = cosine_similarity(trace_embedding, emb)
             if sim >= threshold:
+                hash_val = data.pop("hash", "")
                 try:
                     fp = FailureFingerprint(**data)
+                    fp.hash = hash_val or fp.hash
                 except TypeError:
                     continue
                 matches.append((sim, fp))
