@@ -122,6 +122,7 @@ def test_sandbox_health_and_artifacts(tmp_path, monkeypatch):
     assert health == {
         "self_improvement_thread_alive": True,
         "databases_accessible": True,
+        "database_errors": {},
         "stub_generator_initialized": True,
     }
 
