@@ -107,7 +107,64 @@ _setmod(
             audit_privkey=None,
             prompt_success_log_path="s.log",
             prompt_failure_log_path="f.log",
-        )
+        ),
+        load_sandbox_settings=lambda: types.SimpleNamespace(
+            va_prompt_template="",
+            va_prompt_prefix="",
+            va_repo_layout_lines=0,
+            prompt_chunk_token_threshold=20,
+            chunk_summary_cache_dir="cache",
+            prompt_chunk_cache_dir="cache",
+            audit_log_path="audit.log",
+            audit_privkey=None,
+            prompt_success_log_path="s.log",
+            prompt_failure_log_path="f.log",
+        ),
+    ),
+)
+
+_setmod(
+    "self_improvement",
+    types.ModuleType("self_improvement"),
+)
+_setmod(
+    "self_improvement.prompt_memory",
+    types.SimpleNamespace(log_prompt_attempt=lambda *a, **k: None),
+)
+
+
+class _DummyBaselineTracker:
+    def __init__(self, *a, **k) -> None:
+        self._vals: dict[str, float] = {}
+
+    def update(self, **k) -> None:
+        self._vals.update(k)
+
+    def get(self, key: str) -> float:
+        return self._vals.get(key, 0.0)
+
+    def std(self, key: str) -> float:
+        return 1.0
+
+
+_setmod(
+    "self_improvement.baseline_tracker",
+    types.SimpleNamespace(BaselineTracker=_DummyBaselineTracker),
+)
+
+_setmod(
+    "self_improvement.init",
+    types.SimpleNamespace(
+        FileLock=type(
+            "_FL",
+            (),
+            {
+                "__init__": lambda self, *a, **k: None,
+                "__enter__": lambda self: self,
+                "__exit__": lambda self, exc_type, exc, tb: None,
+            },
+        ),
+        _atomic_write=lambda *a, **k: None,
     ),
 )
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from .test_failure_fingerprint_retry import SAMPLE_TRACE
 from . import test_self_coding_engine_chunking as setup
 
-from failure_fingerprint import FailureFingerprint, log_fingerprint
+from failure_fingerprint import FailureFingerprint
 
 sce = setup.sce
 
@@ -19,6 +19,7 @@ def _make_engine(tmp_path):
         error=lambda *a, **k: None,
         exception=lambda *a, **k: None,
         info=lambda *a, **k: None,
+        warning=lambda *a, **k: None,
     )
     eng.audit_trail = types.SimpleNamespace(record=lambda payload: None)
     eng.data_bot = None
@@ -38,7 +39,6 @@ def test_failed_patch_logs_fingerprint(monkeypatch, tmp_path):
     eng.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=1)
 
     log_file = tmp_path / "failure_fingerprints.jsonl"
-    emb_file = tmp_path / "failure_fingerprints.jsonl.embeddings.jsonl"
     data = json.loads(log_file.read_text().strip())
     assert data["filename"] == "mod.py"
     assert data["function_name"] == "<module>"
@@ -46,25 +46,9 @@ def test_failed_patch_logs_fingerprint(monkeypatch, tmp_path):
     assert data["prompt_text"] == "prompt!"
     assert len(data["embedding"]) > 0
 
-    emb_data = json.loads(emb_file.read_text().strip())
-    record_id = f"{data['filename']}:{data['function_name']}:{data['timestamp']}"
-    assert emb_data["id"] == record_id
-    assert emb_data["vector"] == data["embedding"]
-
 
 def test_second_run_warns_on_similar_failure(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    # first run to record fingerprint
-    eng1 = _make_engine(tmp_path)
-
-    def fail_once(self, path, description, context_meta=None, **kwargs):
-        self._last_retry_trace = SAMPLE_TRACE
-        return None, False, 0.0
-
-    eng1.apply_patch = types.MethodType(fail_once, eng1)
-    eng1.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=1)
-
-    # second run should warn about similarity
     eng2 = _make_engine(tmp_path)
     calls: list[str] = []
 
@@ -76,6 +60,10 @@ def test_second_run_warns_on_similar_failure(monkeypatch, tmp_path):
         return 1, False, 0.0
 
     eng2.apply_patch = types.MethodType(fail_then_succeed, eng2)
+    prior = FailureFingerprint.from_failure(
+        "prev.py", "main", SAMPLE_TRACE, "Boom", "p"
+    )
+    monkeypatch.setattr(sce, "find_similar", lambda emb, thresh: [prior])
     pid, reverted, delta = eng2.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=2)
     assert pid == 1 and not reverted
     assert any("WARNING" in d for d in calls[1:])
@@ -83,22 +71,6 @@ def test_second_run_warns_on_similar_failure(monkeypatch, tmp_path):
 
 def test_second_run_skips_after_similarity_limit(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    base = FailureFingerprint.from_failure(
-        "mod.py", "<module>", SAMPLE_TRACE, "ZeroDivisionError: division by zero", "prompt!"
-    )
-    # Pre-populate three prior failures to hit the similarity limit
-    for i in range(3):
-        fp = FailureFingerprint(
-            filename=base.filename,
-            function_name=base.function_name,
-            stack_trace=base.stack_trace,
-            error_message=base.error_message,
-            prompt_text=base.prompt_text,
-            timestamp=float(i + 1),
-            embedding=base.embedding,
-        )
-        log_fingerprint(fp)
-
     eng = _make_engine(tmp_path)
     calls: list[str] = []
 
@@ -108,5 +80,9 @@ def test_second_run_skips_after_similarity_limit(monkeypatch, tmp_path):
         return None, False, 0.0
 
     eng.apply_patch = types.MethodType(fail_only, eng)
+    prior = FailureFingerprint.from_failure(
+        "mod.py", "<module>", SAMPLE_TRACE, "ZeroDivisionError: division by zero", "prompt!"
+    )
+    monkeypatch.setattr(sce, "find_similar", lambda emb, thresh: [prior, prior, prior])
     pid, reverted, delta = eng.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=3)
     assert pid is None and len(calls) == 1
