@@ -21,8 +21,10 @@ Install the auxiliary packages for self-improvement ahead of time:
 make install-self-improvement-deps
 ```
 
-`verify_dependencies()` merely reports missing or mismatched packages and no
-longer attempts to install them automatically, keeping startup non-interactive.
+`verify_dependencies()` reports missing or mismatched packages.  When the
+`AUTO_INSTALL_DEPENDENCIES` setting or ``auto_install`` flag is enabled it will
+attempt to install requirements automatically, falling back to the same error
+message if installation fails.
 
 - Revenue tracking and monetisation helpers
 - **Profit density evaluation** keeping only the most lucrative clips

@@ -7,7 +7,9 @@ The routines expect auxiliary packages to be installed:
 * ``neurosales`` – supplies predictive sales models.
 
 Missing dependencies raise :class:`RuntimeError` with guidance on how to
-install or upgrade them.
+install or upgrade them.  When the ``auto_install`` flag is enabled the
+verifier attempts to install missing or mismatched packages automatically and
+only raises an error if those installations fail.
 
 Configuration is provided via :class:`sandbox_settings.SandboxSettings` with
 notable options:
@@ -48,17 +50,26 @@ logger = get_logger(__name__)
 settings = SandboxSettings()
 
 
-def verify_dependencies() -> None:
+def verify_dependencies(*, auto_install: bool = False) -> None:
     """Validate required helper modules and their versions.
 
+    Parameters
+    ----------
+    auto_install:
+        When ``True``, missing or mismatched packages are installed via ``pip``
+        before failing.  On installation failure the original error message is
+        raised.
+
     Missing or mismatched packages raise a :class:`RuntimeError` listing the
-    required installation commands.  The function does not attempt to install
-    dependencies automatically, keeping initialisation non-interactive.
+    required installation commands when ``auto_install`` is disabled or when an
+    installation attempt fails.
     """
 
     import importlib
     from importlib import metadata
     from packaging.specifiers import SpecifierSet
+    import shlex
+    import subprocess
 
     neurosales_cfg: dict[str, Any] = {
         "modules": ("neurosales",),
@@ -112,8 +123,8 @@ def verify_dependencies() -> None:
         },
     }
 
-    missing: list[str] = []
-    mismatched: list[str] = []
+    missing: list[tuple[str, str]] = []  # (message, install cmd)
+    mismatched: list[tuple[str, str]] = []
 
     for pkg, cfg in checks.items():
         modules = cfg["modules"]
@@ -131,7 +142,7 @@ def verify_dependencies() -> None:
                     extra=log_record(dependency=mod),
                 )
         if not found:
-            missing.append(f"{pkg} – {cfg['install']}")
+            missing.append((f"{pkg} – {cfg['install']}", cfg["install"]))
             continue
         if requirement:
             try:
@@ -143,21 +154,46 @@ def verify_dependencies() -> None:
                 if cmd.startswith("pip install") and "--upgrade" not in cmd:
                     cmd += " --upgrade"
                 mismatched.append(
-                    f"{pkg} (installed {installed}, required {requirement}) – {cmd}"
+                    (
+                        f"{pkg} (installed {installed}, required {requirement}) – {cmd}",
+                        cmd,
+                    )
                 )
-
     if missing or mismatched:
-        lines: list[str] = []
-        if missing:
-            lines.append(
-                "Missing dependencies for self-improvement:\n  - "
-                + "\n  - ".join(missing)
-                + "\nInstall the missing packages before launching."
-            )
-        if mismatched:
-            lines.append("Version mismatches:\n  - " + "\n  - ".join(mismatched))
-        message = "\n".join(lines)
-        raise RuntimeError(message)
+        if auto_install:
+            for msg, cmd in missing + mismatched:
+                logger.info("auto-installing dependency", extra=log_record(command=cmd))
+                try:
+                    subprocess.run(shlex.split(cmd), check=True)
+                except Exception as exc:
+                    logger.error(
+                        "dependency installation failed",
+                        extra=log_record(command=cmd, error=str(exc)),
+                    )
+                    _raise_dep_error(missing, mismatched)
+            # verify again without auto-install to surface any remaining issues
+            verify_dependencies(auto_install=False)
+            return
+
+        _raise_dep_error(missing, mismatched)
+
+
+def _raise_dep_error(
+    missing: list[tuple[str, str]], mismatched: list[tuple[str, str]]
+) -> None:
+    lines: list[str] = []
+    if missing:
+        lines.append(
+            "Missing dependencies for self-improvement:\n  - "
+            + "\n  - ".join(m for m, _ in missing)
+            + "\nInstall the missing packages before launching."
+        )
+    if mismatched:
+        lines.append(
+            "Version mismatches:\n  - " + "\n  - ".join(m for m, _ in mismatched)
+        )
+    message = "\n".join(lines)
+    raise RuntimeError(message)
 
 
 def _lock_for(path: Path) -> FileLock:
@@ -430,7 +466,7 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
 
     global settings
     settings = new_settings or load_sandbox_settings()
-    verify_dependencies()
+    verify_dependencies(auto_install=settings.auto_install_dependencies)
     initialize_autonomous_sandbox(settings)
     if getattr(settings, "sandbox_central_logging", False):
         setup_logging()
