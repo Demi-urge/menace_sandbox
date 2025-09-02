@@ -203,6 +203,7 @@ class PatchHistoryDB:
 
 cd_mod.PatchHistoryDB = PatchHistoryDB
 sys.modules.setdefault("menace.code_database", cd_mod)
+sys.modules.setdefault("code_database", cd_mod)
 
 pol_mod = types.ModuleType("menace.self_improvement_policy")
 
@@ -714,7 +715,7 @@ def test_score_weights_evolve_from_audit():
         error_delta=0.0,
         roi_delta=0.3,
     )
-    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     first = dbg.score_weights
 
     dbg._log_patch(
@@ -724,7 +725,7 @@ def test_score_weights_evolve_from_audit():
         error_delta=0.1,
         roi_delta=0.1,
     )
-    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     second = dbg.score_weights
 
     dbg._log_patch(
@@ -734,7 +735,7 @@ def test_score_weights_evolve_from_audit():
         error_delta=0.2,
         roi_delta=0.2,
     )
-    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     third = dbg.score_weights
 
     assert first != second
@@ -764,6 +765,7 @@ def test_composite_score_ema_smooth():
             p["coverage_delta"],
             p["error_delta"],
             p["roi_delta"],
+            0.0,
             0.0,
             0.0,
             0.0,
@@ -833,7 +835,7 @@ def test_weight_updates_affect_score(tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
 
-    base = dbg._composite_score(0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.5, 0.5)
+    base = dbg._composite_score(0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5)
 
     patch_db.add(
         types.SimpleNamespace(
@@ -850,7 +852,7 @@ def test_weight_updates_affect_score(tmp_path):
 
     dbg._update_score_weights(patch_db)
     dbg._score_db = patch_db
-    updated = dbg._composite_score(0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.5, 0.5)
+    updated = dbg._composite_score(0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5)
 
     assert updated > base
 
@@ -884,11 +886,12 @@ def test_composite_score_uses_tracker_synergy():
         metrics_history={},
     )
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
-    base = dbg._composite_score(0.1, 0.0, 0.1, 0.0, 0.0, 0.0)
+    base = dbg._composite_score(0.1, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0)
     with_tracker = dbg._composite_score(
         0.1,
         0.0,
         0.1,
+        0.0,
         0.0,
         0.0,
         0.0,
@@ -899,8 +902,9 @@ def test_composite_score_uses_tracker_synergy():
 
 def test_composite_score_custom_weights():
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
-    base = dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)
+    base = dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)
     weighted = dbg._composite_score(
+        0.0,
         0.0,
         0.0,
         0.0,
@@ -1033,8 +1037,8 @@ def test_flakiness_history_affects_score(tmp_path):
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
     dbg._score_db = patch_db
     patch_db.record_flakiness("a.py", 1.0)
-    base = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0)
-    penalized = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, filename="a.py")
+    base = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0)
+    penalized = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, filename="a.py")
     assert penalized < base
 
 

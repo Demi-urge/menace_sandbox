@@ -201,6 +201,60 @@ def get_alignment_metrics(settings: SandboxSettings | None = None) -> Dict[str, 
         return {}
 
 
+def compute_entropy_metrics(
+    files: Sequence[Path | str],
+    settings: SandboxSettings | None = None,
+) -> tuple[float, float]:
+    """Return ``(code_diversity, token_complexity)`` for ``files``.
+
+    ``code_diversity`` is the average token entropy across the supplied files
+    while ``token_complexity`` reflects the average cyclomatic complexity.  Both
+    values are normalised so callers can compare entropy trends across
+    self‑improvement cycles.
+    """
+
+    repo = Path(SandboxSettings().sandbox_repo_path)
+    file_iter: list[Path] = []
+    for f in files:
+        p = Path(f)
+        file_iter.append(p if p.is_absolute() else repo / p)
+    per_file, total_complexity, _, _, avg_entropy, _ = _collect_metrics(
+        file_iter, repo, settings=settings
+    )
+    avg_complexity = total_complexity / len(per_file) if per_file else 0.0
+    return avg_entropy, avg_complexity
+
+
+def compute_entropy_delta(
+    code_diversity: float,
+    token_complexity: float,
+    *,
+    settings: SandboxSettings | None = None,
+) -> tuple[float, float]:
+    """Return ``(delta, moving_avg)`` for the current entropy metrics.
+
+    The moving average is derived from the ``entropy_history`` stored in the
+    alignment baseline. ``delta`` represents the deviation of the current
+    entropy from this moving average.
+    """
+
+    history = get_alignment_metrics(settings).get("entropy_history") or []
+    entropies: list[float] = []
+    for entry in history:
+        try:
+            if isinstance(entry, dict):
+                cd = float(entry.get("code_diversity", 0.0))
+                tc = float(entry.get("token_complexity", 0.0))
+                entropies.append(fmean([cd, tc]))
+            else:
+                entropies.append(float(entry))
+        except Exception:  # pragma: no cover - best effort
+            continue
+    moving_avg = fmean(entropies) if entropies else 0.0
+    current = fmean([float(code_diversity), float(token_complexity)])
+    return current - moving_avg, moving_avg
+
+
 def record_entropy(
     code_diversity: float,
     token_complexity: float,
@@ -337,6 +391,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 __all__ = [
     "_update_alignment_baseline",
     "get_alignment_metrics",
+    "compute_entropy_metrics",
+    "compute_entropy_delta",
     "record_entropy",
     "main",
 ]
