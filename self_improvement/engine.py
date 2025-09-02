@@ -5604,7 +5604,7 @@ class SelfImprovementEngine:
             auto_process = True
             metrics_db_path = "sandbox_data/relevancy_metrics.db"
 
-        for counts in getattr(self.relevancy_radar, "_metrics", {}).values():
+        for mod, counts in getattr(self.relevancy_radar, "_metrics", {}).items():
             impact_val = float(counts.get("impact", 0.0)) + float(
                 counts.get("output_impact", 0.0)
             )
@@ -5613,7 +5613,8 @@ class SelfImprovementEngine:
                 + float(counts.get("executions", 0.0))
                 + impact_val
             )
-            self.baseline_tracker.update(relevancy=score)
+            metric_name = f"relevancy:{mod}"
+            self.baseline_tracker.update(relevancy=score, **{metric_name: score})
 
         avg = self.baseline_tracker.get("relevancy")
         std = self.baseline_tracker.std("relevancy")
