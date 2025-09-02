@@ -107,6 +107,7 @@ class _FallbackPlanner:
         self.stability_weight = getattr(
             cfg, "stability_weight", getattr(cfg, "meta_stability_weight", 1.0)
         )
+        self.entropy_threshold = 0.0
         self.state_prune_strategy = getattr(
             cfg, "state_prune_strategy", getattr(cfg, "meta_state_prune_strategy", "recent")
         )
@@ -273,10 +274,11 @@ class _FallbackPlanner:
             for i in range(1, len(chain))
             if self._domain(chain[i]) != self._domain(chain[i - 1])
         )
+        delta = entropy - getattr(self, "entropy_threshold", 0.0)
         return (
             self.roi_weight * roi
             - self.domain_transition_penalty * transitions
-            - self.entropy_weight * abs(entropy)
+            - self.entropy_weight * abs(delta)
             - self.stability_weight * failures
         )
 
@@ -669,6 +671,7 @@ async def self_improvement_cycle(
 
     stability_db = get_stable_workflows()
     entropy_threshold = _get_entropy_threshold(cfg, stability_db)
+    setattr(planner, "entropy_threshold", entropy_threshold)
 
     async def _log(record: Mapping[str, Any]) -> None:
         chain = record.get("chain", [])

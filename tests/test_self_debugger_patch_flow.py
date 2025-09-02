@@ -1,4 +1,8 @@
 import json
+import logging
+import threading
+import contextlib
+import types
 from pathlib import Path
 
 from tests.test_self_debugger_sandbox import sds, DummyTelem, DummyEngine, DummyTrail
@@ -71,7 +75,28 @@ def test_bad_patch_rolled_back(monkeypatch, tmp_path):
 
 
 def test_composite_score_prefers_better(monkeypatch):
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
-    score_low = dbg._composite_score(0.05, 0.0, 0.1, 0.0, 0.0, 1.0, 0.0, 0.0)
-    score_high = dbg._composite_score(0.2, 0.2, 0.3, 0.0, 0.0, 0.1, 0.0, 0.0)
+    dbg = sds.SelfDebuggerSandbox.__new__(sds.SelfDebuggerSandbox)
+    dbg.score_weights = (1.0, 1.0, 1.0, 1.0, 0.0, 0.0)
+    dbg._baseline_tracker = types.SimpleNamespace(
+        update=lambda s: (0.0, 0.0), stats=lambda: (0.0, 0.0)
+    )
+    dbg._metric_stats = {
+        "coverage": (0.1, 0.05),
+        "error": (0.0, 1.0),
+        "roi": (0.1, 0.05),
+        "complexity": (0.1, 0.05),
+        "synergy_roi": (0.0, 1.0),
+        "synergy_efficiency": (0.0, 1.0),
+        "synergy_resilience": (0.0, 1.0),
+        "synergy_antifragility": (0.0, 1.0),
+    }
+    dbg.logger = logging.getLogger("test")
+    dbg.engine = types.SimpleNamespace()
+    dbg._score_db = None
+    dbg._db_lock = threading.Lock()
+    dbg._history_db = lambda: contextlib.nullcontext(None)
+    dbg._update_score_weights = lambda *a, **k: None
+
+    score_low = dbg._composite_score(0.05, 0.0, 0.1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+    score_high = dbg._composite_score(0.2, 0.2, 0.3, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0)
     assert score_high > score_low
