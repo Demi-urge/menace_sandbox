@@ -45,9 +45,11 @@ class DummyFP:
         return cls(filename, function_name, stack_trace, error_message, prompt_text)
 
 
-def _build_engine(monkeypatch, tmp_path, similar_return):
+def _build_engine(monkeypatch, tmp_path, similar_return, skip: bool = False):
     patch_db = DummyPatchDB(tmp_path / "ph.db")
-    engine = sce.SelfCodingEngine(code_db=object(), memory_mgr=object(), patch_db=patch_db)
+    engine = sce.SelfCodingEngine(
+        code_db=object(), memory_mgr=object(), patch_db=patch_db, skip_retry_on_similarity=skip
+    )
     records: list[dict] = []
     engine.audit_trail = types.SimpleNamespace(record=lambda payload: records.append(payload))
     engine._build_retry_context = lambda desc, rep: {}
@@ -88,6 +90,17 @@ def test_retry_skipped_after_similarity_limit(monkeypatch, tmp_path):
     eng, records, calls, db = _build_engine(monkeypatch, tmp_path, prev)
 
     pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=3)
+    assert pid is None and len(calls) == 1
+    assert any("retry_skipped" in r for r in records)
+    row = db.conn.execute("SELECT outcome FROM patch_history").fetchall()
+    assert ("retry_skipped",) in row
+
+
+def test_retry_skipped_when_configured(monkeypatch, tmp_path):
+    prior = DummyFP("prev.py", "main", "t", "Boom", "p", timestamp=1.0)
+    eng, records, calls, db = _build_engine(monkeypatch, tmp_path, [prior], skip=True)
+
+    pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=2)
     assert pid is None and len(calls) == 1
     assert any("retry_skipped" in r for r in records)
     row = db.conn.execute("SELECT outcome FROM patch_history").fetchall()
