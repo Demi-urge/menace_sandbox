@@ -125,7 +125,6 @@ except Exception:  # pragma: no cover - graceful degradation
 from .prompt_engine import PromptEngine, _ENCODER
 from .prompt_memory_trainer import PromptMemoryTrainer
 from chunking import split_into_chunks, get_chunk_summaries
-from chunk_summary_cache import ChunkSummaryCache
 try:
     from .prompt_optimizer import PromptOptimizer
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -232,13 +231,6 @@ class SelfCodingEngine:
         self.chunk_summary_cache_dir = Path(cache_dir)
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
-        self.chunk_cache = ChunkSummaryCache(self.chunk_summary_cache_dir)
-        try:
-            import chunking as _pc
-
-            _pc.CHUNK_CACHE = self.chunk_cache
-        except Exception:
-            pass
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -637,15 +629,59 @@ class SelfCodingEngine:
             lines.append("...")
         return "\n".join(lines)
 
-    def _build_file_context(self, path: Path) -> str:
-        """Return file content trimmed to the token limit."""
+    def _build_file_context(
+        self, path: Path, chunk_index: int | None = None
+    ) -> tuple[str, list[str] | None]:
+        """Return either trimmed code or chunk summaries for ``path``.
+
+        When the file's token count exceeds :attr:`chunk_token_threshold` the
+        source is summarised via :func:`chunking.get_chunk_summaries`.  When
+        ``chunk_index`` is provided the raw source of that chunk is returned and
+        the remaining chunks are represented by their summaries.  Otherwise the
+        joined summaries are returned.  For smaller files the full source is
+        returned truncated to :attr:`token_threshold`.
+        """
         try:
             code = path.read_text(encoding="utf-8")
         except Exception:
-            return ""
+            return "", None
+
+        threshold = self.chunk_token_threshold or 0
+        if code and threshold and _count_tokens(code) > threshold:
+            try:
+                summary_entries = get_chunk_summaries(
+                    path, threshold, self.llm_client
+                )
+            except Exception:
+                self.logger.exception("failed to summarise %s", path)
+                return "", None
+
+            lines = code.splitlines()
+            if chunk_index is not None and 0 <= chunk_index < len(summary_entries):
+                entry = summary_entries[chunk_index]
+                start = int(entry.get("start_line", 1))
+                end = int(entry.get("end_line", start))
+                selected = "\n".join(lines[start - 1 : end])
+                context = f"# Chunk {chunk_index} lines {start}-{end}\n{selected}"
+                summaries = [
+                    f"Chunk {i}: {e.get('summary', '')}"
+                    for i, e in enumerate(summary_entries)
+                    if i != chunk_index
+                ]
+            else:
+                summaries = [
+                    f"Chunk {i}: {e.get('summary', '')}"
+                    for i, e in enumerate(summary_entries)
+                ]
+                context = "\n".join(summaries)
+            return context, summaries
+
         if self.prompt_engine:
-            return self.prompt_engine._trim_tokens(code, self.token_threshold)
-        return code
+            return (
+                self.prompt_engine._trim_tokens(code, self.token_threshold),
+                None,
+            )
+        return code, None
 
     def _apply_prompt_style(self, action: str, module: str | None = None) -> None:
         if not self.prompt_engine:
@@ -739,54 +775,17 @@ class SelfCodingEngine:
         """Create helper text using snippet and retrieval context.
 
         When ``path`` points to a file larger than
-        :attr:`prompt_chunk_token_threshold`, the file is split via
-        :func:`split_into_chunks`.  ``chunk_index`` selects the chunk whose raw
-        code is provided to the model; other chunks are represented by their
-        summaries.
+        :attr:`prompt_chunk_token_threshold`, the file is summarised via
+        :func:`chunking.get_chunk_summaries`.  ``chunk_index`` selects the chunk
+        whose raw code is provided to the model; other chunks are represented by
+        their summaries.
         """
         snippets = self.suggest_snippets(description, limit=3)
         snippet_context = "\n\n".join(s.code for s in snippets)
         summaries: List[str] | None = None
         file_context = ""
         if path:
-            try:
-                code = path.read_text(encoding="utf-8")
-            except Exception:
-                code = ""
-            threshold = self.prompt_chunk_token_threshold
-            if code and threshold and _count_tokens(code) > threshold:
-                self.logger.debug("using chunk summaries for %s", path)
-                try:
-                    summary_entries = get_chunk_summaries(
-                        path, threshold, self.llm_client, cache=self.chunk_cache
-                    )
-                    chunks = split_into_chunks(code, threshold)
-                    summaries = []
-                    selected_source = ""
-                    selected_lines: tuple[int, int] | None = None
-                    for idx, ch in enumerate(chunks):
-                        if chunk_index is not None and idx == chunk_index:
-                            selected_source = ch.text
-                            selected_lines = (ch.start_line, ch.end_line)
-                        else:
-                            entry = summary_entries[idx] if idx < len(summary_entries) else {}
-                            summaries.append(
-                                f"Chunk {idx}: {entry.get('summary', '')}"
-                            )
-                    if chunk_index is not None and selected_source:
-                        if selected_lines:
-                            start, end = selected_lines
-                            file_context = (
-                                f"# Chunk {chunk_index} lines {start}-{end}\n" f"{selected_source}"
-                            )
-                        else:
-                            file_context = selected_source
-                    else:
-                        file_context = "\n".join(summaries)
-                except Exception:
-                    self.logger.exception("failed to summarise %s", path)
-            else:
-                file_context = self._build_file_context(path)
+            file_context, summaries = self._build_file_context(path, chunk_index)
         context = "\n\n".join(p for p in (file_context, snippet_context) if p)
 
         def _fallback() -> str:
