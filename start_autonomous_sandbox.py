@@ -2,7 +2,7 @@
 
 This small wrapper adds a bit of resiliency around the sandbox bootstrap by
 capturing startup exceptions and allowing the log level to be configured via
-the command line.
+``SandboxSettings`` or overridden on the command line.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import argparse
 import logging
 import sys
 
+from sandbox_settings import SandboxSettings
 from sandbox_runner.bootstrap import (
     bootstrap_environment,
     launch_sandbox,
@@ -29,11 +30,13 @@ def main(argv: list[str] | None = None) -> None:
         be pulled from :data:`sys.argv`.
     """
 
+    settings = SandboxSettings()
+
     parser = argparse.ArgumentParser(description="Launch the autonomous sandbox")
     parser.add_argument(
         "--log-level",
         dest="log_level",
-        default=None,
+        default=settings.sandbox_log_level,
         help="Logging level (e.g. DEBUG, INFO, WARNING)",
     )
     parser.add_argument(
