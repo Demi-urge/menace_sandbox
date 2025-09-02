@@ -1,9 +1,12 @@
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Iterable, TYPE_CHECKING, Any
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from module_index_db import ModuleIndexDB  # type: ignore
@@ -65,7 +68,12 @@ class RelevancyMetricsDB:
             try:
                 tag_set.update(module_index.get_tags(module))
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to fetch tags for %s from module index at %s",
+                    module,
+                    self.path,
+                    exc_info=True,
+                )
         conn = self.router.get_connection("module_metrics")
         row = conn.execute(
             "SELECT call_count, total_time, roi_delta, tags FROM module_metrics WHERE module_id=?",

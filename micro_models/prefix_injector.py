@@ -19,6 +19,7 @@ by any component that prepares prompts for Codex or OpenAI APIs.
 """
 
 import os
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
@@ -26,6 +27,8 @@ try:  # pragma: no cover - yaml is an optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 PromptType = Union[str, List[Dict[str, str]]]
 
@@ -58,7 +61,11 @@ def _load_config() -> tuple[bool, float]:
                         except ValueError:
                             pass
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to load prefix injection config from %s",
+                    path,
+                    exc_info=True,
+                )
     return enabled, threshold
 
 
