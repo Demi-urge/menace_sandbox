@@ -8,13 +8,13 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping, Sequence
 
 from statistics import fmean
+from importlib import import_module
 import asyncio
 import json
 import os
 import time
 import threading
 import queue
-import inspect
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
 
@@ -591,28 +591,46 @@ def get_stable_workflows() -> WorkflowStabilityDB:
     return _stable_workflows
 
 
-def _get_entropy_threshold(
-    cfg: SandboxSettings, db: WorkflowStabilityDB
-) -> float:
+def _get_entropy_threshold(cfg: SandboxSettings, db: WorkflowStabilityDB) -> float:
     """Determine entropy threshold from settings or stored metrics."""
     threshold = cfg.meta_entropy_threshold
-    if threshold is None:
+    if threshold is not None:
+        return float(threshold)
+
+    entropies: list[float] = []
+    try:
+        metrics = import_module("self_improvement.metrics")
+        history = metrics.get_alignment_metrics(cfg).get("entropy_history") or []
+        for entry in history:
+            if isinstance(entry, dict):
+                cd = float(entry.get("code_diversity", 0.0))
+                tc = float(entry.get("token_complexity", 0.0))
+                entropies.append(fmean([cd, tc]))
+            else:
+                entropies.append(float(entry))
+    except Exception as exc:  # pragma: no cover - best effort
+        get_logger(__name__).debug(
+            "entropy history unavailable: %s", exc, exc_info=exc
+        )
+
+    if not entropies:
         try:
             entropies = [abs(float(v.get("entropy", 0.0))) for v in db.data.values()]
-            threshold = max(entropies) if entropies else DEFAULT_ENTROPY_THRESHOLD
         except Exception as exc:  # pragma: no cover - best effort
             get_logger(__name__).debug(
                 "entropy threshold calculation failed: %s", exc, exc_info=exc
             )
-            threshold = DEFAULT_ENTROPY_THRESHOLD
-    return float(threshold)
+            entropies = []
+
+    return fmean(entropies) if entropies else DEFAULT_ENTROPY_THRESHOLD
 
 
 def _should_encode(record: Mapping[str, Any], *, entropy_threshold: float) -> bool:
     """Return True if ``record`` indicates improvement and stability."""
-    return (
-        float(record.get("roi_gain", 0.0)) > 0.0
-        and abs(float(record.get("entropy", 0.0))) <= float(entropy_threshold)
+    entropy = float(record.get("entropy", 0.0))
+    delta_entropy = abs(entropy - float(entropy_threshold))
+    return float(record.get("roi_gain", 0.0)) > 0.0 and delta_entropy <= float(
+        entropy_threshold
     )
 
 
@@ -655,6 +673,15 @@ async def self_improvement_cycle(
         roi = float(record.get("roi_gain", 0.0))
         failures = int(record.get("failures", 0))
         entropy = float(record.get("entropy", 0.0))
+        try:
+            from .metrics import record_entropy as _record_entropy
+            _record_entropy(
+                float(record.get("code_diversity", entropy)),
+                float(record.get("token_complexity", entropy)),
+                roi=roi,
+            )
+        except Exception:
+            pass
         if planner.roi_db is not None:
             try:
                 planner.roi_db.log_result(

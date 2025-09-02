@@ -3,6 +3,8 @@ from pathlib import Path
 import ast
 import pytest
 from typing import Any, Mapping
+from statistics import fmean
+from importlib import import_module
 
 
 src_path = Path(__file__).resolve().parents[1] / "self_improvement" / "meta_planning.py"
@@ -13,6 +15,8 @@ ns["WorkflowStabilityDB"] = object
 ns["Any"] = Any
 ns["Mapping"] = Mapping
 ns["DEFAULT_ENTROPY_THRESHOLD"] = 0.2
+ns["fmean"] = fmean
+ns["import_module"] = import_module
 for node in tree.body:
     if isinstance(node, ast.FunctionDef) and node.name in {
         "_get_entropy_threshold",
@@ -26,20 +30,35 @@ _should_encode = ns["_should_encode"]
 
 
 @pytest.mark.parametrize(
-    "cfg_value, db_data, expected",
+    "cfg_value, history, db_data, expected",
     [
-        (0.1, {"a": {"entropy": 0.5}}, 0.1),
-        (None, {"a": {"entropy": 0.1}, "b": {"entropy": 0.4}}, 0.4),
-        (None, {}, 0.2),
+        (0.1, [{"code_diversity": 0.2, "token_complexity": 0.4}], {"a": {"entropy": 0.5}}, 0.1),
+        (
+            None,
+            [
+                {"code_diversity": 0.1, "token_complexity": 0.3},
+                {"code_diversity": 0.2, "token_complexity": 0.5},
+            ],
+            {},
+            0.275,
+        ),
+        (None, [], {"a": {"entropy": 0.1}, "b": {"entropy": 0.4}}, 0.25),
+        (None, [], {}, 0.2),
     ],
 )
-def test_get_entropy_threshold(cfg_value, db_data, expected):
+def test_get_entropy_threshold(cfg_value, history, db_data, expected):
     settings = SimpleNamespace(meta_entropy_threshold=cfg_value)
     db = SimpleNamespace(data=db_data)
-    assert _get_entropy_threshold(settings, db) == expected
+
+    stub = SimpleNamespace(
+        get_alignment_metrics=lambda cfg: {"entropy_history": history}
+    )
+    _get_entropy_threshold.__globals__["import_module"] = lambda name: stub
+
+    assert _get_entropy_threshold(settings, db) == pytest.approx(expected)
 
 
 def test_should_encode_respects_threshold():
-    record = {"roi_gain": 0.2, "entropy": 0.25}
-    assert _should_encode(record, entropy_threshold=0.3)
+    record = {"roi_gain": 0.2, "entropy": 0.5}
+    assert _should_encode(record, entropy_threshold=0.6)
     assert not _should_encode(record, entropy_threshold=0.2)
