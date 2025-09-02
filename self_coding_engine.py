@@ -139,6 +139,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
     except Exception:  # pragma: no cover - final fallback
         def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
             return None
+from .failure_fingerprint import FailureFingerprint, log_fingerprint, find_similar
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -197,6 +198,8 @@ class SelfCodingEngine:
         prompt_chunk_token_threshold: int | None = None,
         chunk_summary_cache_dir: str | Path | None = None,
         prompt_chunk_cache_dir: str | Path | None = None,
+        failure_similarity_threshold: float = 0.95,
+        failure_similarity_limit: int = 3,
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -232,6 +235,8 @@ class SelfCodingEngine:
         self.chunk_summary_cache_dir = Path(cache_dir)
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
+        self.failure_similarity_threshold = failure_similarity_threshold
+        self.failure_similarity_limit = failure_similarity_limit
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -2104,6 +2109,34 @@ class SelfCodingEngine:
                 )
                 return pid, reverted, delta
             trace = self._last_retry_trace or ""
+            filename = function_name = error_msg = ""
+            m = re.findall(r'File "([^"]+)", line \d+, in ([^\n]+)', trace)
+            if m:
+                filename, function_name = m[-1]
+            m_err = re.findall(r'([\w.]+(?:Error|Exception):.*)', trace)
+            if m_err:
+                error_msg = m_err[-1]
+            fp = FailureFingerprint.from_failure(
+                filename,
+                function_name,
+                trace,
+                error_msg,
+                getattr(self, "_last_prompt", ""),
+            )
+            try:
+                log_fingerprint(fp)
+            except Exception:
+                self.logger.exception("failed to log failure fingerprint")
+            try:
+                matches = [
+                    m
+                    for m in find_similar(
+                        fp.embedding, self.failure_similarity_threshold
+                    )
+                    if m.timestamp != fp.timestamp
+                ]
+            except Exception:
+                matches = []
             if self._failure_cache.seen(trace):
                 break
             current = parse_failure(trace)
@@ -2115,6 +2148,45 @@ class SelfCodingEngine:
                 )
             except Exception:
                 self.logger.exception("audit trail logging failed")
+            if len(matches) >= self.failure_similarity_limit:
+                warning = (
+                    f"similar failure limit reached for {filename}:{function_name}"
+                )
+                try:
+                    self.audit_trail.record({"retry_skipped": warning})
+                except Exception:
+                    self.logger.exception("audit trail logging failed")
+                if self.patch_db:
+                    try:
+                        conn = self.patch_db.router.get_connection("patch_history")
+                        conn.execute(
+                            "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
+                            (str(path), description, "retry_skipped"),
+                        )
+                        conn.commit()
+                    except Exception:
+                        self.logger.exception("failed to record retry status")
+                break
+            if matches:
+                prior = matches[0]
+                warning = (
+                    f"Previous similar failure '{prior.error_message}' in {prior.filename}:{prior.function_name}"
+                )
+                description = description + f"\n\nWARNING: {warning}"
+                try:
+                    self.audit_trail.record({"retry_adjusted": warning})
+                except Exception:
+                    self.logger.exception("audit trail logging failed")
+                if self.patch_db:
+                    try:
+                        conn = self.patch_db.router.get_connection("patch_history")
+                        conn.execute(
+                            "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
+                            (str(path), description, "retry_adjusted"),
+                        )
+                        conn.commit()
+                    except Exception:
+                        self.logger.exception("failed to record retry status")
         roi_val = 0.0
         if self.data_bot:
             try:
