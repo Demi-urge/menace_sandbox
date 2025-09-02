@@ -11,13 +11,11 @@ from typing import Any, Dict
 from filelock import FileLock
 
 try:  # pragma: no cover - optional dependency
-    from prompt_types import Prompt  # type: ignore
-except Exception:  # pragma: no cover - minimal fallback for tests
-    class Prompt:  # type: ignore
-        system: str = ""
-        user: str = ""
-        examples: list[str] = []
-        metadata: Dict[str, Any] = {}
+    from prompt_types import Prompt
+except Exception as exc:  # pragma: no cover - explicit failure
+    raise ImportError(
+        "prompt_types.Prompt is required for PromptEvolutionLogger"
+    ) from exc
 
 
 _ROOT = Path(__file__).resolve().parent
@@ -77,10 +75,10 @@ class PromptEvolutionLogger:
         record: Dict[str, Any] = {
             "timestamp": int(time.time()),
             "prompt": {
-                "system": getattr(prompt, "system", ""),
-                "user": getattr(prompt, "user", ""),
-                "examples": list(getattr(prompt, "examples", [])),
-                "metadata": dict(getattr(prompt, "metadata", {})),
+                "system": prompt.system,
+                "user": prompt.user,
+                "examples": list(prompt.examples),
+                "metadata": dict(prompt.metadata),
             },
             "result": result,
             "roi": roi or {},
