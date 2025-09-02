@@ -479,6 +479,7 @@ class SelfImprovementEngine:
         error_predictor: ErrorClusterPredictor | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
         roi_tracker: ROITracker | None = None,
+        roi_db: ROIResultsDB | None = None,
         foresight_tracker: ForesightTracker | None = None,
         gpt_memory: GPTMemoryInterface | None = None,
         knowledge_service: GPTKnowledgeService | None = None,
@@ -518,6 +519,10 @@ class SelfImprovementEngine:
         self.evolution_history = evolution_history
         self.data_bot = data_bot
         self.patch_db = patch_db or (data_bot.patch_db if data_bot else None)
+        try:
+            self.roi_db = roi_db or ROIResultsDB()
+        except Exception:
+            self.roi_db = None
         if policy is None:
             policy = ConfigurableSelfImprovementPolicy(strategy=policy_strategy)
         self.policy = policy
@@ -1862,6 +1867,31 @@ class SelfImprovementEngine:
         self._scenario_pass_rate = frac - 1.0
         self._last_scenario_trend = trend
         self._last_scenario_metrics = dict(metrics)
+
+    # ------------------------------------------------------------------
+    def _check_chain_stagnation(self, min_streak: int = 3) -> None:
+        """Escalate urgency for chains with stagnant ROI."""
+
+        if self.roi_db is None:
+            return
+        try:
+            flagged = self.roi_db.fetch_stagnant_chains(min_streak)
+        except Exception:
+            self.logger.exception("failed to fetch stagnant chains")
+            return
+        if not flagged:
+            return
+        self.urgency_tier += 1
+        for wid, streak in flagged.items():
+            try:
+                dispatch_alert(
+                    "workflow_chain_stagnation",
+                    2,
+                    "workflow chain ROI non-positive trend",
+                    {"workflow_id": wid, "streak": streak},
+                )
+            except Exception:
+                self.logger.exception("failed to dispatch ROI chain alert")
 
     # ------------------------------------------------------------------
     def _alignment_review_last_commit(self, description: str) -> None:
@@ -6710,6 +6740,7 @@ class SelfImprovementEngine:
                         self.logger.exception("failed to dispatch ROI trend alert")
                 elif self.urgency_tier > 0 and window_sum > 0:
                     self.urgency_tier = 0
+            self._check_chain_stagnation()
             warnings: dict[str, list[dict[str, Any]]] = {}
             if delta > 0:
                 try:

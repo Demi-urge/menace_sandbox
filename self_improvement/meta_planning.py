@@ -350,17 +350,20 @@ class _FallbackPlanner:
         failures = 0
 
         for wid in chain:
-            roi = 0.0
+            current_roi = 0.0
+            moving_avg = 0.0
+            delta_roi = 0.0
             if self.roi_db is not None:
                 try:
-                    results = self.roi_db.fetch_results(wid)
-                    recent = [r.roi_gain for r in results[-self.roi_window:]]
-                    roi = fmean(recent) if recent else 0.0
+                    stats = self.roi_db.fetch_chain_stats(wid)
+                    current_roi = float(stats.get("last_roi", 0.0))
+                    moving_avg = float(stats.get("moving_avg_roi", 0.0))
+                    delta_roi = current_roi - moving_avg
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.warning(
                         "roi fetch failed", extra=log_record(workflow_id=wid), exc_info=exc
                     )
-                    roi = 0.0
+                    current_roi = moving_avg = delta_roi = 0.0
 
             stable = True
             entropy = 0.0
@@ -370,7 +373,7 @@ class _FallbackPlanner:
                     failures += int(entry.get("failures", 0))
                     entropy = float(entry.get("entropy", 0.0))
                     stable = self.stability_db.is_stable(
-                        wid, current_roi=roi, threshold=1.0
+                        wid, current_roi=current_roi, threshold=moving_avg
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.warning(
@@ -378,13 +381,13 @@ class _FallbackPlanner:
                     )
                     stable = True
 
-            if roi <= 0.0 or not stable:
+            if delta_roi <= 0.0 or not stable:
                 self.logger.debug(
                     "rejecting chain %s", "->".join(chain), extra=log_record(workflow_id=wid)
                 )
                 return None
 
-            roi_values.append(roi)
+            roi_values.append(current_roi)
             entropies.append(entropy)
 
         if not roi_values:
