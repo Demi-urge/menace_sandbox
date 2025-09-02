@@ -129,6 +129,16 @@ class ROIResultsDB:
             )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS workflow_chain_stats(
+                workflow_id TEXT PRIMARY KEY,
+                moving_avg_roi REAL DEFAULT 0.0,
+                last_roi REAL DEFAULT 0.0,
+                non_positive_streak INTEGER DEFAULT 0
+            )
+            """,
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS module_attribution(
                 module TEXT PRIMARY KEY,
                 roi_delta REAL,
@@ -216,11 +226,93 @@ class ROIResultsDB:
                         float(metrics.get("roi_delta", 0.0)),
                         commit=False,
                     )
+            self._update_chain_stats(workflow_id)
             self.conn.commit()
             return int(cur.lastrowid or 0)
         except Exception:
             self.conn.rollback()
             raise
+
+    # ------------------------------------------------------------------
+    def _update_chain_stats(self, workflow_id: str, window: int | None = None) -> None:
+        """Update moving average and streak for ``workflow_id``.
+
+        The moving average is computed over the previous ``window`` results and
+        excludes the most recent run. ``non_positive_streak`` counts consecutive
+        runs where ``delta_roi`` is non-positive.
+        """
+
+        win = window or self.ma_window
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT roi_gain FROM workflow_results
+            WHERE workflow_id=? ORDER BY timestamp DESC LIMIT ?
+            """,
+            (workflow_id, win + 1),
+        )
+        rows = [float(r[0]) for r in cur.fetchall()]
+        if not rows:
+            return
+        current = rows[0]
+        prev = rows[1:]
+        moving_avg = fmean(prev) if prev else current
+        delta = current - moving_avg
+        cur.execute(
+            "SELECT non_positive_streak FROM workflow_chain_stats WHERE workflow_id=?",
+            (workflow_id,),
+        )
+        row = cur.fetchone()
+        prev_streak = int(row[0]) if row else 0
+        streak = prev_streak + 1 if delta <= 0 else 0
+        cur.execute(
+            """
+            INSERT INTO workflow_chain_stats(
+                workflow_id, moving_avg_roi, last_roi, non_positive_streak
+            ) VALUES(?,?,?,?)
+            ON CONFLICT(workflow_id) DO UPDATE SET
+                moving_avg_roi=excluded.moving_avg_roi,
+                last_roi=excluded.last_roi,
+                non_positive_streak=excluded.non_positive_streak
+            """,
+            (workflow_id, moving_avg, current, streak),
+        )
+
+    # ------------------------------------------------------------------
+    def fetch_chain_stats(self, workflow_id: str) -> Dict[str, float]:
+        """Return moving average, latest ROI and streak for ``workflow_id``."""
+
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT moving_avg_roi, last_roi, non_positive_streak FROM workflow_chain_stats WHERE workflow_id=?",
+            (workflow_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            ma, last, streak = row
+            return {
+                "moving_avg_roi": float(ma),
+                "last_roi": float(last),
+                "delta_roi": float(last - ma),
+                "non_positive_streak": int(streak),
+            }
+        return {
+            "moving_avg_roi": 0.0,
+            "last_roi": 0.0,
+            "delta_roi": 0.0,
+            "non_positive_streak": 0,
+        }
+
+    # ------------------------------------------------------------------
+    def fetch_stagnant_chains(self, min_streak: int = 3) -> Dict[str, int]:
+        """Return workflow ids with ``non_positive_streak`` >= ``min_streak``."""
+
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT workflow_id, non_positive_streak FROM workflow_chain_stats WHERE non_positive_streak >= ?",
+            (min_streak,),
+        )
+        return {str(w): int(s) for w, s in cur.fetchall()}
 
     # ------------------------------------------------------------------
     def log_module_delta(
