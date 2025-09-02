@@ -36,10 +36,16 @@ from filelock import FileLock
 
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from sandbox_runner.bootstrap import initialize_autonomous_sandbox
+from ..metrics_exporter import self_improvement_failure_total
 
 try:
     from ..logging_utils import get_logger, setup_logging, log_record
-except Exception:  # pragma: no cover - simplified environments
+except (ImportError, AttributeError) as exc:  # pragma: no cover - simplified environments
+    logging.getLogger(__name__).warning(
+        "logging utils unavailable", exc_info=exc, extra={"component": __name__}
+    )
+    self_improvement_failure_total.labels(reason="logging_utils_import").inc()
+
     def get_logger(name: str) -> logging.Logger:  # type: ignore
         return logging.getLogger(name)
 
@@ -321,13 +327,14 @@ def get_default_synergy_weights() -> dict[str, float]:
             candidate = data.get("synergy_weights")
             if isinstance(candidate, dict):
                 weights = {k: float(v) for k, v in candidate.items()}
-        except Exception as exc:  # pragma: no cover - best effort
+        except (OSError, json.JSONDecodeError, yaml.YAMLError) as exc:
             logger.debug(
                 "failed to load synergy weights from metrics snapshot %s",
                 metrics_path,
                 extra=log_record(path=str(metrics_path), error=str(exc)),
                 exc_info=exc,
             )
+            self_improvement_failure_total.labels(reason="synergy_weights_snapshot_load").inc()
 
     if weights is None:
         settings_path = os.getenv("SANDBOX_SETTINGS_PATH") or os.getenv(
@@ -339,13 +346,14 @@ def get_default_synergy_weights() -> dict[str, float]:
                 candidate = getattr(cfg_file, "default_synergy_weights", None)
                 if isinstance(candidate, dict):
                     weights = {k: float(v) for k, v in candidate.items()}
-            except Exception as exc:  # pragma: no cover - best effort
+            except (OSError, yaml.YAMLError, AttributeError, RuntimeError) as exc:
                 logger.debug(
                     "failed to load synergy weights from sandbox settings %s",
                     settings_path,
                     extra=log_record(path=settings_path, error=str(exc)),
                     exc_info=exc,
                 )
+                self_improvement_failure_total.labels(reason="synergy_settings_load").inc()
 
     if weights is None:
         candidate = getattr(cfg, "default_synergy_weights", None)
@@ -490,11 +498,12 @@ def init_self_improvement(new_settings: SandboxSettings | None = None) -> Sandbo
 
         meta_planning.reload_settings(settings)
     except Exception as exc:  # pragma: no cover - best effort
-        message = "failed to reload meta_planning settings"
-        logging.getLogger(__name__).exception(  # ensure real logging backend
-            message, extra=log_record(error=str(exc))
+        logging.getLogger(__name__).exception(
+            "failed to reload meta_planning settings",
+            extra=log_record(error=str(exc), component="meta_planning"),
         )
-        raise RuntimeError(message) from exc
+        self_improvement_failure_total.labels(reason="meta_planning_reload").inc()
+        raise
     return settings
 
 
