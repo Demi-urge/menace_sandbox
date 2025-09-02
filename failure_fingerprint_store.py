@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List
 
+from failure_fingerprint import FailureFingerprint
 from vector_service import SharedVectorService
 from vector_utils import cosine_similarity
 
@@ -15,19 +16,6 @@ try:  # pragma: no cover - sandbox settings may be unavailable
     from sandbox_settings import SandboxSettings
 except Exception:  # pragma: no cover - fall back to env vars
     SandboxSettings = None  # type: ignore
-
-
-@dataclass
-class FailureFingerprint:
-    """Captured details of a failure for later matching."""
-
-    filename: str
-    function: str
-    error_message: str
-    stack_trace: str
-    prompt: str
-    embedding: List[float] = field(default_factory=list)
-    embedding_metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class FailureFingerprintStore:
@@ -84,18 +72,29 @@ class FailureFingerprintStore:
                     fid = data.pop("id", None)
                     if fid is None:
                         continue
+                    hash_val = data.pop("hash", "")
                     try:
-                        self._cache[fid] = FailureFingerprint(**data)
+                        fp = FailureFingerprint(**data)
+                        fp.hash = hash_val or fp.hash
+                        self._cache[fid] = fp
                     except TypeError:  # pragma: no cover - malformed entry
                         continue
 
     # ------------------------------------------------------------------ utils
     def _id_for(self, fingerprint: FailureFingerprint) -> str:
-        return f"{fingerprint.filename}:{fingerprint.function}:{hash(fingerprint.stack_trace)}"
+        return f"{fingerprint.filename}:{fingerprint.function}:{fingerprint.hash}"
 
     def _ensure_embedding(self, fingerprint: FailureFingerprint) -> None:
         if not fingerprint.embedding:
-            vec = self.vector_service.vectorise("text", {"text": fingerprint.stack_trace})
+            try:
+                vec = self.vector_service.vectorise(
+                    "text", {"text": fingerprint.stack_trace}
+                )
+            except Exception:  # pragma: no cover - best effort
+                vec = []
+            if not vec:
+                # Simple fallback embedding based on character codes
+                vec = [float(ord(c)) for c in fingerprint.stack_trace[:32]]
             fingerprint.embedding = vec
             embedder = getattr(self.vector_service, "text_embedder", None)
             model_name = None
@@ -104,7 +103,7 @@ class FailureFingerprintStore:
             fingerprint.embedding_metadata = {"model": model_name, "dim": len(vec)}
 
     # ----------------------------------------------------------------- public
-    def log(self, fingerprint: FailureFingerprint) -> None:
+    def add(self, fingerprint: FailureFingerprint) -> None:
         """Append ``fingerprint`` to the log and index its embedding."""
 
         self._ensure_embedding(fingerprint)
@@ -126,6 +125,10 @@ class FailureFingerprintStore:
         self._cache[record_id] = fingerprint
         if self.compact_interval and len(self._cache) % self.compact_interval == 0:
             self.compact()
+
+    # Backwards compatibility
+    def log(self, fingerprint: FailureFingerprint) -> None:  # pragma: no cover
+        self.add(fingerprint)
 
     def find_similar(
         self,
