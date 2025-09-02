@@ -1,4 +1,6 @@
-from self_improvement import utils
+import importlib
+
+utils = importlib.import_module("menace.self_improvement.utils")
 
 
 def test_remove_import_cache_files(tmp_path):

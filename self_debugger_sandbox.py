@@ -38,6 +38,7 @@ from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
 from .error_parser import ErrorReport, FailureCache, parse_failure
+from self_improvement.utils import MovingBaselineTracker
 from sandbox_runner.environment import create_ephemeral_env
 try:
     from .sandbox_settings import SandboxSettings
@@ -103,6 +104,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         flakiness_runs: int | None = None,
         smoothing_factor: float = 0.5,
         weight_update_interval: float | None = None,
+        baseline_window: int | None = None,
+        delta_margin: float | None = None,
         settings: SandboxSettings | None = None,
     ) -> None:
         super().__init__(telemetry_db, engine)
@@ -112,15 +115,24 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.error_predictor = error_predictor
         self._bad_hashes: set[str] = set()
         self._settings = settings or SandboxSettings()
+        if baseline_window is None:
+            baseline_window = getattr(self._settings, "baseline_window", 5)
+        if delta_margin is None:
+            if score_threshold is not None:
+                delta_margin = score_threshold
+            else:
+                delta_margin = getattr(self._settings, "delta_margin", 0.0)
         if score_threshold is None:
-            score_threshold = self._settings.score_threshold
+            score_threshold = getattr(self._settings, "score_threshold", 0.0)
         if score_weights is None:
             score_weights = tuple(self._settings.score_weights)
         if merge_threshold is None:
             merge_threshold = score_threshold
         self.score_threshold = float(score_threshold)
+        self.delta_margin = float(delta_margin)
         self.merge_threshold = float(merge_threshold)
         self.score_weights = tuple(score_weights)
+        self._baseline_tracker = MovingBaselineTracker(int(baseline_window))
         if flakiness_runs is None:
             flakiness_runs = self._settings.flakiness_runs
         self.flakiness_runs = max(1, int(flakiness_runs))
@@ -188,6 +200,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 )
                 self._history_conn.commit()
             self._load_history_stats()
+            try:
+                cur = self._history_conn.execute(
+                    "SELECT score FROM composite_history ORDER BY id DESC LIMIT ?",
+                    (self._baseline_tracker.window_size,),
+                )
+                for (s,) in reversed(cur.fetchall()):
+                    self._baseline_tracker.update(float(s))
+            except Exception:
+                self.logger.exception("baseline history fetch failed")
         except Exception:
             self.logger.exception("score history init failed")
             self._history_conn = None
@@ -981,7 +1002,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         *,
         tracker: ROITracker | None = None,
         weights: Mapping[str, float] | None = None,
-    ) -> float:
+    ) -> tuple[float, float, float]:
         """Return a composite score from multiple metrics.
 
         If ``weights`` is ``None`` and the attached engine provides a
@@ -1062,7 +1083,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         try:
             score = 1.0 / (1.0 + math.exp(-x))
         except Exception:
-            return 0.0
+            score = 0.0
+
+        moving_avg, moving_dev = self._baseline_tracker.stats()
 
         try:
             with self._history_db() as conn:
@@ -1100,7 +1123,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             self.logger.exception("score history persistence failed")
 
-        return score
+        self._baseline_tracker.update(score)
+
+        return score, moving_avg, moving_dev
 
     # ------------------------------------------------------------------
     def _log_patch(
@@ -1440,7 +1465,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             reverted = True
                         if not reverted:
                             syn_roi, syn_eff, *_ = self._recent_synergy_metrics(tracker)
-                            score = self._composite_score(
+                            score, _, _ = self._composite_score(
                                 coverage_delta,
                                 error_delta,
                                 roi_delta,
@@ -1618,7 +1643,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     complexity = self._code_complexity(root_test)
                     runtime_delta = after_runtime - before_runtime
                     syn_roi, syn_eff, *_ = self._recent_synergy_metrics(tracker)
-                    patch_score = self._composite_score(
+                    patch_score, moving_avg, _ = self._composite_score(
                         coverage_delta,
                         error_delta,
                         roi_delta,
@@ -1630,8 +1655,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         filename=str(root_test),
                         tracker=tracker,
                     )
+                    delta = patch_score - moving_avg
                     result = "reverted" if reverted else "success"
-                    if patch_score < self.score_threshold:
+                    if delta < self.delta_margin:
                         if pid is not None and getattr(self.engine, "rollback_mgr", None):
                             try:
                                 self.engine.rollback_mgr.rollback(str(pid))
@@ -1641,7 +1667,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 self.logger.exception("rollback failed")
                         result = "reverted"
                         reason = (
-                            f"score {patch_score:.3f} below threshold {self.score_threshold:.3f}"
+                            f"delta {delta:.3f} below margin {self.delta_margin:.3f}"
                         )
                     elif (
                         not reverted
@@ -1657,7 +1683,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             self.logger.exception("rollback failed")
                         result = "reverted"
                     else:
-                        patched = not reverted and patch_score >= self.score_threshold
+                        patched = not reverted and delta >= self.delta_margin
                 except RuntimeError as exc:
                     reason = f"sandbox tests failed: {exc}"
                     failure = parse_failure(str(exc))
