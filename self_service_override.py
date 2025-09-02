@@ -3,40 +3,103 @@ from __future__ import annotations
 """Previously toggled safe mode based on ROI and errors."""
 
 import logging
+import math
 import os
 import subprocess
 import threading
-from typing import Optional
+from collections import defaultdict, deque
+from typing import Dict, Optional
 
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
 from .error_bot import ErrorDB
 
 
-_ROI_ENV = "SAFE_MODE_ROI_DROP"
-_ERR_ENV = "SAFE_MODE_ERROR_THRESHOLD"
+class BaselineTracker:
+    """Track moving averages and standard deviations for metrics.
+
+    The tracker keeps a sliding window of recent values for each metric and
+    determines whether the latest value deviates from the moving average by more
+    than ``multiplier * std`` for a number of consecutive cycles.
+    """
+
+    def __init__(
+        self,
+        window: int = 20,
+        deviation_multipliers: Optional[Dict[str, float]] = None,
+    ) -> None:
+        self.window = window
+        self.values: Dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=self.window)
+        )
+        self.multipliers = deviation_multipliers or {}
+        self.counts: Dict[str, int] = defaultdict(int)
+
+    # ------------------------------------------------------------------
+    def update(
+        self, name: str, value: float, *, high_is_bad: bool = True
+    ) -> tuple[float, float, float, int]:
+        """Update tracked metric and return baseline stats.
+
+        Parameters
+        ----------
+        name:
+            Metric name to update.
+        value:
+            Latest observed value.
+        high_is_bad:
+            Whether higher values represent worse performance. If ``False`` the
+            deviation will be calculated as ``mean - value``.
+
+        Returns
+        -------
+        mean, std, deviation, consecutive_count
+        """
+
+        dq = self.values[name]
+        dq.append(value)
+        mean = sum(dq) / len(dq)
+        if len(dq) > 1:
+            std = math.sqrt(sum((x - mean) ** 2 for x in dq) / len(dq))
+        else:
+            std = 0.0
+
+        deviation = (value - mean) if high_is_bad else (mean - value)
+        mult = self.multipliers.get(name, 2.0)
+        bad = std > 0 and deviation > mult * std
+        if bad:
+            self.counts[name] += 1
+        else:
+            self.counts[name] = 0
+        return mean, std, deviation, self.counts[name]
 
 
 class SelfServiceOverride:
     """Toggle system behavior without human input."""
+
+    _baseline_tracker: BaselineTracker | None = None
 
     def __init__(
         self,
         roi_db: ROIDB,
         metrics_db: MetricsDB,
         error_db: Optional[ErrorDB] = None,
-        roi_drop: float | None = None,
-        error_threshold: float | None = None,
+        *,
+        tracker: BaselineTracker | None = None,
+        tracker_window: int = 20,
+        deviation_multipliers: Optional[Dict[str, float]] = None,
     ) -> None:
         self.roi_db = roi_db
         self.metrics_db = metrics_db
         self.error_db = error_db
-        if roi_drop is None:
-            roi_drop = float(os.getenv(_ROI_ENV, "0.1"))
-        if error_threshold is None:
-            error_threshold = float(os.getenv(_ERR_ENV, "0.25"))
-        self.roi_drop = roi_drop
-        self.error_threshold = error_threshold
+        if tracker is not None:
+            self.tracker = tracker
+        else:
+            if SelfServiceOverride._baseline_tracker is None:
+                SelfServiceOverride._baseline_tracker = BaselineTracker(
+                    tracker_window, deviation_multipliers
+                )
+            self.tracker = SelfServiceOverride._baseline_tracker
         self.logger = logging.getLogger(self.__class__.__name__)
         self._safe_mode = os.environ.get("MENACE_SAFE") == "1"
 
@@ -76,8 +139,16 @@ class SelfServiceOverride:
     def adjust(self) -> None:
         drop = self._calc_roi_drop()
         err = self._error_rate()
-        if drop >= self.roi_drop or err >= self.error_threshold:
-            self.logger.warning("performance drop detected; enabling safe mode")
+        roi_mean, roi_std, roi_dev, roi_bad = self.tracker.update("roi", drop)
+        err_mean, err_std, err_dev, err_bad = self.tracker.update("error", err)
+        self.logger.debug(
+            "roi_drop=%.4f baseline=%.4f±%.4f dev=%.4f", drop, roi_mean, roi_std, roi_dev
+        )
+        self.logger.debug(
+            "error_rate=%.4f baseline=%.4f±%.4f dev=%.4f", err, err_mean, err_std, err_dev
+        )
+        if roi_bad >= 3 or err_bad >= 3:
+            self.logger.warning("performance deviation detected; enabling safe mode")
             self._enable_safe_mode()
         else:
             self._disable_safe_mode()
@@ -119,13 +190,20 @@ class AutoRollbackService(SelfServiceOverride):
         roi_db: ROIDB,
         metrics_db: MetricsDB,
         error_db: Optional[ErrorDB] = None,
-        roi_drop: float = 0.1,
-        error_threshold: float = 0.25,
-        energy_threshold: float = 0.3,
+        *,
+        tracker: BaselineTracker | None = None,
+        tracker_window: int = 20,
+        deviation_multipliers: Optional[Dict[str, float]] = None,
         revert_cmd: Optional[list[str]] = None,
     ) -> None:
-        super().__init__(roi_db, metrics_db, error_db, roi_drop, error_threshold)
-        self.energy_threshold = energy_threshold
+        super().__init__(
+            roi_db,
+            metrics_db,
+            error_db,
+            tracker=tracker,
+            tracker_window=tracker_window,
+            deviation_multipliers=deviation_multipliers,
+        )
         self.revert_cmd = revert_cmd or ["git", "revert", "--no-edit", "HEAD"]
 
     def _energy_score(self) -> float:
@@ -154,14 +232,38 @@ class AutoRollbackService(SelfServiceOverride):
         drop = self._calc_roi_drop()
         err = self._error_rate()
         energy = self._energy_score()
-        if drop >= self.roi_drop or err >= self.error_threshold or energy < self.energy_threshold:
-            self.logger.warning(
-                "rollback triggered; enabling safe mode"
-            )
+        roi_mean, roi_std, roi_dev, roi_bad = self.tracker.update("roi", drop)
+        err_mean, err_std, err_dev, err_bad = self.tracker.update("error", err)
+        energy_mean, energy_std, energy_dev, energy_bad = self.tracker.update(
+            "energy", energy, high_is_bad=False
+        )
+        self.logger.debug(
+            "roi_drop=%.4f baseline=%.4f±%.4f dev=%.4f",
+            drop,
+            roi_mean,
+            roi_std,
+            roi_dev,
+        )
+        self.logger.debug(
+            "error_rate=%.4f baseline=%.4f±%.4f dev=%.4f",
+            err,
+            err_mean,
+            err_std,
+            err_dev,
+        )
+        self.logger.debug(
+            "energy=%.4f baseline=%.4f±%.4f dev=%.4f",
+            energy,
+            energy_mean,
+            energy_std,
+            energy_dev,
+        )
+        if roi_bad >= 3 or err_bad >= 3 or energy_bad >= 3:
+            self.logger.warning("rollback triggered; enabling safe mode")
             self._enable_safe_mode()
             self._revert_last_patch()
         else:
             self._disable_safe_mode()
 
 
-__all__ = ["SelfServiceOverride", "AutoRollbackService"]
+__all__ = ["BaselineTracker", "SelfServiceOverride", "AutoRollbackService"]
