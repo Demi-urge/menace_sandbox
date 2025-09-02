@@ -1,7 +1,9 @@
 from pathlib import Path
 from typing import List
 
+from chunk_summary_cache import ChunkSummaryCache
 import chunking as pc
+import threading
 
 
 def _write_sample(path: Path) -> Path:
@@ -29,9 +31,9 @@ def test_chunk_file_splits_top_level_defs(tmp_path: Path) -> None:
 
 def test_get_chunk_summaries_cache(tmp_path: Path, monkeypatch) -> None:
     file = _write_sample(tmp_path)
-    cache = tmp_path / "cache"
-    monkeypatch.setattr(pc, "CACHE_DIR", cache)
-    cache.mkdir()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    monkeypatch.setattr(pc, "CHUNK_CACHE", ChunkSummaryCache(cache_dir))
 
     calls: List[str] = []
 
@@ -45,18 +47,44 @@ def test_get_chunk_summaries_cache(tmp_path: Path, monkeypatch) -> None:
     first = pc.get_chunk_summaries(file, 5)
     assert len(first) == len(chunks)
     assert len(calls) == len(chunks)
-    assert len(list(cache.glob("*.json"))) == 1
+    assert len(list(cache_dir.glob("*.json"))) == 1
 
     second = pc.get_chunk_summaries(file, 5)
     assert len(second) == len(chunks)
-    assert len(calls) == len(chunks) * 2  # summaries recomputed
+    assert len(calls) == len(chunks)  # cache hit -> no new summaries
 
     # modify file -> one chunk changes
     file.write_text(file.read_text().replace("return 1", "return 42"))
     third = pc.get_chunk_summaries(file, 5)
     assert len(third) == len(chunks)
-    assert len(calls) == len(chunks) * 3  # all summaries recomputed again
-    assert len(list(cache.glob("*.json"))) == 2
+    assert len(calls) == len(chunks) * 2  # summaries recomputed after change
+    assert len(list(cache_dir.glob("*.json"))) == 1
+
+
+def test_get_chunk_summaries_concurrent(tmp_path: Path, monkeypatch) -> None:
+    file = _write_sample(tmp_path)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    monkeypatch.setattr(pc, "CHUNK_CACHE", ChunkSummaryCache(cache_dir))
+
+    calls: List[str] = []
+
+    def fake_sum(code: str, llm=None) -> str:
+        calls.append(code)
+        return "sum"
+
+    monkeypatch.setattr(pc, "summarize_code", fake_sum)
+
+    def worker():
+        pc.get_chunk_summaries(file, 5)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(calls) == len(pc.chunk_file(file, 5))
 
 
 def _write_large(path: Path, funcs: int = 4, lines: int = 900) -> Path:
@@ -75,9 +103,9 @@ def test_large_file_chunking_and_cache(tmp_path: Path, monkeypatch) -> None:
     chunks = pc.chunk_file(file, token_limit)
     assert all(pc._count_tokens(c.text) <= token_limit for c in chunks)
 
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    monkeypatch.setattr(pc, "CACHE_DIR", cache)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    monkeypatch.setattr(pc, "CHUNK_CACHE", ChunkSummaryCache(cache_dir))
 
     calls: List[str] = []
 
@@ -90,14 +118,14 @@ def test_large_file_chunking_and_cache(tmp_path: Path, monkeypatch) -> None:
     first = pc.get_chunk_summaries(file, token_limit)
     assert len(first) == len(chunks)
     assert len(calls) == len(chunks)
-    assert len(list(cache.glob("*.json"))) == 1
+    assert len(list(cache_dir.glob("*.json"))) == 1
 
     second = pc.get_chunk_summaries(file, token_limit)
     assert len(second) == len(chunks)
-    assert len(calls) == len(chunks) * 2
+    assert len(calls) == len(chunks)
 
     file.write_text(file.read_text().replace("v_0_0 = 0", "v_0_0 = -1"))
     third = pc.get_chunk_summaries(file, token_limit)
     assert len(third) == len(chunks)
-    assert len(calls) == len(chunks) * 3
-    assert len(list(cache.glob("*.json"))) == 2
+    assert len(calls) == len(chunks) * 2
+    assert len(list(cache_dir.glob("*.json"))) == 1

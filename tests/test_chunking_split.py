@@ -1,3 +1,4 @@
+from chunk_summary_cache import ChunkSummaryCache
 import chunking as pc
 import textwrap
 
@@ -50,14 +51,14 @@ def test_get_chunk_summaries_cache_hit(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "summarize_code", fake_summary)
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    monkeypatch.setattr(pc, "CACHE_DIR", cache_dir)
+    monkeypatch.setattr(pc, "CHUNK_CACHE", ChunkSummaryCache(cache_dir))
 
     first = pc.get_chunk_summaries(file, 50)
     assert calls["n"] == len(first)
 
     second = pc.get_chunk_summaries(file, 50)
     assert second == first
-    assert calls["n"] == len(first) * 2  # summaries recomputed
+    assert calls["n"] == len(first)  # cache hit
 
 
 def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
@@ -73,16 +74,16 @@ def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
     monkeypatch.setattr(pc, "summarize_code", fake_summary)
-    monkeypatch.setattr(pc, "CACHE_DIR", cache_dir)
+    monkeypatch.setattr(pc, "CHUNK_CACHE", ChunkSummaryCache(cache_dir))
 
     first = pc.get_chunk_summaries(file, 50)
     assert calls["n"] == len(first)
     first_files = list(cache_dir.iterdir())
     assert len(first_files) == 1
 
-    file.write_text("def a():\n    return 2\n")  # change content -> new hash
+    file.write_text("def a():\n    return 2\n")  # change content -> cache invalidated
     second = pc.get_chunk_summaries(file, 50)
     assert calls["n"] == len(first) + len(second)
     cache_files = list(cache_dir.iterdir())
-    assert len(cache_files) == 2  # old + new cache files
+    assert len(cache_files) == 1  # file replaced
     assert first != second

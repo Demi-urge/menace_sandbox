@@ -269,9 +269,12 @@ class PromptEngine:
         self.apply_optimizer_format(__name__, "build_prompt")
         try:
             import chunking as _pc
+            from chunk_summary_cache import ChunkSummaryCache
 
             self.chunk_summary_cache_dir = Path(self.chunk_summary_cache_dir)
-            _pc.CACHE_DIR = self.chunk_summary_cache_dir
+            cache = getattr(_pc, "CHUNK_CACHE", None)
+            if not cache or getattr(cache, "cache_dir", None) != self.chunk_summary_cache_dir:
+                _pc.CHUNK_CACHE = ChunkSummaryCache(self.chunk_summary_cache_dir)
         except Exception:
             pass
 

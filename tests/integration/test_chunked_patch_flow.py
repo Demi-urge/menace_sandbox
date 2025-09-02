@@ -10,13 +10,19 @@ package = types.ModuleType("menace_sandbox")
 package.__path__ = [str(ROOT)]
 sys.modules.setdefault("menace_sandbox", package)
 
+
 def _setmod(name: str, module: object) -> None:
-    sys.modules.setdefault(name, module)
-    sys.modules.setdefault(f"menace_sandbox.{name}", module)
+    sys.modules[name] = module
+    sys.modules[f"menace_sandbox.{name}"] = module
+
 
 vec_mod = types.ModuleType("vector_service")
+
+
 class _VSError(Exception):
     pass
+
+
 vec_mod.CognitionLayer = object
 vec_mod.PatchLogger = object
 vec_mod.VectorServiceError = _VSError
@@ -55,15 +61,28 @@ know_mod.recent_improvement_path = lambda *a, **k: None
 _setmod("knowledge_retriever", know_mod)
 _setmod("rollback_manager", types.SimpleNamespace(RollbackManager=object))
 audit_mod = types.ModuleType("audit_trail")
-audit_mod.AuditTrail = lambda *a, **k: types.SimpleNamespace(record=lambda payload: None)
+audit_mod.AuditTrail = lambda *a, **k: types.SimpleNamespace(
+    record=lambda payload: None
+)
 _setmod("audit_trail", audit_mod)
-access_mod = types.SimpleNamespace(READ="r", WRITE="w", check_permission=lambda *a, **k: None)
+access_mod = types.SimpleNamespace(
+    READ="r", WRITE="w", check_permission=lambda *a, **k: None
+)
 _setmod("access_control", access_mod)
-_setmod("patch_suggestion_db", types.SimpleNamespace(PatchSuggestionDB=object, SuggestionRecord=object))
-_setmod("sandbox_runner.workflow_sandbox_runner", types.SimpleNamespace(WorkflowSandboxRunner=object))
+_setmod(
+    "patch_suggestion_db",
+    types.SimpleNamespace(PatchSuggestionDB=object, SuggestionRecord=object),
+)
+_setmod(
+    "sandbox_runner.workflow_sandbox_runner",
+    types.SimpleNamespace(WorkflowSandboxRunner=object),
+)
 _setmod(
     "sandbox_runner.test_harness",
-    types.SimpleNamespace(run_tests=lambda *a, **k: None, TestHarnessResult=types.SimpleNamespace(success=True, stdout="")),
+    types.SimpleNamespace(
+        run_tests=lambda *a, **k: None,
+        TestHarnessResult=types.SimpleNamespace(success=True, stdout=""),
+    ),
 )
 _setmod(
     "sandbox_settings",
@@ -89,14 +108,18 @@ _setmod("roi_tracker", roi_mod)
 import menace_sandbox.self_coding_engine as sce  # noqa: E402
 from chunking import CodeChunk  # noqa: E402
 
+
 class DummyLLM:
     gpt_memory = None
+
     def generate(self, prompt):
         return types.SimpleNamespace(text="")
+
 
 class Tracker:
     def __init__(self):
         self.calls = []
+
     def update(self, a, b):
         self.calls.append((a, b))
 
@@ -125,19 +148,27 @@ def test_multi_chunk_patch_success(tmp_path, monkeypatch):
     path.write_text("def a():\n    pass\n\ndef b():\n    pass\n")
 
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
-    monkeypatch.setattr(sce, "chunk_file", lambda p, limit: [
-        CodeChunk(1, 2, "def a():\n    pass", "h1"),
-        CodeChunk(4, 5, "def b():\n    pass", "h2"),
-    ])
+    monkeypatch.setattr(
+        sce,
+        "split_into_chunks",
+        lambda code, limit: [
+            CodeChunk(1, 2, "def a():\n    pass", "h1", 5),
+            CodeChunk(4, 5, "def b():\n    pass", "h2", 5),
+        ],
+    )
     monkeypatch.setattr(sce, "summarize_code", lambda text, llm: text.splitlines()[0])
 
     calls = []
-    def fake_patch_file(p, desc, context_meta=None):
+
+    def fake_generate_helper(desc, *a, **k):
         calls.append(desc)
         idx = len(calls)
-        return f"# patch {idx}", True
-    monkeypatch.setattr(engine, "patch_file", fake_patch_file)
-    monkeypatch.setattr(engine, "_run_ci", lambda p: types.SimpleNamespace(success=True))
+        return f"# patch {idx}"
+
+    monkeypatch.setattr(engine, "generate_helper", fake_generate_helper)
+    monkeypatch.setattr(
+        engine, "_run_ci", lambda p: types.SimpleNamespace(success=True)
+    )
 
     engine.apply_patch(path, "add patches")
 
@@ -154,24 +185,32 @@ def test_multi_chunk_patch_with_rollback(tmp_path, monkeypatch):
     path.write_text("def a():\n    pass\n\ndef b():\n    pass\n")
 
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
-    monkeypatch.setattr(sce, "chunk_file", lambda p, limit: [
-        CodeChunk(1, 2, "def a():\n    pass", "h1"),
-        CodeChunk(4, 5, "def b():\n    pass", "h2"),
-    ])
+    monkeypatch.setattr(
+        sce,
+        "split_into_chunks",
+        lambda code, limit: [
+            CodeChunk(1, 2, "def a():\n    pass", "h1", 5),
+            CodeChunk(4, 5, "def b():\n    pass", "h2", 5),
+        ],
+    )
     monkeypatch.setattr(sce, "summarize_code", lambda text, llm: text.splitlines()[0])
 
     calls = []
-    def fake_patch_file(p, desc, context_meta=None):
+
+    def fake_generate_helper(desc, *a, **k):
         calls.append(desc)
         idx = len(calls)
-        return f"# patch {idx}", True
-    monkeypatch.setattr(engine, "patch_file", fake_patch_file)
+        return f"# patch {idx}"
+
+    monkeypatch.setattr(engine, "generate_helper", fake_generate_helper)
 
     ci_calls = []
+
     def fake_run_ci(p):
         idx = len(ci_calls)
         ci_calls.append(idx)
         return types.SimpleNamespace(success=idx == 0)
+
     monkeypatch.setattr(engine, "_run_ci", fake_run_ci)
 
     engine.apply_patch(path, "add patches")
