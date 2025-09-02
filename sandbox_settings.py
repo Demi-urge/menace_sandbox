@@ -45,6 +45,8 @@ class ROISettings(BaseModel):
     ema_alpha: float = 0.1
     compounding_weight: float = 1.0
     min_integration_roi: float = 0.0
+    entropy_window: int = 5
+    entropy_weight: float = 0.1
     entropy_threshold: float | None = None
     entropy_plateau_threshold: float | None = None
     entropy_plateau_consecutive: int | None = None
@@ -67,7 +69,12 @@ class ROISettings(BaseModel):
             raise ValueError(f"{info.field_name} must be between 0 and 1")
         return v
 
-    @field_validator("compounding_weight", "min_integration_roi", "deviation_tolerance")
+    @field_validator(
+        "compounding_weight",
+        "min_integration_roi",
+        "deviation_tolerance",
+        "entropy_weight",
+    )
     def _check_non_negative(cls, v: float, info: Any) -> float:
         if v < 0:
             raise ValueError(f"{info.field_name} must be non-negative")
@@ -77,6 +84,12 @@ class ROISettings(BaseModel):
     def _check_positive(cls, v: int | None, info: Any) -> int | None:
         if v is not None and v <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
+        return v
+
+    @field_validator("entropy_window")
+    def _check_entropy_window(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("entropy_window must be a positive integer")
         return v
 
     @field_validator("stagnation_cycles")
@@ -1441,6 +1454,8 @@ class SandboxSettings(BaseSettings):
             "flagging a module."
         ),
     )
+    entropy_window: int = Field(5, env="ENTROPY_WINDOW")
+    entropy_weight: float = Field(0.1, env="ENTROPY_WEIGHT")
     min_integration_roi: float = Field(
         0.0,
         env="MIN_INTEGRATION_ROI",
@@ -1934,6 +1949,8 @@ class SandboxSettings(BaseSettings):
             confidence=self.roi_confidence,
             ema_alpha=self.roi_ema_alpha,
             compounding_weight=self.roi_compounding_weight,
+            entropy_window=self.entropy_window,
+            entropy_weight=self.entropy_weight,
             baseline_window=self.roi_baseline_window,
             stagnation_cycles=self.roi_stagnation_cycles,
             min_integration_roi=self.min_integration_roi,
