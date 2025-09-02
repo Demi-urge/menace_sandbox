@@ -8,8 +8,8 @@ from prompt_types import Prompt
 
 def test_prompt_evolution_logger_records(tmp_path: Path) -> None:
     logger = PromptEvolutionLogger(
-        success_path=tmp_path / "success.jsonl",
-        failure_path=tmp_path / "failure.jsonl",
+        success_path=tmp_path / "success.json",
+        failure_path=tmp_path / "failure.json",
     )
     prompt = Prompt(
         system="sys",
@@ -21,8 +21,8 @@ def test_prompt_evolution_logger_records(tmp_path: Path) -> None:
     logger.log(prompt, True, {"summary": "ok"}, {"roi_delta": 1.5, "coverage": 0.9})
     logger.log(prompt, False, {"summary": "fail"}, {"roi_delta": -0.3, "coverage": 0.1})
 
-    success_record = json.loads((tmp_path / "success.jsonl").read_text().splitlines()[0])
-    failure_record = json.loads((tmp_path / "failure.jsonl").read_text().splitlines()[0])
+    success_record = json.loads((tmp_path / "success.json").read_text().splitlines()[0])
+    failure_record = json.loads((tmp_path / "failure.json").read_text().splitlines()[0])
 
     assert success_record["prompt"] == {
         "system": "sys",
@@ -37,7 +37,7 @@ def test_prompt_evolution_logger_records(tmp_path: Path) -> None:
 
 
 def test_prompt_evolution_logger_locking(tmp_path: Path) -> None:
-    logger = PromptEvolutionLogger(success_path=tmp_path / "success.jsonl")
+    logger = PromptEvolutionLogger(success_path=tmp_path / "success.json")
     prompt = Prompt(user="hi")
 
     def worker(i: int) -> None:
@@ -49,7 +49,7 @@ def test_prompt_evolution_logger_locking(tmp_path: Path) -> None:
     for t in threads:
         t.join()
 
-    lines = (tmp_path / "success.jsonl").read_text().splitlines()
+    lines = (tmp_path / "success.json").read_text().splitlines()
     assert len(lines) == 10
     for line in lines:
         json.loads(line)

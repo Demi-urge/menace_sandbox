@@ -1,16 +1,16 @@
-# Prompt Evolution Memory
+# Prompt Evolution Logger
 
-`PromptEvolutionMemory` persists structured records for prompt experiments so
-that optimisation tools can learn from past executions.  Each call to
-`log_prompt` writes a JSON object to either a success or failure log, allowing
-subsequent runs to analyse what formatting strategies yield the best return on
-investment (ROI).
+`PromptEvolutionLogger` persists structured records for prompt experiments so
+that optimisation tools can learn from past executions. Each call to `log`
+writes a JSON object to either a success or failure log, allowing subsequent
+runs to analyse what formatting strategies yield the best return on investment
+(ROI).
 
 ## Log format
 
-Entries are appended to line-delimited JSON files.  Successful executions are
-written to `prompt_memory_success.jsonl` while failures go to
-`prompt_memory_failure.jsonl`.
+Entries are appended to line-delimited JSON files. Successful executions are
+written to `prompt_success_log.json` while failures go to
+`prompt_failure_log.json`.
 
 ```json
 {
@@ -21,7 +21,7 @@ written to `prompt_memory_success.jsonl` while failures go to
     "examples": ["sample" ]
   },
   "format": {"tone": "neutral", "headers": ["Intro"]},
-  "exec_result": {"stdout": "ok", "runtime": 1.2},
+  "result": {"stdout": "ok", "runtime": 1.2},
   "roi": {"roi_delta": 1.5, "coverage": 0.8}
 }
 ```
@@ -32,7 +32,7 @@ Fields:
 * `prompt` – captured `system`/`user` text and `examples` list.
 * `format` – metadata produced during prompt formatting (tone, section order,
   etc.).
-* `exec_result` – structured result of running the prompt (stdout, runtime,
+* `result` – structured result of running the prompt (stdout, runtime,
   scores).
 * `roi` – optional ROI metadata.  Numbers such as `roi_delta`, `coverage` or
   `runtime_improvement` can be stored and later used for weighting.
@@ -44,10 +44,13 @@ improvement while negative values indicate a regression.  Multiple metrics can
 be supplied and the optimizer can weight them during aggregation.  For example:
 
 ```python
-memory.log_prompt(prompt, success=True,
-                  exec_result={"stdout": "ok"},
-                  roi={"roi_delta": 2.3, "coverage": 0.9},
-                  format_meta={"tone": "upbeat"})
+logger.log(
+    prompt,
+    success=True,
+    result={"stdout": "ok"},
+    roi={"roi_delta": 2.3, "coverage": 0.9},
+    format_meta={"tone": "upbeat"},
+)
 ```
 
 ## Using the optimizer
@@ -58,16 +61,16 @@ rates and weighted ROI.  Suggested formats can then be fed back into a prompt
 engine.
 
 ```python
-from prompt_evolution_memory import PromptEvolutionMemory
+from prompt_evolution_logger import PromptEvolutionLogger
 from prompt_optimizer import PromptOptimizer
 from prompt_engine import PromptEngine
 
-memory = PromptEvolutionMemory()
+logger = PromptEvolutionLogger()
 # record prompt executions ...
 
 optimizer = PromptOptimizer(
-    memory.success_path,
-    memory.failure_path,
+    logger.success_path,
+    logger.failure_path,
     stats_path="prompt_optimizer_stats.json",
     weight_by="coverage",   # use the ``coverage`` ROI field for weighting
     roi_weight=1.2           # emphasise ROI in ranking
@@ -82,12 +85,12 @@ prompts, continually improving style and section ordering.
 
 ## Configuration options
 
-### PromptEvolutionMemory
+### PromptEvolutionLogger
 
 * `success_path` – destination for successful execution logs
-  (default: `prompt_memory_success.jsonl`).
+  (default: `prompt_success_log.json`).
 * `failure_path` – destination for failed execution logs
-  (default: `prompt_memory_failure.jsonl`).
+  (default: `prompt_failure_log.json`).
 
 ### PromptOptimizer
 
@@ -107,7 +110,7 @@ below prints the average ROI for successful prompts:
 import json
 from pathlib import Path
 
-success_log = Path("prompt_memory_success.jsonl")
+success_log = Path("prompt_success_log.json")
 entries = [json.loads(l) for l in success_log.read_text().splitlines() if l]
 avg_roi = sum(e.get("roi", {}).get("roi_delta", 0) for e in entries) / len(entries)
 print(f"average ROI: {avg_roi:.2f}")

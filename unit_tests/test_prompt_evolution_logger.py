@@ -19,7 +19,7 @@ if "llm_interface" not in sys.modules:
 
     sys.modules["llm_interface"] = types.SimpleNamespace(Prompt=_Prompt)
 
-from prompt_evolution_memory import PromptEvolutionMemory
+from prompt_evolution_logger import PromptEvolutionLogger
 
 
 class DummyRetriever:
@@ -43,17 +43,29 @@ def read_lines(path: Path):
 
 
 def test_log_prompt_records_success_and_failure(tmp_path: Path):
-    success = tmp_path / "success.jsonl"
-    failure = tmp_path / "failure.jsonl"
-    mem = PromptEvolutionMemory(success_path=success, failure_path=failure)
+    success = tmp_path / "success.json"
+    failure = tmp_path / "failure.json"
+    logger = PromptEvolutionLogger(success_path=success, failure_path=failure)
 
     class P:
         system = "sys"
         user = "u"
         examples = ["e"]
 
-    mem.log_prompt(P(), True, {"out": "ok"}, {"roi": 1}, {"fmt": "a"})
-    mem.log_prompt(P(), False, {"out": "bad"}, {"roi": -1}, {"fmt": "b"})
+    logger.log(
+        P(),
+        True,
+        {"out": "ok"},
+        {"roi": 1},
+        format_meta={"fmt": "a"},
+    )
+    logger.log(
+        P(),
+        False,
+        {"out": "bad"},
+        {"roi": -1},
+        format_meta={"fmt": "b"},
+    )
 
     s = read_lines(success)
     f = read_lines(failure)
@@ -63,12 +75,12 @@ def test_log_prompt_records_success_and_failure(tmp_path: Path):
     assert f[0]["success"] is False
     assert s[0]["prompt"]["user"] == "u"
     assert s[0]["roi"] == {"roi": 1}
-    assert f[0]["exec_result"]["out"] == "bad"
+    assert f[0]["result"]["out"] == "bad"
 
 
 def test_optimizer_ranking_influences_prompt_engine(tmp_path: Path, monkeypatch):
-    success = tmp_path / "success.jsonl"
-    failure = tmp_path / "failure.jsonl"
+    success = tmp_path / "success.json"
+    failure = tmp_path / "failure.json"
     from prompt_optimizer import PromptOptimizer
     from prompt_engine import PromptEngine
     success.write_text(json.dumps({
@@ -119,8 +131,8 @@ def test_optimizer_ranking_influences_prompt_engine(tmp_path: Path, monkeypatch)
 
 
 def test_optimizer_weighting_uses_roi(tmp_path: Path):
-    success = tmp_path / "success.jsonl"
-    failure = tmp_path / "failure.jsonl"
+    success = tmp_path / "success.json"
+    failure = tmp_path / "failure.json"
     from prompt_optimizer import PromptOptimizer
     entries = [
         {
