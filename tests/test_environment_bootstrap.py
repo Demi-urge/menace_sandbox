@@ -2,6 +2,7 @@ import os
 import sys
 import types
 import subprocess
+from pathlib import Path
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
@@ -50,9 +51,18 @@ primitives_mod.serialization = ser_mod
 asym_mod.ed25519 = ed_mod
 sys.modules["cryptography.hazmat"].primitives = primitives_mod
 
+menace = types.ModuleType("menace")
+menace.RAISE_ERRORS = False
+menace.__path__ = [str(Path(__file__).resolve().parents[1])]
+sys.modules["menace"] = menace
+sys.modules["menace.vector_service.embedding_scheduler"] = types.SimpleNamespace(
+    start_scheduler_from_env=lambda *a, **k: None
+)
+
 import menace.environment_bootstrap as eb
 import menace.config_discovery as cd
 import pytest
+from sandbox_settings import SandboxSettings
 
 
 def test_environment_bootstrapper(monkeypatch, tmp_path):
@@ -60,6 +70,7 @@ def test_environment_bootstrapper(monkeypatch, tmp_path):
     tf_dir.mkdir()
     (tmp_path / "alembic.ini").write_text("[alembic]\n")
     monkeypatch.setenv("MENACE_BOOTSTRAP_DEPS", "dep1, dep2")
+    monkeypatch.setenv("MODELS", "demo")
 
     calls: list[tuple[list[str], str | None]] = []
 
@@ -83,7 +94,7 @@ def test_environment_bootstrapper(monkeypatch, tmp_path):
 
     assert called, "ensure_config should be invoked"
 
-    for var in ["STRIPE_API_KEY", "DATABASE_URL", "OPENAI_API_KEY"]:
+    for var in SandboxSettings().required_env_vars:
         assert os.getenv(var), f"{var} not set"
 
     expected = [
