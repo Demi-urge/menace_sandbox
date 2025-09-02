@@ -9,9 +9,9 @@ such as ``coverage`` or ``runtime_improvement`` can be used to weight ROI
 calculations.
 
 The optimiser groups prompts by structural features – tone, header set and
-example placement – and computes success rates as well as weighted ROI
-improvements. These aggregated statistics are persisted so that subsequent
-runs can build upon previous observations.
+example placement – and computes success rates, weighted ROI improvements and
+average runtime deltas. These aggregated statistics are persisted so that
+subsequent runs can build upon previous observations.
 """
 
 from __future__ import annotations
@@ -46,13 +46,23 @@ class _Stat:
     weighted_roi_sum: float = 0.0
     weight_sum: float = 0.0
 
-    def update(self, success: bool, roi: float, weight: float) -> None:
+    runtime_improvement_sum: float = 0.0
+
+    def update(
+        self,
+        success: bool,
+        roi: float,
+        weight: float,
+        runtime_improvement: float | None = None,
+    ) -> None:
         """Update counters with a single observation."""
 
         self.total += 1
         self.roi_sum += roi
         self.weighted_roi_sum += roi * weight
         self.weight_sum += weight
+        if runtime_improvement is not None:
+            self.runtime_improvement_sum += runtime_improvement
         if success:
             self.success += 1
 
@@ -64,6 +74,11 @@ class _Stat:
         if self.weight_sum:
             return self.weighted_roi_sum / self.weight_sum
         return self.roi_sum / self.total if self.total else 0.0
+
+    def avg_runtime_improvement(self) -> float:
+        return (
+            self.runtime_improvement_sum / self.total if self.total else 0.0
+        )
 
     def score(self, roi_weight: float = 1.0) -> float:
         """Combined score used to rank configurations.
@@ -148,6 +163,9 @@ class PromptOptimizer:
                         roi_sum=float(item.get("roi_sum", 0.0)),
                         weighted_roi_sum=float(item.get("weighted_roi_sum", 0.0)),
                         weight_sum=float(item.get("weight_sum", 0.0)),
+                        runtime_improvement_sum=float(
+                            item.get("runtime_improvement_sum", 0.0)
+                        ),
                     )
                 except Exception:
                     continue
@@ -308,7 +326,7 @@ class PromptOptimizer:
                     has_system=has_system,
                 )
                 self.stats[key] = stat
-            stat.update(success, roi, weight)
+            stat.update(success, roi, weight, runtime_val)
         self.persist_statistics()
         return self.stats
 
@@ -359,6 +377,7 @@ class PromptOptimizer:
                     "system_message": stat.has_system,
                     "success_rate": stat.success_rate(),
                     "weighted_roi": stat.weighted_roi(),
+                    "avg_runtime_improvement": stat.avg_runtime_improvement(),
                 }
             )
         return results
