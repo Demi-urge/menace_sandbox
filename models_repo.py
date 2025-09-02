@@ -66,6 +66,15 @@ def model_build_lock(model_id: int, poll_interval: float = 0.1):
         try:
             if ACTIVE_MODEL_FILE.exists() and ACTIVE_MODEL_FILE.read_text() == str(model_id):
                 ACTIVE_MODEL_FILE.unlink()
-        except Exception as exc:
-            logger.exception("failed to remove active model file: %s", exc)
-
+        except OSError as exc:
+            logger.warning(
+                "Failed to remove active model file",
+                extra={"model_id": model_id, "path": str(ACTIVE_MODEL_FILE)},
+                exc_info=exc,
+            )
+        except Exception:
+            logger.exception(
+                "Unexpected error removing active model file",
+                extra={"model_id": model_id, "path": str(ACTIVE_MODEL_FILE)},
+            )
+            raise

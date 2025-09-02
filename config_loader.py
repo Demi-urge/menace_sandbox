@@ -99,7 +99,6 @@ def get_config_value(key_path: str, default: Any = None) -> Any:
     return current
 
 
-
 _IMPACT_MAP: Mapping[str, float] | None = None
 _IMPACT_PATH: str | None = None
 
@@ -137,8 +136,26 @@ def _load_impact_severity_map(
             }
         else:
             overrides = {}
-    except Exception:
+    except FileNotFoundError as exc:
+        logger.warning(
+            "Impact severity config file missing",
+            extra={"path": cfg_path},
+            exc_info=exc,
+        )
         overrides = {}
+    except (yaml.YAMLError, ValueError) as exc:
+        logger.warning(
+            "Failed to parse impact severity config",
+            extra={"path": cfg_path},
+            exc_info=exc,
+        )
+        overrides = {}
+    except Exception:
+        logger.exception(
+            "Unexpected error loading impact severity config",
+            extra={"path": cfg_path},
+        )
+        raise
     defaults.update(overrides)
     _IMPACT_MAP = defaults
     _IMPACT_PATH = cfg_path
