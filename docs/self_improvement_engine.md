@@ -19,7 +19,7 @@ for name, outcome in results.items():
 
 When a `SelfCodingEngine` is supplied, the engine may patch helper code before running the automation pipeline. See [self_coding_engine.md](self_coding_engine.md) for more information.
 
-Persisting cycle data across runs is possible by providing `state_path` when creating the engine. ROI deltas, an exponential moving average of those deltas (`roi_delta_ema`) and the timestamp of the last cycle are written to this JSON file and reloaded on startup. The smoothing factor for the EMA can be set with `roi_ema_alpha` (default `0.1`).
+Persisting cycle data across runs is possible by providing `state_path` when creating the engine. ROI deltas, an exponential moving average of those deltas (`roi_delta_ema`) and the timestamp of the last cycle are written to this JSON file and reloaded on startup. The smoothing factor for the EMA can be set with `roi_ema_alpha` (default `0.1`). Recent cycle outcomes are also stored in `success_history` to derive a momentum coefficient that influences future scheduling.
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
@@ -67,7 +67,7 @@ required to benefit from automatic workflow evolution and gating in batch runs.
 3. execute the supplied `ModelAutomationPipeline` to retrain and evaluate the
    model;
 4. record ROI deltas, update the exponential moving average and write state to
-   disk;
+   disk while tracking success history for momentum-based scheduling;
 5. consult `_SandboxMetaLogger` to flag modules that hit entropy ceilings or
    exhibit diminishing returns.
 

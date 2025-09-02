@@ -767,6 +767,7 @@ class SelfImprovementEngine:
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
         self._roi_delta_window: deque[float] = deque(maxlen=3)
+        self.success_history: deque[bool] = deque(maxlen=baseline_window)
         self.urgency_tier: int = 0
         self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
@@ -1461,6 +1462,8 @@ class SelfImprovementEngine:
             self.roi_delta_ema = float(data.get("roi_delta_ema", self.roi_delta_ema))
             scores = [float(x) for x in data.get("sandbox_scores", [])]
             self.baseline_tracker = BaselineTracker(self.baseline_window, scores)
+            successes = [bool(x) for x in data.get("success_history", [])]
+            self.success_history = deque(successes, maxlen=self.baseline_window)
         except Exception as exc:
             self.logger.exception("failed to load state: %s", exc)
 
@@ -1481,6 +1484,7 @@ class SelfImprovementEngine:
                         "last_run": self.last_run,
                         "roi_delta_ema": self.roi_delta_ema,
                         "sandbox_scores": self.baseline_tracker.to_list(),
+                        "success_history": list(self.success_history),
                     },
                     fh,
                 )
@@ -1488,6 +1492,14 @@ class SelfImprovementEngine:
             os.replace(tmp, self.state_path)
         except Exception as exc:
             self.logger.exception("failed to save state: %s", exc)
+
+    # ------------------------------------------------------------------
+    @property
+    def momentum_coefficient(self) -> float:
+        """Return recent success ratio for scheduling momentum."""
+        if not self.success_history:
+            return 0.0
+        return sum(1 for s in self.success_history if s) / len(self.success_history)
 
     # ------------------------------------------------------------------
     def _load_synergy_weights(self) -> None:
@@ -6682,6 +6694,7 @@ class SelfImprovementEngine:
                     self.logger.exception("alignment review agent failed to start")
             delta = after_roi - before_roi
             self._roi_delta_window.append(delta)
+            self.success_history.append(delta > 0)
             if len(self._roi_delta_window) == self._roi_delta_window.maxlen:
                 window_sum = sum(self._roi_delta_window)
                 if window_sum <= 0:
@@ -7090,6 +7103,8 @@ class SelfImprovementEngine:
                     current_energy *= 0.8
             else:
                 self._last_growth_type = None
+            momentum = self.momentum_coefficient
+            current_energy *= 1 + momentum
             moving_avg = self.baseline_tracker.moving_average
             delta = current_energy - moving_avg
             self.baseline_tracker.add(current_energy)
