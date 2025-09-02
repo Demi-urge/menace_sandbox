@@ -1,15 +1,25 @@
 import json
 from pathlib import Path
+import types
 
 import pytest
 
 import sys
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+# Provide a lightweight stand-in for the heavy llm_interface module
+if "llm_interface" not in sys.modules:
+    class _Prompt:
+        def __init__(self, system: str = "", user: str = "", examples=None, **kwargs):
+            self.system = system
+            self.user = user
+            self.examples = examples or []
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    sys.modules["llm_interface"] = types.SimpleNamespace(Prompt=_Prompt)
 
 from prompt_evolution_memory import PromptEvolutionMemory
-from prompt_optimizer import PromptOptimizer
-from prompt_engine import PromptEngine
 
 
 class DummyRetriever:
@@ -49,6 +59,8 @@ def test_log_prompt_records_success_and_failure(tmp_path: Path):
     f = read_lines(failure)
 
     assert s and f
+    assert s[0]["success"] is True
+    assert f[0]["success"] is False
     assert s[0]["prompt"]["user"] == "u"
     assert s[0]["roi"] == {"roi": 1}
     assert f[0]["exec_result"]["out"] == "bad"
@@ -57,6 +69,8 @@ def test_log_prompt_records_success_and_failure(tmp_path: Path):
 def test_optimizer_ranking_influences_prompt_engine(tmp_path: Path, monkeypatch):
     success = tmp_path / "success.jsonl"
     failure = tmp_path / "failure.jsonl"
+    from prompt_optimizer import PromptOptimizer
+    from prompt_engine import PromptEngine
     success.write_text(json.dumps({
         "module": "prompt_engine",
         "action": "build_prompt",
@@ -107,6 +121,7 @@ def test_optimizer_ranking_influences_prompt_engine(tmp_path: Path, monkeypatch)
 def test_optimizer_weighting_uses_roi(tmp_path: Path):
     success = tmp_path / "success.jsonl"
     failure = tmp_path / "failure.jsonl"
+    from prompt_optimizer import PromptOptimizer
     entries = [
         {
             "module": "prompt_engine",
