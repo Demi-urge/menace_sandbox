@@ -43,6 +43,8 @@ def _make_engine():
     eng.urgency_tier = 0
     eng.urgency_recovery_threshold = 0.05
     eng.logger = types.SimpleNamespace(warning=lambda *a, **k: None, exception=lambda *a, **k: None)
+    eng.stagnation_cycles = 3
+    eng._stagnation_streak = 0
     return eng
 
 
@@ -55,6 +57,7 @@ def test_roi_stagnation_escalates():
         assert eng.urgency_tier == 0
     eng.baseline_tracker.update(roi=0.8)
     eng._check_roi_stagnation()
+    assert eng._stagnation_streak == 3
     assert eng.urgency_tier == 1
     assert alerts and alerts[0][0][0] == "roi_negative_trend"
 
@@ -65,7 +68,9 @@ def test_roi_recovery_resets():
     for roi in [1.0, 0.9, 0.8, 0.8]:
         eng.baseline_tracker.update(roi=roi)
         eng._check_roi_stagnation()
+    assert eng._stagnation_streak == 3
     assert eng.urgency_tier == 1
     eng.baseline_tracker.update(roi=0.9)
     eng._check_roi_stagnation()
+    assert eng._stagnation_streak == 0
     assert eng.urgency_tier == 0
