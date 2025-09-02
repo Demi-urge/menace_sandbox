@@ -403,6 +403,9 @@ class SelfCodingEngine:
         roi_delta: float,
         coverage: float,
         roi_meta: Mapping[str, Any] | None = None,
+        *,
+        module: str = "self_coding_engine",
+        action: str = "apply_patch",
     ) -> None:
         """Record prompt execution details via :class:`PromptEvolutionLogger`."""
         if not self.prompt_evolution_logger:
@@ -410,6 +413,8 @@ class SelfCodingEngine:
         prompt = getattr(self, "_last_prompt", None)
         if not isinstance(prompt, Prompt):
             prompt = Prompt(getattr(prompt, "text", str(prompt or "")))
+        parts = [prompt.system, *prompt.examples, prompt.user]
+        flat_prompt = "\n".join([p for p in parts if p])
         runtime = getattr(exec_result, "runtime", None) if exec_result else None
         result: Dict[str, Any] = {"patch": patch}
         if isinstance(exec_result, dict):
@@ -437,6 +442,9 @@ class SelfCodingEngine:
                 result,
                 roi,
                 format_meta=getattr(self, "_last_prompt_metadata", {}),
+                module=module,
+                action=action,
+                prompt_text=flat_prompt,
             )
         except Exception:
             self.logger.exception("prompt evolution logging failed")
@@ -1166,6 +1174,8 @@ class SelfCodingEngine:
                 0.0,
                 0.0,
                 roi_meta,
+                module=str(path),
+                action=description,
             )
             self._record_prompt_metadata(False)
             return None, False, 0.0
@@ -1284,6 +1294,8 @@ class SelfCodingEngine:
                 roi_delta,
                 0.0,
                 roi_meta,
+                module=str(path),
+                action=description,
             )
             self._record_prompt_metadata(False)
             return patch_id, True, roi_delta
@@ -1345,6 +1357,8 @@ class SelfCodingEngine:
                 0.0,
                 0.0,
                 roi_meta,
+                module=str(path),
+                action=description,
             )
             self._record_prompt_metadata(False)
             return None, False, 0.0
@@ -1404,6 +1418,8 @@ class SelfCodingEngine:
                 0.0,
                 0.0,
                 roi_meta,
+                module=str(path),
+                action=description,
             )
             self._record_prompt_metadata(False)
             return None, False, 0.0
@@ -1607,6 +1623,8 @@ class SelfCodingEngine:
             roi_delta,
             coverage,
             roi_meta,
+            module=str(path),
+            action=description,
         )
         try:
             if self.patch_db and session_id and patch_id is not None:
@@ -1775,6 +1793,8 @@ class SelfCodingEngine:
                     {"error": str(exc), "trace": trace},
                     0.0,
                     0.0,
+                    module=str(path),
+                    action=description,
                 )
                 self._record_prompt_metadata(False)
                 if log_prompt_attempt and self.data_bot:

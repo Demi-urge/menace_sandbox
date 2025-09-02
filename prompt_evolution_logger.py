@@ -55,6 +55,10 @@ class PromptEvolutionLogger:
         result: Dict[str, Any],
         roi: Dict[str, Any] | None = None,
         format_meta: Dict[str, Any] | None = None,
+        *,
+        module: str = "unknown",
+        action: str = "unknown",
+        prompt_text: str | None = None,
     ) -> None:
         """Record details of a prompt execution.
 
@@ -70,16 +74,28 @@ class PromptEvolutionLogger:
             Optional ROI metrics describing impact of the execution.
         format_meta:
             Optional formatting metadata produced while building the prompt.
+        module, action:
+            Identifier describing where the prompt originated.
+        prompt_text:
+            Flattened full prompt text. If omitted it will be derived from
+            ``prompt``.
         """
+
+        if prompt_text is None:
+            parts = [prompt.system, *prompt.examples, prompt.user]
+            prompt_text = "\n".join([p for p in parts if p])
 
         record: Dict[str, Any] = {
             "timestamp": int(time.time()),
+            "module": module,
+            "action": action,
             "prompt": {
                 "system": prompt.system,
                 "user": prompt.user,
                 "examples": list(prompt.examples),
                 "metadata": dict(prompt.metadata),
             },
+            "prompt_text": prompt_text,
             "result": result,
             "roi": roi or {},
             "success": success,
@@ -94,4 +110,3 @@ class PromptEvolutionLogger:
 
 
 __all__ = ["PromptEvolutionLogger"]
-

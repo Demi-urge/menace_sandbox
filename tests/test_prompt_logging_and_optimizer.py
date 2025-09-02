@@ -56,7 +56,15 @@ def test_prompt_evolution_logging(tmp_path):
         stdout = "ok"
         runtime = 1.0
 
-    engine._log_prompt_evolution("p1", True, R(), roi_delta=1.2, coverage=0.8)
+    engine._log_prompt_evolution(
+        "p1",
+        True,
+        R(),
+        roi_delta=1.2,
+        coverage=0.8,
+        module="mod1",
+        action="act1",
+    )
 
     engine._last_prompt = Prompt(
         user="fail",
@@ -73,7 +81,15 @@ def test_prompt_evolution_logging(tmp_path):
         stdout = "no"
         runtime = 2.0
 
-    engine._log_prompt_evolution("p2", False, R2(), roi_delta=-0.5, coverage=0.4)
+    engine._log_prompt_evolution(
+        "p2",
+        False,
+        R2(),
+        roi_delta=-0.5,
+        coverage=0.4,
+        module="mod2",
+        action="act2",
+    )
 
     success_entries = read_lines(success_log)
     failure_entries = read_lines(failure_log)
@@ -82,12 +98,17 @@ def test_prompt_evolution_logging(tmp_path):
     s = success_entries[0]
     f = failure_entries[0]
 
+    assert s["module"] == "mod1"
+    assert s["action"] == "act1"
     assert s["prompt"]["system"] == "sys"
     assert s["prompt"]["user"] == "do it"
     assert s["prompt"]["examples"] == ["ex1"]
+    assert s["prompt_text"]
     assert "tone" in s["prompt"]["metadata"]
     assert "roi_delta" in s["roi"] and "coverage" in s["roi"]
 
+    assert f["module"] == "mod2"
+    assert f["action"] == "act2"
     assert f["prompt"]["user"] == "fail"
     assert f["prompt"]["examples"] == ["ex2"]
 
@@ -101,11 +122,29 @@ def test_prompt_optimizer_ranking(tmp_path):
     failure_log = tmp_path / "failure.json"
 
     s_entries = [
-        {"module": "m", "action": "a", "prompt": "# H1\nExample: foo", "success": True, "roi": 2.0},
-        {"module": "m", "action": "a", "prompt": "# H2\nExample: foo", "success": True, "roi": 5.0},
+        {
+            "module": "m",
+            "action": "a",
+            "prompt": "# H1\nExample: foo",
+            "success": True,
+            "roi": 2.0,
+        },
+        {
+            "module": "m",
+            "action": "a",
+            "prompt": "# H2\nExample: foo",
+            "success": True,
+            "roi": 5.0,
+        },
     ]
     f_entries = [
-        {"module": "m", "action": "a", "prompt": "# H1\nExample: foo", "success": False, "roi": -1.0},
+        {
+            "module": "m",
+            "action": "a",
+            "prompt": "# H1\nExample: foo",
+            "success": False,
+            "roi": -1.0,
+        },
     ]
     success_log.write_text("\n".join(json.dumps(e) for e in s_entries))
     failure_log.write_text("\n".join(json.dumps(e) for e in f_entries))

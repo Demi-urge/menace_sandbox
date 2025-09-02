@@ -1,9 +1,5 @@
 import json
 from pathlib import Path
-import types
-
-import json
-from pathlib import Path
 
 import pytest
 
@@ -28,7 +24,7 @@ class DummyRetriever:
 
 
 def read_lines(path: Path):
-    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
 def test_log_prompt_records_success_and_failure(tmp_path: Path):
@@ -37,8 +33,24 @@ def test_log_prompt_records_success_and_failure(tmp_path: Path):
     logger = PromptEvolutionLogger(success_path=success, failure_path=failure)
 
     prompt = Prompt(system="sys", user="u", examples=["e"])
-    logger.log(prompt, True, {"out": "ok"}, {"roi": 1}, format_meta={"fmt": "a"})
-    logger.log(prompt, False, {"out": "bad"}, {"roi": -1}, format_meta={"fmt": "b"})
+    logger.log(
+        prompt,
+        True,
+        {"out": "ok"},
+        {"roi": 1},
+        format_meta={"fmt": "a"},
+        module="m1",
+        action="a1",
+    )
+    logger.log(
+        prompt,
+        False,
+        {"out": "bad"},
+        {"roi": -1},
+        format_meta={"fmt": "b"},
+        module="m1",
+        action="a2",
+    )
 
     s = read_lines(success)
     f = read_lines(failure)
@@ -46,7 +58,11 @@ def test_log_prompt_records_success_and_failure(tmp_path: Path):
     assert s and f
     assert s[0]["success"] is True
     assert f[0]["success"] is False
+    assert s[0]["module"] == "m1"
+    assert s[0]["action"] == "a1"
+    assert f[0]["action"] == "a2"
     assert s[0]["prompt"]["user"] == "u"
+    assert "prompt_text" in s[0]
     assert s[0]["roi"] == {"roi": 1}
     assert f[0]["result"]["out"] == "bad"
 
@@ -127,7 +143,12 @@ def test_optimizer_weighting_uses_roi(tmp_path: Path):
     ]
     success.write_text("\n".join(json.dumps(e) for e in entries))
     failure.write_text("")
-    opt = PromptOptimizer(success, failure, stats_path=tmp_path / "stats.json", weight_by="coverage")
+    opt = PromptOptimizer(
+        success,
+        failure,
+        stats_path=tmp_path / "stats.json",
+        weight_by="coverage",
+    )
     stat = next(iter(opt.stats.values()))
     expected = (1.0 * 1.0 + 3.0 * 3.0) / (1.0 + 3.0)
     assert stat.weighted_roi() == pytest.approx(expected)
