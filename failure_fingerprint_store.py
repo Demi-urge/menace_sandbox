@@ -80,6 +80,13 @@ class FailureFingerprintStore:
                     except TypeError:  # pragma: no cover - malformed entry
                         continue
 
+        # cluster bookkeeping
+        self._clusters: Dict[int, List[str]] = {}
+        self._cluster_centroids: Dict[int, List[float]] = {}
+        self._next_cluster_id = 1
+        if self._cache:
+            self.cluster_fingerprints()
+
     # ------------------------------------------------------------------ utils
     def _id_for(self, fingerprint: FailureFingerprint) -> str:
         return f"{fingerprint.filename}:{fingerprint.function}:{fingerprint.hash}"
@@ -102,12 +109,53 @@ class FailureFingerprintStore:
                 model_name = getattr(embedder, "name_or_path", embedder.__class__.__name__)
             fingerprint.embedding_metadata = {"model": model_name, "dim": len(vec)}
 
+    def _assign_cluster(self, record_id: str, fingerprint: FailureFingerprint) -> int:
+        """Assign ``fingerprint`` to the closest cluster and update centroids."""
+
+        best_id = None
+        best_sim = -1.0
+        for cid, centroid in self._cluster_centroids.items():
+            sim = cosine_similarity(fingerprint.embedding, centroid)
+            if sim > best_sim:
+                best_sim = sim
+                best_id = cid
+
+        thresh = self.similarity_threshold
+        if best_id is None or best_sim < thresh:
+            cid = self._next_cluster_id
+            self._next_cluster_id += 1
+            self._clusters[cid] = [record_id]
+            self._cluster_centroids[cid] = list(fingerprint.embedding)
+            fingerprint.cluster_id = cid
+            return cid
+
+        self._clusters.setdefault(best_id, []).append(record_id)
+        centroid = self._cluster_centroids[best_id]
+        n = len(self._clusters[best_id])
+        self._cluster_centroids[best_id] = [
+            (c * (n - 1) + v) / n for c, v in zip(centroid, fingerprint.embedding)
+        ]
+        fingerprint.cluster_id = best_id
+        return best_id
+
+    # ----------------------------------------------------------------- public
+    def cluster_fingerprints(self) -> None:
+        """Cluster all fingerprints currently in the store."""
+
+        self._clusters.clear()
+        self._cluster_centroids.clear()
+        self._next_cluster_id = 1
+        for record_id, fp in self._cache.items():
+            self._ensure_embedding(fp)
+            self._assign_cluster(record_id, fp)
+
     # ----------------------------------------------------------------- public
     def add(self, fingerprint: FailureFingerprint) -> None:
         """Append ``fingerprint`` to the log and index its embedding."""
 
         self._ensure_embedding(fingerprint)
         record_id = self._id_for(fingerprint)
+        self._assign_cluster(record_id, fingerprint)
         data = asdict(fingerprint)
         data["id"] = record_id
         with self.path.open("a", encoding="utf-8") as fh:
@@ -164,6 +212,19 @@ class FailureFingerprintStore:
             if sim > best:
                 best = sim
         return best
+
+    def get_cluster(self, cluster_id: int) -> List[FailureFingerprint]:
+        """Return all fingerprints belonging to ``cluster_id``."""
+
+        ids = self._clusters.get(cluster_id, [])
+        return [self._cache[rid] for rid in ids if rid in self._cache]
+
+    def cluster_for(self, fingerprint: FailureFingerprint) -> List[FailureFingerprint]:
+        """Return all fingerprints that share a cluster with ``fingerprint``."""
+
+        if fingerprint.cluster_id is None:
+            return []
+        return self.get_cluster(fingerprint.cluster_id)
 
     # -------------------------------------------------------------- maintenance
     def compact(self) -> None:

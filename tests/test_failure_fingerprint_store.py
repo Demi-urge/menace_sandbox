@@ -51,7 +51,12 @@ class DummyVectorService:
 
 def make_store(tmp_path):
     svc = DummyVectorService()
-    return FailureFingerprintStore(path=tmp_path / 'fps.jsonl', vector_service=svc, similarity_threshold=0.9, compact_interval=0)
+    return FailureFingerprintStore(
+        path=tmp_path / 'fps.jsonl',
+        vector_service=svc,
+        similarity_threshold=0.9,
+        compact_interval=0,
+    )
 
 
 def test_log_and_find_similar(tmp_path):
@@ -81,3 +86,18 @@ def test_compact_rewrites_store(tmp_path):
         lines = fh.read().strip().splitlines()
     assert len(lines) == 1 and rid2 in lines[0]
     assert rid1 not in store.vector_service.vector_store.records
+
+
+def test_cluster_assignment(tmp_path):
+    store = make_store(tmp_path)
+    fp1 = FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p')
+    fp2 = FailureFingerprint('b.py', 'g', 'e', 'trace one', 'p')
+    fp3 = FailureFingerprint('c.py', 'h', 'e', 'xyz', 'p')
+    store.log(fp1)
+    store.log(fp2)
+    store.log(fp3)
+
+    assert fp1.cluster_id == fp2.cluster_id
+    assert fp3.cluster_id != fp1.cluster_id
+    cluster = store.get_cluster(fp1.cluster_id)
+    assert {f.filename for f in cluster} == {'a.py', 'b.py'}
