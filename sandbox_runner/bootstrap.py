@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import logging
+import sqlite3
 import os
 import shutil
 import sys
@@ -292,10 +293,13 @@ def sandbox_health() -> dict[str, bool]:
     data_dir = Path(os.getenv("SANDBOX_DATA_DIR", settings.sandbox_data_dir))
     db_ok = True
     for name in settings.sandbox_required_db_files:
+        db_path = data_dir / name
         try:
-            with open(data_dir / name, "a"):
-                pass
-        except Exception:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)  # noqa: SQL001
+            conn.execute("PRAGMA schema_version")
+            conn.close()
+        except Exception as exc:
+            logger.error("failed to access database %s: %s", db_path, exc)
             db_ok = False
             break
 
