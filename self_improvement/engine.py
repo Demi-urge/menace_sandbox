@@ -393,6 +393,7 @@ from ..pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from ..env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 from .dashboards import SynergyDashboard, load_synergy_history
 from . import metrics as _si_metrics
+from .baseline_tracker import BaselineTracker, TRACKER as GLOBAL_BASELINE_TRACKER
 
 
 from .learners import (
@@ -402,22 +403,6 @@ from .learners import (
     SACSynergyLearner,
     TD3SynergyLearner,
 )
-class BaselineTracker:
-    """Track recent sandbox scores with a sliding window."""
-
-    def __init__(self, window: int = 10, scores: Iterable[float] | None = None) -> None:
-        self.window = window
-        self.scores = deque([float(s) for s in (scores or [])], maxlen=window)
-
-    def add(self, score: float) -> None:
-        self.scores.append(float(score))
-
-    @property
-    def moving_average(self) -> float:
-        return sum(self.scores) / len(self.scores) if self.scores else 0.0
-
-    def to_list(self) -> list[float]:
-        return list(self.scores)
 
 
 POLICY_STATE_LEN = 21
@@ -440,8 +425,8 @@ class SelfImprovementEngine:
         diagnostics: DiagnosticManager | None = None,
         info_db: InfoDB | None = None,
         capital_bot: "CapitalManagementBot" | None = None,
-        energy_threshold: float = 0.5,
-        baseline_window: int = 10,
+        energy_threshold: float | None = None,
+        baseline_window: int | None = None,
         baseline_margin: float = 0.0,
         learning_engine: LearningEngine | None = None,
         self_coding_engine: SelfCodingEngine | None = None,
@@ -509,10 +494,22 @@ class SelfImprovementEngine:
         self._alignment_agent: AlignmentReviewAgent | None = None
         self.last_run = 0.0
         self.capital_bot = capital_bot
-        self.energy_threshold = energy_threshold
-        self.baseline_window = baseline_window
-        self.baseline_tracker = BaselineTracker(baseline_window)
+        cfg = SandboxSettings()
+        self.energy_threshold = (
+            energy_threshold
+            if energy_threshold is not None
+            else getattr(cfg, "energy_deviation", 1.0)
+        )
+        self.baseline_window = (
+            baseline_window if baseline_window is not None else getattr(cfg, "baseline_window", 10)
+        )
+        self.baseline_tracker = GLOBAL_BASELINE_TRACKER
+        self.baseline_tracker.window = self.baseline_window
         self.baseline_margin = baseline_margin
+        self.mae_dev_multiplier = getattr(cfg, "mae_deviation", 1.0)
+        self.acc_dev_multiplier = getattr(cfg, "acc_deviation", 1.0)
+        self.borderline_dev_multiplier = getattr(cfg, "roi_deviation", 1.0)
+        self.entropy_dev_multiplier = getattr(cfg, "entropy_deviation", 1.0)
         self.learning_engine = learning_engine
         self.self_coding_engine = self_coding_engine
         self.event_bus = event_bus
@@ -562,9 +559,6 @@ class SelfImprovementEngine:
         self.workflow_ready = False
         self.workflow_high_risk = False
         self.workflow_risk: dict[str, object] | None = None
-        self.borderline_raroi_threshold = getattr(
-            settings, "borderline_raroi_threshold", 0.0
-        )
         self.tau = tau if tau is not None else getattr(
             settings, "borderline_confidence_threshold", 0.0
         )
@@ -574,7 +568,7 @@ class SelfImprovementEngine:
                 self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
                 self.roi_tracker = roi_tracker or ROITracker(
                     confidence_threshold=self.tau,
-                    raroi_borderline_threshold=self.borderline_raroi_threshold,
+                    raroi_borderline_threshold=self._raroi_threshold(),
                     borderline_bucket=self.borderline_bucket,
                 )
                 self._adaptive_roi_last_train = time.time()
@@ -1451,6 +1445,13 @@ class SelfImprovementEngine:
         return []
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    def _raroi_threshold(self) -> float:
+        """Dynamic borderline ROI threshold based on baseline statistics."""
+        base = self.baseline_tracker.get("roi")
+        std = self.baseline_tracker.std("roi")
+        return base - self.borderline_dev_multiplier * std
+
     def _load_state(self) -> None:
         if not self.state_path or not self.state_path.exists():
             return
@@ -1466,7 +1467,10 @@ class SelfImprovementEngine:
             self.last_run = float(data.get("last_run", self.last_run))
             self.roi_delta_ema = float(data.get("roi_delta_ema", self.roi_delta_ema))
             scores = [float(x) for x in data.get("sandbox_scores", [])]
-            self.baseline_tracker = BaselineTracker(self.baseline_window, scores)
+            self.baseline_tracker = GLOBAL_BASELINE_TRACKER
+            self.baseline_tracker.window = self.baseline_window
+            for s in scores:
+                self.baseline_tracker.update(score=s)
             successes = [bool(x) for x in data.get("success_history", [])]
             self.success_history = deque(successes, maxlen=self.baseline_window)
         except Exception as exc:
@@ -1488,7 +1492,7 @@ class SelfImprovementEngine:
                         "roi_group_history": self.roi_group_history,
                         "last_run": self.last_run,
                         "roi_delta_ema": self.roi_delta_ema,
-                        "sandbox_scores": self.baseline_tracker.to_list(),
+                        "sandbox_scores": self.baseline_tracker.to_dict().get("score", []),
                         "success_history": list(self.success_history),
                     },
                     fh,
@@ -2758,7 +2762,8 @@ class SelfImprovementEngine:
                 confidence = 1.0
                 final_score, needs_review = raroi, False
             weight = final_score * mult
-            if needs_review or raroi < self.borderline_raroi_threshold:
+            threshold_val = self._raroi_threshold()
+            if needs_review or raroi < threshold_val:
                 reason = "needs_review" if needs_review else "low_raroi"
                 label: str | None = None
                 recs: Dict[str, str] = {}
@@ -2779,7 +2784,7 @@ class SelfImprovementEngine:
                         confidence=confidence,
                         raroi=raroi,
                         weight=weight,
-                        threshold=self.tau,
+                        threshold=threshold_val,
                         shadow_test=True,
                         reason=reason,
                         workflow_label=label,
@@ -2798,7 +2803,7 @@ class SelfImprovementEngine:
                             evaluator = getattr(self, "micro_pilot_evaluator", None)
                             self.borderline_bucket.process(
                                 evaluator,
-                                raroi_threshold=self.borderline_raroi_threshold,
+                                raroi_threshold=threshold_val,
                                 confidence_threshold=getattr(
                                     self.roi_tracker, "confidence_threshold", 0.0
                                 ),
@@ -2975,14 +2980,19 @@ class SelfImprovementEngine:
         tracker = getattr(self, "tracker", None)
         if tracker is None:
             return
-        mae_threshold = 0.1
-        acc_threshold = 0.6
+        mae_avg = self.baseline_tracker.get("mae")
+        mae_std = self.baseline_tracker.std("mae")
+        acc_avg = self.baseline_tracker.get("acc")
+        acc_std = self.baseline_tracker.std("acc")
+        mae_threshold = mae_avg + self.mae_dev_multiplier * mae_std
+        acc_threshold = acc_avg - self.acc_dev_multiplier * acc_std
         try:
             acc, mae = self.roi_predictor.evaluate_model(
                 tracker,
                 mae_threshold=mae_threshold,
                 acc_threshold=acc_threshold,
             )
+            self.baseline_tracker.update(mae=mae, acc=acc)
             try:
                 self.roi_predictor.record_drift(acc, mae)
             except Exception:
@@ -3210,7 +3220,8 @@ class SelfImprovementEngine:
                 else:
                     confidence = 1.0
                     final_score, needs_review = raroi, False
-                if needs_review or raroi < self.borderline_raroi_threshold:
+                threshold_val = self._raroi_threshold()
+                if needs_review or raroi < threshold_val:
                     reason = "needs_review" if needs_review else "low_raroi"
                     label: str | None = None
                     recs: Dict[str, str] = {}
@@ -3235,6 +3246,7 @@ class SelfImprovementEngine:
                             reason=reason,
                             workflow_label=label,
                             recommendations=recs,
+                            threshold=threshold_val,
                         ),
                     )
                     try:
@@ -3249,7 +3261,7 @@ class SelfImprovementEngine:
                                 evaluator = getattr(self, "micro_pilot_evaluator", None)
                                 self.borderline_bucket.process(
                                     evaluator,
-                                    raroi_threshold=self.borderline_raroi_threshold,
+                                    raroi_threshold=threshold_val,
                                     confidence_threshold=getattr(
                                         self.roi_tracker, "confidence_threshold", 0.0
                                     ),
@@ -6532,13 +6544,13 @@ class SelfImprovementEngine:
                                         self, "micro_pilot_evaluator", None
                                     )
                                     self.borderline_bucket.process(
-                                        evaluator,
-                                        raroi_threshold=self.borderline_raroi_threshold,
-                                        confidence_threshold=getattr(
-                                            self.roi_tracker,
-                                            "confidence_threshold",
-                                            0.0,
-                                        ),
+                                    evaluator,
+                                    raroi_threshold=self._raroi_threshold(),
+                                    confidence_threshold=getattr(
+                                        self.roi_tracker,
+                                        "confidence_threshold",
+                                        0.0,
+                                    ),
                                     )
                                 except Exception:
                                     logger.exception("Unhandled exception in self_improvement")
@@ -7074,9 +7086,29 @@ class SelfImprovementEngine:
                     )
                 except Exception:
                     self.logger.exception("workflow scoring failed")
+            score = getattr(getattr(result, "roi", None), "success_rate", 0.0)
+            entropy = getattr(getattr(result, "roi", None), "workflow_synergy_score", 0.0)
+            score_avg = self.baseline_tracker.get("score")
+            roi_avg = self.baseline_tracker.get("roi")
+            entropy_avg = self.baseline_tracker.get("entropy")
+            energy_avg = self.baseline_tracker.get("energy")
+            self.baseline_tracker.update(
+                score=score, roi=roi_realish, entropy=entropy, energy=energy
+            )
+            score_delta = score - score_avg
+            roi_delta = roi_realish - roi_avg
+            entropy_delta = entropy - entropy_avg
+            energy_delta = energy - energy_avg
             self.logger.info(
                 "cycle complete",
-                extra=log_record(roi=roi_realish, predicted_roi=pred_realish),
+                extra=log_record(
+                    roi=roi_realish,
+                    predicted_roi=pred_realish,
+                    score_delta=score_delta,
+                    roi_delta=roi_delta,
+                    entropy_delta=entropy_delta,
+                    energy_delta=energy_delta,
+                ),
             )
             return result
         except Exception:
@@ -7136,11 +7168,13 @@ class SelfImprovementEngine:
                 self._last_growth_type = None
             momentum = self.momentum_coefficient
             current_energy *= 1 + momentum
-            moving_avg = self.baseline_tracker.moving_average
+            moving_avg = self.baseline_tracker.get("energy")
+            std = self.baseline_tracker.std("energy")
             delta = current_energy - moving_avg
-            self.baseline_tracker.add(current_energy)
+            self.baseline_tracker.update(energy=current_energy)
             self._save_state()
-            if delta < -self.baseline_margin and not self._cycle_running:
+            threshold = moving_avg - self.energy_threshold * std
+            if current_energy < threshold and not self._cycle_running:
                 try:
                     await asyncio.to_thread(
                         self.run_cycle, energy=int(round(current_energy * 5))
@@ -7152,14 +7186,14 @@ class SelfImprovementEngine:
                         exc,
                     )
             else:
-                if delta >= -self.baseline_margin:
+                if current_energy >= threshold:
                     self.logger.info(
                         "score above baseline - skipping cycle",
                         extra=log_record(
                             score=current_energy,
-                            baseline=moving_avg,
+                            baseline=threshold,
                             delta=delta,
-                            margin=self.baseline_margin,
+                            margin=self.energy_threshold,
                         ),
                     )
             await asyncio.sleep(self.interval)

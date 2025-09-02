@@ -293,7 +293,31 @@ class SandboxSettings(BaseSettings):
     )
     roi_cycles: int | None = Field(None, env="ROI_CYCLES")
     synergy_cycles: int | None = Field(None, env="SYNERGY_CYCLES")
+    baseline_window: int = Field(10, env="BASELINE_WINDOW")
+    mae_deviation: float = Field(1.0, env="MAE_DEVIATION")
+    acc_deviation: float = Field(1.0, env="ACC_DEVIATION")
+    energy_deviation: float = Field(1.0, env="ENERGY_DEVIATION")
+    roi_deviation: float = Field(1.0, env="ROI_DEVIATION")
+    entropy_deviation: float = Field(1.0, env="ENTROPY_DEVIATION")
     save_synergy_history: bool | None = Field(None, env="SAVE_SYNERGY_HISTORY")
+
+    @field_validator("baseline_window")
+    def _baseline_window_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("baseline_window must be positive")
+        return v
+
+    @field_validator(
+        "mae_deviation",
+        "acc_deviation",
+        "energy_deviation",
+        "roi_deviation",
+        "entropy_deviation",
+    )
+    def _baseline_non_negative(cls, v: float, info: Any) -> float:
+        if v < 0:
+            raise ValueError(f"{info.field_name} must be non-negative")
+        return v
     menace_env_file: str = Field(".env", env="MENACE_ENV_FILE")
     sandbox_data_dir: str = Field("sandbox_data", env="SANDBOX_DATA_DIR")
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
