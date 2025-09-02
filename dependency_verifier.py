@@ -5,6 +5,9 @@ import hashlib
 import importlib
 from importlib import metadata
 from typing import Dict, Iterable
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def verify_dependencies(packages: Dict[str, str]) -> Dict[str, str]:
@@ -20,8 +23,24 @@ def verify_dependencies(packages: Dict[str, str]) -> Dict[str, str]:
     for name, version in packages.items():
         try:
             installed = metadata.version(name)
-        except Exception:
+        except metadata.PackageNotFoundError:
             failures[name] = "missing"
+            logger.warning(
+                "package '%s' is not installed; install it with 'pip install %s' or upgrade with 'pip install --upgrade %s'",
+                name,
+                name,
+                name,
+            )
+            continue
+        except Exception as exc:
+            failures[name] = "missing"
+            logger.warning(
+                "failed to determine version for package '%s': %s. install or upgrade with 'pip install %s' or 'pip install --upgrade %s'",
+                name,
+                exc,
+                name,
+                name,
+            )
             continue
         if version and installed != version:
             failures[name] = installed
