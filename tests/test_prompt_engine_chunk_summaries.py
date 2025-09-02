@@ -8,7 +8,7 @@ sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=obje
 sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=object))
 
 from prompt_engine import PromptEngine  # noqa: E402
-import prompt_chunking as pc  # noqa: E402
+import chunking as pc  # noqa: E402
 
 
 class DummyRetriever:

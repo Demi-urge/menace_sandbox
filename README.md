@@ -19,7 +19,7 @@ configuration. The generated file includes stub values for critical settings:
 Large modules are split and summarised before prompting so the LLM never sees
 more than the configured token budget. The pipeline consists of:
 
-1. `chunk_code` – walks a module and produces token‑bounded chunks.
+1. `chunk_file` – walks a module and produces token‑bounded chunks.
 2. `summarize_code` – generates a short natural‑language blurb for each chunk.
 3. `get_chunk_summaries` – stores the code and summary in
    `chunk_summary_cache/` keyed by a SHA256 hash of the chunk. Cached entries are

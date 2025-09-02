@@ -1,4 +1,4 @@
-import prompt_chunker as pc
+import chunking as pc
 import textwrap
 
 
@@ -22,9 +22,9 @@ def test_ast_boundaries_preserved() -> None:
     )
     chunks = pc.split_into_chunks(code, 12)
     assert len(chunks) == 2
-    assert chunks[0].source.lstrip().startswith("def a")
+    assert chunks[0].text.lstrip().startswith("def a")
     assert chunks[0].start_line == 1
-    assert chunks[1].source.lstrip().startswith("def b")
+    assert chunks[1].text.lstrip().startswith("def b")
     assert chunks[1].start_line == 4
     assert chunks[0].end_line < chunks[1].start_line
 
@@ -43,11 +43,11 @@ def test_get_chunk_summaries_cache_hit(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_summary(code: str) -> str:
+    def fake_summary(code: str, llm=None) -> str:
         calls["n"] += 1
         return f"sum{calls['n']}"
 
-    monkeypatch.setattr(pc, "summarize_chunk", fake_summary)
+    monkeypatch.setattr(pc, "summarize_code", fake_summary)
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
     monkeypatch.setattr(pc, "CACHE_DIR", cache_dir)
@@ -66,13 +66,13 @@ def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_summary(code: str) -> str:
+    def fake_summary(code: str, llm=None) -> str:
         calls["n"] += 1
         return f"sum{calls['n']}"
 
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    monkeypatch.setattr(pc, "summarize_chunk", fake_summary)
+    monkeypatch.setattr(pc, "summarize_code", fake_summary)
     monkeypatch.setattr(pc, "CACHE_DIR", cache_dir)
 
     first = pc.get_chunk_summaries(file, 50)

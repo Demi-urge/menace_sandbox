@@ -1,52 +1,66 @@
-import sys
-import types
 from pathlib import Path
 from typing import Any, Dict, List
+import sys
+import types
+
+import chunking
+import chunk_summarizer
+from prompt_engine import PromptEngine
+import chunking as pc
+
 
 # Lightweight llm_interface stub to avoid heavy dependencies
-llm_stub = types.ModuleType('llm_interface')
+llm_stub = types.ModuleType("llm_interface")
+
+
 class _LLMClient:
-    def __init__(self, model: str = '') -> None:
+    def __init__(self, model: str = "") -> None:
         self.model = model
 
     def generate(self, prompt):
         raise NotImplementedError
 
+
 class _LLMResult:
-    def __init__(self, text: str = '') -> None:
+    def __init__(self, text: str = "") -> None:
         self.text = text
+
 
 llm_stub.LLMClient = _LLMClient
 llm_stub.LLMResult = _LLMResult
 llm_stub.Completion = _LLMResult
+
+
 class _Prompt:
     def __init__(self, system: str = "", user: str = "", **kwargs) -> None:
         self.system = system
         self.user = user
 
-llm_stub.Prompt = _Prompt
-sys.modules.setdefault('llm_interface', llm_stub)
 
+llm_stub.Prompt = _Prompt
+sys.modules.setdefault("llm_interface", llm_stub)
 
 
 # Minimal vector_service stubs for PromptEngine
-vec_mod = types.ModuleType('vector_service')
+vec_mod = types.ModuleType("vector_service")
 vec_mod.CognitionLayer = object
 vec_mod.PatchLogger = object
 vec_mod.VectorServiceError = Exception
-sys.modules.setdefault('vector_service', vec_mod)
-sys.modules.setdefault('vector_service.retriever', types.ModuleType('vector_service.retriever'))
-sys.modules.setdefault('vector_service.decorators', types.ModuleType('vector_service.decorators'))
-
-import chunking
-import chunk_summarizer
+sys.modules.setdefault("vector_service", vec_mod)
+sys.modules.setdefault(
+    "vector_service.retriever", types.ModuleType("vector_service.retriever")
+)
+sys.modules.setdefault(
+    "vector_service.decorators", types.ModuleType("vector_service.decorators")
+)
 
 # Stub heavy dependencies for PromptEngine
-sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=object))
-sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=object))
-
-from prompt_engine import PromptEngine
-import prompt_chunking as pc
+sys.modules.setdefault(
+    "gpt_memory", types.SimpleNamespace(GPTMemoryManager=object)
+)
+sys.modules.setdefault(
+    "code_database", types.SimpleNamespace(PatchHistoryDB=object)
+)
 
 
 def test_chunk_file_ast_and_token_limits(tmp_path, monkeypatch):
@@ -118,7 +132,9 @@ def test_prompt_from_summaries_under_limit(tmp_path, monkeypatch):
 
     if pc._count_tokens(code) > engine.token_threshold:
         chunks = pc.get_chunk_summaries(file, engine.chunk_token_threshold)
-        context = engine._trim_tokens("\n".join(c["summary"] for c in chunks), engine.token_threshold)
+        context = engine._trim_tokens(
+            "\n".join(c["summary"] for c in chunks), engine.token_threshold
+        )
     else:
         context = code
 
@@ -128,21 +144,19 @@ def test_prompt_from_summaries_under_limit(tmp_path, monkeypatch):
     assert pc._count_tokens(prompt.user) <= engine.token_threshold
 
 
-
 def test_patch_application_on_chunked_file(tmp_path, monkeypatch):
     code = (
-        'def a():\n    pass\n\n'
-        'def b():\n    pass\n'
+        "def a():\n    pass\n\n"
+        "def b():\n    pass\n"
     )
-    path = tmp_path / 'big.py'
+    path = tmp_path / "big.py"
     path.write_text(code)
-    monkeypatch.setattr(chunking, '_count_tokens', lambda t: len(t.split()))
+    monkeypatch.setattr(chunking, "_count_tokens", lambda t: len(t.split()))
     chunks = chunking.chunk_file(path, 5)
-    patches = ['# patch 1', '# patch 2']
+    patches = ["# patch 1", "# patch 2"]
     lines = path.read_text().splitlines()
     for patch, chunk in reversed(list(zip(patches, chunks))):
         lines.insert(chunk.end_line, patch)
-    path.write_text('\n'.join(lines))
+    path.write_text("\n".join(lines))
     text = path.read_text()
-    assert '# patch 1' in text and '# patch 2' in text
-
+    assert "# patch 1" in text and "# patch 2" in text

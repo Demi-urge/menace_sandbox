@@ -268,7 +268,7 @@ class PromptEngine:
         # Apply persisted optimiser preferences
         self.apply_optimizer_format(__name__, "build_prompt")
         try:
-            import prompt_chunking as _pc
+            import chunking as _pc
 
             self.chunk_summary_cache_dir = Path(self.chunk_summary_cache_dir)
             _pc.CACHE_DIR = self.chunk_summary_cache_dir

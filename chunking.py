@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, TYPE_CHECKING
+from typing import List, TYPE_CHECKING, Dict
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
 import ast
 import hashlib
+import json
 
 try:  # Optional dependency for accurate token counting
     import tiktoken  # type: ignore
@@ -35,7 +36,7 @@ def _count_tokens(text: str) -> int:
     return len(text.split())
 
 
-@dataclass
+@dataclass(slots=True)
 class CodeChunk:
     """Representation of a contiguous code block."""
 
@@ -43,25 +44,17 @@ class CodeChunk:
     end_line: int
     text: str
     hash: str
+    token_count: int
 
 
-def chunk_file(path: Path, max_tokens: int) -> List[CodeChunk]:
-    """Return token limited ``CodeChunk`` objects for ``path``.
+def split_into_chunks(code: str, max_tokens: int) -> List[CodeChunk]:
+    """Split ``code`` into :class:`CodeChunk` objects under ``max_tokens`` tokens."""
 
-    The file is parsed using :mod:`ast` and split at top-level ``FunctionDef``
-    and ``ClassDef`` boundaries. Nodes are grouped together while ensuring the
-    accumulated token count does not exceed ``max_tokens``. Individual nodes
-    larger than ``max_tokens`` are emitted as their own chunk.
-    """
-
-    source = path.read_text()
-    lines = source.splitlines()
+    lines = code.splitlines()
     try:
-        module = ast.parse(source)
+        module = ast.parse(code)
     except SyntaxError:  # pragma: no cover - syntax error fallback
-        text = source.rstrip()
-        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        return [CodeChunk(1, len(lines), text, h)]
+        return _split_by_lines(lines, 1, max_tokens)
 
     segments: List[tuple[int, int, str]] = []
     prev_end = 1
@@ -90,10 +83,27 @@ def chunk_file(path: Path, max_tokens: int) -> List[CodeChunk]:
 
     for start, end, text in segments:
         count = _count_tokens(text)
+        if count > max_tokens:
+            if current:
+                chunk_text = "\n".join(current).rstrip()
+                h = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
+                t_count = _count_tokens(chunk_text)
+                chunks.append(
+                    CodeChunk(current_start, current_end, chunk_text, h, t_count)
+                )
+                current = []
+                token_total = 0
+            chunks.extend(
+                _split_by_lines(text.splitlines(), start, max_tokens)
+            )
+            current_start = end + 1
+            current_end = end
+            continue
         if current and token_total + count > max_tokens:
             chunk_text = "\n".join(current).rstrip()
             h = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
-            chunks.append(CodeChunk(current_start, current_end, chunk_text, h))
+            t_count = _count_tokens(chunk_text)
+            chunks.append(CodeChunk(current_start, current_end, chunk_text, h, t_count))
             current = [text]
             current_start = start
             current_end = end
@@ -108,15 +118,54 @@ def chunk_file(path: Path, max_tokens: int) -> List[CodeChunk]:
     if current:
         chunk_text = "\n".join(current).rstrip()
         h = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
-        chunks.append(CodeChunk(current_start, current_end, chunk_text, h))
+        t_count = _count_tokens(chunk_text)
+        chunks.append(CodeChunk(current_start, current_end, chunk_text, h, t_count))
     return chunks
 
 
-def summarize_code(text: str, llm: LLMClient | None) -> str:
-    """Return a short summary for ``text`` using ``llm`` when available."""
+def chunk_file(path: Path, max_tokens: int) -> List[CodeChunk]:
+    """Return token limited ``CodeChunk`` objects for ``path``."""
+
+    source = path.read_text()
+    return split_into_chunks(source, max_tokens)
+
+
+def _split_by_lines(lines: List[str], start: int, limit: int) -> List[CodeChunk]:
+    out: List[CodeChunk] = []
+    buf: List[str] = []
+    buf_start = start
+    for line in lines:
+        tentative = "\n".join(buf + [line])
+        if _count_tokens(tentative) <= limit or not buf:
+            buf.append(line)
+            continue
+        text = "\n".join(buf).rstrip()
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        out.append(CodeChunk(buf_start, buf_start + len(buf) - 1, text, h, _count_tokens(text)))
+        buf_start += len(buf)
+        buf = [line]
+    if buf:
+        text = "\n".join(buf).rstrip()
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        out.append(CodeChunk(buf_start, buf_start + len(buf) - 1, text, h, _count_tokens(text)))
+    return out
+
+
+def summarize_code(text: str, llm: LLMClient | None = None) -> str:
+    """Return a short summary for ``text`` using available helpers."""
+
+    try:  # pragma: no cover - optional dependency
+        from micro_models.diff_summarizer import summarize_diff as _summ
+
+        result = _summ("", text)
+        if result:
+            return result
+    except Exception:
+        pass
 
     if llm is not None:
         from prompt_types import Prompt
+
         prompt = Prompt(
             system="Summarise the following code snippet in one sentence.",
             user=text,
@@ -127,6 +176,7 @@ def summarize_code(text: str, llm: LLMClient | None) -> str:
                 return result.text.strip()
         except Exception:
             pass
+
     for line in text.strip().splitlines():
         line = line.strip()
         if line:
@@ -134,4 +184,45 @@ def summarize_code(text: str, llm: LLMClient | None) -> str:
     return ""
 
 
-__all__ = ["CodeChunk", "chunk_file", "summarize_code"]
+CACHE_DIR = Path("chunk_summary_cache")
+CACHE_DIR.mkdir(exist_ok=True)
+
+
+def get_chunk_summaries(
+    path: Path, max_tokens: int, llm: LLMClient | None = None
+) -> List[Dict[str, str]]:
+    """Return cached summaries for ``path`` split into ``max_tokens`` chunks."""
+
+    source = path.read_text()
+    file_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    cache_file = CACHE_DIR / f"{file_hash}.json"
+
+    if cache_file.exists():
+        try:
+            data = json.loads(cache_file.read_text())
+            if data.get("hash") == file_hash:
+                chunks = data.get("chunks", [])
+                if isinstance(chunks, list):
+                    return [dict(c) for c in chunks]
+        except Exception:  # pragma: no cover - corrupted cache
+            pass
+
+    chunks = chunk_file(path, max_tokens)
+    summaries: List[Dict[str, str]] = []
+    for ch in chunks:
+        summary = summarize_code(ch.text, llm)
+        summaries.append({"hash": ch.hash, "summary": summary})
+
+    cache_file.write_text(
+        json.dumps({"hash": file_hash, "chunks": summaries}, indent=2, sort_keys=True)
+    )
+    return summaries
+
+
+__all__ = [
+    "CodeChunk",
+    "split_into_chunks",
+    "chunk_file",
+    "summarize_code",
+    "get_chunk_summaries",
+]
