@@ -831,6 +831,8 @@ class SelfImprovementEngine:
         self.stagnation_cycles: int = getattr(cfg.roi, "stagnation_cycles", 3)
         self._stagnation_streak: int = 0
         self._momentum_streak: int = 0
+        self.delta_score_history: deque[float] = deque(maxlen=self.baseline_window)
+        self._delta_score_streak: int = 0
         self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
         self.alignment_flagger = HumanAlignmentFlagger()
@@ -1828,6 +1830,32 @@ class SelfImprovementEngine:
             return float(vals[-1])
         return float(current_avg - prev_avg)
 
+    # ------------------------------------------------------------------
+    def _compute_delta_score(self) -> tuple[float, dict[str, float]]:
+        """Return combined delta score and its components.
+
+        The score is a simple sum of the contributing metrics where positive
+        ROI changes and momentum improve the result while entropy increases
+        decrease it.  Individual components are returned for audit logging.
+        """
+
+        roi_delta = getattr(self, "roi_delta_ema", 0.0)
+        entropy_delta = abs(getattr(self, "entropy_delta_ema", 0.0))
+        entropy_std = self.baseline_tracker.std("entropy")
+        entropy_threshold = self.entropy_dev_multiplier * entropy_std
+        if entropy_delta <= entropy_threshold:
+            entropy_delta = 0.0
+        else:
+            entropy_delta -= entropy_threshold
+        momentum_delta = self._metric_delta("success_rate")
+        score = roi_delta - entropy_delta + momentum_delta
+        components = {
+            "roi_delta": roi_delta,
+            "entropy_delta": entropy_delta,
+            "momentum_delta": momentum_delta,
+        }
+        return score, components
+
     def _evaluate_scenario_metrics(self, metrics: dict[str, float]) -> None:
         """Evaluate scenario metrics and trigger remediation when thresholds fail."""
         prev = getattr(self, "_last_scenario_metrics", {})
@@ -2029,6 +2057,36 @@ class SelfImprovementEngine:
                 )
         else:
             self._momentum_streak = 0
+
+    # ------------------------------------------------------------------
+    def _check_delta_score(self) -> None:
+        """Escalate urgency when combined delta score trends negative."""
+
+        score, components = self._compute_delta_score()
+        self.baseline_tracker.update(score=score)
+        self.delta_score_history.append(score)
+        avg = sum(self.delta_score_history) / len(self.delta_score_history)
+        self.logger.debug(
+            "delta score update",
+            extra=log_record(delta_score=score, delta_score_avg=avg, **components),
+        )
+        if (
+            len(self.delta_score_history) >= self.baseline_window
+            and avg < 0.0
+        ):
+            self._delta_score_streak += 1
+            if self._delta_score_streak >= self.stagnation_cycles:
+                self.urgency_tier += 1
+                self.logger.warning(
+                    "delta_score negative trend; increasing urgency tier",
+                    extra=log_record(
+                        tier=self.urgency_tier,
+                        delta_score_avg=avg,
+                        **components,
+                    ),
+                )
+        else:
+            self._delta_score_streak = 0
 
     # ------------------------------------------------------------------
     def _alignment_review_last_commit(self, description: str) -> None:
@@ -3020,18 +3078,13 @@ class SelfImprovementEngine:
             return True
         if time.time() - self.last_run < self.interval:
             return False
-        roi_delta = getattr(self, "roi_delta_ema", 0.0)
-        entropy_delta = abs(getattr(self, "entropy_delta_ema", 0.0))
-        entropy_std = self.baseline_tracker.std("entropy")
-        entropy_threshold = self.entropy_dev_multiplier * entropy_std
-        if entropy_delta <= entropy_threshold:
-            entropy_delta = 0.0
-        else:
-            entropy_delta -= entropy_threshold
-        success_momentum = self._metric_delta("success_rate")
-        if roi_delta == 0.0 and entropy_delta == 0.0 and success_momentum == 0.0:
+        score, components = self._compute_delta_score()
+        self.logger.debug(
+            "delta score evaluation",
+            extra=log_record(delta_score=score, **components),
+        )
+        if all(v == 0.0 for v in components.values()):
             return True
-        score = (roi_delta - entropy_delta + success_momentum) / 3.0
         return score > 0.0
 
     def _record_state(self) -> None:
@@ -6913,6 +6966,7 @@ class SelfImprovementEngine:
             self.success_history.append(delta > 0)
             self._check_chain_stagnation()
             self._check_momentum()
+            self._check_delta_score()
             warnings: dict[str, list[dict[str, Any]]] = {}
             if delta > 0:
                 try:
