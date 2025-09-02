@@ -91,6 +91,7 @@ class PromptEvolutionMemory:
             },
             "format": format_meta,
             "exec_result": exec_result,
+            "success": success,
         }
         if roi is not None:
             record["roi"] = roi
