@@ -38,6 +38,42 @@ vec_module = types.ModuleType("vector_service")
 vec_module.SharedVectorService = DummyVectorService
 sys.modules.setdefault("vector_service", vec_module)
 
+# stubs for modules that perform complex imports
+pkg = types.ModuleType("menace_sandbox")
+pkg.__path__ = [str(Path.cwd())]
+pkg.RAISE_ERRORS = False
+sys.modules.setdefault("menace_sandbox", pkg)
+sys.modules.setdefault("menace", pkg)
+
+cd_mod = types.ModuleType("menace_sandbox.config_discovery")
+cd_mod.ConfigDiscovery = type("ConfigDiscovery", (), {})
+sys.modules.setdefault("config_discovery", cd_mod)
+sys.modules.setdefault("menace_sandbox.config_discovery", cd_mod)
+
+# minimal prompt optimizer stub
+po_mod = types.ModuleType("prompt_optimizer")
+po_mod.PromptOptimizer = type(
+    "PromptOptimizer",
+    (),
+    {
+        "__init__": lambda self, *a, **k: setattr(
+            self,
+            "stats",
+            {(
+                "m",
+                "a",
+                "neutral",
+                ("H",),
+                "start",
+                False,
+                False,
+                False,
+            ): types.SimpleNamespace(success=0)},
+        )
+    },
+)
+sys.modules.setdefault("prompt_optimizer", po_mod)
+
 from failure_fingerprint_store import FailureFingerprint, FailureFingerprintStore  # noqa: E402
 from prompt_optimizer import PromptOptimizer  # noqa: E402
 
@@ -96,7 +132,15 @@ def _load_manager(
     # package stub to avoid running heavy __init__
     pkg = types.ModuleType("menace_sandbox")
     pkg.__path__ = [str(Path.cwd())]
+    pkg.RAISE_ERRORS = False
     monkeypatch.setitem(sys.modules, "menace_sandbox", pkg)
+    monkeypatch.setitem(sys.modules, "menace", pkg)
+
+    # stub config_discovery to avoid relative import errors
+    cd_mod = types.ModuleType("menace_sandbox.config_discovery")
+    cd_mod.ConfigDiscovery = type("ConfigDiscovery", (), {})
+    monkeypatch.setitem(sys.modules, "config_discovery", cd_mod)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.config_discovery", cd_mod)
 
     # stub sandbox_runner.test_harness with sequential results
     results: list[TestResult] = list(initial_results or [])

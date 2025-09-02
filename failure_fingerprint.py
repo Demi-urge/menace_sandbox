@@ -25,6 +25,7 @@ class FailureFingerprint:
     error_message: str
     stack_trace: str
     prompt_text: str
+    cluster_id: int | None = None
     hash: str = field(init=False)
     embedding: List[float] = field(default_factory=list)
     embedding_metadata: Dict[str, Any] = field(default_factory=dict)
