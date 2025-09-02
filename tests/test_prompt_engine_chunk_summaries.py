@@ -1,6 +1,5 @@
 import sys
 import types
-from pathlib import Path
 from typing import Any, Dict, List
 
 # Stub heavy dependencies before importing PromptEngine
@@ -9,7 +8,7 @@ sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=obj
 
 from prompt_engine import PromptEngine  # noqa: E402
 import prompt_engine as pe  # noqa: E402
-import chunk_summarizer as cs  # noqa: E402
+import chunking as pc  # noqa: E402
 
 
 class DummyRetriever:
@@ -38,7 +37,7 @@ def test_prompt_engine_auto_summarises_when_limit_exceeded(monkeypatch):
         calls.append(text)
         return f"sum:{text}"
 
-    monkeypatch.setattr(cs, "summarize_code", fake_summarize)
+    monkeypatch.setattr(pc, "summarize_code", fake_summarize)
     monkeypatch.setattr(pe, "summarize_code", fake_summarize)
 
     records = [{"score": 0.9, "metadata": {"summary": "irrelevant", "tests_passed": True}}]

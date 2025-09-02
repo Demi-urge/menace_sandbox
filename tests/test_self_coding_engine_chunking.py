@@ -118,6 +118,7 @@ _setmod("roi_tracker", roi_mod)
 
 import menace_sandbox.self_coding_engine as sce  # noqa: E402
 from chunking import CodeChunk  # noqa: E402
+import chunking as pc  # noqa: E402
 
 
 def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
@@ -133,8 +134,9 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
             CodeChunk(start_line=3, end_line=4, text="code2", hash="h2", token_count=5),
         ]
 
+    monkeypatch.setattr(pc, "split_into_chunks", fake_chunk_file)
     monkeypatch.setattr(sce, "split_into_chunks", fake_chunk_file)
-    monkeypatch.setattr(sce, "summarize_code", lambda text, llm: f"sum:{text}")
+    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: f"sum:{text}")
 
     captured: dict[str, object] = {}
 
@@ -206,6 +208,7 @@ def test_generate_helper_resummarizes_cached_chunks(monkeypatch, tmp_path):
             CodeChunk(start_line=3, end_line=4, text="code2", hash="h2", token_count=5),
         ]
 
+    monkeypatch.setattr(pc, "split_into_chunks", fake_chunk_file)
     monkeypatch.setattr(sce, "split_into_chunks", fake_chunk_file)
 
     calls = {"n": 0}
@@ -214,7 +217,7 @@ def test_generate_helper_resummarizes_cached_chunks(monkeypatch, tmp_path):
         calls["n"] += 1
         return f"sum:{text}".strip()
 
-    monkeypatch.setattr(sce, "summarize_code", fake_summary)
+    monkeypatch.setattr(pc, "summarize_code", fake_summary)
 
     class DummyPrompt:
         def __init__(self, text: str = "") -> None:
@@ -252,7 +255,7 @@ def test_generate_helper_resummarizes_cached_chunks(monkeypatch, tmp_path):
     engine.generate_helper("do something", path=target)
     engine.generate_helper("do something", path=target)
 
-    assert calls["n"] == 4  # two chunks per call, called twice
+    assert calls["n"] == 2  # summaries computed once and cached
 
 
 def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
@@ -264,8 +267,9 @@ def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
             CodeChunk(3, 4, "code2", "h2", 5),
         ]
 
+    monkeypatch.setattr(pc, "split_into_chunks", fake_split)
     monkeypatch.setattr(sce, "split_into_chunks", fake_split)
-    monkeypatch.setattr(sce, "summarize_code", lambda text, llm: f"sum:{text}")
+    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: f"sum:{text}")
 
     captured: dict[str, object] = {}
 

@@ -13,7 +13,6 @@ import tempfile
 import py_compile
 import re
 import traceback
-import hashlib
 from datetime import datetime
 
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
@@ -125,8 +124,7 @@ except Exception:  # pragma: no cover - graceful degradation
         return None
 from .prompt_engine import PromptEngine, _ENCODER
 from .prompt_memory_trainer import PromptMemoryTrainer
-from chunking import split_into_chunks
-from chunk_summarizer import summarize_code
+from chunking import split_into_chunks, get_chunk_summaries
 from chunk_summary_cache import ChunkSummaryCache
 try:
     from .prompt_optimizer import PromptOptimizer
@@ -759,49 +757,22 @@ class SelfCodingEngine:
             if code and threshold and _count_tokens(code) > threshold:
                 self.logger.debug("using chunk summaries for %s", path)
                 try:
-                    path_hash = self.chunk_cache.hash_path(path)
-                    cached = self.chunk_cache.get(path_hash) or {}
-                    cached_summaries = list(cached.get("summaries", [])) if cached else []
-                    cache_map = {c.get("hash"): c for c in cached_summaries}
+                    summary_entries = get_chunk_summaries(
+                        path, threshold, self.llm_client, cache=self.chunk_cache
+                    )
                     chunks = split_into_chunks(code, threshold)
                     summaries = []
                     selected_source = ""
                     selected_lines: tuple[int, int] | None = None
-                    updated = False
                     for idx, ch in enumerate(chunks):
-                        ch_hash = hashlib.sha256(ch.text.encode("utf-8")).hexdigest()
-                        summary_text = summarize_code(ch.text, self.llm_client)
-                        entry = cache_map.get(ch_hash)
-                        if entry is None:
-                            entry = {
-                                "start_line": ch.start_line,
-                                "end_line": ch.end_line,
-                                "hash": ch_hash,
-                                "summary": summary_text,
-                            }
-                            cached_summaries.append(entry)
-                            cache_map[ch_hash] = entry
-                            updated = True
-                        elif (
-                            entry.get("summary") != summary_text
-                            or entry.get("start_line") != ch.start_line
-                            or entry.get("end_line") != ch.end_line
-                        ):
-                            entry.update(
-                                {
-                                    "start_line": ch.start_line,
-                                    "end_line": ch.end_line,
-                                    "summary": summary_text,
-                                }
-                            )
-                            updated = True
                         if chunk_index is not None and idx == chunk_index:
                             selected_source = ch.text
                             selected_lines = (ch.start_line, ch.end_line)
                         else:
-                            summaries.append(f"Chunk {idx}: {summary_text}")
-                    if updated or not cached:
-                        self.chunk_cache.set(path_hash, cached_summaries)
+                            entry = summary_entries[idx] if idx < len(summary_entries) else {}
+                            summaries.append(
+                                f"Chunk {idx}: {entry.get('summary', '')}"
+                            )
                     if chunk_index is not None and selected_source:
                         if selected_lines:
                             start, end = selected_lines
