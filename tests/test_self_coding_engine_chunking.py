@@ -86,6 +86,7 @@ _setmod(
             va_prompt_prefix="",
             va_repo_layout_lines=0,
             prompt_chunk_token_threshold=20,
+            chunk_summary_cache_dir="cache",
             prompt_chunk_cache_dir="cache",
             audit_log_path="audit.log",
             audit_privkey=None,
@@ -147,7 +148,7 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
         object(),
         llm_client=DummyLLM(),
         prompt_chunk_token_threshold=50,
-        prompt_chunk_cache_dir=tmp_path,
+        chunk_summary_cache_dir=tmp_path,
     )
 
     monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])

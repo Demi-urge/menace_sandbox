@@ -594,11 +594,6 @@ class SandboxSettings(BaseSettings):
         env="PROMPT_CHUNK_TOKEN_THRESHOLD",
         description="Token limit for individual code chunks when summarizing large files.",
     )
-    prompt_chunk_cache_dir: Path = Field(
-        Path("chunk_summary_cache"),
-        env="PROMPT_CHUNK_CACHE_DIR",
-        description="Directory for cached summaries of code chunks.",
-    )
     chunk_token_threshold: int = Field(
         3500,
         env="CHUNK_TOKEN_THRESHOLD",
@@ -606,9 +601,22 @@ class SandboxSettings(BaseSettings):
     )
     chunk_summary_cache_dir: Path = Field(
         Path("chunk_summary_cache"),
-        env="CHUNK_SUMMARY_CACHE_DIR",
+        env=["CHUNK_SUMMARY_CACHE_DIR", "PROMPT_CHUNK_CACHE_DIR"],
         description="Directory for cached summaries used in chunked prompting.",
     )
+
+    @property
+    def prompt_chunk_cache_dir(self) -> Path:  # pragma: no cover - backward compat
+        """Alias for :attr:`chunk_summary_cache_dir`.
+
+        Historically the settings exposed ``prompt_chunk_cache_dir`` which
+        matched the environment variable ``PROMPT_CHUNK_CACHE_DIR``.  The new
+        field :attr:`chunk_summary_cache_dir` supersedes it but this property is
+        retained so older code can continue to access the cache directory via
+        the previous attribute name.
+        """
+
+        return self.chunk_summary_cache_dir
     stub_timeout: float = Field(
         10.0,
         env="SANDBOX_STUB_TIMEOUT",

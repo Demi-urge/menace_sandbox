@@ -195,6 +195,7 @@ class SelfCodingEngine:
         prompt_tone: str = "neutral",
         token_threshold: int = 3500,
         prompt_chunk_token_threshold: int | None = None,
+        chunk_summary_cache_dir: str | Path | None = None,
         prompt_chunk_cache_dir: str | Path | None = None,
         **kwargs: Any,
     ) -> None:
@@ -223,10 +224,15 @@ class SelfCodingEngine:
         )
         # maintain backward compatibility
         self.prompt_chunk_token_threshold = self.chunk_token_threshold
-        self.prompt_chunk_cache_dir = Path(
-            prompt_chunk_cache_dir or _settings.prompt_chunk_cache_dir
+        cache_dir = (
+            chunk_summary_cache_dir
+            or prompt_chunk_cache_dir
+            or _settings.chunk_summary_cache_dir
         )
-        self.chunk_cache = ChunkSummaryCache(self.prompt_chunk_cache_dir)
+        self.chunk_summary_cache_dir = Path(cache_dir)
+        # backward compatibility
+        self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
+        self.chunk_cache = ChunkSummaryCache(self.chunk_summary_cache_dir)
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -319,7 +325,7 @@ class SelfCodingEngine:
             optimizer=self.prompt_optimizer,
             token_threshold=token_threshold,
             chunk_token_threshold=self.chunk_token_threshold,
-            prompt_chunk_cache_dir=self.prompt_chunk_cache_dir,
+            chunk_summary_cache_dir=self.chunk_summary_cache_dir,
         )
         if prompt_evolution_memory is None:
             try:
