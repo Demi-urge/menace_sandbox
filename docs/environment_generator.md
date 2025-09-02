@@ -271,9 +271,9 @@ tighten resource limits while negative ones relax them. The RL agent also
 consumes `synergy_roi` alongside ROI history so improvements in these metrics
 directly influence the policy update step.
 
-## OpenAI stub generation
+## LLM stub generation
 
-When `SANDBOX_STUB_MODEL=openai` and `OPENAI_API_KEY` are set the sandbox
-generates input stubs via the OpenAI Completion API. Generated objects are cached
-alongside locally produced stubs under `SANDBOX_STUB_CACHE`. This fallback is
-used whenever the `transformers` pipeline cannot be loaded.
+Set `SANDBOX_STUB_MODEL` to a model name understood by the configured backend
+to enable language-model driven stub creation. Generated objects are cached
+alongside locally produced stubs under `SANDBOX_STUB_CACHE`. When no model is
+configured the sandbox falls back to a deterministic rule-based strategy.
