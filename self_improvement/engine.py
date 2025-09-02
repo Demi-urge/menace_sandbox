@@ -765,6 +765,8 @@ class SelfImprovementEngine:
         self.raroi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
+        self._roi_delta_window: deque[float] = deque(maxlen=3)
+        self.urgency_tier: int = 0
         self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
         self.alignment_flagger = HumanAlignmentFlagger()
@@ -6660,6 +6662,22 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("alignment review agent failed to start")
             delta = after_roi - before_roi
+            self._roi_delta_window.append(delta)
+            if len(self._roi_delta_window) == self._roi_delta_window.maxlen:
+                window_sum = sum(self._roi_delta_window)
+                if window_sum <= 0:
+                    self.urgency_tier += 1
+                    try:
+                        dispatch_alert(
+                            "roi_negative_trend",
+                            2,
+                            "ROI momentum non-positive; increasing urgency tier",
+                            {"tier": self.urgency_tier, "window": list(self._roi_delta_window)},
+                        )
+                    except Exception:
+                        self.logger.exception("failed to dispatch ROI trend alert")
+                elif self.urgency_tier > 0 and window_sum > 0:
+                    self.urgency_tier = 0
             warnings: dict[str, list[dict[str, Any]]] = {}
             if delta > 0:
                 try:
