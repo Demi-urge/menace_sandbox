@@ -225,6 +225,32 @@ def compute_entropy_metrics(
     return avg_entropy, avg_complexity
 
 
+def compute_code_entropy(
+    files: Sequence[Path | str],
+    settings: SandboxSettings | None = None,
+) -> float:
+    """Return combined code entropy derived from complexity and maintainability.
+
+    The helper aggregates cyclomatic complexity and maintainability index for
+    ``files`` and returns the mean of average complexity and the complement of
+    maintainability.  Higher values indicate a more disorderly code base.
+    """
+
+    repo = Path(SandboxSettings().sandbox_repo_path)
+    file_iter: list[Path] = []
+    for f in files:
+        p = Path(f)
+        file_iter.append(p if p.is_absolute() else repo / p)
+    per_file, total_complexity, avg_mi, _, _, _ = _collect_metrics(
+        file_iter, repo, settings=settings
+    )
+    if not per_file:
+        return 0.0
+    avg_complexity = total_complexity / len(per_file)
+    mi_entropy = 100.0 - avg_mi
+    return fmean([avg_complexity, mi_entropy])
+
+
 def compute_entropy_delta(
     code_diversity: float,
     token_complexity: float,
@@ -392,6 +418,7 @@ __all__ = [
     "_update_alignment_baseline",
     "get_alignment_metrics",
     "compute_entropy_metrics",
+    "compute_code_entropy",
     "compute_entropy_delta",
     "record_entropy",
     "main",

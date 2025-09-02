@@ -268,18 +268,17 @@ class _FallbackPlanner:
         return wid.split(".", 1)[0]
 
     def _score(
-        self, chain: Sequence[str], roi: float, entropy: float, failures: int
+        self, chain: Sequence[str], roi_delta: float, entropy_delta: float, failures: int
     ) -> float:
         transitions = sum(
             1
             for i in range(1, len(chain))
             if self._domain(chain[i]) != self._domain(chain[i - 1])
         )
-        delta = entropy - getattr(self, "entropy_threshold", 0.0)
         return (
-            self.roi_weight * roi
+            self.roi_weight * roi_delta
             - self.domain_transition_penalty * transitions
-            - self.entropy_weight * abs(delta)
+            - self.entropy_weight * abs(entropy_delta)
             - self.stability_weight * failures
         )
 
@@ -349,6 +348,7 @@ class _FallbackPlanner:
             return None
 
         roi_values: list[float] = []
+        delta_rois: list[float] = []
         entropies: list[float] = []
         failures = 0
 
@@ -391,19 +391,24 @@ class _FallbackPlanner:
                 return None
 
             roi_values.append(current_roi)
+            delta_rois.append(delta_roi)
             entropies.append(entropy)
 
         if not roi_values:
             return None
 
         chain_roi = fmean(roi_values)
+        chain_roi_delta = fmean(delta_rois) if delta_rois else chain_roi
         chain_entropy = fmean(entropies) if entropies else 0.0
-        score = self._score(chain, chain_roi, chain_entropy, failures)
+        entropy_delta = chain_entropy - BASELINE_TRACKER.get("entropy")
+        score = self._score(chain, chain_roi_delta, entropy_delta, failures)
         record = {
             "chain": list(chain),
             "roi_gain": chain_roi,
+            "roi_delta": chain_roi_delta,
             "failures": failures,
             "entropy": chain_entropy,
+            "entropy_delta": entropy_delta,
             "score": score,
         }
         self.cluster_map[tuple(chain)] = {
@@ -431,6 +436,8 @@ class _FallbackPlanner:
                     workflow_synergy_score=max(0.0, 1.0 - chain_entropy),
                     bottleneck_index=0.0,
                     patchability_score=0.0,
+                    code_entropy=chain_entropy,
+                    entropy_delta=entropy_delta,
                     module_deltas={},
                 )
             except Exception as exc:  # pragma: no cover - logging best effort
@@ -688,6 +695,9 @@ async def self_improvement_cycle(
         roi = float(record.get("roi_gain", 0.0))
         failures = int(record.get("failures", 0))
         entropy = float(record.get("entropy", 0.0))
+        entropy_delta = float(
+            record.get("entropy_delta", entropy - BASELINE_TRACKER.get("entropy"))
+        )
         try:
             from .metrics import record_entropy as _record_entropy
             _record_entropy(
@@ -708,6 +718,8 @@ async def self_improvement_cycle(
                     workflow_synergy_score=max(0.0, 1.0 - entropy),
                     bottleneck_index=0.0,
                     patchability_score=0.0,
+                    code_entropy=entropy,
+                    entropy_delta=entropy_delta,
                     module_deltas={},
                 )
             except Exception as exc:  # pragma: no cover - logging best effort

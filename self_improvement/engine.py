@@ -2911,15 +2911,10 @@ class SelfImprovementEngine:
         if time.time() - self.last_run < self.interval:
             return False
         roi_delta = getattr(self, "roi_delta_ema", 0.0)
-        entropy_delta = self._metric_delta("token_entropy")
+        hist = self.baseline_tracker.delta_history("entropy")
+        entropy_delta = hist[-1] if hist else 0.0
         success_momentum = self._metric_delta("success_rate")
-        tracker = getattr(self, "roi_tracker", None)
-        if (
-            roi_delta == 0.0
-            and entropy_delta == 0.0
-            and success_momentum == 0.0
-            and (tracker is None or not tracker.metrics_history.get("token_entropy"))
-        ):
+        if roi_delta == 0.0 and entropy_delta == 0.0 and success_momentum == 0.0:
             return True
         score = (roi_delta - entropy_delta + success_momentum) / 3.0
         return score > 0.0
@@ -7096,7 +7091,8 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("workflow scoring failed")
             score = getattr(getattr(result, "roi", None), "success_rate", 0.0)
-            entropy = getattr(getattr(result, "roi", None), "workflow_synergy_score", 0.0)
+            files = list(_repo_path.rglob("*.py"))
+            entropy = _si_metrics.compute_code_entropy(files)
             score_avg = self.baseline_tracker.get("score")
             roi_avg = self.baseline_tracker.get("roi")
             entropy_avg = self.baseline_tracker.get("entropy")
@@ -7109,6 +7105,31 @@ class SelfImprovementEngine:
             roi_delta = roi_realish - roi_avg
             entropy_delta = entropy - entropy_avg
             energy_delta = energy - energy_avg
+            roi_db = getattr(self, "roi_db", None)
+            if roi_db is None:
+                try:
+                    roi_db = ROIResultsDB()
+                except Exception:
+                    roi_db = None
+                else:
+                    self.roi_db = roi_db
+            if roi_db is not None:
+                try:
+                    roi_db.log_result(
+                        workflow_id="self_improvement_cycle",
+                        run_id=str(self._cycle_count),
+                        runtime=0.0,
+                        success_rate=score,
+                        roi_gain=roi_realish,
+                        workflow_synergy_score=max(0.0, 1.0 - entropy),
+                        bottleneck_index=0.0,
+                        patchability_score=0.0,
+                        code_entropy=entropy,
+                        entropy_delta=entropy_delta,
+                        module_deltas={},
+                    )
+                except Exception:
+                    self.logger.exception("ROI logging failed")
             self.logger.info(
                 "cycle complete",
                 extra=log_record(
