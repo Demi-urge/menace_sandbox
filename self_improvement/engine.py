@@ -2839,10 +2839,12 @@ class SelfImprovementEngine:
                 try:
                     cards = tracker.generate_scorecards() if tracker else []
                     label = tracker.workflow_label if tracker else None
+                    roi_base = self.baseline_tracker.get("roi_delta")
+                    roi_tol = getattr(getattr(settings, "roi", None), "deviation_tolerance", 0.0)
                     recs = {
                         c.scenario: c.recommendation
                         for c in cards
-                        if c.recommendation and c.roi_delta < 0.0
+                        if c.recommendation and c.roi_delta < roi_base - roi_tol
                     }
                 except Exception:
                     logger.exception("Unhandled exception in self_improvement")
@@ -3292,10 +3294,12 @@ class SelfImprovementEngine:
                     try:
                         cards = tracker.generate_scorecards() if tracker else []
                         label = tracker.workflow_label if tracker else None
+                        roi_base = self.baseline_tracker.get("roi_delta")
+                        roi_tol = getattr(getattr(settings, "roi", None), "deviation_tolerance", 0.0)
                         recs = {
                             c.scenario: c.recommendation
                             for c in cards
-                            if c.recommendation and c.roi_delta < 0.0
+                            if c.recommendation and c.roi_delta < roi_base - roi_tol
                         }
                     except Exception:
                         logger.exception("Unhandled exception in self_improvement")
@@ -3982,7 +3986,10 @@ class SelfImprovementEngine:
                 if worst_roi is math.inf:
                     worst_roi = 0.0
                 info["robustness"] = float(worst_roi)
-                if scenario_failed or worst_roi < 0.0:
+                roi_base = self.baseline_tracker.get("roi")
+                roi_tol = getattr(getattr(settings, "roi", None), "deviation_tolerance", 0.0)
+                roi_delta_base = self.baseline_tracker.get("roi_delta")
+                if scenario_failed or worst_roi < roi_base - roi_tol:
                     self.logger.info(
                         "self tests failed",
                         extra=log_record(module=m, robustness=worst_roi),
@@ -3993,7 +4000,7 @@ class SelfImprovementEngine:
                     roi_total = sum(tracker_res.module_deltas.get(m, []))
                 except Exception:
                     logger.exception("Unhandled exception in self_improvement")
-                if roi_total < 0:
+                if roi_total < roi_delta_base - roi_tol:
                     continue
                 if reuse_scores.get(m, 0.0) < reuse_threshold:
                     continue
@@ -4102,14 +4109,17 @@ class SelfImprovementEngine:
             scen_failed = bool(info.get("workflow_failed")) or any(
                 v.get("failed") for v in info.get("scenarios", {}).values()
             )
-            if scen_failed or worst_roi < 0.0:
+            roi_base = self.baseline_tracker.get("roi")
+            roi_tol = getattr(getattr(settings, "roi", None), "deviation_tolerance", 0.0)
+            roi_delta_base = self.baseline_tracker.get("roi_delta")
+            if scen_failed or worst_roi < roi_base - roi_tol:
                 continue
             roi_total = 0.0
             if tracker_res:
                 for key, vals in tracker_res.module_deltas.items():
                     if key.startswith(p):
                         roi_total += sum(float(v) for v in vals)
-            if roi_total < 0:
+            if roi_total < roi_delta_base - roi_tol:
                 continue
             filtered.add(p)
         passing = filtered

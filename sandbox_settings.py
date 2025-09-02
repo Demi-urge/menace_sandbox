@@ -51,6 +51,7 @@ class ROISettings(BaseModel):
     entropy_ceiling_threshold: float | None = None
     entropy_ceiling_consecutive: int | None = None
     baseline_window: int = 5
+    deviation_tolerance: float = 0.0
 
     @field_validator(
         "threshold",
@@ -65,7 +66,7 @@ class ROISettings(BaseModel):
             raise ValueError(f"{info.field_name} must be between 0 and 1")
         return v
 
-    @field_validator("compounding_weight", "min_integration_roi")
+    @field_validator("compounding_weight", "min_integration_roi", "deviation_tolerance")
     def _check_non_negative(cls, v: float, info: Any) -> float:
         if v < 0:
             raise ValueError(f"{info.field_name} must be non-negative")
@@ -76,6 +77,7 @@ class ROISettings(BaseModel):
         if v is not None and v <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
         return v
+
 
 class SynergySettings(BaseModel):
     """Settings for module synergy calculations."""
@@ -109,6 +111,7 @@ class SynergySettings(BaseModel):
     target_sync: int = 10
     python_fallback: bool = True
     python_max_replay: int = 1000
+    deviation_tolerance: float = 0.0
 
     @field_validator(
         "threshold",
@@ -151,6 +154,7 @@ class SynergySettings(BaseModel):
         "weight_throughput",
         "weights_lr",
         "noise",
+        "deviation_tolerance",
     )
     def _synergy_non_negative(cls, v: float, info: Any) -> float:
         if v < 0:
