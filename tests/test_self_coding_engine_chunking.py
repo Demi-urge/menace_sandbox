@@ -118,6 +118,7 @@ _setmod("roi_tracker", roi_mod)
 
 import menace_sandbox.self_coding_engine as sce  # noqa: E402
 from chunking import CodeChunk  # noqa: E402
+from chunk_summary_cache import ChunkSummaryCache  # noqa: E402
 import chunking as pc  # noqa: E402
 
 
@@ -127,16 +128,15 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
 
     called: dict[str, int] = {}
 
-    def fake_chunk_file(code: str, limit: int):
+    def fake_get_chunk_summaries(path: Path, limit: int, llm=None, cache=None):
         called["limit"] = limit
         return [
-            CodeChunk(start_line=1, end_line=2, text="code1", hash="h1", token_count=5),
-            CodeChunk(start_line=3, end_line=4, text="code2", hash="h2", token_count=5),
+            {"start_line": 1, "end_line": 2, "summary": "sum1"},
+            {"start_line": 3, "end_line": 4, "summary": "sum2"},
         ]
 
-    monkeypatch.setattr(pc, "split_into_chunks", fake_chunk_file)
-    monkeypatch.setattr(sce, "split_into_chunks", fake_chunk_file)
-    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: f"sum:{text}")
+    monkeypatch.setattr(pc, "get_chunk_summaries", fake_get_chunk_summaries)
+    monkeypatch.setattr(sce, "get_chunk_summaries", fake_get_chunk_summaries)
 
     captured: dict[str, object] = {}
 
@@ -178,12 +178,9 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
     )
     engine.formal_verifier = None
     engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
-    engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
-    engine.formal_verifier = None
 
     monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
     monkeypatch.setattr(engine, "_get_repo_layout", lambda lines: "")
-    monkeypatch.setattr(engine, "_build_file_context", lambda path: "raw context")
 
     target = tmp_path / "big.py"
     target.write_text("print('hi')\n")
@@ -191,33 +188,30 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
     engine.generate_helper("do something", path=target)
 
     assert called["limit"] == engine.chunk_token_threshold
-    assert "sum:code1" in captured["context"]
-    assert "sum:code2" in captured["context"]
-    assert "raw context" not in captured["context"]
-
-    # Cache file created
-    assert list(engine.chunk_cache.cache_dir.glob("*.json"))
+    assert "Chunk 0: sum1" in captured["context"]
+    assert "Chunk 1: sum2" in captured["context"]
+    assert captured["summaries"] == ["Chunk 0: sum1", "Chunk 1: sum2"]
 
 
-def test_generate_helper_resummarizes_cached_chunks(monkeypatch, tmp_path):
+def test_generate_helper_uses_cached_chunk_summaries(monkeypatch, tmp_path):
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
 
-    def fake_chunk_file(code: str, limit: int):
+    def fake_chunk_file(path: Path, limit: int):
         return [
-            CodeChunk(start_line=1, end_line=2, text="code1", hash="h1", token_count=5),
-            CodeChunk(start_line=3, end_line=4, text="code2", hash="h2", token_count=5),
+            CodeChunk(1, 2, "code1", "h1", 5),
+            CodeChunk(3, 4, "code2", "h2", 5),
         ]
 
-    monkeypatch.setattr(pc, "split_into_chunks", fake_chunk_file)
-    monkeypatch.setattr(sce, "split_into_chunks", fake_chunk_file)
+    monkeypatch.setattr(pc, "chunk_file", fake_chunk_file)
 
     calls = {"n": 0}
 
     def fake_summary(text: str, llm):
         calls["n"] += 1
-        return f"sum:{text}".strip()
+        return f"sum:{text}"
 
     monkeypatch.setattr(pc, "summarize_code", fake_summary)
+    monkeypatch.setattr(pc, "CHUNK_CACHE", ChunkSummaryCache(tmp_path))
 
     class DummyPrompt:
         def __init__(self, text: str = "") -> None:
@@ -247,7 +241,6 @@ def test_generate_helper_resummarizes_cached_chunks(monkeypatch, tmp_path):
 
     monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
     monkeypatch.setattr(engine, "_get_repo_layout", lambda lines: "")
-    monkeypatch.setattr(engine, "_build_file_context", lambda path: "raw context")
 
     target = tmp_path / "big.py"
     target.write_text("print('hi')\n")
@@ -255,21 +248,20 @@ def test_generate_helper_resummarizes_cached_chunks(monkeypatch, tmp_path):
     engine.generate_helper("do something", path=target)
     engine.generate_helper("do something", path=target)
 
-    assert calls["n"] == 2  # summaries computed once and cached
+    assert calls["n"] == 2  # summaries computed once and then served from cache
 
 
 def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
 
-    def fake_split(code: str, limit: int):
+    def fake_get_chunk_summaries(path: Path, limit: int, llm=None, cache=None):
         return [
-            CodeChunk(1, 2, "code1", "h1", 5),
-            CodeChunk(3, 4, "code2", "h2", 5),
+            {"start_line": 1, "end_line": 1, "summary": "sum1"},
+            {"start_line": 2, "end_line": 2, "summary": "sum2"},
         ]
 
-    monkeypatch.setattr(pc, "split_into_chunks", fake_split)
-    monkeypatch.setattr(sce, "split_into_chunks", fake_split)
-    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: f"sum:{text}")
+    monkeypatch.setattr(pc, "get_chunk_summaries", fake_get_chunk_summaries)
+    monkeypatch.setattr(sce, "get_chunk_summaries", fake_get_chunk_summaries)
 
     captured: dict[str, object] = {}
 
@@ -295,17 +287,18 @@ def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
     engine.formal_verifier = None
     engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
 
-    def fake_build_prompt(goal, *, context=None, **kwargs):
+    def fake_build_prompt(goal, *, context=None, summaries=None, **kwargs):
         captured["context"] = context
+        captured["summaries"] = summaries
         return DummyPrompt()
 
     monkeypatch.setattr(engine.prompt_engine, "build_prompt", fake_build_prompt)
 
     target = tmp_path / "big.py"
-    target.write_text("print('hi')\n")
+    target.write_text("a\nb\n")
 
     engine.patch_file(target, "desc")
 
-    assert "sum:code1" in captured["context"]
-    assert "sum:code2" in captured["context"]
-    assert "print('hi')" not in captured["context"]
+    assert "Chunk 0: sum1" in captured["context"]
+    assert "Chunk 1: sum2" in captured["context"]
+    assert captured["summaries"] == ["Chunk 0: sum1", "Chunk 1: sum2"]
