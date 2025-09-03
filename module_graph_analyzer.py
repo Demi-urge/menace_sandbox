@@ -19,8 +19,9 @@ except Exception:  # pragma: no cover - optional dependency
 
 # ---------------------------------------------------------------------------
 
-def _iter_py_files(root: Path, ignore: Iterable[str] | None = None) -> Iterable[Path]:
+def _iter_py_files(root: str | Path, ignore: Iterable[str] | None = None) -> Iterable[Path]:
     """Yield all ``.py`` files under ``root`` skipping ignored paths."""
+    root = Path(resolve_path(root))
     ignore = set(ignore or [])
     for path in root.rglob("*.py"):
         if not path.is_file():
