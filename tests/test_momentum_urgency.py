@@ -20,18 +20,27 @@ engine_module = ast.Module(
     type_ignores=[],
 )
 engine_module = ast.fix_missing_locations(engine_module)
-ns: Dict[str, Any] = {"log_record": lambda **k: k}
+ns: Dict[str, Any] = {
+    "log_record": lambda **k: k,
+    "settings": types.SimpleNamespace(
+        momentum_stagnation_dev_multiplier=1.0
+    ),
+}
 exec(compile(engine_module, "<engine>", "exec"), ns)
 SelfImprovementEngine = ns["SelfImprovementEngine"]
 
 
 def _make_engine(deltas: list[float] | None = None):
     class Tracker:
-        def __init__(self, deltas: list[float]):
+        def __init__(self, deltas: list[float], std: float = 0.05):
             self._deltas = iter(deltas)
+            self._std = std
 
         def delta(self, metric: str) -> float:
             return next(self._deltas)
+
+        def std(self, metric: str) -> float:
+            return self._std
 
     eng = SelfImprovementEngine.__new__(SelfImprovementEngine)
     eng.urgency_tier = 0

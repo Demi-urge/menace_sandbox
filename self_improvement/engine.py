@@ -2181,15 +2181,20 @@ class SelfImprovementEngine:
         """Escalate urgency when momentum fails to improve."""
 
         delta = self.baseline_tracker.delta("momentum")
-        if delta <= 0:
+        momentum_threshold = (
+            self.baseline_tracker.std("momentum")
+            * settings.momentum_stagnation_dev_multiplier
+        )
+        if delta < -momentum_threshold:
             self._momentum_streak += 1
             if self._momentum_streak >= self.stagnation_cycles:
                 self.urgency_tier += 1
                 self.logger.warning(
-                    "momentum non-positive; increasing urgency tier",
+                    "momentum below threshold; increasing urgency tier",
                     extra=log_record(
                         tier=self.urgency_tier,
                         delta=delta,
+                        threshold=momentum_threshold,
                         streak=self._momentum_streak,
                     ),
                 )
