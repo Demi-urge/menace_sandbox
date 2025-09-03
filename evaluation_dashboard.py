@@ -10,6 +10,11 @@ from typing import Any, Dict, List
 import types
 from relevancy_radar import flagged_modules
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 # optional CLI support
 import argparse
 
@@ -342,9 +347,7 @@ class EvaluationDashboard:
     def relevancy_radar_panel(self, threshold: int = 5) -> List[Dict[str, Any]]:
         """Return modules with low relevancy scores and annotations."""
 
-        metrics_path = (
-            Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
-        )
+        metrics_path = Path(resolve_path("sandbox_data/relevancy_metrics.json"))
         if not metrics_path.exists():
             return []
         try:

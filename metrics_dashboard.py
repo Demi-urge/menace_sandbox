@@ -244,9 +244,7 @@ class MetricsDashboard:
 
             flags = rr_flagged()
             impacts: dict[str, float] = {}
-            metrics_path = (
-                Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
-            )
+            metrics_path = Path(resolve_path("sandbox_data/relevancy_metrics.json"))
             try:
                 data = json.loads(metrics_path.read_text())
                 if isinstance(data, dict):

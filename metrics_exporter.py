@@ -11,6 +11,11 @@ from collections import Counter
 import json
 from pathlib import Path
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 # Ensure this module is a single instance regardless of import path
@@ -391,7 +396,7 @@ def update_relevancy_metrics(
     if impacts is None:
         impacts = {}
         try:
-            path = Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
+            path = Path(resolve_path("sandbox_data/relevancy_metrics.json"))
             data = json.loads(path.read_text())
             if isinstance(data, dict):
                 for mod, info in data.items():
