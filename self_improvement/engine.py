@@ -492,6 +492,9 @@ class SelfImprovementEngine:
         roi_compounding_weight: float | None = None,
         entropy_window: int | None = None,
         entropy_weight: float | None = None,
+        roi_weight: float | None = None,
+        pass_rate_weight: float | None = None,
+        momentum_weight: float | None = None,
         synergy_weights_path: Path | str | None = None,
         synergy_weights_lr: float | None = None,
         synergy_learner_cls: Type[SynergyWeightLearner] = SynergyWeightLearner,
@@ -540,9 +543,19 @@ class SelfImprovementEngine:
         )
         self.baseline_tracker = GLOBAL_BASELINE_TRACKER
         self.baseline_tracker.window = self.baseline_window
-        self.roi_weight = getattr(settings, "roi_weight", 1.0)
-        self.momentum_weight = getattr(settings, "momentum_weight", 1.0)
-        self.pass_rate_weight = getattr(settings, "pass_rate_weight", 1.0)
+        self.roi_weight = (
+            roi_weight if roi_weight is not None else getattr(settings, "roi_weight", 1.0)
+        )
+        self.momentum_weight = (
+            momentum_weight
+            if momentum_weight is not None
+            else getattr(settings, "momentum_weight", 1.0)
+        )
+        self.pass_rate_weight = (
+            pass_rate_weight
+            if pass_rate_weight is not None
+            else getattr(settings, "pass_rate_weight", 1.0)
+        )
         self.momentum_window = getattr(
             getattr(cfg, "roi", None), "momentum_window", self.baseline_window
         )
