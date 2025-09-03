@@ -811,6 +811,10 @@ class PromptEngine:
             lines.append("")
 
         lines.append(f"Given the following pattern, {task}")
+        lines.append(
+            "Modify only the provided lines unless additional changes are"
+            " causally necessary."
+        )
         lines.append("")
 
         if self.trained_example_placement not in {"start", "middle"}:
