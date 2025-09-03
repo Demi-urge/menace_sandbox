@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+from dynamic_path_router import resolve_path  # noqa: E402
 from sandbox_settings import SandboxSettings  # noqa: E402
 
 
@@ -54,7 +55,7 @@ def test_init_creates_and_clamps_synergy_weights(tmp_path, monkeypatch):
     sys.modules["menace.self_improvement.meta_planning"] = meta_stub
 
     init_module = _load_module(
-        "menace.self_improvement.init", Path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
     )
 
     settings = SandboxSettings()
@@ -106,10 +107,11 @@ def test_start_self_improvement_cycle_thread(tmp_path, monkeypatch, in_memory_db
     sys.modules["menace.sandbox_settings"] = sandbox_settings_module
 
     init_module = _load_module(
-        "menace.self_improvement.init", Path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
     )
     meta_planning = _load_module(
-        "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
+        "menace.self_improvement.meta_planning",
+        resolve_path("self_improvement/meta_planning.py"),
     )
 
     settings = SandboxSettings()
