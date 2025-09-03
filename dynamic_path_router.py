@@ -135,7 +135,7 @@ def resolve_dir(dirname: str) -> Path:
 def path_for_prompt(name: str) -> str:
     """Return a normalised string path suitable for inclusion in prompts."""
 
-    return str(resolve_path(name))
+    return resolve_path(name).as_posix()
 
 
 def clear_cache() -> None:
