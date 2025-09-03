@@ -58,6 +58,7 @@ class ROISettings(BaseModel):
     momentum_window: int = 5
     stagnation_cycles: int = 3
     momentum_dev_multiplier: float = 1.0
+    roi_stagnation_dev_multiplier: float = 1.0
 
     @field_validator(
         "threshold",
@@ -82,7 +83,12 @@ class ROISettings(BaseModel):
             raise ValueError(f"{info.field_name} must be non-negative")
         return v
 
-    @field_validator("deviation_tolerance", "stagnation_threshold", "momentum_dev_multiplier")
+    @field_validator(
+        "deviation_tolerance",
+        "stagnation_threshold",
+        "momentum_dev_multiplier",
+        "roi_stagnation_dev_multiplier",
+    )
     def _check_positive_float(cls, v: float, info: Any) -> float:
         if v <= 0:
             raise ValueError(f"{info.field_name} must be positive")
