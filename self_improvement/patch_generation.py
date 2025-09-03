@@ -7,6 +7,10 @@ import logging
 from .utils import _load_callable, _call_with_retries
 from ..sandbox_settings import SandboxSettings
 from ..metrics_exporter import self_improvement_failure_total
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..self_coding_engine import TargetRegion
 
 try:  # pragma: no cover - simplified environments
     from ..logging_utils import log_record
@@ -25,6 +29,7 @@ _settings = SandboxSettings()
 
 def generate_patch(
     *args: object,
+    target_region: "TargetRegion" | None = None,
     retries: int = _settings.patch_retries,
     delay: float = _settings.patch_retry_delay,
     **kwargs: object,
@@ -49,7 +54,14 @@ def generate_patch(
             "quick_fix_engine is required for patch generation. Install it via `pip install quick_fix_engine`."
         ) from exc
     try:
-        patch_id = _call_with_retries(func, *args, retries=retries, delay=delay, **kwargs)
+        patch_id = _call_with_retries(
+            func,
+            *args,
+            retries=retries,
+            delay=delay,
+            target_region=target_region,
+            **kwargs,
+        )
     except (RuntimeError, OSError) as exc:  # pragma: no cover - best effort logging
         logger.error(
             "quick_fix_engine failed",

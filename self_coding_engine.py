@@ -299,7 +299,14 @@ class SelfCodingEngine:
                 formal_verifier = None
         self.formal_verifier = formal_verifier
         self._active_patches: dict[
-            str, tuple[Path, str, str, List[Tuple[str, str, float]]]
+            str,
+            tuple[
+                Path,
+                str,
+                str,
+                List[Tuple[str, str, float]],
+                TargetRegion | None,
+            ],
         ] = {}
         self.bot_roles: Dict[str, str] = bot_roles or {}
         path_setting = audit_trail_path or _settings.audit_log_path
@@ -1357,8 +1364,12 @@ class SelfCodingEngine:
         *,
         context_meta: Dict[str, Any] | None = None,
         requesting_bot: str | None = None,
+        target_region: TargetRegion | None = None,
     ) -> tuple[int | None, bool, float]:
         """Apply patches sequentially to each chunk in a large file.
+
+        When ``target_region`` is provided the patch is generated only for the
+        specified line range instead of chunking the entire file.
 
         For every chunk we craft a prompt that contains the raw source of the
         selected chunk along with summaries of the other chunks.  Generated code
@@ -1371,10 +1382,6 @@ class SelfCodingEngine:
         # Snapshot of original file to merge patches into
         original_lines = path.read_text(encoding="utf-8").splitlines()
         code = "\n".join(original_lines)
-        chunks = split_into_chunks(code, self.chunk_token_threshold)
-        offset = 0
-        success_any = False
-        last_patch_id: int | None = None
 
         def _verify(snippet: str) -> bool:
             if self.formal_verifier:
@@ -1393,6 +1400,80 @@ class SelfCodingEngine:
                 return True
             except SyntaxError:
                 return False
+
+        if target_region is not None:
+            generated = self.generate_helper(
+                description,
+                path=path,
+                metadata=context_meta,
+                target_region=target_region,
+            )
+            if not generated.strip() or not _verify(generated):
+                return None, False, 0.0
+            start = max(target_region.start_line - 1, 0)
+            end = min(target_region.end_line, len(original_lines))
+            new_lines = (
+                original_lines[:start]
+                + generated.rstrip().splitlines()
+                + original_lines[end:]
+            )
+            path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            patch_key = f"{path}:{description}:{start}-{end}"
+            if self.rollback_mgr:
+                try:
+                    self.rollback_mgr.register_region_patch(
+                        patch_key,
+                        self.bot_name,
+                        str(path),
+                        target_region.start_line,
+                        target_region.end_line,
+                    )
+                except Exception:
+                    self.logger.exception("failed to register region patch")
+            ci_result = self._run_ci(path)
+            if not ci_result.success:
+                path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+                if self.rollback_mgr:
+                    try:
+                        self.rollback_mgr.rollback_region(
+                            str(path),
+                            target_region.start_line,
+                            target_region.end_line,
+                            requesting_bot=requesting_bot,
+                        )
+                    except Exception:
+                        self.logger.exception("region rollback failed")
+                return None, False, 0.0
+            last_patch_id = None
+            if self.patch_db:
+                try:
+                    last_patch_id = self.patch_db.add(
+                        PatchRecord(
+                            filename=str(path),
+                            description=f"{description} [region]",
+                            roi_before=0.0,
+                            roi_after=0.0,
+                            reverted=False,
+                        )
+                    )
+                except Exception:
+                    self.logger.exception("failed to record region patch")
+            if self.roi_tracker:
+                try:
+                    self.roi_tracker.update(0.0, 0.0)
+                except Exception:
+                    pass
+            if self.memory_mgr:
+                try:
+                    self.memory_mgr.store(str(path), generated, tags="code")
+                except Exception:
+                    self.logger.exception("memory store failed")
+            return last_patch_id, True, 0.0
+
+        chunks = split_into_chunks(code, self.chunk_token_threshold)
+        offset = 0
+        success_any = False
+        last_patch_id: int | None = None
 
         def _generate(idx: int) -> str:
             try:
@@ -1590,12 +1671,13 @@ class SelfCodingEngine:
                     "retrieval_session_id": "",
                 }
         original = path.read_text(encoding="utf-8")
-        if target_region is None and _count_tokens(original) > self.chunk_token_threshold:
+        if _count_tokens(original) > self.chunk_token_threshold:
             return self._apply_patch_chunked(
                 path,
                 description,
                 context_meta=context_meta,
                 requesting_bot=requesting_bot,
+                target_region=target_region,
             )
         generated_code, pre_verified = self.patch_file(
             path,
@@ -1615,7 +1697,15 @@ class SelfCodingEngine:
         retrieval_metadata: Dict[str, Dict[str, Any]] = {}
         if not pre_verified or not generated_code.strip():
             self.logger.info("no code generated; skipping enhancement")
-            path.write_text(original, encoding="utf-8")
+            if target_region is not None:
+                cur_lines = path.read_text(encoding="utf-8").splitlines()
+                orig_lines = original.splitlines()
+                start = max(target_region.start_line - 1, 0)
+                end = min(target_region.end_line, len(orig_lines))
+                cur_lines[start:end] = orig_lines[start:end]
+                path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+            else:
+                path.write_text(original, encoding="utf-8")
             ci_result = self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
             if self.cognition_layer and session_id:
@@ -1646,125 +1736,164 @@ class SelfCodingEngine:
             )
             self._record_prompt_metadata(False)
             return None, False, 0.0
-        if self.formal_verifier and not self.formal_verifier.verify(path):
-            path.write_text(original, encoding="utf-8")
-            ci_result = self._run_ci(path)
-            reverted = True
-            after_roi = before_roi
-            after_err = before_err
-            after_complexity = before_complexity
-            pred_after_roi = pred_before_roi
-            pred_after_err = pred_before_err
-            roi_delta = 0.0
-            complexity_delta = 0.0
-            patch_id: int | None = None
-            if self.patch_db:
+        if self.formal_verifier:
+            verified = False
+            if target_region is not None:
+                with tempfile.NamedTemporaryFile("w", suffix=path.suffix, delete=False) as fh:
+                    fh.write(generated_code)
+                    tmp_path = Path(fh.name)
                 try:
-                    patch_id = self.patch_db.add(
-                        PatchRecord(
-                            filename=str(path),
-                            description=description,
-                            roi_before=before_roi,
-                            roi_after=after_roi,
-                            errors_before=before_err,
-                            errors_after=after_err,
-                            roi_delta=roi_delta,
-                            complexity_before=before_complexity,
-                            complexity_after=after_complexity,
-                            complexity_delta=complexity_delta,
-                            predicted_roi=pred_after_roi,
-                            predicted_errors=pred_after_err,
-                            reverted=True,
-                            trending_topic=trending_topic,
-                            parent_patch_id=parent_patch_id,
-                            reason=reason,
-                            trigger=trigger,
-                            outcome="FAIL",
-                            prompt_headers=json.dumps(
-                                self._last_prompt_metadata.get("headers", [])
-                            ),
-                            prompt_order=json.dumps(
-                                self._last_prompt_metadata.get("example_order", [])
-                            ),
-                            prompt_tone=self._last_prompt_metadata.get("tone", ""),
+                    verified = self.formal_verifier.verify(tmp_path)
+                finally:
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+            else:
+                verified = self.formal_verifier.verify(path)
+            if not verified:
+                if target_region is not None:
+                    cur_lines = path.read_text(encoding="utf-8").splitlines()
+                    orig_lines = original.splitlines()
+                    start = max(target_region.start_line - 1, 0)
+                    end = min(target_region.end_line, len(orig_lines))
+                    cur_lines[start:end] = orig_lines[start:end]
+                    path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+                else:
+                    path.write_text(original, encoding="utf-8")
+                ci_result = self._run_ci(path)
+                reverted = True
+                after_roi = before_roi
+                after_err = before_err
+                after_complexity = before_complexity
+                pred_after_roi = pred_before_roi
+                pred_after_err = pred_before_err
+                roi_delta = 0.0
+                complexity_delta = 0.0
+                patch_id: int | None = None
+                if self.patch_db:
+                    try:
+                        patch_id = self.patch_db.add(
+                            PatchRecord(
+                                filename=str(path),
+                                description=description,
+                                roi_before=before_roi,
+                                roi_after=after_roi,
+                                errors_before=before_err,
+                                errors_after=after_err,
+                                roi_delta=roi_delta,
+                                complexity_before=before_complexity,
+                                complexity_after=after_complexity,
+                                complexity_delta=complexity_delta,
+                                predicted_roi=pred_after_roi,
+                                predicted_errors=pred_after_err,
+                                reverted=True,
+                                trending_topic=trending_topic,
+                                parent_patch_id=parent_patch_id,
+                                reason=reason,
+                                trigger=trigger,
+                                outcome="FAIL",
+                                prompt_headers=json.dumps(
+                                    self._last_prompt_metadata.get("headers", [])
+                                ),
+                                prompt_order=json.dumps(
+                                    self._last_prompt_metadata.get("example_order", [])
+                                ),
+                                prompt_tone=self._last_prompt_metadata.get("tone", ""),
+                            )
                         )
-                    )
-                except Exception:
-                    patch_id = None
-            patch_key = str(patch_id) if patch_id is not None else description
-            if patch_id is not None and self.rollback_mgr:
-                self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
-            self.logger.info(
-                "patch result",
-                extra={
-                    "path": str(path),
-                    "patch_id": patch_id,
-                    "reverted": True,
-                    "roi_delta": roi_delta,
-                    "success": False,
-                    "tags": [FEEDBACK],
-                },
-            )
-            self._store_patch_memory(path, description, generated_code, False, roi_delta)
-            if self.patch_db and session_id and vectors and patch_id is not None:
-                try:
-                    self.patch_db.record_vector_metrics(
-                        session_id,
-                        [(o, v) for o, v, _ in vectors],
-                        patch_id=patch_id,
-                        contribution=0.0,
-                        roi_delta=roi_delta,
-                        win=False,
-                        regret=True,
-                        effort_estimate=effort_estimate,
-                    )
-                except Exception:
-                    self.logger.exception("failed to log patch outcome")
-            if self.data_bot:
-                try:
-                    pid = str(patch_id) if patch_id is not None else description
-                    self.data_bot.db.log_patch_outcome(
-                        pid,
-                        False,
-                        [(o, v) for o, v, _ in vectors],
-                        session_id=session_id,
-                        reverted=True,
-                    )
-                except Exception:
-                    self.logger.exception("failed to log patch outcome")
-            self._track_contributors(
-                session_id,
-                vectors,
-                False,
-                patch_id=patch_id,
-                retrieval_metadata=retrieval_metadata,
-                roi_delta=roi_delta,
-            )
-            self._log_attempt(
-                requesting_bot,
-                "apply_patch_result",
-                {"path": str(path), "success": False, "patch_id": patch_id},
-            )
-            roi_meta = {
-                "coverage_delta": (0.0 - (baseline_coverage or 0.0)),
-            }
-            self._log_prompt_evolution(
-                generated_code,
-                False,
-                ci_result,
-                roi_delta,
-                0.0,
-                roi_meta,
-                baseline_runtime=baseline_runtime,
-                module=str(path),
-                action=description,
-            )
-            self._record_prompt_metadata(False)
-            return patch_id, True, roi_delta
+                    except Exception:
+                        patch_id = None
+                patch_key = str(patch_id) if patch_id is not None else description
+                if patch_id is not None and self.rollback_mgr:
+                    if target_region is not None:
+                        self.rollback_mgr.rollback_region(
+                            str(path),
+                            target_region.start_line,
+                            target_region.end_line,
+                            requesting_bot=requesting_bot,
+                        )
+                    else:
+                        self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
+                self.logger.info(
+                    "patch result",
+                    extra={
+                        "path": str(path),
+                        "patch_id": patch_id,
+                        "reverted": True,
+                        "roi_delta": roi_delta,
+                        "success": False,
+                        "tags": [FEEDBACK],
+                    },
+                )
+                self._store_patch_memory(path, description, generated_code, False, roi_delta)
+                if self.patch_db and session_id and vectors and patch_id is not None:
+                    try:
+                        self.patch_db.record_vector_metrics(
+                            session_id,
+                            [(o, v) for o, v, _ in vectors],
+                            patch_id=patch_id,
+                            contribution=0.0,
+                            roi_delta=roi_delta,
+                            win=False,
+                            regret=True,
+                            effort_estimate=effort_estimate,
+                        )
+                    except Exception:
+                        self.logger.exception("failed to log patch outcome")
+                if self.data_bot:
+                    try:
+                        pid = str(patch_id) if patch_id is not None else description
+                        self.data_bot.db.log_patch_outcome(
+                            pid,
+                            False,
+                            [(o, v) for o, v, _ in vectors],
+                            session_id=session_id,
+                            reverted=True,
+                        )
+                    except Exception:
+                        self.logger.exception("failed to log patch outcome")
+                self._track_contributors(
+                    session_id,
+                    vectors,
+                    False,
+                    patch_id=patch_id,
+                    retrieval_metadata=retrieval_metadata,
+                    roi_delta=roi_delta,
+                )
+                self._log_attempt(
+                    requesting_bot,
+                    "apply_patch_result",
+                    {"path": str(path), "success": False, "patch_id": patch_id},
+                )
+                roi_meta = {
+                    "coverage_delta": (0.0 - (baseline_coverage or 0.0)),
+                }
+                self._log_prompt_evolution(
+                    generated_code,
+                    False,
+                    ci_result,
+                    roi_delta,
+                    0.0,
+                    roi_meta,
+                    baseline_runtime=baseline_runtime,
+                    module=str(path),
+                    action=description,
+                )
+                self._record_prompt_metadata(False)
+                return patch_id, True, roi_delta
         ci_result = self._run_ci(path)
         if not ci_result:
             self.logger.error("CI checks failed; skipping commit")
-            path.write_text(original, encoding="utf-8")
+            if target_region is not None:
+                cur_lines = path.read_text(encoding="utf-8").splitlines()
+                orig_lines = original.splitlines()
+                start = max(target_region.start_line - 1, 0)
+                end = min(target_region.end_line, len(orig_lines))
+                cur_lines[start:end] = orig_lines[start:end]
+                path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+            else:
+                path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
             if self.patch_db and session_id and vectors:
@@ -1820,7 +1949,15 @@ class SelfCodingEngine:
             self._record_prompt_metadata(False)
             return None, False, 0.0
         if self.safety_monitor and not self.safety_monitor.validate_bot(self.bot_name):
-            path.write_text(original, encoding="utf-8")
+            if target_region is not None:
+                cur_lines = path.read_text(encoding="utf-8").splitlines()
+                orig_lines = original.splitlines()
+                start = max(target_region.start_line - 1, 0)
+                end = min(target_region.end_line, len(orig_lines))
+                cur_lines[start:end] = orig_lines[start:end]
+                path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+            else:
+                path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
             if self.patch_db and session_id and vectors:
@@ -1960,7 +2097,15 @@ class SelfCodingEngine:
 
         reverted = False
         if roi_drop or err_spike or comp_spike or proi_drop or perr_spike:
-            path.write_text(original, encoding="utf-8")
+            if target_region is not None:
+                cur_lines = path.read_text(encoding="utf-8").splitlines()
+                orig_lines = original.splitlines()
+                start = max(target_region.start_line - 1, 0)
+                end = min(target_region.end_line, len(orig_lines))
+                cur_lines[start:end] = orig_lines[start:end]
+                path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+            else:
+                path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             reverted = True
 
@@ -2021,9 +2166,24 @@ class SelfCodingEngine:
         branch_name = "main"
         if not reverted:
             if patch_id is not None:
-                self._active_patches[patch_key] = (path, original, session_id, list(vectors))
+                self._active_patches[patch_key] = (
+                    path,
+                    original,
+                    session_id,
+                    list(vectors),
+                    target_region,
+                )
                 if self.rollback_mgr:
-                    self.rollback_mgr.register_patch(patch_key, self.bot_name)
+                    if target_region is not None:
+                        self.rollback_mgr.register_region_patch(
+                            patch_key,
+                            self.bot_name,
+                            str(path),
+                            target_region.start_line,
+                            target_region.end_line,
+                        )
+                    else:
+                        self.rollback_mgr.register_patch(patch_key, self.bot_name)
             roi_thr = _settings.auto_merge.roi_threshold
             cov_thr = _settings.auto_merge.coverage_threshold
             if roi_delta < roi_thr or coverage < cov_thr:
@@ -2058,7 +2218,15 @@ class SelfCodingEngine:
                 except Exception:
                     self.logger.exception("failed to record patch metadata")
         elif patch_id is not None and self.rollback_mgr:
-            self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
+            if target_region is not None:
+                self.rollback_mgr.rollback_region(
+                    str(path),
+                    target_region.start_line,
+                    target_region.end_line,
+                    requesting_bot=requesting_bot,
+                )
+            else:
+                self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
         if (
             self.patch_suggestion_db
             and not reverted
@@ -2477,8 +2645,16 @@ class SelfCodingEngine:
         info = self._active_patches.pop(patch_id, None)
         if not info:
             return
-        path, original, session_id, vectors = info
-        path.write_text(original, encoding="utf-8")
+        path, original, session_id, vectors, region = info
+        if region is not None:
+            cur_lines = path.read_text(encoding="utf-8").splitlines()
+            orig_lines = original.splitlines()
+            start = max(region.start_line - 1, 0)
+            end = min(region.end_line, len(orig_lines))
+            cur_lines[start:end] = orig_lines[start:end]
+            path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+        else:
+            path.write_text(original, encoding="utf-8")
         self._run_ci(path)
         try:
             if self.data_bot:
