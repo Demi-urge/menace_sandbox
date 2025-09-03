@@ -34,6 +34,7 @@ import ast
 from contextlib import AsyncExitStack
 
 from db_router import init_db_router
+from dynamic_path_router import resolve_path
 
 MENACE_ID = uuid.uuid4().hex
 
@@ -218,7 +219,7 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
             determined.
         """
 
-        repo = Path(settings.sandbox_repo_path).resolve()
+        repo = Path(resolve_path(settings.sandbox_repo_path))
         logger = get_logger(__name__)
 
         def _iter_package(pkg: Path) -> Iterable[Path]:
@@ -226,15 +227,24 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                 yield child
 
         def _resolve(parts: list[str], *, star: bool = False) -> list[Path]:
-            base = repo / Path(*parts)
             results: list[Path] = []
-            file_cand = base.with_suffix(".py")
-            if file_cand.exists():
+            try:
+                file_cand = Path(resolve_path(Path(*parts).with_suffix(".py")))
                 results.append(file_cand)
-            init_cand = base / "__init__.py"
-            if init_cand.exists():
+            except FileNotFoundError:
+                file_cand = None
+            try:
+                init_cand = Path(resolve_path(Path(*parts) / "__init__.py"))
                 results.append(init_cand)
-            if base.is_dir() and (star or not results):
+                base = init_cand.parent
+            except FileNotFoundError:
+                base = None
+            if base is None and (star or not results):
+                try:
+                    base = Path(resolve_path(Path(*parts)))
+                except FileNotFoundError:
+                    base = None
+            if base and base.is_dir() and (star or not results):
                 results.extend(_iter_package(base))
             return results
 
@@ -713,7 +723,7 @@ class SelfTestService:
 
             mods = [m for m in mods if _score(m) >= settings.integration_score_threshold]
 
-        repo = Path(settings.sandbox_repo_path).resolve()
+        repo = Path(resolve_path(settings.sandbox_repo_path))
         paths: list[str] = []
         for m in mods:
             p = Path(m)
@@ -1268,7 +1278,7 @@ class SelfTestService:
         Entries marked ``{"redundant": true}`` are preserved for later
         auditing.
         """
-        repo = Path(settings.sandbox_repo_path).resolve()
+        repo = Path(resolve_path(settings.sandbox_repo_path))
 
         def _norm(p: str) -> str:
             q = Path(p)
@@ -1322,7 +1332,7 @@ class SelfTestService:
 
         path = Path(mod)
         stem = path.stem
-        repo = Path(settings.sandbox_repo_path).resolve()
+        repo = Path(resolve_path(settings.sandbox_repo_path))
         candidates = [
             path.parent / f"test_{stem}.py",
             repo / "tests" / f"test_{stem}.py",
@@ -1351,7 +1361,7 @@ class SelfTestService:
             fixtures via ``{"fixture": "name"}`` entries.
         """
 
-        repo = Path(settings.sandbox_repo_path).resolve()
+        repo = Path(resolve_path(settings.sandbox_repo_path))
         stub_root = Path(settings.sandbox_data_dir)
         if not stub_root.is_absolute():
             stub_root = repo / stub_root
@@ -2523,7 +2533,7 @@ class SelfTestService:
         if not modules:
             return
 
-        repo = Path(settings.sandbox_repo_path)
+        repo = Path(resolve_path(settings.sandbox_repo_path))
         data_dir = Path(settings.sandbox_data_dir)
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
@@ -2578,7 +2588,7 @@ class SelfTestService:
     def orphan_summary(path: str | Path | None = None) -> dict[str, dict[str, Any]]:
         """Return stored orphan testing metrics."""
 
-        repo = Path(settings.sandbox_repo_path)
+        repo = Path(resolve_path(settings.sandbox_repo_path))
         data_dir = Path(settings.sandbox_data_dir)
         if not data_dir.is_absolute():
             data_dir = repo / data_dir

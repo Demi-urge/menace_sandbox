@@ -8,6 +8,8 @@ import os
 import logging
 from typing import Callable, Iterable, List, Mapping, Set, Tuple
 
+from dynamic_path_router import resolve_path
+
 
 DependencyCallback = Callable[[str, str, List[str]], None]
 """Callback invoked for each discovered dependency.
@@ -61,8 +63,17 @@ def collect_local_dependencies(
         logging and continuing.
     """
 
-    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+    repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
     queue: List[Tuple[Path, List[str]]] = []
+
+    def _resolve_parts(parts: List[str]) -> Path | None:
+        try:
+            return Path(resolve_path(Path(*parts).with_suffix(".py")))
+        except FileNotFoundError:
+            try:
+                return Path(resolve_path(Path(*parts) / "__init__.py"))
+            except FileNotFoundError:
+                return None
 
     def _call_on_module(rel: str, path: Path, parents: List[str]) -> None:
         if on_module is None:
@@ -125,13 +136,7 @@ def collect_local_dependencies(
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     name = alias.name
-                    mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-                    pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                    dep = (
-                        mod_path
-                        if mod_path.exists()
-                        else pkg_init if pkg_init.exists() else None
-                    )
+                    dep = _resolve_parts(name.split("."))
                     if dep is not None:
                         dep_rel = dep.relative_to(repo).as_posix()
                         dep_parents = [rel] + parents
@@ -147,13 +152,7 @@ def collect_local_dependencies(
                     base_prefix = pkg_parts
                 if node.module:
                     parts = base_prefix + node.module.split(".")
-                    mod_path = repo / Path(*parts).with_suffix(".py")
-                    pkg_init = repo / Path(*parts) / "__init__.py"
-                    dep = (
-                        mod_path
-                        if mod_path.exists()
-                        else pkg_init if pkg_init.exists() else None
-                    )
+                    dep = _resolve_parts(parts)
                     if dep is not None:
                         dep_rel = dep.relative_to(repo).as_posix()
                         dep_parents = [rel] + parents
@@ -163,13 +162,7 @@ def collect_local_dependencies(
                         if alias.name == "*":
                             continue
                         sub_parts = parts + alias.name.split(".")
-                        mod_path = repo / Path(*sub_parts).with_suffix(".py")
-                        pkg_init = repo / Path(*sub_parts) / "__init__.py"
-                        dep = (
-                            mod_path
-                            if mod_path.exists()
-                            else pkg_init if pkg_init.exists() else None
-                        )
+                        dep = _resolve_parts(sub_parts)
                         if dep is not None:
                             dep_rel = dep.relative_to(repo).as_posix()
                             dep_parents = [rel] + parents
@@ -178,13 +171,7 @@ def collect_local_dependencies(
                 elif node.names:
                     for alias in node.names:
                         name = ".".join(base_prefix + alias.name.split("."))
-                        mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-                        pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                        dep = (
-                            mod_path
-                            if mod_path.exists()
-                            else pkg_init if pkg_init.exists() else None
-                        )
+                        dep = _resolve_parts(name.split("."))
                         if dep is not None:
                             dep_rel = dep.relative_to(repo).as_posix()
                             dep_parents = [rel] + parents
@@ -216,13 +203,7 @@ def collect_local_dependencies(
                         mod_name = arg.value
                 if mod_name:
                     parts = mod_name.split(".")
-                    mod_path = repo / Path(*parts).with_suffix(".py")
-                    pkg_init = repo / Path(*parts) / "__init__.py"
-                    dep = (
-                        mod_path
-                        if mod_path.exists()
-                        else pkg_init if pkg_init.exists() else None
-                    )
+                    dep = _resolve_parts(parts)
                     if dep is not None:
                         dep_rel = dep.relative_to(repo).as_posix()
                         dep_parents = [rel] + parents
@@ -230,4 +211,3 @@ def collect_local_dependencies(
                         queue.append((dep, dep_parents))
 
     return seen
-

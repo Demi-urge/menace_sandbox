@@ -809,7 +809,7 @@ def discover_recursive_orphans(
     environment variable.
     """
 
-    repo = Path(repo_path).resolve()
+    repo = Path(resolve_path(repo_path))
     if module_map is None:
         module_map = resolve_path("sandbox_data/module_map.json")
 
@@ -898,11 +898,17 @@ def discover_recursive_orphans(
             continue
         seen.add(mod)
 
-        path = repo / Path(*mod.split(".")).with_suffix(".py")
-        if not path.exists():
-            path = repo / Path(*mod.split(".")) / "__init__.py"
-        if not path.exists():
-            continue
+        try:
+            path = Path(
+                resolve_path(Path(*mod.split(".")).with_suffix(".py"))
+            )
+        except FileNotFoundError:
+            try:
+                path = Path(
+                    resolve_path(Path(*mod.split(".")) / "__init__.py")
+                )
+            except FileNotFoundError:
+                continue
 
         cls = classifications.get(mod)
         if cls is None:
@@ -924,11 +930,18 @@ def discover_recursive_orphans(
             if importers and not importers.issubset(orphans):
                 continue
 
-            mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-            pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-            target = mod_path if mod_path.exists() else pkg_init
-            if not target.exists():
-                continue
+            try:
+                mod_path = Path(
+                    resolve_path(Path(*name.split(".")).with_suffix(".py"))
+                )
+                target = mod_path
+            except FileNotFoundError:
+                try:
+                    target = Path(
+                        resolve_path(Path(*name.split(".")) / "__init__.py")
+                    )
+                except FileNotFoundError:
+                    continue
 
             child_cls = classifications.get(name)
             if child_cls is None:
@@ -953,9 +966,18 @@ def discover_recursive_orphans(
     result: Dict[str, Dict[str, Any]] = {}
     for m in sorted(found - known):
         cls = classifications.get(m, "candidate")
-        mod_path = repo / Path(*m.split(".")).with_suffix(".py")
-        pkg_init = repo / Path(*m.split(".")) / "__init__.py"
-        target = mod_path if mod_path.exists() else pkg_init
+        try:
+            mod_path = Path(
+                resolve_path(Path(*m.split(".")).with_suffix(".py"))
+            )
+            target = mod_path
+        except FileNotFoundError:
+            try:
+                target = Path(
+                    resolve_path(Path(*m.split(".")) / "__init__.py")
+                )
+            except FileNotFoundError:
+                continue
         try:
             redundant_flag = orphan_analyzer.analyze_redundancy(target)
         except Exception:
@@ -971,11 +993,18 @@ def discover_recursive_orphans(
         entries: Dict[str, Dict[str, Any]] = {}
         class_entries: Dict[str, Dict[str, Any]] = {}
         for name, info in result.items():
-            mod_path = Path(*name.split(".")).with_suffix(".py")
-            pkg_init = Path(*name.split(".")) / "__init__.py"
-            target = mod_path if (repo / mod_path).exists() else pkg_init
-            full_path = repo / target
-            rel = full_path.relative_to(repo).as_posix()
+            try:
+                target = Path(
+                    resolve_path(Path(*name.split(".")).with_suffix(".py"))
+                )
+            except FileNotFoundError:
+                try:
+                    target = Path(
+                        resolve_path(Path(*name.split(".")) / "__init__.py")
+                    )
+                except FileNotFoundError:
+                    continue
+            rel = target.relative_to(repo).as_posix()
             cls = info.get("classification", "candidate")
             redundant_flag = info.get("redundant")
             if redundant_flag is None:

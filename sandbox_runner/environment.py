@@ -8614,7 +8614,9 @@ def integrate_new_orphans(
         Repository-relative paths of modules successfully added.
     """
 
-    return discover_and_integrate_orphans(Path(repo_path).resolve(), router=router)
+    return discover_and_integrate_orphans(
+        Path(resolve_path(repo_path)), router=router
+    )
 
 
 # ----------------------------------------------------------------------
