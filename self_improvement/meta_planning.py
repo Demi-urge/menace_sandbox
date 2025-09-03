@@ -818,7 +818,7 @@ async def self_improvement_cycle(
                     == "critical"
                     for err in rec.get("errors", [])
                 )
-                if should_skip and reason == "all_deltas_positive" and (
+                if not should_skip and (
                     entropy_shift > cfg.overfitting_entropy_threshold or has_critical
                 ):
                     logger.debug(
