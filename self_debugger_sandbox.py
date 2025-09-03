@@ -50,22 +50,25 @@ from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
 from .error_parser import ErrorReport, FailureCache, parse_failure
 try:
-    from self_improvement.utils import MovingBaselineTracker
+    from self_improvement.baseline_tracker import BaselineTracker
 except Exception:  # pragma: no cover - test fallback
-    class MovingBaselineTracker:
-        def __init__(self, window_size: int) -> None:
-            self.window_size = int(window_size)
-            self.composite_history = deque(maxlen=self.window_size)
+    class BaselineTracker:
+        def __init__(self, window: int) -> None:
+            self.window = int(window)
+            self._history = deque(maxlen=self.window)
 
-        def update(self, score: float) -> tuple[float, float]:
-            self.composite_history.append(float(score))
-            return self.stats()
+        def update(self, *, score: float) -> None:
+            self._history.append(float(score))
 
-        def stats(self) -> tuple[float, float]:
-            if not self.composite_history:
-                return 0.0, 0.0
-            avg = sum(self.composite_history) / len(self.composite_history)
-            return avg, 0.0
+        def get(self, _metric: str) -> float:
+            if not self._history:
+                return 0.0
+            return sum(self._history) / len(self._history)
+
+        def std(self, _metric: str) -> float:
+            if len(self._history) < 2:
+                return 0.0
+            return pstdev(self._history)
 
 try:
     from self_improvement.metrics import (
@@ -187,7 +190,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.merge_threshold = float(merge_threshold)
         self.score_weights = tuple(score_weights)
         self.stagnation_iters = int(stagnation_iters)
-        self._baseline_tracker = MovingBaselineTracker(int(baseline_window))
+        self._baseline_tracker = BaselineTracker(int(baseline_window))
         if flakiness_runs is None:
             flakiness_runs = getattr(self._settings, "flakiness_runs", 1)
         self.flakiness_runs = max(1, int(flakiness_runs))
@@ -268,10 +271,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             try:
                 cur = self._history_conn.execute(
                     "SELECT score FROM composite_history ORDER BY id DESC LIMIT ?",
-                    (self._baseline_tracker.window_size,),
+                    (self._baseline_tracker.window,),
                 )
                 for (s,) in reversed(cur.fetchall()):
-                    self._baseline_tracker.update(float(s))
+                    self._baseline_tracker.update(score=float(s))
             except Exception:
                 self.logger.exception("baseline history fetch failed")
         except Exception:
@@ -1171,7 +1174,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             score = 0.0
 
-        moving_avg, moving_dev = self._baseline_tracker.stats()
+        moving_avg = self._baseline_tracker.get("score")
+        moving_dev = self._baseline_tracker.std("score")
 
         try:
             with self._history_db() as conn:
@@ -1209,7 +1213,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             self.logger.exception("score history persistence failed")
 
-        self._baseline_tracker.update(score)
+        self._baseline_tracker.update(score=score)
 
         return score, moving_avg, moving_dev
 
