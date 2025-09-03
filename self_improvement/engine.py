@@ -923,7 +923,7 @@ class SelfImprovementEngine:
                 repo_path = _repo_path()
                 discovered = discover_module_groups(repo_path)
                 module_groups = {
-                    (m if m.endswith(".py") else f"{m}.py"): grp
+                    str(resolve_path(m if m.endswith(".py") else f"{m}.py")): grp
                     for grp, mods in discovered.items()
                     for m in mods
                 }
@@ -992,7 +992,7 @@ class SelfImprovementEngine:
 
         if SandboxSettings().auto_train_synergy:
             interval = SandboxSettings().auto_train_interval
-            hist_file = Path(settings.sandbox_data_dir) / "synergy_history.db"
+            hist_file = resolve_path(settings.sandbox_data_dir) / "synergy_history.db"
             self._start_synergy_trainer(hist_file, interval)
 
         # Schedule periodic meta-planning runs on a background thread.  This
@@ -1998,10 +1998,11 @@ class SelfImprovementEngine:
                 elif action == "patch":
                     try:
                         with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
-                            src = Path(name)
-                            if src.suffix == "":
-                                src = src.with_suffix(".py")
-                            rel = src.name if src.is_absolute() else src
+                            orig = Path(name)
+                            rel = orig.name if orig.is_absolute() else orig
+                            src = resolve_path(
+                                f"{orig}.py" if orig.suffix == "" else str(orig)
+                            )
                             before_target = Path(before_dir) / rel
                             before_target.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(src, before_target)
@@ -2047,7 +2048,7 @@ class SelfImprovementEngine:
                                         f"scenario_patch_{patch_id}"
                                     )
                                     try:
-                                        repo = Path(__file__).resolve().parent
+                                        repo = resolve_path(".")
                                         self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                                     except Exception:
                                         self.logger.exception(
@@ -3778,15 +3779,13 @@ class SelfImprovementEngine:
             if clusterer is None:
                 from intent_clusterer import IntentClusterer
 
-                data_dir = Path(settings.sandbox_data_dir)
-                if not data_dir.is_absolute():
-                    data_dir = repo / data_dir
+                data_dir = resolve_path(settings.sandbox_data_dir)
                 clusterer = IntentClusterer(
                     local_db_path=data_dir / "intent.db",
                     shared_db_path=data_dir / "intent.db",
                 )
                 self.intent_clusterer = clusterer
-            paths = {repo / f"{m}.py" for m in mods}
+            paths = {resolve_path(f"{m}.py") for m in mods}
             clusterer.index_modules(paths)
         except Exception:
             self.logger.exception("failed to index intent modules")
@@ -4113,7 +4112,7 @@ class SelfImprovementEngine:
                     seen: set[int] = set()
                     for step in getattr(wf, "workflow", []):
                         mod = step.split(":")[0]
-                        file = repo / (mod.replace(".", "/") + ".py")
+                        file = resolve_path(mod.replace(".", "/") + ".py")
                         try:
                             gid = idx.get(file.as_posix())
                         except Exception:
@@ -4925,13 +4924,13 @@ class SelfImprovementEngine:
                 for k, v in trace.items():
                     info: dict[str, Any] = {
                         "parents": [
-                            str(Path(*p.split(".")).with_suffix(".py"))
+                            str(resolve_path(str(Path(*p.split(".")).with_suffix(".py"))))
                             for p in (v.get("parents") if isinstance(v, dict) else v)
                         ]
                     }
                     if isinstance(v, dict) and "redundant" in v:
                         info["redundant"] = bool(v["redundant"])
-                    mod_path = str(Path(*k.split(".")).with_suffix(".py"))
+                    mod_path = str(resolve_path(str(Path(*k.split(".")).with_suffix(".py"))))
                     self.orphan_traces.setdefault(mod_path, info)
                     modules.append(mod_path)
             except Exception as exc:  # pragma: no cover - best effort
@@ -5063,7 +5062,7 @@ class SelfImprovementEngine:
             trace = _discover(str(repo), module_map=data_dir / "module_map.json")
             for mod, info in trace.items():
                 parents = [
-                    str(Path(*p.split(".")).with_suffix(".py"))
+                    str(resolve_path(str(Path(*p.split(".")).with_suffix(".py"))))
                     for p in (info.get("parents") if isinstance(info, dict) else info)
                 ]
                 entry: dict[str, Any] = {"parents": parents}
@@ -5074,7 +5073,7 @@ class SelfImprovementEngine:
                         entry["redundant"] = cls != "candidate"
                     elif "redundant" in info:
                         entry["redundant"] = bool(info["redundant"])
-                mod_path = str(Path(*mod.split(".")).with_suffix(".py"))
+                mod_path = str(resolve_path(str(Path(*mod.split(".")).with_suffix(".py"))))
                 self.orphan_traces.setdefault(mod_path, entry).update(entry)
                 modules.append(mod_path)
         except Exception as exc:  # pragma: no cover - best effort
@@ -5430,7 +5429,11 @@ class SelfImprovementEngine:
             exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
             mapping = build_module_map(repo, ignore=exclude)
             mapping = {
-                (f"{k}.py" if not k.endswith(".py") else k): v
+                (
+                    str(resolve_path(f"{k}.py"))
+                    if not k.endswith(".py")
+                    else str(resolve_path(k))
+                ): v
                 for k, v in mapping.items()
             }
             if skipped:
@@ -5521,10 +5524,11 @@ class SelfImprovementEngine:
             try:
                 patch_id = None
                 with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
-                    src = Path(mod)
-                    if src.suffix == "":
-                        src = src.with_suffix(".py")
-                    rel = src.name if src.is_absolute() else src
+                    orig = Path(mod)
+                    rel = orig.name if orig.is_absolute() else orig
+                    src = resolve_path(
+                        f"{orig}.py" if orig.suffix == "" else str(orig)
+                    )
                     before_target = Path(before_dir) / rel
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
@@ -5586,7 +5590,7 @@ class SelfImprovementEngine:
                             },
                         )
                         try:
-                            repo = Path(__file__).resolve().parent
+                            repo = resolve_path(".")
                             self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                         except Exception:
                             self.logger.exception(
@@ -5635,7 +5639,7 @@ class SelfImprovementEngine:
                     "post_patch_orphan_discovery",
                     extra=log_record(module=mod),
                 )
-                repo = Path(__file__).resolve().parent
+                repo = resolve_path(".")
                 self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
             except Exception:
                 self.logger.exception(
@@ -5670,10 +5674,11 @@ class SelfImprovementEngine:
                 try:
                     patch_id = None
                     with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
-                        src = Path(mod)
-                        if src.suffix == "":
-                            src = src.with_suffix(".py")
-                        rel = src.name if src.is_absolute() else src
+                        orig = Path(mod)
+                        rel = orig.name if orig.is_absolute() else orig
+                        src = resolve_path(
+                            f"{orig}.py" if orig.suffix == "" else str(orig)
+                        )
                         before_target = Path(before_dir) / rel
                         before_target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src, before_target)
@@ -5735,7 +5740,7 @@ class SelfImprovementEngine:
                                 },
                             )
                             try:
-                                repo = Path(__file__).resolve().parent
+                                repo = resolve_path(".")
                                 self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                             except Exception:
                                 self.logger.exception(
@@ -5784,7 +5789,7 @@ class SelfImprovementEngine:
                         "post_patch_orphan_discovery",
                         extra=log_record(module=mod),
                     )
-                    repo = Path(__file__).resolve().parent
+                    repo = resolve_path(".")
                     self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                 except Exception:
                     self.logger.exception(
@@ -5874,7 +5879,7 @@ class SelfImprovementEngine:
                     "relevancy audit log failed", extra=log_record(module=mod)
                 )
             try:
-                analyze_redundancy(repo / (mod.replace(".", "/") + ".py"))
+                analyze_redundancy(resolve_path(mod.replace(".", "/") + ".py"))
             except Exception:
                 self.logger.exception(
                     "redundancy analysis failed", extra=log_record(module=mod)
@@ -6200,7 +6205,7 @@ class SelfImprovementEngine:
                         break
 
                 try:
-                    repo = Path(__file__).resolve().parent
+                    repo = resolve_path(".")
                     self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(

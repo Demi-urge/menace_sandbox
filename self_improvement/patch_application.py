@@ -18,6 +18,11 @@ from .patch_generation import generate_patch
 from .utils import _load_callable, _call_with_retries
 from ..sandbox_settings import SandboxSettings
 
+try:  # pragma: no cover - fallback for flat layout
+    from ..dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback
+    from dynamic_path_router import resolve_path  # type: ignore
+
 _settings = SandboxSettings()
 
 
@@ -54,7 +59,7 @@ def apply_patch(
     if not patch_data:
         logger.error("quick_fix_engine returned no patch data")
         raise RuntimeError("quick_fix_engine did not return patch data")
-    repo_path = Path(repo_path)
+    repo_path = resolve_path(str(repo_path))
     status = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=str(repo_path),

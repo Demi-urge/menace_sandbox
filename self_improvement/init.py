@@ -38,6 +38,11 @@ from sandbox_settings import SandboxSettings, load_sandbox_settings
 from sandbox_runner.bootstrap import initialize_autonomous_sandbox
 from ..metrics_exporter import self_improvement_failure_total
 
+try:  # pragma: no cover - fallback for flat layout
+    from ..dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback
+    from dynamic_path_router import resolve_path  # type: ignore
+
 try:
     from ..logging_utils import get_logger, setup_logging, log_record
 except (ImportError, AttributeError) as exc:  # pragma: no cover - simplified environments
@@ -393,7 +398,7 @@ def _load_initial_synergy_weights() -> None:
     normalisation is logged and the sanitized result written back to disk.
     """
 
-    default_path = Path(getattr(settings, "sandbox_data_dir", ".")) / "synergy_weights.json"
+    default_path = resolve_path(getattr(settings, "sandbox_data_dir", ".")) / "synergy_weights.json"
     path = Path(
         getattr(
             settings,
