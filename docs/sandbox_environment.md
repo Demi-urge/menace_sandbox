@@ -14,6 +14,20 @@ The sandbox expects a few variables to be set before launch:
 Run `auto_env_setup.ensure_env()` to generate a `.env` file with these variables when
 missing. Values may also be supplied via the shell environment.
 
+Use `dynamic_path_router.resolve_path` for all repository file lookups so paths
+remain portable. Combine it with `SANDBOX_DATA_DIR` when accessing runtime
+artifacts:
+
+```python
+import os
+from dynamic_path_router import resolve_path
+data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+```
+
+Setting `MENACE_ROOT` or `SANDBOX_REPO_PATH` changes the repository root used by
+`resolve_path`, allowing alternate checkouts to be targeted without modifying
+code.
+
 ## Prompt logging variables
 
 These optional variables control where prompt execution results are stored:

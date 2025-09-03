@@ -18,6 +18,24 @@ PY
 )" --help
 ```
 
+Environment variables influence path resolution. Setting `MENACE_ROOT` or
+`SANDBOX_REPO_PATH` overrides the repository root:
+
+```bash
+SANDBOX_REPO_PATH=/alt/clone python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('configs/foresight_templates.yaml'))
+PY
+```
+
+Combine `SANDBOX_DATA_DIR` with `resolve_path` to locate runtime data files:
+
+```python
+import os
+from dynamic_path_router import resolve_path
+roi_history = resolve_path(f"{os.getenv('SANDBOX_DATA_DIR', 'sandbox_data')}/roi_history.json")
+```
+
 The router enables experimenting with alternative directory structures without
 breaking tooling, and nested clones can share the same lookup logic.
 When adding new scripts or documentation, resolve paths with
@@ -32,7 +50,8 @@ configuration. The generated file includes stub values for critical settings:
 - `DATABASE_URL` defaults to `sqlite:///menace.db`
 - `MODELS` resolves to the bundled `micro_models` directory when set to `demo`
 - `OPENAI_API_KEY` and `STRIPE_API_KEY` placeholders
-- `SANDBOX_DATA_DIR` defaults to `sandbox_data`
+- `SANDBOX_DATA_DIR` defaults to `sandbox_data` (use `resolve_path` when
+  referencing files under this directory)
 - `SANDBOX_LOG_LEVEL` defaults to `INFO` (use `--log-level` to override)
 - `PROMPT_CHUNK_TOKEN_THRESHOLD` and `CHUNK_SUMMARY_CACHE_DIR` control code
   chunking token limits and caching for large file summaries (see
@@ -81,7 +100,7 @@ message if installation fails.
 - ROI foresight with `ForesightTracker.predict_roi_collapse`, projecting trends,
   classifying risk (Stable, Slow decay, Volatile, Immediate collapse risk) and
   flagging brittle workflows. Baseline curves live in
-  `configs/foresight_templates.yaml` with keys `profiles`, `trajectories`,
+  `resolve_path('configs/foresight_templates.yaml')` with keys `profiles`, `trajectories`,
   `entropy_profiles`, `risk_profiles`, `entropy_trajectories` and
   `risk_trajectories`
 - Self-coding manager applies patches then deploys via the automation pipeline
