@@ -1,3 +1,4 @@
+import json
 import math
 from pathlib import Path
 
@@ -101,3 +102,18 @@ def test_cluster_assignment(tmp_path):
     assert fp3.cluster_id != fp1.cluster_id
     cluster = store.get_cluster(fp1.cluster_id)
     assert {f.filename for f in cluster} == {'a.py', 'b.py'}
+
+
+def test_duplicate_increments_count(tmp_path):
+    store = make_store(tmp_path)
+    fp = FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p')
+    store.add(fp)
+    store.add(FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p'))
+    rid = store._id_for(fp)
+    assert store._cache[rid].count == 2
+    with store.path.open('r', encoding='utf-8') as fh:
+        lines = fh.read().strip().splitlines()
+    assert len(lines) == 1
+    data = json.loads(lines[0])
+    assert data['count'] == 2
+    assert store.vector_service.vector_store.meta[rid]['count'] == 2

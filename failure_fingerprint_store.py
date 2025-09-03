@@ -143,6 +143,32 @@ class FailureFingerprintStore:
         fingerprint.cluster_id = best_id
         return best_id
 
+    def _persist_update(self, record_id: str, fingerprint: FailureFingerprint) -> None:
+        """Rewrite the JSONL entry for ``record_id`` with updated data."""
+
+        tmp_path = self.path.with_suffix(".tmp")
+        data = asdict(fingerprint)
+        data["id"] = record_id
+        new_line = json.dumps(data) + "\n"
+        try:
+            with self.path.open("r", encoding="utf-8") as src, tmp_path.open(
+                "w", encoding="utf-8"
+            ) as dst:
+                for line in src:
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        dst.write(line)
+                        continue
+                    if obj.get("id") == record_id:
+                        dst.write(new_line)
+                    else:
+                        dst.write(line)
+        except FileNotFoundError:  # pragma: no cover - best effort
+            with tmp_path.open("w", encoding="utf-8") as dst:
+                dst.write(new_line)
+        tmp_path.replace(self.path)
+
     # ----------------------------------------------------------------- public
     def cluster_fingerprints(self) -> None:
         """Cluster all fingerprints currently in the store."""
@@ -180,6 +206,28 @@ class FailureFingerprintStore:
 
         self._ensure_embedding(fingerprint)
         record_id = self._id_for(fingerprint)
+        existing = self._cache.get(record_id)
+        if existing is not None:
+            existing.count += 1
+            existing.timestamp = fingerprint.timestamp
+            existing.embedding_metadata = fingerprint.embedding_metadata
+            self._persist_update(record_id, existing)
+            try:
+                self.vector_service.vector_store.add(
+                    "failure_fingerprint",
+                    record_id,
+                    existing.embedding,
+                    metadata={
+                        "filename": existing.filename,
+                        "function": existing.function,
+                        "embedding_meta": existing.embedding_metadata,
+                        "count": existing.count,
+                    },
+                )
+            except Exception:  # pragma: no cover - best effort
+                pass
+            return
+
         self._assign_cluster(record_id, fingerprint)
         data = asdict(fingerprint)
         data["id"] = record_id
@@ -193,6 +241,7 @@ class FailureFingerprintStore:
                 "filename": fingerprint.filename,
                 "function": fingerprint.function,
                 "embedding_meta": fingerprint.embedding_metadata,
+                "count": fingerprint.count,
             },
         )
         self._cache[record_id] = fingerprint

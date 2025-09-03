@@ -404,7 +404,8 @@ class PromptOptimizer:
                         feats["has_bullets"],
                         has_system,
                     )
-                    counts[key] += 1
+                    count_val = int(data.get("count", 1))
+                    counts[key] += count_val
             for key, count in counts.items():
                 stat = self.stats.get(key)
                 if not stat:
@@ -475,8 +476,9 @@ class PromptOptimizer:
                         has_system=has_system,
                     )
                     self.stats[key] = stat
-                stat.total += 1
-                counts[key] += 1
+                occurrences = getattr(fp, "count", 1)
+                stat.total += occurrences
+                counts[key] += occurrences
         for key, count in counts.items():
             stat = self.stats.get(key)
             if not stat:
