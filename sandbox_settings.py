@@ -30,6 +30,20 @@ except Exception:  # pragma: no cover
     from pydantic import validator as field_validator  # type: ignore
 
 
+DEFAULT_SEVERITY_SCORE_MAP: dict[str, float] = {
+    "critical": 100.0,
+    "crit": 100.0,
+    "fatal": 100.0,
+    "high": 75.0,
+    "error": 75.0,
+    "warn": 50.0,
+    "warning": 50.0,
+    "medium": 50.0,
+    "low": 25.0,
+    "info": 0.0,
+}
+
+
 class AlignmentRules(BaseModel):
     """Thresholds for human-alignment checks."""
 
@@ -359,6 +373,15 @@ class SandboxSettings(BaseSettings):
         3.0, env="SCENARIO_RERUN_DEV_MULTIPLIER"
     )
     save_synergy_history: bool | None = Field(None, env="SAVE_SYNERGY_HISTORY")
+    severity_score_map: dict[str, float] = Field(
+        default_factory=lambda: DEFAULT_SEVERITY_SCORE_MAP.copy(),
+        env="SEVERITY_SCORE_MAP",
+        description=(
+            "Mapping of error severities to numeric scores used during cycle "
+            "evaluation. Defaults to "
+            f"{DEFAULT_SEVERITY_SCORE_MAP}."
+        ),
+    )
 
     @field_validator("baseline_window")
     def _baseline_window_range(cls, v: int) -> int:

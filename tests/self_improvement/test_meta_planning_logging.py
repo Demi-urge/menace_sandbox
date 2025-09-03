@@ -26,6 +26,8 @@ logging_utils.log_record = lambda **k: k
 sys.modules["menace.logging_utils"] = logging_utils
 
 sandbox_settings_mod = types.ModuleType("menace.sandbox_settings")
+
+
 class _SandboxSettings:
     sandbox_data_dir = "/tmp"
     sandbox_repo_path = "/tmp"
@@ -40,20 +42,43 @@ class _SandboxSettings:
     meta_beam_width = 1
     max_allowed_errors = 0
     overfitting_entropy_threshold = 1.0
+
+
 sandbox_settings_mod.SandboxSettings = _SandboxSettings
+sandbox_settings_mod.DEFAULT_SEVERITY_SCORE_MAP = {
+    "critical": 100.0,
+    "crit": 100.0,
+    "fatal": 100.0,
+    "high": 75.0,
+    "error": 75.0,
+    "warn": 50.0,
+    "warning": 50.0,
+    "medium": 50.0,
+    "low": 25.0,
+    "info": 0.0,
+}
+
 sys.modules["menace.sandbox_settings"] = sandbox_settings_mod
 
 ws_db_mod = types.ModuleType("menace.workflow_stability_db")
+
+
 class _WSDB:
     def record_metrics(self, *a, **k):
         pass
+
+
 ws_db_mod.WorkflowStabilityDB = _WSDB
 sys.modules["menace.workflow_stability_db"] = ws_db_mod
 
 roi_db_mod = types.ModuleType("menace.roi_results_db")
+
+
 class _ROIDB:
     def log_result(self, *a, **k):
         pass
+
+
 roi_db_mod.ROIResultsDB = _ROIDB
 sys.modules["menace.roi_results_db"] = roi_db_mod
 
