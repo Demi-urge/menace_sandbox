@@ -29,12 +29,14 @@ import math
 import atexit
 import threading
 from datetime import datetime
-from collections import defaultdict, deque
+from collections import deque
 from typing import Any, Dict, Optional, TYPE_CHECKING
 import logging
+from dynamic_path_router import resolve_path
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from unified_event_bus import UnifiedEventBus
+    from task_handoff_bot import WorkflowRecord
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +236,7 @@ class WorkflowGraph:
     """
 
     def __init__(self, path: Optional[str] = None, *, db_path: Optional[str] = None) -> None:
-        self.path = path or os.path.join("sandbox_data", "workflow_graph.json")
+        self.path = path or resolve_path("sandbox_data/workflow_graph.json")
         # ``_backend`` retained for compatibility with existing tests although
         # this implementation now always relies on ``networkx``.
         self._backend = "networkx" if _HAS_NX else "adjlist"
@@ -381,7 +383,9 @@ class WorkflowGraph:
     # Automatic population from WorkflowDB
     # ------------------------------------------------------------------
     @staticmethod
-    def _derive_edge_weights(a: "WorkflowRecord", b: "WorkflowRecord") -> tuple[float, float, float]:
+    def _derive_edge_weights(
+        a: "WorkflowRecord", b: "WorkflowRecord"
+    ) -> tuple[float, float, float]:
         """Return resource, data and logical dependency weights between two records."""
 
         def _jaccard(seq1: Any, seq2: Any) -> float:
@@ -905,6 +909,7 @@ def load_graph(path: Optional[str] = None):
 
     wg = WorkflowGraph(path=path, db_path=None)
     return wg.graph
+
 
 __all__ = [
     "WorkflowGraph",
