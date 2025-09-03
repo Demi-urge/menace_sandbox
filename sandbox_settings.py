@@ -2215,10 +2215,11 @@ def load_sandbox_settings(path: str | None = None) -> SandboxSettings:
 
     data: dict[str, Any] = {}
     if path:
+        path = resolve_path(path)
         with open(path, "r", encoding="utf-8") as fh:
-            if path.endswith((".yml", ".yaml")):
+            if path.suffix in (".yml", ".yaml"):
                 data = yaml.safe_load(fh) or {}
-            elif path.endswith(".json"):
+            elif path.suffix == ".json":
                 data = json.load(fh)
             else:  # pragma: no cover - defensive
                 raise ValueError(f"Unsupported config format: {path}")
