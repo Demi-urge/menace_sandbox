@@ -6990,7 +6990,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                     logger.exception(
                         "docker execution failed: %s; cmd: docker run <image> python %s",
                         exc,
-                        resolve_path("sandbox_runner.py"),
+                        str(resolve_path("sandbox_runner.py")),
                     )
                     if attempt >= _CREATE_RETRY_LIMIT - 1:
                         logger.error("docker repeatedly failed; running locally")
@@ -7047,7 +7047,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                                 "-serial",
                                 "stdio",
                                 "-append",
-                                f"python {resolve_path('sandbox_runner.py')}",
+                                f"python {str(resolve_path('sandbox_runner.py'))}",
                             ]
                             subprocess.run(
                                 cmd,
