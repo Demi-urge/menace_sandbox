@@ -2,6 +2,10 @@ import inspect
 import traceback
 from pathlib import Path
 
+import inspect
+import traceback
+from pathlib import Path
+
 from error_parser import extract_target_region
 from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
@@ -21,9 +25,9 @@ def test_extract_target_region_identifies_innermost_frame():
         trace = traceback.format_exc()
     region = extract_target_region(trace)
     assert region is not None
-    assert Path(region.file) == Path(inspect.getsourcefile(_inner_fail))
+    assert Path(region.filename) == Path(inspect.getsourcefile(_inner_fail))
     src, start = inspect.getsourcelines(_inner_fail)
-    assert region.func_name == "_inner_fail"
+    assert region.function == "_inner_fail"
     assert region.start_line == start
     assert region.end_line == start + len(src) - 1
 
