@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
+from dataclasses import dataclass
 import subprocess
 import json
 import base64
@@ -174,6 +175,15 @@ def _count_tokens(text: str) -> int:
         except Exception:
             pass
     return len(text.split())
+
+
+@dataclass
+class TargetRegion:
+    """Represents a contiguous region within a source file."""
+
+    start_line: int
+    end_line: int
+    func_name: str | None = None
 
 
 class SelfCodingEngine:
@@ -728,7 +738,10 @@ class SelfCodingEngine:
         return "\n".join(lines)
 
     def _build_file_context(
-        self, path: Path, chunk_index: int | None = None
+        self,
+        path: Path,
+        chunk_index: int | None = None,
+        target_region: TargetRegion | None = None,
     ) -> tuple[str, list[str] | None]:
         """Return either trimmed code or chunk summaries for ``path``.
 
@@ -737,13 +750,29 @@ class SelfCodingEngine:
         ``chunk_index`` is provided the raw source of that chunk is returned and
         the remaining chunks are represented by their summaries.  Otherwise the
         joined summaries are returned.  For smaller files the full source is
-        returned truncated to :attr:`token_threshold`.
+        returned truncated to :attr:`token_threshold`. When ``target_region`` is
+        supplied only the specified line range plus minimal surrounding context
+        is returned.
         """
         path = resolve_path(path)
         try:
             code = path.read_text(encoding="utf-8")
         except Exception:
             return "", None
+
+        if target_region is not None:
+            lines = code.splitlines()
+            start = max(target_region.start_line - 1, 0)
+            end = min(target_region.end_line, len(lines))
+            context_pad = 5
+            s = max(0, start - context_pad)
+            e = min(len(lines), end + context_pad)
+            snippet = "\n".join(lines[s:e])
+            header = (
+                f"# Region {target_region.func_name or ''} lines"
+                f" {target_region.start_line}-{target_region.end_line}"
+            ).strip()
+            return f"{header}\n{snippet}", None
 
         threshold = self.chunk_token_threshold or 0
         if code and threshold and _count_tokens(code) > threshold:
@@ -871,6 +900,7 @@ class SelfCodingEngine:
         path: Path | None = None,
         metadata: Dict[str, Any] | None = None,
         chunk_index: int | None = None,
+        target_region: TargetRegion | None = None,
     ) -> str:
         """Create helper text using snippet and retrieval context.
 
@@ -886,7 +916,9 @@ class SelfCodingEngine:
         file_context = ""
         if path:
             path = resolve_path(path)
-            file_context, summaries = self._build_file_context(path, chunk_index)
+            file_context, summaries = self._build_file_context(
+                path, chunk_index, target_region
+            )
         context = "\n\n".join(p for p in (file_context, snippet_context) if p)
 
         def _fallback() -> str:
@@ -1111,17 +1143,24 @@ class SelfCodingEngine:
         *,
         context_meta: Dict[str, Any] | None = None,
         chunk_index: int | None = None,
+        target_region: TargetRegion | None = None,
     ) -> tuple[str, bool]:
         """Generate helper code and append it to ``path`` if it passes verification.
 
         When ``chunk_index`` is provided and the file exceeds
         :attr:`prompt_chunk_token_threshold`, only the selected chunk's raw
         source is included in the prompt.  Other chunks are represented by their
-        summaries to keep the prompt size below token limits.
+        summaries to keep the prompt size below token limits. When ``target_region``
+        is supplied the generated code is spliced into that line range instead of
+        being appended.
         """
         try:
             code = self.generate_helper(
-                description, path=path, metadata=context_meta, chunk_index=chunk_index
+                description,
+                path=path,
+                metadata=context_meta,
+                chunk_index=chunk_index,
+                target_region=target_region,
             )
         except TypeError:
             code = self.generate_helper(description)
@@ -1156,8 +1195,16 @@ class SelfCodingEngine:
         if not verified:
             self.logger.warning("pre-verification failed; patch not applied")
             return "", False
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write("\n" + code)
+        if target_region is not None:
+            original_lines = path.read_text(encoding="utf-8").splitlines()
+            start = max(target_region.start_line - 1, 0)
+            end = min(target_region.end_line, len(original_lines))
+            patch_lines = code.rstrip().splitlines()
+            original_lines[start:end] = patch_lines
+            path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+        else:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("\n" + code)
         self.memory_mgr.store(str(path), code, tags="code")
         self.logger.info(
             "patch applied",
@@ -1402,6 +1449,7 @@ class SelfCodingEngine:
         suggestion_id: int | None = None,
         baseline_coverage: float | None = None,
         baseline_runtime: float | None = None,
+        target_region: TargetRegion | None = None,
     ) -> tuple[int | None, bool, float]:
         """Patch file, run CI and benchmark a workflow.
 
@@ -1484,7 +1532,7 @@ class SelfCodingEngine:
                     "retrieval_session_id": "",
                 }
         original = path.read_text(encoding="utf-8")
-        if _count_tokens(original) > self.chunk_token_threshold:
+        if target_region is None and _count_tokens(original) > self.chunk_token_threshold:
             return self._apply_patch_chunked(
                 path,
                 description,
@@ -1492,7 +1540,10 @@ class SelfCodingEngine:
                 requesting_bot=requesting_bot,
             )
         generated_code, pre_verified = self.patch_file(
-            path, description, context_meta=context_meta
+            path,
+            description,
+            context_meta=context_meta,
+            target_region=target_region,
         )
         self._log_attempt(
             requesting_bot,
@@ -2413,4 +2464,4 @@ class SelfCodingEngine:
         self.apply_patch(path, "refactor", reason="refactor", trigger="refactor_worst_bot")
 
 
-__all__ = ["SelfCodingEngine"]
+__all__ = ["SelfCodingEngine", "TargetRegion"]
