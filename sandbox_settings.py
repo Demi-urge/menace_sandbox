@@ -330,6 +330,9 @@ class SandboxSettings(BaseSettings):
     energy_deviation: float = Field(1.0, env="ENERGY_DEVIATION")
     roi_deviation: float = Field(1.0, env="ROI_DEVIATION")
     entropy_deviation: float = Field(1.0, env="ENTROPY_DEVIATION")
+    scenario_deviation_multiplier: float = Field(
+        1.0, env="SCENARIO_DEVIATION_MULTIPLIER"
+    )
     save_synergy_history: bool | None = Field(None, env="SAVE_SYNERGY_HISTORY")
 
     @field_validator("baseline_window")
@@ -379,6 +382,7 @@ class SandboxSettings(BaseSettings):
         "roi_deviation",
         "entropy_deviation",
         "relevancy_deviation_multiplier",
+        "scenario_deviation_multiplier",
     )
     def _baseline_non_negative(cls, v: float, info: Any) -> float:
         if v < 0:

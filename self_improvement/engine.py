@@ -1884,33 +1884,58 @@ class SelfImprovementEngine:
         return score, components
 
     def _evaluate_scenario_metrics(self, metrics: dict[str, float]) -> None:
-        """Evaluate scenario metrics and trigger remediation when thresholds fail."""
+        """Evaluate scenario metrics and trigger remediation based on deviations."""
         prev = getattr(self, "_last_scenario_metrics", {})
         trend = {k: float(v) - float(prev.get(k, 0.0)) for k, v in metrics.items()}
-        thresholds = {
-            "latency_error_rate": {"max": 0.2, "action": "alert"},
-            "hostile_failures": {"max": 5.0, "action": "patch"},
-            "misuse_failures": {"max": 5.0, "action": "patch"},
-            "concurrency_throughput": {"min": 100.0, "action": "rerun"},
+        action_map = {
+            "latency_error_rate": "alert",
+            "hostile_failures": "patch",
+            "misuse_failures": "patch",
+            "concurrency_throughput": "rerun",
         }
         failing: list[str] = []
+        dev_mult = getattr(settings, "scenario_deviation_multiplier", 1.0)
+        histories = self.baseline_tracker.to_dict()
+        baselines = {
+            name: (
+                self.baseline_tracker.get(name),
+                self.baseline_tracker.std(name),
+                len(histories.get(name, [])),
+            )
+            for name in metrics
+        }
         for name, val in metrics.items():
-            cfg = thresholds.get(name)
-            if not cfg:
+            action = action_map.get(name)
+            if not action:
                 continue
-            exceed = ("max" in cfg and val > cfg["max"]) or (
-                "min" in cfg and val < cfg["min"]
+            avg, std, hist_len = baselines.get(name, (0.0, 0.0, 0))
+            if hist_len == 0:
+                continue
+            delta = float(val) - avg
+            deviation = std * dev_mult
+            exceed = (
+                delta > deviation
+                if name != "concurrency_throughput"
+                else delta < -deviation
             )
             if exceed:
                 failing.append(name)
-                action = cfg.get("action")
+                self.logger.info(
+                    "scenario_metric_action",
+                    extra=log_record(
+                        metric=name,
+                        moving_avg=avg,
+                        delta=delta,
+                        action=action,
+                    ),
+                )
                 if action == "alert":
                     try:
                         dispatch_alert(
                             "scenario_degradation",
                             2,
                             f"{name} degraded",
-                            {"value": float(val)},
+                            {"value": float(val), "moving_avg": avg, "delta": delta},
                         )
                     except Exception:
                         self.logger.exception("alert dispatch failed for %s", name)
@@ -1993,7 +2018,7 @@ class SelfImprovementEngine:
         passed = total - len(failing)
         pass_rate = passed / total if total else 1.0
         try:
-            self.baseline_tracker.update(pass_rate=pass_rate)
+            self.baseline_tracker.update(pass_rate=pass_rate, **metrics)
         except Exception:
             pass
         # store negative value when scenarios fail so reward is penalised
