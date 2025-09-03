@@ -112,13 +112,33 @@ class ImprovementEngineRegistry:
             self.logger.exception("autoscale trend fetch failed: %s", exc)
             trend = 0.0
 
+        # Snapshot baseline statistics before recording current metrics
         energy_avg = self.baseline_tracker.get("energy")
         roi_avg = self.baseline_tracker.get("roi")
-        energy_std = self.baseline_tracker.std("energy")
-        roi_std = self.baseline_tracker.std("roi")
+        pass_rate_avg = self.baseline_tracker.get("pass_rate")
+        entropy_avg = self.baseline_tracker.get("entropy")
+        momentum_avg = self.baseline_tracker.get("momentum")
+        energy_std = max(self.baseline_tracker.std("energy"), 1e-6)
+        roi_std = max(self.baseline_tracker.std("roi"), 1e-6)
+        pass_rate_std = max(self.baseline_tracker.std("pass_rate"), 1e-6)
+        entropy_std = max(self.baseline_tracker.std("entropy"), 1e-6)
+        momentum_std = max(self.baseline_tracker.std("momentum"), 1e-6)
+
+        pass_rate = self.baseline_tracker.current("pass_rate")
+        entropy = self.baseline_tracker.current("entropy")
+
+        # Record latest metrics including pass rate and entropy
+        self.baseline_tracker.update(
+            energy=energy, roi=trend, pass_rate=pass_rate, entropy=entropy
+        )
+
         energy_dev = energy - energy_avg
         roi_dev = trend - roi_avg
-        self.baseline_tracker.update(energy=energy, roi=trend)
+        pass_rate_dev = pass_rate - pass_rate_avg
+        entropy_dev = entropy - entropy_avg
+        momentum = self.baseline_tracker.current("momentum")
+        momentum_dev = momentum - momentum_avg
+
         roi_tol = getattr(getattr(settings, "roi", None), "deviation_tolerance", 0.0)
         syn_tol = getattr(getattr(settings, "synergy", None), "deviation_tolerance", 0.0)
 
@@ -132,7 +152,7 @@ class ImprovementEngineRegistry:
                 self.unregister_engine(name)
             else:
                 self.logger.warning(
-                    "ROI or energy below baseline for three cycles; escalating"
+                    "ROI or energy below baseline for three cycles; escalating",
                 )
             self._lag_count = 0
             return
@@ -143,29 +163,43 @@ class ImprovementEngineRegistry:
             return
 
         projected_roi = trend - roi_avg - cost_per_engine
-        create_mult = (
+
+        # Normalised deviations (z-scores)
+        energy_z = energy_dev / energy_std
+        roi_z = roi_dev / roi_std
+        pass_rate_z = pass_rate_dev / pass_rate_std
+        entropy_z = entropy_dev / entropy_std
+        momentum_z = momentum_dev / momentum_std
+
+        # Combined delta score emphasising ROI, pass rate and momentum while
+        # penalising entropy spikes
+        score = roi_z + pass_rate_z + momentum_z - entropy_z
+        score_avg = self.baseline_tracker.get("delta_score")
+        score_std = self.baseline_tracker.std("delta_score")
+        self.baseline_tracker.update(delta_score=score, record_momentum=False)
+
+        # Adapt thresholds using recent volatility and momentum
+        create_weight = (
             create_energy
             if create_energy is not None
-            else getattr(settings, "autoscale_create_dev_multiplier", 0.8)
+            else 1.0 + max(momentum_z, 0.0)
         )
-        remove_mult = (
+        remove_weight = (
             remove_energy
             if remove_energy is not None
-            else getattr(settings, "autoscale_remove_dev_multiplier", 0.3)
+            else 1.0 + max(-momentum_z, 0.0)
         )
-        roi_mult = (
-            roi_threshold
-            if roi_threshold is not None
-            else getattr(settings, "autoscale_roi_dev_multiplier", 0.0)
-        )
-        create_thresh = energy_avg + create_mult * energy_std
-        remove_thresh = energy_avg - remove_mult * energy_std
-        roi_high = roi_avg + roi_mult * roi_std
-        roi_low = roi_avg - roi_mult * roi_std
+        roi_weight = roi_threshold if roi_threshold is not None else 1.0
+        create_thresh = energy_avg + create_weight * energy_std
+        remove_thresh = energy_avg - remove_weight * energy_std
+        roi_high = roi_avg + roi_weight * roi_std
+        roi_low = roi_avg - roi_weight * roi_std
+
         if (
             energy >= create_thresh
             and trend >= roi_high
             and projected_roi > roi_tol
+            and score > score_avg + score_std
             and len(self.engines) < max_engines
         ):
             if approval_callback and not approval_callback():
@@ -177,6 +211,7 @@ class ImprovementEngineRegistry:
             energy <= remove_thresh
             or trend <= roi_low
             or projected_roi <= -roi_tol
+            or score < score_avg - score_std
         ) and len(self.engines) > min_engines:
             name = next(iter(self.engines))
             self.unregister_engine(name)
