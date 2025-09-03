@@ -37,6 +37,11 @@ from .evolution_history_db import EvolutionHistoryDB
 from .evaluation_history_db import EvaluationHistoryDB
 from .roi_tracker import ROITracker
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 __all__ = ["load_adaptive_roi_dataset", "build_dataset"]
 
 
@@ -445,7 +450,7 @@ def build_dataset(
     ema_span: int | None = 3,
     selected_features: Sequence[str] | None = None,
     return_feature_names: bool = False,
-    export_path: str | Path | None = "sandbox_data/adaptive_roi.csv",
+    export_path: str | Path | None = resolve_path("sandbox_data") / "adaptive_roi.csv",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray] | Tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     """Assemble a training dataset combining evolution, ROI and evaluation data.
 
@@ -515,7 +520,7 @@ def build_dataset(
 
     if selected_features is None:
         try:
-            meta_path = Path("sandbox_data/adaptive_roi.meta.json")
+            meta_path = resolve_path("sandbox_data") / "adaptive_roi.meta.json"
             if meta_path.exists():
                 meta = json.loads(meta_path.read_text())
                 sel = meta.get("selected_features")

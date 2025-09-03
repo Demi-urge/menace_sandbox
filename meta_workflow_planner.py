@@ -21,6 +21,11 @@ from vector_utils import persist_embedding, cosine_similarity
 from cache_utils import get_cached_chain, set_cached_chain
 from logging_utils import get_logger
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 logger = get_logger(__name__)
 
 # Decay factor applied when persisting/loading cluster metrics to favor recent runs
@@ -2086,7 +2091,7 @@ class MetaWorkflowPlanner:
     def _save_cluster_map(self) -> None:
         """Persist ``cluster_map`` to ``sandbox_data/meta_clusters.json``."""
 
-        path = Path("sandbox_data/meta_clusters.json")
+        path = resolve_path("sandbox_data") / "meta_clusters.json"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -2136,7 +2141,7 @@ class MetaWorkflowPlanner:
     def _load_cluster_map(self) -> None:
         """Load ``cluster_map`` from persistence layers if present."""
 
-        path = Path("sandbox_data/meta_clusters.json")
+        path = resolve_path("sandbox_data") / "meta_clusters.json"
         if path.exists():
             try:
                 data = json.loads(path.read_text())

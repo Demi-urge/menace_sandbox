@@ -53,6 +53,11 @@ except ImportError as exc:  # pragma: no cover - module may not be a package
     )
     from sandbox_settings import SandboxSettings  # type: ignore
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 recovery_failure_total = Gauge(
     "sandbox_recovery_failure_total",
     "Total number of sandbox recovery failures by severity",
@@ -317,7 +322,7 @@ def cli(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=cli.__doc__)
     parser.add_argument(
         "--file",
-        default=str(Path("sandbox_data") / "recovery.json"),
+        default=str(resolve_path("sandbox_data") / "recovery.json"),
         help="Path to recovery.json",
     )
     args = parser.parse_args(argv)

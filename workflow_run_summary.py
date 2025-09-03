@@ -7,6 +7,11 @@ import json
 import os
 from typing import Dict, List
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 from .workflow_graph import WorkflowGraph
 from . import workflow_spec
 
@@ -26,7 +31,7 @@ _HISTORY_PATH = Path(
 # Default location for saved workflow summaries.  Individual tests can override
 # via the ``WORKFLOW_SUMMARY_STORE`` environment variable.
 _SUMMARY_STORE = Path(
-    os.environ.get("WORKFLOW_SUMMARY_STORE", Path("sandbox_data") / "workflows")
+    os.environ.get("WORKFLOW_SUMMARY_STORE", str(resolve_path("sandbox_data") / "workflows"))
 )
 
 
