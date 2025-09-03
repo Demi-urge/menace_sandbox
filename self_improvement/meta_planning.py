@@ -925,6 +925,8 @@ async def self_improvement_cycle(
     stop_event: threading.Event | None = None,
     should_encode: Callable[[Mapping[str, Any], "BaselineTracker", float], tuple[bool, str]]
     | None = None,
+    evaluate_cycle: Callable[["BaselineTracker", Any | None], tuple[str, Mapping[str, Any]]]
+    = _evaluate_cycle,
 ) -> None:
     """Background loop evolving ``workflows`` using the meta planner."""
     logger = get_logger("SelfImprovementCycle")
@@ -1046,21 +1048,14 @@ async def self_improvement_cycle(
             extra=log_record(outcome=outcome, reason=reason, **metrics),
         )
 
+    if evaluate_cycle is None:
+        raise ValueError("evaluate_cycle callable required")
+
     while True:
         if stop_event is not None and stop_event.is_set():
             _debug_cycle("skipped", reason="stop_event")
             break
-        eval_fn = globals().get("_evaluate_cycle")
-        if eval_fn is None:
-            alt_fn = globals().get("evaluate_cycle")
-            if alt_fn is not None:
-                def eval_fn(tracker, error_state):  # type: ignore[misc]
-                    dec, reason = alt_fn({}, tracker, error_state or [])
-                    return ("skip" if dec else "run", {"reason": reason})
-            else:
-                def eval_fn(tracker, error_state):  # type: ignore[misc]
-                    return "run", {"reason": "no_evaluator"}
-        decision, info = eval_fn(BASELINE_TRACKER, error_log)
+        decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
         if decision == "skip":
             traces, ent_delta, err_count = _recent_error_entropy(
                 error_log, BASELINE_TRACKER
@@ -1189,6 +1184,8 @@ def start_self_improvement_cycle(
         [Mapping[str, Any], "BaselineTracker", float], tuple[bool, str]
     ]
     | None = None,
+    evaluate_cycle: Callable[["BaselineTracker", Any | None], tuple[str, Mapping[str, Any]]]
+    = _evaluate_cycle,
 ):
     """Prepare a background thread running :func:`self_improvement_cycle`.
 
@@ -1197,6 +1194,9 @@ def start_self_improvement_cycle(
     when ``join()`` is invoked.  ``stop()`` gracefully cancels the running
     coroutine.
     """
+
+    if evaluate_cycle is None:
+        raise ValueError("evaluate_cycle callable required")
 
     stop_event = threading.Event()
 
@@ -1209,6 +1209,7 @@ def start_self_improvement_cycle(
             self._stop_event = stop_event
             self._error_log = error_log
             self._should_encode = should_encode
+            self._evaluate_cycle = evaluate_cycle
 
         # --------------------------------------------------
         def _run(self) -> None:
@@ -1225,6 +1226,8 @@ def start_self_improvement_cycle(
                 kwargs["error_log"] = self._error_log
             if "should_encode" in signature(self_improvement_cycle).parameters:
                 kwargs["should_encode"] = self._should_encode
+            if "evaluate_cycle" in signature(self_improvement_cycle).parameters:
+                kwargs["evaluate_cycle"] = self._evaluate_cycle
             self._task = self._loop.create_task(
                 self_improvement_cycle(workflows, **kwargs)
             )
