@@ -724,7 +724,9 @@ def _should_encode(
 
 
 def _recent_error_entropy(
-    error_log: Any | None, tracker: BaselineTracker
+    error_log: Any | None,
+    tracker: BaselineTracker,
+    limit: int | None = None,
 ) -> tuple[Sequence[Any], float, int, float, float]:
     """Return recent error traces and entropy statistics.
 
@@ -747,17 +749,19 @@ def _recent_error_entropy(
     """
 
     events: Sequence[Any] | None = None
+    # Allow callers or configuration to control the error history window.
+    window = int(limit or getattr(_init.settings, "error_window", 5))
     try:
         if error_log is None:
             events = []
         elif isinstance(error_log, Sequence):
             events = error_log
         elif hasattr(error_log, "recent_errors"):
-            events = error_log.recent_errors(limit=5)
+            events = error_log.recent_errors(limit=window)
         elif hasattr(error_log, "recent_events"):
-            events = error_log.recent_events(limit=5)
+            events = error_log.recent_events(limit=window)
         elif hasattr(getattr(error_log, "db", None), "recent_errors"):
-            events = error_log.db.recent_errors(limit=5)  # type: ignore[attr-defined]
+            events = error_log.db.recent_errors(limit=window)  # type: ignore[attr-defined]
         else:
             events = []
     except Exception:
@@ -1041,7 +1045,9 @@ async def self_improvement_cycle(
                 )
             if decision == "skip":
                 traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
-                    error_log, BASELINE_TRACKER
+                    error_log,
+                    BASELINE_TRACKER,
+                    getattr(cfg, "error_window", 5),
                 )
                 max_errors, z_threshold = _get_overfit_thresholds(cfg, BASELINE_TRACKER)
                 z_score = (
