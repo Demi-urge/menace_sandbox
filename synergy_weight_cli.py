@@ -21,7 +21,7 @@ from menace.metrics_exporter import (
 from alert_dispatcher import dispatch_alert
 from dynamic_path_router import resolve_path
 
-LOG_PATH = Path(resolve_path("sandbox_data")) / "synergy_weights.log"
+LOG_PATH = resolve_path("sandbox_data/synergy_weights.log")
 
 
 def _load_engine(path: str | None):
@@ -80,7 +80,7 @@ def train_from_history(
     weights_path = (
         Path(path)
         if path is not None
-        else Path(settings.sandbox_data_dir) / "synergy_weights.json"
+        else resolve_path(settings.sandbox_data_dir) / "synergy_weights.json"
     )
     learner = cls(weights_path, lr=settings.synergy_weights_lr)
 
