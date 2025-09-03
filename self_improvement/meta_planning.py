@@ -16,6 +16,7 @@ import threading
 import queue
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
+from datetime import datetime
 
 from ..logging_utils import get_logger, log_record
 from ..sandbox_settings import SandboxSettings
@@ -24,6 +25,7 @@ from ..workflow_stability_db import WorkflowStabilityDB
 from ..roi_results_db import ROIResultsDB
 from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
+from ..error_logger import TelemetryEvent
 
 
 _cycle_thread: Any | None = None
@@ -641,6 +643,57 @@ def _should_encode(
     return roi_delta > 0.0 and delta_entropy <= float(entropy_threshold)
 
 
+def evaluate_cycle(
+    record: Mapping[str, Any],
+    tracker: BaselineTracker,
+    errors: Sequence[TelemetryEvent] | Sequence[Any],
+) -> tuple[bool, str]:
+    """Evaluate cycle metrics and errors.
+
+    Parameters
+    ----------
+    record:
+        Metrics record for the current cycle. Only used for timestamp context.
+    tracker:
+        Baseline metric tracker containing historical values.
+    errors:
+        Sequence of :class:`TelemetryEvent` instances observed during the cycle.
+
+    Returns
+    -------
+    tuple[bool, str]
+        ``(True, "")`` when any metric delta is non-positive or a recent
+        critical error is present. Otherwise ``(False, "all_deltas_positive")``.
+    """
+
+    # Compute current deltas for all tracked metrics
+    for metric in list(tracker._history):
+        if tracker.delta(metric) <= 0:
+            return True, ""
+
+    def _to_ts(val: Any) -> float:
+        if isinstance(val, (int, float)):
+            return float(val)
+        if isinstance(val, str):
+            try:
+                return datetime.fromisoformat(val).timestamp()
+            except Exception:
+                try:
+                    return float(val)
+                except Exception:
+                    return 0.0
+        return 0.0
+
+    cycle_ts = _to_ts(record.get("timestamp"))
+
+    for err in errors:
+        sev = getattr(getattr(err, "error_type", None), "severity", None)
+        if sev == "critical":
+            if _to_ts(getattr(err, "timestamp", 0)) >= cycle_ts:
+                return True, ""
+
+    return False, "all_deltas_positive"
+
 async def self_improvement_cycle(
     workflows: Mapping[str, Callable[[], Any]],
     *,
@@ -752,8 +805,12 @@ async def self_improvement_cycle(
                 entropy = float(rec.get("entropy", 0.0))
                 pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
                 BASELINE_TRACKER.update(roi=roi, pass_rate=pass_rate, entropy=entropy)
-                entropy_threshold = _get_entropy_threshold(cfg, BASELINE_TRACKER)
-                if not _should_encode(rec, BASELINE_TRACKER, entropy_threshold=entropy_threshold):
+                should_skip, _ = evaluate_cycle(
+                    rec,
+                    BASELINE_TRACKER,
+                    rec.get("errors", []),
+                )
+                if should_skip:
                     continue
                 chain = rec.get("chain", [])
                 if chain and roi > 0:
