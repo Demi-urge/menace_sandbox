@@ -5,6 +5,7 @@ import importlib.util
 import logging
 from pathlib import Path
 import pytest
+import dynamic_path_router
 
 # Avoid heavy imports from the real package
 package = types.ModuleType("menace")
@@ -259,3 +260,39 @@ def test_run_records_ancestry_without_logger(tmp_path, monkeypatch):
     engine.run("bot")
     prov = get_patch_provenance(patch_id, patch_db=db)
     assert prov[0]["vector_id"] == "vec1"
+
+
+def test_generate_patch_resolves_module_path(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    nested = repo / "pkg"
+    nested.mkdir()
+    mod = nested / "mod.py"
+    mod.write_text("x=1\n")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    dynamic_path_router.clear_cache()
+
+    class DummyEngine:
+        patch_db = None
+
+        def __init__(self):
+            self.calls = []
+
+        def apply_patch(self, path, *a, **k):
+            self.calls.append(path)
+            return 1, "", 0.0
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(quick_fix, "generate_code_diff", lambda a, b: {})
+    monkeypatch.setattr(quick_fix, "flag_risky_changes", lambda d: {})
+    monkeypatch.setattr(quick_fix, "_collect_diff_data", lambda a, b: {})
+    monkeypatch.setattr(quick_fix, "HumanAlignmentAgent", lambda: types.SimpleNamespace(evaluate_changes=lambda *a, **k: {}))
+    monkeypatch.setattr(quick_fix, "log_violation", lambda *a, **k: None)
+    monkeypatch.setattr(quick_fix, "EmbeddingBackfill", lambda: types.SimpleNamespace(run=lambda *a, **k: None))
+    sys.modules.setdefault("sandbox_runner", types.SimpleNamespace(post_round_orphan_scan=lambda p: None))
+
+    engine = DummyEngine()
+    patch_id = quick_fix.generate_patch("pkg/mod", engine=engine, context_builder=None)
+    assert patch_id == 1
+    assert engine.calls and engine.calls[0] == mod

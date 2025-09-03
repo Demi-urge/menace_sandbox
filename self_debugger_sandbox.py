@@ -41,6 +41,10 @@ except Exception:  # pragma: no cover - test fallback
 
     def _hash_code(data: bytes) -> str:
         return "x"
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from .error_cluster_predictor import ErrorClusterPredictor
@@ -1672,7 +1676,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     break
 
                 code = best["code"]
-                root_test = Path("test_auto.py")
+                root_test = resolve_path(".") / "test_auto.py"
                 root_test.write_text(code)
                 code_hash: str | None = None
                 try:
