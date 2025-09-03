@@ -15,6 +15,7 @@ from prompt_engine import PromptEngine, DEFAULT_TEMPLATE  # noqa: E402
 from prompt_memory_trainer import PromptMemoryTrainer  # noqa: E402
 from vector_service.retriever import FallbackResult  # noqa: E402
 from vector_service.roi_tags import RoiTag  # noqa: E402
+from failure_localization import TargetRegion
 
 
 class DummyRetriever:
@@ -398,3 +399,16 @@ def test_build_prompt_trims_final_text():
     long_context = "word " * 100
     prompt = engine.build_prompt("desc", context=long_context)
     assert str(prompt).endswith("...")
+
+
+def test_prompt_engine_includes_target_region_metadata():
+    records = [_record(0.9, summary="ok", tests_passed=True)]
+    engine = PromptEngine(
+        retriever=DummyRetriever(records),
+        patch_retriever=DummyRetriever(records),
+        confidence_threshold=-1.0,
+    )
+    region = TargetRegion(path="mod.py", start_line=3, end_line=5, func_name="func")
+    prompt = engine.build_prompt("desc", target_region=region)
+    assert "Change only lines 3-5 of mod.py" in str(prompt)
+    assert prompt.metadata["target_region"]["func_name"] == "func"
