@@ -15,6 +15,7 @@ import keyword
 import logging
 import subprocess
 import shutil
+from dynamic_path_router import resolve_path
 
 try:
     from packaging.requirements import Requirement  # type: ignore
@@ -652,6 +653,7 @@ class BotDevelopmentBot:
         self, repo_dir: Path, paths: List[Path], message: str = "Auto-generated bot"
     ) -> None:
         """Commit generated files using GitPython if available."""
+        repo_dir = Path(resolve_path(repo_dir))
         if Repo:
             try:
                 repo = Repo(repo_dir)
@@ -672,12 +674,13 @@ class BotDevelopmentBot:
                 raise
 
     def _create_requirements(self, repo_dir: Path, spec: BotSpec) -> Path | None:
+        repo_dir = Path(resolve_path(repo_dir))
         if not spec.dependencies:
             return None
         req = repo_dir / "requirements.txt"
         self._write_with_retry(req, "\n".join(spec.dependencies))
         self._validate_dependencies(spec.dependencies)
-        return req
+        return Path(resolve_path(req))
 
     def _validate_dependencies(self, deps: Iterable[str]) -> None:
         for dep in deps:
@@ -702,6 +705,7 @@ class BotDevelopmentBot:
                     self.logger.warning("dependency '%s' not importable", dep)
 
     def _write_meta(self, repo_dir: Path, spec: BotSpec) -> Path:
+        repo_dir = Path(resolve_path(repo_dir))
         meta = repo_dir / "meta.yaml"
         data = {
             "name": spec.name,
@@ -718,11 +722,13 @@ class BotDevelopmentBot:
             self._write_with_retry(meta, yaml.safe_dump(data))
         else:
             self._write_with_retry(meta, json.dumps(data, indent=2))
-        return meta
+        return Path(resolve_path(meta))
 
     def _create_tests(self, repo_dir: Path, spec: BotSpec) -> list[Path]:
+        repo_dir = Path(resolve_path(repo_dir))
         tests_dir = repo_dir / "tests"
         tests_dir.mkdir(exist_ok=True)
+        tests_dir = Path(resolve_path(tests_dir))
         (tests_dir / "__init__.py").touch()
         files: list[Path] = []
         for func in spec.functions:
@@ -754,12 +760,13 @@ class BotDevelopmentBot:
             else:
                 lines.append("    assert result is None")
             self._write_with_retry(tf, "\n".join(lines) + "\n")
-            files.append(tf)
+            files.append(Path(resolve_path(tf)))
         return files
 
     def _validate_repo(self, repo_dir: Path, spec: BotSpec) -> bool:
+        repo_dir = Path(resolve_path(repo_dir))
         try:
-            module_path = repo_dir / f"{spec.name}.py"
+            module_path = Path(resolve_path(repo_dir / f"{spec.name}.py"))
             spec_obj = importlib.util.spec_from_file_location(spec.name, module_path)
             if not spec_obj or not spec_obj.loader:
                 raise ImportError("cannot load module")
@@ -1146,12 +1153,13 @@ class BotDevelopmentBot:
             existing = None
 
         patterns = self.fetch_patterns(spec)
-        repo_dir = self.create_env(spec, model_id=model_id)
+        repo_dir = Path(resolve_path(self.create_env(spec, model_id=model_id)))
         meta = self._write_meta(repo_dir, spec)
 
         if existing:
-            file_path = repo_dir / f"{spec.name}.py"
+            file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
             self._write_with_retry(file_path, existing)
+            file_path = Path(resolve_path(file_path))
             self.lint_code(file_path)
             req = self._create_requirements(repo_dir, spec)
             tests = self._create_tests(repo_dir, spec)
@@ -1182,7 +1190,7 @@ class BotDevelopmentBot:
                     self._escalate(f"bot file read failed for {spec.name}: {exc}")
                     if RAISE_ERRORS:
                         raise
-            files = list(repo_dir.glob(f"{spec.name}.py"))
+            files = [Path(resolve_path(p)) for p in repo_dir.glob(f"{spec.name}.py")]
             if files:
                 req = self._create_requirements(repo_dir, spec)
                 tests = self._create_tests(repo_dir, spec)
@@ -1205,8 +1213,9 @@ class BotDevelopmentBot:
             self.errors.append("openai fallback failed")
             code = self.generate_code(spec, patterns)
 
-        file_path = repo_dir / f"{spec.name}.py"
+        file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
         self._write_with_retry(file_path, code)
+        file_path = Path(resolve_path(file_path))
         self.lint_code(file_path)
         req = self._create_requirements(repo_dir, spec)
         tests = self._create_tests(repo_dir, spec)
