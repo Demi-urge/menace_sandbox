@@ -1051,50 +1051,49 @@ async def self_improvement_cycle(
         if stop_event is not None and stop_event.is_set():
             _debug_cycle("skipped", reason="stop_event")
             break
-        decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
-        if info.get("reason") == "missing_metrics":
-            _debug_cycle(
-                "run",
-                reason="missing_metrics",
-                missing_metrics=",".join(info.get("missing", [])),
-            )
-        if decision == "skip":
-            traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
-                error_log, BASELINE_TRACKER
-            )
-            max_errors = getattr(cfg, "max_allowed_errors", 0)
-            z_threshold = float(getattr(cfg, "entropy_z_threshold", 3.0))
-            z_score = (
-                abs(ent_delta - delta_mean) / delta_std if delta_std > 0 else 0.0
-            )
-            if err_count > int(max_errors) or z_score > z_threshold:
-                logger.debug(
-                    "fallback_overfitting",
-                    extra=log_record(
-                        decision="run",
-                        reason="fallback_overfitting",
+        try:
+            decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
+            if info.get("reason") == "missing_metrics":
+                _debug_cycle(
+                    "run",
+                    reason="missing_metrics",
+                    missing_metrics=",".join(info.get("missing", [])),
+                )
+            if decision == "skip":
+                traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
+                    error_log, BASELINE_TRACKER
+                )
+                max_errors = getattr(cfg, "max_allowed_errors", 0)
+                z_threshold = float(getattr(cfg, "entropy_z_threshold", 3.0))
+                z_score = (
+                    abs(ent_delta - delta_mean) / delta_std if delta_std > 0 else 0.0
+                )
+                if err_count > int(max_errors) or z_score > z_threshold:
+                    logger.debug(
+                        "fallback_overfitting",
+                        extra=log_record(
+                            decision="run",
+                            reason="fallback_overfitting",
+                            entropy_delta=ent_delta,
+                            entropy_z=z_score,
+                            errors=err_count,
+                            max_allowed_errors=max_errors,
+                            entropy_z_threshold=z_threshold,
+                        ),
+                    )
+                    decision = "run"
+                    _debug_cycle(
+                        "fallback",
+                        reason="overfitting",
+                        errors=err_count,
                         entropy_delta=ent_delta,
                         entropy_z=z_score,
-                        errors=err_count,
-                        max_allowed_errors=max_errors,
                         entropy_z_threshold=z_threshold,
-                    ),
-                )
-                decision = "run"
-                _debug_cycle(
-                    "fallback",
-                    reason="overfitting",
-                    errors=err_count,
-                    entropy_delta=ent_delta,
-                    entropy_z=z_score,
-                    entropy_z_threshold=z_threshold,
-                    error_traces=traces,
-                )
-            else:
-                _debug_cycle("skipped", reason=info.get("reason"))
-                await asyncio.sleep(interval)
-                continue
-        try:
+                        error_traces=traces,
+                    )
+                else:
+                    _debug_cycle("skipped", reason=info.get("reason"))
+                    continue
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
             outcome_logged = False
@@ -1166,17 +1165,16 @@ async def self_improvement_cycle(
                         )
             if not outcome_logged:
                 _debug_cycle("skipped", reason="no_records")
+
+            for chain in list(active):
+                planner.cluster_map.pop(tuple(chain), None)
+
         except Exception as exc:  # pragma: no cover - planner is best effort
             _debug_cycle("error", reason=str(exc))
             logger.debug("error", extra=log_record(err=str(exc)))
             logger.exception("meta planner execution failed", exc_info=exc)
+        finally:
             await asyncio.sleep(interval)
-            continue
-
-        for chain in list(active):
-            planner.cluster_map.pop(tuple(chain), None)
-
-        await asyncio.sleep(interval)
 
 
 def start_self_improvement_cycle(
