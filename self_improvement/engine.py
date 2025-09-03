@@ -7524,26 +7524,55 @@ class SelfImprovementEngine:
             self._save_state()
             scale = 1.0 + (0.5 - momentum)
             threshold = moving_avg - self.energy_threshold * scale * std
-            if current_energy < threshold and not self._cycle_running:
-                try:
-                    await asyncio.to_thread(
-                        self.run_cycle, energy=int(round(current_energy * 5))
-                    )
-                except Exception as exc:
-                    self.logger.exception(
-                        "self improvement run_cycle failed with energy %s: %s",
-                        int(round(current_energy * 5)),
-                        exc,
-                    )
+            roi_deltas = self.baseline_tracker.delta_history("roi")
+            roi_delta = roi_deltas[-1] if roi_deltas else 0.0
+            pr_deltas = self.baseline_tracker.delta_history("pass_rate")
+            pass_rate_delta = pr_deltas[-1] if pr_deltas else 0.0
+            within_baseline = current_energy >= threshold
+            if roi_delta > 0 and pass_rate_delta > 0 and within_baseline:
+                self.logger.info(
+                    "positive deltas - skipping cycle",
+                    extra=log_record(
+                        energy=current_energy,
+                        baseline=threshold,
+                        roi_delta=roi_delta,
+                        pass_rate_delta=pass_rate_delta,
+                        decision="skip",
+                    ),
+                )
             else:
-                if current_energy >= threshold:
+                if not within_baseline and not self._cycle_running:
                     self.logger.info(
-                        "score above baseline - skipping cycle",
+                        "triggering run_cycle due to low energy",
                         extra=log_record(
-                            score=current_energy,
+                            energy=current_energy,
                             baseline=threshold,
-                            delta=delta,
-                            margin=self.energy_threshold,
+                            roi_delta=roi_delta,
+                            pass_rate_delta=pass_rate_delta,
+                            decision="cycle",
+                        ),
+                    )
+                    try:
+                        await asyncio.to_thread(
+                            self.run_cycle, energy=int(round(current_energy * 5))
+                        )
+                    except Exception as exc:
+                        self.logger.exception(
+                            "self improvement run_cycle failed with energy %s: %s",
+                            int(round(current_energy * 5)),
+                            exc,
+                        )
+                else:
+                    self.urgency_tier += 1
+                    self.logger.warning(
+                        "non-positive deltas - escalating urgency",
+                        extra=log_record(
+                            energy=current_energy,
+                            baseline=threshold,
+                            roi_delta=roi_delta,
+                            pass_rate_delta=pass_rate_delta,
+                            tier=self.urgency_tier,
+                            decision="escalate",
                         ),
                     )
             await asyncio.sleep(self.interval)
