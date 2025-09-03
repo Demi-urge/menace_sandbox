@@ -354,6 +354,12 @@ class SandboxSettings(BaseSettings):
     energy_deviation: float = Field(1.0, env="ENERGY_DEVIATION")
     roi_deviation: float = Field(1.0, env="ROI_DEVIATION")
     entropy_deviation: float = Field(1.0, env="ENTROPY_DEVIATION")
+    error_overfit_percentile: float = Field(
+        0.95, env="ERROR_OVERFIT_PERCENTILE"
+    )
+    entropy_overfit_percentile: float = Field(
+        0.95, env="ENTROPY_OVERFIT_PERCENTILE"
+    )
     autoscale_create_dev_multiplier: float = Field(
         0.8, env="AUTOSCALE_CREATE_DEV_MULTIPLIER"
     )
@@ -421,6 +427,12 @@ class SandboxSettings(BaseSettings):
     def _roi_positive_float(cls, v: float, info: Any) -> float:
         if v <= 0:
             raise ValueError(f"{info.field_name} must be positive")
+        return v
+
+    @field_validator("error_overfit_percentile", "entropy_overfit_percentile")
+    def _overfit_percentile_range(cls, v: float, info: Any) -> float:
+        if not 0 < v <= 1:
+            raise ValueError(f"{info.field_name} must be between 0 and 1")
         return v
 
     @field_validator(

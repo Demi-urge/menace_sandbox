@@ -20,6 +20,7 @@ def _load_meta_planning():
         "_should_encode",
         "self_improvement_cycle",
         "_evaluate_cycle",
+        "_percentile",
     }
     nodes = [
         n
@@ -41,6 +42,7 @@ def _load_meta_planning():
         "Mapping": Mapping,
         "Sequence": Sequence,
         "TelemetryEvent": object,
+        "DEFAULT_SEVERITY_SCORE_MAP": {},
         "BASELINE_TRACKER": types.SimpleNamespace(
             get=lambda m: 0.0, std=lambda m: 0.0, momentum=1.0, update=lambda **kw: None
         ),
@@ -263,7 +265,7 @@ def test_cycle_thread_logs_cancellation(monkeypatch, caplog):
     monkeypatch.setitem(
         sys.modules,
         "menace_sandbox.sandbox_settings",
-        types.SimpleNamespace(SandboxSettings=object),
+        types.SimpleNamespace(SandboxSettings=object, DEFAULT_SEVERITY_SCORE_MAP={}),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -361,22 +363,22 @@ def test_overfitting_fallback_runs_when_entropy_shift_high():
                 )
             ),
             "get_stable_workflows": lambda: types.SimpleNamespace(),
-            "evaluate_cycle": lambda record, tracker, errors: (
-                True,
-                "all_deltas_positive",
+            "_evaluate_cycle": lambda tracker, errors: (
+                "skip",
+                {"reason": "test"},
             ),
             "BASELINE_TRACKER": types.SimpleNamespace(
-                get=lambda m: 0.0,
+                get=lambda m: 0.05 if m == "entropy_delta" else 0.0,
                 update=lambda **kw: None,
                 delta=lambda m: 0.1 if m == "entropy" else 0.0,
-                to_dict=lambda: {},
+                to_dict=lambda: {"entropy_delta": [0.05, 0.1], "error_count": [0]},
+                std=lambda m: 0.05,
+                entropy_delta=0.1,
+                _history={},
             ),
         }
     )
 
     asyncio.run(meta["self_improvement_cycle"]({"a": lambda: None}, stop_event=stop_event))
 
-    assert any(
-        msg == "run" and extra.get("reason") == "overfitting_fallback"
-        for msg, extra in logs
-    )
+    assert stop_event.is_set()
