@@ -41,34 +41,22 @@ class BaselineTracker:
 
         Notes
         -----
-        Updating the ``roi`` or ``pass_rate`` metrics also records the delta
-        from the previous value under ``roi_delta`` or ``pass_rate_delta`` to
-        provide a history of per-cycle changes.
+        For every metric the delta from the current moving average is recorded
+        under ``<metric>_delta`` before the new value is added to the history.
+        ``roi`` deltas also update the internal success history used for
+        momentum calculations.
         """
 
         for name, value in metrics.items():
             hist = self._history.setdefault(name, deque(maxlen=self.window))
+            avg = sum(hist) / len(hist) if hist else 0.0
+            delta_hist = self._history.setdefault(
+                f"{name}_delta", deque(maxlen=self.window)
+            )
+            delta = float(value) - avg
+            delta_hist.append(delta)
             if name == "roi":
-                prev = hist[-1] if hist else 0.0
-                delta_hist = self._history.setdefault(
-                    "roi_delta", deque(maxlen=self.window)
-                )
-                delta = float(value) - prev
-                delta_hist.append(delta)
                 self._success_history.append(delta > 0)
-            elif name == "pass_rate":
-                prev = hist[-1] if hist else 0.0
-                delta_hist = self._history.setdefault(
-                    "pass_rate_delta", deque(maxlen=self.window)
-                )
-                delta = float(value) - prev
-                delta_hist.append(delta)
-            elif name == "entropy":
-                avg = sum(hist) / len(hist) if hist else 0.0
-                delta_hist = self._history.setdefault(
-                    "entropy_delta", deque(maxlen=self.window)
-                )
-                delta_hist.append(float(value) - avg)
             hist.append(float(value))
 
         # Record current momentum so moving averages and deviations can be
