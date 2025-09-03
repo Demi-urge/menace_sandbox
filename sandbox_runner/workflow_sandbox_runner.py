@@ -96,6 +96,7 @@ class ModuleMetrics:
     memory_peak: int
     success: bool
     exception: str | None = None
+    frames: list[tuple[str, int, str]] | None = None
     result: Any | None = None
     fixtures: Mapping[str, Any] = field(default_factory=dict)
 
@@ -276,7 +277,13 @@ class WorkflowSandboxRunner:
             except Exception as exc:
                 logger.exception("subprocess execution failed")
                 metrics = RunMetrics()
-                telemetry = {"error": str(exc), "trace": traceback.format_exc()}
+                tb = traceback.TracebackException.from_exception(exc)
+                frames = [(f.filename, f.lineno, f.name) for f in tb.stack]
+                telemetry = {
+                    "error": str(exc),
+                    "trace": traceback.format_exc(),
+                    "frames": frames,
+                }
             finally:
                 if p.pid is not None:
                     p.join()
@@ -1048,6 +1055,7 @@ class WorkflowSandboxRunner:
                 success = True
                 error: str | None = None
                 result: Any | None = None
+                frames: list[tuple[str, int, str]] | None = None
                 timeout_event = threading.Event()
                 mem_event = threading.Event()
                 mem_stop = threading.Event()
@@ -1118,11 +1126,15 @@ class WorkflowSandboxRunner:
                 except Exception as exc:  # pragma: no cover - exercise failure path
                     success = False
                     error = str(exc)
+                    tb = traceback.TracebackException.from_exception(exc)
+                    frames = [(f.filename, f.lineno, f.name) for f in tb.stack]
                     metrics.crash_count += 1
                     logger.exception("module %s failed", name)
                     if not safe_mode:
                         raise
                 except BaseException as exc:  # pragma: no cover - timeout/memory
+                    tb = traceback.TracebackException.from_exception(exc)
+                    frames = [(f.filename, f.lineno, f.name) for f in tb.stack]
                     if mem_event.is_set():
                         success = False
                         error = "module exceeded memory limit"
@@ -1193,6 +1205,7 @@ class WorkflowSandboxRunner:
                         memory_peak=mem_peak,
                         success=success,
                         exception=error,
+                        frames=frames,
                         result=result,
                         fixtures=fixtures,
                     )
@@ -1375,7 +1388,14 @@ def _subprocess_worker(
         conn.send((metrics, runner.telemetry))
     except Exception as exc:  # pragma: no cover - safety
         logger.exception("subprocess workflow failed")
-        conn.send((RunMetrics(), {"error": str(exc), "trace": traceback.format_exc()}))
+        tb = traceback.TracebackException.from_exception(exc)
+        frames = [(f.filename, f.lineno, f.name) for f in tb.stack]
+        conn.send(
+            (
+                RunMetrics(),
+                {"error": str(exc), "trace": traceback.format_exc(), "frames": frames},
+            )
+        )
     finally:
         if cgroup_path is not None:
             try:
