@@ -15,7 +15,7 @@ from prompt_engine import PromptEngine, DEFAULT_TEMPLATE  # noqa: E402
 from prompt_memory_trainer import PromptMemoryTrainer  # noqa: E402
 from vector_service.retriever import FallbackResult  # noqa: E402
 from vector_service.roi_tags import RoiTag  # noqa: E402
-from failure_localization import TargetRegion
+from failure_localization import TargetRegion  # noqa: E402
 
 
 class DummyRetriever:
@@ -408,7 +408,22 @@ def test_prompt_engine_includes_target_region_metadata():
         patch_retriever=DummyRetriever(records),
         confidence_threshold=-1.0,
     )
+    context = "\n".join(
+        [
+            "# Region func lines 3-5",
+            "def func(a, b):",
+            "# start",
+            "    pass",
+            "# end",
+        ]
+    )
     region = TargetRegion(path="mod.py", start_line=3, end_line=5, func_name="func")
-    prompt = engine.build_prompt("desc", target_region=region)
-    assert "Change only lines 3-5 of mod.py" in str(prompt)
+    region.func_signature = "def func(a, b):"
+    region.original_lines = ["    pass"]
+    prompt = engine.build_prompt("desc", context=context, target_region=region)
+    text = str(prompt)
+    assert "Modify only lines 3-5 within function func" in text
+    assert "# start" in text and "# end" in text
     assert prompt.metadata["target_region"]["func_name"] == "func"
+    assert prompt.metadata["target_region"]["signature"] == "def func(a, b):"
+    assert prompt.metadata["target_region"]["original_lines"] == ["    pass"]
