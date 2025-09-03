@@ -7594,13 +7594,10 @@ class SelfImprovementEngine:
             self._save_state()
             scale = 1.0 + (0.5 - momentum)
             threshold = moving_avg - self.energy_threshold * scale * std
-            roi_deltas = self.baseline_tracker.delta_history("roi")
-            roi_delta = roi_deltas[-1] if roi_deltas else 0.0
-            pr_deltas = self.baseline_tracker.delta_history("pass_rate")
-            pass_rate_delta = pr_deltas[-1] if pr_deltas else 0.0
-            combined_delta = (
-                self.roi_weight * roi_delta + self.pass_rate_weight * pass_rate_delta
-            )
+            # Combine weighted deltas from multiple metrics to assess overall
+            # system movement.  Entropy increases and momentum drops will
+            # reduce the score while ROI and pass rate gains increase it.
+            combined_delta, components = self._compute_delta_score()
             within_baseline = current_energy >= threshold
             if combined_delta > 0 and within_baseline:
                 self.logger.info(
@@ -7608,8 +7605,7 @@ class SelfImprovementEngine:
                     extra=log_record(
                         energy=current_energy,
                         baseline=threshold,
-                        roi_delta=roi_delta,
-                        pass_rate_delta=pass_rate_delta,
+                        **components,
                         decision="skip",
                     ),
                 )
@@ -7620,8 +7616,7 @@ class SelfImprovementEngine:
                         extra=log_record(
                             energy=current_energy,
                             baseline=threshold,
-                            roi_delta=roi_delta,
-                            pass_rate_delta=pass_rate_delta,
+                            **components,
                             decision="cycle",
                         ),
                     )
@@ -7642,8 +7637,7 @@ class SelfImprovementEngine:
                         extra=log_record(
                             energy=current_energy,
                             baseline=threshold,
-                            roi_delta=roi_delta,
-                            pass_rate_delta=pass_rate_delta,
+                            **components,
                             tier=self.urgency_tier,
                             decision="escalate",
                         ),
