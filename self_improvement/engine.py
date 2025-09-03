@@ -859,7 +859,8 @@ class SelfImprovementEngine:
         self._last_momentum: float = 0.0
         self.urgency_tier: int = 0
         self.stagnation_cycles: int = getattr(cfg.roi, "stagnation_cycles", 3)
-        self._stagnation_streak: int = 0
+        # Tracks consecutive cycles without positive ROI delta
+        self._roi_stagnation_count: int = 0
         self._momentum_streak: int = 0
         self.delta_score_history: deque[float] = deque(maxlen=self.baseline_window)
         self._delta_score_streak: int = 0
@@ -2119,13 +2120,13 @@ class SelfImprovementEngine:
 
         last_delta = self.baseline_tracker.delta("roi")
         if last_delta <= 0:
-            self._stagnation_streak += 1
-            if self._stagnation_streak >= self.stagnation_cycles:
+            self._roi_stagnation_count += 1
+            if self._roi_stagnation_count > self.stagnation_cycles:
                 self.urgency_tier += 1
                 self.logger.warning(
                     "ROI momentum non-positive; increasing urgency tier",
                     extra=log_record(
-                        tier=self.urgency_tier, streak=self._stagnation_streak
+                        tier=self.urgency_tier, streak=self._roi_stagnation_count
                     ),
                 )
                 try:
@@ -2135,13 +2136,13 @@ class SelfImprovementEngine:
                         "ROI momentum non-positive; increasing urgency tier",
                         {
                             "tier": self.urgency_tier,
-                            "streak": self._stagnation_streak,
+                            "streak": self._roi_stagnation_count,
                         },
                     )
                 except Exception:
                     self.logger.exception("failed to dispatch ROI trend alert")
         else:
-            self._stagnation_streak = 0
+            self._roi_stagnation_count = 0
             if (
                 self.urgency_tier > 0
                 and last_delta > self.urgency_recovery_threshold
@@ -7480,9 +7481,9 @@ class SelfImprovementEngine:
             )
             self._check_momentum()
             self._check_delta_score()
+            self._check_roi_stagnation()
             self.roi_baseline.append(current_roi)
             self.entropy_baseline.append(entropy)
-            self._check_roi_stagnation()
             pass_rate_delta = pass_rate - pass_rate_avg
             roi_delta = current_roi - roi_avg
             entropy_delta = entropy - entropy_avg
