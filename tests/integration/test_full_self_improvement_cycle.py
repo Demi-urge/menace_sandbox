@@ -3,17 +3,18 @@ import asyncio
 import importlib.util
 import sys
 import types
-from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import pytest
 
+from dynamic_path_router import resolve_dir, resolve_path, repo_root
 
-ROOT = Path(__file__).resolve().parent.parent.parent
+
+ROOT = repo_root()
 
 
 def _load_meta_planning():
-    src = (ROOT / "self_improvement" / "meta_planning.py").read_text()
+    src = resolve_path("self_improvement/meta_planning.py").read_text()
     tree = ast.parse(src)
     wanted = {"_get_entropy_threshold", "_should_encode", "self_improvement_cycle"}
     nodes = [
@@ -49,12 +50,12 @@ def _load_meta_planning():
 
 
 # Dynamically load WorkflowSandboxRunner without importing the full package
-package_path = ROOT / "sandbox_runner"
+package_path = resolve_dir("sandbox_runner")
 package = types.ModuleType("sandbox_runner")
 package.__path__ = [str(package_path)]
 sys.modules["sandbox_runner"] = package
 spec = importlib.util.spec_from_file_location(
-    "sandbox_runner.workflow_sandbox_runner", package_path / "workflow_sandbox_runner.py"
+    "sandbox_runner.workflow_sandbox_runner", resolve_path("workflow_sandbox_runner.py")
 )
 wsr = importlib.util.module_from_spec(spec)
 assert spec.loader

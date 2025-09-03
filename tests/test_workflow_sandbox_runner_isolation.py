@@ -8,17 +8,19 @@ import shutil
 
 import pytest
 
+from dynamic_path_router import resolve_dir, resolve_path
+
 
 @pytest.fixture(scope="module")
 def WorkflowSandboxRunner():
-    package_path = Path(__file__).resolve().parent.parent / "sandbox_runner"
+    package_path = resolve_dir("sandbox_runner")
     package = types.ModuleType("sandbox_runner")
     package.__path__ = [str(package_path)]
     sys.modules["sandbox_runner"] = package
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner.workflow_sandbox_runner",
-        package_path / "workflow_sandbox_runner.py",
+        resolve_path("workflow_sandbox_runner.py"),
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
