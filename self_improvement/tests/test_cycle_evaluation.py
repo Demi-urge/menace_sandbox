@@ -41,7 +41,8 @@ def _load_cycle_funcs() -> dict[str, Any]:
         "_init": types.SimpleNamespace(
             settings=types.SimpleNamespace(
                 critical_severity_threshold=75.0,
-                entropy_z_threshold=1.0,
+                max_allowed_errors=0,
+                entropy_overfit_threshold=1.0,
             )
         ),
     }
@@ -129,7 +130,6 @@ def _run_cycle(
                     meta_domain_penalty=0.0,
                     overfitting_entropy_threshold=1.0,
                     entropy_overfit_threshold=1.0,
-                    entropy_z_threshold=1.0,
                     max_allowed_errors=0,
                     critical_severity_threshold=75.0,
                 )
@@ -306,7 +306,6 @@ def test_cycle_logs_skip_on_stop_event():
                     meta_domain_penalty=0.0,
                     overfitting_entropy_threshold=1.0,
                     entropy_overfit_threshold=1.0,
-                    entropy_z_threshold=1.0,
                     max_allowed_errors=0,
                 )
             ),
