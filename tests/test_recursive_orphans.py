@@ -46,7 +46,7 @@ def _load_methods():
         "Iterable": __import__("typing").Iterable,
         "math": __import__("math"),
         "SandboxSettings": lambda: types.SimpleNamespace(
-            side_effect_threshold=0.0, test_redundant_modules=False
+            test_redundant_modules=False
         ),
         "classify_module": lambda path, include_meta=True: ("candidate", {}),
         "build_module_map": lambda repo, ignore=None: {},

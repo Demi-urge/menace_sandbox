@@ -3848,12 +3848,12 @@ class SelfImprovementEngine:
                 cls, meta = "candidate", {}
             score = float(meta.get("side_effects", 0))
             hist = self.baseline_tracker.to_dict().get("side_effects", [])
+            avg = self.baseline_tracker.get("side_effects") if hist else score
             if len(hist) >= 2:
-                avg = self.baseline_tracker.get("side_effects")
                 std = self.baseline_tracker.std("side_effects")
-                threshold = avg + multiplier * std
             else:
-                threshold = getattr(settings, "side_effect_threshold", 10)
+                std = max(1.0, abs(avg) * 0.1)
+            threshold = avg + multiplier * std
             try:
                 # record metric for future threshold calculations
                 self.baseline_tracker.update(side_effects=score)
@@ -4952,14 +4952,14 @@ class SelfImprovementEngine:
                 safe: list[str] = []
                 settings = SandboxSettings()
                 hist = self.baseline_tracker.to_dict().get("side_effects", [])
+                avg = self.baseline_tracker.get("side_effects") if hist else 0.0
                 if len(hist) >= 2:
-                    avg = self.baseline_tracker.get("side_effects")
                     std = self.baseline_tracker.std("side_effects")
-                    threshold = avg + getattr(
-                        settings, "side_effect_dev_multiplier", 1.0
-                    ) * std
                 else:
-                    threshold = getattr(settings, "side_effect_threshold", 10)
+                    std = max(1.0, abs(avg) * 0.1)
+                threshold = avg + getattr(
+                    settings, "side_effect_dev_multiplier", 1.0
+                ) * std
                 for m in passing:
                     if metrics.get(m, 0) > threshold:
                         info = self.orphan_traces.setdefault(m, {"parents": []})
@@ -5170,14 +5170,14 @@ class SelfImprovementEngine:
             safe: list[str] = []
             settings = SandboxSettings()
             hist = self.baseline_tracker.to_dict().get("side_effects", [])
+            avg = self.baseline_tracker.get("side_effects") if hist else 0.0
             if len(hist) >= 2:
-                avg = self.baseline_tracker.get("side_effects")
                 std = self.baseline_tracker.std("side_effects")
-                threshold = avg + getattr(
-                    settings, "side_effect_dev_multiplier", 1.0
-                ) * std
             else:
-                threshold = getattr(settings, "side_effect_threshold", 10)
+                std = max(1.0, abs(avg) * 0.1)
+            threshold = avg + getattr(
+                settings, "side_effect_dev_multiplier", 1.0
+            ) * std
             for m in passing:
                 if metrics.get(m, 0) > threshold:
                     info = self.orphan_traces.setdefault(m, {"parents": []})
