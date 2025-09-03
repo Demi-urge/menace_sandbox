@@ -618,13 +618,20 @@ def _get_entropy_threshold(cfg: SandboxSettings, tracker: BaselineTracker) -> fl
     return base + dev * std
 
 
-def _should_encode(record: Mapping[str, Any], *, entropy_threshold: float) -> bool:
+def _should_encode(
+    record: Mapping[str, Any],
+    tracker: BaselineTracker,
+    *,
+    entropy_threshold: float,
+) -> bool:
     """Return True if ``record`` indicates improvement and stability."""
     entropy = float(record.get("entropy", 0.0))
     delta_entropy = abs(entropy - float(entropy_threshold))
-    return float(record.get("roi_gain", 0.0)) > 0.0 and delta_entropy <= float(
-        entropy_threshold
-    )
+
+    roi_gain = float(record.get("roi_gain", 0.0))
+    roi_delta = (roi_gain - tracker.get("roi")) * (getattr(tracker, "momentum", 1.0) or 1.0)
+
+    return roi_delta > 0.0 and delta_entropy <= float(entropy_threshold)
 
 
 async def self_improvement_cycle(
@@ -734,7 +741,7 @@ async def self_improvement_cycle(
             active: list[list[str]] = []
             for rec in records:
                 await _log(rec)
-                if not _should_encode(rec, entropy_threshold=entropy_threshold):
+                if not _should_encode(rec, BASELINE_TRACKER, entropy_threshold=entropy_threshold):
                     continue
                 chain = rec.get("chain", [])
                 roi = float(rec.get("roi_gain", 0.0))

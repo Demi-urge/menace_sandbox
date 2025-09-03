@@ -50,8 +50,9 @@ def test_get_entropy_threshold(cfg_value, base, std, dev, expected):
 
 def test_should_encode_respects_threshold():
     record = {"roi_gain": 0.2, "entropy": 0.5}
-    assert _should_encode(record, entropy_threshold=0.6)
-    assert not _should_encode(record, entropy_threshold=0.2)
+    tracker = SimpleNamespace(get=lambda name: 0.0, momentum=1.0)
+    assert _should_encode(record, tracker, entropy_threshold=0.6)
+    assert not _should_encode(record, tracker, entropy_threshold=0.2)
 
 
 def test_fallback_score_penalizes_delta(monkeypatch):
