@@ -738,6 +738,7 @@ def full_autonomous_run(
     synergy_ma_history: list[dict[str, float]] | None = None,
 ) -> None:
     """Execute sandbox cycles until all modules show diminishing returns."""
+    settings = get_settings()
     if getattr(args, "dashboard_port", None):
         history_file = (
             Path(args.sandbox_data_dir or "sandbox_data") / "roi_history.json"
@@ -760,6 +761,12 @@ def full_autonomous_run(
     synergy_threshold = getattr(args, "synergy_threshold", None)
     if synergy_threshold is None:
         synergy_threshold = settings.synergy_threshold
+    roi_k = getattr(args, "roi_threshold_k", None)
+    if roi_k is None:
+        roi_k = getattr(settings, "roi_threshold_k", 1.0)
+    synergy_k = getattr(args, "synergy_threshold_k", None)
+    if synergy_k is None:
+        synergy_k = getattr(settings, "synergy_threshold_k", 1.0)
     roi_confidence = getattr(args, "roi_confidence", None)
     if roi_confidence is None:
         roi_confidence = settings.roi_confidence
@@ -849,7 +856,7 @@ def full_autonomous_run(
             last_tracker = tracker
             for mod, vals in tracker.module_deltas.items():
                 module_history.setdefault(mod, []).extend(vals)
-            for mod, vals in tracker.module_entropy_deltas.items():
+            for mod, vals in getattr(tracker, "module_entropy_deltas", {}).items():
                 module_entropy_history.setdefault(mod, []).extend(vals)
             syn_vals = {
                 k: v[-1]
@@ -883,7 +890,13 @@ def full_autonomous_run(
                     win,
                 )
             elif roi_threshold is None:
-                roi_threshold = last_tracker.diminishing()
+                if hasattr(last_tracker, "get") and hasattr(last_tracker, "std"):
+                    try:
+                        roi_threshold = last_tracker.get("roi_delta") + roi_k * last_tracker.std("roi_delta")
+                    except Exception:
+                        roi_threshold = last_tracker.diminishing()
+                else:
+                    roi_threshold = last_tracker.diminishing()
             new_flags, _ = _diminishing_modules(
                 module_history,
                 flagged,
@@ -906,7 +919,15 @@ def full_autonomous_run(
             )
             synergy_ma_window = max(1, win)
         elif last_tracker and synergy_threshold is None:
-            synergy_threshold = last_tracker.diminishing()
+            if hasattr(last_tracker, "get") and hasattr(last_tracker, "std"):
+                try:
+                    base = last_tracker.get("synergy_roi")
+                    dev = last_tracker.std("synergy_roi")
+                    synergy_threshold = base + synergy_k * dev
+                except Exception:
+                    synergy_threshold = last_tracker.diminishing()
+            else:
+                synergy_threshold = last_tracker.diminishing()
         if synergy_threshold is not None:
             converged, ema_val, _ = _synergy_converged(
                 synergy_history,
@@ -940,7 +961,7 @@ def full_autonomous_run(
                 roi,
                 extra={
                     "iteration": iteration,
-                    "module": mod,
+                    "module_name": mod,
                     "raroi": raroi,
                     "roi": roi,
                 },
@@ -1409,6 +1430,11 @@ def main(argv: List[str] | None = None) -> None:
         help="override ROI delta threshold",
     )
     p_autorun.add_argument(
+        "--roi-threshold-k",
+        type=float,
+        help="std dev multiplier when estimating ROI threshold",
+    )
+    p_autorun.add_argument(
         "--roi-confidence",
         type=float,
         help="confidence level for ROI convergence",
@@ -1453,6 +1479,11 @@ def main(argv: List[str] | None = None) -> None:
         "--synergy-threshold",
         type=float,
         help="override synergy threshold",
+    )
+    p_autorun.add_argument(
+        "--synergy-threshold-k",
+        type=float,
+        help="std dev multiplier when estimating synergy threshold",
     )
     p_autorun.add_argument(
         "--synergy-threshold-window",
@@ -1522,6 +1553,11 @@ def main(argv: List[str] | None = None) -> None:
         help="override ROI delta threshold",
     )
     p_complete.add_argument(
+        "--roi-threshold-k",
+        type=float,
+        help="std dev multiplier when estimating ROI threshold",
+    )
+    p_complete.add_argument(
         "--roi-confidence",
         type=float,
         help="confidence level for ROI convergence",
@@ -1536,6 +1572,11 @@ def main(argv: List[str] | None = None) -> None:
         "--synergy-threshold",
         type=float,
         help="override synergy threshold",
+    )
+    p_complete.add_argument(
+        "--synergy-threshold-k",
+        type=float,
+        help="std dev multiplier when estimating synergy threshold",
     )
     p_complete.add_argument(
         "--synergy-threshold-window",
