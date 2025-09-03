@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Deque, Dict, List, Mapping, Tuple
+from typing import Deque, Dict, List, Mapping, Tuple, TYPE_CHECKING
 from numbers import Number
 
 import numpy as np
@@ -48,6 +48,9 @@ try:  # pragma: no cover - optional dependency
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
+    from roi_tracker import ROITracker
 
 
 class ForesightTracker:
@@ -91,9 +94,7 @@ class ForesightTracker:
         self.history: Dict[str, Deque[Dict[str, float | str]]] = {}
         if template_config_path is not None:
             templates_path = template_config_path
-        cfg_path = Path(templates_path)
-        if not cfg_path.is_absolute():
-            cfg_path = Path(__file__).resolve().parent / cfg_path
+        cfg_path = resolve_path(templates_path)
         self.template_config_path = cfg_path
         self.templates: Dict[str, list[float]] | None = None
         self.entropy_templates: Dict[str, list[float]] | None = None
@@ -741,4 +742,3 @@ class ForesightTracker:
 
 
 __all__ = ["ForesightTracker"]
-
