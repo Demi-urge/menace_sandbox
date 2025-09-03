@@ -78,7 +78,7 @@ if settings.menace_mode.lower() == "production" and settings.database_url.starts
     settings = SandboxSettings()
 
 # allow execution directly from the package directory
-_pkg_dir = Path(__file__).resolve().parent
+_pkg_dir = resolve_path("run_autonomous.py").parent
 if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
     sys.path.insert(0, str(_pkg_dir.parent))
 elif "menace" not in sys.modules:
@@ -88,7 +88,7 @@ elif "menace" not in sys.modules:
 # Default to ``SANDBOX_REPO_PATH`` when provided, otherwise fall back to the
 # directory containing this file.  ``SANDBOX_REPO_PATH`` is required in most
 # environments but this fallback keeps unit tests and ad-hoc scripts working.
-REPO_ROOT = Path(settings.sandbox_repo_path or _pkg_dir)
+REPO_ROOT = resolve_path(settings.sandbox_repo_path or ".")
 
 
 def _visual_agent_running(urls: str) -> bool:
@@ -135,7 +135,7 @@ def _visual_agent_running(urls: str) -> bool:
     return False
 
 
-spec = importlib.util.spec_from_file_location("menace", _pkg_dir / "__init__.py")
+spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
 menace_pkg = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace_pkg
 spec.loader.exec_module(menace_pkg)
@@ -1676,7 +1676,7 @@ def main(argv: List[str] | None = None) -> None:
     if autostart:
         from visual_agent_manager import VisualAgentManager
 
-        agent_mgr = VisualAgentManager(str(_pkg_dir / "menace_visual_agent_2.py"))
+        agent_mgr = VisualAgentManager(str(resolve_path("menace_visual_agent_2.py")))
         if not _visual_agent_running(settings.visual_agent_urls):
             try:
                 logger.info("starting visual agent")
