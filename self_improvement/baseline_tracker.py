@@ -41,8 +41,9 @@ class BaselineTracker:
 
         Notes
         -----
-        Updating the ``roi`` metric also records the delta from the previous
-        value under ``roi_delta`` to provide a history of per-cycle ROI changes.
+        Updating the ``roi`` or ``pass_rate`` metrics also records the delta
+        from the previous value under ``roi_delta`` or ``pass_rate_delta`` to
+        provide a history of per-cycle changes.
         """
 
         for name, value in metrics.items():
@@ -60,7 +61,8 @@ class BaselineTracker:
                 delta_hist = self._history.setdefault(
                     "pass_rate_delta", deque(maxlen=self.window)
                 )
-                delta_hist.append(float(value) - prev)
+                delta = float(value) - prev
+                delta_hist.append(delta)
             elif name == "entropy":
                 avg = sum(hist) / len(hist) if hist else 0.0
                 delta_hist = self._history.setdefault(
