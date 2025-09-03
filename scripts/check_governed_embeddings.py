@@ -12,6 +12,8 @@ from pathlib import Path
 import re
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 # Match ``SentenceTransformer(...).encode(`` or ``SentenceTransformer.encode(``
 # directly.  The ``.*`` is non-greedy so multi-line constructions are handled.
 DIRECT_ST_ENCODE = re.compile(
@@ -24,7 +26,9 @@ ENCODE_CALL = re.compile(r"\b(?!tokenizer\.)[A-Za-z_][A-Za-z0-9_]*\.encode\(")
 
 
 def main() -> int:
-    root = Path(__file__).resolve().parents[1]
+    from dynamic_path_router import get_project_root
+
+    root = get_project_root()
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
     for path in root.rglob("*.py"):

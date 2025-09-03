@@ -13,14 +13,17 @@ from pathlib import Path
 import re
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 # Match ``something.retrieve(``
 RETRIEVE_CALL = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\.retrieve\(")
 
 
 def main() -> int:
-    root = Path(__file__).resolve().parents[1]
+    from dynamic_path_router import get_project_root
+
+    root = get_project_root()
     offenders: list[str] = []
-    this_file = Path(__file__).resolve()
     for path in root.rglob("*.py"):
         if (
             "tests" in path.parts
