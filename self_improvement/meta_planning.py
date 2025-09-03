@@ -130,7 +130,11 @@ class _FallbackPlanner:
                     data = json.loads(self.state_path.read_text())
                 else:
                     data = {}
-            self.cluster_map = {tuple(k.split("|")): v for k, v in data.items()}
+            clusters = data.get("clusters", data)
+            self.cluster_map = {tuple(k.split("|")): v for k, v in clusters.items()}
+            baseline_state = data.get("baseline", {})
+            if isinstance(baseline_state, Mapping):
+                BASELINE_TRACKER.load_state(baseline_state)
         except Timeout as exc:  # pragma: no cover - lock contention
             self.logger.warning(
                 "state lock acquisition timed out",
@@ -155,7 +159,10 @@ class _FallbackPlanner:
 
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            data = {"|".join(k): v for k, v in self.cluster_map.items()}
+            data = {
+                "clusters": {"|".join(k): v for k, v in self.cluster_map.items()},
+                "baseline": BASELINE_TRACKER.to_state(),
+            }
             tmp_path = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
             ctx = (
                 self.state_lock.acquire(timeout=LOCK_TIMEOUT)
@@ -665,8 +672,7 @@ async def self_improvement_cycle(
             setattr(planner, name, value)
 
     stability_db = get_stable_workflows()
-    entropy_threshold = _get_entropy_threshold(cfg, BASELINE_TRACKER)
-    setattr(planner, "entropy_threshold", entropy_threshold)
+    setattr(planner, "entropy_threshold", _get_entropy_threshold(cfg, BASELINE_TRACKER))
 
     async def _log(record: Mapping[str, Any]) -> None:
         chain = record.get("chain", [])
@@ -741,12 +747,15 @@ async def self_improvement_cycle(
             active: list[list[str]] = []
             for rec in records:
                 await _log(rec)
-                if not _should_encode(rec, BASELINE_TRACKER, entropy_threshold=entropy_threshold):
-                    continue
-                chain = rec.get("chain", [])
                 roi = float(rec.get("roi_gain", 0.0))
                 failures = int(rec.get("failures", 0))
                 entropy = float(rec.get("entropy", 0.0))
+                pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
+                BASELINE_TRACKER.update(roi=roi, pass_rate=pass_rate, entropy=entropy)
+                entropy_threshold = _get_entropy_threshold(cfg, BASELINE_TRACKER)
+                if not _should_encode(rec, BASELINE_TRACKER, entropy_threshold=entropy_threshold):
+                    continue
+                chain = rec.get("chain", [])
                 if chain and roi > 0:
                     active.append(chain)
                     chain_id = "->".join(chain)

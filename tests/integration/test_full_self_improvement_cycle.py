@@ -36,7 +36,7 @@ def _load_meta_planning():
         "Callable": Callable,
         "Mapping": Mapping,
         "BASELINE_TRACKER": types.SimpleNamespace(
-            get=lambda m: 0.0, std=lambda m: 0.0, momentum=1.0
+            get=lambda m: 0.0, std=lambda m: 0.0, momentum=1.0, update=lambda **kw: None
         ),
         "_init": types.SimpleNamespace(
             settings=types.SimpleNamespace(
