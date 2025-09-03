@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable
 from logging_utils import get_logger, set_correlation_id, log_record
 
 from packaging.version import Version
+from dynamic_path_router import resolve_path, repo_root
 
 from menace.auto_env_setup import ensure_env
 from menace.default_config_manager import DefaultConfigManager
@@ -122,7 +123,10 @@ def _default_env_value(name: str, settings: SandboxSettings) -> str:
     """
 
     if name == "DATABASE_URL":
-        return f"sqlite:///{Path(settings.sandbox_data_dir) / 'sandbox.db'}"
+        data_dir = Path(settings.sandbox_data_dir)
+        if not data_dir.is_absolute():
+            data_dir = repo_root() / data_dir
+        return f"sqlite:///{data_dir / 'sandbox.db'}"
     if name == "MODELS":
         return "micro_models"
     if name.endswith("_KEY"):
@@ -140,6 +144,8 @@ def auto_configure_env(settings: SandboxSettings) -> None:
     """
 
     env_file = Path(getattr(settings, "menace_env_file", ".env"))
+    if not env_file.is_absolute():
+        env_file = repo_root() / env_file
     ensure_env(str(env_file))
     DefaultConfigManager(str(env_file)).apply_defaults()
 
@@ -169,7 +175,12 @@ def auto_configure_env(settings: SandboxSettings) -> None:
             changed = True
 
     models_spec = os.getenv("MODELS", "").strip()
-    model_path = Path("micro_models" if models_spec in {"", "demo"} else models_spec)
+    if models_spec in {"", "demo"}:
+        model_path = resolve_path("micro_models")
+    else:
+        model_path = Path(models_spec)
+        if not model_path.is_absolute():
+            model_path = repo_root() / model_path
     if not model_path.exists():
         try:  # pragma: no cover - best effort download
             from vector_service.download_model import ensure_model as _ensure_model
@@ -248,6 +259,8 @@ def _initialize_autonomous_sandbox(
         missing_optional = set()
 
     data_dir = Path(settings.sandbox_data_dir)
+    if not data_dir.is_absolute():
+        data_dir = repo_root() / data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
     try:
         probe = data_dir / ".write-test"
@@ -263,15 +276,18 @@ def _initialize_autonomous_sandbox(
     # Ensure baseline metrics file exists; fall back to minimal snapshot when
     # metrics collection fails.
     baseline_path = Path(getattr(settings, "alignment_baseline_metrics_path", ""))
-    if baseline_path and not baseline_path.exists():
-        baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        try:  # compute baseline if possible
-            from self_improvement.metrics import _update_alignment_baseline
+    if baseline_path:
+        if not baseline_path.is_absolute():
+            baseline_path = repo_root() / baseline_path
+        if not baseline_path.exists():
+            baseline_path.parent.mkdir(parents=True, exist_ok=True)
+            try:  # compute baseline if possible
+                from self_improvement.metrics import _update_alignment_baseline
 
-            _update_alignment_baseline(settings)
-        except Exception:  # pragma: no cover - best effort
-            logger.warning("failed to populate baseline metrics", exc_info=True)
-            baseline_path.write_text("{}\n", encoding="utf-8")
+                _update_alignment_baseline(settings)
+            except Exception:  # pragma: no cover - best effort
+                logger.warning("failed to populate baseline metrics", exc_info=True)
+                baseline_path.write_text("{}\n", encoding="utf-8")
 
     # Create expected SQLite databases
     for name in settings.sandbox_required_db_files:
@@ -405,6 +421,8 @@ def sandbox_health() -> dict[str, bool | dict[str, str]]:
 
     settings = load_sandbox_settings()
     data_dir = Path(os.getenv("SANDBOX_DATA_DIR", settings.sandbox_data_dir))
+    if not data_dir.is_absolute():
+        data_dir = repo_root() / data_dir
     db_errors: dict[str, str] = {}
     for name in settings.sandbox_required_db_files:
         db_path = data_dir / name
@@ -581,7 +599,10 @@ def launch_sandbox(
     try:
         settings = bootstrap_environment(settings, verifier)
         os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
-        os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
+        data_dir = Path(settings.sandbox_data_dir)
+        if not data_dir.is_absolute():
+            data_dir = repo_root() / data_dir
+        os.environ.setdefault("SANDBOX_DATA_DIR", str(data_dir))
         _cli_main([])
         logger.info("launch sandbox shutdown", extra=log_record(event="shutdown"))
     except Exception:

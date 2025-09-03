@@ -25,7 +25,7 @@ from logging_utils import get_logger, log_record
 from metrics_exporter import sandbox_crashes_total
 from alert_dispatcher import dispatch_alert
 import re
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, repo_root
 
 from .orphan_integration import integrate_and_graph_orphans
 
@@ -240,13 +240,12 @@ def _tracking_import(
     record_fn = globals().get("record_module_usage")
     module_file = getattr(mod, "__file__", "")
     if record_fn and module_file:
-        root = globals().get("ROOT")
+        root = repo_root()
         path = Path(module_file).resolve()
-        if root:
-            try:
-                path = path.relative_to(root)
-            except ValueError:
-                logger.debug("module %s outside root %s", module_file, root)
+        try:
+            path = path.relative_to(root)
+        except ValueError:
+            logger.debug("module %s outside root %s", module_file, root)
         record_fn(path.as_posix())
     return mod
 
@@ -319,10 +318,15 @@ from knowledge_graph import KnowledgeGraph
 
 from db_router import GLOBAL_ROUTER, init_db_router
 
-ROOT = Path(__file__).resolve().parents[1]
+
+def _env_path(name: str, default: str) -> Path:
+    path = Path(os.getenv(name, str(resolve_path(default))))
+    if not path.is_absolute():
+        path = repo_root() / path
+    return path
 
 # Persistent module usage tracking -------------------------------------------
-MODULE_USAGE_PATH = ROOT / "sandbox_data" / "module_usage.json"
+MODULE_USAGE_PATH = _env_path("SANDBOX_MODULE_USAGE_PATH", "sandbox_data/module_usage.json")
 _MODULE_USAGE_LOCK = FileLock(str(MODULE_USAGE_PATH) + ".lock")
 
 
@@ -352,13 +356,9 @@ def record_module_usage(module_name: str) -> None:
             )
 
 # path to cleanup log file
-_CLEANUP_LOG_PATH = Path(
-    os.getenv("SANDBOX_CLEANUP_LOG", str(ROOT / "sandbox_data" / "cleanup.log"))
-)
+_CLEANUP_LOG_PATH = _env_path("SANDBOX_CLEANUP_LOG", "sandbox_data/cleanup.log")
 _CLEANUP_LOG_LOCK = threading.Lock()
-POOL_LOCK_FILE = Path(
-    os.getenv("SANDBOX_POOL_LOCK", str(ROOT / "sandbox_data" / "pool.lock"))
-)
+POOL_LOCK_FILE = _env_path("SANDBOX_POOL_LOCK", "sandbox_data/pool.lock")
 
 _INPUT_HISTORY_DB: InputHistoryDB | None = None
 
@@ -615,9 +615,7 @@ def verify_scenario_coverage(
 def save_coverage_data() -> None:
     """Persist :data:`COVERAGE_TRACKER` and its summary to ``sandbox_data`` files."""
 
-    path = Path(
-        os.getenv("SANDBOX_COVERAGE_FILE", ROOT / "sandbox_data" / "coverage.json")
-    )
+    path = _env_path("SANDBOX_COVERAGE_FILE", "sandbox_data/coverage.json")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
@@ -629,11 +627,8 @@ def save_coverage_data() -> None:
             exc_info=exc,
         )
 
-    summary_path = Path(
-        os.getenv(
-            "SANDBOX_COVERAGE_SUMMARY",
-            ROOT / "sandbox_data" / "coverage_summary.json",
-        )
+    summary_path = _env_path(
+        "SANDBOX_COVERAGE_SUMMARY", "sandbox_data/coverage_summary.json"
     )
     summary = coverage_summary()
     try:  # pragma: no cover - best effort only
@@ -649,7 +644,7 @@ def save_coverage_data() -> None:
 
 
 def _scenario_summary_path() -> Path:
-    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", ROOT / "sandbox_data"))
+    data_dir = _env_path("SANDBOX_DATA_DIR", "sandbox_data")
     default = data_dir / "scenario_summary.json"
     return Path(os.getenv("SANDBOX_SCENARIO_SUMMARY", str(default)))
 
@@ -726,9 +721,7 @@ def _get_history_db() -> InputHistoryDB:
     """Return cached :class:`InputHistoryDB` instance."""
     global _INPUT_HISTORY_DB
     if _INPUT_HISTORY_DB is None:
-        path = os.getenv(
-            "SANDBOX_INPUT_HISTORY", str(ROOT / "sandbox_data" / "input_history.db")
-        )
+        path = str(_env_path("SANDBOX_INPUT_HISTORY", "sandbox_data/input_history.db"))
         _INPUT_HISTORY_DB = InputHistoryDB(path)
     return _INPUT_HISTORY_DB
 
@@ -1024,10 +1017,8 @@ _CREATE_FAILURES: Counter[str] = Counter()
 _CONSECUTIVE_CREATE_FAILURES: Counter[str] = Counter()
 _CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
 _CREATE_RETRY_LIMIT = int(os.getenv("SANDBOX_CONTAINER_RETRIES", "3"))
-_POOL_METRICS_FILE = Path(
-    os.getenv(
-        "SANDBOX_POOL_METRICS_FILE", str(ROOT / "sandbox_data" / "pool_failures.json")
-    )
+_POOL_METRICS_FILE = _env_path(
+    "SANDBOX_POOL_METRICS_FILE", "sandbox_data/pool_failures.json"
 )
 _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
@@ -1063,37 +1054,25 @@ _PRUNE_NETWORKS = str(os.getenv("SANDBOX_PRUNE_NETWORKS", "0")).lower() not in {
     "",
 }
 
-_ACTIVE_CONTAINERS_FILE = Path(
-    os.getenv(
-        "SANDBOX_ACTIVE_CONTAINERS",
-        str(ROOT / "sandbox_data" / "active_containers.json"),
-    )
+_ACTIVE_CONTAINERS_FILE = _env_path(
+    "SANDBOX_ACTIVE_CONTAINERS", "sandbox_data/active_containers.json"
 )
 
-_ACTIVE_OVERLAYS_FILE = Path(
-    os.getenv(
-        "SANDBOX_ACTIVE_OVERLAYS",
-        str(ROOT / "sandbox_data" / "active_overlays.json"),
-    )
+_ACTIVE_OVERLAYS_FILE = _env_path(
+    "SANDBOX_ACTIVE_OVERLAYS", "sandbox_data/active_overlays.json"
 )
 
-_FAILED_OVERLAYS_FILE = Path(
-    os.getenv(
-        "SANDBOX_FAILED_OVERLAYS",
-        str(ROOT / "sandbox_data" / "failed_overlays.json"),
-    )
+_FAILED_OVERLAYS_FILE = _env_path(
+    "SANDBOX_FAILED_OVERLAYS", "sandbox_data/failed_overlays.json"
 )
 
-FAILED_CLEANUP_FILE = Path(
-    os.getenv(
-        "SANDBOX_FAILED_CLEANUP",
-        str(ROOT / "sandbox_data" / "failed_cleanup.json"),
-    )
+FAILED_CLEANUP_FILE = _env_path(
+    "SANDBOX_FAILED_CLEANUP", "sandbox_data/failed_cleanup.json"
 )
 
 # timestamp of last automatic purge
-_LAST_AUTOPURGE_FILE = Path(
-    os.getenv("SANDBOX_LAST_AUTOPURGE", str(ROOT / "sandbox_data" / "last_autopurge"))
+_LAST_AUTOPURGE_FILE = _env_path(
+    "SANDBOX_LAST_AUTOPURGE", "sandbox_data/last_autopurge"
 )
 
 # age threshold for automatic purge invocation
@@ -1101,11 +1080,8 @@ _SANDBOX_AUTOPURGE_THRESHOLD = 0.0
 _LAST_AUTOPURGE_TS = 0.0
 
 # file tracking persistent cleanup statistics
-_CLEANUP_STATS_FILE = Path(
-    os.getenv(
-        "SANDBOX_CLEANUP_STATS",
-        str(ROOT / "sandbox_data" / "cleanup_stats.json"),
-    )
+_CLEANUP_STATS_FILE = _env_path(
+    "SANDBOX_CLEANUP_STATS", "sandbox_data/cleanup_stats.json"
 )
 
 # duration after which stray overlay directories are purged
@@ -5082,8 +5058,9 @@ def _load_metrics_file(path: str | Path) -> Dict[str, float]:
     return {}
 
 
+_SANDBOX_METRICS_FILE = _env_path("SANDBOX_METRICS_FILE", "sandbox_metrics.yaml")
 SANDBOX_EXTRA_METRICS: Dict[str, float] = _load_metrics_file(
-    os.getenv("SANDBOX_METRICS_FILE", str(ROOT / "sandbox_metrics.yaml"))
+    str(_SANDBOX_METRICS_FILE)
 )
 
 
@@ -5441,9 +5418,11 @@ def _hostile_strategy(
             None,
         ]
 
-    tmpl_path = os.getenv(
-        "SANDBOX_INPUT_TEMPLATES_FILE",
-        str(ROOT / "sandbox_data" / "input_stub_templates.json"),
+    tmpl_path = str(
+        _env_path(
+            "SANDBOX_INPUT_TEMPLATES_FILE",
+            "sandbox_data/input_stub_templates.json",
+        )
     )
     if tmpl_path:
         p = Path(tmpl_path)
@@ -6251,7 +6230,7 @@ def run_scenarios(
         for scen, delta in tracker.scenario_roi_deltas.items()
     }
     try:
-        out_path = Path("sandbox_data") / "scenario_deltas.json"
+        out_path = _env_path("SANDBOX_DATA_DIR", "sandbox_data") / "scenario_deltas.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with out_path.open("w", encoding="utf-8") as fh:
             json.dump(export, fh)
@@ -6340,7 +6319,7 @@ def generate_scorecard(
 
     if len(failing) == 1 and passing:
         card["status"] = "situationally weak"
-    out_path = Path("sandbox_data") / f"scorecard_{wf_id}.json"
+    out_path = _env_path("SANDBOX_DATA_DIR", "sandbox_data") / f"scorecard_{wf_id}.json"
     try:  # pragma: no cover - best effort
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with out_path.open("w", encoding="utf-8") as fh:
@@ -8089,7 +8068,7 @@ def auto_include_modules(
     mod_paths = {Path(m).as_posix() for m in modules}
     isolated_mods: set[str] = set()
 
-    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    data_dir = _env_path("SANDBOX_DATA_DIR", "sandbox_data")
     map_file = data_dir / "module_map.json"
     existing_mods: set[str] = set()
     try:
@@ -8282,7 +8261,7 @@ def auto_include_modules(
         except Exception:
             logger.exception('unexpected error')
 
-    cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
+    cache = _env_path("SANDBOX_DATA_DIR", "sandbox_data") / "orphan_modules.json"
     try:
         existing = json.loads(cache.read_text()) if cache.exists() else {}
     except Exception:
@@ -8342,7 +8321,7 @@ def auto_include_modules(
     try:  # pragma: no cover - best effort
         from menace.roi_tracker import ROITracker
 
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir = _env_path("SANDBOX_DATA_DIR", "sandbox_data")
         hist_path = data_dir / "roi_history.json"
         tracker = ROITracker()
         if hist_path.exists():
@@ -8383,7 +8362,7 @@ def auto_include_modules(
     baseline_tracker = (
         baseline_result[0] if isinstance(baseline_result, tuple) else baseline_result
     )
-    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    data_dir = _env_path("SANDBOX_DATA_DIR", "sandbox_data")
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         baseline_tracker.save_history(str(data_dir / "roi_history.json"))
@@ -8448,7 +8427,7 @@ def auto_include_modules(
             except Exception:
                 logger.exception('unexpected error')
 
-    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    data_dir = _env_path("SANDBOX_DATA_DIR", "sandbox_data")
     map_file = data_dir / "module_map.json"
     try:
         orig_map_text = map_file.read_text() if map_file.exists() else None
