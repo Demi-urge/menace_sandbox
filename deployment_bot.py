@@ -10,6 +10,10 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 from typing import Any, Dict, Iterable, List, Optional
 
 
@@ -438,7 +442,7 @@ class DeploymentBot:
         existing = self.code_db.fetch_all(scope="all")
 
         for bot_name, bot_id in bot_map.items():
-            path = Path(f"{bot_name}.py")
+            path = Path(resolve_path(f"{bot_name}.py"))
             if not path.exists():
                 continue
             text = path.read_text()
