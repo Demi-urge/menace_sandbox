@@ -25,10 +25,19 @@ class BaselineTracker:
             m: deque(maxlen=window) for m in (metrics or [])
         }
         self._success_history: Deque[bool] = deque(maxlen=window)
+        # ``_last_entropy`` stores the most recent entropy value prior to the
+        # latest update so that callers can easily compute deltas between
+        # successive cycles.  This is preferable to reaching into the history
+        # deque and simplifies overfitting checks in callers.
+        self._last_entropy: float = 0.0
         for name, values in initial.items():
             hist = self._history.setdefault(name, deque(maxlen=window))
             for v in values:
                 hist.append(float(v))
+            if name == "entropy" and values:
+                # When initial entropy history is provided the last value is
+                # considered the "previous" entropy for delta calculations.
+                self._last_entropy = float(list(values)[-1])
 
     # ------------------------------------------------------------------
     def update(self, *, record_momentum: bool = True, **metrics: float) -> None:
@@ -64,6 +73,11 @@ class BaselineTracker:
             delta_hist.append(delta)
             if name == "roi":
                 self._success_history.append(delta > 0)
+            if name == "entropy":
+                # Record the previous entropy value so callers can compute the
+                # change between consecutive updates without inspecting the
+                # history deque directly.
+                self._last_entropy = hist[-1] if hist else self._last_entropy
             hist.append(float(value))
 
         if record_momentum:
@@ -123,7 +137,11 @@ class BaselineTracker:
     def to_state(self) -> Dict[str, object]:
         """Serialise tracker histories including success records."""
 
-        return {"history": self.to_dict(), "success": list(self._success_history)}
+        return {
+            "history": self.to_dict(),
+            "success": list(self._success_history),
+            "last_entropy": self._last_entropy,
+        }
 
     # ------------------------------------------------------------------
     def load_state(self, state: Mapping[str, object]) -> None:
@@ -139,11 +157,27 @@ class BaselineTracker:
         self._success_history = deque(
             (bool(x) for x in success), maxlen=self.window
         )
+        self._last_entropy = float(state.get("last_entropy", self._last_entropy))
 
     # ------------------------------------------------------------------
     def delta_history(self, metric: str) -> list[float]:
         """Return recorded deltas for *metric* if available."""
         return list(self._history.get(f"{metric}_delta", []))
+
+    # ------------------------------------------------------------------
+    @property
+    def last_entropy(self) -> float:
+        """Return the entropy value from the previous update."""
+        return self._last_entropy
+
+    # ------------------------------------------------------------------
+    @property
+    def entropy_delta(self) -> float:
+        """Return the change in entropy since the previous update."""
+        hist = self._history.get("entropy")
+        if not hist:
+            return 0.0
+        return hist[-1] - self._last_entropy
 
     # ------------------------------------------------------------------
     @property

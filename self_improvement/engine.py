@@ -7680,21 +7680,17 @@ class SelfImprovementEngine:
                 )
                 self._last_momentum = momentum
             current_energy *= 1 + momentum
-            # Fetch recent error telemetry and record the count so deltas can be
-            # tracked.  The count is used as a proxy for overall system health.
-            error_count = 0.0
-            critical_errors = False
-            if self.error_bot and hasattr(getattr(self.error_bot, "db", None), "recent_errors"):
-                try:
-                    events = self.error_bot.db.recent_errors(limit=5)
-                    error_count = float(len(events or []))
-                    critical_errors = any(
-                        getattr(getattr(ev, "error_type", None), "severity", None)
-                        == "critical"
-                        for ev in events or []
-                    )
-                except Exception as exc:
-                    self.logger.exception("error log retrieval failed: %s", exc)
+            # Fetch recent error telemetry and recent entropy change.  The error
+            # count is used as a proxy for overall system health while the
+            # entropy delta is examined for potential overfitting.
+            traces, recent_entropy_delta = meta_planning._recent_error_entropy(
+                self.error_bot, self.baseline_tracker
+            )
+            error_count = float(len(traces))
+            critical_errors = any(
+                getattr(getattr(ev, "error_type", None), "severity", None) == "critical"
+                for ev in traces
+            )
             moving_avg = self.baseline_tracker.get("energy")
             std = self.baseline_tracker.std("energy")
             self.baseline_tracker.update(energy=current_energy, error_count=error_count)
@@ -7714,7 +7710,7 @@ class SelfImprovementEngine:
             entropy_delta = components.get("entropy_delta", 0.0)
             entropy_std = self.baseline_tracker.std("entropy")
             entropy_threshold = self.entropy_dev_multiplier * entropy_std
-            entropy_spike = abs(entropy_delta) > entropy_threshold
+            entropy_spike = abs(recent_entropy_delta) > entropy_threshold
             within_baseline = current_energy >= threshold
             metric_values = {
                 "roi": self.baseline_tracker.current("roi"),
@@ -7722,12 +7718,7 @@ class SelfImprovementEngine:
                 "momentum": self.baseline_tracker.momentum,
                 "error_count": error_count,
             }
-            error_traces: list[Any] | None = None
-            if self.error_bot and hasattr(getattr(self.error_bot, "db", None), "recent_errors"):
-                try:
-                    error_traces = self.error_bot.db.recent_errors(limit=5)
-                except Exception as exc:
-                    self.logger.exception("error trace retrieval failed: %s", exc)
+            error_traces = traces
             overfit_signal = False
             if WorkflowSynergyComparator and hasattr(
                 WorkflowSynergyComparator, "analyze_overfitting"
@@ -7743,7 +7734,7 @@ class SelfImprovementEngine:
             if error_traces:
                 signals["errors"] = len(error_traces)
             if entropy_spike:
-                signals["entropy_delta"] = entropy_delta
+                signals["entropy_delta"] = recent_entropy_delta
             if overfit_signal:
                 signals["overfitting"] = True
             decision = "escalate"

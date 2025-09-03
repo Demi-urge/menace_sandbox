@@ -772,6 +772,41 @@ def should_skip_cycle(tracker: BaselineTracker, error_log: Any) -> bool:
     return True
 
 
+def _recent_error_entropy(
+    error_log: Any | None, tracker: BaselineTracker
+) -> tuple[Sequence[Any], float]:
+    """Return recent error traces and entropy change.
+
+    Parameters
+    ----------
+    error_log:
+        Error log or telemetry object exposing ``recent_errors`` or
+        ``recent_events``.  ``None`` is treated as no errors.
+    tracker:
+        Baseline tracker providing access to entropy history.
+    """
+
+    events: Sequence[Any] | None = None
+    try:
+        if error_log is None:
+            events = []
+        elif isinstance(error_log, Sequence):
+            events = error_log
+        elif hasattr(error_log, "recent_errors"):
+            events = error_log.recent_errors(limit=5)
+        elif hasattr(error_log, "recent_events"):
+            events = error_log.recent_events(limit=5)
+        elif hasattr(getattr(error_log, "db", None), "recent_errors"):
+            events = error_log.db.recent_errors(limit=5)  # type: ignore[attr-defined]
+        else:
+            events = []
+    except Exception:
+        events = []
+
+    entropy_delta = getattr(tracker, "entropy_delta", 0.0)
+    return list(events or []), float(entropy_delta)
+
+
 def _evaluate_cycle(
     tracker: BaselineTracker, error_state: Any
 ) -> tuple[str, Mapping[str, Any]]:
@@ -933,16 +968,30 @@ async def self_improvement_cycle(
             break
         decision, info = _evaluate_cycle(BASELINE_TRACKER, error_log)
         if decision == "skip":
-            logger.debug(
-                "skip",
-                extra=log_record(
-                    decision="skip",
-                    reason=info.get("reason"),
-                    metrics=info.get("metrics"),
-                ),
-            )
-            await asyncio.sleep(interval)
-            continue
+            traces, ent_delta = _recent_error_entropy(error_log, BASELINE_TRACKER)
+            threshold = getattr(planner, "entropy_threshold", 0.0)
+            if traces or abs(ent_delta) > float(threshold):
+                logger.debug(
+                    "fallback_overfitting",
+                    extra=log_record(
+                        decision="run",
+                        reason="fallback_overfitting",
+                        entropy_delta=ent_delta,
+                        errors=len(traces),
+                    ),
+                )
+                decision = "run"
+            else:
+                logger.debug(
+                    "skip",
+                    extra=log_record(
+                        decision="skip",
+                        reason=info.get("reason"),
+                        metrics=info.get("metrics"),
+                    ),
+                )
+                await asyncio.sleep(interval)
+                continue
         try:
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
