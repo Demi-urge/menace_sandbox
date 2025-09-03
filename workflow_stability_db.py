@@ -5,6 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Tuple
 import json
+try:  # pragma: no cover - allow package and flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
+
+try:  # pragma: no cover - compute default path via resolve_path
+    _DEFAULT_PATH = resolve_path("sandbox_data/stable_workflows.json")
+except FileNotFoundError:  # pragma: no cover - directory exists but file may not
+    _DEFAULT_PATH = resolve_path("sandbox_data") / "stable_workflows.json"
 
 
 class WorkflowStabilityDB:
@@ -15,7 +24,7 @@ class WorkflowStabilityDB:
     ``threshold`` the workflow is automatically cleared from the stable set.
     """
 
-    def __init__(self, path: str | Path = "sandbox_data/stable_workflows.json") -> None:
+    def __init__(self, path: str | Path = _DEFAULT_PATH) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._load()
