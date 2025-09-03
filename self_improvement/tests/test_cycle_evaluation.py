@@ -36,6 +36,18 @@ def _load_cycle_funcs() -> dict[str, Any]:
         "Sequence": Sequence,
         "TelemetryEvent": object,
         "datetime": datetime,
+        "DEFAULT_SEVERITY_SCORE_MAP": {
+            "critical": 100.0,
+            "crit": 100.0,
+            "fatal": 100.0,
+            "high": 75.0,
+            "error": 75.0,
+            "warn": 50.0,
+            "warning": 50.0,
+            "medium": 50.0,
+            "low": 25.0,
+            "info": 0.0,
+        },
         "BASELINE_TRACKER": types.SimpleNamespace(),
         "_get_entropy_threshold": lambda cfg, tracker: 1.0,
         "_init": types.SimpleNamespace(
@@ -263,6 +275,16 @@ def test__evaluate_cycle_ignores_noncritical_severity(severity):
     decision, info = meta["_evaluate_cycle"](tracker, [err])
     assert decision == "skip"
     assert info["reason"] == "all_deltas_positive"
+
+
+def test__evaluate_cycle_respects_severity_map_override():
+    meta = _load_cycle_funcs()
+    tracker = DummyTracker({"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1})
+    meta["_init"].settings.severity_score_map = {"alert": 100.0}
+    err = types.SimpleNamespace(error_type=types.SimpleNamespace(severity="alert"))
+    decision, info = meta["_evaluate_cycle"](tracker, [err])
+    assert decision == "run"
+    assert info["reason"] == "critical_error"
 
 
 def test_cycle_fallback_on_entropy_spike():

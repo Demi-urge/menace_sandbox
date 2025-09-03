@@ -1570,6 +1570,30 @@ SYNERGY_TRAIN_INTERVAL=20
 ROI_CYCLES=5
 ```
 
+#### Error severity scoring
+
+``SandboxSettings`` exposes ``severity_score_map`` to convert error severity
+labels into numeric scores when deciding whether to run a self-improvement
+cycle. The defaults are::
+
+```python
+{
+    "critical": 100.0,
+    "crit": 100.0,
+    "fatal": 100.0,
+    "high": 75.0,
+    "error": 75.0,
+    "warn": 50.0,
+    "warning": 50.0,
+    "medium": 50.0,
+    "low": 25.0,
+    "info": 0.0,
+}
+```
+
+Override via the ``SEVERITY_SCORE_MAP`` environment variable (JSON encoded) or
+when instantiating ``SandboxSettings``.
+
 ### Advanced sandbox commands
 
 - ``--auto-thresholds`` recomputes ROI and synergy thresholds every cycle so

@@ -18,7 +18,7 @@ from pathlib import Path
 from contextlib import contextmanager, nullcontext
 
 from ..logging_utils import get_logger, log_record
-from ..sandbox_settings import SandboxSettings
+from ..sandbox_settings import SandboxSettings, DEFAULT_SEVERITY_SCORE_MAP
 from . import init as _init
 from ..workflow_stability_db import WorkflowStabilityDB
 from ..roi_results_db import ROIResultsDB
@@ -825,24 +825,15 @@ def _evaluate_cycle(
         events = None
 
     threshold = getattr(_init.settings, "critical_severity_threshold", 75.0)
+    severity_map = getattr(
+        _init.settings, "severity_score_map", DEFAULT_SEVERITY_SCORE_MAP
+    )
 
     def _severity_to_score(sev: Any) -> float | None:
-        mapping = {
-            "critical": 100.0,
-            "crit": 100.0,
-            "fatal": 100.0,
-            "high": 75.0,
-            "error": 75.0,
-            "warn": 50.0,
-            "warning": 50.0,
-            "medium": 50.0,
-            "low": 25.0,
-            "info": 0.0,
-        }
         if isinstance(sev, str):
             s = sev.lower()
-            if s in mapping:
-                return mapping[s]
+            if s in severity_map:
+                return severity_map[s]
             try:
                 sev = float(sev)
             except ValueError:
