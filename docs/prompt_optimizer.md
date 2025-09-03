@@ -8,8 +8,9 @@ runtime improvements to suggest high-performing configurations.
 
 Pass a path to `failure_fingerprints.jsonl` via the
 `failure_fingerprints_path` argument when constructing `PromptOptimizer`.
-Fingerprints are grouped by their prompt text and counted. If the number of
-fingerprints associated with a prompt configuration exceeds the
-`fingerprint_threshold`, the optimiser reduces that configuration's recorded
-successes accordingly. This allows repeated failures to bias the success rate
-without needing corresponding log entries.
+Fingerprints are grouped into similarity clusters. For each cluster whose size
+exceeds `fingerprint_threshold`, the optimiser deducts the cluster size from the
+configuration's successes and scales its score by `1 / (1 + size -
+fingerprint_threshold)`. Larger clusters therefore impose heavier penalties,
+allowing repeated failures to bias the success rate without needing
+corresponding log entries.
