@@ -211,8 +211,16 @@ class _FallbackPlanner:
         """Trim ``cluster_map`` according to pruning strategy."""
 
         if self.state_capacity <= 0:
+            self.logger.debug(
+                "state capacity disabled; skipping prune",
+                extra=log_record(component=__name__),
+            )
             return
         if len(self.cluster_map) <= self.state_capacity:
+            self.logger.debug(
+                "state within capacity; skipping prune",
+                extra=log_record(component=__name__),
+            )
             return
         if self.state_prune_strategy == "score":
             items = sorted(
@@ -353,6 +361,11 @@ class _FallbackPlanner:
             )
             return None
         if not allow_existing and tuple(chain) in self.cluster_map:
+            self.logger.debug(
+                "rejecting existing chain %s",
+                "->".join(chain),
+                extra=log_record(workflow_id="->".join(chain)),
+            )
             return None
 
         roi_values: list[float] = []
@@ -405,6 +418,10 @@ class _FallbackPlanner:
             entropies.append(entropy)
 
         if not roi_values:
+            self.logger.debug(
+                "no ROI values for chain %s", "->".join(chain),
+                extra=log_record(workflow_id="->".join(chain)),
+            )
             return None
 
         chain_roi = fmean(roi_values)
@@ -705,6 +722,11 @@ def evaluate_cycle(
     # Compute current deltas for all tracked metrics
     for metric in list(tracker._history):
         if tracker.delta(metric) <= 0:
+            get_logger(__name__).debug(
+                "cycle evaluation skipped; non-positive delta for %s",
+                metric,
+                extra=log_record(metric=metric),
+            )
             return True, ""
 
     def _to_ts(val: Any) -> float:
@@ -726,6 +748,10 @@ def evaluate_cycle(
         sev = getattr(getattr(err, "error_type", None), "severity", None)
         if sev == "critical":
             if _to_ts(getattr(err, "timestamp", 0)) >= cycle_ts:
+                get_logger(__name__).debug(
+                    "cycle evaluation skipped due to critical error",
+                    extra=log_record(severity=sev),
+                )
                 return True, ""
 
     return False, "all_deltas_positive"
@@ -747,9 +773,17 @@ def should_skip_cycle(tracker: BaselineTracker, error_log: Any) -> bool:
     # All tracked metrics must have positive deltas.
     metrics = [m for m in tracker._history if not m.endswith("_delta")]
     if any(tracker.delta(m) <= 0 for m in metrics):
+        get_logger(__name__).debug(
+            "cycle not skipped; non-positive metric delta",
+            extra=log_record(metrics=[m for m in metrics if tracker.delta(m) <= 0]),
+        )
         return False
 
     if error_log is None:
+        get_logger(__name__).debug(
+            "cycle not skipped; no error log available",
+            extra=log_record(component=__name__),
+        )
         return False
 
     try:
@@ -760,15 +794,32 @@ def should_skip_cycle(tracker: BaselineTracker, error_log: Any) -> bool:
         elif hasattr(getattr(error_log, "db", None), "recent_errors"):
             events = error_log.db.recent_errors(limit=5)  # type: ignore[attr-defined]
         else:
+            get_logger(__name__).debug(
+                "cycle not skipped; error log lacks recent events API",
+                extra=log_record(component=__name__),
+            )
             return False
-    except Exception:
+    except Exception as exc:
+        get_logger(__name__).warning(
+            "cycle skip check failed",
+            extra=log_record(component=__name__),
+            exc_info=exc,
+        )
         return False
 
     for ev in events or []:
         sev = getattr(getattr(ev, "error_type", None), "severity", None)
         if sev == "critical":
+            get_logger(__name__).debug(
+                "cycle not skipped; critical error present",
+                extra=log_record(severity=sev),
+            )
             return False
 
+    get_logger(__name__).debug(
+        "cycle skipped; metrics positive and no critical errors",
+        extra=log_record(component=__name__),
+    )
     return True
 
 
@@ -914,8 +965,12 @@ async def self_improvement_cycle(
                 float(record.get("token_complexity", entropy)),
                 roi=roi,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "entropy metric recording failed",
+                extra=log_record(workflow_id=cid),
+                exc_info=exc,
+            )
         if planner.roi_db is not None:
             try:
                 planner.roi_db.log_result(
