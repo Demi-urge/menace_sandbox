@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from filelock import FileLock
+from dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,11 @@ class BorderlineBucket:
     """Persist borderline workflow information to a JSONL file."""
 
     def __init__(self, path: str | Path | None = None) -> None:
-        self.path = Path(path) if path else Path("sandbox_data/borderline_bucket.jsonl")
+        self.path = (
+            Path(path)
+            if path
+            else Path(resolve_path("sandbox_data")) / "borderline_bucket.jsonl"
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = FileLock(str(self.path) + ".lock")
         self._load()

@@ -13,8 +13,10 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+from dynamic_path_router import resolve_path
+
 # Path to the relevancy metrics file produced by :class:`RelevancyRadar`.
-_METRICS_FILE = Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
+_METRICS_FILE = Path(resolve_path("sandbox_data")) / "relevancy_metrics.json"
 
 
 # ---------------------------------------------------------------------------

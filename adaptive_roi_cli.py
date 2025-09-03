@@ -22,6 +22,7 @@ from .truth_adapter import TruthAdapter
 from .composite_workflow_scorer import CompositeWorkflowScorer
 from .roi_results_db import ROIResultsDB
 import db_router
+from .dynamic_path_router import resolve_path
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        default="sandbox_data/adaptive_roi.pkl",
+        default=str(Path(resolve_path("sandbox_data")) / "adaptive_roi.pkl"),
         help="Model path",
     )
     parser.add_argument("--slope-threshold", type=float, default=None, help="Slope threshold")
@@ -381,10 +382,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_refresh.add_argument("--evaluation-db", default="evaluation_history.db")
     p_refresh.add_argument("--roi-events-db", default="roi_events.db")
     p_refresh.add_argument(
-        "--history", default="sandbox_data/roi_history.json", help="Tracker history path"
+        "--history",
+        default=str(Path(resolve_path("sandbox_data")) / "roi_history.json"),
+        help="Tracker history path",
     )
     p_refresh.add_argument(
-        "--output-csv", default="sandbox_data/adaptive_roi.csv", help="CSV dump path"
+        "--output-csv",
+        default=str(Path(resolve_path("sandbox_data")) / "adaptive_roi.csv"),
+        help="CSV dump path",
     )
     p_refresh.add_argument(
         "--interval", type=int, default=3600, help="Seconds between refresh"
@@ -400,7 +405,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Comma separated scenario names; defaults to standard presets",
     )
     p_card.add_argument(
-        "--history", default="sandbox_data/roi_history.json", help="Tracker history path"
+        "--history",
+        default=str(Path(resolve_path("sandbox_data")) / "roi_history.json"),
+        help="Tracker history path",
     )
     p_card.add_argument("--output", default=None, help="Write scorecard JSON to file")
     p_card.set_defaults(func=_scorecard)
@@ -425,10 +432,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_sched.add_argument("--evaluation-db", default="evaluation_history.db")
     p_sched.add_argument("--roi-events-db", default="roi_events.db")
     p_sched.add_argument(
-        "--history", default="sandbox_data/roi_history.json", help="Tracker history path"
+        "--history",
+        default=str(Path(resolve_path("sandbox_data")) / "roi_history.json"),
+        help="Tracker history path",
     )
     p_sched.add_argument(
-        "--output-csv", default="sandbox_data/adaptive_roi.csv", help="CSV dump path"
+        "--output-csv",
+        default=str(Path(resolve_path("sandbox_data")) / "adaptive_roi.csv"),
+        help="CSV dump path",
     )
     p_sched.add_argument(
         "--interval", type=int, default=3600, help="Seconds between retraining"
@@ -447,7 +458,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_sched.add_argument(
         "--log-path",
-        default="sandbox_data/adaptive_roi_schedule.log",
+        default=str(Path(resolve_path("sandbox_data")) / "adaptive_roi_schedule.log"),
         help="Log file path",
     )
     p_sched.set_defaults(func=_schedule)
