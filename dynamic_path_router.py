@@ -2,8 +2,9 @@
 
 The module provides :func:`resolve_path` which locates files relative to the
 project root.  The root is determined by consulting an optional environment
-override (``MENACE_ROOT``), falling back to ``git rev-parse --show-toplevel``
-and finally searching parent directories for a ``.git`` directory.  When a
+override (``MENACE_ROOT`` or ``SANDBOX_REPO_PATH``), falling back to
+``git rev-parse --show-toplevel`` and finally searching parent directories for
+a ``.git`` directory.  When a
 direct lookup fails a full ``os.walk`` search is used.  Successful lookups are
 cached to avoid repeated scans.
 """
@@ -31,7 +32,7 @@ def get_project_root() -> Path:
 
     Preference order:
 
-    1. ``MENACE_ROOT`` environment variable.
+    1. ``MENACE_ROOT`` or ``SANDBOX_REPO_PATH`` environment variables.
     2. ``git rev-parse --show-toplevel``.
     3. Upward search from this file for a ``.git`` directory.
     4. Directory containing this file.
@@ -41,12 +42,13 @@ def get_project_root() -> Path:
     if _PROJECT_ROOT is not None:
         return _PROJECT_ROOT
 
-    env_path = os.environ.get("MENACE_ROOT")
-    if env_path:
-        path = Path(env_path).expanduser().resolve()
-        if path.exists():
-            _PROJECT_ROOT = path
-            return path
+    for env_var in ("MENACE_ROOT", "SANDBOX_REPO_PATH"):
+        env_path = os.environ.get(env_var)
+        if env_path:
+            path = Path(env_path).expanduser().resolve()
+            if path.exists():
+                _PROJECT_ROOT = path
+                return path
 
     try:
         top_level = subprocess.check_output(
