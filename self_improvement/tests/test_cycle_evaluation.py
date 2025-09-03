@@ -10,7 +10,12 @@ import types
 def _load_cycle_funcs() -> dict[str, Any]:
     src = Path("self_improvement/meta_planning.py").read_text()
     tree = ast.parse(src)
-    wanted = {"self_improvement_cycle", "evaluate_cycle"}
+    wanted = {
+        "self_improvement_cycle",
+        "evaluate_cycle",
+        "_evaluate_cycle",
+        "_recent_error_entropy",
+    }
     nodes = [
         n
         for n in tree.body
@@ -31,7 +36,7 @@ def _load_cycle_funcs() -> dict[str, Any]:
         "TelemetryEvent": object,
         "datetime": datetime,
         "BASELINE_TRACKER": types.SimpleNamespace(),
-        "_get_entropy_threshold": lambda cfg, tracker: 0.0,
+        "_get_entropy_threshold": lambda cfg, tracker: 1.0,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
@@ -40,7 +45,7 @@ def _load_cycle_funcs() -> dict[str, Any]:
 class DummyTracker:
     def __init__(self, deltas: Mapping[str, float]):
         self.deltas = dict(deltas)
-        self._history = {k: [] for k in ["roi", "pass_rate", "entropy"]}
+        self._history = {k: [] for k in deltas}
 
     def update(self, **kw):
         pass
@@ -53,6 +58,10 @@ class DummyTracker:
 
     def get(self, metric: str) -> float:
         return float(self.deltas.get(metric, 0.0))
+
+    @property
+    def entropy_delta(self) -> float:
+        return float(self.deltas.get("entropy", 0.0))
 
 
 class DummyLogger:
