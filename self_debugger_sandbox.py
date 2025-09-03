@@ -406,10 +406,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     tempfile.TemporaryDirectory() as before_dir,
                     tempfile.TemporaryDirectory() as after_dir,
                 ):
-                    src = Path(mod)
-                    if src.suffix == "":
-                        src = src.with_suffix(".py")
-                    rel = src.name if src.is_absolute() else src
+                    orig = Path(mod)
+                    rel = orig.name if orig.is_absolute() else orig
+                    src = resolve_path(
+                        f"{orig}.py" if orig.suffix == "" else str(orig)
+                    )
                     before_target = Path(before_dir) / rel
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
@@ -1372,7 +1373,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 best: dict[str, object] | None = None
 
                 async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
-                    repo_src = Path(self._settings.sandbox_repo_path or ".")
+                    repo_src = resolve_path(self._settings.sandbox_repo_path or ".")
                     with create_ephemeral_env(repo_src) as (repo, run):
                         test_path = repo / "test_auto.py"
                         test_path.write_text(code)

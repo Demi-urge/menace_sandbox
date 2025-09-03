@@ -9,6 +9,11 @@ import logging
 import json
 
 try:  # pragma: no cover - fallback for flat layout
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback
+    from dynamic_path_router import resolve_path  # type: ignore
+
+try:  # pragma: no cover - fallback for flat layout
     from .audit_trail import AuditTrail
 except Exception:  # pragma: no cover - fallback
     from audit_trail import AuditTrail  # type: ignore
@@ -26,7 +31,7 @@ class PatchBranchManager:
         audit_trail: AuditTrail | None = None,
         main_branch: str = "main",
     ) -> None:
-        self.repo = Path(repo)
+        self.repo = resolve_path(str(repo))
         self.audit_trail = audit_trail
         self.main_branch = main_branch
 
