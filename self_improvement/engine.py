@@ -7691,7 +7691,13 @@ class SelfImprovementEngine:
             # Fetch recent error telemetry and recent entropy change.  The error
             # count is used as a proxy for overall system health while the
             # entropy delta is examined for potential overfitting.
-            traces, recent_entropy_delta, error_count = meta_planning._recent_error_entropy(
+            (
+                traces,
+                recent_entropy_delta,
+                error_count,
+                _entropy_mean,
+                _entropy_std,
+            ) = meta_planning._recent_error_entropy(
                 self.error_bot, self.baseline_tracker
             )
             error_count = float(error_count)

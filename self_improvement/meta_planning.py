@@ -759,8 +759,8 @@ def evaluate_cycle(
 
 def _recent_error_entropy(
     error_log: Any | None, tracker: BaselineTracker
-) -> tuple[Sequence[Any], float, int]:
-    """Return recent error traces, entropy change and error count.
+) -> tuple[Sequence[Any], float, int, float, float]:
+    """Return recent error traces and entropy statistics.
 
     Parameters
     ----------
@@ -769,6 +769,15 @@ def _recent_error_entropy(
         ``recent_events``.  ``None`` is treated as no errors.
     tracker:
         Baseline tracker providing access to entropy history.
+
+    Returns
+    -------
+    tuple[Sequence[Any], float, int, float, float]
+        ``(events, entropy_delta, error_count, delta_mean, delta_std)`` where
+        ``entropy_delta`` is the change in entropy since the previous update
+        while ``delta_mean`` and ``delta_std`` are the rolling average and
+        standard deviation of recent entropy deltas as tracked by
+        :class:`BaselineTracker`.
     """
 
     events: Sequence[Any] | None = None
@@ -789,8 +798,10 @@ def _recent_error_entropy(
         events = []
 
     entropy_delta = getattr(tracker, "entropy_delta", 0.0)
+    delta_mean = getattr(tracker, "get", lambda _m: 0.0)("entropy_delta")
+    delta_std = getattr(tracker, "std", lambda _m: 0.0)("entropy_delta")
     error_count = len(events or [])
-    return list(events or []), float(entropy_delta), error_count
+    return list(events or []), float(entropy_delta), error_count, float(delta_mean), float(delta_std)
 
 
 # Canonical metrics that must be tracked for cycle evaluation.
@@ -1048,23 +1059,25 @@ async def self_improvement_cycle(
                 missing_metrics=",".join(info.get("missing", [])),
             )
         if decision == "skip":
-            traces, ent_delta, err_count = _recent_error_entropy(
+            traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
                 error_log, BASELINE_TRACKER
             )
             max_errors = getattr(cfg, "max_allowed_errors", 0)
-            entropy_threshold = getattr(
-                cfg, "entropy_overfit_threshold", getattr(planner, "entropy_threshold", 0.0)
+            z_threshold = float(getattr(cfg, "entropy_z_threshold", 3.0))
+            z_score = (
+                abs(ent_delta - delta_mean) / delta_std if delta_std > 0 else 0.0
             )
-            if err_count > int(max_errors) or abs(ent_delta) > float(entropy_threshold):
+            if err_count > int(max_errors) or z_score > z_threshold:
                 logger.debug(
                     "fallback_overfitting",
                     extra=log_record(
                         decision="run",
                         reason="fallback_overfitting",
                         entropy_delta=ent_delta,
+                        entropy_z=z_score,
                         errors=err_count,
                         max_allowed_errors=max_errors,
-                        entropy_overfit_threshold=entropy_threshold,
+                        entropy_z_threshold=z_threshold,
                     ),
                 )
                 decision = "run"
@@ -1073,8 +1086,8 @@ async def self_improvement_cycle(
                     reason="overfitting",
                     errors=err_count,
                     entropy_delta=ent_delta,
-                    max_allowed_errors=max_errors,
-                    entropy_overfit_threshold=entropy_threshold,
+                    entropy_z=z_score,
+                    entropy_z_threshold=z_threshold,
                     error_traces=traces,
                 )
             else:
