@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Dict, Set
 
+from dynamic_path_router import resolve_path
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ROLE_PERMISSIONS: dict[str, set[str]] = {
@@ -16,7 +18,8 @@ _DEFAULT_ROLE_PERMISSIONS: dict[str, set[str]] = {
     "admin": {"read", "write", "admin"},
 }
 
-ROLE_PERMISSIONS_FILE = Path(os.getenv("ROLE_PERMISSIONS_FILE", Path(__file__).with_name("config") / "role_permissions.json"))
+default_path = resolve_path("config/role_permissions.json")
+ROLE_PERMISSIONS_FILE = Path(os.getenv("ROLE_PERMISSIONS_FILE", str(default_path)))
 
 
 def load_role_permissions(path: str | Path = ROLE_PERMISSIONS_FILE) -> Dict[str, Set[str]]:
