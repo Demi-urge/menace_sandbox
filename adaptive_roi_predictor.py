@@ -16,6 +16,9 @@ from typing import Sequence, Tuple, Dict, Any
 
 import numpy as np
 import json
+import sqlite3
+
+from dynamic_path_router import resolve_path
 
 try:  # pragma: no cover - optional dependency
     import pandas as pd  # type: ignore
@@ -143,7 +146,11 @@ class AdaptiveROIPredictor:
         slope_threshold: float | None = None,
         curvature_threshold: float | None = None,
     ) -> None:
-        self.model_path = Path(model_path)
+        model_path = Path(model_path)
+        try:
+            self.model_path = resolve_path(model_path.as_posix())
+        except FileNotFoundError:
+            self.model_path = resolve_path(model_path.parent.as_posix()) / model_path.name
         self.cv = cv
         param_grid_provided = param_grid is not None
         default_grid = {
@@ -961,6 +968,25 @@ def load_training_data(
     if pd is None:  # pragma: no cover - pandas not installed
         raise RuntimeError("pandas is required for load_training_data")
 
+    evolution_path = Path(evolution_path)
+    roi_events_path = Path(roi_events_path)
+    output_path = Path(output_path)
+
+    try:
+        evolution_path = resolve_path(evolution_path.as_posix())
+    except FileNotFoundError:
+        evolution_path = resolve_path(evolution_path.parent.as_posix()) / evolution_path.name
+    try:
+        roi_events_path = resolve_path(roi_events_path.as_posix())
+    except FileNotFoundError:
+        roi_events_path = resolve_path(roi_events_path.parent.as_posix()) / roi_events_path.name
+    try:
+        output_path = resolve_path(output_path.as_posix())
+    except FileNotFoundError:
+        output_path = resolve_path(output_path.parent.as_posix()) / output_path.name
+
+    router = router or DB_ROUTER
+
     n = len(tracker.roi_history)
     data: dict[str, list[float]] = {
         "roi_delta": [float(x) for x in tracker.roi_history]
@@ -989,7 +1015,7 @@ def load_training_data(
     df = pd.DataFrame(data)
 
     # GPT evaluation scores -------------------------------------------------
-    eval_db = EvaluationHistoryDB(router=router or GLOBAL_ROUTER or init_db_router("adaptive_roi"))
+    eval_db = EvaluationHistoryDB(router=router)
     recs: list[tuple[pd.Timestamp, float]] = []
     for eng in eval_db.engines():
         for score, ts, _passed, _err in eval_db.history(eng, limit=1_000_000):
@@ -1001,22 +1027,41 @@ def load_training_data(
     df["gpt_score"] = scores
 
     # ROI event deltas ------------------------------------------------------
-    roi_conn = DB_ROUTER.get_connection("roi_events")
     try:
-        roi_df = pd.read_sql(
-            "SELECT roi_after - roi_before AS roi_event_delta FROM roi_events ORDER BY ts",
-            roi_conn,
-        )
-    except Exception:  # pragma: no cover - missing table or DB
+        with sqlite3.connect(roi_events_path) as conn:
+            try:
+                roi_df = pd.read_sql(
+                    "SELECT roi_after - roi_before AS roi_event_delta FROM roi_events ORDER BY ts",
+                    conn,
+                )
+            except Exception:  # pragma: no cover - missing table or DB
+                roi_df = pd.DataFrame(columns=["roi_event_delta"])
+            try:
+                pred_df = pd.read_sql(
+                    "SELECT predicted_roi, actual_roi, predicted_class, actual_class, confidence FROM roi_prediction_events ORDER BY ts",
+                    conn,
+                )
+            except Exception:  # pragma: no cover - missing table or DB
+                pred_df = pd.DataFrame(
+                    columns=[
+                        "predicted_roi",
+                        "actual_roi",
+                        "predicted_class",
+                        "actual_class",
+                        "confidence",
+                    ]
+                )
+    except Exception:
         roi_df = pd.DataFrame(columns=["roi_event_delta"])
-    pred_conn = DB_ROUTER.get_connection("roi_prediction_events")
-    try:
-        pred_df = pd.read_sql(
-            "SELECT predicted_roi, actual_roi, predicted_class, actual_class, confidence FROM roi_prediction_events ORDER BY ts",
-            pred_conn,
+        pred_df = pd.DataFrame(
+            columns=[
+                "predicted_roi",
+                "actual_roi",
+                "predicted_class",
+                "actual_class",
+                "confidence",
+            ]
         )
-    except Exception:  # pragma: no cover - missing table or DB
-        pred_df = pd.DataFrame(columns=["predicted_roi", "actual_roi", "predicted_class", "actual_class", "confidence"])
 
     event_deltas = roi_df.get("roi_event_delta", pd.Series(dtype=float)).astype(float).tolist()
     if len(event_deltas) < n:
@@ -1080,8 +1125,7 @@ def load_training_data(
             std = 1.0
         df[col] = (series - mean) / std
 
-    out_path = Path(output_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out_path, index=False)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
     return df
 
