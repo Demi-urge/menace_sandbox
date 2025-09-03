@@ -16,7 +16,7 @@ from .failure_fingerprint_store import (
     FailureFingerprint,
     FailureFingerprintStore,
 )
-from .vector_utils import cosine_similarity
+from .failure_retry_utils import check_similarity_and_warn, record_failure
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import record_failed_tags, load_failed_tags
 except Exception:  # pragma: no cover - optional dependency
@@ -287,47 +287,25 @@ class SelfCodingManager:
                                 "",
                                 desc,
                             )
-                        matches = self.failure_store.find_similar(provisional_fp)
+                        desc, skip, best, matches, _ = check_similarity_and_warn(
+                            provisional_fp,
+                            self.failure_store,
+                            self.skip_similarity or 0.95,
+                            desc,
+                        )
                     except Exception:
                         matches = []
-                    if matches:
                         best = 0.0
-                        best_match = matches[0]
-                        for m in matches:
-                            try:
-                                sim = cosine_similarity(
-                                    provisional_fp.embedding, m.embedding
-                                )
-                            except Exception:
-                                sim = 0.0
-                            if sim > best:
-                                best = sim
-                                best_match = m
-                        advisory = f"avoid repeating failure: {best_match.error_message}"
-                        if best >= self.skip_similarity:
-                            self.logger.info(
-                                "failure fingerprint decision",
-                                extra={"action": "abort", "similarity": best},
-                            )
-                            raise RuntimeError("similar failure detected")
-                        desc = f"{desc}; {advisory}"
+                        skip = False
+                    if matches:
+                        action = "abort" if skip else "warn"
                         self.logger.info(
                             "failure fingerprint decision",
-                            extra={"action": "warn", "similarity": best},
+                            extra={"action": action, "similarity": best},
                         )
+                        if skip:
+                            raise RuntimeError("similar failure detected")
                 if last_fp and self.failure_store:
-                    try:
-                        matches = self.failure_store.find_similar(last_fp)
-                    except Exception:
-                        matches = []
-                    best = 0.0
-                    for m in matches:
-                        try:
-                            sim = cosine_similarity(last_fp.embedding, m.embedding)
-                        except Exception:
-                            sim = 0.0
-                        if sim > best:
-                            best = sim
                     threshold = getattr(self.engine, "failure_similarity_threshold", None)
                     if threshold is None and self.failure_store is not None:
                         try:
@@ -338,18 +316,25 @@ class SelfCodingManager:
                         threshold = self.skip_similarity or 0.95
                     if self.skip_similarity is not None:
                         threshold = max(threshold, self.skip_similarity)
-                    if best >= threshold:
+                    try:
+                        desc, skip, best, matches, _ = check_similarity_and_warn(
+                            last_fp,
+                            self.failure_store,
+                            threshold,
+                            desc,
+                        )
+                    except Exception:
+                        matches = []
+                        best = 0.0
+                        skip = False
+                    action = "skip" if skip else "warning"
+                    if matches:
                         self.logger.info(
                             "failure fingerprint decision",
-                            extra={"action": "skip", "similarity": best},
+                            extra={"action": action, "similarity": best},
                         )
+                    if skip:
                         raise RuntimeError("similar failure detected")
-                    warning = f"avoid repeating failure: {last_fp.error_message}"
-                    desc = f"{desc}; {warning}"
-                    self.logger.info(
-                        "failure fingerprint decision",
-                        extra={"action": "warning", "similarity": best},
-                    )
                 patch_id, reverted, _ = self.engine.apply_patch(
                     cloned_path,
                     desc,
@@ -422,11 +407,7 @@ class SelfCodingManager:
                     self.engine.last_prompt_text,
                 )
                 last_fp = fingerprint
-                if self.failure_store:
-                    try:
-                        self.failure_store.add(fingerprint)
-                    except Exception:  # pragma: no cover - best effort
-                        self.logger.exception("failed to log failure fingerprint")
+                record_failure(fingerprint, self.failure_store)
                 self.logger.info(
                     "rebuilding context",
                     extra={"tags": tags, "attempt": attempt},
