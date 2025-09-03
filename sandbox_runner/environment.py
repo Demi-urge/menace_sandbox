@@ -25,6 +25,7 @@ from logging_utils import get_logger, log_record
 from metrics_exporter import sandbox_crashes_total
 from alert_dispatcher import dispatch_alert
 import re
+from dynamic_path_router import resolve_path
 
 from .orphan_integration import integrate_and_graph_orphans
 
@@ -2067,7 +2068,7 @@ def purge_leftovers() -> None:
                         created_ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S %z").timestamp()
                     except Exception:
                         continue
-                    if created_ts <= threshold and "sandbox_runner.py" in cmd:
+                    if created_ts <= threshold and resolve_path("sandbox_runner.py").name in cmd:
                         try:
                             logger.info("removing stale sandbox container %s", cid)
                         except Exception as exc:
@@ -6984,7 +6985,8 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
 
             code = (
                 "import subprocess, os\n"
-                "subprocess.run(['python', 'sandbox_runner.py'], cwd='"
+                "from dynamic_path_router import resolve_path\n"
+                "subprocess.run(['python', str(resolve_path('sandbox_runner.py'))], cwd='"
                 + container_repo
                 + "')\n"
             )
@@ -7007,8 +7009,9 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                 except DockerException as exc:
                     diagnostics["docker_error"] = str(exc)
                     logger.exception(
-                        "docker execution failed: %s; cmd: docker run <image> python sandbox_runner.py",
+                        "docker execution failed: %s; cmd: docker run <image> python %s",
                         exc,
+                        resolve_path("sandbox_runner.py"),
                     )
                     if attempt >= _CREATE_RETRY_LIMIT - 1:
                         logger.error("docker repeatedly failed; running locally")
@@ -7065,7 +7068,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                                 "-serial",
                                 "stdio",
                                 "-append",
-                                f"python {vm_repo}/sandbox_runner.py",
+                                f"python {resolve_path('sandbox_runner.py')}",
                             ]
                             subprocess.run(
                                 cmd,
@@ -7122,7 +7125,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
             diagnostics.setdefault("local_execution", "vm")
             env["SANDBOX_DATA_DIR"] = str(data_dir)
             subprocess.run(
-                ["python", "sandbox_runner.py"],
+                ["python", str(resolve_path("sandbox_runner.py"))],
                 cwd=repo_path,
                 env=env,
                 check=False,
