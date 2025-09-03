@@ -16,19 +16,32 @@ from importlib import import_module
 import sys
 import tokenize
 import io
+from pathlib import Path
+
+from dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 # default location for bundled pattern configuration
-DEFAULT_PATTERN_CONFIG_PATH = os.path.join(
-    os.path.dirname(__file__), "config", "default_pattern_config.json"
-)
+try:
+    DEFAULT_PATTERN_CONFIG_PATH = resolve_path(
+        "codex_output_analyzer/config/default_pattern_config.json"
+    )
+except FileNotFoundError:
+    DEFAULT_PATTERN_CONFIG_PATH = Path(
+        "codex_output_analyzer/config/default_pattern_config.json"
+    )
 
 # default severity map configuration
-DEFAULT_SEVERITY_MAP_PATH = os.path.join(
-    os.path.dirname(__file__), "config", "default_severity_map.json"
-)
+try:
+    DEFAULT_SEVERITY_MAP_PATH = resolve_path(
+        "codex_output_analyzer/config/default_severity_map.json"
+    )
+except FileNotFoundError:
+    DEFAULT_SEVERITY_MAP_PATH = Path(
+        "codex_output_analyzer/config/default_severity_map.json"
+    )
 
 # default suspicious words for comment/docstring extraction
 DEFAULT_SUSPICIOUS_WORDS: Set[str] = {
@@ -133,15 +146,18 @@ class UnsafePattern:
         return data
 
 
-def _load_default_pattern_config(path: Optional[str] = None) -> "PatternConfig":
+def _load_default_pattern_config(path: Optional[Path | str] = None) -> "PatternConfig":
     """Return pattern config loaded from JSON if available."""
 
     if path is None:
-        path = os.getenv("CODEX_DEFAULT_PATTERN_CONFIG") or DEFAULT_PATTERN_CONFIG_PATH
+        env = os.getenv("CODEX_DEFAULT_PATTERN_CONFIG")
+        path = Path(env) if env else DEFAULT_PATTERN_CONFIG_PATH
+    else:
+        path = Path(path)
 
-    if path and os.path.exists(path):
+    if path.exists():
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
             logger.debug("loaded default pattern config from %s", path)
             return PatternConfig(
@@ -171,15 +187,18 @@ def _load_default_pattern_config(path: Optional[str] = None) -> "PatternConfig":
 DEFAULT_PATTERN_CONFIG = _load_default_pattern_config()
 
 
-def _load_default_severity_map(path: Optional[str] = None) -> Dict[str, Severity]:
+def _load_default_severity_map(path: Optional[Path | str] = None) -> Dict[str, Severity]:
     """Return severity mapping loaded from JSON if available."""
 
     if path is None:
-        path = os.getenv("CODEX_DEFAULT_SEVERITY_MAP") or DEFAULT_SEVERITY_MAP_PATH
+        env = os.getenv("CODEX_DEFAULT_SEVERITY_MAP")
+        path = Path(env) if env else DEFAULT_SEVERITY_MAP_PATH
+    else:
+        path = Path(path)
 
-    if path and os.path.exists(path):
+    if path.exists():
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with path.open("r", encoding="utf-8") as f:
                 raw = json.load(f)
             logger.debug("loaded default severity map from %s", path)
             return {k: Severity(v) for k, v in raw.items()}
@@ -206,12 +225,11 @@ def _load_default_severity_map(path: Optional[str] = None) -> Dict[str, Severity
         "suspicious_attribute": Severity.LOW,
     }
 
+
 # version tag for generated analysis schemas
 ANALYSIS_SCHEMA_VERSION = 1
 
-
 PLUGIN_INTERFACE_VERSION = 1
-
 
 
 def _config_from_dict(data: Dict[str, Any]) -> PatternConfig:
@@ -311,7 +329,7 @@ def load_pattern_source(
                         visitors.append(inst)
                     else:
                         logger.warning("custom visitor %s is not a NodeVisitor", vis)
-        except Exception as exc:  # pragma: no cover - plugin loading errors
+        except Exception:  # pragma: no cover - plugin loading errors
             logger.exception("failed loading custom visitors from %s", source)
             raise
 
@@ -631,7 +649,6 @@ def flag_unsafe_patterns(
         p.to_dict(include_context=include_context or include_all, include_count=include_counts)
         for p in patterns
     ]
-
 
 
 def log_analysis_result(result: Dict[str, Any], output_path: str) -> None:
