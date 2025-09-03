@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from db_router import GLOBAL_ROUTER
+from dynamic_path_router import resolve_path
 
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,7 @@ if TYPE_CHECKING:  # pragma: no cover - for type hints
     from .preliminary_research_bot import PreliminaryResearchBot
 else:  # pragma: no cover - lightweight fallback implementation
     from .preliminary_research_bot import BusinessData
+
     class PreliminaryResearchBot:
         """Minimal fallback that attempts a basic scrape for metrics."""
 
@@ -56,7 +58,7 @@ else:  # pragma: no cover - lightweight fallback implementation
                     roi_score=None,
                 )
 
-DB_PATH = Path(__file__).parent / "models.db"
+DB_PATH = resolve_path("models.db")
 
 
 @contextmanager
@@ -280,7 +282,8 @@ def integrity_check(db_path: Path = DB_PATH) -> bool:
         ).fetchall()
         for name, _ in duplicates:
             conn.execute(
-                "DELETE FROM models WHERE id NOT IN (SELECT MIN(id) FROM models WHERE LOWER(name) = LOWER(?) )",
+                "DELETE FROM models WHERE id NOT IN (SELECT MIN(id) FROM models "
+                "WHERE LOWER(name) = LOWER(?) )",
                 (name,),
             )
     return ok and not duplicates
