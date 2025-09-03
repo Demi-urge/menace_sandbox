@@ -13,6 +13,11 @@ import dataclasses
 from datetime import datetime
 from pathlib import Path
 
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
+
 from .auto_link import auto_link
 from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator, Literal
 
@@ -1331,7 +1336,7 @@ class ErrorBot(AdminBotBase):
                 module = mnode.split(":", 1)[1]
                 self.flag_module(module)
                 if self.self_coding_engine:
-                    path = Path(f"{module}.py")
+                    path = Path(resolve_path(f"{module}.py"))
                     if path.exists():
                         try:
                             self.self_coding_engine.apply_patch(
@@ -1388,7 +1393,7 @@ class ErrorBot(AdminBotBase):
                     preds.append(f"high_error_risk_{b}")
                     if self.self_coding_engine:
                         try:
-                            path = Path(f"{b}.py")
+                            path = Path(resolve_path(f"{b}.py"))
                             if path.exists():
                                 self.self_coding_engine.apply_patch(
                                     path,
@@ -1419,7 +1424,8 @@ class ErrorBot(AdminBotBase):
                                     "affected_modules": modules_for_fix,
                                     "mitigation": "restart affected modules and review logs",
                                 }
-                                path = Path(
+                                root_dir = Path(resolve_path("."))
+                                path = root_dir / (
                                     f"runbook_{b}_{hashlib.md5(str(full_chain).encode()).hexdigest()}.json"
                                 )
                                 path.write_text(json.dumps(runbook, indent=2))
@@ -1481,7 +1487,7 @@ class ErrorBot(AdminBotBase):
                 bot = self.data_bot.worst_bot("errors")
                 if not bot:
                     continue
-                path = Path(f"{bot}.py")
+                path = Path(resolve_path(f"{bot}.py"))
                 if path.exists():
                     desc = f"fix recurring {item.get('error_type', 'error')}"
                     try:
