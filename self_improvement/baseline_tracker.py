@@ -31,11 +31,17 @@ class BaselineTracker:
                 hist.append(float(v))
 
     # ------------------------------------------------------------------
-    def update(self, **metrics: float) -> None:
+    def update(self, *, record_momentum: bool = True, **metrics: float) -> None:
         """Record new metric values.
 
         Parameters
         ----------
+        record_momentum:
+            When ``True`` (the default) the current momentum value is recorded
+            after processing ``metrics`` so that moving averages and deviations
+            can be computed for the momentum series.  Set to ``False`` when
+            adding auxiliary metrics that should not advance the momentum
+            history.
         **metrics:
             Mapping of metric name to numeric value.
 
@@ -60,12 +66,15 @@ class BaselineTracker:
                 self._success_history.append(delta > 0)
             hist.append(float(value))
 
-        # Record current momentum so moving averages and deviations can be
-        # computed like other metrics.  This is appended after processing the
-        # provided metrics so ``roi`` updates influence the momentum history in
-        # the same cycle.
-        momentum_hist = self._history.setdefault("momentum", deque(maxlen=self.window))
-        momentum_hist.append(self.momentum)
+        if record_momentum:
+            # Record current momentum so moving averages and deviations can be
+            # computed like other metrics.  This is appended after processing the
+            # provided metrics so ``roi`` updates influence the momentum history in
+            # the same cycle.
+            momentum_hist = self._history.setdefault(
+                "momentum", deque(maxlen=self.window)
+            )
+            momentum_hist.append(self.momentum)
 
     # ------------------------------------------------------------------
     def get(self, metric: str) -> float:

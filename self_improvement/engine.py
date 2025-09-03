@@ -565,6 +565,12 @@ class SelfImprovementEngine:
             if pass_rate_weight is not None
             else getattr(settings, "pass_rate_weight", 1.0)
         )
+        self.entropy_weight_scale = getattr(
+            settings, "entropy_weight_scale", 0.0
+        )
+        self.momentum_weight_scale = getattr(
+            settings, "momentum_weight_scale", 0.0
+        )
         self.momentum_window = getattr(
             getattr(cfg, "roi", None), "momentum_window", self.baseline_window
         )
@@ -1927,11 +1933,26 @@ class SelfImprovementEngine:
         momentum_delta = (
             self.baseline_tracker.momentum - self.baseline_tracker.get("momentum")
         )
+        # Adapt weights based on recent variability and success trends.
+        entropy_weight = self.entropy_weight * (
+            1 + self.entropy_weight_scale * entropy_std
+        )
+        momentum_weight = self.momentum_weight * (
+            1 + self.momentum_weight_scale * self.baseline_tracker.momentum
+        )
+        # Persist adaptive weights for historical analysis without advancing
+        # momentum twice in a single cycle.
+        if hasattr(self.baseline_tracker, "update"):
+            self.baseline_tracker.update(
+                record_momentum=False,
+                entropy_weight=entropy_weight,
+                momentum_weight=momentum_weight,
+            )
         score = (
             self.roi_weight * roi_delta
             + self.pass_rate_weight * pass_rate_delta
-            + self.momentum_weight * momentum_delta
-            - self.entropy_weight * entropy_delta
+            + momentum_weight * momentum_delta
+            - entropy_weight * entropy_delta
         )
         components = {
             "roi_delta": roi_delta,
@@ -1940,8 +1961,8 @@ class SelfImprovementEngine:
             "momentum_delta": momentum_delta,
             "roi_component": self.roi_weight * roi_delta,
             "pass_rate_component": self.pass_rate_weight * pass_rate_delta,
-            "momentum_component": self.momentum_weight * momentum_delta,
-            "entropy_component": -self.entropy_weight * entropy_delta,
+            "momentum_component": momentum_weight * momentum_delta,
+            "entropy_component": -entropy_weight * entropy_delta,
         }
         return score, components
 

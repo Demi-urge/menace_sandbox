@@ -38,6 +38,8 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `pass_rate_weight`: `1.0`
 - `momentum_weight`: `1.0`
 - `entropy_weight`: `0.1`
+- `momentum_weight_scale`: `0.0`
+- `entropy_weight_scale`: `0.0`
 
 ## Synergy defaults
 - `threshold`: `null`
