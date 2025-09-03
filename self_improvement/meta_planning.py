@@ -1052,6 +1052,7 @@ async def self_improvement_cycle(
                     ),
                 )
                 decision = "run"
+                _debug_cycle("fallback", reason="overfitting")
             else:
                 _debug_cycle("skipped", reason=info.get("reason"))
                 await asyncio.sleep(interval)
