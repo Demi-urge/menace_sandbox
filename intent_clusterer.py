@@ -970,7 +970,7 @@ class IntentClusterer:
     def index_repository(self, repo_path: str | Path) -> None:
         """Embed modules under ``repo_path`` using incremental updates."""
 
-        root = Path(repo_path)
+        root = Path(resolve_path(repo_path))
         paths = list(root.rglob("*.py"))
         if not paths:
             return
@@ -1050,7 +1050,7 @@ class IntentClusterer:
         if watch is None:
             raise RuntimeError("watchfiles is required for watch_repository")
 
-        repo_path = Path(repo_path)
+        repo_path = Path(resolve_path(repo_path))
         stop_event = threading.Event()
 
         def _run() -> None:

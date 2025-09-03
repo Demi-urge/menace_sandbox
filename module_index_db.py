@@ -127,7 +127,7 @@ class ModuleIndexDB:
     # --------------------------------------------------------------
     def _norm(self, name: str) -> str:
         """Return repository-relative POSIX path for ``name``."""
-        repo_path = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        repo_path = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
         p = Path(name)
         try:
             p = p.resolve()
