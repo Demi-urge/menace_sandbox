@@ -7,6 +7,11 @@ import time
 import asyncio
 from filelock import FileLock
 
+try:  # pragma: no cover - prefer package import
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - allow running as script
+    from dynamic_path_router import resolve_path  # type: ignore
+
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
 
@@ -99,7 +104,7 @@ class SynergyAutoTrainer:
         self.interval = float(interval)
         self.progress_file = Path(progress_file)
         self._last_id = 0
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
 
         if not self.history_file.exists():
             new_path = data_dir / self.history_file.name

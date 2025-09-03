@@ -7,6 +7,11 @@ import threading
 import time
 from typing import Optional, List, Tuple
 
+try:  # pragma: no cover - prefer package import
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - allow running as script
+    from dynamic_path_router import resolve_path  # type: ignore
+
 from .db_router import (
     DBRouter,
     GLOBAL_ROUTER,
@@ -89,8 +94,9 @@ class TelemetryFeedback:
         error_type, module, mods, count, sample_bot = info
         if count < self.threshold:
             return
-        path = Path(f"{module}.py")
-        if not path.exists():
+        try:
+            path = resolve_path(f"{module}.py")
+        except FileNotFoundError:
             return
         desc = f"fix {error_type}: {module}"
         try:

@@ -7,6 +7,12 @@ import threading
 import time
 from pathlib import Path
 from typing import Dict, Iterable
+import os
+
+try:  # pragma: no cover - prefer package import
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - allow running as script
+    from dynamic_path_router import resolve_path  # type: ignore
 
 try:  # pragma: no cover - prefer package import but allow direct execution
     from .relevancy_radar import RelevancyRadar
@@ -102,9 +108,8 @@ class RelevancyRadarService:
             module_names.update(usage_stats.keys())
 
             try:
-                db = RelevancyMetricsDB(
-                    self.root / "sandbox_data" / "relevancy_metrics.db"
-                )
+                data_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
+                db = RelevancyMetricsDB(data_dir / "relevancy_metrics.db")
                 roi_deltas = db.get_roi_deltas(module_names)
             except Exception:
                 roi_deltas = {}
