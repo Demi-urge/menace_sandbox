@@ -7252,7 +7252,7 @@ def try_integrate_into_workflows(
     workflows_db: str | Path = "workflows.db",
     side_effects: Mapping[str, float] | None = None,
     *,
-    side_effect_k: float | None = None,
+    side_effect_dev_multiplier: float | None = None,
     router: DBRouter | None = None,
     intent_clusterer: IntentClusterer | None = None,
     intent_k: float = 0.5,
@@ -7265,7 +7265,7 @@ def try_integrate_into_workflows(
     module group will receive the orphan module as an additional step. The list
     of updated workflow IDs is returned. Modules with heavy side-effect metrics
     are skipped based on a dynamic threshold derived from recent history and
-    ``side_effect_k``.
+    ``side_effect_dev_multiplier``.
 
     When an :class:`IntentClusterer` is available, each module is expanded by
     its synergy neighbourhood (via :func:`get_synergy_cluster`) and workflows
@@ -7295,8 +7295,10 @@ def try_integrate_into_workflows(
     names: dict[str, str] = {}
     tracker = GLOBAL_BASELINE_TRACKER
     settings = SandboxSettings()
-    if side_effect_k is None:
-        side_effect_k = getattr(settings, "side_effect_dev_multiplier", 1.0)
+    if side_effect_dev_multiplier is None:
+        side_effect_dev_multiplier = getattr(
+            settings, "side_effect_dev_multiplier", 1.0
+        )
     if synergy_k is None:
         synergy_k = getattr(settings, "synergy_dev_multiplier", 1.0)
     for m in modules:
@@ -7310,32 +7312,19 @@ def try_integrate_into_workflows(
             rel = p
         rel_str = rel.as_posix()
         metric = side_effects.get(rel_str) or side_effects.get(str(p), 0)
-        hist = tracker.to_dict().get("side_effects", [])
+        tracker.update(side_effects=metric)
         avg = tracker.get("side_effects")
         std = tracker.std("side_effects")
-        delta = metric - avg
-        tracker.update(side_effects=metric)
-        if len(hist) >= 2:
-            if delta > side_effect_k * std:
-                logger.info(
-                    "skipping %s due to side effects score %.2f", rel_str, metric
-                )
-                try:
-                    _me.orphan_modules_side_effects_total.inc()
-                except Exception:
-                    logger.exception('unexpected error')
-                continue
-        else:
-            threshold = getattr(settings, "side_effect_threshold", 10)
-            if metric > threshold:
-                logger.info(
-                    "skipping %s due to side effects score %.2f", rel_str, metric
-                )
-                try:
-                    _me.orphan_modules_side_effects_total.inc()
-                except Exception:
-                    logger.exception('unexpected error')
-                continue
+        threshold = avg + side_effect_dev_multiplier * std
+        if metric > threshold:
+            logger.info(
+                "skipping %s due to side effects score %.2f", rel_str, metric
+            )
+            try:
+                _me.orphan_modules_side_effects_total.inc()
+            except Exception:
+                logger.exception('unexpected error')
+            continue
         names[rel_str] = rel.with_suffix("").as_posix().replace("/", ".")
     if not names:
         return []
@@ -8286,16 +8275,12 @@ def auto_include_modules(
                 res = orphan_analyzer.classify_module(path, include_meta=True)
                 cls, meta = res if isinstance(res, tuple) else (res, {})
                 score = float(meta.get("side_effects", 0))
-                hist = GLOBAL_BASELINE_TRACKER.to_dict().get("side_effects", [])
-                if len(hist) >= 2:
-                    avg = GLOBAL_BASELINE_TRACKER.get("side_effects")
-                    std = GLOBAL_BASELINE_TRACKER.std("side_effects")
-                    threshold = avg + getattr(
-                        settings, "side_effect_dev_multiplier", 1.0
-                    ) * std
-                else:
-                    threshold = getattr(settings, "side_effect_threshold", 10)
                 GLOBAL_BASELINE_TRACKER.update(side_effects=score)
+                avg = GLOBAL_BASELINE_TRACKER.get("side_effects")
+                std = GLOBAL_BASELINE_TRACKER.std("side_effects")
+                threshold = avg + getattr(
+                    settings, "side_effect_dev_multiplier", 1.0
+                ) * std
                 if score > threshold:
                     logger.info(
                         "skipping %s due to side effects score %.2f", mod, score
