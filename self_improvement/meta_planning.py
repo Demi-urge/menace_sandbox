@@ -982,12 +982,20 @@ async def self_improvement_cycle(
                 )
             else:
                 metrics[f"{name}_delta"] = float(tracker.delta(name))
+        extra_fields: dict[str, Any] = {}
         for key, value in extra.items():
             if isinstance(value, (int, float)):
                 metrics[key] = float(value)
+            else:
+                extra_fields[key] = value
         logger.debug(
             "cycle",
-            extra=log_record(outcome=outcome, reason=reason, **metrics),
+            extra=log_record(
+                outcome=outcome,
+                reason=reason,
+                **metrics,
+                **extra_fields,
+            ),
         )
 
     if evaluate_cycle is None:
@@ -1032,6 +1040,7 @@ async def self_improvement_cycle(
                     entropy_delta=ent_delta,
                     max_allowed_errors=max_errors,
                     entropy_overfit_threshold=entropy_threshold,
+                    error_traces=traces,
                 )
             else:
                 _debug_cycle("skipped", reason=info.get("reason"))
