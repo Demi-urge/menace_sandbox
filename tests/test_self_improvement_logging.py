@@ -33,8 +33,12 @@ env_mod.auto_include_modules = lambda *a, **k: None
 env_mod.run_workflow_simulations = lambda *a, **k: ([], {})
 env_mod.try_integrate_into_workflows = lambda *a, **k: []
 sandbox_runner.environment = env_mod
+bootstrap_mod = types.ModuleType("sandbox_runner.bootstrap")
+bootstrap_mod.initialize_autonomous_sandbox = lambda *a, **k: None
+sandbox_runner.bootstrap = bootstrap_mod
 sys.modules["sandbox_runner"] = sandbox_runner
 sys.modules["sandbox_runner.environment"] = env_mod
+sys.modules["sandbox_runner.bootstrap"] = bootstrap_mod
 
 error_logger = types.ModuleType("menace.error_logger")
 error_logger.TelemetryEvent = type("TelemetryEvent", (), {})
@@ -149,13 +153,14 @@ sandbox_settings.SandboxSettings = lambda: types.SimpleNamespace(
     patch_retries=3,
     patch_retry_delay=0.1,
 )
+sandbox_settings.load_sandbox_settings = lambda: sandbox_settings.SandboxSettings()
 sys.modules["sandbox_settings"] = sandbox_settings
 
 
 def _load_engine():
     spec = importlib.util.spec_from_file_location(
         "menace.self_improvement",
-        os.path.join(os.path.dirname(__file__), "..", "self_improvement.py"),
+        os.path.join(os.path.dirname(__file__), "..", "self_improvement", "__init__.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod

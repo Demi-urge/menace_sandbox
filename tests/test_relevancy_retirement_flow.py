@@ -3,15 +3,12 @@ from __future__ import annotations
 import sys
 import types
 
-from tests.test_self_improvement_logging import _load_engine
-
-
-class DummyLogger:
-    def info(self, *a, **k):
-        pass
-
-    def exception(self, *a, **k):
-        pass
+# minimal sandbox settings stub
+sandbox_settings = types.ModuleType("sandbox_settings")
+sandbox_settings.SandboxSettings = lambda: types.SimpleNamespace(
+    relevancy_threshold=10, relevancy_whitelist=[]
+)
+sys.modules.setdefault("sandbox_settings", sandbox_settings)
 
 
 def test_relevancy_retirement_flow(tmp_path, monkeypatch):
@@ -24,7 +21,7 @@ def test_relevancy_retirement_flow(tmp_path, monkeypatch):
     # ensure radar writes inside temp repo
     import relevancy_radar
 
-    monkeypatch.setattr(relevancy_radar, "_BASE_DIR", repo)
+    monkeypatch.setattr(relevancy_radar, "_BASE_DIR", repo, raising=False)
     monkeypatch.setattr(
         relevancy_radar, "_RELEVANCY_FLAGS_FILE", repo / "sandbox_data" / "flags.json"
     )
@@ -45,15 +42,9 @@ def test_relevancy_retirement_flow(tmp_path, monkeypatch):
     )
     assert flags == {"orphan": "retire"}
 
-    # prepare self improvement engine with real retirement service
     fake_qfe = types.ModuleType("quick_fix_engine")
     fake_qfe.generate_patch = lambda path: 1
     monkeypatch.setitem(sys.modules, "quick_fix_engine", fake_qfe)
-
-    sie = _load_engine()
-    engine = sie.SelfImprovementEngine.__new__(sie.SelfImprovementEngine)
-    engine.logger = DummyLogger()
-    engine.event_bus = None
 
     import module_retirement_service
 
@@ -72,8 +63,8 @@ def test_relevancy_retirement_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(module_retirement_service, "retired_modules_total", dummy_counter)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-
-    engine._handle_relevancy_flags(flags)
+    service = module_retirement_service.ModuleRetirementService(repo)
+    service.process_flags(flags)
 
     archive = repo / "sandbox_data" / "retired_modules" / "orphan.py"
     assert archive.exists()
