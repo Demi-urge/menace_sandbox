@@ -115,6 +115,7 @@ try:
     import neurosales  # noqa: F401
 except ImportError as exc:  # pragma: no cover - fail fast when dependency missing
     raise RuntimeError("neurosales dependency is required") from exc
+DEFAULT_RELEVANCY_METRICS_DB = Path("sandbox_data") / "relevancy_metrics.db"
 from alert_dispatcher import dispatch_alert
 import json
 import inspect
@@ -5985,14 +5986,18 @@ class SelfImprovementEngine:
             auto_process = getattr(
                 settings, "auto_process_relevancy_flags", True
             )
-            metrics_db_path = getattr(
-                settings, "relevancy_metrics_db_path", "sandbox_data/relevancy_metrics.db"
+            metrics_db_path = resolve_path(
+                getattr(
+                    settings,
+                    "relevancy_metrics_db_path",
+                    DEFAULT_RELEVANCY_METRICS_DB,
+                )
             )
         except Exception:
             k = 1.0
             min_history = 0
             auto_process = True
-            metrics_db_path = "sandbox_data/relevancy_metrics.db"
+            metrics_db_path = resolve_path(DEFAULT_RELEVANCY_METRICS_DB)
 
         for mod, counts in getattr(self.relevancy_radar, "_metrics", {}).items():
             impact_val = float(counts.get("impact", 0.0)) + float(
