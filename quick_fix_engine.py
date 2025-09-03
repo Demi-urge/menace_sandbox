@@ -14,6 +14,10 @@ import uuid
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
 from codebase_diff_checker import generate_code_diff, flag_risky_changes
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 try:  # pragma: no cover - optional dependency
     from .error_cluster_predictor import ErrorClusterPredictor
 except Exception:  # pragma: no cover - optional dependency
@@ -92,10 +96,10 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
-    path = Path(module)
-    if path.suffix == "":
-        path = path.with_suffix(".py")
-    if not path.exists():
+    mod_str = module if module.endswith(".py") else f"{module}.py"
+    try:
+        path = resolve_path(mod_str)
+    except FileNotFoundError:
         logger.error("module not found: %s", module)
         return None
 

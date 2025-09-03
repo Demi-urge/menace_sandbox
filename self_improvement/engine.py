@@ -61,6 +61,10 @@ from .init import (
     _atomic_write,
     get_default_synergy_weights,
 )
+try:  # pragma: no cover - allow flat imports
+    from ..dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 from ..metrics_exporter import (
     synergy_weight_updates_total,
     synergy_weight_update_failures_total,
@@ -6495,7 +6499,7 @@ class SelfImprovementEngine:
                         "applying helper patch",
                         extra=log_record(trending_topic=trending_topic),
                     )
-                    mod_path = Path("auto_helpers.py")
+                    mod_path = resolve_path(".") / "auto_helpers.py"
                     start_patch = time.perf_counter()
                     patch_id, reverted, delta = self.self_coding_engine.apply_patch(
                         mod_path,
