@@ -32,7 +32,7 @@ import math
 import uuid
 from scipy.stats import t
 from db_router import init_db_router
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, get_project_root
 from sandbox_settings import SandboxSettings
 from sandbox_runner.bootstrap import (
     bootstrap_environment,
@@ -77,12 +77,9 @@ if settings.menace_mode.lower() == "production" and settings.database_url.starts
     os.environ["MENACE_MODE"] = "test"
     settings = SandboxSettings()
 
-# allow execution directly from the package directory
-_pkg_dir = resolve_path("run_autonomous.py").parent
-if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
-    sys.path.insert(0, str(_pkg_dir.parent))
-elif "menace" not in sys.modules:
-    import importlib.util
+# Ensure repository root on sys.path when running as a script
+if "menace" not in sys.modules:
+    sys.path.insert(0, str(get_project_root()))
 
 # Repository root used by background services like the RelevancyRadarService.
 # Default to ``SANDBOX_REPO_PATH`` when provided, otherwise fall back to the

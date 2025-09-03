@@ -10,6 +10,8 @@ import time
 import json
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 try:
     from .visual_agent_queue import VisualAgentQueue
 except ImportError:  # pragma: no cover - allow running as script
@@ -29,7 +31,7 @@ class VisualAgentManager:
 
     def __init__(self, agent_script: str | None = None) -> None:
         self.agent_script = agent_script or str(
-            Path(__file__).with_name("menace_visual_agent_2.py")
+            resolve_path("menace_visual_agent_2.py")
         )
         self.pid_file = Path(
             os.getenv(
@@ -92,7 +94,10 @@ class VisualAgentManager:
                         status = data.get("status", {})
                         if isinstance(status, dict):
                             for tid, info in status.items():
-                                if isinstance(info, dict) and info.get("status") in {"queued", "running"}:
+                                if (
+                                    isinstance(info, dict)
+                                    and info.get("status") in {"queued", "running"}
+                                ):
                                     queue.append({
                                         "id": tid,
                                         "prompt": info.get("prompt", ""),

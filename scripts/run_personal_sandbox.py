@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import os
-import sys
 import time
-from pathlib import Path
+
+from dynamic_path_router import resolve_path
 
 from visual_agent_manager import VisualAgentManager
 import run_autonomous
@@ -39,15 +39,13 @@ def _ensure_env() -> None:
     ensure_env(env_file)
 
 
-
 def main(argv: list[str] | None = None) -> None:
     """Start the visual agent if needed then run ``run_autonomous``."""
     _ensure_env()
     os.environ.setdefault("MENACE_AGENT_PORT", _DEF_PORT)
     os.environ.setdefault("VISUAL_AGENT_URLS", f"http://127.0.0.1:{_DEF_PORT}")
 
-    agent_path = Path(__file__).resolve().parents[1] / "menace_visual_agent_2.py"
-    manager = VisualAgentManager(str(agent_path))
+    manager = VisualAgentManager(str(resolve_path("menace_visual_agent_2.py")))
     started = _start_agent(manager)
     try:
         run_autonomous.main(argv)
