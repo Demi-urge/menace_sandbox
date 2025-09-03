@@ -34,7 +34,7 @@ except Exception:  # pragma: no cover - chunking unavailable
     get_chunk_summaries = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
-    from .self_coding_engine import SelfCodingEngine
+    from .self_coding_engine import SelfCodingEngine, TargetRegion
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
@@ -70,6 +70,7 @@ def generate_patch(
     patch_logger: PatchLogger | None = None,
     context: Dict[str, Any] | None = None,
     effort_estimate: float | None = None,
+    target_region: "TargetRegion" | None = None,
 ) -> int | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -93,6 +94,9 @@ def generate_patch(
     context:
         Optional dictionary merged into the patch's ``context_meta`` prior to
         patch application.
+    target_region:
+        Optional region within the file to patch. When provided only this
+        slice is modified.
     """
 
     logger = logging.getLogger("QuickFixEngine")
@@ -166,7 +170,7 @@ def generate_patch(
                 except Exception:
                     chunks = []
             patch_ids: List[int | None] = []
-            if chunks:
+            if chunks and target_region is None:
                 for chunk in chunks:
                     summary = (
                         chunk.get("summary", "")
@@ -183,10 +187,14 @@ def generate_patch(
                             reason="preemptive_fix",
                             trigger="quick_fix_engine",
                             context_meta=context_meta,
+                            target_region=target_region,
                         )
                     except AttributeError:
                         engine.patch_file(
-                            path, "preemptive_fix", context_meta=context_meta
+                            path,
+                            "preemptive_fix",
+                            context_meta=context_meta,
+                            target_region=target_region,
                         )
                         pid = None
                     patch_ids.append(pid)
@@ -199,9 +207,15 @@ def generate_patch(
                         reason="preemptive_fix",
                         trigger="quick_fix_engine",
                         context_meta=context_meta,
+                        target_region=target_region,
                     )
                 except AttributeError:
-                    engine.patch_file(path, "preemptive_fix", context_meta=context_meta)
+                    engine.patch_file(
+                        path,
+                        "preemptive_fix",
+                        context_meta=context_meta,
+                        target_region=target_region,
+                    )
                     patch_id = None
             after_target = Path(after_dir) / rel
             after_target.parent.mkdir(parents=True, exist_ok=True)
