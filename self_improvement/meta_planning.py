@@ -644,6 +644,33 @@ def _get_entropy_threshold(cfg: SandboxSettings, tracker: BaselineTracker) -> fl
     return base + dev * std
 
 
+def _get_overfit_thresholds(
+    cfg: SandboxSettings, tracker: BaselineTracker
+) -> tuple[int, float]:
+    """Return dynamic error and entropy thresholds.
+
+    ``max_allowed_errors`` and ``entropy_overfit_threshold`` may be configured
+    explicitly on *cfg*.  When they are ``None`` the thresholds are derived from
+    the baseline statistics tracked by ``tracker`` using a simple
+    mean-plus-standard-deviation heuristic.  This keeps the fallback logic
+    responsive to recent behaviour without requiring static configuration.
+    """
+
+    max_errors = getattr(cfg, "max_allowed_errors", None)
+    if max_errors is None:
+        base = tracker.get("error_count")
+        std = tracker.std("error_count")
+        max_errors = base + std
+
+    entropy_thresh = getattr(cfg, "entropy_overfit_threshold", None)
+    if entropy_thresh is None:
+        base = tracker.get("entropy_delta")
+        std = tracker.std("entropy_delta")
+        entropy_thresh = abs(base) + std
+
+    return int(max_errors), float(entropy_thresh)
+
+
 def _should_encode(
     record: Mapping[str, Any],
     tracker: BaselineTracker,
@@ -1063,12 +1090,11 @@ async def self_improvement_cycle(
                 traces, ent_delta, err_count, delta_mean, delta_std = _recent_error_entropy(
                     error_log, BASELINE_TRACKER
                 )
-                max_errors = getattr(cfg, "max_allowed_errors", 0)
-                z_threshold = float(getattr(cfg, "entropy_z_threshold", 3.0))
+                max_errors, z_threshold = _get_overfit_thresholds(cfg, BASELINE_TRACKER)
                 z_score = (
                     abs(ent_delta - delta_mean) / delta_std if delta_std > 0 else 0.0
                 )
-                if err_count > int(max_errors) or z_score > z_threshold:
+                if err_count > max_errors or z_score > z_threshold:
                     logger.debug(
                         "fallback_overfitting",
                         extra=log_record(
@@ -1078,7 +1104,7 @@ async def self_improvement_cycle(
                             entropy_z=z_score,
                             errors=err_count,
                             max_allowed_errors=max_errors,
-                            entropy_z_threshold=z_threshold,
+                            entropy_overfit_threshold=z_threshold,
                         ),
                     )
                     decision = "run"
@@ -1088,7 +1114,7 @@ async def self_improvement_cycle(
                         errors=err_count,
                         entropy_delta=ent_delta,
                         entropy_z=z_score,
-                        entropy_z_threshold=z_threshold,
+                        entropy_overfit_threshold=z_threshold,
                         error_traces=traces,
                     )
                 else:

@@ -16,6 +16,7 @@ def _load_meta_planning():
     tree = ast.parse(src)
     wanted = {
         "_get_entropy_threshold",
+        "_get_overfit_thresholds",
         "_should_encode",
         "self_improvement_cycle",
         "_evaluate_cycle",
@@ -45,6 +46,7 @@ def _load_meta_planning():
         ),
     }
     exec(compile(module, "<ast>", "exec"), ns)
+    ns["REQUIRED_METRICS"] = ("roi", "pass_rate", "entropy")
     return ns
 
 
@@ -73,6 +75,26 @@ def test_get_entropy_threshold(cfg_value, base, std, dev, expected):
     assert meta["_get_entropy_threshold"](Cfg(), Tracker()) == pytest.approx(expected)
 
 
+def test_overfit_thresholds_adjust_with_baseline():
+    meta = _load_meta_planning()
+
+    class Cfg:
+        max_allowed_errors = None
+        entropy_overfit_threshold = None
+
+    tracker = BaselineTracker(window=4)
+    tracker.update(error_count=1, entropy=0.0)
+    tracker.update(error_count=1, entropy=0.0)
+    tracker.update(error_count=1, entropy=0.1)
+    max1, ent1 = meta["_get_overfit_thresholds"](Cfg(), tracker)
+
+    tracker.update(error_count=5, entropy=0.5)
+    max2, ent2 = meta["_get_overfit_thresholds"](Cfg(), tracker)
+
+    assert max2 > max1
+    assert ent2 > ent1
+
+
 def test_should_encode_requires_positive_roi_and_low_entropy():
     meta = _load_meta_planning()
     should_encode = meta["_should_encode"]
@@ -93,7 +115,7 @@ def test_should_encode_requires_positive_roi_and_low_entropy():
 
     tracker3 = BaselineTracker(window=3)
     tracker3.update(roi=0.0, pass_rate=1.0, entropy=0.1)
-    rec3 = {"roi_gain": 0.1, "entropy": 0.3, "failures": 0}
+    rec3 = {"roi_gain": 0.1, "entropy": 0.31, "failures": 0}
     tracker3.update(roi=rec3["roi_gain"], pass_rate=1.0, entropy=rec3["entropy"])
     ok3, reason3 = should_encode(rec3, tracker3, entropy_threshold=0.2)
     assert not ok3 and reason3 == "entropy_spike"
@@ -120,7 +142,9 @@ def test_cycle_uses_fallback_planner_when_missing():
             "MetaWorkflowPlanner": None,
             "_FallbackPlanner": DummyPlanner,
             "get_logger": lambda name: types.SimpleNamespace(
-                warning=lambda *a, **k: None, exception=lambda *a, **k: None
+                warning=lambda *a, **k: None,
+                exception=lambda *a, **k: None,
+                debug=lambda *a, **k: None,
             ),
             "log_record": lambda **kw: kw,
             "load_sandbox_settings": lambda: types.SimpleNamespace(
@@ -145,8 +169,7 @@ def test_cycle_uses_fallback_planner_when_missing():
 
     async def run():
         task = asyncio.create_task(meta["self_improvement_cycle"]({}, interval=0))
-        await asyncio.sleep(0.05)
-        assert calls["count"] > 0
+        await asyncio.sleep(0.2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task

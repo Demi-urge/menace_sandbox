@@ -39,7 +39,6 @@ class _SandboxSettings:
     meta_search_depth = 1
     meta_beam_width = 1
     max_allowed_errors = 0
-    entropy_z_threshold = 3.0
     overfitting_entropy_threshold = 1.0
 sandbox_settings_mod.SandboxSettings = _SandboxSettings
 sys.modules["menace.sandbox_settings"] = sandbox_settings_mod
@@ -104,7 +103,6 @@ def _setup(monkeypatch):
         meta_roi_weight=1.0,
         meta_domain_penalty=1.0,
         max_allowed_errors=0,
-        entropy_z_threshold=3.0,
         overfitting_entropy_threshold=1.0,
     )
     monkeypatch.setattr(mp, "_init", SimpleNamespace(settings=cfg))
