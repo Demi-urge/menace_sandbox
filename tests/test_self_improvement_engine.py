@@ -1552,21 +1552,29 @@ def test_compute_delta_score_weights():
     if not hasattr(sie, "SelfImprovementEngine"):
         pytest.skip("SelfImprovementEngine unavailable")
     eng = sie.SelfImprovementEngine.__new__(sie.SelfImprovementEngine)
-    eng.roi_delta_ema = 1.0
-    eng.entropy_delta_ema = 0.5
     eng.entropy_dev_multiplier = 0.0
     eng.pass_rate_dev_multiplier = 0.0
     eng.baseline_tracker = types.SimpleNamespace(
-        std=lambda metric: 0.0,
-        get=lambda name: 0.3 if name == "pass_rate_delta" else 0.0,
+        std=lambda metric: 0.2 if metric == "entropy" else 0.0,
+        get=lambda name: 0.0,
+        delta_history=lambda m: [1.0]
+        if m == "roi"
+        else [0.3]
+        if m == "pass_rate"
+        else [0.5]
+        if m == "entropy"
+        else [],
+        momentum=0.2,
+        update=lambda record_momentum=True, **kw: None,
     )
-    eng._metric_delta = lambda metric: 0.2
     eng.roi_weight = 2.0
     eng.momentum_weight = 3.0
     eng.entropy_weight = 4.0
     eng.pass_rate_weight = 5.0
+    eng.entropy_weight_scale = 1.0
+    eng.momentum_weight_scale = 1.0
     score, components = sie.SelfImprovementEngine._compute_delta_score(eng)
-    assert score == pytest.approx(2.0 * 1.0 + 5.0 * 0.3 + 3.0 * 0.2 - 4.0 * 0.5)
+    assert score == pytest.approx(2.0 * 1.0 + 5.0 * 0.3 + 3.6 * 0.2 - 4.8 * 0.5)
     assert components == {
         "roi_delta": 1.0,
         "pass_rate_delta": 0.3,
@@ -1574,6 +1582,6 @@ def test_compute_delta_score_weights():
         "momentum_delta": 0.2,
         "roi_component": 2.0,
         "pass_rate_component": 1.5,
-        "momentum_component": 0.6,
-        "entropy_component": -2.0,
+        "momentum_component": pytest.approx(0.72),
+        "entropy_component": pytest.approx(-2.4),
     }
