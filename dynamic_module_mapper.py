@@ -8,6 +8,7 @@ from typing import Dict, Iterable
 from orphan_analyzer import analyze_redundancy
 
 from module_graph_analyzer import build_import_graph, cluster_modules
+from dynamic_path_router import resolve_path
 
 
 def discover_module_groups(
@@ -71,7 +72,7 @@ def build_module_map(
                 pass
             filtered[mod] = grp
         mapping = filtered
-    out = root / "sandbox_data" / "module_map.json"
+    out = Path(resolve_path("sandbox_data")) / "module_map.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(mapping, fh, indent=2)

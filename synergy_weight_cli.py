@@ -19,8 +19,9 @@ from menace.metrics_exporter import (
     synergy_weight_update_alerts_total,
 )
 from alert_dispatcher import dispatch_alert
+from dynamic_path_router import resolve_path
 
-LOG_PATH = Path("sandbox_data/synergy_weights.log")
+LOG_PATH = Path(resolve_path("sandbox_data")) / "synergy_weights.log"
 
 
 def _load_engine(path: str | None):

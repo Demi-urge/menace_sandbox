@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Tuple
 
 from .logging_utils import get_logger, log_record
+from .dynamic_path_router import resolve_path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -41,7 +42,8 @@ class TruthAdapter:
 
     def __init__(
         self,
-        model_path: str | Path = "sandbox_data/truth_adapter.pkl",
+        model_path: str | Path = Path(resolve_path("sandbox_data"))
+        / "truth_adapter.pkl",
         model_type: str = "ridge",
         ridge_params: dict[str, Any] | None = None,
         xgb_params: dict[str, Any] | None = None,

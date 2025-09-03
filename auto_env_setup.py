@@ -12,6 +12,7 @@ from typing import Dict, Iterable
 from . import config_discovery as cd
 from .secrets_manager import SecretsManager
 from .vault_secret_provider import VaultSecretProvider
+from .dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ DEFAULT_VARS: Dict[str, str] = {
     "OVERRIDE_UPDATE_INTERVAL": "600",
     "AUTO_BACKUP": "0",
     "MAINTENANCE_DB": "maintenance.db",
-    "SANDBOX_DATA_DIR": "sandbox_data",
+    "SANDBOX_DATA_DIR": str(resolve_path("sandbox_data")),
     "SELF_TEST_DISABLE_ORPHANS": "0",
     "SELF_TEST_DISCOVER_ORPHANS": "1",
     "SELF_TEST_RECURSIVE_ORPHANS": "1",

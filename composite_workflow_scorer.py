@@ -26,6 +26,7 @@ from .roi_tracker import ROITracker
 from .roi_calculator import ROICalculator
 from .roi_results_db import ROIResultsDB
 from . import sandbox_runner
+from .dynamic_path_router import resolve_path
 from .workflow_scorer_core import (
     ROIScorer as BaseROIScorer,
     EvaluationResult,
@@ -46,7 +47,7 @@ try:  # pragma: no cover - runtime failures should not break scoring
 except Exception:  # pragma: no cover - defensive fallback
     PATCH_SUCCESS_RATE = 1.0
 
-WINNING_SEQUENCES_PATH = Path("sandbox_data/winning_sequences.json")
+WINNING_SEQUENCES_PATH = Path(resolve_path("sandbox_data")) / "winning_sequences.json"
 
 
 # ---------------------------------------------------------------------------
