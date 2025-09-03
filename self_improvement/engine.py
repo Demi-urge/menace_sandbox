@@ -3271,18 +3271,22 @@ class SelfImprovementEngine:
             self._force_rerun = False
             return True
 
+        self._last_skip_info: dict[str, object] | None = None
+
         elapsed = time.time() - self.last_run
         should_run = True
         if elapsed < self.interval:
+            info = {"reason": "interval_not_elapsed", "metrics": {}}
             self.logger.debug(
                 "skipping self-improvement cycle",
                 extra=log_record(
-                    metrics={},
-                    reason="interval_not_elapsed",
+                    reason=info["reason"],
+                    metrics=info["metrics"],
                     elapsed=elapsed,
                     interval=self.interval,
                 ),
             )
+            self._last_skip_info = info
             should_run = False
         else:
             # Gather per-metric deltas from the baseline tracker
@@ -3363,10 +3367,12 @@ class SelfImprovementEngine:
                     break
 
             if metrics and all(v > 0 for v in metrics.values()) and not critical_error:
+                info = {"reason": "all_deltas_positive", "metrics": metrics}
                 self.logger.debug(
                     "skipping self-improvement cycle",
-                    extra=log_record(metrics=metrics, reason="all_deltas_positive"),
+                    extra=log_record(reason=info["reason"], metrics=info["metrics"]),
                 )
+                self._last_skip_info = info
                 should_run = False
 
         return should_run
@@ -6369,6 +6375,15 @@ class SelfImprovementEngine:
                         "fallback trigger activated",
                         extra=log_record(entropy_delta=entropy_delta, error_traces=len(error_traces)),
                     )
+            if not evo_allowed:
+                info = getattr(self, "_last_skip_info", {})
+                self.logger.debug(
+                    "self optimisation skipped",
+                    extra=log_record(
+                        reason=str(info.get("reason", "unknown")),
+                        metrics=info.get("metrics"),
+                    ),
+                )
             planner_chains: list[list[str]] = []
             meta_records: list[dict[str, Any]] = []
             if self._cycle_count % PLANNER_INTERVAL == 0:
