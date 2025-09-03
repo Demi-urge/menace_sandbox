@@ -9,6 +9,8 @@ from typing import Dict, Iterable
 
 import networkx as nx
 
+from dynamic_path_router import resolve_path
+
 try:  # optional dependency
     import hdbscan  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -24,7 +26,6 @@ def _iter_py_files(root: Path, ignore: Iterable[str] | None = None) -> Iterable[
         if not path.is_file():
             continue
         rel = path.relative_to(root)
-        posix = rel.as_posix()
         if any(rel.match(pat) or pat in rel.parts for pat in ignore):
             continue
         yield path
@@ -36,7 +37,7 @@ def build_import_graph(
     ignore: Iterable[str] | None = None,
 ) -> nx.DiGraph:
     """Return a directed graph of imports and cross-module calls."""
-    root = Path(root)
+    root = Path(resolve_path(root))
     graph = nx.DiGraph()
     modules: Dict[str, Path] = {}
     for file in _iter_py_files(root, ignore=ignore):
@@ -124,7 +125,7 @@ def cluster_modules(
     if use_semantic and root is not None:
         docs: Dict[str, str] = {}
         for node in graph.nodes:
-            path = root / f"{node}.py"
+            path = Path(resolve_path(root / f"{node}.py"))
             try:
                 tree = ast.parse(path.read_text())
             except Exception:
@@ -142,7 +143,7 @@ def cluster_modules(
                 tfidf = vec.transform(corpus)
                 sim = cosine_similarity(tfidf)
                 for i, a in enumerate(nodes):
-                    for j, b in enumerate(nodes[i + 1 :], start=i + 1):
+                    for j, b in enumerate(nodes[i + 1:], start=i + 1):
                         score = float(sim[i, j])
                         if score >= threshold:
                             if undirected.has_edge(a, b):
