@@ -22,9 +22,10 @@ import threading
 import importlib
 from contextlib import contextmanager
 from typing import Callable, Mapping
-from collections import deque
+from collections import deque, defaultdict
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
+from .failure_localization import TargetRegion, extract_target_region
 from .knowledge_graph import KnowledgeGraph
 from .quick_fix_engine import generate_patch
 from .human_alignment_agent import HumanAlignmentAgent
@@ -313,6 +314,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._last_test_log: Path | None = None
         self.graph = KnowledgeGraph()
         self.error_logger = ErrorLogger(knowledge_graph=self.graph)
+        self._attempt_counts: dict[tuple[str, str, int], int] = defaultdict(int)
 
     # ------------------------------------------------------------------
     def _load_score_backend(self, spec: str):
@@ -371,6 +373,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             record_failed_tags(list(report.tags))
         except Exception:
             self.logger.exception("failed to record failed tags")
+
+    # ------------------------------------------------------------------
+    def attempt_count(self, region: TargetRegion) -> int:
+        """Return number of attempts made for ``region``."""
+        key = (region.path, region.func_name, region.start_line)
+        return self._attempt_counts.get(key, 0)
 
     # ------------------------------------------------------------------
     def _update_success_metrics(self, result: str) -> None:
@@ -595,6 +603,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             except Exception:
                 self.logger.exception("failed to write test log")
             failure = parse_failure(output)
+            region = extract_target_region(failure.trace)
+            if region:
+                failure.target_region = region
+                key = (region.path, region.func_name, region.start_line)
+                self._attempt_counts[key] += 1
+                failure.attempts = self._attempt_counts[key]
             if not self._failure_cache.seen(failure):
                 self._failure_cache.add(failure)
             self._record_failed_strategy(failure)
@@ -613,6 +627,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             runtime = time.perf_counter() - start
             output = str(exc)
             failure = parse_failure(output)
+            region = extract_target_region(failure.trace)
+            if region:
+                failure.target_region = region
+                key = (region.path, region.func_name, region.start_line)
+                self._attempt_counts[key] += 1
+                failure.attempts = self._attempt_counts[key]
             if not self._failure_cache.seen(failure):
                 self._failure_cache.add(failure)
             self._record_failed_strategy(failure)
@@ -1430,6 +1450,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         except subprocess.CalledProcessError as exc:
                             self._record_exception(exc)
                             failure = parse_failure(exc.stderr or str(exc))
+                            region = extract_target_region(failure.trace)
+                            if region:
+                                failure.target_region = region
+                                key = (region.path, region.func_name, region.start_line)
+                                self._attempt_counts[key] += 1
+                                failure.attempts = self._attempt_counts[key]
                             self._record_failed_strategy(failure)
                             try:
                                 self.error_logger.log(
@@ -1454,6 +1480,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         except subprocess.TimeoutExpired as exc:
                             self._record_exception(exc)
                             failure = parse_failure(exc.stderr or str(exc))
+                            region = extract_target_region(failure.trace)
+                            if region:
+                                failure.target_region = region
+                                key = (region.path, region.func_name, region.start_line)
+                                self._attempt_counts[key] += 1
+                                failure.attempts = self._attempt_counts[key]
                             self._record_failed_strategy(failure)
                             try:
                                 self.error_logger.log(
@@ -1787,6 +1819,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 except RuntimeError as exc:
                     reason = f"sandbox tests failed: {exc}"
                     failure = parse_failure(str(exc))
+                    region = extract_target_region(failure.trace)
+                    if region:
+                        failure.target_region = region
+                        key = (region.path, region.func_name, region.start_line)
+                        self._attempt_counts[key] += 1
+                        failure.attempts = self._attempt_counts[key]
                     self._record_failed_strategy(failure)
                     self._record_exception(exc)
                     try:
@@ -1802,6 +1840,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 except Exception as exc:
                     reason = f"{type(exc).__name__}: {exc}"
                     failure = parse_failure(str(exc))
+                    region = extract_target_region(failure.trace)
+                    if region:
+                        failure.target_region = region
+                        key = (region.path, region.func_name, region.start_line)
+                        self._attempt_counts[key] += 1
+                        failure.attempts = self._attempt_counts[key]
                     self._record_failed_strategy(failure)
                     self._record_exception(exc)
                     try:
