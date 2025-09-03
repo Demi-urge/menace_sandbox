@@ -30,6 +30,7 @@ import os
 import sqlite3
 from pathlib import Path
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES
+from dynamic_path_router import resolve_path
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -1170,10 +1171,26 @@ class ROITracker:
         """Evaluate prediction accuracy and trigger retraining when needed.
 
         Prediction performance is calculated from persisted events stored in
-        ``roi_events.db``. When recent mean absolute error or classification
-        accuracy fall outside the provided thresholds the adaptive ROI model is
-        retrained using :class:`AdaptiveROIPredictor`.
+        ``roi_events.db``. Both ``history_path`` and ``roi_events_path`` are
+        resolved relative to the project root via :func:`resolve_path`. When
+        recent mean absolute error or classification accuracy fall outside the
+        provided thresholds the adaptive ROI model is retrained using
+        :class:`AdaptiveROIPredictor`.
         """
+
+        try:
+            history_path = str(resolve_path(history_path))
+        except FileNotFoundError:
+            history_path = str(Path(history_path))
+        try:
+            roi_events_path = str(resolve_path(roi_events_path))
+        except FileNotFoundError:
+            roi_events_path = str(Path(roi_events_path))
+        logger.debug(
+            "evaluate_model using history_path=%s, roi_events_path=%s",
+            history_path,
+            roi_events_path,
+        )
 
         try:
             conn = router.get_connection("roi_prediction_events")
