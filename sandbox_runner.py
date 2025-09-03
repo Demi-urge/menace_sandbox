@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
+from dynamic_path_router import resolve_path, repo_root
 
 # Initialise a router for this process with a unique menace_id so
 # ``GLOBAL_ROUTER`` becomes available to imported modules.  Import modules that
@@ -29,8 +30,12 @@ from scope_utils import Scope, build_scope_clause, apply_scope
 # legacy behaviour where sandbox utilities operate without a database connection
 # when possible. All DB access must go through the router.
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 router = GLOBAL_ROUTER
 
@@ -173,8 +178,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, TYPE_CHECKING, Iterable
-from dynamic_path_router import resolve_path, repo_root
-
 from menace.unified_event_bus import UnifiedEventBus
 from menace.menace_orchestrator import MenaceOrchestrator
 from menace.self_improvement_policy import SelfImprovementPolicy
