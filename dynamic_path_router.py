@@ -1,22 +1,23 @@
-"""Utilities for dynamically resolving paths within the repository.
+"""Utilities for resolving files within this repository.
 
-This module exposes :func:`resolve_path` which attempts to locate files or
-directories relative to the project root.  The root is determined by invoking
-``git rev-parse --show-toplevel`` and falling back to walking the parents of
-this file.  Results are cached to avoid repeated filesystem searches.
+The module provides :func:`resolve_path` which locates files relative to the
+project root.  The root is determined by consulting ``SANDBOX_REPO_PATH``,
+falling back to ``git rev-parse --show-toplevel`` and finally searching parent
+directories for a ``.git`` directory.  When a direct lookup fails a full
+``os.walk`` search is used.  Successful lookups are cached to avoid repeated
+scans.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 import os
 import subprocess
-from typing import Dict
+from typing import Dict, Optional
 
-# Cache of previously discovered paths.  Keys use POSIX style separators to
-# keep lookups platform independent.
+# Cache of discovered paths keyed by normalised POSIX style names
 _PATH_CACHE: Dict[str, Path] = {}
+_PROJECT_ROOT: Optional[Path] = None
 
 
 def _normalize(name: str | Path) -> str:
@@ -25,8 +26,7 @@ def _normalize(name: str | Path) -> str:
     return Path(str(name).replace("\\", "/")).as_posix().lstrip("./")
 
 
-@lru_cache(maxsize=1)
-def repo_root() -> Path:
+def project_root() -> Path:
     """Return the repository root directory.
 
     Preference order:
@@ -34,12 +34,18 @@ def repo_root() -> Path:
     1. ``SANDBOX_REPO_PATH`` environment variable.
     2. ``git rev-parse --show-toplevel``.
     3. Upward search from this file for a ``.git`` directory.
+    4. Current working directory.
     """
+
+    global _PROJECT_ROOT
+    if _PROJECT_ROOT is not None:
+        return _PROJECT_ROOT
 
     env_path = os.environ.get("SANDBOX_REPO_PATH")
     if env_path:
         path = Path(env_path).expanduser().resolve()
         if path.exists():
+            _PROJECT_ROOT = path
             return path
 
     try:
@@ -49,55 +55,68 @@ def repo_root() -> Path:
             text=True,
         ).strip()
         if top_level:
-            return Path(top_level).resolve()
+            _PROJECT_ROOT = Path(top_level).resolve()
+            return _PROJECT_ROOT
     except Exception:
         pass
 
-    for parent in Path(__file__).resolve().parents:
+    current = Path(__file__).resolve()
+    for parent in [current] + list(current.parents):
         if (parent / ".git").exists():
+            _PROJECT_ROOT = parent
             return parent
 
-    raise FileNotFoundError("Repository root could not be determined")
+    _PROJECT_ROOT = current.parent
+    return _PROJECT_ROOT
 
 
-def resolve_path(filename: str) -> Path:
-    """Resolve *filename* to an absolute :class:`Path` within the repository.
+# Backwards compatible alias
+repo_root = project_root
 
-    Searches the repository root for ``filename``.  Direct path joins are
-    attempted first and a recursive glob search is used as a fallback.  Results
-    are cached to avoid repeated filesystem walks.
-    """
 
-    key = _normalize(filename)
+def resolve_path(name: str) -> Path:
+    """Resolve *name* to an absolute :class:`Path` within the repository."""
+
+    key = _normalize(name)
     if key in _PATH_CACHE:
         return _PATH_CACHE[key]
 
-    path = Path(filename)
+    path = Path(name)
     if path.is_absolute():
         if path.exists():
             resolved = path.resolve()
             _PATH_CACHE[key] = resolved
             return resolved
-        raise FileNotFoundError(f"'{filename}' does not exist")
+        raise FileNotFoundError(f"{name!r} does not exist")
 
-    root = repo_root()
+    root = project_root()
     candidate = root / path
     if candidate.exists():
         resolved = candidate.resolve()
         _PATH_CACHE[key] = resolved
         return resolved
 
-    # Fallback to rglob search when direct lookup fails.
-    for match in root.rglob(path.name):
-        rel = match.relative_to(root).as_posix()
-        if rel.endswith(key):
-            resolved = match.resolve()
-            _PATH_CACHE[key] = resolved
-            return resolved
+    target = Path(key)
+    for base, dirs, files in os.walk(root):
+        if target.name in files or target.name in dirs:
+            match = Path(base) / target.name
+            rel = match.relative_to(root).as_posix()
+            if rel.endswith(key):
+                resolved = match.resolve()
+                _PATH_CACHE[key] = resolved
+                return resolved
 
-    raise FileNotFoundError(
-        f"{filename!r} not found under repository root {repo_root()}"
-    )
+    raise FileNotFoundError(f"{name!r} not found under {root}")
+
+
+def resolve_module_path(module_name: str) -> Path:
+    """Resolve dotted ``module_name`` to a Python source file."""
+
+    module_path = Path(*module_name.split("."))
+    try:
+        return resolve_path(module_path.with_suffix(".py").as_posix())
+    except FileNotFoundError:
+        return resolve_path(str(module_path / "__init__.py"))
 
 
 def resolve_dir(dirname: str) -> Path:
@@ -113,8 +132,15 @@ def clear_cache() -> None:
     """Clear internal caches used by this module."""
 
     _PATH_CACHE.clear()
-    repo_root.cache_clear()
+    global _PROJECT_ROOT
+    _PROJECT_ROOT = None
 
 
-__all__ = ["resolve_path", "resolve_dir", "repo_root", "clear_cache"]
-
+__all__ = [
+    "resolve_path",
+    "resolve_module_path",
+    "resolve_dir",
+    "project_root",
+    "repo_root",
+    "clear_cache",
+]

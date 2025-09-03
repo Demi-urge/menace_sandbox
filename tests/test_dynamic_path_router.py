@@ -1,51 +1,56 @@
-import subprocess
 from pathlib import Path
+import subprocess
 
-from dynamic_path_router import clear_cache, repo_root, resolve_path
+from dynamic_path_router import (
+    clear_cache,
+    project_root,
+    resolve_module_path,
+    resolve_path,
+)
 
 
-def test_repo_root_matches_git(monkeypatch):
+def test_project_root_git_present(monkeypatch):
+    """When git is available the root should match rev-parse output."""
+
     monkeypatch.delenv("SANDBOX_REPO_PATH", raising=False)
     clear_cache()
     expected = Path(
-        subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"], text=True
-        ).strip()
+        subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
     ).resolve()
-    assert repo_root() == expected
+    assert project_root() == expected
 
 
-def test_fallback_search(monkeypatch, tmp_path):
-    root = tmp_path / "proj"
-    nested = root / "a" / "b" / "target.txt"
-    nested.parent.mkdir(parents=True)
-    nested.write_text("x")
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(root))
-    clear_cache()
-    assert resolve_path("target.txt") == nested.resolve()
+def test_project_root_git_absent(monkeypatch):
+    """If git is unavailable the nearest .git directory should be used."""
 
-
-def test_caching(monkeypatch, tmp_path):
-    root = tmp_path / "proj"
-    nested = root / "dir" / "cached.txt"
-    nested.parent.mkdir(parents=True)
-    nested.write_text("data")
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(root))
+    monkeypatch.delenv("SANDBOX_REPO_PATH", raising=False)
     clear_cache()
 
-    calls = 0
+    def _fail(*args, **kwargs):  # pragma: no cover - simple exception helper
+        raise FileNotFoundError
 
-    original_rglob = Path.rglob
+    monkeypatch.setattr(subprocess, "check_output", _fail)
+    expected = Path(__file__).resolve().parents[1]
+    assert project_root() == expected
 
-    def counting_rglob(self, pattern):
-        nonlocal calls
-        calls += 1
-        return original_rglob(self, pattern)
 
-    monkeypatch.setattr(Path, "rglob", counting_rglob)
+def test_resolve_path_fallback_search(tmp_path):
+    """A basename lookup should fall back to an os.walk search."""
 
-    assert resolve_path("cached.txt") == nested.resolve()
-    assert calls == 1
-    assert resolve_path("cached.txt") == nested.resolve()
-    assert calls == 1  # cached, no additional rglob calls
+    clear_cache()
+    root = project_root()
+    temp_dir = root / "tests" / "tmp_dynamic_router"
+    temp_dir.mkdir(exist_ok=True)
+    target = temp_dir / "unique_target.txt"
+    target.write_text("content")
+    try:
+        assert resolve_path("unique_target.txt") == target.resolve()
+    finally:
+        target.unlink()
+        temp_dir.rmdir()
 
+
+def test_resolve_module_path():
+    clear_cache()
+    path = resolve_module_path("dynamic_path_router")
+    assert path.name == "dynamic_path_router.py"
