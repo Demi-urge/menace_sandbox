@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 """Utilities for dynamically resolving paths within the repository.
 
-The :func:`resolve_path` helper attempts to locate a file or directory by
-name.  The repository root is determined via a series of fallbacks and the
-filesystem may be crawled to locate the target.  Results from expensive
-operations are cached to keep lookups fast on subsequent calls.
+This module exposes :func:`resolve_path` which attempts to locate files or
+directories relative to the project root.  The root is determined by invoking
+``git rev-parse --show-toplevel`` and falling back to walking the parents of
+this file.  Results are cached to avoid repeated filesystem searches.
 """
+
+from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
@@ -14,33 +14,26 @@ import os
 import subprocess
 from typing import Dict
 
-# Cache of discovered paths.  Keys are normalized relative paths using POSIX
-# separators.  Values are absolute :class:`Path` objects.
-_INDEX_CACHE: Dict[str, Path] = {}
-_INDEX_BUILT = False
+# Cache of previously discovered paths.  Keys use POSIX style separators to
+# keep lookups platform independent.
+_PATH_CACHE: Dict[str, Path] = {}
 
 
 def _normalize(name: str | Path) -> str:
-    """Normalize *name* for cross-platform comparisons.
+    """Return *name* as a normalised POSIX style string."""
 
-    Paths are converted to strings with POSIX separators so lookups are
-    consistent across operating systems.  The returned value never contains
-    a leading ``./``.
-    """
-
-    path = Path(str(name).replace("\\", "/"))
-    return path.as_posix().lstrip("./")
+    return Path(str(name).replace("\\", "/")).as_posix().lstrip("./")
 
 
 @lru_cache(maxsize=1)
 def repo_root() -> Path:
     """Return the repository root directory.
 
-    Determination order:
+    Preference order:
 
     1. ``SANDBOX_REPO_PATH`` environment variable.
     2. ``git rev-parse --show-toplevel``.
-    3. Upward search for a ``.git`` folder.
+    3. Upward search from this file for a ``.git`` directory.
     """
 
     env_path = os.environ.get("SANDBOX_REPO_PATH")
@@ -60,120 +53,68 @@ def repo_root() -> Path:
     except Exception:
         pass
 
-    current = Path.cwd().resolve()
-    for folder in [current, *current.parents]:
-        if (folder / ".git").exists():
-            return folder
+    for parent in Path(__file__).resolve().parents:
+        if (parent / ".git").exists():
+            return parent
 
     raise FileNotFoundError("Repository root could not be determined")
 
 
-def _build_index() -> None:
-    """Populate the path index using ``os.walk``.
+def resolve_path(filename: str) -> Path:
+    """Resolve *filename* to an absolute :class:`Path` within the repository.
 
-    This is executed at most once per process.  All discovered files and
-    directories are stored in :data:`_INDEX_CACHE` under both their relative
-    paths and their final component names.  The relative paths use POSIX
-    separators to ensure portability.
+    Searches the repository root for ``filename``.  Direct path joins are
+    attempted first and a recursive glob search is used as a fallback.  Results
+    are cached to avoid repeated filesystem walks.
     """
 
-    global _INDEX_BUILT
-    if _INDEX_BUILT:
-        return
+    key = _normalize(filename)
+    if key in _PATH_CACHE:
+        return _PATH_CACHE[key]
+
+    path = Path(filename)
+    if path.is_absolute():
+        if path.exists():
+            resolved = path.resolve()
+            _PATH_CACHE[key] = resolved
+            return resolved
+        raise FileNotFoundError(f"'{filename}' does not exist")
 
     root = repo_root()
-    for dirpath, dirnames, filenames in os.walk(root):
-        for name in dirnames + filenames:
-            path = Path(dirpath) / name
-            rel = path.relative_to(root).as_posix()
-            _INDEX_CACHE[rel] = path.resolve()
-            _INDEX_CACHE.setdefault(name, path.resolve())
+    candidate = root / path
+    if candidate.exists():
+        resolved = candidate.resolve()
+        _PATH_CACHE[key] = resolved
+        return resolved
 
-    _INDEX_BUILT = True
-
-
-def resolve_path(name: str | Path) -> Path:
-    """Resolve *name* to an absolute :class:`Path` within the repository.
-
-    Parameters
-    ----------
-    name:
-        File or directory to locate.  Can be a relative path, absolute path or
-        just a base name.
-
-    Returns
-    -------
-    pathlib.Path
-        Normalised absolute path to the located file or directory.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the target cannot be located.
-    """
-
-    key = _normalize(name)
-    candidate = Path(key)
-
-    if candidate.is_absolute():
-        if candidate.exists():
-            result = candidate.resolve()
-            _INDEX_CACHE[key] = result
-            return result
-    else:
-        direct = repo_root() / candidate
-        if direct.exists():
-            result = direct.resolve()
-            _INDEX_CACHE[key] = result
-            return result
-
-    if key in _INDEX_CACHE:
-        return _INDEX_CACHE[key]
-
-    _build_index()
-
-    if key in _INDEX_CACHE:
-        return _INDEX_CACHE[key]
-
-    for rel, path in _INDEX_CACHE.items():
+    # Fallback to rglob search when direct lookup fails.
+    for match in root.rglob(path.name):
+        rel = match.relative_to(root).as_posix()
         if rel.endswith(key):
-            _INDEX_CACHE[key] = path
-            return path
+            resolved = match.resolve()
+            _PATH_CACHE[key] = resolved
+            return resolved
 
-    raise FileNotFoundError(f"Unable to resolve path: {name}")
+    raise FileNotFoundError(
+        f"{filename!r} not found under repository root {repo_root()}"
+    )
 
 
-def resolve_dir(name: str | Path) -> Path:
-    """Resolve *name* to a directory within the repository.
+def resolve_dir(dirname: str) -> Path:
+    """Resolve *dirname* to a directory within the repository."""
 
-    Parameters
-    ----------
-    name:
-        Directory to locate. Accepts the same forms as :func:`resolve_path`.
-
-    Returns
-    -------
-    pathlib.Path
-        Normalised absolute path to the located directory.
-
-    Raises
-    ------
-    NotADirectoryError
-        If the resolved path is not a directory.
-    FileNotFoundError
-        If the target cannot be located.
-    """
-
-    path = resolve_path(name)
+    path = resolve_path(dirname)
     if not path.is_dir():
-        raise NotADirectoryError(f"Expected directory: {name}")
+        raise NotADirectoryError(f"Expected directory: {dirname}")
     return path
 
 
 def clear_cache() -> None:
     """Clear internal caches used by this module."""
 
-    _INDEX_CACHE.clear()
-    global _INDEX_BUILT
-    _INDEX_BUILT = False
+    _PATH_CACHE.clear()
     repo_root.cache_clear()
+
+
+__all__ = ["resolve_path", "resolve_dir", "repo_root", "clear_cache"]
+
