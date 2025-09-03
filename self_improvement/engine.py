@@ -540,6 +540,7 @@ class SelfImprovementEngine:
         )
         self.baseline_tracker = GLOBAL_BASELINE_TRACKER
         self.baseline_tracker.window = self.baseline_window
+        self.pass_rate_weight = getattr(settings, "pass_rate_weight", 1.0)
         self.momentum_window = getattr(
             getattr(cfg, "roi", None), "momentum_window", self.baseline_window
         )
@@ -1831,12 +1832,31 @@ class SelfImprovementEngine:
         return float(current_avg - prev_avg)
 
     # ------------------------------------------------------------------
+    def _baseline_metric_delta(self, name: str, window: int = 3) -> float:
+        """Return rolling average delta for a baseline tracker metric."""
+
+        hist = self.baseline_tracker.to_dict().get(name, [])
+        if not hist:
+            return 0.0
+        w = min(window, len(hist))
+        current_avg = sum(hist[-w:]) / w
+        if len(hist) > w:
+            prev_w = min(w, len(hist) - w)
+            prev_avg = sum(hist[-w - prev_w : -w]) / prev_w
+        elif len(hist) >= 2:
+            prev_avg = hist[-2]
+        else:
+            return float(hist[-1])
+        return float(current_avg - prev_avg)
+
+    # ------------------------------------------------------------------
     def _compute_delta_score(self) -> tuple[float, dict[str, float]]:
         """Return combined delta score and its components.
 
         The score is a simple sum of the contributing metrics where positive
-        ROI changes and momentum improve the result while entropy increases
-        decrease it.  Individual components are returned for audit logging.
+        ROI changes, momentum, and scenario pass rate improvements boost the
+        result while entropy increases decrease it. Individual components are
+        returned for audit logging.
         """
 
         roi_delta = getattr(self, "roi_delta_ema", 0.0)
@@ -1848,11 +1868,18 @@ class SelfImprovementEngine:
         else:
             entropy_delta -= entropy_threshold
         momentum_delta = self._metric_delta("success_rate")
-        score = roi_delta - entropy_delta + momentum_delta
+        pass_rate_delta = self._baseline_metric_delta("pass_rate")
+        score = (
+            roi_delta
+            - entropy_delta
+            + momentum_delta
+            + self.pass_rate_weight * pass_rate_delta
+        )
         components = {
             "roi_delta": roi_delta,
             "entropy_delta": entropy_delta,
             "momentum_delta": momentum_delta,
+            "pass_rate_delta": pass_rate_delta,
         }
         return score, components
 
@@ -1964,9 +1991,13 @@ class SelfImprovementEngine:
                     self._force_rerun = True
         total = len(metrics)
         passed = total - len(failing)
-        frac = passed / total if total else 1.0
+        pass_rate = passed / total if total else 1.0
+        try:
+            self.baseline_tracker.update(pass_rate=pass_rate)
+        except Exception:
+            pass
         # store negative value when scenarios fail so reward is penalised
-        self._scenario_pass_rate = frac - 1.0
+        self._scenario_pass_rate = pass_rate - 1.0
         self._last_scenario_trend = trend
         self._last_scenario_metrics = dict(metrics)
 
@@ -2060,7 +2091,12 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _check_delta_score(self) -> None:
-        """Escalate urgency when combined delta score trends negative."""
+        """Escalate urgency when combined delta score trends negative.
+
+        The combined score includes ROI, entropy, momentum and pass rate
+        deltas so that deteriorating scenario quality also influences
+        urgency adjustments.
+        """
 
         score, components = self._compute_delta_score()
         self.baseline_tracker.update(score=score)
@@ -4580,6 +4616,10 @@ class SelfImprovementEngine:
             tested = float(counts.get("orphan_modules_tested", len(mods)))
             passed = float(counts.get("orphan_modules_passed", len(mods)))
             pass_rate = passed / tested if tested else 0.0
+            try:
+                self.baseline_tracker.update(pass_rate=pass_rate)
+            except Exception:
+                pass
             avg_roi = sum(roi_vals.values()) / len(roi_vals) if roi_vals else 0.0
             robust_vals = [
                 self.orphan_traces.get(m, {}).get("robustness", 0.0) for m in mods
