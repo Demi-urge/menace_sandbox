@@ -7834,7 +7834,9 @@ class SelfImprovementEngine:
                 _entropy_mean,
                 _entropy_std,
             ) = meta_planning._recent_error_entropy(
-                self.error_bot, self.baseline_tracker
+                self.error_bot,
+                self.baseline_tracker,
+                getattr(SandboxSettings(), "error_window", 5),
             )
             error_count = float(error_count)
             critical_errors = any(

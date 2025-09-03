@@ -348,8 +348,21 @@ def _load_cycle_funcs():
         "datetime": datetime,
         "BASELINE_TRACKER": types.SimpleNamespace(),
         "_get_entropy_threshold": lambda cfg, tracker: 1.0,
+        "DEFAULT_SEVERITY_SCORE_MAP": {
+            "critical": 100.0,
+            "crit": 100.0,
+            "fatal": 100.0,
+            "high": 75.0,
+            "error": 75.0,
+            "warn": 50.0,
+            "warning": 50.0,
+            "medium": 50.0,
+            "low": 25.0,
+            "info": 0.0,
+        },
     }
     exec(compile(module, "<ast>", "exec"), ns)
+    ns["REQUIRED_METRICS"] = ("roi", "pass_rate", "entropy")
     return ns
 
 
@@ -432,9 +445,14 @@ def _run_cycle(
                     overfitting_entropy_threshold=1.0,
                     entropy_overfit_threshold=1.0,
                     max_allowed_errors=0,
+                    error_window=5,
                 )
             ),
             "BASELINE_TRACKER": tracker,
+            "_get_overfit_thresholds": lambda cfg, _tracker: (
+                getattr(cfg, "max_allowed_errors", 0),
+                getattr(cfg, "entropy_overfit_threshold", 1.0),
+            ),
         }
     )
 

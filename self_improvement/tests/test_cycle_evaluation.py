@@ -55,6 +55,7 @@ def _load_cycle_funcs() -> dict[str, Any]:
                 critical_severity_threshold=75.0,
                 max_allowed_errors=0,
                 entropy_overfit_threshold=1.0,
+                error_window=5,
             )
         ),
     }
@@ -144,6 +145,7 @@ def _run_cycle(
                     entropy_overfit_threshold=1.0,
                     max_allowed_errors=0,
                     critical_severity_threshold=75.0,
+                    error_window=5,
                 )
             ),
             "BASELINE_TRACKER": tracker,
@@ -373,6 +375,7 @@ def test_cycle_logs_skip_on_stop_event():
                     overfitting_entropy_threshold=1.0,
                     entropy_overfit_threshold=1.0,
                     max_allowed_errors=0,
+                    error_window=5,
                 )
             ),
             "BASELINE_TRACKER": tracker,
