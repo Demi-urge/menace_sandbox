@@ -23,6 +23,7 @@ from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 from foresight_tracker import ForesightTracker
 from db_router import GLOBAL_ROUTER, init_db_router
 from alert_dispatcher import dispatch_alert
+from dynamic_path_router import resolve_path
 
 
 # ``vector_service`` is an essential dependency but importing it at module load
@@ -444,7 +445,7 @@ def run_workflow_scenarios(
 
     from task_handoff_bot import WorkflowDB
 
-    wf_db = WorkflowDB(Path(workflow_db))
+    wf_db = WorkflowDB(resolve_path(str(workflow_db)))
     workflows = wf_db.fetch(limit=1000)
     report: Dict[str, Dict[str, float]] = {}
 
@@ -459,7 +460,7 @@ def run_workflow_scenarios(
         wf_id = str(getattr(wf, "wid", getattr(wf, "id", "")))
         report[wf_id] = deltas
 
-    out_path = Path(data_dir) / "scenario_deltas.json"
+    out_path = resolve_path(str(data_dir)) / "scenario_deltas.json"
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with out_path.open("w", encoding="utf-8") as fh:
@@ -1103,7 +1104,7 @@ def _sandbox_cycle_runner(
         )
         flexibility = float(len(mods)) / float(total_mods)
 
-        cov_path = ctx.repo / ".coverage"
+        cov_path = resolve_path(".coverage")
         if cov_path.exists():
             try:
                 from coverage import CoverageData
@@ -2013,9 +2014,9 @@ def _sandbox_cycle_runner(
     try:
         load_training_data(
             tracker,
-            evolution_path=ctx.repo / "evolution_history.db",
-            roi_events_path=ctx.repo / "roi_events.db",
-            output_path=ctx.repo / "sandbox_data/adaptive_roi.csv",
+            evolution_path=resolve_path("evolution_history.db"),
+            roi_events_path=resolve_path("roi_events.db"),
+            output_path=resolve_path("sandbox_data/adaptive_roi.csv"),
             router=router,
         )
     except Exception:
@@ -2056,7 +2057,7 @@ def _sandbox_cycle_runner(
                 settings.relevancy_radar_compress_ratio,
                 settings.relevancy_radar_replace_ratio,
             )
-            flag_path = ctx.repo / "sandbox_data" / "relevancy_flags.json"
+            flag_path = resolve_path("sandbox_data/relevancy_flags.json")
             flag_path.parent.mkdir(parents=True, exist_ok=True)
             with flag_path.open("w", encoding="utf-8") as fh:
                 json.dump(flags, fh, indent=2, sort_keys=True)

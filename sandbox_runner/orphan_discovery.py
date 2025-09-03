@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
+from dynamic_path_router import resolve_path
+
 try:  # pragma: no cover - executed during import
     import orphan_analyzer
 except ModuleNotFoundError as exc:  # pragma: no cover - import-time guard
@@ -809,7 +811,7 @@ def discover_recursive_orphans(
 
     repo = Path(repo_path).resolve()
     if module_map is None:
-        module_map = repo / "sandbox_data" / "module_map.json"
+        module_map = resolve_path("sandbox_data/module_map.json")
 
     known: set[str] = set()
     if module_map and Path(module_map).exists():
