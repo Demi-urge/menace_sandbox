@@ -4,6 +4,30 @@ import traceback
 from failure_localization import extract_target_region
 
 
+def test_extract_target_region_from_string(tmp_path):
+    src = (
+        "def inner():\n"
+        "    x = 1\n"
+        "    y = 2\n\n"
+        "def outer():\n"
+        "    inner()\n"
+    )
+    path = tmp_path / "m.py"
+    path.write_text(src)
+
+    trace = (
+        f'File "{path}", line 5, in outer\n'
+        f'File "{path}", line 2, in inner\n'
+    )
+
+    region = extract_target_region(trace)
+    assert region is not None
+    assert region.path == str(path)
+    assert region.func_name == "inner"
+    assert region.start_line == 1
+    assert region.end_line == 3
+
+
 def test_extract_target_region(tmp_path):
     source = (
         "def inner():\n"
