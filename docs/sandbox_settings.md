@@ -69,6 +69,11 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `improvement_failure_threshold`: `0.9`
 - `baseline_metrics_path`: `sandbox_metrics.yaml`
 
+## Scenario deviation defaults
+- `scenario_alert_dev_multiplier`: `1.0` (`SCENARIO_ALERT_DEV_MULTIPLIER`)
+- `scenario_patch_dev_multiplier`: `2.0` (`SCENARIO_PATCH_DEV_MULTIPLIER`)
+- `scenario_rerun_dev_multiplier`: `3.0` (`SCENARIO_RERUN_DEV_MULTIPLIER`)
+
 ## Policy defaults
 - `alpha`: `0.5`
 - `gamma`: `0.9`

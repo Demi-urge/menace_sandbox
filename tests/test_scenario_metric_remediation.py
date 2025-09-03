@@ -58,9 +58,9 @@ def make_engine():
     eng.logger = logging.getLogger("test")
     eng.self_coding_engine = None
     eng._last_scenario_metrics = {
-        "latency_error_rate": 0.1,
-        "hostile_failures": 0.0,
-        "concurrency_throughput": 200.0,
+        "latency_error_rate": 0.12,
+        "hostile_failures": 0.1,
+        "concurrency_throughput": 205.0,
     }
     eng.synergy_learner = DummyLearner()
     eng.synergy_weight_roi = eng.synergy_weight_efficiency = eng.synergy_weight_resilience = eng.synergy_weight_antifragility = eng.synergy_weight_reliability = eng.synergy_weight_maintainability = eng.synergy_weight_throughput = 1.0
@@ -73,28 +73,32 @@ def make_engine():
     eng._last_mutation_id = None
     eng.baseline_tracker = BaselineTracker(
         window=3,
-        latency_error_rate=[0.1, 0.1, 0.1],
-        hostile_failures=[0.0, 0.0, 0.0],
-        concurrency_throughput=[200.0, 200.0, 200.0],
+        latency_error_rate=[0.1, 0.15, 0.11],
+        hostile_failures=[0.0, 0.1, 0.2],
+        concurrency_throughput=[200.0, 210.0, 205.0],
     )
     return eng
 
 
 def test_scenario_metric_degradation_triggers_actions(monkeypatch):
     engine = make_engine()
-    alerts = []
-    patches = []
+    alerts: list[tuple] = []
+    patches: list[tuple] = []
     monkeypatch.setattr(sie, "dispatch_alert", lambda *a, **k: alerts.append(a))
-    monkeypatch.setattr(sie, "generate_patch", lambda *a, **k: patches.append(a))
+    monkeypatch.setattr(engine, "_generate_patch_with_memory", lambda *a, **k: (patches.append(a), 0)[1])
+    monkeypatch.setattr(engine, "_pre_commit_alignment_check", lambda *a, **k: None)
+    monkeypatch.setattr(engine, "_alignment_review_last_commit", lambda *a, **k: None)
+    monkeypatch.setattr(engine, "_sandbox_integrate", lambda *a, **k: None)
+    monkeypatch.setattr(engine, "_post_round_orphan_scan", lambda *a, **k: None)
     engine._evaluate_scenario_metrics(
         {
-            "latency_error_rate": 0.3,
-            "hostile_failures": 10.0,
-            "concurrency_throughput": 50.0,
+            "latency_error_rate": 0.15,
+            "hostile_failures": 0.3,
+            "concurrency_throughput": 180.0,
         }
     )
-    assert alerts
-    assert patches
+    assert len(alerts) == 1
+    assert len(patches) == 1
     assert engine._force_rerun
     assert engine._scenario_pass_rate < 0
     assert engine._pass_rate_delta == engine.baseline_tracker.get("pass_rate_delta")
