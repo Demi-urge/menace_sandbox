@@ -149,7 +149,7 @@ class _DummyBaselineTracker:
 
 _setmod(
     "self_improvement.baseline_tracker",
-    types.SimpleNamespace(BaselineTracker=_DummyBaselineTracker),
+    types.SimpleNamespace(BaselineTracker=_DummyBaselineTracker, TRACKER={}),
 )
 
 _setmod(

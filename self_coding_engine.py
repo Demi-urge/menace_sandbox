@@ -2139,8 +2139,14 @@ class SelfCodingEngine:
                         len(matches) >= self.failure_similarity_limit
                         or self.skip_retry_on_similarity
                     ):
+                        details = {
+                            "fingerprint_hash": getattr(last_fp, "hash", ""),
+                            "similarity": best_sim,
+                            "cluster_id": getattr(prior, "cluster_id", None),
+                            "reason": "retry_skipped_due_to_similarity",
+                        }
                         try:
-                            self.audit_trail.record({"retry_skipped": warning})
+                            self.audit_trail.record(details)
                         except Exception:
                             self.logger.exception("audit trail logging failed")
                         if self.patch_db:
@@ -2149,7 +2155,7 @@ class SelfCodingEngine:
                                 conn.execute(
                                     "INSERT INTO patch_history(filename, description, outcome) "
                                     "VALUES(?,?,?)",
-                                    (str(path), description, "retry_skipped"),
+                                    (str(path), json.dumps(details), "retry_skipped"),
                                 )
                                 conn.commit()
                             except Exception:
