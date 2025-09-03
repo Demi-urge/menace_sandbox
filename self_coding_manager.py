@@ -259,13 +259,34 @@ class SelfCodingManager:
                 provisional_fp: FailureFingerprint | None = None
                 if self.failure_store:
                     try:
-                        provisional_fp = FailureFingerprint.from_failure(
-                            path.name,
-                            "",
-                            desc,
-                            "",
-                            desc,
-                        )
+                        latest_fp: FailureFingerprint | None = None
+                        for fp in getattr(self.failure_store, "_cache", {}).values():
+                            if fp.filename != path.name:
+                                continue
+                            if latest_fp is None or fp.timestamp > latest_fp.timestamp:
+                                latest_fp = fp
+                        if latest_fp is not None:
+                            provisional_fp = FailureFingerprint.from_failure(
+                                path.name,
+                                getattr(latest_fp, "function_name", getattr(latest_fp, "function", "")),
+                                latest_fp.stack_trace,
+                                latest_fp.error_message,
+                                desc,
+                            )
+                        else:
+                            diff = subprocess.run(
+                                ["git", "diff", "--unified=0", str(path)],
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            ).stdout
+                            provisional_fp = FailureFingerprint.from_failure(
+                                path.name,
+                                "",
+                                diff,
+                                "",
+                                desc,
+                            )
                         matches = self.failure_store.find_similar(provisional_fp)
                     except Exception:
                         matches = []
