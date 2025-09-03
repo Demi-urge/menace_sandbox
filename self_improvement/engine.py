@@ -544,8 +544,12 @@ class SelfImprovementEngine:
             else getattr(cfg, "energy_deviation", 1.0)
         )
         self.baseline_window = (
-            baseline_window if baseline_window is not None else getattr(cfg, "baseline_window", 10)
+            baseline_window
+            if baseline_window is not None
+            else getattr(cfg, "baseline_window", 10)
         )
+        if not 5 <= self.baseline_window <= 10:
+            raise ValueError("baseline_window must be between 5 and 10")
         self.baseline_tracker = GLOBAL_BASELINE_TRACKER
         self.baseline_tracker.window = self.baseline_window
         self.roi_weight = (
@@ -7466,20 +7470,21 @@ class SelfImprovementEngine:
             pass_rate = getattr(getattr(result, "roi", None), "success_rate", 0.0)
             files = list(_repo_path.rglob("*.py"))
             entropy = _si_metrics.compute_code_entropy(files)
+            current_roi = roi_realish
             pass_rate_avg = self.baseline_tracker.get("pass_rate")
             roi_avg = self.roi_baseline.average()
             entropy_avg = self.entropy_baseline.average()
             energy_avg = self.baseline_tracker.get("energy")
             self.baseline_tracker.update(
-                pass_rate=pass_rate, roi=roi_realish, entropy=entropy, energy=energy
+                roi=current_roi, pass_rate=pass_rate, entropy=entropy
             )
             self._check_momentum()
             self._check_delta_score()
-            self.roi_baseline.append(roi_realish)
+            self.roi_baseline.append(current_roi)
             self.entropy_baseline.append(entropy)
             self._check_roi_stagnation()
             pass_rate_delta = pass_rate - pass_rate_avg
-            roi_delta = roi_realish - roi_avg
+            roi_delta = current_roi - roi_avg
             entropy_delta = entropy - entropy_avg
             self.entropy_delta_ema = (
                 (1 - self.entropy_weight) * self.entropy_delta_ema
@@ -7513,7 +7518,7 @@ class SelfImprovementEngine:
                         run_id=str(self._cycle_count),
                         runtime=0.0,
                         success_rate=pass_rate,
-                        roi_gain=roi_realish,
+                        roi_gain=current_roi,
                         workflow_synergy_score=max(0.0, 1.0 - entropy),
                         bottleneck_index=0.0,
                         patchability_score=0.0,
@@ -7526,7 +7531,7 @@ class SelfImprovementEngine:
             self.logger.info(
                 "cycle complete",
                 extra=log_record(
-                    roi=roi_realish,
+                    roi=current_roi,
                     predicted_roi=pred_realish,
                     pass_rate_delta=pass_rate_delta,
                     roi_delta=roi_delta,
