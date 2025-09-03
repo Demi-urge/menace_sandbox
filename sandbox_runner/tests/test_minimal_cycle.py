@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+from dynamic_path_router import resolve_path  # noqa: E402
 from sandbox_settings import SandboxSettings  # noqa: E402
 
 
@@ -123,13 +124,15 @@ def test_cycle_generates_patch_and_metrics(tmp_path, monkeypatch):
     sys.modules["menace.meta_workflow_planner"] = types.SimpleNamespace(MetaWorkflowPlanner=None)
 
     init_module = _load_module(
-        "menace.self_improvement.init", Path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
     )
     meta_planning = _load_module(
-        "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
+        "menace.self_improvement.meta_planning",
+        resolve_path("self_improvement/meta_planning.py"),
     )
     patch_generation = _load_module(
-        "menace.self_improvement.patch_generation", Path("self_improvement/patch_generation.py")
+        "menace.self_improvement.patch_generation",
+        resolve_path("self_improvement/patch_generation.py"),
     )
 
     monkeypatch.setattr(meta_planning, "ROIResultsDB", InMemoryROIResultsDB)
