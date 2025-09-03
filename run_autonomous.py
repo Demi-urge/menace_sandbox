@@ -2044,7 +2044,7 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
     import threading
 
     try:
-        settings = load_sandbox_settings(config_path)
+        settings = load_sandbox_settings(resolve_path(config_path))
     except ValidationError as exc:
         raise SystemExit(f"Invalid bootstrap configuration: {exc}") from exc
 
