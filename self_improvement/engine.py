@@ -5889,9 +5889,7 @@ class SelfImprovementEngine:
         except Exception:
             self.logger.exception("relevancy evaluation failed")
         try:
-            metrics_db = Path(metrics_db_path)
-            if not metrics_db.is_absolute():
-                metrics_db = _repo_path() / metrics_db
+            metrics_db = resolve_path(metrics_db_path)
             scan_flags = radar_scan(metrics_db)
             if scan_flags:
                 flags.update(scan_flags)
@@ -6581,7 +6579,7 @@ class SelfImprovementEngine:
                         "applying helper patch",
                         extra=log_record(trending_topic=trending_topic),
                     )
-                    mod_path = resolve_path(".") / "auto_helpers.py"
+                    mod_path = resolve_path("auto_helpers.py")
                     start_patch = time.perf_counter()
                     patch_id, reverted, delta = self.self_coding_engine.apply_patch(
                         mod_path,
@@ -6874,7 +6872,7 @@ class SelfImprovementEngine:
                         try:
                             forecaster = UpgradeForecaster(self.foresight_tracker)
                             graph = WorkflowGraph()
-                            logger_obj = ForecastLogger("forecast_records/foresight.log")
+                            logger_obj = ForecastLogger(resolve_path("forecast_records/foresight.log"))
                             decision = is_foresight_safe_to_promote(
                                 workflow_id,
                                 str(patch_id) if patch_id is not None else "",

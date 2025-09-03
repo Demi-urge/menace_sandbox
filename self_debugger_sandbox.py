@@ -562,7 +562,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         test_paths = [path]
         tmp: Path | None = None
         self._last_test_log = None
-        sandbox_dir = Path(self._settings.sandbox_data_dir)
+        sandbox_dir = resolve_path(self._settings.sandbox_data_dir)
         sandbox_dir.mkdir(parents=True, exist_ok=True)
         try:
             logs = list(self._recent_logs())
