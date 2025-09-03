@@ -10,6 +10,7 @@ import numpy as np
 import menace.roi_tracker as rt
 from menace.roi_tracker import ROITracker
 from menace.borderline_bucket import BorderlineBucket
+from dynamic_path_router import resolve_dir, resolve_path
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -415,9 +416,9 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -504,9 +505,9 @@ def test_gpt_trigger_on_diminishing(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -566,9 +567,9 @@ def test_section_loop_gpt_trigger(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -637,9 +638,9 @@ def test_metrics_db_records(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -741,9 +742,9 @@ def test_metric_predictions_recorded(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -818,9 +819,9 @@ def test_section_worker_netem(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -1006,9 +1007,9 @@ def test_auto_prompt_selection(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -1088,9 +1089,9 @@ def test_prompt_truncation_and_metrics(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -1172,9 +1173,9 @@ def test_prompt_synergy_and_length(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -1266,9 +1267,9 @@ def test_preset_adaptation(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -1352,9 +1353,9 @@ def test_preset_persistence_across_runs(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -1452,9 +1453,9 @@ def test_no_preset_adapt_flag(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -1602,9 +1603,9 @@ def test_brainstorm_trigger_on_low_roi(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -1693,9 +1694,9 @@ def test_brainstorm_trigger_on_resilience_drop(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -2120,9 +2121,9 @@ def test_modules_marked_complete_skip_improvement(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)

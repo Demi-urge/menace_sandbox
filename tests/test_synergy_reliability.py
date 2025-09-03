@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from dynamic_path_router import resolve_dir, resolve_path
 
 import pytest
 
@@ -9,7 +10,7 @@ import os
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 spec = importlib.util.spec_from_file_location(
-    "menace", Path(__file__).resolve().parents[1] / "__init__.py"
+    "menace", resolve_path("__init__.py")
 )
 menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
@@ -139,8 +140,8 @@ def _run_sandbox_loop(monkeypatch, tmp_path, reliability):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
-        submodule_search_locations=[str(Path(__file__).resolve().parents[1] / "sandbox_runner")],
+        str(resolve_path("sandbox_runner.py")),
+        submodule_search_locations=[str(resolve_dir("sandbox_runner"))],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner"] = sandbox_runner
