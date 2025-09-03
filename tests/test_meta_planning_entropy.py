@@ -4,20 +4,17 @@ import ast
 import pytest
 from typing import Any, Mapping, Sequence
 from statistics import fmean
-from importlib import import_module
 
 
 src_path = Path(__file__).resolve().parents[1] / "self_improvement" / "meta_planning.py"
 tree = ast.parse(src_path.read_text(), filename=str(src_path))
 ns: dict[str, object] = {}
 ns["SandboxSettings"] = object
-ns["WorkflowStabilityDB"] = object
+ns["BaselineTracker"] = object
 ns["Any"] = Any
 ns["Mapping"] = Mapping
 ns["Sequence"] = Sequence
-ns["DEFAULT_ENTROPY_THRESHOLD"] = 0.2
 ns["fmean"] = fmean
-ns["import_module"] = import_module
 for node in tree.body:
     if isinstance(node, ast.FunctionDef) and node.name in {
         "_get_entropy_threshold",
@@ -37,32 +34,18 @@ _fp_score = ns["_score"]
 
 
 @pytest.mark.parametrize(
-    "cfg_value, history, db_data, expected",
+    "cfg_value, base, std, dev, expected",
     [
-        (0.1, [{"code_diversity": 0.2, "token_complexity": 0.4}], {"a": {"entropy": 0.5}}, 0.1),
-        (
-            None,
-            [
-                {"code_diversity": 0.1, "token_complexity": 0.3},
-                {"code_diversity": 0.2, "token_complexity": 0.5},
-            ],
-            {},
-            0.275,
-        ),
-        (None, [], {"a": {"entropy": 0.1}, "b": {"entropy": 0.4}}, 0.25),
-        (None, [], {}, 0.2),
+        (0.1, 0.2, 0.3, 1.0, 0.1),
+        (None, 0.1, 0.05, 2.0, 0.2),
+        (None, 0.2, 0.0, 1.0, 0.2),
     ],
 )
-def test_get_entropy_threshold(cfg_value, history, db_data, expected):
-    settings = SimpleNamespace(meta_entropy_threshold=cfg_value)
-    db = SimpleNamespace(data=db_data)
+def test_get_entropy_threshold(cfg_value, base, std, dev, expected):
+    settings = SimpleNamespace(meta_entropy_threshold=cfg_value, entropy_deviation=dev)
+    tracker = SimpleNamespace(get=lambda name: base, std=lambda name: std)
 
-    stub = SimpleNamespace(
-        get_alignment_metrics=lambda cfg: {"entropy_history": history}
-    )
-    _get_entropy_threshold.__globals__["import_module"] = lambda name: stub
-
-    assert _get_entropy_threshold(settings, db) == pytest.approx(expected)
+    assert _get_entropy_threshold(settings, tracker) == pytest.approx(expected)
 
 
 def test_should_encode_respects_threshold():

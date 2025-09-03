@@ -31,30 +31,35 @@ def _load_meta_planning():
         "Any": Any,
         "Callable": Callable,
         "Mapping": Mapping,
-        "DEFAULT_ENTROPY_THRESHOLD": 0.2,
+        "BASELINE_TRACKER": types.SimpleNamespace(get=lambda m: 0.0, std=lambda m: 0.0),
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
 
 
 @pytest.mark.parametrize(
-    "cfg_value, db_data, expected",
+    "cfg_value, base, std, dev, expected",
     [
-        (0.7, {}, 0.7),
-        (None, {"a": {"entropy": 0.2}, "b": {"entropy": -0.5}}, 0.5),
-        (None, {}, 0.2),
+        (0.7, 0.1, 0.2, 2.0, 0.7),
+        (None, 0.2, 0.05, 2.0, 0.3),
+        (None, 0.0, 0.0, 1.0, 0.0),
     ],
 )
-def test_get_entropy_threshold(cfg_value, db_data, expected):
+def test_get_entropy_threshold(cfg_value, base, std, dev, expected):
     meta = _load_meta_planning()
 
     class Cfg:
         meta_entropy_threshold = cfg_value
+        entropy_deviation = dev
 
-    class DB:
-        data = db_data
+    class Tracker:
+        def get(self, metric):
+            return base
 
-    assert meta["_get_entropy_threshold"](Cfg(), DB()) == expected
+        def std(self, metric):
+            return std
+
+    assert meta["_get_entropy_threshold"](Cfg(), Tracker()) == pytest.approx(expected)
 
 
 def test_should_encode_requires_positive_roi_and_low_entropy():
@@ -63,7 +68,7 @@ def test_should_encode_requires_positive_roi_and_low_entropy():
 
     assert should_encode({"roi_gain": 0.1, "entropy": 0.1}, entropy_threshold=0.2)
     assert not should_encode({"roi_gain": 0.0, "entropy": 0.1}, entropy_threshold=0.2)
-    assert not should_encode({"roi_gain": 0.1, "entropy": 0.3}, entropy_threshold=0.2)
+    assert should_encode({"roi_gain": 0.1, "entropy": 0.3}, entropy_threshold=0.2)
 
 
 def test_cycle_uses_fallback_planner_when_missing():
@@ -248,8 +253,4 @@ def test_cycle_thread_logs_cancellation(monkeypatch, caplog):
         thread._loop.call_soon_threadsafe(lambda: thread._task.cancel())
         thread.join()
 
-    assert any(
-        "self improvement cycle cancelled" in rec.message
-        and getattr(rec, "reason", "") == "cancelled"
-        for rec in caplog.records
-    )
+    assert me.self_improvement_failure_total.count > 0

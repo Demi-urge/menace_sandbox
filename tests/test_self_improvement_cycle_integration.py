@@ -30,7 +30,7 @@ def _load_meta_planning():
         "Any": object,
         "Callable": object,
         "Mapping": object,
-        "DEFAULT_ENTROPY_THRESHOLD": 0.2,
+        "BASELINE_TRACKER": types.SimpleNamespace(get=lambda m: 0.0, std=lambda m: 0.0),
         "_init": types.SimpleNamespace(
             settings=types.SimpleNamespace(
                 meta_mutation_rate=0,
@@ -46,8 +46,6 @@ def _load_meta_planning():
 
 def test_self_improvement_cycle_runs_with_patch_and_orphans(tmp_path):
     meta = _load_meta_planning()
-
-    settings = SandboxSettings(sandbox_repo_path=str(tmp_path), sandbox_data_dir=str(tmp_path))
 
     patch_calls = {"count": 0}
     integrate_calls = {"count": 0}
@@ -119,7 +117,9 @@ def test_self_improvement_cycle_runs_with_patch_and_orphans(tmp_path):
     )
 
     async def run_cycle():
-        task = asyncio.create_task(meta["self_improvement_cycle"]({"wf": lambda: None}, interval=0.0))
+        task = asyncio.create_task(
+            meta["self_improvement_cycle"]({"wf": lambda: None}, interval=0.0)
+        )
         await asyncio.sleep(0.05)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
