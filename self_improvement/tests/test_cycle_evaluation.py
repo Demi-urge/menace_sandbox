@@ -38,6 +38,9 @@ def _load_cycle_funcs() -> dict[str, Any]:
         "datetime": datetime,
         "BASELINE_TRACKER": types.SimpleNamespace(),
         "_get_entropy_threshold": lambda cfg, tracker: 1.0,
+        "_init": types.SimpleNamespace(
+            settings=types.SimpleNamespace(critical_severity_threshold=75.0)
+        ),
     }
     exec(compile(module, "<ast>", "exec"), ns)
     ns["REQUIRED_METRICS"] = ("roi", "pass_rate", "entropy")
@@ -121,6 +124,7 @@ def _run_cycle(
                     overfitting_entropy_threshold=1.0,
                     entropy_overfit_threshold=1.0,
                     max_allowed_errors=0,
+                    critical_severity_threshold=75.0,
                 )
             ),
             "BASELINE_TRACKER": tracker,
@@ -208,6 +212,32 @@ def test__evaluate_cycle_runs_on_non_positive_delta(metric):
     decision, info = meta["_evaluate_cycle"](tracker, [])
     assert decision == "run"
     assert info["reason"] == "non_positive_delta"
+
+
+@pytest.mark.parametrize(
+    "severity",
+    ["critical", "high", 0.9, "0.9", 9, "90"],
+)
+def test__evaluate_cycle_detects_critical_severity(severity):
+    meta = _load_cycle_funcs()
+    tracker = DummyTracker({"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1})
+    err = types.SimpleNamespace(error_type=types.SimpleNamespace(severity=severity))
+    decision, info = meta["_evaluate_cycle"](tracker, [err])
+    assert decision == "run"
+    assert info["reason"] == "critical_error"
+
+
+@pytest.mark.parametrize(
+    "severity",
+    ["medium", 0.2, "20"],
+)
+def test__evaluate_cycle_ignores_noncritical_severity(severity):
+    meta = _load_cycle_funcs()
+    tracker = DummyTracker({"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1})
+    err = types.SimpleNamespace(error_type=types.SimpleNamespace(severity=severity))
+    decision, info = meta["_evaluate_cycle"](tracker, [err])
+    assert decision == "skip"
+    assert info["reason"] == "all_deltas_positive"
 
 
 def test_cycle_fallback_on_entropy_spike():
