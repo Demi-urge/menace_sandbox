@@ -428,6 +428,8 @@ def _run_cycle(
                     meta_roi_weight=0.0,
                     meta_domain_penalty=0.0,
                     overfitting_entropy_threshold=1.0,
+                    entropy_overfit_threshold=1.0,
+                    max_allowed_errors=0,
                 )
             ),
             "BASELINE_TRACKER": tracker,
