@@ -98,7 +98,7 @@ except ImportError:  # pragma: no cover - fallback for flat layout
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
-from .meta_planning import PLANNER_INTERVAL
+from .meta_planning import PLANNER_INTERVAL, evaluate_cycle
 # Time based interval (in seconds) used to periodically trigger the meta
 # workflow planner in a background thread.  Keeping the configuration separate
 # from the cycle based ``PLANNER_INTERVAL`` allows the planner to run even when
@@ -7648,9 +7648,14 @@ class SelfImprovementEngine:
             # Combine weighted deltas from multiple metrics to assess overall
             # system movement.  Entropy increases and momentum drops will
             # reduce the score while ROI and pass rate gains increase it.
-            combined_delta, components = self._compute_delta_score()
+            _, components = self._compute_delta_score()
+            should_skip, _ = evaluate_cycle(
+                {"timestamp": datetime.now().isoformat()},
+                self.baseline_tracker,
+                [],
+            )
             within_baseline = current_energy >= threshold
-            if combined_delta > 0 and within_baseline:
+            if not should_skip and within_baseline:
                 self.logger.info(
                     "positive deltas - skipping cycle",
                     extra=log_record(
@@ -7660,39 +7665,38 @@ class SelfImprovementEngine:
                         decision="skip",
                     ),
                 )
+            elif not within_baseline and not self._cycle_running:
+                self.logger.info(
+                    "triggering run_cycle due to low energy",
+                    extra=log_record(
+                        energy=current_energy,
+                        baseline=threshold,
+                        **components,
+                        decision="cycle",
+                    ),
+                )
+                try:
+                    await asyncio.to_thread(
+                        self.run_cycle, energy=int(round(current_energy * 5))
+                    )
+                except Exception as exc:
+                    self.logger.exception(
+                        "self improvement run_cycle failed with energy %s: %s",
+                        int(round(current_energy * 5)),
+                        exc,
+                    )
             else:
-                if not within_baseline and not self._cycle_running:
-                    self.logger.info(
-                        "triggering run_cycle due to low energy",
-                        extra=log_record(
-                            energy=current_energy,
-                            baseline=threshold,
-                            **components,
-                            decision="cycle",
-                        ),
-                    )
-                    try:
-                        await asyncio.to_thread(
-                            self.run_cycle, energy=int(round(current_energy * 5))
-                        )
-                    except Exception as exc:
-                        self.logger.exception(
-                            "self improvement run_cycle failed with energy %s: %s",
-                            int(round(current_energy * 5)),
-                            exc,
-                        )
-                else:
-                    self.urgency_tier += 1
-                    self.logger.warning(
-                        "non-positive deltas - escalating urgency",
-                        extra=log_record(
-                            energy=current_energy,
-                            baseline=threshold,
-                            **components,
-                            tier=self.urgency_tier,
-                            decision="escalate",
-                        ),
-                    )
+                self.urgency_tier += 1
+                self.logger.warning(
+                    "non-positive deltas - escalating urgency",
+                    extra=log_record(
+                        energy=current_energy,
+                        baseline=threshold,
+                        **components,
+                        tier=self.urgency_tier,
+                        decision="escalate",
+                    ),
+                )
             await asyncio.sleep(self.interval)
 
     def schedule(
