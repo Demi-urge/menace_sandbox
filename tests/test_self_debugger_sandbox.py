@@ -7,6 +7,7 @@ import pytest
 import json
 import asyncio
 import time
+import dynamic_path_router
 
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
 sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
@@ -113,8 +114,40 @@ sys.modules.setdefault("menace", menace_pkg)
 import logging_utils as _logging_utils
 sys.modules.setdefault("menace.logging_utils", _logging_utils)
 
+cfg_stub = types.SimpleNamespace(
+    get_impact_severity=lambda *a, **k: {},
+    impact_severity_map=lambda *a, **k: {},
+)
+sys.modules.setdefault("menace.config_loader", cfg_stub)
+sys.modules.setdefault("config_loader", cfg_stub)
+sys.modules.setdefault(
+    "menace.workflow_run_summary",
+    types.SimpleNamespace(record_run=lambda *a, **k: None, save_all_summaries=lambda *a, **k: None),
+)
+sys.modules.setdefault(
+    "workflow_run_summary",
+    types.SimpleNamespace(record_run=lambda *a, **k: None, save_all_summaries=lambda *a, **k: None),
+)
+sys.modules.setdefault("menace.telemetry_backend", types.SimpleNamespace(TelemetryBackend=object))
+sys.modules.setdefault("telemetry_backend", types.SimpleNamespace(TelemetryBackend=object))
+sys.modules.setdefault("menace.borderline_bucket", types.SimpleNamespace(BorderlineBucket=object))
+sys.modules.setdefault("borderline_bucket", types.SimpleNamespace(BorderlineBucket=object))
+sys.modules.setdefault("menace.truth_adapter", types.SimpleNamespace(TruthAdapter=object))
+sys.modules.setdefault("truth_adapter", types.SimpleNamespace(TruthAdapter=object))
+sys.modules.setdefault(
+    "menace.roi_calculator", types.SimpleNamespace(ROICalculator=object, propose_fix=lambda *a, **k: None)
+)
+sys.modules.setdefault(
+    "roi_calculator", types.SimpleNamespace(ROICalculator=object, propose_fix=lambda *a, **k: None)
+)
+sys.modules.setdefault("menace.readiness_index", types.SimpleNamespace(compute_readiness=lambda *a, **k: 0.0))
+sys.modules.setdefault(
+    "readiness_index", types.SimpleNamespace(compute_readiness=lambda *a, **k: 0.0)
+)
+
 rt_spec = importlib.util.spec_from_file_location(
-    "menace.roi_tracker", Path(__file__).resolve().parents[1] / "roi_tracker.py"
+    "menace.roi_tracker",
+    str(dynamic_path_router.resolve_path("roi_tracker.py")),
 )
 rt = importlib.util.module_from_spec(rt_spec)
 assert rt_spec.loader is not None
@@ -219,7 +252,7 @@ from pathlib import Path as _P
 
 _spec = importlib.util.spec_from_file_location(
     "menace.self_debugger_sandbox",
-    _P(__file__).resolve().parents[1] / "self_debugger_sandbox.py",
+    str(dynamic_path_router.resolve_path("self_debugger_sandbox.py")),
 )
 sds = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sds)

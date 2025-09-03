@@ -3,6 +3,8 @@ import json
 import sys
 # flake8: noqa
 import types
+import importlib.util
+import dynamic_path_router
 
 from llm_interface import LLMResult
 
@@ -75,15 +77,13 @@ sys.modules.setdefault("bot_database", types.SimpleNamespace(BotDB=object))
 sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
 sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
 sys.modules.setdefault("failure_learning_system", types.SimpleNamespace(DiscrepancyDB=object))
-sys.modules.setdefault(
-    "code_database",
-    types.SimpleNamespace(
-        CodeDB=object,
-        CodeRecord=object,
-        PatchHistoryDB=object,
-        PatchRecord=object,
-    ),
-)
+cd_stub = types.ModuleType("code_database")
+cd_stub.CodeDB = object
+cd_stub.CodeRecord = object
+cd_stub.PatchHistoryDB = object
+cd_stub.PatchRecord = object
+sys.modules.setdefault("code_database", cd_stub)
+sys.modules.setdefault("menace.code_database", cd_stub)
 sys.modules.setdefault(
     "gpt_memory",
     types.SimpleNamespace(
@@ -226,7 +226,13 @@ sys.modules.setdefault(
     "menace.run_autonomous", types.SimpleNamespace(LOCAL_KNOWLEDGE_MODULE=None)
 )
 
-import menace.self_coding_engine as sce  # noqa: E402
+spec = importlib.util.spec_from_file_location(
+    "menace.self_coding_engine",
+    str(dynamic_path_router.resolve_path("self_coding_engine.py")),
+)
+sce = importlib.util.module_from_spec(spec)
+sys.modules["menace.self_coding_engine"] = sce
+spec.loader.exec_module(sce)
 import menace.code_database as cd  # noqa: E402
 import menace.menace_memory_manager as mm  # noqa: E402
 import menace.data_bot as db  # noqa: E402

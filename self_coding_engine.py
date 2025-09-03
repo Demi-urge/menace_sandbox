@@ -2389,7 +2389,8 @@ class SelfCodingEngine:
         bot = data_bot.worst_bot("errors")
         if not bot:
             return
-        path = Path(root_dir) / f"{bot}.py"
+        root_path = resolve_path(str(root_dir))
+        path = root_path / f"{bot}.py"
         if not path.exists():
             return
         self.apply_patch(path, "refactor", reason="refactor", trigger="refactor_worst_bot")

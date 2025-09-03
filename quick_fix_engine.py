@@ -373,8 +373,9 @@ class QuickFixEngine:
         etype, module, mods, count = info
         if count < self.threshold:
             return
-        path = Path(f"{module}.py")
-        if not path.exists():
+        try:
+            path = resolve_path(f"{module}.py")
+        except FileNotFoundError:
             return
         context_meta = {"error_type": etype, "module": module, "bot": bot}
         builder = self.context_builder
@@ -474,8 +475,9 @@ class QuickFixEngine:
                 module, risk = item, 1.0
             if risk < thresh:
                 continue
-            path = Path(f"{module}.py")
-            if not path.exists():
+            try:
+                path = resolve_path(f"{module}.py")
+            except FileNotFoundError:
                 continue
             meta = {"module": module, "reason": "preemptive_patch"}
             builder = self.context_builder
