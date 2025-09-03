@@ -199,3 +199,59 @@ def test_cycle_overfitting_fallback_logs_before_planner():
     )
     overfit = [rec for msg, rec in logs if rec.get("outcome") == "fallback"]
     assert any(r.get("reason") == "overfitting" for r in overfit)
+
+
+def test_cycle_logs_skip_on_stop_event():
+    meta = _load_cycle_funcs()
+    tracker = DummyTracker({})
+    logger = DummyLogger()
+
+    class Planner:
+        roi_db = None
+        stability_db = None
+
+        def __init__(self):
+            self.cluster_map = {}
+
+        def discover_and_persist(self, workflows):  # pragma: no cover - not used
+            return []
+
+    meta.update(
+        {
+            "MetaWorkflowPlanner": None,
+            "_FallbackPlanner": Planner,
+            "get_logger": lambda name: logger,
+            "log_record": lambda **kw: kw,
+            "get_stable_workflows": lambda: types.SimpleNamespace(
+                record_metrics=lambda *a, **k: None
+            ),
+            "_init": types.SimpleNamespace(
+                settings=types.SimpleNamespace(
+                    meta_mutation_rate=0.0,
+                    meta_roi_weight=0.0,
+                    meta_domain_penalty=0.0,
+                    overfitting_entropy_threshold=1.0,
+                    entropy_overfit_threshold=1.0,
+                    max_allowed_errors=0,
+                )
+            ),
+            "BASELINE_TRACKER": tracker,
+        }
+    )
+
+    stop = threading.Event()
+    stop.set()
+
+    async def _run():
+        await meta["self_improvement_cycle"](
+            {"w": lambda: None}, interval=0, stop_event=stop
+        )
+
+    asyncio.run(_run())
+
+    assert any(
+        msg == "cycle"
+        and rec.get("outcome") == "skipped"
+        and rec.get("reason") == "stop_event"
+        for msg, rec in logger.records
+    )
