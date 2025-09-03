@@ -94,6 +94,7 @@ sys.modules.setdefault(
 )
 roi_mod = types.ModuleType("vector_service.roi_tags")
 
+
 class _RoiTag:
     HIGH_ROI = types.SimpleNamespace(value="high-ROI")
     SUCCESS = types.SimpleNamespace(value="success")
@@ -105,6 +106,7 @@ class _RoiTag:
     @classmethod
     def validate(cls, value):
         return cls.SUCCESS
+
 
 roi_mod.RoiTag = _RoiTag
 sys.modules.setdefault("vector_service.roi_tags", roi_mod)
@@ -126,7 +128,13 @@ def test_build_visual_agent_prompt_basic(monkeypatch):
     captured: dict[str, str | None] = {}
 
     def fake_build_prompt(
-        self, description, *, context="", retrieval_context="", retry_trace=None
+        self,
+        description,
+        *,
+        context="",
+        retrieval_context="",
+        retry_trace=None,
+        target_region=None,
     ):
         captured.update(
             description=description,
@@ -170,7 +178,13 @@ def test_build_visual_agent_prompt_layout(monkeypatch):
     captured = {}
 
     def fake_build_prompt(
-        self, description, *, context="", retrieval_context="", retry_trace=None
+        self,
+        description,
+        *,
+        context="",
+        retrieval_context="",
+        retry_trace=None,
+        target_region=None,
     ):
         captured["context"] = context
         return "PROMPT"
@@ -187,7 +201,13 @@ def test_build_visual_agent_prompt_retrieval_context(monkeypatch):
     captured = {}
 
     def fake_build_prompt(
-        self, description, *, context="", retrieval_context="", retry_trace=None
+        self,
+        description,
+        *,
+        context="",
+        retrieval_context="",
+        retry_trace=None,
+        target_region=None,
     ):
         captured["retrieval_context"] = retrieval_context
         return "PROMPT"

@@ -422,7 +422,9 @@ def test_prompt_engine_includes_target_region_metadata():
     region.original_lines = ["    pass"]
     prompt = engine.build_prompt("desc", context=context, target_region=region)
     text = str(prompt)
-    assert "Modify only lines 3-5 within function func" in text
+    assert text.splitlines()[0].startswith(
+        "Modify only lines 3-5 within function func"
+    )
     assert "# start" in text and "# end" in text
     assert prompt.metadata["target_region"]["func_name"] == "func"
     assert prompt.metadata["target_region"]["signature"] == "def func(a, b):"

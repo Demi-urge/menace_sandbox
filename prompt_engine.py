@@ -743,6 +743,7 @@ class PromptEngine:
             and summaries is None
             and self.chunk_token_threshold
             and self._count_tokens(context) > self.chunk_token_threshold
+            and target_region is None
         ):
             chunks = split_into_chunks(context, self.chunk_token_threshold)
             summaries = []
@@ -786,7 +787,28 @@ class PromptEngine:
                 outcome_tags.append(str(tag))
 
         snippet_lines = self.build_snippets(ranked)
-        lines: List[str] = []
+
+        path_hint = None
+        if target_region is not None:
+            path_hint = (
+                getattr(target_region, "path", None)
+                or getattr(target_region, "file", None)
+                or getattr(target_region, "filename", None)
+            )
+            func = getattr(target_region, "func_name", None)
+            instr = f"Modify only lines {target_region.start_line}-{target_region.end_line}"
+            if func:
+                instr += f" within function {func}"
+            if path_hint:
+                instr += f" in {path_hint}"
+            instr += " unless surrounding logic is causally required."
+        else:
+            instr = (
+                "Modify only the provided lines unless surrounding logic is causally required."
+            )
+
+        lines: List[str] = [instr, ""]
+
         if summaries:
             summary_text = "\n".join(summaries).strip()
             if summary_text:
@@ -812,22 +834,6 @@ class PromptEngine:
             lines.extend(snippet_lines)
             lines.append("")
 
-        if target_region is not None:
-            func = getattr(target_region, "func_name", None)
-            if func:
-                lines.append(
-                    f"Modify only lines {target_region.start_line}-{target_region.end_line} "
-                    f"within function {func} unless surrounding logic is causally required."
-                )
-            else:
-                lines.append(
-                    f"Modify only lines {target_region.start_line}-{target_region.end_line} "
-                    f"unless surrounding logic is causally required."
-                )
-        else:
-            lines.append(
-                "Modify only the provided lines unless surrounding logic is causally required."
-            )
         lines.append(f"Given the following pattern, {task}")
         lines.append("")
 
@@ -841,7 +847,7 @@ class PromptEngine:
         meta: Dict[str, Any] = {"vector_confidences": scores}
         if target_region is not None:
             region_meta = {
-                "path": getattr(target_region, "path", ""),
+                "path": path_hint or "",
                 "start_line": target_region.start_line,
                 "end_line": target_region.end_line,
                 "func_name": getattr(target_region, "func_name", ""),

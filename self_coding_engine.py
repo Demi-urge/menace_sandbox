@@ -162,7 +162,7 @@ _PATCH_ESCALATIONS = _me.Gauge(
     "Patch escalation events",
     labelnames=["level"],
 )
-from .self_improvement.baseline_tracker import (
+from .self_improvement.baseline_tracker import (  # noqa: E402
     BaselineTracker,
     TRACKER as METRIC_BASELINES,
 )
@@ -895,8 +895,13 @@ class SelfCodingEngine:
         context: str,
         retrieval_context: str | None = None,
         repo_layout: str | None = None,
+        target_region: TargetRegion | None = None,
     ) -> str:
-        """Return a prompt formatted for :class:`VisualAgentClient`."""
+        """Return a prompt formatted for :class:`VisualAgentClient`.
+
+        When ``target_region`` is provided the line range metadata is embedded in
+        the prompt so downstream components can reason about the intended scope.
+        """
         func = f"auto_{description.replace(' ', '_')}"
         repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         resolved = path_for_prompt(path) if path else None
@@ -909,6 +914,7 @@ class SelfCodingEngine:
                 retrieval_context=retrieval_context or "",
                 retry_trace=retry_trace,
                 tone=self.prompt_tone,
+                target_region=target_region,
             )
         except TypeError:
             prompt_obj = self.prompt_engine.build_prompt(
@@ -2477,7 +2483,10 @@ class SelfCodingEngine:
             source = path.read_text(encoding="utf-8")
             tree = ast.parse(source)
             for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == region.func_name:
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == region.func_name
+                ):
                     end = getattr(node, "end_lineno", node.lineno)
                     return TargetRegion(
                         start_line=node.lineno,
