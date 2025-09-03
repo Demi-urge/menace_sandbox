@@ -1911,29 +1911,16 @@ class SelfImprovementEngine:
         failing: list[str] = []
         dev_mult = getattr(settings, "scenario_deviation_multiplier", 1.0)
         histories = self.baseline_tracker.to_dict()
-        baselines = {
-            name: (
-                self.baseline_tracker.get(name),
-                self.baseline_tracker.std(name),
-                len(histories.get(name, [])),
-            )
-            for name in metrics
-        }
         for name, val in metrics.items():
+            avg = self.baseline_tracker.get(name)
+            std = self.baseline_tracker.std(name)
+            hist_len = len(histories.get(name, []))
             action = action_map.get(name)
-            if not action:
-                continue
-            avg, std, hist_len = baselines.get(name, (0.0, 0.0, 0))
-            if hist_len == 0:
+            if not action or hist_len == 0:
                 continue
             delta = float(val) - avg
             deviation = std * dev_mult
-            exceed = (
-                delta > deviation
-                if name != "concurrency_throughput"
-                else delta < -deviation
-            )
-            if exceed:
+            if abs(delta) > deviation:
                 failing.append(name)
                 self.logger.info(
                     "scenario_metric_action",
