@@ -28,6 +28,7 @@ import site
 import copy
 
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
+from dynamic_path_router import get_project_root
 
 try:  # pragma: no cover - optional dependencies
     from .unified_config_store import UnifiedConfigStore
@@ -315,7 +316,7 @@ class Config(BaseModel):
 # Configuration loading utilities
 # ---------------------------------------------------------------------------
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = get_project_root()
 CONFIG_DIR = BASE_DIR / "config"
 DEFAULT_SETTINGS_FILE = CONFIG_DIR / "settings.yaml"
 
