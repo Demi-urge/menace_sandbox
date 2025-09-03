@@ -39,6 +39,7 @@ ns: Dict[str, Any] = {
     "time": time,
     "log_record": lambda **k: k,
     "dispatch_alert": lambda *a, **k: alerts.append((a, k)),
+    "settings": types.SimpleNamespace(critical_severity_threshold=75.0),
 }
 exec(compile(engine_module, "<engine>", "exec"), ns)
 SelfImprovementEngine = ns["SelfImprovementEngine"]
@@ -57,20 +58,24 @@ exec(compile(mp_module, "<meta>", "exec"), mp_ns)
 _should_encode = mp_ns["_should_encode"]
 
 
-def test_should_trigger_respects_dynamic_baseline():
+def test_should_trigger_skips_only_on_positive_deltas_and_no_critical_errors():
     tracker = BaselineTracker(window=3)
-    for score in [0.4, 0.5, 0.6]:
-        tracker.update(score=score)
-    threshold = tracker.get("score") + tracker.std("score")
+    tracker.update(roi=1.0, pass_rate=1.0, record_momentum=False)
+    tracker.update(roi=1.2, pass_rate=1.1, record_momentum=False)
     eng = SelfImprovementEngine.__new__(SelfImprovementEngine)
     eng.baseline_tracker = tracker
+    eng.error_bot = types.SimpleNamespace(recent_errors=lambda limit=5: [])
     eng.last_run = 0.0
     eng.interval = 0.0
-    eng.delta_score_dev_multiplier = 1.0
     eng.logger = types.SimpleNamespace(debug=lambda *a, **k: None)
-    eng._compute_delta_score = lambda: (threshold - 0.01, {"roi": 0.1})
     assert not eng._should_trigger()
-    eng._compute_delta_score = lambda: (threshold + 0.01, {"roi": 0.1})
+
+    tracker.update(roi=0.5, pass_rate=1.0, record_momentum=False)
+    assert eng._should_trigger()
+
+    tracker.update(roi=1.5, pass_rate=1.2, record_momentum=False)
+    err = types.SimpleNamespace(error_type=types.SimpleNamespace(severity="critical"))
+    eng.error_bot = types.SimpleNamespace(recent_errors=lambda limit=5: [err])
     assert eng._should_trigger()
 
 
