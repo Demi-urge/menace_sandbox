@@ -807,7 +807,7 @@ async def self_improvement_cycle(
                 pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
                 BASELINE_TRACKER.update(roi=roi, pass_rate=pass_rate, entropy=entropy)
                 tracker = BASELINE_TRACKER
-                should_skip, reason = evaluate_cycle(
+                should_run, reason = evaluate_cycle(
                     rec,
                     tracker,
                     rec.get("errors", []),
@@ -818,7 +818,7 @@ async def self_improvement_cycle(
                     == "critical"
                     for err in rec.get("errors", [])
                 )
-                if not should_skip and (
+                if not should_run and (
                     entropy_shift > cfg.overfitting_entropy_threshold or has_critical
                 ):
                     logger.debug(
@@ -828,7 +828,7 @@ async def self_improvement_cycle(
                             metrics=tracker.to_dict(),
                         ),
                     )
-                elif should_skip:
+                elif not should_run:
                     logger.debug(
                         "skip",
                         extra=log_record(reason=reason, metrics=tracker.to_dict()),
