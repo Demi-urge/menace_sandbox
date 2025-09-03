@@ -342,9 +342,9 @@ class SandboxSettings(BaseSettings):
     save_synergy_history: bool | None = Field(None, env="SAVE_SYNERGY_HISTORY")
 
     @field_validator("baseline_window")
-    def _baseline_window_positive(cls, v: int) -> int:
-        if v <= 0:
-            raise ValueError("baseline_window must be positive")
+    def _baseline_window_range(cls, v: int) -> int:
+        if not 5 <= v <= 10:
+            raise ValueError("baseline_window must be between 5 and 10")
         return v
 
     @field_validator("relevancy_history_min_length")
