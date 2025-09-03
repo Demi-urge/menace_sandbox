@@ -3939,8 +3939,12 @@ class SelfImprovementEngine:
             try:
                 # record metric for future threshold calculations
                 self.baseline_tracker.update(side_effects=score)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.debug(
+                    "side effects metric update failed",
+                    extra=log_record(module=str(abs_path)),
+                    exc_info=exc,
+                )
             try:
                 rel = abs_path.resolve().relative_to(repo).as_posix()
             except Exception:
@@ -4798,8 +4802,12 @@ class SelfImprovementEngine:
             pass_rate = passed / tested if tested else 0.0
             try:
                 self.baseline_tracker.update(pass_rate=pass_rate)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.debug(
+                    "pass rate metric update failed",
+                    extra=log_record(pass_rate=pass_rate),
+                    exc_info=exc,
+                )
             avg_roi = sum(roi_vals.values()) / len(roi_vals) if roi_vals else 0.0
             robust_vals = [
                 self.orphan_traces.get(m, {}).get("robustness", 0.0) for m in mods
