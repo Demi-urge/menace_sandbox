@@ -772,6 +772,63 @@ def should_skip_cycle(tracker: BaselineTracker, error_log: Any) -> bool:
     return True
 
 
+def _evaluate_cycle(
+    tracker: BaselineTracker, error_state: Any
+) -> tuple[str, Mapping[str, Any]]:
+    """Evaluate whether the improvement cycle should run.
+
+    Parameters
+    ----------
+    tracker:
+        Baseline metric tracker providing recent deltas.
+    error_state:
+        Error log or sequence of :class:`TelemetryEvent` instances used to
+        detect critical failures.
+
+    Returns
+    -------
+    tuple[str, Mapping[str, Any]]
+        A decision of ``"run"`` or ``"skip"`` and a mapping containing the
+        quantitative metric deltas along with a ``reason`` string.
+    """
+
+    deltas = {
+        "roi": tracker.delta("roi"),
+        "pass_rate": tracker.delta("pass_rate"),
+        "momentum": tracker.delta("momentum"),
+        "entropy": tracker.delta("entropy"),
+    }
+
+    # Examine recent errors for critical severity
+    critical = False
+    events: Sequence[TelemetryEvent] | Sequence[Any] | None = None
+    try:
+        if isinstance(error_state, Sequence):
+            events = error_state
+        elif hasattr(error_state, "recent_errors"):
+            events = error_state.recent_errors(limit=5)
+        elif hasattr(error_state, "recent_events"):
+            events = error_state.recent_events(limit=5)
+        elif hasattr(getattr(error_state, "db", None), "recent_errors"):
+            events = error_state.db.recent_errors(limit=5)  # type: ignore[attr-defined]
+    except Exception:
+        events = None
+
+    for ev in events or []:
+        sev = getattr(getattr(ev, "error_type", None), "severity", None)
+        if sev == "critical":
+            critical = True
+            break
+
+    if not critical and all(v > 0 for v in deltas.values()):
+        return "skip", {"reason": "all_deltas_positive", "metrics": deltas}
+    if critical:
+        reason = "critical_error"
+    else:
+        reason = "non_positive_delta"
+    return "run", {"reason": reason, "metrics": deltas}
+
+
 async def self_improvement_cycle(
     workflows: Mapping[str, Callable[[], Any]],
     *,
@@ -874,21 +931,14 @@ async def self_improvement_cycle(
     while True:
         if stop_event is not None and stop_event.is_set():
             break
-        skip_fn = globals().get("should_skip_cycle")
-        if skip_fn is None:
-            metrics = [m for m in BASELINE_TRACKER._history if not m.endswith("_delta")]
-            skip = all(BASELINE_TRACKER.delta(m) > 0 for m in metrics)
-            if abs(BASELINE_TRACKER.delta("entropy")) > float(cfg.overfitting_entropy_threshold):
-                skip = False
-        else:
-            skip = skip_fn(BASELINE_TRACKER, error_log)
-        if skip:
+        decision, info = _evaluate_cycle(BASELINE_TRACKER, error_log)
+        if decision == "skip":
             logger.debug(
                 "skip",
                 extra=log_record(
-                    reason="all_deltas_positive",
                     decision="skip",
-                    metrics=BASELINE_TRACKER.to_dict(),
+                    reason=info.get("reason"),
+                    metrics=info.get("metrics"),
                 ),
             )
             await asyncio.sleep(interval)
