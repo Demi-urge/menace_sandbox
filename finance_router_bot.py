@@ -13,6 +13,8 @@ import logging
 
 from dotenv import load_dotenv
 
+from dynamic_path_router import resolve_path
+
 from . import stripe_handler
 
 from .capital_management_bot import CapitalManagementBot
@@ -38,7 +40,7 @@ class FinanceRouterBot:
     def __init__(
         self,
         stripe_api_key: Optional[str] = None,
-        payout_log_path: Path | str = Path("finance_logs/payout_log.json"),
+        payout_log_path: Path | str | None = None,
         capital_manager: Optional[CapitalManagementBot] = None,
         test_mode: bool = True,
         *,
@@ -49,7 +51,22 @@ class FinanceRouterBot:
         self.stripe_api_key = stripe_api_key or os.getenv("STRIPE_API_KEY", "")
         self.capital_manager = capital_manager
         self.test_mode = test_mode
-        self.payout_log_path = Path(payout_log_path)
+        raw_log_path = str(
+            payout_log_path
+            or os.getenv("PAYOUT_LOG_PATH", "finance_logs/payout_log.json")
+        )
+        try:
+            self.payout_log_path = Path(resolve_path(raw_log_path))
+        except FileNotFoundError:
+            parent = Path(raw_log_path).parent
+            if str(parent) not in {"", "."}:
+                try:
+                    resolved_parent = resolve_path(str(parent))
+                    self.payout_log_path = Path(resolved_parent) / Path(raw_log_path).name
+                except FileNotFoundError:
+                    self.payout_log_path = Path(raw_log_path)
+            else:
+                self.payout_log_path = Path(raw_log_path)
         self.payout_log_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.payout_log_path.exists():
             self.payout_log_path.write_text("[]")
