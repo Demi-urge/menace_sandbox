@@ -330,6 +330,15 @@ class SandboxSettings(BaseSettings):
     energy_deviation: float = Field(1.0, env="ENERGY_DEVIATION")
     roi_deviation: float = Field(1.0, env="ROI_DEVIATION")
     entropy_deviation: float = Field(1.0, env="ENTROPY_DEVIATION")
+    autoscale_create_dev_multiplier: float = Field(
+        0.8, env="AUTOSCALE_CREATE_DEV_MULTIPLIER"
+    )
+    autoscale_remove_dev_multiplier: float = Field(
+        0.3, env="AUTOSCALE_REMOVE_DEV_MULTIPLIER"
+    )
+    autoscale_roi_dev_multiplier: float = Field(
+        0.0, env="AUTOSCALE_ROI_DEV_MULTIPLIER"
+    )
     scenario_alert_dev_multiplier: float = Field(
         1.0, env="SCENARIO_ALERT_DEV_MULTIPLIER"
     )
@@ -387,6 +396,9 @@ class SandboxSettings(BaseSettings):
         "energy_deviation",
         "roi_deviation",
         "entropy_deviation",
+        "autoscale_create_dev_multiplier",
+        "autoscale_remove_dev_multiplier",
+        "autoscale_roi_dev_multiplier",
         "relevancy_deviation_multiplier",
         "scenario_alert_dev_multiplier",
         "scenario_patch_dev_multiplier",
