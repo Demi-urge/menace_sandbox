@@ -922,6 +922,8 @@ async def self_improvement_cycle(
     event_bus: UnifiedEventBus | None = None,
     error_log: Any | None = None,
     stop_event: threading.Event | None = None,
+    should_encode: Callable[[Mapping[str, Any], "BaselineTracker", float], tuple[bool, str]]
+    | None = None,
 ) -> None:
     """Background loop evolving ``workflows`` using the meta planner."""
     logger = get_logger("SelfImprovementCycle")
@@ -1038,7 +1040,17 @@ async def self_improvement_cycle(
     while True:
         if stop_event is not None and stop_event.is_set():
             break
-        decision, info = _evaluate_cycle(BASELINE_TRACKER, error_log)
+        eval_fn = globals().get("_evaluate_cycle")
+        if eval_fn is None:
+            alt_fn = globals().get("evaluate_cycle")
+            if alt_fn is not None:
+                def eval_fn(tracker, error_state):  # type: ignore[misc]
+                    dec, reason = alt_fn({}, tracker, error_state or [])
+                    return ("skip" if dec else "run", {"reason": reason})
+            else:
+                def eval_fn(tracker, error_state):  # type: ignore[misc]
+                    return "run", {"reason": "no_evaluator"}
+        decision, info = eval_fn(BASELINE_TRACKER, error_log)
         if decision == "skip":
             traces, ent_delta = _recent_error_entropy(error_log, BASELINE_TRACKER)
             threshold = getattr(planner, "entropy_threshold", 0.0)
@@ -1070,7 +1082,7 @@ async def self_improvement_cycle(
                 pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
                 BASELINE_TRACKER.update(roi=roi, pass_rate=pass_rate, entropy=entropy)
                 tracker = BASELINE_TRACKER
-                encode_fn = globals().get("_should_encode")
+                encode_fn = should_encode
                 if encode_fn is None:
                     momentum = getattr(tracker, "momentum", 1.0) or 1.0
                     roi_delta = tracker.delta("roi") * momentum
@@ -1102,7 +1114,7 @@ async def self_improvement_cycle(
                     should_encode, reason = encode_fn(
                         rec,
                         tracker,
-                        entropy_threshold=cfg.overfitting_entropy_threshold,
+                        cfg.overfitting_entropy_threshold,
                     )
                 if not should_encode:
                     outcome = (
@@ -1149,6 +1161,10 @@ def start_self_improvement_cycle(
     event_bus: UnifiedEventBus | None = None,
     interval: float = PLANNER_INTERVAL,
     error_log: Any | None = None,
+    should_encode: Callable[
+        [Mapping[str, Any], "BaselineTracker", float], tuple[bool, str]
+    ]
+    | None = None,
 ):
     """Prepare a background thread running :func:`self_improvement_cycle`.
 
@@ -1168,6 +1184,7 @@ def start_self_improvement_cycle(
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._stop_event = stop_event
             self._error_log = error_log
+            self._should_encode = should_encode
 
         # --------------------------------------------------
         def _run(self) -> None:
@@ -1182,6 +1199,8 @@ def start_self_improvement_cycle(
                 kwargs["stop_event"] = self._stop_event
             if "error_log" in signature(self_improvement_cycle).parameters:
                 kwargs["error_log"] = self._error_log
+            if "should_encode" in signature(self_improvement_cycle).parameters:
+                kwargs["should_encode"] = self._should_encode
             self._task = self._loop.create_task(
                 self_improvement_cycle(workflows, **kwargs)
             )
