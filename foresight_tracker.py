@@ -39,6 +39,11 @@ import numpy as np
 import yaml
 import os
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 try:  # pragma: no cover - optional dependency
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -58,7 +63,7 @@ class ForesightTracker:
         volatility_threshold: float = 1.0,
         window: int | None = None,
         N: int | None = None,
-        templates_path: str | Path = "configs/foresight_templates.yaml",
+        templates_path: str | Path = resolve_path("configs/foresight_templates.yaml"),
         template_config_path: str | Path | None = None,
         cssm_client: object | None = None,
     ) -> None:
