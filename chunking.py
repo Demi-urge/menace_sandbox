@@ -94,8 +94,19 @@ class CodeChunk:
     token_count: int
 
 
-def split_into_chunks(code: str, max_tokens: int) -> List[CodeChunk]:
-    """Split ``code`` into :class:`CodeChunk` objects under ``max_tokens`` tokens."""
+def split_into_chunks(
+    code: str,
+    max_tokens: int,
+    *,
+    line_ranges: List[tuple[int, int]] | None = None,
+) -> List[CodeChunk]:
+    """Split ``code`` into :class:`CodeChunk` objects under ``max_tokens`` tokens.
+
+    ``line_ranges`` can be used to force chunk boundaries at specific line
+    numbers.  Each ``(start, end)`` pair is treated as an inclusive range that
+    should not be merged with surrounding code.  This allows callers to ensure
+    that targeted regions map cleanly to chunk boundaries.
+    """
 
     lines = code.splitlines()
     try:
@@ -122,45 +133,66 @@ def split_into_chunks(code: str, max_tokens: int) -> List[CodeChunk]:
         if filler:
             segments.append((prev_end, len(lines), filler))
 
+    # Split segments so that explicit line range boundaries align with segment
+    # edges.  This makes it possible to treat the specified ranges as atomic
+    # units during chunk assembly.
+    if line_ranges:
+        boundaries = sorted({b for s, e in line_ranges for b in (s, e + 1)})
+        adjusted: List[tuple[int, int, str]] = []
+        for start, end, text in segments:
+            curr_start = start
+            curr_lines = text.splitlines()
+            offset = 0
+            for b in (b for b in boundaries if start < b <= end):
+                rel = b - curr_start
+                part = "\n".join(curr_lines[:rel]).rstrip()
+                if part:
+                    adjusted.append((curr_start, b - 1, part))
+                curr_lines = curr_lines[rel:]
+                curr_start = b
+            remaining = "\n".join(curr_lines).rstrip()
+            if remaining:
+                adjusted.append((curr_start, end, remaining))
+        segments = adjusted
+
     chunks: List[CodeChunk] = []
     current: List[str] = []
     current_start = 1
     current_end = 1
     token_total = 0
+    current_range: tuple[int, int] | None = None
+
+    def _range_for(seg_start: int, seg_end: int) -> tuple[int, int] | None:
+        if not line_ranges:
+            return None
+        for s, e in line_ranges:
+            if s <= seg_start and seg_end <= e:
+                return s, e
+        return None
 
     for start, end, text in segments:
         count = _count_tokens(text)
-        if count > max_tokens:
-            if current:
-                chunk_text = "\n".join(current).rstrip()
-                h = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
-                t_count = _count_tokens(chunk_text)
-                chunks.append(
-                    CodeChunk(current_start, current_end, chunk_text, h, t_count)
-                )
-                current = []
-                token_total = 0
-            chunks.extend(
-                _split_by_lines(text.splitlines(), start, max_tokens)
-            )
-            current_start = end + 1
-            current_end = end
-            continue
-        if current and token_total + count > max_tokens:
+        seg_range = _range_for(start, end)
+        if current and (current_range != seg_range or token_total + count > max_tokens):
             chunk_text = "\n".join(current).rstrip()
             h = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
             t_count = _count_tokens(chunk_text)
             chunks.append(CodeChunk(current_start, current_end, chunk_text, h, t_count))
-            current = [text]
+            current = []
+            token_total = 0
+        if count > max_tokens:
+            # Large segment: split by lines and treat each portion separately.
+            chunks.extend(_split_by_lines(text.splitlines(), start, max_tokens))
+            current_start = end + 1
+            current_end = end
+            current_range = None
+            continue
+        if not current:
             current_start = start
-            current_end = end
-            token_total = count
-        else:
-            if not current:
-                current_start = start
-            current.append(text)
-            current_end = end
-            token_total += count
+            current_range = seg_range
+        current.append(text)
+        current_end = end
+        token_total += count
 
     if current:
         chunk_text = "\n".join(current).rstrip()
@@ -170,11 +202,20 @@ def split_into_chunks(code: str, max_tokens: int) -> List[CodeChunk]:
     return chunks
 
 
-def chunk_file(path: Path, max_tokens: int) -> List[CodeChunk]:
-    """Return token limited ``CodeChunk`` objects for ``path``."""
+def chunk_file(
+    path: Path,
+    max_tokens: int,
+    *,
+    line_ranges: List[tuple[int, int]] | None = None,
+) -> List[CodeChunk]:
+    """Return token limited ``CodeChunk`` objects for ``path``.
+
+    ``line_ranges`` are forwarded to :func:`split_into_chunks` to allow callers to
+    align chunks with specific line boundaries.
+    """
 
     source = path.read_text()
-    return split_into_chunks(source, max_tokens)
+    return split_into_chunks(source, max_tokens, line_ranges=line_ranges)
 
 
 def _split_by_lines(lines: List[str], start: int, limit: int) -> List[CodeChunk]:
