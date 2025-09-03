@@ -30,6 +30,7 @@ from governed_embeddings import governed_embed
 from module_graph_analyzer import build_import_graph
 from vector_utils import cosine_similarity
 from retry_utils import with_retry
+from dynamic_path_router import resolve_path, get_project_root
 
 try:  # synergy history DB may need package import
     import synergy_history_db as shd  # type: ignore
@@ -131,8 +132,16 @@ class ModuleSynergyGrapher:
                 self.coefficients.update({k: float(v) for k, v in data.items()})
         self.graph = graph
         self.embedding_threshold = embedding_threshold
-        self.root = root
-        self.weights_file = weights_file
+        self.root = root or get_project_root()
+        self.weights_file = (
+            Path(weights_file)
+            if weights_file
+            else None
+        )
+        if self.weights_file and not self.weights_file.is_absolute():
+            self.weights_file = (
+                resolve_path(str(self.weights_file.parent)) / self.weights_file.name
+            )
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
 
@@ -142,10 +151,12 @@ class ModuleSynergyGrapher:
 
         path = weights_file or self.weights_file
         if path is None:
-            base = self.root if self.root is not None else Path.cwd()
-            path = base / "sandbox_data" / "synergy_weights.json"
+            path = resolve_path("sandbox_data") / "synergy_weights.json"
         else:
-            path = Path(path)
+            p = Path(path)
+            if not p.is_absolute():
+                p = resolve_path(str(p.parent)) / p.name
+            path = p
         self.weights_file = path
         try:
             if path.exists():
@@ -193,7 +204,7 @@ class ModuleSynergyGrapher:
         self.root = root
         db_path = root / "synergy_history.db"
         if not db_path.exists():
-            db_path = root / "sandbox_data" / "synergy_history.db"
+            db_path = resolve_path("sandbox_data/synergy_history.db")
         if not db_path.exists() or shd is None:  # type: ignore[truthy-bool]
             return self.coefficients
 
@@ -226,8 +237,10 @@ class ModuleSynergyGrapher:
         self.coefficients.update(new_coeffs)
 
         path = Path(weights_file) if weights_file else None
+        if path and not path.is_absolute():
+            path = resolve_path(str(path.parent)) / path.name
         self._load_weights(path)
-        out = self.weights_file or (root / "sandbox_data" / "synergy_weights.json")
+        out = self.weights_file or (resolve_path("sandbox_data") / "synergy_weights.json")
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
             out.write_text(json.dumps(self.coefficients))
@@ -260,7 +273,7 @@ class ModuleSynergyGrapher:
         modules = list(import_graph.nodes)
 
         # Reuse cached AST details and embeddings where possible
-        cache_path = root / "sandbox_data" / "synergy_cache.json"
+        cache_path = resolve_path("sandbox_data") / "synergy_cache.json"
         cache: Dict[str, Dict[str, object]] = {}
         if cache_path.exists():
             try:
@@ -389,8 +402,10 @@ class ModuleSynergyGrapher:
 
         # Persist learned weights
         path = Path(weights_file) if weights_file else None
+        if path and not path.is_absolute():
+            path = resolve_path(str(path.parent)) / path.name
         self._load_weights(path)
-        out = self.weights_file or (root / "sandbox_data" / "synergy_weights.json")
+        out = self.weights_file or (resolve_path("sandbox_data") / "synergy_weights.json")
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
             out.write_text(json.dumps(self.coefficients))
@@ -618,7 +633,7 @@ class ModuleSynergyGrapher:
         counts: Dict[Tuple[str, str], float] = {}
         db_path = root / "synergy_history.db"
         if not db_path.exists():
-            db_path = root / "sandbox_data" / "synergy_history.db"
+            db_path = resolve_path("sandbox_data/synergy_history.db")
         if not db_path.exists() or shd is None:  # type: ignore[operator]
             return counts
         try:
@@ -657,9 +672,11 @@ class ModuleSynergyGrapher:
         fmt = format.lower()
         ext = ".json" if fmt == "json" else ".pkl"
         if path is None:
-            path = Path("sandbox_data") / f"module_synergy_graph{ext}"
+            path = resolve_path("sandbox_data") / f"module_synergy_graph{ext}"
         else:
             path = Path(path)
+            if not path.is_absolute():
+                path = resolve_path(str(path.parent)) / path.name
             if not path.suffix:
                 path = path.with_suffix(ext)
 
@@ -684,7 +701,11 @@ class ModuleSynergyGrapher:
         """
 
         if path is None:
-            path = Path("sandbox_data/module_synergy_graph.json")
+            path = resolve_path("sandbox_data/module_synergy_graph.json")
+        else:
+            path = Path(path)
+            if not path.is_absolute():
+                path = resolve_path(str(path))
         self.graph = load_graph(path)
         return self.graph
 
@@ -706,7 +727,7 @@ class ModuleSynergyGrapher:
         # Refresh coefficient weights from disk before scoring
         self._load_weights()
 
-        cache_path = root / "sandbox_data" / "synergy_cache.json"
+        cache_path = resolve_path("sandbox_data") / "synergy_cache.json"
         cache: Dict[str, Dict[str, object]] = {}
         if use_cache and cache_path.exists():
             try:
@@ -843,7 +864,7 @@ class ModuleSynergyGrapher:
                     graph.add_edge(a, b, weight=total)
 
         self.graph = graph
-        out_dir = root / "sandbox_data"
+        out_dir = resolve_path("sandbox_data")
         out_dir.mkdir(exist_ok=True)
         self.save(graph, out_dir / "module_synergy_graph.json", format="json")
         return graph
@@ -866,7 +887,7 @@ class ModuleSynergyGrapher:
         if self.graph is None:
             raise ValueError("graph not built")
 
-        root = self.root or Path.cwd()
+        root = self.root or get_project_root()
         changed: set[str] = {m for m in changed_modules}
         if not changed:
             return self.graph
@@ -882,12 +903,12 @@ class ModuleSynergyGrapher:
                 changed.remove(mod)
 
         if not changed:
-            out_dir = root / "sandbox_data"
+            out_dir = resolve_path("sandbox_data")
             out_dir.mkdir(exist_ok=True)
             self.save(self.graph, out_dir / "module_synergy_graph.json", format="json")
             return self.graph
 
-        cache_path = root / "sandbox_data" / "synergy_cache.json"
+        cache_path = resolve_path("sandbox_data") / "synergy_cache.json"
         cache: Dict[str, Dict[str, object]] = {}
         if cache_path.exists():
             try:
@@ -1042,7 +1063,7 @@ class ModuleSynergyGrapher:
                     elif self.graph.has_edge(a, b):
                         self.graph.remove_edge(a, b)
 
-        out_dir = root / "sandbox_data"
+        out_dir = resolve_path("sandbox_data")
         out_dir.mkdir(exist_ok=True)
         self.save(self.graph, out_dir / "module_synergy_graph.json", format="json")
         return self.graph
