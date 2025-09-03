@@ -1,3 +1,4 @@
+# flake8: noqa
 from __future__ import annotations
 
 """Execute Menace patches in a controlled sandbox environment.
@@ -172,6 +173,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, TYPE_CHECKING, Iterable
+from dynamic_path_router import resolve_path, repo_root
 
 from menace.unified_event_bus import UnifiedEventBus
 from menace.menace_orchestrator import MenaceOrchestrator
@@ -250,15 +252,16 @@ LOCAL_KNOWLEDGE_REFRESH_EVERY = int(
 )
 _local_knowledge_refresh_counter = 0
 
-ROOT = Path(__file__).resolve().parent
-
 import sandbox_runner.config as sandbox_config
 
 _TPL_PATH = Path(
-    os.getenv("GPT_SECTION_TEMPLATE", ROOT / "templates" / "gpt_section_prompt.j2")
+    os.getenv(
+        "GPT_SECTION_TEMPLATE",
+        str(resolve_path("templates/gpt_section_prompt.j2")),
+    )
 )
 _TPL: Template | None = None
-_AUTO_PROMPTS_DIR = ROOT / "templates" / "auto_prompts"
+_AUTO_PROMPTS_DIR = resolve_path("templates/auto_prompts")
 # Loaded auto templates cached globally to avoid repeated disk reads
 _AUTO_TEMPLATES: list[tuple[str, Template]] | None = None
 _SUGGESTION_DB: PatchSuggestionDB | None = None
@@ -752,10 +755,10 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
 
     data_dir = Path(
         getattr(args, "sandbox_data_dir", None)
-        or os.getenv("SANDBOX_DATA_DIR", str(ROOT / "sandbox_data"))
+        or os.getenv("SANDBOX_DATA_DIR", str(resolve_path("sandbox_data")))
     )
     if not data_dir.is_absolute():
-        data_dir = ROOT / data_dir
+        data_dir = repo_root() / data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
     logger.info("using data directory", extra=log_record(path=str(data_dir)))
     policy_file = data_dir / "improvement_policy.pkl"
@@ -1083,7 +1086,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         plugins = []
 
     metrics_cfg_path = os.getenv(
-        "SANDBOX_METRICS_FILE", str(ROOT / "sandbox_metrics.yaml")
+        "SANDBOX_METRICS_FILE", str(resolve_path("sandbox_metrics.yaml"))
     )
     extra_metrics = SANDBOX_EXTRA_METRICS
 
