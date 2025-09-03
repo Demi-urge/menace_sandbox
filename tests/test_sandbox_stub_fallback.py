@@ -5,6 +5,7 @@ from pathlib import Path
 import argparse
 import types
 import pytest
+from dynamic_path_router import resolve_dir, resolve_path
 
 
 def _stub_module(monkeypatch, name, **attrs):
@@ -134,11 +135,11 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     va_mod.VisualAgentClientStub = VisualAgentClientStub
     monkeypatch.setitem(sys.modules, "menace.visual_agent_client", va_mod)
 
-    path = Path(__file__).resolve().parents[1] / "sandbox_runner.py"
+    path = resolve_path("sandbox_runner.py")
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
         str(path),
-        submodule_search_locations=[str(Path(__file__).resolve().parents[1] / "sandbox_runner")],
+        submodule_search_locations=[str(resolve_dir("sandbox_runner"))],
     )
     sr = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner"] = sr
@@ -153,7 +154,7 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
 
 
 def test_generate_input_stubs_seed(monkeypatch):
-    path = Path(__file__).resolve().parents[1] / "sandbox_runner" / "environment.py"
+    path = resolve_path("sandbox_runner/environment.py")
     spec = importlib.util.spec_from_file_location("sandbox_runner.environment", str(path))
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = [str(path.parent)]

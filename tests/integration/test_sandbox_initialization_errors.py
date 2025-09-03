@@ -29,6 +29,7 @@ env_stub.auto_include_modules = lambda *a, **k: []
 
 from sandbox_runner import bootstrap
 import sandbox_runner.generative_stub_provider as gsp
+from dynamic_path_router import resolve_path
 
 
 class DummyROITracker:
@@ -127,7 +128,7 @@ def test_dependency_check_raises_on_missing(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner_main",
-        Path(__file__).resolve().parents[2] / "sandbox_runner.py",
+        resolve_path("sandbox_runner.py"),
     )
     sr = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

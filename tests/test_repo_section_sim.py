@@ -1,6 +1,7 @@
 import types
 import sys
 import asyncio
+from dynamic_path_router import resolve_dir, resolve_path
 
 
 def _stub_module(monkeypatch, name, **attrs):
@@ -259,9 +260,9 @@ def test_section_worker_concurrency(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        str(resolve_path("sandbox_runner.py")),
         submodule_search_locations=[
-            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+            str(resolve_dir("sandbox_runner"))
         ],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
