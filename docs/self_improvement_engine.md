@@ -536,11 +536,15 @@ registry.autoscale(capital_bot=my_capital_bot,
                    approval_callback=lambda: True)
 ```
 
-When the energy score exceeds ``create_energy`` (default ``0.8``) and the ROI
-trend is above ``roi_threshold`` the registry ensures projected ROI covers the
-``cost_per_engine`` before adding a new one. Optionally ``approval_callback``
-can gate risky expansions. If resources dwindle or ROI falls below the
-threshold, engines are removed down to ``min_engines``.
+Energy and ROI thresholds are derived from rolling averages maintained by the
+registry.  When the current energy exceeds the mean by
+``autoscale_create_dev_multiplier`` standard deviations and the ROI trend
+exceeds the mean by ``autoscale_roi_dev_multiplier`` deviations, a new engine is
+considered if the projected ROI covers the ``cost_per_engine``.  Deviation
+multipliers are configurable via :class:`sandbox_settings.SandboxSettings` so
+behaviour adapts to historical performance.  Optionally ``approval_callback``
+can gate risky expansions.  If resources dwindle or ROI falls below the lower
+bound, engines are removed down to ``min_engines``.
 
 ## Synergy Weight Learners
 

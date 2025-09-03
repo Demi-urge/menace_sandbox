@@ -112,13 +112,15 @@ def test_registry_autoscale(tmp_path, monkeypatch):
     # establish baseline
     reg.autoscale(capital_bot=Cap(0.5), data_bot=Data(0.1), factory=factory)
 
+    sie.registry.settings.autoscale_create_dev_multiplier = 0.0
+    sie.registry.settings.autoscale_remove_dev_multiplier = 0.0
+    sie.registry.settings.autoscale_roi_dev_multiplier = 0.0
+
     reg.autoscale(
         capital_bot=Cap(0.9),
         data_bot=Data(0.6),
         factory=factory,
         max_engines=2,
-        create_energy=0.3,
-        roi_threshold=0.2,
     )
     assert len(reg.engines) == 2
 
@@ -128,8 +130,6 @@ def test_registry_autoscale(tmp_path, monkeypatch):
             data_bot=Data(-0.5),
             factory=factory,
             min_engines=1,
-            remove_energy=0.2,
-            roi_threshold=0.2,
         )
     assert len(reg.engines) == 1
 

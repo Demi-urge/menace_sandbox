@@ -88,9 +88,9 @@ class ImprovementEngineRegistry:
         factory: Callable[[str], SelfImprovementEngine],
         max_engines: int = 5,
         min_engines: int = 1,
-        create_energy: float = 0.8,
-        remove_energy: float = 0.3,
-        roi_threshold: float = 0.0,
+        create_energy: float | None = None,
+        remove_energy: float | None = None,
+        roi_threshold: float | None = None,
         cost_per_engine: float = 0.0,
         approval_callback: Optional[Callable[[], bool]] = None,
         max_instances: Optional[int] = None,
@@ -142,13 +142,29 @@ class ImprovementEngineRegistry:
         if max_instances is not None and len(self.engines) >= max_instances:
             return
 
-        projected_roi = roi_dev - cost_per_engine
-        create_thresh = create_energy * energy_std
-        remove_thresh = -remove_energy * energy_std
-        roi_thresh = roi_threshold * roi_std
+        projected_roi = trend - roi_avg - cost_per_engine
+        create_mult = (
+            create_energy
+            if create_energy is not None
+            else getattr(settings, "autoscale_create_dev_multiplier", 0.8)
+        )
+        remove_mult = (
+            remove_energy
+            if remove_energy is not None
+            else getattr(settings, "autoscale_remove_dev_multiplier", 0.3)
+        )
+        roi_mult = (
+            roi_threshold
+            if roi_threshold is not None
+            else getattr(settings, "autoscale_roi_dev_multiplier", 0.0)
+        )
+        create_thresh = energy_avg + create_mult * energy_std
+        remove_thresh = energy_avg - remove_mult * energy_std
+        roi_high = roi_avg + roi_mult * roi_std
+        roi_low = roi_avg - roi_mult * roi_std
         if (
-            energy_dev >= create_thresh
-            and roi_dev > roi_thresh
+            energy >= create_thresh
+            and trend >= roi_high
             and projected_roi > roi_tol
             and len(self.engines) < max_engines
         ):
@@ -158,8 +174,8 @@ class ImprovementEngineRegistry:
             self.register_engine(name, factory(name))
             return
         if (
-            energy_dev <= remove_thresh
-            or roi_dev <= -roi_thresh
+            energy <= remove_thresh
+            or trend <= roi_low
             or projected_roi <= -roi_tol
         ) and len(self.engines) > min_engines:
             name = next(iter(self.engines))
