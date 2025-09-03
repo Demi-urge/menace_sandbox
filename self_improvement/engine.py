@@ -1914,8 +1914,18 @@ class SelfImprovementEngine:
         }
         return score, components
 
-    def _evaluate_scenario_metrics(self, metrics: dict[str, float]) -> None:
-        """Evaluate scenario metrics and trigger remediation based on deviations."""
+    def _evaluate_scenario_metrics(self, metrics: dict[str, float]) -> float:
+        """Evaluate scenario metrics and trigger remediation based on deviations.
+
+        Returns
+        -------
+        float
+            Fraction of metrics that passed. The caller must update the
+            :class:`~self_improvement.baseline_tracker.BaselineTracker` with this
+            value and the provided ``metrics`` so future evaluations use the
+            expanded history.
+        """
+
         prev = getattr(self, "_last_scenario_metrics", {})
         trend = {k: float(v) - float(prev.get(k, 0.0)) for k, v in metrics.items()}
         failing: list[str] = []
@@ -2038,14 +2048,14 @@ class SelfImprovementEngine:
         passed = total - len(failing)
         frac = passed / total if total else 1.0
         try:
-            self.baseline_tracker.update(pass_rate=frac, **metrics)
-            self._pass_rate_delta = self.baseline_tracker.get("pass_rate_delta")
+            self._pass_rate_delta = frac - self.baseline_tracker.get("pass_rate")
         except Exception:
             self._pass_rate_delta = 0.0
         # store negative value when scenarios fail so reward is penalised
         self._scenario_pass_rate = frac - 1.0
         self._last_scenario_trend = trend
         self._last_scenario_metrics = dict(metrics)
+        return frac
 
     # ------------------------------------------------------------------
     def _check_chain_stagnation(self, min_streak: int = 3) -> None:
@@ -7044,7 +7054,11 @@ class SelfImprovementEngine:
                                     except Exception:
                                         logger.exception("Unhandled exception in self_improvement")
                     if scenario_metrics:
-                        self._evaluate_scenario_metrics(scenario_metrics)
+                        frac = self._evaluate_scenario_metrics(scenario_metrics)
+                        try:
+                            self.baseline_tracker.update(pass_rate=frac, **scenario_metrics)
+                        except Exception:
+                            self.logger.exception("baseline tracker update failed")
                         self.logger.info(
                             "scenario metrics",
                             extra=log_record(**scenario_metrics),

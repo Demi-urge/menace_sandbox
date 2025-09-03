@@ -2,6 +2,8 @@ import os
 import sys
 import types
 import logging
+import importlib.util
+import os
 
 # ensure light imports
 os.environ.setdefault("TORCH_DISABLE_DYNAMO", "1")
@@ -32,6 +34,34 @@ sys.modules.setdefault("menace.module_index_db", mid)
 err = types.ModuleType("error_logger")
 err.ErrorLogger = object
 sys.modules.setdefault("error_logger", err)
+
+# stub sandbox_runner to avoid heavy imports
+sr = types.ModuleType("sandbox_runner")
+sr_bootstrap = types.ModuleType("sandbox_runner.bootstrap")
+sr_bootstrap.initialize_autonomous_sandbox = lambda *a, **k: None
+sys.modules.setdefault("sandbox_runner", sr)
+sys.modules.setdefault("sandbox_runner.bootstrap", sr_bootstrap)
+sr_env = types.ModuleType("sandbox_runner.environment")
+sr_env.load_presets = lambda *a, **k: {}
+sr_env.simulate_full_environment = lambda *a, **k: None
+sys.modules.setdefault("sandbox_runner.environment", sr_env)
+sr_cli = types.ModuleType("sandbox_runner.cli")
+sr_cli.main = lambda *a, **k: None
+sys.modules.setdefault("sandbox_runner.cli", sr_cli)
+sr_cycle = types.ModuleType("sandbox_runner.cycle")
+sys.modules.setdefault("sandbox_runner.cycle", sr_cycle)
+sr_oi = types.ModuleType("sandbox_runner.orphan_integration")
+sys.modules.setdefault("sandbox_runner.orphan_integration", sr_oi)
+neurosales_mod = types.ModuleType("neurosales")
+sys.modules.setdefault("neurosales", neurosales_mod)
+
+# use real neuroplasticity module so PathwayDB is available
+np_spec = importlib.util.spec_from_file_location(
+    "menace.neuroplasticity", os.path.join(os.path.dirname(__file__), "..", "neuroplasticity.py")
+)
+np_mod = importlib.util.module_from_spec(np_spec)
+sys.modules["menace.neuroplasticity"] = np_mod
+np_spec.loader.exec_module(np_mod)
 
 from tests import test_self_improvement_engine_rl_synergy as base
 sie = base.sie
@@ -90,13 +120,13 @@ def test_scenario_metric_degradation_triggers_actions(monkeypatch):
     monkeypatch.setattr(engine, "_alignment_review_last_commit", lambda *a, **k: None)
     monkeypatch.setattr(engine, "_sandbox_integrate", lambda *a, **k: None)
     monkeypatch.setattr(engine, "_post_round_orphan_scan", lambda *a, **k: None)
-    engine._evaluate_scenario_metrics(
-        {
-            "latency_error_rate": 0.15,
-            "hostile_failures": 0.3,
-            "concurrency_throughput": 180.0,
-        }
-    )
+    metrics = {
+        "latency_error_rate": 0.15,
+        "hostile_failures": 0.3,
+        "concurrency_throughput": 180.0,
+    }
+    frac = engine._evaluate_scenario_metrics(metrics)
+    engine.baseline_tracker.update(pass_rate=frac, **metrics)
     assert len(alerts) == 1
     assert len(patches) == 1
     assert engine._force_rerun
