@@ -757,72 +757,6 @@ def evaluate_cycle(
     return False, "all_deltas_positive"
 
 
-def should_skip_cycle(tracker: BaselineTracker, error_log: Any) -> bool:
-    """Return ``True`` when metrics trend positively and no critical errors exist.
-
-    Parameters
-    ----------
-    tracker:
-        Baseline metric tracker to inspect for recent deltas.
-    error_log:
-        Object providing access to recent :class:`TelemetryEvent` entries.  It
-        is expected to expose a ``recent_errors``-style method.  When the log is
-        unavailable or fails to provide events the cycle is not skipped.
-    """
-
-    # All tracked metrics must have positive deltas.
-    metrics = [m for m in tracker._history if not m.endswith("_delta")]
-    if any(tracker.delta(m) <= 0 for m in metrics):
-        get_logger(__name__).debug(
-            "cycle not skipped; non-positive metric delta",
-            extra=log_record(metrics=[m for m in metrics if tracker.delta(m) <= 0]),
-        )
-        return False
-
-    if error_log is None:
-        get_logger(__name__).debug(
-            "cycle not skipped; no error log available",
-            extra=log_record(component=__name__),
-        )
-        return False
-
-    try:
-        if hasattr(error_log, "recent_errors"):
-            events = error_log.recent_errors(limit=5)
-        elif hasattr(error_log, "recent_events"):
-            events = error_log.recent_events(limit=5)
-        elif hasattr(getattr(error_log, "db", None), "recent_errors"):
-            events = error_log.db.recent_errors(limit=5)  # type: ignore[attr-defined]
-        else:
-            get_logger(__name__).debug(
-                "cycle not skipped; error log lacks recent events API",
-                extra=log_record(component=__name__),
-            )
-            return False
-    except Exception as exc:
-        get_logger(__name__).warning(
-            "cycle skip check failed",
-            extra=log_record(component=__name__),
-            exc_info=exc,
-        )
-        return False
-
-    for ev in events or []:
-        sev = getattr(getattr(ev, "error_type", None), "severity", None)
-        if sev == "critical":
-            get_logger(__name__).debug(
-                "cycle not skipped; critical error present",
-                extra=log_record(severity=sev),
-            )
-            return False
-
-    get_logger(__name__).debug(
-        "cycle skipped; metrics positive and no critical errors",
-        extra=log_record(component=__name__),
-    )
-    return True
-
-
 def _recent_error_entropy(
     error_log: Any | None, tracker: BaselineTracker
 ) -> tuple[Sequence[Any], float, int]:
@@ -1339,7 +1273,6 @@ def stop_self_improvement_cycle() -> None:
 
 
 __all__ = [
-    "should_skip_cycle",
     "self_improvement_cycle",
     "start_self_improvement_cycle",
     "stop_self_improvement_cycle",
