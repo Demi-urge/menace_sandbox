@@ -632,15 +632,44 @@ def _should_encode(
     tracker: BaselineTracker,
     *,
     entropy_threshold: float,
-) -> bool:
-    """Return True if ``record`` indicates improvement and stability."""
-    entropy = float(record.get("entropy", 0.0))
-    delta_entropy = abs(entropy - float(entropy_threshold))
+) -> tuple[bool, str]:
+    """Determine if the latest cycle warrants encoding.
 
-    roi_gain = float(record.get("roi_gain", 0.0))
-    roi_delta = (roi_gain - tracker.get("roi")) * (getattr(tracker, "momentum", 1.0) or 1.0)
+    The tracker is expected to be updated with the metrics contained in
+    ``record`` *before* this function is invoked.  Deltas for all tracked
+    metrics are therefore derived from :class:`BaselineTracker` rather than
+    recomputed from raw ``record`` values.  A tuple ``(should_encode, reason)``
+    is returned where ``reason`` provides additional context when encoding is
+    skipped.
+    """
 
-    return roi_delta > 0.0 and delta_entropy <= float(entropy_threshold)
+    # Momentum-weighted ROI delta must be positive.
+    momentum = getattr(tracker, "momentum", 1.0) or 1.0
+    roi_delta = tracker.delta("roi") * momentum
+    if roi_delta <= 0:
+        return False, "no_delta"
+
+    # All other tracked metrics (excluding momentum and entropy) require
+    # positive deltas.
+    for metric in tracker._history:
+        if metric.endswith("_delta") or metric in {"roi", "momentum", "entropy"}:
+            continue
+        if tracker.delta(metric) <= 0:
+            return False, "no_delta"
+
+    # Treat entropy spikes as potential overfitting even when ROI is high.
+    if abs(tracker.delta("entropy")) > float(entropy_threshold):
+        return False, "entropy_spike"
+
+    # Any failures or critical errors invalidate the improvement signal.
+    if int(record.get("failures", 0)) > 0:
+        return False, "errors_present"
+    for err in record.get("errors", []) or []:
+        sev = getattr(getattr(err, "error_type", None), "severity", None)
+        if sev == "critical":
+            return False, "errors_present"
+
+    return True, "improved"
 
 
 def evaluate_cycle(
@@ -858,38 +887,21 @@ async def self_improvement_cycle(
                 pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
                 BASELINE_TRACKER.update(roi=roi, pass_rate=pass_rate, entropy=entropy)
                 tracker = BASELINE_TRACKER
-                should_run, reason = evaluate_cycle(
+                should_encode, reason = _should_encode(
                     rec,
                     tracker,
-                    rec.get("errors", []),
+                    entropy_threshold=cfg.overfitting_entropy_threshold,
                 )
-                entropy_shift = abs(tracker.delta("entropy"))
-                has_critical = any(
-                    getattr(getattr(err, "error_type", None), "severity", None)
-                    == "critical"
-                    for err in rec.get("errors", [])
-                )
-                if not should_run and (
-                    entropy_shift > cfg.overfitting_entropy_threshold or has_critical
-                ):
-                    logger.debug(
-                        "run",
-                        extra=log_record(
-                            reason="overfitting_fallback",
-                            metrics=tracker.to_dict(),
-                        ),
-                    )
-                elif not should_run:
+                if not should_encode:
                     logger.debug(
                         "skip",
                         extra=log_record(reason=reason, metrics=tracker.to_dict()),
                     )
                     continue
-                else:
-                    logger.debug(
-                        "run",
-                        extra=log_record(metrics=tracker.to_dict()),
-                    )
+                logger.debug(
+                    "run",
+                    extra=log_record(metrics=tracker.to_dict()),
+                )
                 chain = rec.get("chain", [])
                 if chain and roi > 0:
                     active.append(chain)

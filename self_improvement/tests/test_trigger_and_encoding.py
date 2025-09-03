@@ -76,15 +76,29 @@ def test_should_trigger_respects_dynamic_baseline():
 
 def test_should_encode_uses_roi_delta_and_momentum():
     tracker = BaselineTracker(window=3)
-    tracker.update(roi=1.0)
-    record = {"roi_gain": 1.2, "entropy": 0.4}
-    assert _should_encode(record, tracker, entropy_threshold=0.5)
-    record_neg = {"roi_gain": 0.8, "entropy": 0.4}
-    assert not _should_encode(record_neg, tracker, entropy_threshold=0.5)
-    tracker._success_history.clear()
-    tracker._success_history.extend([False] * tracker.window)
-    assert tracker.momentum == 0.0
-    assert not _should_encode(record, tracker, entropy_threshold=0.5)
+    tracker.update(roi=1.0, pass_rate=1.0, entropy=0.4)
+    record = {"roi_gain": 1.2, "entropy": 0.4, "failures": 0}
+    tracker.update(roi=record["roi_gain"], pass_rate=1.0, entropy=record["entropy"])
+    ok, reason = _should_encode(record, tracker, entropy_threshold=0.5)
+    assert ok and reason == "improved"
+
+    record_neg = {"roi_gain": 0.8, "entropy": 0.4, "failures": 0}
+    tracker_neg = BaselineTracker(window=3)
+    tracker_neg.update(roi=1.0, pass_rate=1.0, entropy=0.4)
+    tracker_neg.update(
+        roi=record_neg["roi_gain"], pass_rate=1.0, entropy=record_neg["entropy"]
+    )
+    ok_neg, reason_neg = _should_encode(record_neg, tracker_neg, entropy_threshold=0.5)
+    assert not ok_neg and reason_neg == "no_delta"
+
+    tracker_zero = BaselineTracker(window=3)
+    tracker_zero.update(roi=1.0, pass_rate=1.0, entropy=0.4)
+    tracker_zero._success_history.clear()
+    tracker_zero._success_history.extend([False] * tracker_zero.window)
+    tracker_zero.update(roi=record["roi_gain"], pass_rate=1.0, entropy=record["entropy"])
+    assert tracker_zero.momentum == 0.0
+    ok_zero, _ = _should_encode(record, tracker_zero, entropy_threshold=0.5)
+    assert not ok_zero
 
 
 def test_urgency_escalates_after_persistent_roi_decline():
