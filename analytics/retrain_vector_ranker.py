@@ -9,6 +9,8 @@ import argparse
 import json
 import time
 
+from dynamic_path_router import resolve_path
+
 # ``retrieval_ranker_dataset`` historically exposed ``load_training_data``.  The
 # helper may not be available in lightweight environments so we fall back to
 # ``build_dataset`` if necessary.
@@ -19,7 +21,7 @@ except Exception:  # pragma: no cover - alias when helper missing
 
 from retrieval_ranker import train, save_model
 
-MODEL_PATH = Path("analytics/retrieval_ranker.model")
+MODEL_PATH = resolve_path("analytics/retrieval_ranker.model")
 REGISTRY_PATH = Path("retrieval_ranker.json")
 
 
