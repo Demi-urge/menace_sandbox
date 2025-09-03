@@ -4,6 +4,7 @@ import ast
 import pytest
 from typing import Any, Mapping, Sequence
 from statistics import fmean
+from self_improvement.baseline_tracker import BaselineTracker
 
 
 src_path = Path(__file__).resolve().parents[1] / "self_improvement" / "meta_planning.py"
@@ -49,10 +50,14 @@ def test_get_entropy_threshold(cfg_value, base, std, dev, expected):
 
 
 def test_should_encode_respects_threshold():
-    record = {"roi_gain": 0.2, "entropy": 0.5}
-    tracker = SimpleNamespace(get=lambda name: 0.0, momentum=1.0)
-    assert _should_encode(record, tracker, entropy_threshold=0.6)
-    assert not _should_encode(record, tracker, entropy_threshold=0.2)
+    tracker = BaselineTracker(window=3)
+    tracker.update(roi=0.0, pass_rate=1.0, entropy=0.3)
+    record = {"roi_gain": 0.2, "entropy": 0.5, "failures": 0}
+    tracker.update(roi=record["roi_gain"], pass_rate=1.0, entropy=record["entropy"])
+    ok_high, _ = _should_encode(record, tracker, entropy_threshold=0.6)
+    ok_low, reason_low = _should_encode(record, tracker, entropy_threshold=0.2)
+    assert ok_high
+    assert not ok_low and reason_low == "entropy_spike"
 
 
 def test_fallback_score_penalizes_delta(monkeypatch):

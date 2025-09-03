@@ -7,6 +7,7 @@ import time
 import types
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from self_improvement.baseline_tracker import BaselineTracker
 import pytest
 
 
@@ -69,17 +70,26 @@ def test_should_encode_requires_positive_roi_and_low_entropy():
     meta = _load_meta_planning()
     should_encode = meta["_should_encode"]
 
-    tracker = types.SimpleNamespace(get=lambda m: 0.0, momentum=1.0)
+    tracker1 = BaselineTracker(window=3)
+    tracker1.update(roi=0.0, pass_rate=1.0, entropy=0.1)
+    rec1 = {"roi_gain": 0.1, "entropy": 0.1, "failures": 0}
+    tracker1.update(roi=rec1["roi_gain"], pass_rate=1.0, entropy=rec1["entropy"])
+    ok1, reason1 = should_encode(rec1, tracker1, entropy_threshold=0.2)
+    assert ok1 and reason1 == "improved"
 
-    assert should_encode(
-        {"roi_gain": 0.1, "entropy": 0.1}, tracker, entropy_threshold=0.2
-    )
-    assert not should_encode(
-        {"roi_gain": 0.0, "entropy": 0.1}, tracker, entropy_threshold=0.2
-    )
-    assert should_encode(
-        {"roi_gain": 0.1, "entropy": 0.3}, tracker, entropy_threshold=0.2
-    )
+    tracker2 = BaselineTracker(window=3)
+    tracker2.update(roi=0.1, pass_rate=1.0, entropy=0.1)
+    rec2 = {"roi_gain": 0.0, "entropy": 0.1, "failures": 0}
+    tracker2.update(roi=rec2["roi_gain"], pass_rate=1.0, entropy=rec2["entropy"])
+    ok2, reason2 = should_encode(rec2, tracker2, entropy_threshold=0.2)
+    assert not ok2 and reason2 == "no_delta"
+
+    tracker3 = BaselineTracker(window=3)
+    tracker3.update(roi=0.0, pass_rate=1.0, entropy=0.1)
+    rec3 = {"roi_gain": 0.1, "entropy": 0.3, "failures": 0}
+    tracker3.update(roi=rec3["roi_gain"], pass_rate=1.0, entropy=rec3["entropy"])
+    ok3, reason3 = should_encode(rec3, tracker3, entropy_threshold=0.2)
+    assert not ok3 and reason3 == "entropy_spike"
 
 
 def test_cycle_uses_fallback_planner_when_missing():
