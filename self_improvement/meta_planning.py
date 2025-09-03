@@ -1108,7 +1108,7 @@ async def self_improvement_cycle(
                             exc_info=exc,
                         )
             if not outcome_logged:
-                _debug_cycle("skipped")
+                _debug_cycle("skipped", reason="no_records")
         except Exception as exc:  # pragma: no cover - planner is best effort
             _debug_cycle("error", reason=str(exc))
             logger.debug("error", extra=log_record(err=str(exc)))
