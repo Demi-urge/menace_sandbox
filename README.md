@@ -1100,7 +1100,7 @@ missing. Notable defaults include:
 - `SYNERGY_WEIGHTS_PATH=sandbox_data/synergy_weights.json`
 - `ALIGNMENT_FLAGS_PATH=sandbox_data/alignment_flags.jsonl`
 - `MODULE_SYNERGY_GRAPH_PATH=sandbox_data/module_synergy_graph.json`
-- `RELEVANCY_METRICS_DB_PATH=sandbox_data/relevancy_metrics.db`
+- `RELEVANCY_METRICS_DB_PATH=/path/to/relevancy_metrics.db`
 - `RUN_CYCLES=0`
 - `RUN_UNTIL=`
  - `METRICS_PORT=8001`  # same as `--metrics-port`
