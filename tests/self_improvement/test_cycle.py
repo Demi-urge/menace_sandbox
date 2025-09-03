@@ -322,7 +322,12 @@ def test_start_self_improvement_cycle_dependency_failure(tmp_path, monkeypatch, 
 def _load_cycle_funcs():
     src = Path("self_improvement/meta_planning.py").read_text()
     tree = ast.parse(src)
-    wanted = {"self_improvement_cycle", "evaluate_cycle"}
+    wanted = {
+        "self_improvement_cycle",
+        "evaluate_cycle",
+        "_evaluate_cycle",
+        "_recent_error_entropy",
+    }
     nodes = [
         n
         for n in tree.body
@@ -343,7 +348,7 @@ def _load_cycle_funcs():
         "TelemetryEvent": object,
         "datetime": datetime,
         "BASELINE_TRACKER": types.SimpleNamespace(),
-        "_get_entropy_threshold": lambda cfg, tracker: 0.0,
+        "_get_entropy_threshold": lambda cfg, tracker: 1.0,
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
@@ -352,7 +357,7 @@ def _load_cycle_funcs():
 class DummyTracker:
     def __init__(self, deltas: Mapping[str, float]):
         self.deltas = dict(deltas)
-        self._history = {k: [] for k in ["roi", "pass_rate", "entropy"]}
+        self._history = {k: [] for k in deltas}
 
     def update(self, **kw):
         pass
@@ -365,6 +370,10 @@ class DummyTracker:
 
     def get(self, metric: str) -> float:
         return float(self.deltas.get(metric, 0.0))
+
+    @property
+    def entropy_delta(self) -> float:
+        return float(self.deltas.get("entropy", 0.0))
 
 
 class DummyLogger:
@@ -445,8 +454,9 @@ def test_cycle_runs_when_deltas_non_positive():
         {"roi": 0.0, "pass_rate": -0.1, "entropy": 0.0},
         {"chain": ["w"], "roi_gain": 0.0, "failures": 0, "entropy": 0.0},
     )
-    assert logs[0][0] == "skip"
-    assert logs[0][1].get("reason") == "no_delta"
+    rec = next(r for r in logs if r[1].get("outcome"))
+    assert rec[1].get("outcome") == "skipped"
+    assert rec[1].get("reason") == "no_delta"
 
 
 def test_cycle_skips_when_deltas_positive():
@@ -454,8 +464,9 @@ def test_cycle_skips_when_deltas_positive():
         {"roi": 1.0, "pass_rate": 0.5, "entropy": 0.1},
         {"chain": ["w"], "roi_gain": 1.0, "failures": 0, "entropy": 0.1},
     )
-    assert logs[0][0] == "skip"
-    assert logs[0][1].get("reason") == "all_deltas_positive"
+    rec = next(r for r in logs if r[1].get("outcome"))
+    assert rec[1].get("outcome") == "skipped"
+    assert rec[1].get("reason") == "all_deltas_positive"
 
 
 def test_cycle_overfitting_fallback_on_entropy_spike():
@@ -463,5 +474,6 @@ def test_cycle_overfitting_fallback_on_entropy_spike():
         {"roi": 1.0, "pass_rate": 1.0, "entropy": 5.0},
         {"chain": ["w"], "roi_gain": 1.0, "failures": 0, "entropy": 5.0},
     )
-    assert logs[0][0] == "fallback"
-    assert logs[0][1].get("reason") == "entropy_spike"
+    rec = next(r for r in logs if r[1].get("outcome"))
+    assert rec[1].get("outcome") == "fallback"
+    assert rec[1].get("reason") == "entropy_spike"

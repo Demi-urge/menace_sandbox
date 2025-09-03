@@ -878,12 +878,11 @@ def _evaluate_cycle(
         quantitative metric deltas along with a ``reason`` string.
     """
 
-    deltas = {
-        "roi": tracker.delta("roi"),
-        "pass_rate": tracker.delta("pass_rate"),
-        "momentum": tracker.delta("momentum"),
-        "entropy": tracker.delta("entropy"),
-    }
+    deltas: dict[str, float] = {}
+    for name in getattr(tracker, "_history", {}):
+        if name.endswith("_delta"):
+            continue
+        deltas[name] = float(tracker.delta(name))
 
     # Examine recent errors for critical severity
     critical = False
@@ -906,7 +905,7 @@ def _evaluate_cycle(
             critical = True
             break
 
-    if not critical and all(v > 0 for v in deltas.values()):
+    if not critical and deltas and all(v > 0 for v in deltas.values()):
         return "skip", {"reason": "all_deltas_positive", "metrics": deltas}
     if critical:
         reason = "critical_error"
@@ -1020,16 +1019,19 @@ async def self_improvement_cycle(
 
     def _debug_cycle(outcome: str, *, reason: str | None = None) -> None:
         tracker = BASELINE_TRACKER
+        metrics: dict[str, float] = {}
+        for name in getattr(tracker, "_history", {}):
+            if name.endswith("_delta"):
+                continue
+            if name == "entropy":
+                metrics["entropy_delta"] = float(
+                    getattr(tracker, "entropy_delta", tracker.delta("entropy"))
+                )
+            else:
+                metrics[f"{name}_delta"] = float(tracker.delta(name))
         logger.debug(
             "cycle",
-            extra=log_record(
-                outcome=outcome,
-                reason=reason,
-                roi_delta=tracker.delta("roi"),
-                pass_rate_delta=tracker.delta("pass_rate"),
-                momentum_delta=tracker.delta("momentum"),
-                entropy_delta=tracker.entropy_delta,
-            ),
+            extra=log_record(outcome=outcome, reason=reason, **metrics),
         )
 
     while True:
