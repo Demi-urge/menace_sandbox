@@ -99,6 +99,7 @@ except ImportError:  # pragma: no cover - fallback for flat layout
 router = GLOBAL_ROUTER or init_db_router("self_improvement")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
 from .meta_planning import PLANNER_INTERVAL, evaluate_cycle
+from . import meta_planning
 # Time based interval (in seconds) used to periodically trigger the meta
 # workflow planner in a background thread.  Keeping the configuration separate
 # from the cycle based ``PLANNER_INTERVAL`` allows the planner to run even when
@@ -1032,6 +1033,9 @@ class SelfImprovementEngine:
     def _plan_cross_domain_chains(self, top_k: int = 3) -> list[list[str]]:
         """Use meta planner to suggest new cross-domain workflow chains."""
         if MetaWorkflowPlanner is None or WorkflowChainSuggester is None:
+            self.logger.debug(
+                "cross-domain chain planning skipped: planner or suggester missing"
+            )
             return []
         try:
             planner = MetaWorkflowPlanner()
@@ -1133,10 +1137,14 @@ class SelfImprovementEngine:
     def _discover_meta_workflows(self) -> list[dict[str, Any]]:
         """Run meta planner, evaluate chains and persist winners."""
         if MetaWorkflowPlanner is None or self.workflow_evolver is None:
+            self.logger.debug(
+                "meta workflow discovery skipped: planner or evolver missing"
+            )
             return []
         try:
             planner = MetaWorkflowPlanner()
         except Exception:
+            self.logger.exception("meta workflow planner instantiation failed")
             return []
         workflows: dict[str, Callable[[], Any]] = {}
         db: WorkflowDB | None = None
@@ -1165,6 +1173,7 @@ class SelfImprovementEngine:
                 self.logger.exception("failed loading workflows for meta discovery")
         records = planner.discover_and_persist(workflows, metrics_db=self.metrics_db)
         if not records:
+            self.logger.debug("meta workflow discovery produced no records")
             return []
         if db is None and WorkflowDB is not None and WorkflowRecord is not None:
             try:
@@ -1248,10 +1257,20 @@ class SelfImprovementEngine:
 
     def _execute_meta_planner(self) -> None:
         """Instantiate planner and run scheduled meta-pipelines."""
-        if MetaWorkflowPlanner is None or self.workflow_evolver is None:
-            return
+        if self.workflow_evolver is None:
+            self.logger.debug(
+                "meta planner execution skipped: workflow_evolver missing"
+            )
+            raise RuntimeError("workflow_evolver not initialised")
+        planner_cls = (
+            meta_planning.MetaWorkflowPlanner or meta_planning._FallbackPlanner
+        )
+        if planner_cls is meta_planning._FallbackPlanner:
+            self.logger.debug(
+                "MetaWorkflowPlanner unavailable; using fallback planner"
+            )
         try:
-            planner = MetaWorkflowPlanner()
+            planner = planner_cls()
             workflows: dict[str, Callable[[], Any]] = {}
             if WorkflowDB is not None and WorkflowRecord is not None:
                 try:
@@ -1562,6 +1581,7 @@ class SelfImprovementEngine:
 
     def _load_state(self) -> None:
         if not self.state_path or not self.state_path.exists():
+            self.logger.debug("state file missing; skipping load")
             return
         try:
             with open(self.state_path, "r", encoding="utf-8") as fh:
@@ -1610,6 +1630,7 @@ class SelfImprovementEngine:
     # ------------------------------------------------------------------
     def _save_state(self) -> None:
         if not self.state_path:
+            self.logger.debug("state path not configured; skipping save")
             return
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1737,6 +1758,7 @@ class SelfImprovementEngine:
 
     def _start_meta_planner_thread(self, interval: float) -> None:
         if self._meta_planner_thread:
+            self.logger.debug("meta planner thread already running; skip start")
             return
         self._meta_planner_stop = threading.Event()
         self._meta_planner_thread = threading.Thread(
@@ -1760,9 +1782,19 @@ class SelfImprovementEngine:
         """Background evolution loop driven by :class:`MetaWorkflowPlanner`."""
 
         assert self._meta_loop_stop is not None
-        if MetaWorkflowPlanner is None or self.workflow_evolver is None:
+        if self.workflow_evolver is None:
+            self.logger.debug(
+                "meta planning loop skipped: workflow_evolver missing"
+            )
             return
-        planner = MetaWorkflowPlanner()
+        planner_cls = (
+            meta_planning.MetaWorkflowPlanner or meta_planning._FallbackPlanner
+        )
+        if planner_cls is meta_planning._FallbackPlanner:
+            self.logger.debug(
+                "MetaWorkflowPlanner unavailable; using fallback planner"
+            )
+        planner = planner_cls()
 
         while not self._meta_loop_stop.is_set():
             try:
@@ -1848,6 +1880,7 @@ class SelfImprovementEngine:
         self, interval: float, improvement_threshold: float
     ) -> None:
         if self._meta_loop_thread:
+            self.logger.debug("meta planning loop already running; skip start")
             return
         self._meta_loop_stop = threading.Event()
         self._meta_loop_thread = threading.Thread(
