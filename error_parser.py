@@ -14,28 +14,10 @@ import re
 from datetime import datetime
 from typing import Optional
 
-# ``self_improvement`` has heavy import-time side effects.  To avoid importing
-# the entire package when only targeting utilities are required, load the
-# targeting module directly from its path.
-import importlib.util
-import pathlib
-import sys
-
-_targeting_path = pathlib.Path(__file__).with_name("self_improvement").joinpath("targeting.py")
-_spec = importlib.util.spec_from_file_location("_targeting", _targeting_path)
-if _spec and _spec.loader:  # pragma: no cover - best effort
-    _module = importlib.util.module_from_spec(_spec)
-    sys.modules.setdefault(_spec.name, _module)
-    _spec.loader.exec_module(_module)
-    TargetRegion = getattr(_module, "TargetRegion")  # type: ignore[attr-defined]
-    _extract_target_region = getattr(
-        _module, "extract_target_region"
-    )  # type: ignore[attr-defined]
-else:  # pragma: no cover - fallback when module unavailable
-    TargetRegion = None  # type: ignore
-
-    def _extract_target_region(trace: str):  # type: ignore
-        return None
+try:
+    from .target_region import TargetRegion, extract_target_region as _extract_target_region
+except ImportError:  # pragma: no cover - fallback for direct execution
+    from target_region import TargetRegion, extract_target_region as _extract_target_region  # type: ignore
 
 
 @dataclass
@@ -136,6 +118,7 @@ class ErrorParser:
         for f in files:
             seen_files.setdefault(f, None)
 
+        region = _extract_target_region(report.trace)
         first_tag = report.tags[0] if report.tags else ""
         return {
             "error_type": first_tag,
@@ -143,6 +126,7 @@ class ErrorParser:
             "tags": report.tags,
             "signature": _signature(report.trace),
             "trace": report.trace,
+            "target_region": region,
         }
 
 

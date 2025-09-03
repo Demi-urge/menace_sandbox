@@ -24,6 +24,7 @@ from foresight_tracker import ForesightTracker
 from db_router import GLOBAL_ROUTER, init_db_router
 from alert_dispatcher import dispatch_alert
 from dynamic_path_router import resolve_path
+from error_parser import ErrorParser
 
 
 # ``vector_service`` is an essential dependency but importing it at module load
@@ -832,6 +833,13 @@ def _sandbox_cycle_runner(
         try:
             ctx.tester.run_once()
             results = getattr(ctx.tester, "results", {}) or {}
+            trace_out = (results.get("stdout", "") + results.get("stderr", "")).strip()
+            if trace_out:
+                parsed = ErrorParser.parse(trace_out)
+                region = parsed.get("target_region") if isinstance(parsed, dict) else None
+                if region:
+                    results["target_region"] = region
+                    ctx.last_failure_region = region
         except Exception as exc:
             record_error(exc)
             results = {}

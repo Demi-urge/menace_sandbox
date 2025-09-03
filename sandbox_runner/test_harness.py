@@ -219,7 +219,7 @@ def run_tests(
         stdout_parts.append(tests.stdout)
         failure = None
         if tests.returncode != 0:
-            failure = ErrorParser.parse_failure(tests.stdout + tests.stderr)
+            failure = ErrorParser.parse(tests.stdout + tests.stderr)
         return TestHarnessResult(
             success=tests.returncode == 0,
             stdout="".join(stdout_parts),
