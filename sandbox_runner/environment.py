@@ -67,6 +67,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from lock_utils import SandboxLock as FileLock
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
+from self_improvement.baseline_tracker import TRACKER as GLOBAL_BASELINE_TRACKER
 
 from .workflow_sandbox_runner import WorkflowSandboxRunner
 from metrics_exporter import Gauge, environment_failure_total
@@ -7277,7 +7278,10 @@ def try_integrate_into_workflows(
 
     from menace.task_handoff_bot import WorkflowDB
     from module_index_db import ModuleIndexDB
-    from self_test_service import SelfTestService
+    try:  # pragma: no cover - service may be unavailable
+        from self_test_service import SelfTestService
+    except Exception:  # pragma: no cover - fallback for tests
+        SelfTestService = None  # type: ignore
     from db_router import GLOBAL_ROUTER
     import ast
     import asyncio
@@ -7290,6 +7294,9 @@ def try_integrate_into_workflows(
     except Exception:
         import metrics_exporter as _me  # type: ignore
     names: dict[str, str] = {}
+    tracker = GLOBAL_BASELINE_TRACKER
+    settings = SandboxSettings()
+    multiplier = getattr(settings, "side_effect_dev_multiplier", 1.0)
     for m in modules:
         p = Path(m)
         if p.is_absolute():
@@ -7301,7 +7308,16 @@ def try_integrate_into_workflows(
             rel = p
         rel_str = rel.as_posix()
         metric = side_effects.get(rel_str) or side_effects.get(str(p), 0)
-        if metric and metric > side_effect_threshold:
+        hist = tracker.to_dict().get("side_effects", [])
+        if len(hist) >= 2:
+            avg = tracker.get("side_effects")
+            std = tracker.std("side_effects")
+            threshold = avg + multiplier * std
+        else:
+            threshold = side_effect_threshold
+        if metric:
+            tracker.update(side_effects=metric)
+        if metric and metric > threshold:
             logger.info(
                 "skipping %s due to side effects score %.2f", rel_str, metric
             )
@@ -8237,7 +8253,17 @@ def auto_include_modules(
                 res = orphan_analyzer.classify_module(path, include_meta=True)
                 cls, meta = res if isinstance(res, tuple) else (res, {})
                 score = float(meta.get("side_effects", 0))
-                if score > getattr(settings, "side_effect_threshold", 10):
+                hist = GLOBAL_BASELINE_TRACKER.to_dict().get("side_effects", [])
+                if len(hist) >= 2:
+                    avg = GLOBAL_BASELINE_TRACKER.get("side_effects")
+                    std = GLOBAL_BASELINE_TRACKER.std("side_effects")
+                    threshold = avg + getattr(
+                        settings, "side_effect_dev_multiplier", 1.0
+                    ) * std
+                else:
+                    threshold = getattr(settings, "side_effect_threshold", 10)
+                GLOBAL_BASELINE_TRACKER.update(side_effects=score)
+                if score > threshold:
                     logger.info(
                         "skipping %s due to side effects score %.2f", mod, score
                     )
