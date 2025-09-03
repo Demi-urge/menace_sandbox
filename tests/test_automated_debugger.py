@@ -33,6 +33,7 @@ spec = importlib.util.spec_from_file_location(
 pkg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pkg)
 sys.modules["menace"] = pkg
+sys.modules.setdefault("menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object))
 import menace.automated_debugger as ad
 
 
@@ -40,20 +41,27 @@ class DummyEngine:
     def __init__(self):
         self.called = False
 
-    def apply_patch(self, path: Path, description: str, **kw):
+    def apply_patch(self, path: Path, description: str, *, target_region=None, **kw):
         self.called = True
 
 
 class DummyTelem:
+    def __init__(self, log: str):
+        self.log = log
+
     def recent_errors(self, limit: int = 5):
-        return ["error"]
+        return [self.log]
 
 
 def test_analyse_and_fix(monkeypatch, tmp_path):
+    mod = tmp_path / "mod.py"
+    mod.write_text("def x():\n    pass\n")
+    log = f"File '{mod}', line 1, in x"
     eng = DummyEngine()
-    dbg = ad.AutomatedDebugger(DummyTelem(), eng)
+    dbg = ad.AutomatedDebugger(DummyTelem(log), eng)
+    monkeypatch.setitem(sys.modules, "sandbox_runner", types.SimpleNamespace(integrate_new_orphans=lambda p: None))
     monkeypatch.setattr(ad.tempfile, "NamedTemporaryFile", lambda *a, **k: open(tmp_path / "t.py", "w+"))
-    monkeypatch.setattr(ad.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=b""))
+    monkeypatch.setattr(ad.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=b"", stdout=""))
     dbg.analyse_and_fix()
     assert eng.called
 

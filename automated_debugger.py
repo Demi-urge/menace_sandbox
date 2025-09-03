@@ -12,6 +12,11 @@ from typing import Iterable
 
 from .self_coding_engine import SelfCodingEngine
 from .retry_utils import retry
+from .target_region import TargetRegion, extract_target_region
+from .patch_attempt_tracker import PatchAttemptTracker
+
+
+_FRAME_RE = re.compile(r"File \"([^\"]+)\", line (\d+), in ([^\n]+)")
 
 
 class AutomatedDebugger:
@@ -21,6 +26,7 @@ class AutomatedDebugger:
         self.telemetry_db = telemetry_db
         self.engine = engine
         self.logger = logging.getLogger("AutomatedDebugger")
+        self._tracker = PatchAttemptTracker()
 
     # ------------------------------------------------------------------
     def _recent_logs(self, limit: int = 5) -> Iterable[str]:
@@ -138,43 +144,72 @@ class AutomatedDebugger:
         if not logs:
             return
         tests = self._generate_tests(logs)
-        for code in tests:
+        for log, code in zip(logs, tests):
             with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
                 f.write(code)
-                path = Path(f.name)
+                test_path = Path(f.name)
+
+            line_region: TargetRegion | None = None
+            func_region: TargetRegion | None = None
+            m = _FRAME_RE.findall(log)
+            if m:
+                filename, lineno, func = m[-1]
+                line_region = TargetRegion(
+                    filename=filename,
+                    start_line=int(lineno),
+                    end_line=int(lineno),
+                    function=func.strip(),
+                )
+                func_region = extract_target_region(log)
+
+            if line_region and func_region:
+                level, target = self._tracker.level_for(line_region, func_region)
+                module_path = Path(func_region.filename)
+            else:
+                level, target = "module", None
+                module_path = test_path
 
             @retry(Exception, attempts=3)
-            def _apply(path: Path) -> None:
+            def _apply(path: Path, region: TargetRegion | None) -> None:
                 self.engine.apply_patch(
                     path,
                     "auto_debug",
                     reason="auto_debug",
                     trigger="automated_debugger",
+                    target_region=region,
                 )
 
             try:
-                _apply(path)
+                _apply(module_path, target)
                 try:
                     from sandbox_runner import integrate_new_orphans  # type: ignore
 
                     integrate_new_orphans(Path.cwd())
                 except Exception:
                     self.logger.exception(
-                        "integrate_new_orphans after apply_patch failed"
+                        "integrate_new_orphans after apply_patch failed",
                     )
-                res = subprocess.run(["pytest", "-q", str(path)], capture_output=True, text=True)
+                res = subprocess.run(
+                    ["pytest", "-q", str(test_path)], capture_output=True, text=True
+                )
                 if res.returncode != 0:
                     self.logger.error(
                         "test failed after patch: %s",
                         (res.stdout + res.stderr).strip(),
                     )
+                    if line_region and func_region:
+                        self._tracker.record_failure(level, line_region, func_region)
                     self.logger.warning("Patch failed. Reverting or retrying...")
                     continue
-                self.logger.info("patch succeeded for %s", path.name)
+                self.logger.info("patch succeeded for %s", test_path.name)
+                if line_region:
+                    self._tracker.reset(line_region)
             except Exception:
                 self.logger.exception("patch failed")
+                if line_region and func_region:
+                    self._tracker.record_failure(level, line_region, func_region)
             finally:
-                path.unlink(missing_ok=True)
+                test_path.unlink(missing_ok=True)
 
 
 __all__ = ["AutomatedDebugger"]
