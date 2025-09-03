@@ -145,22 +145,22 @@ sys.modules.setdefault("menace.alert_dispatcher", _alert_dispatcher)
 _readiness_index = importlib.import_module(__name__ + ".readiness_index")
 sys.modules.setdefault("readiness_index", _readiness_index)
 sys.modules.setdefault("menace.readiness_index", _readiness_index)
+from .dynamic_path_router import resolve_path, get_project_root
 
-_pkg_dir = os.path.dirname(__file__)
-_sk_dir = os.path.join(_pkg_dir, "sklearn")
-_extra_dir = os.path.join(_pkg_dir, "menace")
-if os.path.isdir(_extra_dir) and _extra_dir not in __path__:
-    __path__.append(_extra_dir)
-if "sklearn" not in sys.modules and os.path.isdir(_sk_dir):
+_sk_dir = get_project_root() / "sklearn"
+_extra_dir = get_project_root() / "menace"
+if _extra_dir.is_dir() and str(_extra_dir) not in __path__:
+    __path__.append(str(_extra_dir))
+if "sklearn" not in sys.modules and _sk_dir.is_dir():
     spec = importlib.util.spec_from_file_location(
-        "sklearn", os.path.join(_sk_dir, "__init__.py")
+        "sklearn", str(resolve_path("sklearn/__init__.py"))
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     sys.modules["sklearn"] = mod
     for sub in ["feature_extraction", "linear_model", "pipeline"]:
         spec_sub = importlib.util.spec_from_file_location(
-            f"sklearn.{sub}", os.path.join(_sk_dir, sub, "__init__.py")
+            f"sklearn.{sub}", str(resolve_path(f"sklearn/{sub}/__init__.py"))
         )
         mod_sub = importlib.util.module_from_spec(spec_sub)
         spec_sub.loader.exec_module(mod_sub)
