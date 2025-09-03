@@ -7420,7 +7420,7 @@ def try_integrate_into_workflows(
                     logger.exception('unexpected error')
             ids: set[int] = set()
             for name in expanded:
-                path = (repo / (name.replace(".", "/") + ".py")).resolve()
+                path = Path(resolve_path(repo / (name.replace(".", "/") + ".py")))
                 ids.update(clusterer.clusters.get(str(path), []))
             module_intents[mod] = ids
 
@@ -7431,7 +7431,7 @@ def try_integrate_into_workflows(
         for wf in workflows:
             ids: set[int] = set()
             for step in wf.workflow:
-                path = (repo / (step.replace(".", "/") + ".py")).resolve()
+                path = Path(resolve_path(repo / (step.replace(".", "/") + ".py")))
                 ids.update(clusterer.clusters.get(str(path), []))
             workflow_intents[wf.wid] = ids
     updated: list[int] = []
@@ -7447,7 +7447,7 @@ def try_integrate_into_workflows(
         for step in wf.workflow:
             mod = step.split(":")[0]
             step_names.append(mod)
-            file = repo / (mod.replace(".", "/") + ".py")
+            file = Path(resolve_path(repo / (mod.replace(".", "/") + ".py")))
             step_imports.update(_imports(file))
             try:
                 rel = file.resolve().relative_to(repo)
