@@ -3,6 +3,7 @@ import json
 import types
 import sys
 from pathlib import Path
+from dynamic_path_router import resolve_path
 import pytest
 
 
@@ -21,7 +22,7 @@ class DummyLogger:
 
 
 def _load_integrator(repo: Path, data_dir: Path):
-    src = Path("self_improvement.py").read_text()
+    src = resolve_path("self_improvement.py").read_text()
     tree = ast.parse(src)
     cls = next(
         n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"

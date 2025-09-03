@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 from statistics import fmean
 from typing import Any, Callable, Mapping, Sequence
+from dynamic_path_router import resolve_path
 
 import pytest
 
@@ -68,7 +69,7 @@ class DummyLogger:
 
 
 def _load_fallback_planner():
-    src = Path("self_improvement/meta_planning.py").read_text()
+    src = resolve_path("self_improvement/meta_planning.py").read_text()
     tree = ast.parse(src)
     nodes = [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "_FallbackPlanner"]
     module = ast.Module(nodes, type_ignores=[])

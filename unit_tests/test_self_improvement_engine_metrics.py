@@ -1,9 +1,10 @@
 import ast
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 
 def _load_data_dir(sandbox_dir):
-    src = Path("self_improvement/__init__.py").read_text()
+    src = resolve_path("self_improvement/__init__.py").read_text()
     tree = ast.parse(src)
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_data_dir")
     module = ast.Module([fn], type_ignores=[])

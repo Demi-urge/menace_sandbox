@@ -6,13 +6,14 @@ import threading
 import time
 import types
 from pathlib import Path
+from dynamic_path_router import resolve_path
 from typing import Any, Callable, Mapping, Sequence
 from self_improvement.baseline_tracker import BaselineTracker
 import pytest
 
 
 def _load_meta_planning():
-    src = Path("self_improvement/meta_planning.py").read_text()
+    src = resolve_path("self_improvement/meta_planning.py").read_text()
     tree = ast.parse(src)
     wanted = {
         "_get_entropy_threshold",
@@ -215,7 +216,7 @@ def test_cycle_fails_when_enabled_but_missing():
 def test_cycle_thread_logs_cancellation(monkeypatch, caplog):
     import importlib.util
 
-    path = Path("self_improvement/meta_planning.py")
+    path = resolve_path("self_improvement/meta_planning.py")
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.self_improvement.meta_planning", path
     )

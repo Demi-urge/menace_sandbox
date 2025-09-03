@@ -3,7 +3,7 @@ import importlib
 import logging
 import time
 import types
-from pathlib import Path
+from dynamic_path_router import resolve_path
 from typing import Any, Callable, Awaitable
 from unittest.mock import patch
 import asyncio
@@ -19,7 +19,7 @@ import pytest
 
 
 def _load_utils():
-    src = Path("self_improvement/utils.py").read_text()
+    src = resolve_path("self_improvement/utils.py").read_text()
     tree = ast.parse(src)
     wanted_funcs = {
         "_load_callable",

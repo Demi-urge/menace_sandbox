@@ -1,5 +1,6 @@
 import ast
 from pathlib import Path
+from dynamic_path_router import resolve_path
 import os
 from types import SimpleNamespace
 
@@ -42,7 +43,7 @@ def test_evolve_workflows_calls_evolver():
         "os": os,
     }
 
-    src = Path("self_improvement.py").read_text()
+    src = resolve_path("self_improvement.py").read_text()
     tree = ast.parse(src)
     class_node = next(
         n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"
@@ -107,7 +108,7 @@ def test_evolve_workflows_skips_flagged_workflow():
         "os": os,
     }
 
-    src = Path("self_improvement.py").read_text()
+    src = resolve_path("self_improvement.py").read_text()
     tree = ast.parse(src)
     class_node = next(
         n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"
