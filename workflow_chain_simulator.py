@@ -13,6 +13,7 @@ from typing import Sequence, Iterable, List, Dict, Any, Mapping, Callable
 import json
 from pathlib import Path
 import logging
+from dynamic_path_router import resolve_path
 
 try:  # pragma: no cover - allow import when used as package or module
     from .workflow_chain_suggester import WorkflowChainSuggester
@@ -20,7 +21,10 @@ try:  # pragma: no cover - allow import when used as package or module
     from .composite_workflow_scorer import CompositeWorkflowScorer
     from .workflow_synergy_comparator import WorkflowSynergyComparator
     from .workflow_stability_db import WorkflowStabilityDB
-    from .meta_workflow_planner import MetaWorkflowPlanner, simulate_meta_workflow as _simulate_meta_workflow
+    from .meta_workflow_planner import (
+        MetaWorkflowPlanner,
+        simulate_meta_workflow as _simulate_meta_workflow,
+    )
     from . import workflow_run_summary
 except Exception:  # pragma: no cover - fallback to absolute imports
     from workflow_chain_suggester import WorkflowChainSuggester  # type: ignore
@@ -28,10 +32,13 @@ except Exception:  # pragma: no cover - fallback to absolute imports
     from composite_workflow_scorer import CompositeWorkflowScorer  # type: ignore
     from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
     from workflow_stability_db import WorkflowStabilityDB  # type: ignore
-    from meta_workflow_planner import MetaWorkflowPlanner, simulate_meta_workflow as _simulate_meta_workflow  # type: ignore
+    from meta_workflow_planner import (
+        MetaWorkflowPlanner,
+        simulate_meta_workflow as _simulate_meta_workflow,
+    )  # type: ignore
     import workflow_run_summary  # type: ignore
 
-RESULTS_PATH = Path("sandbox_data/chain_simulations.json")
+RESULTS_PATH = resolve_path("sandbox_data/chain_simulations.json")
 logger = logging.getLogger(__name__)
 
 
