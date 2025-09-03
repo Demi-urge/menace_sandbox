@@ -17,6 +17,8 @@ import logging
 from pathlib import Path
 from typing import Iterable, List
 
+from dynamic_path_router import resolve_path
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -102,12 +104,12 @@ def main(argv: Iterable[str] | None = None) -> None:
         help="Repeat detection excluding discovered modules until stable",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
-    root = Path.cwd()
+    root = resolve_path(".")
     orphan_paths = find_orphan_modules(
         root, excludes=args.exclude, recursive=args.recursive
     )
-    output = root / "sandbox_data" / "orphan_modules.json"
-    output.parent.mkdir(exist_ok=True)
+    output = resolve_path("sandbox_data/orphan_modules.json")
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps([str(p) for p in orphan_paths], indent=2))
     for path in orphan_paths:
         logger.info("orphan module: %s", path)
