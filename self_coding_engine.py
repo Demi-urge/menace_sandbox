@@ -531,16 +531,24 @@ class SelfCodingEngine:
         code: str,
         success: bool,
         roi_delta: float,
+        target_region: TargetRegion | None = None,
     ) -> None:
         """Record GPT output and its outcome for later retrieval."""
         status = "success" if success else "failure"
         summary = f"status={status},roi_delta={roi_delta:.4f}"
+        if target_region is not None:
+            summary += (
+                f",lines={target_region.start_line}-{target_region.end_line}"
+            )
         try:
+            key = f"{path}:{description}"
+            if target_region is not None:
+                key = f"{key}:{target_region.start_line}-{target_region.end_line}"
             self.gpt_memory.log_interaction(
-                f"{path}:{description}", code.strip(), tags=[ERROR_FIX, IMPROVEMENT_PATH]
+                key, code.strip(), tags=[ERROR_FIX, IMPROVEMENT_PATH]
             )
             self.gpt_memory.log_interaction(
-                f"{path}:{description}:result", summary, tags=[FEEDBACK]
+                f"{key}:result", summary, tags=[FEEDBACK]
             )
         except Exception:
             self.logger.exception("memory logging failed")
@@ -1208,9 +1216,10 @@ class SelfCodingEngine:
         When ``chunk_index`` is provided and the file exceeds
         :attr:`prompt_chunk_token_threshold`, only the selected chunk's raw
         source is included in the prompt.  Other chunks are represented by their
-        summaries to keep the prompt size below token limits. When ``target_region``
-        is supplied the generated code is spliced into that line range instead of
-        being appended.
+        summaries to keep the prompt size below token limits.  When
+        ``target_region`` is supplied, only that snippet and minimal surrounding
+        context are presented to the model and the generated code is spliced back
+        into the original file at the specified range.
         """
         try:
             code = self.generate_helper(
@@ -1612,7 +1621,12 @@ class SelfCodingEngine:
         baseline_runtime: float | None = None,
         target_region: TargetRegion | None = None,
     ) -> tuple[int | None, bool, float]:
-        """Patch file, run CI and benchmark a workflow.
+        """Patch a file, optionally restricting edits to a target region.
+
+        When ``target_region`` is provided the specified line range along with
+        minimal surrounding context is supplied to the language model and the
+        generated code is spliced back into the original file.  Unrelated code
+        remains untouched and ROI/memory bookkeeping is scoped to the region.
 
         Returns the rowid of the stored patch if available.
         """
@@ -1729,7 +1743,14 @@ class SelfCodingEngine:
             else:
                 path.write_text(original, encoding="utf-8")
             ci_result = self._run_ci(path)
-            self._store_patch_memory(path, description, generated_code, False, 0.0)
+            self._store_patch_memory(
+                path,
+                description,
+                generated_code,
+                False,
+                0.0,
+                target_region=target_region,
+            )
             if self.cognition_layer and session_id:
                 try:
                     self.cognition_layer.record_patch_outcome(session_id, False)
@@ -1848,7 +1869,14 @@ class SelfCodingEngine:
                         "tags": [FEEDBACK],
                     },
                 )
-                self._store_patch_memory(path, description, generated_code, False, roi_delta)
+                self._store_patch_memory(
+                    path,
+                    description,
+                    generated_code,
+                    False,
+                    roi_delta,
+                    target_region=target_region,
+                )
                 if self.patch_db and session_id and vectors and patch_id is not None:
                     try:
                         self.patch_db.record_vector_metrics(
@@ -1917,7 +1945,14 @@ class SelfCodingEngine:
             else:
                 path.write_text(original, encoding="utf-8")
             self._run_ci(path)
-            self._store_patch_memory(path, description, generated_code, False, 0.0)
+            self._store_patch_memory(
+                path,
+                description,
+                generated_code,
+                False,
+                0.0,
+                target_region=target_region,
+            )
             if self.patch_db and session_id and vectors:
                 try:
                     self.patch_db.record_vector_metrics(
@@ -1981,7 +2016,14 @@ class SelfCodingEngine:
             else:
                 path.write_text(original, encoding="utf-8")
             self._run_ci(path)
-            self._store_patch_memory(path, description, generated_code, False, 0.0)
+            self._store_patch_memory(
+                path,
+                description,
+                generated_code,
+                False,
+                0.0,
+                target_region=target_region,
+            )
             if self.patch_db and session_id and vectors:
                 try:
                     self.patch_db.record_vector_metrics(
@@ -2271,7 +2313,14 @@ class SelfCodingEngine:
                 "tags": [FEEDBACK],
             },
         )
-        self._store_patch_memory(path, description, generated_code, not reverted, roi_delta)
+        self._store_patch_memory(
+            path,
+            description,
+            generated_code,
+            not reverted,
+            roi_delta,
+            target_region=target_region,
+        )
         coverage_delta = (
             coverage - baseline_coverage if baseline_coverage is not None else 0.0
         )
