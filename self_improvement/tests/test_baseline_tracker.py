@@ -3,6 +3,7 @@ import sys
 import types
 from pathlib import Path
 
+
 MODULE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(MODULE_DIR.parent))
 
@@ -15,46 +16,40 @@ sub_pkg.__path__ = [str(MODULE_DIR)]
 sys.modules.setdefault("menace.self_improvement", sub_pkg)
 sys.modules.setdefault("self_improvement", sub_pkg)
 
-utils_spec = importlib.util.spec_from_file_location(
-    "menace.self_improvement.utils", MODULE_DIR / "utils.py"
-)
-utils = importlib.util.module_from_spec(utils_spec)
-utils_spec.loader.exec_module(utils)
-
 baseline_spec = importlib.util.spec_from_file_location(
     "menace.self_improvement.baseline_tracker", MODULE_DIR / "baseline_tracker.py"
 )
 baseline = importlib.util.module_from_spec(baseline_spec)
 baseline_spec.loader.exec_module(baseline)
 
-MovingBaselineTracker = utils.MovingBaselineTracker
 BaselineTracker = baseline.BaselineTracker
 
 
-def _apply(tracker: MovingBaselineTracker, score: float, margin: float = 0.0) -> tuple[bool, float]:
+def _apply(tracker: BaselineTracker, score: float, margin: float = 0.0) -> tuple[bool, float]:
     """Helper returning acceptance decision and delta."""
 
-    avg, _ = tracker.stats()
-    delta = score - avg
-    tracker.update(score)
+    prev_avg = tracker.get("score")
+    tracker.update(score=score)
+    history = tracker.delta_history("score")
+    delta = history[-1] if history else score - prev_avg
     return delta >= margin, delta
 
 
 def test_accept_on_positive_delta():
-    tracker = MovingBaselineTracker(3)
-    tracker.update(0.2)
-    tracker.update(0.4)
+    tracker = BaselineTracker(window=3)
+    tracker.update(score=0.2)
+    tracker.update(score=0.4)
     accepted, delta = _apply(tracker, 0.6)
     assert accepted and delta > 0
 
 
 def test_reject_and_persist_on_negative_delta():
-    tracker = MovingBaselineTracker(3)
-    tracker.update(0.8)
-    tracker.update(0.7)
+    tracker = BaselineTracker(window=3)
+    tracker.update(score=0.8)
+    tracker.update(score=0.7)
     accepted, delta = _apply(tracker, 0.6)
     assert not accepted and delta < 0
-    assert tracker.composite_history[-1] == 0.6
+    assert tracker.current("score") == 0.6
 
 
 def test_momentum_history_recorded():
@@ -100,3 +95,4 @@ def test_current_and_delta_methods():
     assert tracker.current("pass_rate") == 1.0
     # Average is 0.75 -> delta should be 0.25
     assert tracker.delta("pass_rate") == 0.25
+
