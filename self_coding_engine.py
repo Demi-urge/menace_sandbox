@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
 from itertools import zip_longest
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import subprocess
 import json
 import base64
@@ -147,6 +147,21 @@ except Exception:  # pragma: no cover - fallback for flat layout
             return None
 from .failure_fingerprint import FailureFingerprint, find_similar, log_fingerprint
 from .failure_retry_utils import check_similarity_and_warn, record_failure
+try:  # pragma: no cover - optional dependency for metrics
+    from . import metrics_exporter as _me
+except Exception:  # pragma: no cover - fallback when executed directly
+    import metrics_exporter as _me  # type: ignore
+
+_PATCH_ATTEMPTS = _me.Gauge(
+    "patch_attempts_total",
+    "Patch attempts by region scope",
+    labelnames=["scope"],
+)
+_PATCH_ESCALATIONS = _me.Gauge(
+    "patch_escalations_total",
+    "Patch escalation events",
+    labelnames=["level"],
+)
 from .self_improvement.baseline_tracker import (
     BaselineTracker,
     TRACKER as METRIC_BASELINES,
@@ -2407,6 +2422,23 @@ class SelfCodingEngine:
             meta.update({"retrieval_context": "", "retrieval_session_id": ""})
         return meta
 
+    def _expand_region_to_function(self, path: Path, region: TargetRegion) -> TargetRegion:
+        """Return ``region`` expanded to cover the entire function."""
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == region.func_name:
+                    end = getattr(node, "end_lineno", node.lineno)
+                    return TargetRegion(
+                        start_line=node.lineno,
+                        end_line=end,
+                        func_name=region.func_name,
+                    )
+        except Exception:
+            pass
+        return region
+
     def apply_patch_with_retry(
         self,
         path: Path,
@@ -2417,11 +2449,13 @@ class SelfCodingEngine:
         **kwargs: Any,
     ) -> tuple[int | None, bool, float]:
         """Retry :meth:`apply_patch` until tests pass or ``max_attempts`` reached."""
-
         attempts = 0
         current = report
         failures: List[ErrorReport] = []
         context_meta = kwargs.pop("context_meta", None)
+        region: TargetRegion | None = kwargs.pop("target_region", None)
+        region_scope = "module" if region is None else "line"
+        failures_for_region = 0
         last_fp: FailureFingerprint | None = None
         warning = ""
         while attempts < max_attempts:
@@ -2485,6 +2519,7 @@ class SelfCodingEngine:
                         except Exception:
                             self.logger.exception("failed to record retry status")
             attempts += 1
+            _PATCH_ATTEMPTS.labels(scope=region_scope).inc()
             meta = context_meta if attempts == 1 and context_meta is not None else None
             if current or meta is None:
                 meta = self._build_retry_context(description, current)
@@ -2495,6 +2530,7 @@ class SelfCodingEngine:
                     path,
                     description,
                     context_meta=meta,
+                    target_region=region,
                     **kwargs,
                 )
             except Exception as exc:
@@ -2624,6 +2660,28 @@ class SelfCodingEngine:
             )
             record_failure(fp, log_fingerprint)
             last_fp = fp
+            failures_for_region += 1
+            if region is not None:
+                if failures_for_region == 2 and region_scope == "line":
+                    region = self._expand_region_to_function(path, region)
+                    region_scope = "function"
+                    _PATCH_ESCALATIONS.labels(level="function").inc()
+                    self.logger.info(
+                        "escalating patch region",
+                        extra={
+                            "level": "function",
+                            "path": str(path),
+                            "region": asdict(region),
+                        },
+                    )
+                elif failures_for_region == 4 and region_scope == "function":
+                    region = None
+                    region_scope = "module"
+                    _PATCH_ESCALATIONS.labels(level="module").inc()
+                    self.logger.info(
+                        "escalating patch region",
+                        extra={"level": "module", "path": str(path)},
+                    )
         roi_val = 0.0
         if self.data_bot:
             try:
