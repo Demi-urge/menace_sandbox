@@ -20,9 +20,9 @@ from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
 from .trend_predictor import TrendPredictor
 try:  # pragma: no cover - allow flat imports
-    from .dynamic_path_router import resolve_path
+    from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
@@ -790,7 +790,7 @@ class SelfCodingEngine:
         """Return a prompt formatted for :class:`VisualAgentClient`."""
         func = f"auto_{description.replace(' ', '_')}"
         repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
-        resolved = str(resolve_path(path)) if path else None
+        resolved = path_for_prompt(path) if path else None
         self._apply_prompt_style(description, module=resolved or "visual_agent")
         retry_trace = self._last_retry_trace
         try:

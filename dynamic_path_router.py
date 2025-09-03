@@ -133,6 +133,12 @@ def resolve_dir(dirname: str) -> Path:
     return path
 
 
+def path_for_prompt(name: str) -> str:
+    """Return a normalised string path suitable for inclusion in prompts."""
+
+    return str(resolve_path(name))
+
+
 def clear_cache() -> None:
     """Clear internal caches used by this module."""
 
@@ -152,6 +158,7 @@ __all__ = [
     "resolve_path",
     "resolve_module_path",
     "resolve_dir",
+    "path_for_prompt",
     "project_root",
     "repo_root",
     "clear_cache",
