@@ -2,6 +2,7 @@ import logging
 import sys
 import types
 from pathlib import Path
+import dynamic_path_router
 
 from llm_interface import LLMResult
 
@@ -146,7 +147,7 @@ def test_knowledge_service_logging(monkeypatch, caplog):
     )
     caplog.set_level(logging.WARNING)
     caplog.clear()
-    engine.generate_helper("desc", path=Path("a.py"))
+    engine.generate_helper("desc", path=dynamic_path_router.resolve_path(".") / "a.py")
     messages = [record.message for record in caplog.records]
     assert any("recent_feedback" in m for m in messages)
     assert any("recent_improvement_path" in m for m in messages)

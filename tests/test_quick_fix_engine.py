@@ -41,9 +41,20 @@ kg = types.ModuleType("menace.knowledge_graph")
 kg.KnowledgeGraph = object
 sys.modules["menace.knowledge_graph"] = kg
 
+# Minimal vector_service stubs
+vec = types.SimpleNamespace(
+    ContextBuilder=object,
+    Retriever=object,
+    FallbackResult=list,
+    EmbeddingBackfill=object,
+)
+sys.modules.setdefault("vector_service", vec)
+sys.modules.setdefault("vector_service.patch_logger", types.SimpleNamespace(PatchLogger=object))
+
 # Load QuickFixEngine without importing the full package
 spec = importlib.util.spec_from_file_location(
-    "menace.quick_fix_engine", os.path.join(os.path.dirname(__file__), "..", "quick_fix_engine.py")
+    "menace.quick_fix_engine",
+    str(dynamic_path_router.resolve_path("quick_fix_engine.py")),
 )
 quick_fix = importlib.util.module_from_spec(spec)
 sys.modules["menace.quick_fix_engine"] = quick_fix
@@ -73,6 +84,8 @@ def test_telemetry_error_logged(monkeypatch, tmp_path, caplog):
         graph=FailingGraph(),
     )
     (tmp_path / "bot.py").write_text("x = 1\n")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "bot", {}, 1))
     monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
@@ -107,10 +120,12 @@ def test_run_targets_frequent_module(tmp_path, monkeypatch):
         graph=DummyGraph(),
     )
     (tmp_path / "b.py").write_text("x=1\n")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
     engine.run("bot")
-    assert engine.manager.calls[0][0] == Path("b.py")
+    assert engine.manager.calls[0][0] == dynamic_path_router.resolve_path("b.py")
     assert engine.graph.events[0][0][2] == "b"
     assert engine.graph.events[0][1]["resolved"] is True
     assert engine.graph.updated is engine.db
@@ -145,11 +160,13 @@ def test_preemptive_patch_modules(tmp_path, monkeypatch):
     db = DummyPreemptiveDB()
     mgr = DummyManager2()
     engine = QuickFixEngine(error_db=db, manager=mgr, threshold=0, graph=None)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     (tmp_path / "mod.py").write_text("x=1\n")
     modules = [("mod", 0.9), ("low", 0.1)]
     engine.preemptive_patch_modules(modules, risk_threshold=0.5)
-    assert mgr.calls == [(Path("mod.py"), "preemptive_patch")]
+    assert mgr.calls == [(dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")]
     assert db.records == [("mod", 0.9, 123)]
 
 
@@ -157,11 +174,13 @@ def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
     db = DummyPreemptiveDB()
     mgr = DummyManager2(fail=True)
     engine = QuickFixEngine(error_db=db, manager=mgr, threshold=0, graph=None)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     (tmp_path / "mod.py").write_text("x=1\n")
     monkeypatch.setattr(quick_fix, "generate_patch", lambda m, engine=None: 999)
     engine.preemptive_patch_modules([("mod", 0.8)], risk_threshold=0.5)
-    assert mgr.calls == [(Path("mod.py"), "preemptive_patch")]
+    assert mgr.calls == [(dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")]
     assert db.records == [("mod", 0.8, 999)]
 
 
@@ -174,7 +193,8 @@ def test_generate_patch_blocks_risky(monkeypatch, tmp_path):
             with open(p, "a", encoding="utf-8") as f:
                 f.write("eval('2')\n")
             return 1, "", ""
-
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     res = quick_fix.generate_patch(str(path), engine=DummyEngine())
     assert res is None
@@ -216,6 +236,8 @@ def test_run_records_retrieval_metadata(tmp_path, monkeypatch):
         patch_logger=PatchLogger(patch_db=db),
     )
     (tmp_path / "mod.py").write_text("x=1\n")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
     monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
@@ -253,6 +275,8 @@ def test_run_records_ancestry_without_logger(tmp_path, monkeypatch):
         retriever=Retriever(),
     )
     (tmp_path / "mod.py").write_text("x=1\n")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
     monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)

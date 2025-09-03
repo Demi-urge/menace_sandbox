@@ -1474,7 +1474,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                     self.logger.exception("record failed strategy failed")
                             return None
 
-                    root_test = Path(f"test_auto_{idx}.py")
+                    root_test = resolve_path(".") / f"test_auto_{idx}.py"
                     root_test.write_text(code)
                     result = "failed"
                     before_cov = after_cov = None
