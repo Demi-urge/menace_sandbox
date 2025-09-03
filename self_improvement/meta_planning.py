@@ -644,6 +644,21 @@ def _get_entropy_threshold(cfg: SandboxSettings, tracker: BaselineTracker) -> fl
     return base + dev * std
 
 
+def _percentile(data: Sequence[float], pct: float) -> float:
+    """Return the *pct* percentile for *data* where *pct* is 0-1."""
+    if not data:
+        return 0.0
+    if not 0 <= pct <= 1:
+        raise ValueError("percentile must be between 0 and 1")
+    data_sorted = sorted(data)
+    k = (len(data_sorted) - 1) * pct
+    f = int(k)
+    c = min(f + 1, len(data_sorted) - 1)
+    if f == c:
+        return data_sorted[f]
+    return data_sorted[f] + (data_sorted[c] - data_sorted[f]) * (k - f)
+
+
 def _get_overfit_thresholds(
     cfg: SandboxSettings, tracker: BaselineTracker
 ) -> tuple[int, float]:
@@ -651,22 +666,22 @@ def _get_overfit_thresholds(
 
     ``max_allowed_errors`` and ``entropy_overfit_threshold`` may be configured
     explicitly on *cfg*.  When they are ``None`` the thresholds are derived from
-    the baseline statistics tracked by ``tracker`` using a simple
-    mean-plus-standard-deviation heuristic.  This keeps the fallback logic
-    responsive to recent behaviour without requiring static configuration.
+    tracker histories using a percentile-based heuristic (default 95th
+    percentile).  This keeps the fallback logic responsive to recent behaviour
+    without requiring static configuration.
     """
 
     max_errors = getattr(cfg, "max_allowed_errors", None)
     if max_errors is None:
-        base = tracker.get("error_count")
-        std = tracker.std("error_count")
-        max_errors = base + std
+        pct = getattr(cfg, "error_overfit_percentile", 0.95)
+        errors = tracker.to_dict().get("error_count", [])
+        max_errors = _percentile(errors, pct)
 
     entropy_thresh = getattr(cfg, "entropy_overfit_threshold", None)
     if entropy_thresh is None:
-        base = tracker.get("entropy_delta")
-        std = tracker.std("entropy_delta")
-        entropy_thresh = abs(base) + std
+        pct = getattr(cfg, "entropy_overfit_percentile", 0.95)
+        deltas = [abs(x) for x in tracker.to_dict().get("entropy_delta", [])]
+        entropy_thresh = _percentile(deltas, pct)
 
     return int(max_errors), float(entropy_thresh)
 
