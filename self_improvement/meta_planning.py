@@ -963,6 +963,20 @@ async def self_improvement_cycle(
                     exc_info=exc,
                 )
 
+    def _debug_cycle(outcome: str, *, reason: str | None = None) -> None:
+        tracker = BASELINE_TRACKER
+        logger.debug(
+            "cycle",
+            extra=log_record(
+                outcome=outcome,
+                reason=reason,
+                roi_delta=tracker.delta("roi"),
+                pass_rate_delta=tracker.delta("pass_rate"),
+                momentum_delta=tracker.delta("momentum"),
+                entropy_delta=tracker.entropy_delta,
+            ),
+        )
+
     while True:
         if stop_event is not None and stop_event.is_set():
             break
@@ -982,19 +996,13 @@ async def self_improvement_cycle(
                 )
                 decision = "run"
             else:
-                logger.debug(
-                    "skip",
-                    extra=log_record(
-                        decision="skip",
-                        reason=info.get("reason"),
-                        metrics=info.get("metrics"),
-                    ),
-                )
+                _debug_cycle("skipped", reason=info.get("reason"))
                 await asyncio.sleep(interval)
                 continue
         try:
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
+            outcome_logged = False
             for rec in records:
                 await _log(rec)
                 roi = float(rec.get("roi_gain", 0.0))
@@ -1038,25 +1046,15 @@ async def self_improvement_cycle(
                         entropy_threshold=cfg.overfitting_entropy_threshold,
                     )
                 if not should_encode:
-                    msg = (
-                        "fallback" if reason in {"entropy_spike", "errors_present"} else "skip"
+                    outcome = (
+                        "fallback" if reason in {"entropy_spike", "errors_present"} else "skipped"
                     )
-                    logger.debug(
-                        msg,
-                        extra=log_record(
-                            reason=reason,
-                            decision="skip",
-                            metrics=tracker.to_dict(),
-                        ),
-                    )
+                    _debug_cycle(outcome, reason=reason)
+                    outcome_logged = True
                     continue
                 else:
-                    logger.debug(
-                        "run",
-                        extra=log_record(
-                            decision="improve", metrics=tracker.to_dict()
-                        ),
-                    )
+                    _debug_cycle("improved")
+                    outcome_logged = True
                 chain = rec.get("chain", [])
                 if chain and roi > 0:
                     active.append(chain)
@@ -1071,6 +1069,8 @@ async def self_improvement_cycle(
                             extra=log_record(workflow_id=chain_id),
                             exc_info=exc,
                         )
+            if not outcome_logged:
+                _debug_cycle("skipped")
         except Exception as exc:  # pragma: no cover - planner is best effort
             logger.debug("error", extra=log_record(err=str(exc)))
             logger.exception("meta planner execution failed", exc_info=exc)
