@@ -371,6 +371,9 @@ class DummyTracker:
     def get(self, metric: str) -> float:
         return float(self.deltas.get(metric, 0.0))
 
+    def std(self, metric: str) -> float:  # pragma: no cover - simple stub
+        return 0.0
+
     @property
     def entropy_delta(self) -> float:
         return float(self.deltas.get("entropy", 0.0))
@@ -429,6 +432,7 @@ def _run_cycle(
                     meta_domain_penalty=0.0,
                     overfitting_entropy_threshold=1.0,
                     entropy_overfit_threshold=1.0,
+                    entropy_z_threshold=1.0,
                     max_allowed_errors=0,
                 )
             ),

@@ -39,7 +39,10 @@ def _load_cycle_funcs() -> dict[str, Any]:
         "BASELINE_TRACKER": types.SimpleNamespace(),
         "_get_entropy_threshold": lambda cfg, tracker: 1.0,
         "_init": types.SimpleNamespace(
-            settings=types.SimpleNamespace(critical_severity_threshold=75.0)
+            settings=types.SimpleNamespace(
+                critical_severity_threshold=75.0,
+                entropy_z_threshold=1.0,
+            )
         ),
     }
     exec(compile(module, "<ast>", "exec"), ns)
@@ -63,6 +66,9 @@ class DummyTracker:
 
     def get(self, metric: str) -> float:
         return float(self.deltas.get(metric, 0.0))
+
+    def std(self, metric: str) -> float:  # pragma: no cover - simple stub
+        return 0.0
 
     @property
     def entropy_delta(self) -> float:
@@ -90,7 +96,7 @@ class DummyLogger:
 def _run_cycle(
     deltas: Mapping[str, float],
     record: Mapping[str, Any],
-    recent: tuple[Sequence[Any], float, int] | None = None,
+    recent: tuple[Sequence[Any], float, int, float, float] | None = None,
     evaluator: Callable[[Any, Any | None], tuple[str, Mapping[str, Any]]] | None = None,
 ) -> list[tuple[str, Mapping[str, Any]]]:
     meta = _load_cycle_funcs()
@@ -123,6 +129,7 @@ def _run_cycle(
                     meta_domain_penalty=0.0,
                     overfitting_entropy_threshold=1.0,
                     entropy_overfit_threshold=1.0,
+                    entropy_z_threshold=1.0,
                     max_allowed_errors=0,
                     critical_severity_threshold=75.0,
                 )
@@ -262,7 +269,7 @@ def test_cycle_overfitting_fallback_logs_before_planner():
     logs = _run_cycle(
         {"roi": 1.0, "pass_rate": 1.0, "entropy": 0.0},
         {"chain": [], "roi_gain": 0.0, "failures": 0, "entropy": 0.0},
-        recent=(["trace"], 2.0, 1),
+        recent=(["trace"], 0.2, 0, 0.05, 0.02),
     )
     overfit = [rec for msg, rec in logs if rec.get("outcome") == "fallback"]
     assert any(r.get("reason") == "overfitting" for r in overfit)
@@ -299,6 +306,7 @@ def test_cycle_logs_skip_on_stop_event():
                     meta_domain_penalty=0.0,
                     overfitting_entropy_threshold=1.0,
                     entropy_overfit_threshold=1.0,
+                    entropy_z_threshold=1.0,
                     max_allowed_errors=0,
                 )
             ),
