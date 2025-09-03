@@ -825,8 +825,8 @@ def should_skip_cycle(tracker: BaselineTracker, error_log: Any) -> bool:
 
 def _recent_error_entropy(
     error_log: Any | None, tracker: BaselineTracker
-) -> tuple[Sequence[Any], float]:
-    """Return recent error traces and entropy change.
+) -> tuple[Sequence[Any], float, int]:
+    """Return recent error traces, entropy change and error count.
 
     Parameters
     ----------
@@ -855,7 +855,8 @@ def _recent_error_entropy(
         events = []
 
     entropy_delta = getattr(tracker, "entropy_delta", 0.0)
-    return list(events or []), float(entropy_delta)
+    error_count = len(events or [])
+    return list(events or []), float(entropy_delta), error_count
 
 
 def _evaluate_cycle(
@@ -1020,7 +1021,12 @@ async def self_improvement_cycle(
                     exc_info=exc,
                 )
 
-    def _debug_cycle(outcome: str, *, reason: str | None = None) -> None:
+    def _debug_cycle(
+        outcome: str,
+        *,
+        reason: str | None = None,
+        **extra: Any,
+    ) -> None:
         tracker = BASELINE_TRACKER
         metrics: dict[str, float] = {}
         for name in getattr(tracker, "_history", {}):
@@ -1032,6 +1038,9 @@ async def self_improvement_cycle(
                 )
             else:
                 metrics[f"{name}_delta"] = float(tracker.delta(name))
+        for key, value in extra.items():
+            if isinstance(value, (int, float)):
+                metrics[key] = float(value)
         logger.debug(
             "cycle",
             extra=log_record(outcome=outcome, reason=reason, **metrics),
@@ -1052,20 +1061,34 @@ async def self_improvement_cycle(
                     return "run", {"reason": "no_evaluator"}
         decision, info = eval_fn(BASELINE_TRACKER, error_log)
         if decision == "skip":
-            traces, ent_delta = _recent_error_entropy(error_log, BASELINE_TRACKER)
-            threshold = getattr(planner, "entropy_threshold", 0.0)
-            if traces or abs(ent_delta) > float(threshold):
+            traces, ent_delta, err_count = _recent_error_entropy(
+                error_log, BASELINE_TRACKER
+            )
+            max_errors = getattr(cfg, "max_allowed_errors", 0)
+            entropy_threshold = getattr(
+                cfg, "entropy_overfit_threshold", getattr(planner, "entropy_threshold", 0.0)
+            )
+            if err_count > int(max_errors) or abs(ent_delta) > float(entropy_threshold):
                 logger.debug(
                     "fallback_overfitting",
                     extra=log_record(
                         decision="run",
                         reason="fallback_overfitting",
                         entropy_delta=ent_delta,
-                        errors=len(traces),
+                        errors=err_count,
+                        max_allowed_errors=max_errors,
+                        entropy_overfit_threshold=entropy_threshold,
                     ),
                 )
                 decision = "run"
-                _debug_cycle("fallback", reason="overfitting")
+                _debug_cycle(
+                    "fallback",
+                    reason="overfitting",
+                    errors=err_count,
+                    entropy_delta=ent_delta,
+                    max_allowed_errors=max_errors,
+                    entropy_overfit_threshold=entropy_threshold,
+                )
             else:
                 _debug_cycle("skipped", reason=info.get("reason"))
                 await asyncio.sleep(interval)
