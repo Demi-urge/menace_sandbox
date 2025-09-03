@@ -33,6 +33,10 @@ import json
 from pathlib import Path
 import atexit
 import psutil
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 try:
     from .visual_agent_queue import VisualAgentQueue
 except ImportError:  # pragma: no cover - allow running as script
@@ -298,7 +302,7 @@ def _cleanup_stale_files() -> None:
 # Queue management
 
 # Database paths
-DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
 QUEUE_FILE = DATA_DIR / "visual_agent_queue.jsonl"  # legacy path
 QUEUE_DB = DATA_DIR / "visual_agent_queue.db"
 RECOVERY_METRICS_FILE = DATA_DIR / "visual_agent_recovery.json"
