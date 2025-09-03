@@ -2,13 +2,15 @@ import json
 import types
 import sys
 import logging
+from pathlib import Path
 
 
 def test_engine_skips_heavy_side_effects(monkeypatch, tmp_path):
     import menace_sandbox.self_improvement as sie
+    from menace_sandbox.self_improvement.baseline_tracker import BaselineTracker
 
-    mod = tmp_path / "a.py"
-    mod.write_text("print('hi')")
+    (tmp_path / "a.py").write_text("print('hi')")
+    (tmp_path / "b.py").write_text("print('bye')")
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
@@ -29,7 +31,11 @@ def test_engine_skips_heavy_side_effects(monkeypatch, tmp_path):
 
     def fake_classify(path, include_meta=False):
         assert include_meta
-        return "candidate", {"side_effects": 11}
+        name = Path(path).name
+        return (
+            "candidate",
+            {"side_effects": 5 if name == "a.py" else 11},
+        )
 
     monkeypatch.setattr(sie, "classify_module", fake_classify)
 
@@ -40,10 +46,18 @@ def test_engine_skips_heavy_side_effects(monkeypatch, tmp_path):
         def exception(self, *a, **k):
             pass
 
-    dummy = types.SimpleNamespace(logger=DummyLogger())
+    dummy = types.SimpleNamespace(
+        logger=DummyLogger(), baseline_tracker=BaselineTracker()
+    )
+
+    # Seed baseline with a safe module
     res = sie.SelfImprovementEngine._test_orphan_modules(dummy, ["a.py"])
+    assert res == {"a.py"}
+
+    # Second module exceeds dynamic threshold and is skipped
+    res = sie.SelfImprovementEngine._test_orphan_modules(dummy, ["b.py"])
     assert res == set()
 
     data = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert data["a.py"]["reason"] == "heavy_side_effects"
+    assert data["b.py"]["reason"] == "heavy_side_effects"
 

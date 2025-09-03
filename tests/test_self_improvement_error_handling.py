@@ -19,9 +19,24 @@ def _load_module(monkeypatch, tmp_path):
 
     # Patch the stubbed ``sandbox_settings`` module before importing
     # ``self_improvement`` so its global initialisation succeeds.
-    import sandbox_settings as ss  # type: ignore
     import sys
     import types as _types
+
+    ss = _types.ModuleType("sandbox_settings")
+    class _Settings:
+        def __init__(self):
+            self.test_redundant_modules = True
+            self.exclude_dirs = ""
+            self.sandbox_repo_path = str(tmp_path)
+            self.sandbox_data_dir = str(tmp_path)
+
+        def __getattr__(self, name):  # pragma: no cover - provide safe defaults
+            return 1
+
+    ss.SandboxSettings = _Settings
+    ss.load_sandbox_settings = lambda: _Settings()
+    sys.modules["sandbox_settings"] = ss
+    sys.modules["menace.sandbox_settings"] = ss
 
     # Ensure optional menace modules required during import expose minimal APIs.
     neuro = sys.modules.setdefault("menace.neuroplasticity", _types.ModuleType("neuro"))
@@ -39,20 +54,18 @@ def _load_module(monkeypatch, tmp_path):
     gpt_mod = sys.modules.setdefault("menace.gpt_memory", _types.ModuleType("gpt"))
     setattr(gpt_mod, "GPTMemoryManager", object)
 
-    monkeypatch.setattr(
-        ss,
-        "SandboxSettings",
-        lambda: types.SimpleNamespace(
-            side_effect_threshold=0,
-            test_redundant_modules=True,
-            exclude_dirs="",
-            sandbox_repo_path=str(tmp_path),
-            sandbox_data_dir=str(tmp_path),
-        ),
-    )
-    monkeypatch.setattr(
-        ss, "load_sandbox_settings", lambda: ss.SandboxSettings(), raising=False
-    )
+    sys.modules.setdefault("menace.sandbox_settings", ss)
+
+    pg_mod = _types.ModuleType("menace.self_improvement.patch_generation")
+    setattr(pg_mod, "generate_patch", lambda *a, **k: None)
+    sys.modules["menace.self_improvement.patch_generation"] = pg_mod
+
+    sr_pkg = sys.modules.setdefault("sandbox_runner", _types.ModuleType("sandbox_runner"))
+    sr_boot = _types.ModuleType("sandbox_runner.bootstrap")
+    setattr(sr_boot, "initialize_autonomous_sandbox", lambda *a, **k: None)
+    sys.modules["sandbox_runner.bootstrap"] = sr_boot
+
+    # ``SandboxSettings`` already defined on stub module above
 
     path = Path(__file__).resolve().parent.parent / "self_improvement" / "__init__.py"
     spec = importlib.util.spec_from_file_location("menace.self_improvement", path)
@@ -65,12 +78,10 @@ def _load_module(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_repo_path", lambda: tmp_path)
     monkeypatch.setattr(mod, "_data_dir", lambda: tmp_path)
 
-    # ``auto_include_modules`` normally returns integration metadata.  For the
-    # tests we only need a placeholder structure.
-    monkeypatch.setattr(
-        mod.environment,
-        "auto_include_modules",
-        lambda *a, **k: (None, {"added": []}),
+    # Provide stub environment with ``auto_include_modules`` placeholder.
+    mod.environment = types.SimpleNamespace(
+        auto_include_modules=lambda *a, **k: (None, {"added": []}),
+        try_integrate_into_workflows=lambda *a, **k: None,
     )
 
     return mod
@@ -79,9 +90,30 @@ def _load_module(monkeypatch, tmp_path):
 def _make_engine(mod):
     """Create a minimal object that supports ``_update_orphan_modules``."""
 
+    class _BT:
+        def __init__(self):
+            self.values: list[float] = []
+
+        def to_dict(self):
+            return {"side_effects": list(self.values)}
+
+        def get(self, name):
+            return sum(self.values) / len(self.values) if self.values else 0.0
+
+        def std(self, name):
+            if len(self.values) < 2:
+                return 0.0
+            avg = self.get(name)
+            return (sum((v - avg) ** 2 for v in self.values) / len(self.values)) ** 0.5
+
+        def update(self, **metrics):
+            if "side_effects" in metrics:
+                self.values.append(float(metrics["side_effects"]))
+
     engine = types.SimpleNamespace(
         logger=logging.getLogger("test"),
         orphan_traces={},
+        baseline_tracker=_BT(),
     )
     engine._collect_recursive_modules = lambda mods: mods
     engine._test_orphan_modules = lambda mods: mods

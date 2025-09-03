@@ -26,7 +26,7 @@ def _load_test_method():
         "Path": Path,
         "Iterable": __import__("typing").Iterable,
         "SandboxSettings": lambda: types.SimpleNamespace(
-            side_effect_threshold=0.0, test_redundant_modules=False
+            test_redundant_modules=False
         ),
         "classify_module": lambda path, include_meta=True: ("candidate", {}),
         "analyze_redundancy": lambda p: False,
