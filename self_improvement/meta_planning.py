@@ -878,11 +878,12 @@ def _evaluate_cycle(
         quantitative metric deltas along with a ``reason`` string.
     """
 
-    deltas: dict[str, float] = {}
-    for name in getattr(tracker, "_history", {}):
+    metrics: dict[str, float] = {}
+    history = getattr(tracker, "_history", {})
+    for name in history.keys():
         if name.endswith("_delta"):
             continue
-        deltas[name] = float(tracker.delta(name))
+        metrics[name] = float(tracker.delta(name))
 
     # Examine recent errors for critical severity
     critical = False
@@ -905,13 +906,13 @@ def _evaluate_cycle(
             critical = True
             break
 
-    if not critical and deltas and all(v > 0 for v in deltas.values()):
-        return "skip", {"reason": "all_deltas_positive", "metrics": deltas}
+    if not critical and metrics and all(v > 0 for v in metrics.values()):
+        return "skip", {"reason": "all_deltas_positive", "metrics": metrics}
     if critical:
         reason = "critical_error"
     else:
         reason = "non_positive_delta"
-    return "run", {"reason": reason, "metrics": deltas}
+    return "run", {"reason": reason, "metrics": metrics}
 
 
 async def self_improvement_cycle(
