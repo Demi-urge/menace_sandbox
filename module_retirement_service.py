@@ -7,6 +7,8 @@ from typing import Dict, Iterable
 import logging
 import shutil
 
+from dynamic_path_router import resolve_path
+
 from module_graph_analyzer import build_import_graph
 from quick_fix_engine import generate_patch
 from metrics_exporter import (
@@ -21,7 +23,7 @@ class ModuleRetirementService:
     """Handle archival, compression, or replacement of modules based on relevancy flags."""
 
     def __init__(self, repo_root: Path | str = ".") -> None:
-        self.root = Path(repo_root)
+        self.root = Path(resolve_path(repo_root))
         self.logger = logging.getLogger(self.__class__.__name__)
         try:
             self._graph = build_import_graph(self.root)
@@ -48,7 +50,12 @@ class ModuleRetirementService:
     def retire_module(self, module: str) -> bool:
         """Archive ``module`` if no other modules depend on it."""
 
-        path = self.root / (module if module.endswith(".py") else f"{module}.py")
+        path = Path(
+            resolve_path(
+                self.root
+                / (module if module.endswith(".py") else f"{module}.py")
+            )
+        )
         dependents = list(self._dependents(module))
         if dependents:
             self.logger.warning("cannot retire %s; dependents exist: %s", module, dependents)
@@ -56,6 +63,7 @@ class ModuleRetirementService:
         archive_dir = self.root / "sandbox_data" / "retired_modules"
         try:
             archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_dir = Path(resolve_path(archive_dir))
             if path.exists():
                 shutil.move(str(path), archive_dir / path.name)
                 retired_modules_total.inc()
@@ -68,7 +76,12 @@ class ModuleRetirementService:
     def compress_module(self, module: str) -> bool:
         """Invoke quick fix tooling to minimise ``module``."""
 
-        path = self.root / (module if module.endswith(".py") else f"{module}.py")
+        path = Path(
+            resolve_path(
+                self.root
+                / (module if module.endswith(".py") else f"{module}.py")
+            )
+        )
         if not path.exists():
             self.logger.error("module not found: %s", module)
             return False
@@ -92,7 +105,12 @@ class ModuleRetirementService:
     def replace_module(self, module: str) -> bool:
         """Invoke quick fix tooling to propose replacement for ``module``."""
 
-        path = self.root / (module if module.endswith(".py") else f"{module}.py")
+        path = Path(
+            resolve_path(
+                self.root
+                / (module if module.endswith(".py") else f"{module}.py")
+            )
+        )
         if not path.exists():
             self.logger.error("module not found: %s", module)
             return False
