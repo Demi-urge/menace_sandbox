@@ -1550,6 +1550,14 @@ class SandboxSettings(BaseSettings):
             "adapting the momentum weight."
         ),
     )
+    momentum_stagnation_dev_multiplier: float = Field(
+        1.0,
+        env="MOMENTUM_STAGNATION_DEV_MULTIPLIER",
+        description=(
+            "Multiplier for the momentum standard deviation when "
+            "detecting stagnation."
+        ),
+    )
     min_integration_roi: float = Field(
         0.0,
         env="MIN_INTEGRATION_ROI",
@@ -1581,6 +1589,14 @@ class SandboxSettings(BaseSettings):
     def _validate_delta_weights(cls, v: float, info: Any) -> float:
         if v < 0:
             raise ValueError(f"{info.field_name} must be non-negative")
+        return v
+
+    @field_validator("momentum_stagnation_dev_multiplier")
+    def _momentum_stagnation_dev_multiplier_positive(
+        cls, v: float
+    ) -> float:
+        if v <= 0:
+            raise ValueError("momentum_stagnation_dev_multiplier must be positive")
         return v
 
     relevancy_threshold: int = Field(

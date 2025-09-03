@@ -41,6 +41,10 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `momentum_weight_scale`: `0.0`
 - `entropy_weight_scale`: `0.0`
 
+## Momentum defaults
+- `momentum_stagnation_dev_multiplier`: `1.0` – multiplier applied to the
+  momentum standard deviation when detecting stagnation.
+
 ## Synergy defaults
 - `threshold`: `null`
 - `confidence`: `null`
