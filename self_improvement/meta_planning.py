@@ -695,11 +695,53 @@ def evaluate_cycle(
     return False, "all_deltas_positive"
 
 
+def should_skip_cycle(tracker: BaselineTracker, error_log: Any) -> bool:
+    """Return ``True`` when metrics trend positively and no critical errors exist.
+
+    Parameters
+    ----------
+    tracker:
+        Baseline metric tracker to inspect for recent deltas.
+    error_log:
+        Object providing access to recent :class:`TelemetryEvent` entries.  It
+        is expected to expose a ``recent_errors``-style method.  When the log is
+        unavailable or fails to provide events the cycle is not skipped.
+    """
+
+    # All tracked metrics must have positive deltas.
+    metrics = [m for m in tracker._history if not m.endswith("_delta")]
+    if any(tracker.delta(m) <= 0 for m in metrics):
+        return False
+
+    if error_log is None:
+        return False
+
+    try:
+        if hasattr(error_log, "recent_errors"):
+            events = error_log.recent_errors(limit=5)
+        elif hasattr(error_log, "recent_events"):
+            events = error_log.recent_events(limit=5)
+        elif hasattr(getattr(error_log, "db", None), "recent_errors"):
+            events = error_log.db.recent_errors(limit=5)  # type: ignore[attr-defined]
+        else:
+            return False
+    except Exception:
+        return False
+
+    for ev in events or []:
+        sev = getattr(getattr(ev, "error_type", None), "severity", None)
+        if sev == "critical":
+            return False
+
+    return True
+
+
 async def self_improvement_cycle(
     workflows: Mapping[str, Callable[[], Any]],
     *,
     interval: float = PLANNER_INTERVAL,
     event_bus: UnifiedEventBus | None = None,
+    error_log: Any | None = None,
     stop_event: threading.Event | None = None,
 ) -> None:
     """Background loop evolving ``workflows`` using the meta planner."""
@@ -796,6 +838,15 @@ async def self_improvement_cycle(
     while True:
         if stop_event is not None and stop_event.is_set():
             break
+        if should_skip_cycle(BASELINE_TRACKER, error_log):
+            logger.debug(
+                "skip",
+                extra=log_record(
+                    reason="all_deltas_positive", metrics=BASELINE_TRACKER.to_dict()
+                ),
+            )
+            await asyncio.sleep(interval)
+            continue
         try:
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
@@ -868,6 +919,7 @@ def start_self_improvement_cycle(
     *,
     event_bus: UnifiedEventBus | None = None,
     interval: float = PLANNER_INTERVAL,
+    error_log: Any | None = None,
 ):
     """Prepare a background thread running :func:`self_improvement_cycle`.
 
@@ -886,6 +938,7 @@ def start_self_improvement_cycle(
             self._exc: queue.Queue[BaseException] = queue.Queue()
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._stop_event = stop_event
+            self._error_log = error_log
 
         # --------------------------------------------------
         def _run(self) -> None:
@@ -898,6 +951,8 @@ def start_self_improvement_cycle(
             }
             if "stop_event" in signature(self_improvement_cycle).parameters:
                 kwargs["stop_event"] = self._stop_event
+            if "error_log" in signature(self_improvement_cycle).parameters:
+                kwargs["error_log"] = self._error_log
             self._task = self._loop.create_task(
                 self_improvement_cycle(workflows, **kwargs)
             )
@@ -995,6 +1050,7 @@ def stop_self_improvement_cycle() -> None:
 
 
 __all__ = [
+    "should_skip_cycle",
     "self_improvement_cycle",
     "start_self_improvement_cycle",
     "stop_self_improvement_cycle",
