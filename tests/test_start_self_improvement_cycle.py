@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _load_module():
     src = (ROOT / "self_improvement" / "meta_planning.py").read_text()
     tree = ast.parse(src)
-    wanted = {"start_self_improvement_cycle", "self_improvement_cycle"}
+    wanted = {"start_self_improvement_cycle", "self_improvement_cycle", "_evaluate_cycle"}
     nodes = [
         n
         for n in tree.body
@@ -32,6 +32,10 @@ def _load_module():
         "ROIResultsDB": lambda *a, **k: None,
         "WorkflowStabilityDB": lambda *a, **k: None,
         "UnifiedEventBus": object,
+        "get_logger": lambda name: types.SimpleNamespace(info=lambda *a, **k: None),
+        "log_record": lambda **kw: kw,
+        "_evaluate_cycle": lambda tracker, errors: ("run", {"reason": "noop"}),
+        "BaselineTracker": type("BaselineTracker", (), {}),
         "_init": types.SimpleNamespace(
             settings=types.SimpleNamespace(
                 meta_planning_interval=0.0,
@@ -114,3 +118,11 @@ def test_cycle_exception_propagated(monkeypatch):
     thread.start()
     with pytest.raises(RuntimeError):
         thread.join(timeout=1.0)
+
+
+def test_start_cycle_requires_evaluator():
+    mod = _load_module()
+    with pytest.raises(ValueError):
+        mod["start_self_improvement_cycle"](
+            {"wf": lambda: None}, interval=0.0, evaluate_cycle=None
+        )

@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping, Sequence
 import types
+import pytest
 
 
 def _load_cycle_funcs() -> dict[str, Any]:
@@ -86,6 +87,7 @@ def _run_cycle(
     deltas: Mapping[str, float],
     record: Mapping[str, Any],
     recent: tuple[Sequence[Any], float, int] | None = None,
+    evaluator: Callable[[Any, Any | None], tuple[str, Mapping[str, Any]]] | None = None,
 ) -> list[tuple[str, Mapping[str, Any]]]:
     meta = _load_cycle_funcs()
     tracker = DummyTracker(deltas)
@@ -128,8 +130,11 @@ def _run_cycle(
 
     async def _run():
         stop = threading.Event()
+        kwargs = {"interval": 0, "stop_event": stop}
+        if evaluator is not None:
+            kwargs["evaluate_cycle"] = evaluator
         task = asyncio.create_task(
-            meta["self_improvement_cycle"]({"w": lambda: None}, interval=0, stop_event=stop)
+            meta["self_improvement_cycle"]({"w": lambda: None}, **kwargs)
         )
         await asyncio.sleep(0.01)
         stop.set()
@@ -255,3 +260,30 @@ def test_cycle_logs_skip_on_stop_event():
         and rec.get("reason") == "stop_event"
         for msg, rec in logger.records
     )
+
+
+def test_cycle_uses_provided_evaluator():
+    calls: list[str] = []
+
+    def custom_eval(tracker, errors):
+        calls.append("called")
+        return "skip", {"reason": "custom"}
+
+    _run_cycle(
+        {"roi": 1.0, "pass_rate": 1.0, "entropy": 0.0},
+        {"chain": [], "roi_gain": 0.0, "failures": 0, "entropy": 0.0},
+        evaluator=custom_eval,
+    )
+    assert calls
+
+
+def test_cycle_requires_evaluator():
+    meta = _load_cycle_funcs()
+
+    async def _run():
+        with pytest.raises(ValueError):
+            await meta["self_improvement_cycle"](
+                {"w": lambda: None}, interval=0, evaluate_cycle=None
+            )
+
+    asyncio.run(_run())

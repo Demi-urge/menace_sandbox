@@ -6,7 +6,7 @@ import threading
 import time
 import types
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 from self_improvement.baseline_tracker import BaselineTracker
 import pytest
 
@@ -14,7 +14,12 @@ import pytest
 def _load_meta_planning():
     src = Path("self_improvement/meta_planning.py").read_text()
     tree = ast.parse(src)
-    wanted = {"_get_entropy_threshold", "_should_encode", "self_improvement_cycle"}
+    wanted = {
+        "_get_entropy_threshold",
+        "_should_encode",
+        "self_improvement_cycle",
+        "_evaluate_cycle",
+    }
     nodes = [
         n
         for n in tree.body
@@ -33,6 +38,8 @@ def _load_meta_planning():
         "Any": Any,
         "Callable": Callable,
         "Mapping": Mapping,
+        "Sequence": Sequence,
+        "TelemetryEvent": object,
         "BASELINE_TRACKER": types.SimpleNamespace(
             get=lambda m: 0.0, std=lambda m: 0.0, momentum=1.0, update=lambda **kw: None
         ),
