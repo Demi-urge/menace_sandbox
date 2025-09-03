@@ -1323,6 +1323,8 @@ class SandboxSettings(BaseSettings):
         "test_run_timeout",
         "side_effect_dev_multiplier",
         "synergy_dev_multiplier",
+        "roi_threshold_k",
+        "synergy_threshold_k",
     )
     def _validate_positive_float(cls, v: float, info: Any) -> float:
         if v <= 0:
@@ -1419,6 +1421,8 @@ class SandboxSettings(BaseSettings):
     )
     roi_threshold: float | None = Field(None, env="ROI_THRESHOLD")
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
+    roi_threshold_k: float = Field(1.0, env="ROI_THRESHOLD_K")
+    synergy_threshold_k: float = Field(1.0, env="SYNERGY_THRESHOLD_K")
     roi_confidence: float | None = Field(
         None,
         env="ROI_CONFIDENCE",
