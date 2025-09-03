@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from dynamic_module_mapper import build_module_map as _build_map
+from dynamic_path_router import resolve_path
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +39,9 @@ def generate_module_map(
 def main(args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Build sandbox module map")
     parser.add_argument("repo", nargs="?", default=".", help="Repository path")
-    parser.add_argument("--output", default="sandbox_data/module_map.json")
+    parser.add_argument(
+        "--output", default=resolve_path("sandbox_data/module_map.json")
+    )
     parser.add_argument(
         "--algorithm",
         default="greedy",
