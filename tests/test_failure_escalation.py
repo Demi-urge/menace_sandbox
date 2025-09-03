@@ -53,3 +53,47 @@ def test_escalation_and_reset():
     sandbox._reset_failure_counter(region)
     key = (region.path, region.func_name, region.start_line)
     assert key not in sandbox._failure_counts
+
+
+def test_engine_respects_target_region(tmp_path):
+    path = tmp_path / "mod.py"
+    path.write_text(
+        "def f():\n"
+        "    a = 1\n"
+        "    b = 2\n"
+        "    return a + b\n"
+    )
+
+    class RecordingEngine:
+        def __init__(self):
+            self.calls = []
+
+        def apply_patch(self, p, desc, **kwargs):  # pragma: no cover - stub
+            self.calls.append((p, kwargs.get("target_region")))
+            region = kwargs.get("target_region")
+            text = path.read_text().splitlines()
+            if region:
+                for i in range(region.start_line - 1, region.end_line):
+                    text[i] = "# patched"
+            else:
+                text = ["# module patched"]
+            path.write_text("\n".join(text) + "\n")
+            return None, False, 0.0
+
+    engine = RecordingEngine()
+    sandbox = SelfDebuggerSandbox(None, engine)
+    sandbox.error_logger = DummyLogger()
+    region = TargetRegion(path=str(path), start_line=2, end_line=3, func_name="f")
+
+    sandbox._record_region_failure(region)
+    sandbox._record_region_failure(region)  # triggers function rewrite
+    assert engine.calls[0][1] == region
+    lines = path.read_text().splitlines()
+    assert lines[0] == "def f():"
+    assert lines[1] == "# patched" and lines[2] == "# patched"
+    assert lines[3] == "    return a + b"
+
+    sandbox._record_region_failure(region)
+    sandbox._record_region_failure(region)  # triggers module rewrite
+    assert engine.calls[1][1] is None
+    assert path.read_text() == "# module patched\n"
