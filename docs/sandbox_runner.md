@@ -10,6 +10,11 @@ The sandbox uses the existing repository defined by `SANDBOX_REPO_PATH`. This is
 expected to be a checkout of `https://github.com/Demi-urge/menace_sandbox` and
 is modified and evaluated directly.
 
+Paths in the examples below are resolved with
+`dynamic_path_router.resolve_path`. The router honours `SANDBOX_REPO_PATH` when
+set and falls back to Git metadata, allowing forked layouts or nested clones to
+share the same tooling.
+
 > **Note:** The former `sandbox_runner.workflow_runner` module has been
 > replaced by `sandbox_runner.workflow_sandbox_runner`. Import
 > `WorkflowSandboxRunner` from the new module; the old path remains as a
@@ -21,7 +26,11 @@ Run the runner against the current repository by setting `SANDBOX_REPO_PATH`
 and specifying how many cycles to execute:
 
 ```bash
-SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
+SANDBOX_REPO_PATH=$(pwd) python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --runs 1
 ```
 
 Use `--preset-file` or the `SANDBOX_ENV_PRESETS` environment variable to supply
@@ -148,7 +157,11 @@ The runner updates ``sandbox_cpu_percent``, ``sandbox_memory_mb`` and
 small Chart.js page showing these values alongside ROI history:
 
 ```bash
-python sandbox_dashboard.py --port 8002
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_dashboard.py'))
+PY
+)" --port 8002
 ```
 
 Open ``http://localhost:8002`` to view CPU and memory usage and the cumulative
@@ -353,15 +366,27 @@ tracker = run_repo_section_simulations("/repo", env_presets=presets)
 Run all canonical profiles with:
 
 ```bash
-SANDBOX_PRESET_MODE=canonical python sandbox_runner.py --runs 1
+SANDBOX_PRESET_MODE=canonical python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --runs 1
 ```
 
 To target specific profiles, generate presets via the CLI and pass them to the
 runner:
 
 ```bash
-python environment_cli.py --profiles hostile_input concurrency_spike --count 1 > presets.json
-SANDBOX_ENV_PRESETS="$(cat presets.json)" python sandbox_runner.py
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('environment_cli.py'))
+PY
+)" --profiles hostile_input concurrency_spike --count 1 > presets.json
+SANDBOX_ENV_PRESETS="$(cat presets.json)" python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)"
 ```
 
 ## Automatic Failure Mode Coverage
@@ -400,7 +425,11 @@ use malicious input stubs by setting `SANDBOX_STUB_STRATEGY=hostile` (alias
 
 ```bash
 export SANDBOX_STUB_STRATEGY=hostile
-python sandbox_runner.py --runs 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --runs 1
 ```
 
 ## Concurrency Settings
@@ -413,7 +442,11 @@ control the spike. They may also be set directly:
 export FAILURE_MODES=concurrency_spike
 export THREAD_BURST=32
 export ASYNC_TASK_BURST=128
-python sandbox_runner.py --runs 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --runs 1
 ```
 
 `adapt_presets()` further tweaks these scenarios before each run. The function
@@ -859,7 +892,11 @@ environment variable `SANDBOX_METRICS_PLUGIN_DIR` to the directory containing
 the plugin file:
 
 ```bash
-SANDBOX_METRICS_PLUGIN_DIR=plugins python sandbox_runner.py
+SANDBOX_METRICS_PLUGIN_DIR=plugins python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)"
 ```
 
 The plugin stores its forecasts with `ROITracker.record_metric_prediction` so
@@ -949,7 +986,11 @@ environment variables:
 Example:
 
 ```bash
-VA_PROMPT_PREFIX="[internal]" VA_PROMPT_TEMPLATE=va.tmpl python sandbox_runner.py full-autonomous-run
+VA_PROMPT_PREFIX="[internal]" VA_PROMPT_TEMPLATE=va.tmpl python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" full-autonomous-run
 ```
 
 ## Visual Agent Prompt Format
@@ -1014,14 +1055,22 @@ After the sandbox runs, ROI trends are stored in `sandbox_data/roi_history.json`
 Launch a metrics dashboard to visualise these values and predicted metrics:
 
 ```bash
-python -m menace.metrics_dashboard --file sandbox_data/roi_history.json --port 8002
+python -m menace.metrics_dashboard --file "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_data/roi_history.json'))
+PY
+)" --port 8002
 ```
 
 When running the autonomous loop you can start the dashboard automatically with
 the `--dashboard-port` option or by setting `AUTO_DASHBOARD_PORT`:
 
 ```bash
-python sandbox_runner.py full-autonomous-run --dashboard-port 8002
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" full-autonomous-run --dashboard-port 8002
 ```
 
 Open the displayed address in your browser to see graphs. The `/roi` endpoint
@@ -1031,7 +1080,11 @@ and `actual` arrays so you can gauge forecast accuracy. To see the error as a
 number use the CLI:
 
 ```bash
-python -m menace.roi_tracker reliability sandbox_data/roi_history.json --metric security_score
+python -m menace.roi_tracker reliability "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_data/roi_history.json'))
+PY
+)" --metric security_score
 ```
 
 ## Ranking Preset Scenarios
@@ -1041,7 +1094,11 @@ Run multiple sandbox sessions with different environment presets and collect the
 compare their effectiveness:
 
 ```bash
-python sandbox_runner.py rank-scenarios run1 run2/roi_history.json
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" rank-scenarios run1 run2/roi_history.json
 ```
 
 The command prints scenario names sorted by cumulative ROI and includes the last
@@ -1057,7 +1114,11 @@ The command aggregates `synergy_roi` by default. Specify `--metric` to rank by
 other synergy metrics:
 
 ```bash
-python sandbox_runner.py rank-synergy run1 run2 --metric security_score
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" rank-synergy run1 run2 --metric security_score
 ```
 
 This prints scenario names with their cumulative synergy values.
@@ -1067,7 +1128,11 @@ The command aggregates `synergy_roi` by default and can target any other
 `synergy_<metric>`:
 
 ```bash
-python sandbox_runner.py rank-scenario-synergy run1 run2 --metric revenue
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" rank-scenario-synergy run1 run2 --metric revenue
 ```
 
 Scenario names are sorted by the total value of the chosen synergy metric.
@@ -1080,7 +1145,15 @@ with their exponential moving averages. Pass `--file` to specify the
 `--plot` creates a small bar chart when `matplotlib` is available.
 
 ```bash
-python sandbox_runner.py synergy-metrics --file sandbox_data/roi_history.json --window 4
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" synergy-metrics --file "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_data/roi_history.json'))
+PY
+)" --window 4
 ```
 
 ## Fully Autonomous Runs
@@ -1091,7 +1164,11 @@ and executes sandbox cycles until the :class:`ROITracker` reports diminishing
 returns for every module.
 
 ```bash
-python sandbox_runner.py full-autonomous-run --preset-count 3 --dashboard-port 8002
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" full-autonomous-run --preset-count 3 --dashboard-port 8002
 ```
 
 Use `--max-iterations` to limit the number of iterations when running
@@ -1103,7 +1180,11 @@ To replay a specific set of presets use the `run-complete` subcommand and pass
 the preset JSON directly:
 
 ```bash
-python sandbox_runner.py run-complete presets.json --max-iterations 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" run-complete presets.json --max-iterations 1
 ```
 
 This will invoke `full_autonomous_run` with the provided presets and also launch
@@ -1198,11 +1279,19 @@ Example usage:
 ```bash
 SYNERGY_MA_WINDOW=4 SYNERGY_STATIONARITY_CONFIDENCE=0.99 \
 SYNERGY_VARIANCE_CONFIDENCE=0.9 SYNERGY_CYCLES=5 \
-python run_autonomous.py --runs 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)" --runs 1
 ```
 
 ```bash
-python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)" --runs 2 --preset-count 2 --dashboard-port 8002
 ```
 Each iteration prints a `Starting autonomous run` message. The loop ends early
 whenever ROI deltas remain below the tracker threshold for the configured
@@ -1232,7 +1321,15 @@ back to writing these metrics to `sandbox_data/recovery.json`. Use the included
 CLI to inspect the file:
 
 ```bash
-python sandbox_recovery_manager.py --file sandbox_data/recovery.json
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_recovery_manager.py'))
+PY
+)" --file "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_data/recovery.json'))
+PY
+)"
 ```
 
 ## Container Pool Failures

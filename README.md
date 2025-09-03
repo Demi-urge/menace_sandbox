@@ -1,5 +1,23 @@
 See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required environment variables, optional dependencies and directory layout.
 
+## Dynamic Path Router
+
+Scripts and data files are located with `dynamic_path_router.resolve_path` so
+shell commands remain portable across forked layouts or nested repositories.
+The resolver honours the `SANDBOX_REPO_PATH` environment variable when set and
+otherwise falls back to Git metadata or a `.git` directory search.
+
+```bash
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --help
+```
+
+The router enables experimenting with alternative directory structures without
+breaking tooling, and nested clones can share the same lookup logic.
+
 ## Self-Improvement Sandbox Setup
 
 `initialize_autonomous_sandbox()` now creates a `.env` file on first run and
@@ -372,17 +390,29 @@ bucket is configured or run as a limited pilot.
 
   ```bash
   # Same behaviour using CLI flags
-  python run_autonomous.py --no-recursive-orphans --no-recursive-isolated \
+  python "$(python - <<'PY'
+  from dynamic_path_router import resolve_path
+  print(resolve_path('run_autonomous.py'))
+  PY
+  )" --no-recursive-orphans --no-recursive-isolated \
       --discover-isolated --auto-include-isolated --clean-orphans \
       --check-settings
   ```
 
   ```bash
   # Include modules flagged as redundant (default)
-  python run_autonomous.py --include-redundant
+  python "$(python - <<'PY'
+  from dynamic_path_router import resolve_path
+  print(resolve_path('run_autonomous.py'))
+  PY
+  )" --include-redundant
 
   # Skip redundant modules during tests
-  SANDBOX_TEST_REDUNDANT=0 python run_autonomous.py --discover-orphans
+  SANDBOX_TEST_REDUNDANT=0 python "$(python - <<'PY'
+  from dynamic_path_router import resolve_path
+  print(resolve_path('run_autonomous.py'))
+  PY
+  )" --discover-orphans
   ```
 
   Set `SANDBOX_FAIL_ON_MISSING_SCENARIOS=1` to raise an error when canonical
@@ -636,7 +666,11 @@ written to `sandbox_data/module_map.json`. With `--clean-orphans` (or
 Example discovering orphans:
 
 ```bash
-python run_autonomous.py --discover-orphans --clean-orphans \
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)" --discover-orphans --clean-orphans \
     --include-orphans
 ```
 After the run, passing modules are appended to `sandbox_data/module_map.json`
@@ -1246,8 +1280,12 @@ resides outside `~/menace_sandbox`.
 
 For a completely autonomous optimisation loop run:
 
-```
-python run_autonomous.py
+```bash
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)"
 ```
 
 The wrapper verifies that Docker, QEMU and the required Python packages are
@@ -1262,7 +1300,11 @@ When you want to reproduce a specific scenario pass preset files or JSON strings
 directly to ``sandbox_runner.py`` via the ``run-complete`` subcommand:
 
 ```
-python sandbox_runner.py run-complete presets.json --max-iterations 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" run-complete presets.json --max-iterations 1
 ```
 
 The command forwards the presets to ``full_autonomous_run`` and starts the
@@ -1276,7 +1318,11 @@ deviation of recent metrics so manual ``--roi-threshold`` or
 To execute multiple runs sequentially and launch the metrics dashboard run:
 
 ```
-python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)" --runs 2 --preset-count 2 --dashboard-port 8002
 
 # or simply set AUTO_DASHBOARD_PORT=8002
 ```
@@ -1287,7 +1333,11 @@ To optimise across distinct scenarios supply preset files explicitly. The
 runner cycles through them when ``--preset-file`` is repeated:
 
 ```
-python run_autonomous.py --runs 3 \
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)" --runs 3 \
   --preset-file presets/dev.json \
   --preset-file presets/prod.json \
   --preset-file presets/chaos.json
@@ -1331,8 +1381,16 @@ ALIGNMENT_WARNING_THRESHOLD=0.5 \
 ALIGNMENT_FAILURE_THRESHOLD=0.9 \
 IMPROVEMENT_WARNING_THRESHOLD=0.5 \
 IMPROVEMENT_FAILURE_THRESHOLD=0.9 \
-python alignment_review_agent.py &  # start reviewer in background
-python run_autonomous.py
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('alignment_review_agent.py'))
+PY
+)" &  # start reviewer in background
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)"
 ```
 
 Run the checker directly against two source trees when reviewing changes::
@@ -1402,7 +1460,11 @@ mutations.
 #### Example workflow
 
 ```bash
-SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
+SANDBOX_REPO_PATH=$(pwd) python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --runs 1
 ```
 
 #### Autonomous bootstrap script
@@ -1412,7 +1474,12 @@ SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
 continuous self-improvement cycle.
 
 ```bash
-SANDBOX_REPO_PATH=$(pwd) SANDBOX_DATA_DIR=./sandbox_data python autonomous_bootstrap.py
+SANDBOX_REPO_PATH=$(pwd) SANDBOX_DATA_DIR=./sandbox_data \
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('autonomous_bootstrap.py'))
+PY
+)"
 ```
 
 The script honours the same environment variables as ``sandbox_runner.py``.
@@ -1548,7 +1615,11 @@ Enable Prometheus metrics by starting the exporter on a port of your choice:
 
 ```bash
 export METRICS_PORT=8001
-python run_autonomous.py  # or synergy_tools.py
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)"  # or use resolve_path('synergy_tools.py')
 ```
 
 Add the port to your Prometheus configuration:
