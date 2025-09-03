@@ -14,6 +14,29 @@ import re
 from datetime import datetime
 from typing import Optional
 
+# ``self_improvement`` has heavy import-time side effects.  To avoid importing
+# the entire package when only targeting utilities are required, load the
+# targeting module directly from its path.
+import importlib.util
+import pathlib
+import sys
+
+_targeting_path = pathlib.Path(__file__).with_name("self_improvement").joinpath("targeting.py")
+_spec = importlib.util.spec_from_file_location("_targeting", _targeting_path)
+if _spec and _spec.loader:  # pragma: no cover - best effort
+    _module = importlib.util.module_from_spec(_spec)
+    sys.modules.setdefault(_spec.name, _module)
+    _spec.loader.exec_module(_module)
+    TargetRegion = getattr(_module, "TargetRegion")  # type: ignore[attr-defined]
+    _extract_target_region = getattr(
+        _module, "extract_target_region"
+    )  # type: ignore[attr-defined]
+else:  # pragma: no cover - fallback when module unavailable
+    TargetRegion = None  # type: ignore
+
+    def _extract_target_region(trace: str):  # type: ignore
+        return None
+
 
 @dataclass
 class ErrorReport:
@@ -123,4 +146,17 @@ class ErrorParser:
         }
 
 
-__all__ = ["ErrorReport", "parse_failure", "FailureCache", "ErrorParser"]
+def extract_target_region(trace: str) -> TargetRegion | None:
+    """Expose targeting helper without importing ``self_improvement`` package."""
+
+    return _extract_target_region(trace)
+
+
+__all__ = [
+    "ErrorReport",
+    "parse_failure",
+    "FailureCache",
+    "ErrorParser",
+    "TargetRegion",
+    "extract_target_region",
+]
