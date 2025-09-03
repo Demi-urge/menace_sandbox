@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Mapping, Tuple, List
 
 import networkx as nx
+from dynamic_path_router import resolve_path
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +47,7 @@ def build_module_graph(
 
     logger = logging.getLogger(__name__)
 
-    root = Path(repo_path)
+    root = Path(resolve_path(repo_path))
     graph = nx.DiGraph()
     modules: Dict[str, Path] = {}
     for file in _iter_py_files(root, ignore=ignore):

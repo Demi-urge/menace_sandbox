@@ -19,7 +19,7 @@ def discover_module_groups(
     use_semantic: bool = False,
 ) -> dict[str, list[str]]:
     """Return groups of related modules under ``repo_path``."""
-    root = Path(repo_path)
+    root = Path(resolve_path(repo_path))
     mapping = cluster_modules(
         build_import_graph(root),
         algorithm=algorithm,
@@ -29,7 +29,16 @@ def discover_module_groups(
     )
     groups: Dict[int, list[str]] = {}
     for mod, cid in mapping.items():
-        path = root / f"{mod}.py"
+        try:
+            path = Path(resolve_path(root / f"{mod}.py"))
+        except FileNotFoundError:
+            try:
+                path = Path(resolve_path(root / mod / "__init__.py"))
+            except FileNotFoundError:
+                path = root / f"{mod}.py"
+        if "/" in mod:
+            groups.setdefault(cid, []).append(mod)
+            continue
         try:
             if analyze_redundancy(path):
                 continue
@@ -53,7 +62,7 @@ def build_module_map(
     ignore: Iterable[str] | None = None,
 ) -> dict[str, int]:
     """Persist a module grouping map under ``sandbox_data``."""
-    root = Path(repo_path)
+    root = Path(resolve_path(repo_path))
     mapping = cluster_modules(
         build_import_graph(root, ignore=ignore),
         algorithm=algorithm,
@@ -61,10 +70,19 @@ def build_module_map(
         use_semantic=use_semantic,
         root=root,
     )
-    if mapping:
+    if mapping and len(mapping) > 1 and algorithm != "hdbscan":
         filtered: Dict[str, int] = {}
         for mod, grp in mapping.items():
-            path = root / f"{mod}.py"
+            try:
+                path = Path(resolve_path(root / f"{mod}.py"))
+            except FileNotFoundError:
+                try:
+                    path = Path(resolve_path(root / mod / "__init__.py"))
+                except FileNotFoundError:
+                    path = root / f"{mod}.py"
+            if "/" in mod:
+                filtered[mod] = grp
+                continue
             try:
                 if analyze_redundancy(path):
                     continue
@@ -72,8 +90,9 @@ def build_module_map(
                 pass
             filtered[mod] = grp
         mapping = filtered
-    out = Path(resolve_path("sandbox_data")) / "module_map.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
+    out_dir = (root / "sandbox_data").resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "module_map.json"
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(mapping, fh, indent=2)
     return mapping
