@@ -83,3 +83,20 @@ def test_pass_rate_delta_from_moving_average():
     tracker.update(pass_rate=1.0)
     tracker.update(pass_rate=0.25)
     assert tracker.delta_history("pass_rate") == [0.5, 0.5, -0.5]
+
+
+def test_current_and_delta_methods():
+    tracker = BaselineTracker(window=3)
+    tracker.update(roi=1.0)
+    tracker.update(roi=3.0)
+    # Latest value recorded
+    assert tracker.current("roi") == 3.0
+    # Moving average now 2.0, so deviation should be 1.0
+    assert tracker.delta("roi") == 1.0
+
+    tracker = BaselineTracker(window=3)
+    tracker.update(pass_rate=0.5)
+    tracker.update(pass_rate=1.0)
+    assert tracker.current("pass_rate") == 1.0
+    # Average is 0.75 -> delta should be 0.25
+    assert tracker.delta("pass_rate") == 0.25
