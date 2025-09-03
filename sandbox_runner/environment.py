@@ -6934,12 +6934,19 @@ def run_repo_section_simulations(
 
 # ----------------------------------------------------------------------
 def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
-    """Execute an isolated sandbox run using ``preset`` environment vars."""
+    """Execute an isolated sandbox run using ``preset`` environment vars.
+
+    The path to ``sandbox_runner.py`` is resolved dynamically via
+    :func:`resolve_path` so the function remains robust when the repository
+    layout changes.
+    """
 
     tmp_dir = tempfile.mkdtemp(prefix="full_env_")
     diagnostics: Dict[str, str] = {}
     try:
         repo_path = sandbox_config.get_sandbox_repo_path()
+        runner_path = resolve_path("sandbox_runner.py")
+        runner_rel = runner_path.relative_to(repo_path).as_posix()
         data_dir = Path(tmp_dir) / "data"
         env = os.environ.copy()
         env.update({k: str(v) for k, v in preset.items()})
@@ -6964,10 +6971,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
 
             code = (
                 "import subprocess, os\n"
-                "from dynamic_path_router import resolve_path\n"
-                "subprocess.run(['python', str(resolve_path('sandbox_runner.py'))], cwd='"
-                + container_repo
-                + "')\n"
+                f"subprocess.run(['python', {runner_rel!r}], cwd={container_repo!r})\n"
             )
             attempt = 0
             delay = _CREATE_BACKOFF_BASE
@@ -6990,7 +6994,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                     logger.exception(
                         "docker execution failed: %s; cmd: docker run <image> python %s",
                         exc,
-                        str(resolve_path("sandbox_runner.py")),
+                        str(runner_path),
                     )
                     if attempt >= _CREATE_RETRY_LIMIT - 1:
                         logger.error("docker repeatedly failed; running locally")
@@ -7047,7 +7051,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                                 "-serial",
                                 "stdio",
                                 "-append",
-                                f"python {str(resolve_path('sandbox_runner.py'))}",
+                                f"python {str((Path(vm_repo) / runner_rel))}",
                             ]
                             subprocess.run(
                                 cmd,
@@ -7104,7 +7108,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
             diagnostics.setdefault("local_execution", "vm")
             env["SANDBOX_DATA_DIR"] = str(data_dir)
             subprocess.run(
-                ["python", str(resolve_path("sandbox_runner.py"))],
+                ["python", str(runner_path)],
                 cwd=repo_path,
                 env=env,
                 check=False,
