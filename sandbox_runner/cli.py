@@ -13,6 +13,7 @@ import math
 import platform
 import subprocess
 from sandbox_settings import SandboxSettings, load_sandbox_settings
+from dynamic_path_router import resolve_path
 try:  # optional dependency
     from scipy.stats import pearsonr, t, levene
 except Exception:  # pragma: no cover - fallback when scipy is missing
@@ -740,9 +741,8 @@ def full_autonomous_run(
     """Execute sandbox cycles until all modules show diminishing returns."""
     settings = get_settings()
     if getattr(args, "dashboard_port", None):
-        history_file = (
-            Path(args.sandbox_data_dir or "sandbox_data") / "roi_history.json"
-        )
+        history_dir = resolve_path(args.sandbox_data_dir or "sandbox_data")
+        history_file = history_dir / "roi_history.json"
         dash = MetricsDashboard(str(history_file))
         Thread(
             target=dash.run, kwargs={"port": args.dashboard_port}, daemon=True
@@ -838,7 +838,7 @@ def full_autonomous_run(
                 os.environ["SANDBOX_ENTROPY_THRESHOLD"] = str(entropy_threshold)
             run_args = argparse.Namespace(
                 sandbox_data_dir=args.sandbox_data_dir,
-                workflow_db="workflows.db",
+                workflow_db=str(resolve_path("workflows.db")),
                 workflow_sim=False,
                 preset_count=None,
                 no_workflow_run=False,
@@ -1040,11 +1040,10 @@ def check_resources_command() -> None:
 def install_autopurge_command() -> None:
     """Install scheduled cleanup using systemd or Windows Task Scheduler."""
 
-    base = Path(__file__).resolve().parent.parent
     system = platform.system().lower()
 
     if system == "windows":
-        xml = base / "systemd" / "windows_sandbox_purge.xml"
+        xml = resolve_path("systemd/windows_sandbox_purge.xml")
         try:
             subprocess.run(
                 [
@@ -1075,8 +1074,8 @@ def install_autopurge_command() -> None:
         return
 
     if system in {"linux", "darwin"} and shutil.which("systemctl"):
-        service = base / "systemd" / "sandbox_autopurge.service"
-        timer = base / "systemd" / "sandbox_autopurge.timer"
+        service = resolve_path("systemd/sandbox_autopurge.service")
+        timer = resolve_path("systemd/sandbox_autopurge.timer")
         try:
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 unit_dir = Path("/etc/systemd/system")
@@ -1131,7 +1130,9 @@ def main(argv: List[str] | None = None) -> None:
         help="simulate workflows instead of repo sections",
     )
     parser.add_argument(
-        "--workflow-db", default="workflows.db", help="path to workflow database"
+        "--workflow-db",
+        default=str(resolve_path("workflows.db")),
+        help="path to workflow database",
     )
     parser.add_argument(
         "--dynamic-workflows",
@@ -1362,7 +1363,7 @@ def main(argv: List[str] | None = None) -> None:
     )
     p_metrics.add_argument(
         "--file",
-        default="sandbox_data/roi_history.json",
+        default=str(resolve_path("sandbox_data") / "roi_history.json"),
         help="path to roi_history.json",
     )
     p_metrics.add_argument(
@@ -1794,7 +1795,7 @@ def main(argv: List[str] | None = None) -> None:
             foresight_tracker=ft,
         )
         path = (
-            Path("sandbox_data")
+            resolve_path("sandbox_data")
             / f"temporal_trajectory_{args.simulate_temporal_trajectory}.json"
         )
         path.parent.mkdir(parents=True, exist_ok=True)

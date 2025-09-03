@@ -11,6 +11,7 @@ from datetime import datetime
 import yaml
 
 from logging_utils import get_logger
+from dynamic_path_router import resolve_path
 
 if TYPE_CHECKING:  # pragma: no cover - heavy import for type checking only
     from roi_tracker import ROITracker
@@ -89,7 +90,7 @@ def integrate_and_graph_orphans(
             from module_synergy_grapher import ModuleSynergyGrapher, load_graph
 
             grapher = ModuleSynergyGrapher(root=repo)
-            graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
+            graph_path = resolve_path("sandbox_data/module_synergy_graph.json")
             if graph_path.exists():
                 try:
                     grapher.graph = load_graph(graph_path)
@@ -111,7 +112,7 @@ def integrate_and_graph_orphans(
             from intent_clusterer import IntentClusterer
 
             clusterer = IntentClusterer()
-            clusterer.index_modules([repo / m for m in added])
+            clusterer.index_modules([resolve_path(m) for m in added])
             cluster_ok = True
         except Exception:  # pragma: no cover - best effort
             log.warning("intent clustering update failed", exc_info=True)
@@ -132,7 +133,7 @@ def integrate_and_graph_orphans(
         retry = list(added)
         tested["retry"] = retry
 
-    log_path = repo / "sandbox_data" / "orphan_integration.log"
+    log_path = resolve_path("sandbox_data/orphan_integration.log")
     record = {
         "timestamp": datetime.utcnow().isoformat(),
         "modules": added,
@@ -171,7 +172,7 @@ def _record_orphan_metrics(
         Logger used for diagnostic messages.
     """
 
-    path = repo / "sandbox_metrics.yaml"
+    path = resolve_path("sandbox_metrics.yaml")
     data: Dict[str, Dict[str, float]] = {}
     try:
         if path.exists():
