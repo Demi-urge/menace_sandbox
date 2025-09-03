@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 
 import auto_env_setup
 import run_autonomous
@@ -18,7 +18,7 @@ _DEF_PORT = "8001"
 
 def _start_agent(env: dict[str, str]) -> subprocess.Popen[bytes]:
     """Spawn ``menace_visual_agent_2.py`` with ``env``."""
-    cmd = [sys.executable, str(resolve_path("menace_visual_agent_2.py"))]
+    cmd = [sys.executable, path_for_prompt("menace_visual_agent_2.py")]
     if env.get("VISUAL_AGENT_AUTO_RECOVER") == "1":
         cmd.append("--auto-recover")
     return subprocess.Popen(cmd, env=env)

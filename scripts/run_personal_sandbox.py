@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import time
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 
 from visual_agent_manager import VisualAgentManager
 import run_autonomous
@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> None:
     os.environ.setdefault("MENACE_AGENT_PORT", _DEF_PORT)
     os.environ.setdefault("VISUAL_AGENT_URLS", f"http://127.0.0.1:{_DEF_PORT}")
 
-    manager = VisualAgentManager(str(resolve_path("menace_visual_agent_2.py")))
+    manager = VisualAgentManager(path_for_prompt("menace_visual_agent_2.py"))
     started = _start_agent(manager)
     try:
         run_autonomous.main(argv)
