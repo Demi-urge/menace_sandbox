@@ -1131,8 +1131,11 @@ async def self_improvement_cycle(
             if not outcome_logged:
                 _debug_cycle("skipped")
         except Exception as exc:  # pragma: no cover - planner is best effort
+            _debug_cycle("error", reason=str(exc))
             logger.debug("error", extra=log_record(err=str(exc)))
             logger.exception("meta planner execution failed", exc_info=exc)
+            await asyncio.sleep(interval)
+            continue
 
         for chain in list(active):
             planner.cluster_map.pop(tuple(chain), None)
