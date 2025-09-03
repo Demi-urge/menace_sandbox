@@ -8,8 +8,10 @@ quality of an enhancement.  Weights are loaded from
 """
 
 from dataclasses import dataclass
-import os
+from pathlib import Path
 import yaml
+
+from dynamic_path_router import resolve_path
 
 
 @dataclass
@@ -37,20 +39,18 @@ class EnhancementScoreWeights:
     effort_estimate: float = 1.0
 
 
-_DEFAULT_CONFIG_PATH = os.path.join(
-    os.path.dirname(__file__), "config", "enhancement_score.yaml"
-)
+_DEFAULT_CONFIG_PATH = resolve_path("config/enhancement_score.yaml")
 
 
-def load_weights(path: str | None = None) -> EnhancementScoreWeights:
+def load_weights(path: str | Path | None = None) -> EnhancementScoreWeights:
     """Load weighting factors from ``path``.
 
-    If ``path`` is omitted, ``config/enhancement_score.yaml`` relative to the
-    repository root is used. Missing entries default to the values in
-    :class:`EnhancementScoreWeights`.
+    ``path`` is resolved relative to the repository root when provided. If it
+    is omitted, ``config/enhancement_score.yaml`` is used. Missing entries
+    default to the values in :class:`EnhancementScoreWeights`.
     """
 
-    cfg_path = path or _DEFAULT_CONFIG_PATH
+    cfg_path = resolve_path(path) if path else _DEFAULT_CONFIG_PATH
     try:
         with open(cfg_path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
