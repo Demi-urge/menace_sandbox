@@ -14,6 +14,11 @@ from typing import Iterable, Dict, Any, Callable, Deque, Tuple
 from pathlib import Path
 import json
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
+
 from . import metrics_exporter
 
 from .audit_logger import log_event
@@ -128,7 +133,7 @@ class VisualAgentClient:
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
         self._stop_event = threading.Event()
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
         self._local_queue = _LocalQueue(data_dir / "visual_agent_client_queue.jsonl")
         if self.queue_warning_threshold is not None and self.urls and requests:
             self._metrics_thread = threading.Thread(
