@@ -175,19 +175,22 @@ def test_run_sandbox_uses_temporary_env(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
     _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
-
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
-    spec = importlib.util.spec_from_file_location("menace_master", path)
-    mm = importlib.util.module_from_spec(spec)
-    sys.modules["menace_master"] = mm
-    if "menace.error_bot" in sys.modules:
-        monkeypatch.setattr(sys.modules["menace.error_bot"], "ErrorDB", lambda p: DummyBot(), raising=False)
-        monkeypatch.setattr(sys.modules["menace.error_bot"], "ErrorBot", DummyBot, raising=False)
-    else:
-        _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
-    spec.loader.exec_module(mm)
-    import sandbox_runner
-    import sandbox_runner
+    _stub_module(monkeypatch, "menace.db_router", init_db_router=lambda *a, **k: None)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
+    sandbox_runner = types.ModuleType("sandbox_runner")
+    sandbox_runner.subprocess = types.SimpleNamespace(run=lambda *a, **k: None)
+    sandbox_runner.shutil = types.SimpleNamespace(copy2=lambda *a, **k: None)
+    def _sandbox_init(config, args):
+        bus = sandbox_runner.UnifiedEventBus(persist_path="menace_sandbox_dummy.db")
+        return types.SimpleNamespace(bus=bus, tracker=_ROITracker())
+    def _sandbox_cycle_runner(ctx, a, b, tracker):
+        tracker.update(None, None, metrics={})
+    def _sandbox_cleanup(ctx):
+        ctx.bus.close()
+    sandbox_runner._sandbox_init = _sandbox_init
+    sandbox_runner._sandbox_cycle_runner = _sandbox_cycle_runner
+    sandbox_runner._sandbox_cleanup = _sandbox_cleanup
+    sys.modules["sandbox_runner"] = sandbox_runner
 
 
     bus_paths = []
@@ -198,7 +201,7 @@ def test_run_sandbox_uses_temporary_env(monkeypatch, tmp_path):
         def close(self):
             bus_paths.append("closed")
 
-    monkeypatch.setattr(sandbox_runner, "UnifiedEventBus", DummyBus)
+    monkeypatch.setattr(sandbox_runner, "UnifiedEventBus", DummyBus, raising=False)
 
     def fake_run(cmd, check=False):
         Path(cmd[-1]).mkdir(parents=True, exist_ok=True)
@@ -235,9 +238,11 @@ def test_run_sandbox_uses_temporary_env(monkeypatch, tmp_path):
 
         def analyse_and_fix(self):
             pass
-    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch)
-    monkeypatch.setattr(sandbox_runner, "SelfImprovementEngine", lambda *a, **k: DummyImprover())
-    monkeypatch.setattr(sandbox_runner, "SelfTestService", DummyTester)
+    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch, raising=False)
+    monkeypatch.setattr(
+        sandbox_runner, "SelfImprovementEngine", lambda *a, **k: DummyImprover(), raising=False
+    )
+    monkeypatch.setattr(sandbox_runner, "SelfTestService", DummyTester, raising=False)
     monkeypatch.setattr(sys.modules["menace.self_debugger_sandbox"], "SelfDebuggerSandbox", DummySandbox)
     monkeypatch.setattr(sys.modules["menace.data_bot"], "MetricsDB", DummyBot)
 
@@ -268,18 +273,23 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
     _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
+    _stub_module(monkeypatch, "menace.db_router", init_db_router=lambda *a, **k: None)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
 
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
-    spec = importlib.util.spec_from_file_location("menace_master", path)
-    mm = importlib.util.module_from_spec(spec)
-    sys.modules["menace_master"] = mm
-    if "menace.error_bot" in sys.modules:
-        monkeypatch.setattr(sys.modules["menace.error_bot"], "ErrorDB", lambda p: DummyBot(), raising=False)
-        monkeypatch.setattr(sys.modules["menace.error_bot"], "ErrorBot", DummyBot, raising=False)
-    else:
-        _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
-    spec.loader.exec_module(mm)
-
+    sandbox_runner = types.ModuleType("sandbox_runner")
+    sandbox_runner.subprocess = types.SimpleNamespace(run=lambda *a, **k: None)
+    sandbox_runner.shutil = types.SimpleNamespace(copy2=lambda *a, **k: None)
+    def _sandbox_init(config, args):
+        bus = sandbox_runner.UnifiedEventBus(persist_path="menace_sandbox_dummy.db")
+        return types.SimpleNamespace(bus=bus, tracker=_ROITracker())
+    def _sandbox_cycle_runner(ctx, a, b, tracker):
+        tracker.update(None, None, metrics={})
+    def _sandbox_cleanup(ctx):
+        ctx.bus.close()
+    sandbox_runner._sandbox_init = _sandbox_init
+    sandbox_runner._sandbox_cycle_runner = _sandbox_cycle_runner
+    sandbox_runner._sandbox_cleanup = _sandbox_cleanup
+    sys.modules["sandbox_runner"] = sandbox_runner
 
     import shutil as real_shutil
     orig_copy = real_shutil.copy2
@@ -298,7 +308,7 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
         def close(self):
             pass
 
-    monkeypatch.setattr(sandbox_runner, "UnifiedEventBus", DummyBus)
+    monkeypatch.setattr(sandbox_runner, "UnifiedEventBus", DummyBus, raising=False)
 
     import json
 
@@ -339,9 +349,14 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
         def analyse_and_fix(self):
             pass
 
-    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch)
-    monkeypatch.setattr(sandbox_runner, "SelfImprovementEngine", lambda *a, **kw: DummyImprover(*a, **kw))
-    monkeypatch.setattr(sandbox_runner, "SelfTestService", DummyTester)
+    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch, raising=False)
+    monkeypatch.setattr(
+        sandbox_runner,
+        "SelfImprovementEngine",
+        lambda *a, **kw: DummyImprover(*a, **kw),
+        raising=False,
+    )
+    monkeypatch.setattr(sandbox_runner, "SelfTestService", DummyTester, raising=False)
     monkeypatch.setattr(sys.modules["menace.self_debugger_sandbox"], "SelfDebuggerSandbox", DummySandbox)
     monkeypatch.setattr(sys.modules["menace.data_bot"], "MetricsDB", DummyBot)
 
