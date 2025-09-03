@@ -1009,8 +1009,25 @@ def discover_recursive_orphans(
             redundant_flag = info.get("redundant")
             if redundant_flag is None:
                 redundant_flag = cls in {"legacy", "redundant"}
+            parent_paths: list[str] = []
+            for p in info.get("parents", []):
+                try:
+                    pp = Path(
+                        resolve_path(Path(*p.split(".")).with_suffix(".py"))
+                    )
+                except FileNotFoundError:
+                    try:
+                        pp = Path(
+                            resolve_path(Path(*p.split(".")) / "__init__.py")
+                        )
+                    except FileNotFoundError:
+                        continue
+                try:
+                    parent_paths.append(pp.relative_to(repo).as_posix())
+                except ValueError:
+                    parent_paths.append(pp.as_posix())
             entry = {
-                "parents": info.get("parents", []),
+                "parents": parent_paths,
                 "classification": cls,
                 "redundant": bool(redundant_flag),
             }
