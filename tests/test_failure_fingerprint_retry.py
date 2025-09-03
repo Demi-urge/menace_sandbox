@@ -1,7 +1,7 @@
-import types
+import json
 import sqlite3
+import types
 from pathlib import Path
-
 import pytest
 
 from . import test_self_coding_engine_chunking as setup  # reuse stub environment
@@ -65,11 +65,12 @@ def _build_engine(monkeypatch, tmp_path, similar_return, skip: bool = False):
     engine.apply_patch = types.MethodType(fake_apply, engine)
     monkeypatch.setattr(sce, "FailureFingerprint", DummyFP)
     monkeypatch.setattr(sce, "log_fingerprint", lambda fp: None)
-    monkeypatch.setattr(
-        sce,
-        "find_similar",
-        lambda emb, thresh, path="failure_fingerprints.jsonl": similar_return,
-    )
+
+    def fake_check(fp, store, thresh, desc):
+        skip_flag = skip or len(similar_return) >= 3
+        return desc, skip_flag, 0.9, similar_return, ""
+
+    monkeypatch.setattr(sce, "check_similarity_and_warn", fake_check)
     return engine, records, calls, patch_db
 
 
@@ -91,9 +92,12 @@ def test_retry_skipped_after_similarity_limit(monkeypatch, tmp_path):
 
     pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=3)
     assert pid is None and len(calls) == 1
-    assert any("retry_skipped" in r for r in records)
-    row = db.conn.execute("SELECT outcome FROM patch_history").fetchall()
-    assert ("retry_skipped",) in row
+    assert any(r.get("reason") == "retry_skipped_due_to_similarity" for r in records)
+    row = db.conn.execute("SELECT description, outcome FROM patch_history").fetchall()
+    assert row and row[0][1] == "retry_skipped"
+    info = json.loads(row[0][0])
+    assert info["reason"] == "retry_skipped_due_to_similarity"
+    assert "fingerprint_hash" in info and "similarity" in info and "cluster_id" in info
 
 
 def test_retry_skipped_when_configured(monkeypatch, tmp_path):
@@ -102,6 +106,9 @@ def test_retry_skipped_when_configured(monkeypatch, tmp_path):
 
     pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=2)
     assert pid is None and len(calls) == 1
-    assert any("retry_skipped" in r for r in records)
-    row = db.conn.execute("SELECT outcome FROM patch_history").fetchall()
-    assert ("retry_skipped",) in row
+    assert any(r.get("reason") == "retry_skipped_due_to_similarity" for r in records)
+    row = db.conn.execute("SELECT description, outcome FROM patch_history").fetchall()
+    assert row and row[0][1] == "retry_skipped"
+    info = json.loads(row[0][0])
+    assert info["reason"] == "retry_skipped_due_to_similarity"
+    assert "fingerprint_hash" in info and "similarity" in info and "cluster_id" in info

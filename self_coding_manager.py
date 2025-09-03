@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import re
+import json
 from typing import Dict, Any, TYPE_CHECKING
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
@@ -304,6 +305,29 @@ class SelfCodingManager:
                             extra={"action": action, "similarity": best},
                         )
                         if skip:
+                            details = {
+                                "fingerprint_hash": getattr(provisional_fp, "hash", ""),
+                                "similarity": best,
+                                "cluster_id": getattr(matches[0], "cluster_id", None) if matches else None,
+                                "reason": "retry_skipped_due_to_similarity",
+                            }
+                            audit = getattr(self.engine, "audit_trail", None)
+                            if audit:
+                                try:
+                                    audit.record(details)
+                                except Exception:
+                                    self.logger.exception("audit trail logging failed")
+                            pdb = getattr(self.engine, "patch_db", None)
+                            if pdb:
+                                try:
+                                    conn = pdb.router.get_connection("patch_history")
+                                    conn.execute(
+                                        "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
+                                        (str(path), json.dumps(details), "retry_skipped"),
+                                    )
+                                    conn.commit()
+                                except Exception:
+                                    self.logger.exception("failed to record retry status")
                             raise RuntimeError("similar failure detected")
                 if last_fp and self.failure_store:
                     threshold = getattr(self.engine, "failure_similarity_threshold", None)
@@ -334,6 +358,29 @@ class SelfCodingManager:
                             extra={"action": action, "similarity": best},
                         )
                     if skip:
+                        details = {
+                            "fingerprint_hash": getattr(last_fp, "hash", ""),
+                            "similarity": best,
+                            "cluster_id": getattr(matches[0], "cluster_id", None) if matches else None,
+                            "reason": "retry_skipped_due_to_similarity",
+                        }
+                        audit = getattr(self.engine, "audit_trail", None)
+                        if audit:
+                            try:
+                                audit.record(details)
+                            except Exception:
+                                self.logger.exception("audit trail logging failed")
+                        pdb = getattr(self.engine, "patch_db", None)
+                        if pdb:
+                            try:
+                                conn = pdb.router.get_connection("patch_history")
+                                conn.execute(
+                                    "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
+                                    (str(path), json.dumps(details), "retry_skipped"),
+                                )
+                                conn.commit()
+                            except Exception:
+                                self.logger.exception("failed to record retry status")
                         raise RuntimeError("similar failure detected")
                 patch_id, reverted, _ = self.engine.apply_patch(
                     cloned_path,
