@@ -6956,7 +6956,6 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
     try:
         repo_path = sandbox_config.get_sandbox_repo_path()
         runner_path = resolve_path("sandbox_runner.py")
-        runner_rel = runner_path.relative_to(repo_path).as_posix()
         data_dir = Path(tmp_dir) / "data"
         env = os.environ.copy()
         env.update({k: str(v) for k, v in preset.items()})
@@ -6978,10 +6977,13 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
             container_repo = "/repo"
             sandbox_tmp = "/sandbox_tmp"
             env["SANDBOX_DATA_DIR"] = f"{sandbox_tmp}/data"
+            runner_in_container = str(
+                Path(container_repo) / runner_path.relative_to(repo_path)
+            )
 
             code = (
                 "import subprocess, os\n"
-                f"subprocess.run(['python', {runner_rel!r}], cwd={container_repo!r})\n"
+                f"subprocess.run(['python', {runner_in_container!r}], cwd={container_repo!r})\n"
             )
             attempt = 0
             delay = _CREATE_BACKOFF_BASE
@@ -7025,6 +7027,9 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                 vm_repo = "/repo"
                 sandbox_tmp = "/sandbox_tmp"
                 env["SANDBOX_DATA_DIR"] = f"{sandbox_tmp}/data"
+                runner_in_vm = str(
+                    Path(vm_repo) / runner_path.relative_to(repo_path)
+                )
 
                 overlay = Path(tmp_dir) / "overlay.qcow2"
                 _record_active_overlay(str(overlay.parent))
@@ -7061,7 +7066,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                                 "-serial",
                                 "stdio",
                                 "-append",
-                                f"python {str((Path(vm_repo) / runner_rel))}",
+                                f"python {runner_in_vm}",
                             ]
                             subprocess.run(
                                 cmd,
