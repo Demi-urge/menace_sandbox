@@ -16,7 +16,6 @@ import threading
 import queue
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
-from datetime import datetime
 
 from ..logging_utils import get_logger, log_record
 from ..sandbox_settings import SandboxSettings
@@ -722,73 +721,6 @@ def _should_encode(
             return False, "errors_present"
 
     return True, "improved"
-
-
-def evaluate_cycle(
-    record: Mapping[str, Any],
-    tracker: BaselineTracker,
-    errors: Sequence[TelemetryEvent] | Sequence[Any],
-) -> tuple[bool, str]:
-    """Evaluate cycle metrics and errors.
-
-    Parameters
-    ----------
-    record:
-        Metrics record for the current cycle. Only used for timestamp context.
-    tracker:
-        Baseline metric tracker containing historical values.
-    errors:
-        Sequence of :class:`TelemetryEvent` instances observed during the cycle.
-
-    Returns
-    -------
-    tuple[bool, str]
-        ``(True, "")`` when any metric delta is non-positive or a recent
-        critical error is present. Otherwise ``(False, "all_deltas_positive")``.
-    """
-
-    # Compute current deltas for all tracked metrics
-    metrics: dict[str, float] = {
-        metric: float(tracker.delta(metric)) for metric in list(tracker._history)
-    }
-    for metric, delta in metrics.items():
-        if delta <= 0:
-            get_logger(__name__).debug(
-                "cycle evaluation will run due to non-positive delta",
-                extra=log_record(reason="non_positive_delta", metrics=metrics),
-            )
-            return True, ""
-
-    def _to_ts(val: Any) -> float:
-        if isinstance(val, (int, float)):
-            return float(val)
-        if isinstance(val, str):
-            try:
-                return datetime.fromisoformat(val).timestamp()
-            except Exception:
-                try:
-                    return float(val)
-                except Exception:
-                    return 0.0
-        return 0.0
-
-    cycle_ts = _to_ts(record.get("timestamp"))
-
-    for err in errors:
-        sev = getattr(getattr(err, "error_type", None), "severity", None)
-        if sev == "critical":
-            if _to_ts(getattr(err, "timestamp", 0)) >= cycle_ts:
-                get_logger(__name__).debug(
-                    "cycle evaluation will run due to critical error",
-                    extra=log_record(reason="critical_error", metrics=metrics),
-                )
-                return True, ""
-
-    get_logger(__name__).debug(
-        "cycle evaluation skipped; all deltas positive",
-        extra=log_record(reason="all_deltas_positive", metrics=metrics),
-    )
-    return False, "all_deltas_positive"
 
 
 def _recent_error_entropy(

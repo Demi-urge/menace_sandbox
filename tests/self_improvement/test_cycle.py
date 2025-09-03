@@ -324,7 +324,6 @@ def _load_cycle_funcs():
     tree = ast.parse(src)
     wanted = {
         "self_improvement_cycle",
-        "evaluate_cycle",
         "_evaluate_cycle",
         "_recent_error_entropy",
     }
