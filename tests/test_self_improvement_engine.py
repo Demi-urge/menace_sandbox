@@ -381,6 +381,14 @@ sys.modules["analytics"] = analytics_mod
 sys.modules["analytics.adaptive_roi_model"] = analytics_mod.adaptive_roi_model
 pytest.importorskip("pandas")
 
+err_logger_mod = types.ModuleType("error_logger")
+err_logger_mod.TelemetryEvent = object
+class _ErrLogger:
+    pass
+err_logger_mod.ErrorLogger = _ErrLogger
+sys.modules["error_logger"] = err_logger_mod
+sys.modules["menace.error_logger"] = err_logger_mod
+
 import menace.self_improvement as sie
 
 _BT_SPEC = importlib.util.spec_from_file_location(
@@ -1538,3 +1546,27 @@ def test_deployment_gate_pilot(tmp_path, monkeypatch):
     assert engine.workflow_ready is False
     assert events and events[-1]["verdict"] == "pilot"
     assert events[-1]["downgrade_type"] == "pilot"
+
+
+def test_compute_delta_score_weights():
+    if not hasattr(sie, "SelfImprovementEngine"):
+        pytest.skip("SelfImprovementEngine unavailable")
+    eng = sie.SelfImprovementEngine.__new__(sie.SelfImprovementEngine)
+    eng.roi_delta_ema = 1.0
+    eng.entropy_delta_ema = 0.5
+    eng.entropy_dev_multiplier = 0.0
+    eng.baseline_tracker = types.SimpleNamespace(std=lambda metric: 0.0)
+    eng._metric_delta = lambda metric: 0.2
+    eng.roi_weight = 2.0
+    eng.momentum_weight = 3.0
+    eng.entropy_weight = 4.0
+    score, components = sie.SelfImprovementEngine._compute_delta_score(eng)
+    assert score == pytest.approx(2.0 * 1.0 + 3.0 * 0.2 - 4.0 * 0.5)
+    assert components == {
+        "roi_delta": 1.0,
+        "entropy_delta": 0.5,
+        "momentum_delta": 0.2,
+        "roi_component": 2.0,
+        "momentum_component": 0.6,
+        "entropy_component": -2.0,
+    }

@@ -540,7 +540,8 @@ class SelfImprovementEngine:
         )
         self.baseline_tracker = GLOBAL_BASELINE_TRACKER
         self.baseline_tracker.window = self.baseline_window
-        self.pass_rate_weight = getattr(settings, "pass_rate_weight", 1.0)
+        self.roi_weight = getattr(settings, "roi_weight", 1.0)
+        self.momentum_weight = getattr(settings, "momentum_weight", 1.0)
         self.momentum_window = getattr(
             getattr(cfg, "roi", None), "momentum_window", self.baseline_window
         )
@@ -1853,10 +1854,10 @@ class SelfImprovementEngine:
     def _compute_delta_score(self) -> tuple[float, dict[str, float]]:
         """Return combined delta score and its components.
 
-        The score is a simple sum of the contributing metrics where positive
-        ROI changes, momentum, and scenario pass rate improvements boost the
-        result while entropy increases decrease it. Individual components are
-        returned for audit logging.
+        The score combines ROI, momentum, and entropy deltas with configurable
+        weights. Positive ROI and momentum changes increase the score while
+        entropy increases decrease it. Individual components are returned for
+        audit logging.
         """
 
         roi_delta = getattr(self, "roi_delta_ema", 0.0)
@@ -1868,18 +1869,18 @@ class SelfImprovementEngine:
         else:
             entropy_delta -= entropy_threshold
         momentum_delta = self._metric_delta("success_rate")
-        pass_rate_delta = self._baseline_metric_delta("pass_rate")
         score = (
-            roi_delta
-            - entropy_delta
-            + momentum_delta
-            + self.pass_rate_weight * pass_rate_delta
+            self.roi_weight * roi_delta
+            + self.momentum_weight * momentum_delta
+            - self.entropy_weight * entropy_delta
         )
         components = {
             "roi_delta": roi_delta,
             "entropy_delta": entropy_delta,
             "momentum_delta": momentum_delta,
-            "pass_rate_delta": pass_rate_delta,
+            "roi_component": self.roi_weight * roi_delta,
+            "momentum_component": self.momentum_weight * momentum_delta,
+            "entropy_component": -self.entropy_weight * entropy_delta,
         }
         return score, components
 
@@ -2118,9 +2119,8 @@ class SelfImprovementEngine:
     def _check_delta_score(self) -> None:
         """Escalate urgency when combined delta score trends negative.
 
-        The combined score includes ROI, entropy, momentum and pass rate
-        deltas so that deteriorating scenario quality also influences
-        urgency adjustments.
+        The combined score includes ROI, entropy, and momentum deltas, each
+        scaled by a configurable weight.
         """
 
         score, components = self._compute_delta_score()
