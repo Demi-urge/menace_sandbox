@@ -17,11 +17,13 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, List
 
 from dotenv import load_dotenv
 import numpy as np
 
+from .dynamic_path_router import resolve_path
 from .kpi_reward_core import compute_reward, explain_reward
 from . import reward_dispatcher
 from .roi_calculator import ROICalculator
@@ -71,12 +73,8 @@ FORESIGHT_TRACKER = ForesightTracker()
 
 # Paths for input logs and output records
 ACTIONS_FILE = os.getenv("ACTIONS_FILE", "/mnt/shared/menace_logs/actions.jsonl")
-CURSOR_FILE = os.getenv(
-    "CURSOR_FILE", os.path.join(os.path.dirname(__file__), "last_processed.txt")
-)
-AUDIT_DIR = os.getenv(
-    "AUDIT_DIR", os.path.join(os.path.dirname(__file__), "audit_logs")
-)
+CURSOR_FILE = resolve_path("last_processed.txt")
+AUDIT_DIR = resolve_path("audit_logs")
 
 # Interval between scans (seconds)
 SLEEP_INTERVAL = float(os.getenv("SLEEP_INTERVAL", "5"))
@@ -85,12 +83,12 @@ FAILURE_THROTTLE_SLEEP = float(os.getenv("FAILURE_THROTTLE_SLEEP", "60"))
 
 def setup_logging() -> None:
     """Configure application logging."""
-    os.makedirs(AUDIT_DIR, exist_ok=True)
+    AUDIT_DIR.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler(os.path.join(AUDIT_DIR, "security_ai.log")),
+            logging.FileHandler(AUDIT_DIR / "security_ai.log"),
             logging.StreamHandler(),
         ],
     )
@@ -128,9 +126,9 @@ def flag_risky_behaviour(action: dict[str, Any]) -> List[str]:
     return flags
 
 
-def _audit_file_for_today() -> str:
+def _audit_file_for_today() -> Path:
     date_str = time.strftime("%Y-%m-%d")
-    return os.path.join(AUDIT_DIR, f"audit_{date_str}.jsonl")
+    return AUDIT_DIR / f"audit_{date_str}.jsonl"
 
 
 def append_audit(entry: dict[str, Any]) -> None:
@@ -359,8 +357,12 @@ def main_loop() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Security AI evaluation loop")
     parser.add_argument("--actions-file", default=ACTIONS_FILE, help="Path to actions log")
-    parser.add_argument("--cursor-file", default=CURSOR_FILE, help="Path to cursor file")
-    parser.add_argument("--audit-dir", default=AUDIT_DIR, help="Audit log directory")
+    parser.add_argument(
+        "--cursor-file", default=str(CURSOR_FILE), help="Path to cursor file"
+    )
+    parser.add_argument(
+        "--audit-dir", default=str(AUDIT_DIR), help="Audit log directory"
+    )
     parser.add_argument(
         "--sleep-interval", type=float, default=SLEEP_INTERVAL, help="Sleep seconds"
     )
@@ -372,8 +374,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ACTIONS_FILE = args.actions_file
-    CURSOR_FILE = args.cursor_file
-    AUDIT_DIR = args.audit_dir
+    CURSOR_FILE = resolve_path(args.cursor_file)
+    AUDIT_DIR = resolve_path(args.audit_dir)
     SLEEP_INTERVAL = args.sleep_interval
 
     ENABLE_TRUTH_CALIBRATION = not args.disable_calibration and (
