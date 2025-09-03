@@ -2113,10 +2113,7 @@ class SelfImprovementEngine:
     def _check_roi_stagnation(self) -> None:
         """Escalate urgency when ROI fails to improve over consecutive cycles."""
 
-        deltas = self.baseline_tracker.delta_history("roi")
-        if not deltas:
-            return
-        last_delta = deltas[-1]
+        last_delta = self.baseline_tracker.delta("roi")
         if last_delta <= 0:
             self._stagnation_streak += 1
             if self._stagnation_streak >= self.stagnation_cycles:
@@ -2149,28 +2146,28 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _check_momentum(self) -> None:
-        """Escalate urgency when momentum trails the moving average."""
+        """Escalate urgency when momentum fails to improve."""
 
-        current_momentum = self.baseline_tracker.momentum
-        moving_avg = self.baseline_tracker.get("momentum")
-        deviation = self.momentum_dev_multiplier * self.baseline_tracker.std("momentum")
-        threshold = moving_avg - deviation
-        if current_momentum < threshold:
+        delta = self.baseline_tracker.delta("momentum")
+        if delta <= 0:
             self._momentum_streak += 1
             if self._momentum_streak >= self.stagnation_cycles:
                 self.urgency_tier += 1
                 self.logger.warning(
-                    "momentum below moving average; increasing urgency tier",
+                    "momentum non-positive; increasing urgency tier",
                     extra=log_record(
                         tier=self.urgency_tier,
-                        momentum=current_momentum,
-                        moving_avg=moving_avg,
-                        deviation=deviation,
+                        delta=delta,
                         streak=self._momentum_streak,
                     ),
                 )
         else:
             self._momentum_streak = 0
+            if (
+                self.urgency_tier > 0
+                and delta > self.urgency_recovery_threshold
+            ):
+                self.urgency_tier = 0
 
     # ------------------------------------------------------------------
     def _check_delta_score(self) -> None:
