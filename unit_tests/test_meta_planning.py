@@ -31,7 +31,9 @@ def _load_meta_planning():
         "Any": Any,
         "Callable": Callable,
         "Mapping": Mapping,
-        "BASELINE_TRACKER": types.SimpleNamespace(get=lambda m: 0.0, std=lambda m: 0.0),
+        "BASELINE_TRACKER": types.SimpleNamespace(
+            get=lambda m: 0.0, std=lambda m: 0.0, momentum=1.0
+        ),
     }
     exec(compile(module, "<ast>", "exec"), ns)
     return ns
@@ -66,9 +68,17 @@ def test_should_encode_requires_positive_roi_and_low_entropy():
     meta = _load_meta_planning()
     should_encode = meta["_should_encode"]
 
-    assert should_encode({"roi_gain": 0.1, "entropy": 0.1}, entropy_threshold=0.2)
-    assert not should_encode({"roi_gain": 0.0, "entropy": 0.1}, entropy_threshold=0.2)
-    assert should_encode({"roi_gain": 0.1, "entropy": 0.3}, entropy_threshold=0.2)
+    tracker = types.SimpleNamespace(get=lambda m: 0.0, momentum=1.0)
+
+    assert should_encode(
+        {"roi_gain": 0.1, "entropy": 0.1}, tracker, entropy_threshold=0.2
+    )
+    assert not should_encode(
+        {"roi_gain": 0.0, "entropy": 0.1}, tracker, entropy_threshold=0.2
+    )
+    assert should_encode(
+        {"roi_gain": 0.1, "entropy": 0.3}, tracker, entropy_threshold=0.2
+    )
 
 
 def test_cycle_uses_fallback_planner_when_missing():
