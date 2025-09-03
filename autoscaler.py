@@ -22,6 +22,7 @@ import subprocess
 from typing import Dict, Deque
 from collections import deque
 import math
+from dynamic_path_router import resolve_path
 
 from .env_config import (
     BUDGET_MAX_INSTANCES,
@@ -118,9 +119,14 @@ class LocalProvider(Provider):
         self.max_restarts = LOCAL_PROVIDER_MAX_RESTARTS
         self._lock = threading.Lock()
         self.exec_path = executable or os.getenv("MENACE_EXECUTABLE_PATH")
-        if not self.exec_path:
-            candidate = os.path.join(os.path.dirname(__file__), "menace_master.py")
-            self.exec_path = candidate if os.path.exists(candidate) else "menace_master.py"
+        if self.exec_path:
+            if not os.path.isabs(self.exec_path):
+                try:
+                    self.exec_path = str(resolve_path(self.exec_path))
+                except FileNotFoundError:
+                    pass
+        else:
+            self.exec_path = str(resolve_path("menace_master.py"))
         if not os.path.isfile(self.exec_path):
             self.logger.error("executable %s not found", self.exec_path)
             raise FileNotFoundError(f"Executable {self.exec_path} not found")

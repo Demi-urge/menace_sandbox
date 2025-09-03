@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import platform
 import shutil
 import subprocess
 import sys
-from pathlib import Path
-import argparse
 import textwrap
+from pathlib import Path
+
+from dynamic_path_router import resolve_path
 
 SERVICE_NAME = "menace"
 
 
 def _install_systemd() -> None:
-    service_file = Path("systemd/menace.service")
+    service_file = resolve_path("systemd/menace.service")
     target = Path("/etc/systemd/system/menace.service")
     if os.geteuid() != 0:
         print("Systemd installation requires root privileges")
@@ -31,7 +33,7 @@ def _install_systemd() -> None:
 
 def _install_windows() -> None:
     exe = sys.executable
-    script = Path(__file__).resolve().parent / "service_supervisor.py"
+    script = resolve_path("service_supervisor.py")
     cmd = [
         "sc",
         "create",

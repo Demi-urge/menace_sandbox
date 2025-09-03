@@ -28,6 +28,7 @@ from pathlib import Path
 import sys
 import logging
 from logging_utils import log_record
+from dynamic_path_router import resolve_path
 
 # Logger for this module
 logger = logging.getLogger(__name__)
@@ -252,7 +253,7 @@ def _start_dependency_watchdog(
 
 
 def _install_user_systemd() -> None:
-    service_file = Path("systemd/menace.service")
+    service_file = resolve_path("systemd/menace.service")
     target = Path.home() / ".config" / "systemd" / "user" / "menace.service"
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(service_file, target)
@@ -262,7 +263,7 @@ def _install_user_systemd() -> None:
 
 def _install_task_scheduler() -> None:
     exe = sys.executable
-    script = Path(__file__).resolve().parent / "service_supervisor.py"
+    script = resolve_path("service_supervisor.py")
     cmd = [
         "schtasks",
         "/Create",
