@@ -78,13 +78,17 @@ import functools
 import contextlib
 from metrics_exporter import update_relevancy_metrics
 from relevancy_metrics_db import RelevancyMetricsDB
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
 
 # Path to the persistent usage statistics file.
 _BASE_DIR = Path(__file__).resolve().parent
 _MODULE_USAGE_FILE = _BASE_DIR / "sandbox_data" / "module_usage.json"
 _RELEVANCY_FLAGS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_flags.json"
 # File used by :class:`RelevancyRadar` to persist detailed usage metrics.
-_RELEVANCY_METRICS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_metrics.json"
+_RELEVANCY_METRICS_FILE = Path(resolve_path("sandbox_data/relevancy_metrics.json"))
 # Default location of the SQLite metrics store consumed by :func:`scan`.
 _RELEVANCY_METRICS_DB = _BASE_DIR / "sandbox_data" / "relevancy_metrics.db"
 # File used to persist the call graph between runs.
