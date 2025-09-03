@@ -841,9 +841,44 @@ def _evaluate_cycle(
     except Exception:
         events = None
 
+    threshold = getattr(_init.settings, "critical_severity_threshold", 75.0)
+
+    def _severity_to_score(sev: Any) -> float | None:
+        mapping = {
+            "critical": 100.0,
+            "crit": 100.0,
+            "fatal": 100.0,
+            "high": 75.0,
+            "error": 75.0,
+            "warn": 50.0,
+            "warning": 50.0,
+            "medium": 50.0,
+            "low": 25.0,
+            "info": 0.0,
+        }
+        if isinstance(sev, str):
+            s = sev.lower()
+            if s in mapping:
+                return mapping[s]
+            try:
+                sev = float(sev)
+            except ValueError:
+                return None
+        if isinstance(sev, (int, float)):
+            val = float(sev)
+            if 0 <= val <= 1:
+                return val * 100
+            if 0 <= val <= 5:
+                return val * 20
+            if 0 <= val <= 10:
+                return val * 10
+            return val
+        return None
+
     for ev in events or []:
         sev = getattr(getattr(ev, "error_type", None), "severity", None)
-        if sev == "critical":
+        score = _severity_to_score(sev)
+        if score is not None and score >= threshold:
             critical = True
             break
 
