@@ -19,9 +19,21 @@ This guide walks you through the common Menace workflows using the new `menace` 
    values for critical settings:
 
    - `DATABASE_URL` defaults to `sqlite:///menace.db`
-   - `SANDBOX_DATA_DIR` defaults to `sandbox_data`
+   - `SANDBOX_DATA_DIR` defaults to `sandbox_data` (use `resolve_path` when referencing files)
    - `PROMPT_CHUNK_TOKEN_THRESHOLD` and `PROMPT_CHUNK_CACHE_DIR` control code
      chunking token limits and caching for large file summaries
+
+   Resolve paths with `dynamic_path_router.resolve_path` so configurations
+   remain portable:
+
+   ```python
+   import os
+   from dynamic_path_router import resolve_path
+   data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+   ```
+
+   Setting `MENACE_ROOT` or `SANDBOX_REPO_PATH` will change the root used by
+   `resolve_path`, allowing the CLI to target alternative checkouts.
 3. **Run the tests** (optional)
    ```bash
    menace test

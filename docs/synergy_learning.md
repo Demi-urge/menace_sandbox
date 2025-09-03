@@ -1,6 +1,14 @@
 # Synergy learning
 
-This page explains how synergy weights are learned and how predictions feed into ROI calculations. Synergy history is persisted in `synergy_history.db` within the sandbox data directory. If a legacy `synergy_history.json` exists it is migrated automatically at startup.
+This page explains how synergy weights are learned and how predictions feed into ROI calculations. Synergy history is persisted in `synergy_history.db` under the sandbox data directory. Resolve the path dynamically to respect environment overrides:
+
+```python
+import os
+from dynamic_path_router import resolve_path
+history = resolve_path(f"{os.getenv('SANDBOX_DATA_DIR', 'sandbox_data')}/synergy_history.db")
+```
+
+If a legacy `synergy_history.json` exists it is migrated automatically at startup.
 
 ## SynergyWeightLearner
 
