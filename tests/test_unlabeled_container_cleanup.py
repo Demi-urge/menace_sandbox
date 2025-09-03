@@ -1,8 +1,30 @@
 import types
-import sandbox_runner.environment as env
+import importlib
+import sys
+from pathlib import Path
+
+import dynamic_path_router
+from dynamic_path_router import resolve_path
 
 
 def test_unlabeled_container_removed(monkeypatch, tmp_path):
+    # prepare environment module with minimal dependencies
+    class DummyErrorLogger:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setitem(
+        sys.modules, "error_logger", types.SimpleNamespace(ErrorLogger=DummyErrorLogger)
+    )
+    monkeypatch.setattr(
+        dynamic_path_router,
+        "resolve_path",
+        lambda name: Path(name),
+    )
+    resolve_path = dynamic_path_router.resolve_path
+    env = importlib.import_module("sandbox_runner.environment")
+    importlib.reload(env)
+
     # ensure active files do not interfere
     monkeypatch.setattr(env, '_read_active_containers', lambda: [])
     monkeypatch.setattr(env, '_write_active_containers', lambda ids: None)
@@ -20,7 +42,7 @@ def test_unlabeled_container_removed(monkeypatch, tmp_path):
             return types.SimpleNamespace(returncode=0, stdout='')
         if cmd[:3] == ['docker', 'ps', '-a']:
             out = (
-                'abc\t2023-01-01 00:00:00 +0000 UTC\t"python sandbox_runner.py"\n'
+                f'abc\t2023-01-01 00:00:00 +0000 UTC\t"python {resolve_path("sandbox_runner.py").name}"\n'
                 'def\t2023-01-01 00:00:00 +0000 UTC\t"other"\n'
             )
             return types.SimpleNamespace(returncode=0, stdout=out)

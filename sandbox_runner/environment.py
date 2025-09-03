@@ -1924,7 +1924,12 @@ def _prune_networks() -> int:
 
 
 def purge_leftovers() -> None:
-    """Remove stale sandbox containers and leftover QEMU overlay files."""
+    """Remove stale sandbox containers and leftover QEMU overlay files.
+
+    Container commands are matched using :func:`resolve_path` to locate
+    ``sandbox_runner.py`` dynamically, ensuring cleanup works even if the
+    repository layout changes.
+    """
     global _STALE_CONTAINERS_REMOVED
     with _PURGE_FILE_LOCK:
         try:
