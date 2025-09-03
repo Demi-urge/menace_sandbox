@@ -36,7 +36,11 @@ to run self-improvement cycles inside the sandbox.
 ### Run a single cycle from the CLI
 
 ```bash
-SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
+SANDBOX_REPO_PATH=$(pwd) python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --runs 1
 ```
 
 ### Trigger a cycle programmatically

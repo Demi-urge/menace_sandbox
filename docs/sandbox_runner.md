@@ -15,6 +15,9 @@ Paths in the examples below are resolved with
 set and falls back to Git metadata, allowing forked layouts or nested clones to
 share the same tooling.
 
+See [dynamic_path_router.md](dynamic_path_router.md) for caching behaviour and
+migration guidance when adding new files.
+
 > **Note:** The former `sandbox_runner.workflow_runner` module has been
 > replaced by `sandbox_runner.workflow_sandbox_runner`. Import
 > `WorkflowSandboxRunner` from the new module; the old path remains as a

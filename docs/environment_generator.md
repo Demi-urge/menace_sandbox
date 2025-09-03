@@ -30,7 +30,11 @@ runner. Available names include:
 Generate a preset that combines hostile inputs with a concurrency spike:
 
 ```bash
-python environment_cli.py --profiles hostile_input concurrency_spike --count 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('environment_cli.py'))
+PY
+)" --profiles hostile_input concurrency_spike --count 1
 ```
 
 ## Automatic Runner Coverage
@@ -51,8 +55,16 @@ or by editing the generated JSON. Example:
 
 ```bash
 export CPU_LIMIT=2
-python environment_cli.py --profiles hostile_input --count 1 --out presets.json
-python run_autonomous.py --preset-file presets.json --runs 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('environment_cli.py'))
+PY
+)" --profiles hostile_input --count 1 --out presets.json
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)" --preset-file presets.json --runs 1
 ```
 
 ## Hostile Input Stub Strategy
@@ -63,7 +75,11 @@ payloads to each section. To enforce it without a profile:
 
 ```bash
 export SANDBOX_STUB_STRATEGY=hostile
-python sandbox_runner.py --runs 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --runs 1
 ```
 
 The `user_misuse` profile sets `SANDBOX_STUB_STRATEGY=misuse` which generates
@@ -79,7 +95,11 @@ also be supplied manually:
 export FAILURE_MODES=concurrency_spike
 export THREAD_BURST=32
 export ASYNC_TASK_BURST=128
-python sandbox_runner.py --runs 1
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --runs 1
 ```
 
 ## Available Parameters
@@ -256,7 +276,11 @@ learning enabled for preset adaptation:
 3. Run the sandbox using `run_autonomous.py`:
 
    ```bash
-   python run_autonomous.py --preset-count 2 --runs 1
+   python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('run_autonomous.py'))
+PY
+)" --preset-count 2 --runs 1
    ```
 
    During each cycle `environment_generator.adapt_presets` loads the policy
