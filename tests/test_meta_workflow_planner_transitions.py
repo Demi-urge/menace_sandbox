@@ -1,15 +1,14 @@
 import sys
 import types
 import importlib.util
-from pathlib import Path
 
 import pytest
 
+from dynamic_path_router import resolve_path
 from meta_workflow_planner import MetaWorkflowPlanner
 
 spec = importlib.util.spec_from_file_location(
-    "workflow_sandbox_runner",
-    Path(__file__).resolve().parent.parent / "sandbox_runner" / "workflow_sandbox_runner.py",
+    "workflow_sandbox_runner", resolve_path("workflow_sandbox_runner.py")
 )
 wsr = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
 assert spec.loader is not None

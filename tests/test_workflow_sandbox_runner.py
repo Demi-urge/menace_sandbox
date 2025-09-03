@@ -4,9 +4,9 @@ import os
 import sys
 import tempfile
 import types
-from pathlib import Path
 import builtins
 import logging
+from pathlib import Path
 
 import urllib.request
 import shutil
@@ -15,22 +15,23 @@ import multiprocessing
 import pytest
 import time
 
+from dynamic_path_router import resolve_dir, resolve_path, repo_root
+
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = repo_root()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # ---------------------------------------------------------------------------
 # Dynamically load WorkflowSandboxRunner without importing the heavy package
-package_path = Path(__file__).resolve().parent.parent / "sandbox_runner"
+package_path = resolve_dir("sandbox_runner")
 package = types.ModuleType("sandbox_runner")
 package.__path__ = [str(package_path)]
 sys.modules["sandbox_runner"] = package
 
 spec = importlib.util.spec_from_file_location(
-    "sandbox_runner.workflow_sandbox_runner",
-    package_path / "workflow_sandbox_runner.py",
+    "sandbox_runner.workflow_sandbox_runner", resolve_path("workflow_sandbox_runner.py")
 )
 wsr = importlib.util.module_from_spec(spec)
 assert spec.loader

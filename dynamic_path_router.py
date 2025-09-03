@@ -143,6 +143,33 @@ def resolve_path(name: str | Path) -> Path:
     raise FileNotFoundError(f"Unable to resolve path: {name}")
 
 
+def resolve_dir(name: str | Path) -> Path:
+    """Resolve *name* to a directory within the repository.
+
+    Parameters
+    ----------
+    name:
+        Directory to locate. Accepts the same forms as :func:`resolve_path`.
+
+    Returns
+    -------
+    pathlib.Path
+        Normalised absolute path to the located directory.
+
+    Raises
+    ------
+    NotADirectoryError
+        If the resolved path is not a directory.
+    FileNotFoundError
+        If the target cannot be located.
+    """
+
+    path = resolve_path(name)
+    if not path.is_dir():
+        raise NotADirectoryError(f"Expected directory: {name}")
+    return path
+
+
 def clear_cache() -> None:
     """Clear internal caches used by this module."""
 
