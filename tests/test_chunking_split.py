@@ -87,3 +87,9 @@ def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
     cache_files = list(cache_dir.iterdir())
     assert len(cache_files) == 1  # file replaced
     assert first != second
+
+
+def test_split_respects_line_ranges() -> None:
+    code = "\n".join(f"print({i})" for i in range(1, 6))
+    chunks = pc.split_into_chunks(code, 100, line_ranges=[(2, 3)])
+    assert [(c.start_line, c.end_line) for c in chunks] == [(1, 1), (2, 3), (4, 5)]

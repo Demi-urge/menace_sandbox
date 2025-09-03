@@ -385,3 +385,41 @@ def test_patch_file_rejects_scope_violation(tmp_path):
     with pytest.raises(ValueError):
         engine.patch_file(target, "desc", target_region=region)
     assert events and events[0][0] == "patch:scope_violation"
+
+
+def test_build_file_context_stitches_target_region(tmp_path, monkeypatch):
+    monkeypatch.setattr(sce, "_count_tokens", lambda text: 100)
+
+    def fake_summary(text: str, llm=None) -> str:
+        return text.splitlines()[0]
+
+    monkeypatch.setattr(sce, "summarize_code", fake_summary)
+    monkeypatch.setattr(pc, "summarize_code", fake_summary)
+
+    engine = sce.SelfCodingEngine(
+        object(),
+        object(),
+        prompt_chunk_token_threshold=10,
+        chunk_summary_cache_dir=tmp_path,
+    )
+
+    path = tmp_path / "mod.py"
+    path.write_text(
+        "\n".join(
+            [
+                "def a():",
+                "    pass",
+                "",
+                "def b():",
+                "    pass",
+                "",
+                "def c():",
+                "    pass",
+            ]
+        )
+    )
+
+    region = sce.TargetRegion(start_line=4, end_line=8, func_name="bc")
+    snippet, summaries = engine._build_file_context(path, target_region=region)
+    assert "def b():" in snippet and "def c():" in snippet
+    assert summaries == ["Chunk 0: def a():"]

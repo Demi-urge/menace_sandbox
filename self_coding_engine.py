@@ -131,7 +131,7 @@ except Exception:  # pragma: no cover - graceful degradation
         return None
 from .prompt_engine import PromptEngine, _ENCODER
 from .prompt_memory_trainer import PromptMemoryTrainer
-from chunking import split_into_chunks, get_chunk_summaries
+from chunking import split_into_chunks, get_chunk_summaries, summarize_code
 try:
     from .prompt_optimizer import PromptOptimizer
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -762,16 +762,42 @@ class SelfCodingEngine:
             return "", None
 
         if target_region is not None:
+            start = target_region.start_line
+            end = target_region.end_line
+            threshold = self.chunk_token_threshold or 0
+            if code and threshold and _count_tokens(code) > threshold:
+                try:
+                    chunks = split_into_chunks(
+                        code,
+                        threshold,
+                        line_ranges=[(start, end)],
+                    )
+                except Exception:
+                    self.logger.exception("failed to split %s", path)
+                    return "", None
+                summaries: List[str] = []
+                parts: List[str] = []
+                for i, ch in enumerate(chunks):
+                    if start <= ch.start_line and ch.end_line <= end:
+                        parts.append(ch.text)
+                    else:
+                        summary = summarize_code(ch.text, self.llm_client)
+                        summaries.append(f"Chunk {i}: {summary}")
+                snippet_body = "\n".join(parts).strip()
+                header = (
+                    f"# Region {target_region.func_name or ''} lines"
+                    f" {start}-{end}"
+                ).strip()
+                return f"{header}\n{snippet_body}", summaries or None
+
             lines = code.splitlines()
-            start = max(target_region.start_line - 1, 0)
-            end = min(target_region.end_line, len(lines))
             context_pad = 5
-            s = max(0, start - context_pad)
+            s = max(0, start - 1 - context_pad)
             e = min(len(lines), end + context_pad)
             snippet = "\n".join(lines[s:e])
             header = (
                 f"# Region {target_region.func_name or ''} lines"
-                f" {target_region.start_line}-{target_region.end_line}"
+                f" {start}-{end}"
             ).strip()
             return f"{header}\n{snippet}", None
 
@@ -999,7 +1025,7 @@ class SelfCodingEngine:
                 context=context_block,
                 retrieval_context=retrieval_context,
                 retry_trace=retry_trace,
-                target_region=target_region,
+                summaries=summaries,
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
