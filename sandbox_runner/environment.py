@@ -7613,7 +7613,7 @@ def run_workflow_simulations(
     *,
     dynamic_workflows: bool = False,
     module_algorithm: str = "greedy",
-    module_threshold: float = 0.1,
+    module_threshold: float | None = None,
     module_semantic: bool = False,
     return_details: bool = False,
     tracker: "ROITracker" | None = None,
@@ -7626,7 +7626,9 @@ def run_workflow_simulations(
     ``module_algorithm`` selects the clustering method used when
     ``dynamic_workflows`` generates workflows from module groups. The
     ``module_threshold`` and ``module_semantic`` options mirror the
-    parameters accepted by :func:`discover_module_groups`.
+    parameters accepted by :func:`discover_module_groups`. When
+    ``module_threshold`` is ``None``, the value is derived from the
+    ``tracker``'s synergy baseline.
     """
     from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
     from menace.roi_tracker import ROITracker
@@ -7635,6 +7637,10 @@ def run_workflow_simulations(
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
     from sandbox_settings import SandboxSettings
+    tracker = tracker or ROITracker()
+    if module_threshold is None:
+        k = getattr(SandboxSettings(), "synergy_dev_multiplier", 1.0)
+        module_threshold = tracker.get("synergy") + k * tracker.std("synergy")
     try:
         from menace.environment_generator import _PROFILE_ALIASES, CANONICAL_PROFILES
     except Exception:  # pragma: no cover - environment generator optional
@@ -7762,7 +7768,6 @@ def run_workflow_simulations(
             return step
         raise ValueError(f"Workflow step '{step}' must include a module path")
 
-    tracker = tracker or ROITracker()
     scenario_names: List[str] = []
     for i, p in enumerate(all_presets):
         raw = p.get("SCENARIO_NAME", f"scenario_{i}")
