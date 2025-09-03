@@ -63,6 +63,8 @@ class FailureFingerprint:
     embedding_metadata: Dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=lambda: time())
     count: int = 1
+    target_region: str | None = None
+    escalation_level: int = 0
 
     # ``function`` is used by ``FailureFingerprintStore``; keep ``function_name`` for
     # backwards compatibility with existing callers.

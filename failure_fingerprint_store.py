@@ -247,6 +247,8 @@ class FailureFingerprintStore:
                         "function": existing.function,
                         "embedding_meta": existing.embedding_metadata,
                         "count": existing.count,
+                        "target_region": existing.target_region,
+                        "escalation_level": existing.escalation_level,
                     },
                 )
             except Exception:  # pragma: no cover - best effort
@@ -267,6 +269,8 @@ class FailureFingerprintStore:
                 "function": fingerprint.function,
                 "embedding_meta": fingerprint.embedding_metadata,
                 "count": fingerprint.count,
+                "target_region": fingerprint.target_region,
+                "escalation_level": fingerprint.escalation_level,
             },
         )
         self._cache[record_id] = fingerprint
@@ -364,6 +368,8 @@ class FailureFingerprintStore:
                         "filename": fp.filename,
                         "function": fp.function,
                         "embedding_meta": fp.embedding_metadata,
+                        "target_region": fp.target_region,
+                        "escalation_level": fp.escalation_level,
                     },
                 )
         except Exception:  # pragma: no cover - best effort
@@ -378,6 +384,8 @@ class FailureFingerprintStore:
                             "filename": fp.filename,
                             "function": fp.function,
                             "embedding_meta": fp.embedding_metadata,
+                            "target_region": fp.target_region,
+                            "escalation_level": fp.escalation_level,
                         },
                     )
                 except Exception:
