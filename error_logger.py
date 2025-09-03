@@ -68,9 +68,9 @@ except Exception:
 
 from governed_embeddings import governed_embed, get_embedder
 try:  # pragma: no cover - allow flat imports
-    from .dynamic_path_router import resolve_path
+    from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
@@ -671,7 +671,7 @@ class ErrorLogger:
         )
 
         for module, hint in suggestions:
-            resolved_module = str(resolve_path(module)) if module else None
+            resolved_module = path_for_prompt(module) if module else None
             payload = {
                 "task_id": task_id,
                 "bot_id": bot_id,
