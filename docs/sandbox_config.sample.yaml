@@ -1,4 +1,5 @@
 meta_entropy_threshold: 0.2
+overfitting_entropy_threshold: 0.2
 enable_meta_planner: false
 optional_service_versions:
   relevancy_radar: "1.0.0"

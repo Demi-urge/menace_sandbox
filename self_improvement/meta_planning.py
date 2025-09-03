@@ -694,6 +694,7 @@ def evaluate_cycle(
 
     return False, "all_deltas_positive"
 
+
 async def self_improvement_cycle(
     workflows: Mapping[str, Callable[[], Any]],
     *,
@@ -811,16 +812,33 @@ async def self_improvement_cycle(
                     tracker,
                     rec.get("errors", []),
                 )
-                if should_skip:
+                entropy_shift = abs(tracker.delta("entropy"))
+                has_critical = any(
+                    getattr(getattr(err, "error_type", None), "severity", None)
+                    == "critical"
+                    for err in rec.get("errors", [])
+                )
+                if should_skip and reason == "all_deltas_positive" and (
+                    entropy_shift > cfg.overfitting_entropy_threshold or has_critical
+                ):
+                    logger.debug(
+                        "run",
+                        extra=log_record(
+                            reason="overfitting_fallback",
+                            metrics=tracker.to_dict(),
+                        ),
+                    )
+                elif should_skip:
                     logger.debug(
                         "skip",
                         extra=log_record(reason=reason, metrics=tracker.to_dict()),
                     )
                     continue
-                logger.debug(
-                    "run",
-                    extra=log_record(metrics=tracker.to_dict()),
-                )
+                else:
+                    logger.debug(
+                        "run",
+                        extra=log_record(metrics=tracker.to_dict()),
+                    )
                 chain = rec.get("chain", [])
                 if chain and roi > 0:
                     active.append(chain)
