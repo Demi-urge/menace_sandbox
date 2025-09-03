@@ -263,7 +263,11 @@ class SelfCodingEngine:
         )
         self.baseline_tracker = delta_tracker or METRIC_BASELINES
         data_dir = getattr(_settings, "sandbox_data_dir", ".")
-        self._state_path = Path(data_dir) / "self_coding_engine_state.json"
+        state_candidate = Path(data_dir) / "self_coding_engine_state.json"
+        try:
+            self._state_path = resolve_path(state_candidate)
+        except FileNotFoundError:
+            self._state_path = state_candidate
         self.safety_monitor = safety_monitor
         if llm_client is None:
             try:
@@ -287,7 +291,11 @@ class SelfCodingEngine:
             str, tuple[Path, str, str, List[Tuple[str, str, float]]]
         ] = {}
         self.bot_roles: Dict[str, str] = bot_roles or {}
-        path = audit_trail_path or _settings.audit_log_path
+        path_setting = audit_trail_path or _settings.audit_log_path
+        try:
+            path = resolve_path(path_setting)
+        except FileNotFoundError:
+            path = Path(path_setting)
         key_b64 = audit_privkey or _settings.audit_privkey
         # Fallback to unsigned logging when no key is provided
         if key_b64:
@@ -338,11 +346,19 @@ class SelfCodingEngine:
         self.patch_logger = patch_logger
         self.roi_tracker = tracker
         self.knowledge_service = knowledge_service
+        try:
+            success_log_path = resolve_path(_settings.prompt_success_log_path)
+        except FileNotFoundError:
+            success_log_path = Path(_settings.prompt_success_log_path)
+        try:
+            failure_log_path = resolve_path(_settings.prompt_failure_log_path)
+        except FileNotFoundError:
+            failure_log_path = Path(_settings.prompt_failure_log_path)
         if prompt_optimizer is None:
             try:
                 prompt_optimizer = PromptOptimizer(
-                    _settings.prompt_success_log_path,
-                    _settings.prompt_failure_log_path,
+                    success_log_path,
+                    failure_log_path,
                 )
             except Exception:
                 prompt_optimizer = None
@@ -362,8 +378,8 @@ class SelfCodingEngine:
         if prompt_evolution_memory is None:
             try:
                 prompt_evolution_memory = PromptEvolutionMemory(
-                    success_path=Path(_settings.prompt_success_log_path),
-                    failure_path=Path(_settings.prompt_failure_log_path),
+                    success_path=success_log_path,
+                    failure_path=failure_log_path,
                 )
             except Exception:
                 prompt_evolution_memory = None
