@@ -95,6 +95,10 @@ try:  # pragma: no cover - optional dependency
     from ..workflow_summary_db import WorkflowSummaryDB
 except ImportError:  # pragma: no cover - fallback for flat layout
     from workflow_summary_db import WorkflowSummaryDB  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from ..workflow_synergy_comparator import WorkflowSynergyComparator
+except ImportError:  # pragma: no cover - fallback for flat layout
+    from workflow_synergy_comparator import WorkflowSynergyComparator  # type: ignore
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
@@ -7702,6 +7706,10 @@ class SelfImprovementEngine:
             roi_delta = components.get("roi_delta", 0.0)
             pass_rate_delta = components.get("pass_rate_delta", 0.0)
             momentum_delta = components.get("momentum_delta", 0.0)
+            entropy_delta = components.get("entropy_delta", 0.0)
+            entropy_std = self.baseline_tracker.std("entropy")
+            entropy_threshold = self.entropy_dev_multiplier * entropy_std
+            entropy_spike = abs(entropy_delta) > entropy_threshold
             within_baseline = current_energy >= threshold
             metric_values = {
                 "roi": self.baseline_tracker.current("roi"),
@@ -7709,7 +7717,53 @@ class SelfImprovementEngine:
                 "momentum": self.baseline_tracker.momentum,
                 "error_count": error_count,
             }
-            if (
+            error_traces: list[Any] | None = None
+            if self.error_bot and hasattr(getattr(self.error_bot, "db", None), "recent_errors"):
+                try:
+                    error_traces = self.error_bot.db.recent_errors(limit=5)
+                except Exception as exc:
+                    self.logger.exception("error trace retrieval failed: %s", exc)
+            overfit_signal = False
+            if WorkflowSynergyComparator and hasattr(
+                WorkflowSynergyComparator, "analyze_overfitting"
+            ):
+                spec = getattr(self, "last_workflow_spec", None)
+                if spec is not None:
+                    try:
+                        report = WorkflowSynergyComparator.analyze_overfitting(spec)
+                        overfit_signal = getattr(report, "is_overfitting", lambda: False)()
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.debug("overfitting analysis failed: %s", exc)
+            signals: dict[str, object] = {}
+            if error_traces:
+                signals["errors"] = len(error_traces)
+            if entropy_spike:
+                signals["entropy_delta"] = entropy_delta
+            if overfit_signal:
+                signals["overfitting"] = True
+            if signals and not self._cycle_running:
+                self.logger.info(
+                    "forcing run_cycle due to fallback signals",
+                    extra=log_record(
+                        energy=current_energy,
+                        baseline=threshold,
+                        **metric_values,
+                        **components,
+                        **signals,
+                        decision="fallback",
+                    ),
+                )
+                try:
+                    await asyncio.to_thread(
+                        self.run_cycle, energy=int(round(current_energy * 5))
+                    )
+                except Exception as exc:
+                    self.logger.exception(
+                        "self improvement run_cycle failed with energy %s: %s",
+                        int(round(current_energy * 5)),
+                        exc,
+                    )
+            elif (
                 roi_delta > 0
                 and pass_rate_delta > 0
                 and momentum_delta > 0
