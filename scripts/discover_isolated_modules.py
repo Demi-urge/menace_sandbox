@@ -16,6 +16,8 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+from dynamic_path_router import resolve_path
+
 from sandbox_runner.orphan_discovery import discover_recursive_orphans
 
 
@@ -29,7 +31,7 @@ def discover_isolated_modules(
     without orphan parents are returned.
     """
 
-    repo = Path(base_dir).resolve()
+    repo = resolve_path(str(base_dir))
     mapping = discover_recursive_orphans(str(repo))
 
     if not recursive:
@@ -59,10 +61,9 @@ def main(argv: Iterable[str] | None = None) -> None:  # pragma: no cover - CLI
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    res = discover_isolated_modules(Path(args.path), recursive=args.recursive)
+    res = discover_isolated_modules(args.path, recursive=args.recursive)
     print(json.dumps(res, indent=2))
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     main()
-

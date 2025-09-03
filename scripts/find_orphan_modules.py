@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, List
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, get_project_root
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         help="Repeat detection excluding discovered modules until stable",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
-    root = resolve_path(".")
+    root = get_project_root()
     orphan_paths = find_orphan_modules(
         root, excludes=args.exclude, recursive=args.recursive
     )
