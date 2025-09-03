@@ -19,6 +19,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
 from .trend_predictor import TrendPredictor
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
@@ -245,7 +249,7 @@ class SelfCodingEngine:
             or prompt_chunk_cache_dir
             or _settings.chunk_summary_cache_dir
         )
-        self.chunk_summary_cache_dir = Path(cache_dir)
+        self.chunk_summary_cache_dir = resolve_path(cache_dir)
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
         self._failure_similarity_threshold = failure_similarity_threshold
@@ -700,7 +704,7 @@ class SelfCodingEngine:
     @staticmethod
     def _get_repo_layout(limit: int) -> str:
         """Return a short list of top-level Python files in the repo."""
-        root = Path(__file__).resolve().parent
+        root = resolve_path(".")
         files = sorted(p.name for p in root.glob("*.py"))
         lines = files[:limit]
         if len(files) > limit:
@@ -814,7 +818,7 @@ class SelfCodingEngine:
         self._last_prompt_metadata = meta
         if VA_PROMPT_TEMPLATE:
             try:
-                text = Path(VA_PROMPT_TEMPLATE).read_text()
+                text = resolve_path(VA_PROMPT_TEMPLATE).read_text()
             except Exception:
                 text = VA_PROMPT_TEMPLATE
             data = {
@@ -1155,7 +1159,7 @@ class SelfCodingEngine:
 
         def workflow() -> bool:
             ok = True
-            target = Path(file_name) if file_name else Path(".")
+            target = Path(file_name) if file_name else resolve_path(".")
             if self.formal_verifier and path is not None:
                 try:
                     if not self.formal_verifier.verify(target):

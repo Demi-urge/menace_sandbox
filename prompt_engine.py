@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from dynamic_path_router import resolve_path
+
 from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
@@ -56,6 +58,7 @@ except Exception:  # pragma: no cover - logging only when available
 
 
 logger = logging.getLogger(__name__)
+ROOT_DIR = resolve_path(".")
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -168,9 +171,9 @@ class PromptEngine:
         else 3500
     )
     chunk_summary_cache_dir: Path = field(
-        default_factory=lambda: Path(_SETTINGS.chunk_summary_cache_dir)
+        default_factory=lambda: resolve_path(_SETTINGS.chunk_summary_cache_dir)
         if _SETTINGS
-        else Path("chunk_summary_cache")
+        else ROOT_DIR / "chunk_summary_cache"
     )
     llm: LLMClient | None = None
     roi_weight: float = 1.0
@@ -188,7 +191,7 @@ class PromptEngine:
     template_path: Path = Path(
         os.getenv(
             "PROMPT_TEMPLATES_PATH",
-            Path(__file__).resolve().parent / "config" / "prompt_templates.v1.json",
+            str(ROOT_DIR / "config" / "prompt_templates.v1.json"),
         )
     )
     template_sections: List[str] = field(
@@ -200,7 +203,7 @@ class PromptEngine:
     weights_path: Path = Path(
         os.getenv(
             "PROMPT_STYLE_WEIGHTS_PATH",
-            Path(__file__).resolve().parent / "prompt_style_weights.json",
+            str(ROOT_DIR / "prompt_style_weights.json"),
         )
     )
     trainer: PromptMemoryTrainer | None = None
@@ -232,6 +235,14 @@ class PromptEngine:
         return self.chunk_summary_cache_dir
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
+        try:
+            self.template_path = resolve_path(self.template_path)
+        except Exception:
+            pass
+        try:
+            self.weights_path = resolve_path(self.weights_path)
+        except Exception:
+            pass
         if self.retriever is None:
             try:
                 self.retriever = Retriever()
@@ -273,7 +284,7 @@ class PromptEngine:
             import chunking as _pc
             from chunk_summary_cache import ChunkSummaryCache
 
-            self.chunk_summary_cache_dir = Path(self.chunk_summary_cache_dir)
+            self.chunk_summary_cache_dir = resolve_path(self.chunk_summary_cache_dir)
             cache = getattr(_pc, "CHUNK_CACHE", None)
             if not cache or getattr(cache, "cache_dir", None) != self.chunk_summary_cache_dir:
                 _pc.CHUNK_CACHE = ChunkSummaryCache(self.chunk_summary_cache_dir)

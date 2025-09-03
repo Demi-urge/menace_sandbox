@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, Optional, List, Dict, TYPE_CHECKING
 
 import yaml
+from dynamic_path_router import resolve_path
 
 from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
@@ -66,7 +67,7 @@ class SelfCodingScheduler:
             if error_increase is not None
             else self.settings.self_coding_error_increase
         )
-        self.patch_path = patch_path or Path("auto_helpers.py")
+        self.patch_path = patch_path or (resolve_path(".") / "auto_helpers.py")
         self.description = description
         self.last_roi = self.data_bot.roi(self.manager.bot_name)
         self.last_errors = 0.0
@@ -107,7 +108,7 @@ class SelfCodingScheduler:
     def _record_cycle_metrics(self, success: bool, retries: int) -> None:
         """Persist outcome of a self-coding cycle to ``sandbox_metrics.yaml``."""
 
-        path = Path("sandbox_metrics.yaml")
+        path = resolve_path("sandbox_metrics.yaml")
         data: Dict[str, Dict[str, float]] = {}
         try:
             if path.exists():

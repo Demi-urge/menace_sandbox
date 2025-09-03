@@ -6,6 +6,8 @@ from typing import Any, Dict, Iterable, Mapping, Tuple
 import sqlite3
 import time
 
+from dynamic_path_router import resolve_path
+
 try:  # pragma: no cover - optional dependency
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 except Exception:  # pragma: no cover - allow running without dependency
@@ -15,6 +17,7 @@ from gpt_memory import GPTMemoryManager
 from code_database import PatchHistoryDB
 from db_router import init_db_router
 
+ROOT_DIR = resolve_path(".")
 
 class PromptMemoryTrainer:
     STYLE_VERSION = 1
@@ -34,13 +37,19 @@ class PromptMemoryTrainer:
         *,
         memory: GPTMemoryManager | None = None,
         patch_db: PatchHistoryDB | None = None,
-        state_path: str | Path | None = Path("prompt_style_weights.json"),
-        db_path: str | Path | None = Path("prompt_styles.db"),
+        state_path: str | Path | None = ROOT_DIR / "prompt_style_weights.json",
+        db_path: str | Path | None = ROOT_DIR / "prompt_styles.db",
     ) -> None:
         self.memory = memory or GPTMemoryManager(db_path=":memory:")
         self.patch_db = patch_db or PatchHistoryDB(":memory:")
-        self.state_path = Path(state_path) if state_path else None
-        self.db_path = Path(db_path) if db_path else None
+        self.state_path = None
+        if state_path:
+            p = Path(state_path)
+            self.state_path = p if p.is_absolute() else ROOT_DIR / p
+        self.db_path = None
+        if db_path and str(db_path) != ":memory":
+            p = Path(db_path)
+            self.db_path = p if p.is_absolute() else ROOT_DIR / p
         self._sentiment = (
             SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
         )
@@ -69,11 +78,8 @@ class PromptMemoryTrainer:
                 self.style_weights = {}
 
         # initialise sqlite persistence
-        self.router = init_db_router(
-            "prompt_styles",
-            str(self.db_path or Path("prompt_styles.db")),
-            str(self.db_path or Path("prompt_styles.db")),
-        )
+        db_str = str(self.db_path) if self.db_path else ":memory:"
+        self.router = init_db_router("prompt_styles", db_str, db_str)
         self._db = self.router.local_conn
         self._db.execute(
             """
@@ -315,6 +321,8 @@ class PromptMemoryTrainer:
         """Persist :attr:`style_weights` and version to ``path`` as JSON."""
 
         p = Path(path)
+        if not p.is_absolute():
+            p = ROOT_DIR / p
         p.parent.mkdir(parents=True, exist_ok=True)
         data = {"version": self.STYLE_VERSION, "weights": self.style_weights}
         with p.open("w", encoding="utf-8") as fh:
@@ -326,6 +334,8 @@ class PromptMemoryTrainer:
         """Return ``(version, weights)`` loaded from JSON ``path``."""
 
         p = Path(path)
+        if not p.is_absolute():
+            p = ROOT_DIR / p
         with p.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
         version = data.get("version")
