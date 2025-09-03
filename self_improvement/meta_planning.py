@@ -31,6 +31,7 @@ from ..error_logger import TelemetryEvent
 _cycle_thread: Any | None = None
 _stop_event: threading.Event | None = None
 
+
 try:  # pragma: no cover - optional dependency
     from ..unified_event_bus import UnifiedEventBus
 except ImportError as exc:  # pragma: no cover - fallback when event bus missing
@@ -747,12 +748,14 @@ def evaluate_cycle(
     """
 
     # Compute current deltas for all tracked metrics
-    for metric in list(tracker._history):
-        if tracker.delta(metric) <= 0:
+    metrics: dict[str, float] = {
+        metric: float(tracker.delta(metric)) for metric in list(tracker._history)
+    }
+    for metric, delta in metrics.items():
+        if delta <= 0:
             get_logger(__name__).debug(
-                "cycle evaluation skipped; non-positive delta for %s",
-                metric,
-                extra=log_record(metric=metric),
+                "cycle evaluation will run due to non-positive delta",
+                extra=log_record(reason="non_positive_delta", metrics=metrics),
             )
             return True, ""
 
@@ -776,11 +779,15 @@ def evaluate_cycle(
         if sev == "critical":
             if _to_ts(getattr(err, "timestamp", 0)) >= cycle_ts:
                 get_logger(__name__).debug(
-                    "cycle evaluation skipped due to critical error",
-                    extra=log_record(severity=sev),
+                    "cycle evaluation will run due to critical error",
+                    extra=log_record(reason="critical_error", metrics=metrics),
                 )
                 return True, ""
 
+    get_logger(__name__).debug(
+        "cycle evaluation skipped; all deltas positive",
+        extra=log_record(reason="all_deltas_positive", metrics=metrics),
+    )
     return False, "all_deltas_positive"
 
 
@@ -828,7 +835,13 @@ def _recent_error_entropy(
     delta_mean = getattr(tracker, "get", lambda _m: 0.0)("entropy_delta")
     delta_std = getattr(tracker, "std", lambda _m: 0.0)("entropy_delta")
     error_count = len(events or [])
-    return list(events or []), float(entropy_delta), error_count, float(delta_mean), float(delta_std)
+    return (
+        list(events or []),
+        float(entropy_delta),
+        error_count,
+        float(delta_mean),
+        float(delta_std),
+    )
 
 
 # Canonical metrics that must be tracked for cycle evaluation.
@@ -919,15 +932,32 @@ def _evaluate_cycle(
         if score is not None and score >= threshold:
             critical = True
             break
+    logger = get_logger(__name__)
 
     if not missing and not critical and metrics and all(v > 0 for v in metrics.values()):
+        logger.debug(
+            "cycle evaluation skipped; all deltas positive",
+            extra=log_record(reason="all_deltas_positive", metrics=metrics),
+        )
         return "skip", {"reason": "all_deltas_positive", "metrics": metrics}
     if missing:
+        logger.debug(
+            "cycle evaluation running; missing metrics",
+            extra=log_record(reason="missing_metrics", metrics=metrics, missing=missing),
+        )
         return "run", {"reason": "missing_metrics", "metrics": metrics, "missing": missing}
     if critical:
+        logger.debug(
+            "cycle evaluation running; critical error detected",
+            extra=log_record(reason="critical_error", metrics=metrics),
+        )
         reason = "critical_error"
     else:
         reason = "non_positive_delta"
+        logger.debug(
+            "cycle evaluation running; non-positive delta",
+            extra=log_record(reason=reason, metrics=metrics),
+        )
     return "run", {"reason": reason, "metrics": metrics}
 
 
