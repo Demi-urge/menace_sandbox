@@ -813,17 +813,20 @@ class PromptEngine:
             lines.append("")
 
         if target_region is not None:
-            file_name = (
-                Path(getattr(target_region, "path", "")).name
-                if getattr(target_region, "path", None)
-                else "the file"
-            )
-            lines.append(
-                f"Change only lines {target_region.start_line}-{target_region.end_line} of {file_name} unless adjacent logic is required."
-            )
+            func = getattr(target_region, "func_name", None)
+            if func:
+                lines.append(
+                    f"Modify only lines {target_region.start_line}-{target_region.end_line} "
+                    f"within function {func} unless surrounding logic is causally required."
+                )
+            else:
+                lines.append(
+                    f"Modify only lines {target_region.start_line}-{target_region.end_line} "
+                    f"unless surrounding logic is causally required."
+                )
         else:
             lines.append(
-                "Change only the provided lines unless adjacent logic is required."
+                "Modify only the provided lines unless surrounding logic is causally required."
             )
         lines.append(f"Given the following pattern, {task}")
         lines.append("")
@@ -842,6 +845,10 @@ class PromptEngine:
                 "start_line": target_region.start_line,
                 "end_line": target_region.end_line,
                 "func_name": getattr(target_region, "func_name", ""),
+                "signature": getattr(
+                    target_region, "func_signature", getattr(target_region, "signature", "")
+                ),
+                "original_lines": getattr(target_region, "original_lines", []),
             }
             meta["target_region"] = region_meta
             try:

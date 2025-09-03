@@ -771,7 +771,32 @@ class SelfCodingEngine:
         if target_region is not None:
             start = target_region.start_line
             end = target_region.end_line
+            lines = code.splitlines()
+            if not getattr(target_region, "path", None):
+                target_region.path = str(path)
+            target_region.original_lines = lines[start - 1:end]
+            func_sig = ""
+            if getattr(target_region, "func_name", None):
+                pat = re.compile(
+                    rf"^\s*def\s+{re.escape(target_region.func_name)}\s*\("
+                )
+                for ln in lines:
+                    if pat.match(ln):
+                        func_sig = ln.strip()
+                        break
+            target_region.func_signature = func_sig or None
             threshold = self.chunk_token_threshold or 0
+            header = (
+                f"# Region {target_region.func_name or ''} lines"
+                f" {start}-{end}"
+            ).strip()
+            region_body = "\n".join(target_region.original_lines)
+            snippet_lines = ["# start", region_body, "# end"]
+            snippet = "\n".join([line for line in snippet_lines if line])
+            if func_sig:
+                snippet = f"{header}\n{func_sig}\n{snippet}"
+            else:
+                snippet = f"{header}\n{snippet}"
             if code and threshold and _count_tokens(code) > threshold:
                 try:
                     chunks = split_into_chunks(
@@ -783,30 +808,12 @@ class SelfCodingEngine:
                     self.logger.exception("failed to split %s", path)
                     return "", None
                 summaries: List[str] = []
-                parts: List[str] = []
                 for i, ch in enumerate(chunks):
-                    if start <= ch.start_line and ch.end_line <= end:
-                        parts.append(ch.text)
-                    else:
+                    if not (start <= ch.start_line and ch.end_line <= end):
                         summary = summarize_code(ch.text, self.llm_client)
                         summaries.append(f"Chunk {i}: {summary}")
-                snippet_body = "\n".join(parts).strip()
-                header = (
-                    f"# Region {target_region.func_name or ''} lines"
-                    f" {start}-{end}"
-                ).strip()
-                return f"{header}\n{snippet_body}", summaries or None
-
-            lines = code.splitlines()
-            context_pad = 5
-            s = max(0, start - 1 - context_pad)
-            e = min(len(lines), end + context_pad)
-            snippet = "\n".join(lines[s:e])
-            header = (
-                f"# Region {target_region.func_name or ''} lines"
-                f" {start}-{end}"
-            ).strip()
-            return f"{header}\n{snippet}", None
+                return snippet, summaries or None
+            return snippet, None
 
         threshold = self.chunk_token_threshold or 0
         if code and threshold and _count_tokens(code) > threshold:
