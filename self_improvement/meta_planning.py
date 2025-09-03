@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping, Sequence
 
 from statistics import fmean
-from importlib import import_module
 import asyncio
 import json
 import os
@@ -560,11 +559,13 @@ def reload_settings(cfg: SandboxSettings) -> None:
     ENTROPY_WEIGHT = settings.meta_entropy_weight
     SEARCH_DEPTH = settings.meta_search_depth
     BEAM_WIDTH = settings.meta_beam_width
-    ENTROPY_THRESHOLD = (
-        settings.meta_entropy_threshold
-        if settings.meta_entropy_threshold is not None
-        else DEFAULT_ENTROPY_THRESHOLD
-    )
+    if settings.meta_entropy_threshold is not None:
+        ENTROPY_THRESHOLD = float(settings.meta_entropy_threshold)
+    else:
+        dev = getattr(settings, "entropy_deviation", 1.0)
+        base = BASELINE_TRACKER.get("entropy")
+        std = BASELINE_TRACKER.std("entropy")
+        ENTROPY_THRESHOLD = base + dev * std
 
 
 def _validate_config(cfg: SandboxSettings) -> None:
@@ -584,7 +585,6 @@ def _validate_config(cfg: SandboxSettings) -> None:
             raise ValueError(f"{attr} must be positive")
 
 
-DEFAULT_ENTROPY_THRESHOLD = 0.2
 reload_settings(settings)
 _stable_workflows: WorkflowStabilityDB | None = None
 
@@ -606,10 +606,8 @@ def get_stable_workflows() -> WorkflowStabilityDB:
     return _stable_workflows
 
 
-def _get_entropy_threshold(
-    cfg: SandboxSettings, db: WorkflowStabilityDB, tracker: BaselineTracker
-) -> float:
-    """Determine entropy threshold from settings or stored metrics."""
+def _get_entropy_threshold(cfg: SandboxSettings, tracker: BaselineTracker) -> float:
+    """Determine entropy threshold from baseline statistics."""
     threshold = cfg.meta_entropy_threshold
     if threshold is not None:
         return float(threshold)
@@ -617,35 +615,7 @@ def _get_entropy_threshold(
     base = tracker.get("entropy")
     std = tracker.std("entropy")
     dev = getattr(cfg, "entropy_deviation", 1.0)
-    if base or std:
-        return base + dev * std
-
-    entropies: list[float] = []
-    try:
-        metrics = import_module("self_improvement.metrics")
-        history = metrics.get_alignment_metrics(cfg).get("entropy_history") or []
-        for entry in history:
-            if isinstance(entry, dict):
-                cd = float(entry.get("code_diversity", 0.0))
-                tc = float(entry.get("token_complexity", 0.0))
-                entropies.append(fmean([cd, tc]))
-            else:
-                entropies.append(float(entry))
-    except Exception as exc:  # pragma: no cover - best effort
-        get_logger(__name__).debug(
-            "entropy history unavailable: %s", exc, exc_info=exc
-        )
-
-    if not entropies:
-        try:
-            entropies = [abs(float(v.get("entropy", 0.0))) for v in db.data.values()]
-        except Exception as exc:  # pragma: no cover - best effort
-            get_logger(__name__).debug(
-                "entropy threshold calculation failed: %s", exc, exc_info=exc
-            )
-            entropies = []
-
-    return fmean(entropies) if entropies else DEFAULT_ENTROPY_THRESHOLD
+    return base + dev * std
 
 
 def _should_encode(record: Mapping[str, Any], *, entropy_threshold: float) -> bool:
@@ -688,7 +658,7 @@ async def self_improvement_cycle(
             setattr(planner, name, value)
 
     stability_db = get_stable_workflows()
-    entropy_threshold = _get_entropy_threshold(cfg, stability_db, BASELINE_TRACKER)
+    entropy_threshold = _get_entropy_threshold(cfg, BASELINE_TRACKER)
     setattr(planner, "entropy_threshold", entropy_threshold)
 
     async def _log(record: Mapping[str, Any]) -> None:

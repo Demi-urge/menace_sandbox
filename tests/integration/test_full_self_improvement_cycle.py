@@ -35,7 +35,7 @@ def _load_meta_planning():
         "Any": Any,
         "Callable": Callable,
         "Mapping": Mapping,
-        "DEFAULT_ENTROPY_THRESHOLD": 0.2,
+        "BASELINE_TRACKER": types.SimpleNamespace(get=lambda m: 0.0, std=lambda m: 0.0),
         "_init": types.SimpleNamespace(
             settings=types.SimpleNamespace(
                 meta_mutation_rate=0,
