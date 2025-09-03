@@ -846,7 +846,6 @@ class SelfImprovementEngine:
         self.raroi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
-        self.success_history: deque[bool] = deque(maxlen=self.momentum_window)
         self._last_momentum: float = 0.0
         self.urgency_tier: int = 0
         self.stagnation_cycles: int = getattr(cfg.roi, "stagnation_cycles", 3)
@@ -1571,17 +1570,20 @@ class SelfImprovementEngine:
             self.momentum_weight = float(
                 data.get("momentum_weight", self.momentum_weight)
             )
-            scores = [float(x) for x in data.get("sandbox_scores", [])]
             self.baseline_tracker = GLOBAL_BASELINE_TRACKER
             self.baseline_tracker.window = self.baseline_window
-            for s in scores:
-                self.baseline_tracker.update(score=s)
+            bt_state = data.get("baseline_tracker")
+            if isinstance(bt_state, dict):
+                self.baseline_tracker.load_state(bt_state)
+            else:
+                # legacy sandbox_scores support
+                scores = [float(x) for x in data.get("sandbox_scores", [])]
+                for s in scores:
+                    self.baseline_tracker.update(score=s)
             roi_scores = [float(x) for x in data.get("roi_baseline", [])]
             self.roi_baseline = MovingBaseline(self.roi_baseline_window)
             for v in roi_scores:
                 self.roi_baseline.append(v)
-            successes = [bool(x) for x in data.get("success_history", [])]
-            self.success_history = deque(successes, maxlen=self.momentum_window)
         except Exception as exc:
             self.logger.exception("failed to load state: %s", exc)
 
@@ -1607,8 +1609,7 @@ class SelfImprovementEngine:
                         "pass_rate_weight": self.pass_rate_weight,
                         "entropy_weight": self.entropy_weight,
                         "momentum_weight": self.momentum_weight,
-                        "sandbox_scores": self.baseline_tracker.to_dict().get("score", []),
-                        "success_history": list(self.success_history),
+                        "baseline_tracker": self.baseline_tracker.to_state(),
                         "roi_baseline": self.roi_baseline.to_list(),
                     },
                     fh,
@@ -1617,14 +1618,6 @@ class SelfImprovementEngine:
             os.replace(tmp, self.state_path)
         except Exception as exc:
             self.logger.exception("failed to save state: %s", exc)
-
-    # ------------------------------------------------------------------
-    @property
-    def momentum_coefficient(self) -> float:
-        """Return recent success ratio for scheduling momentum."""
-        if not self.success_history:
-            return 0.0
-        return sum(1 for s in self.success_history if s) / self.momentum_window
 
     # ------------------------------------------------------------------
     def _load_synergy_weights(self) -> None:
@@ -6145,7 +6138,7 @@ class SelfImprovementEngine:
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
         try:
-            momentum = self.momentum_coefficient
+            momentum = self.baseline_tracker.momentum
             if self.policy:
                 try:
                     self.policy.adjust_for_momentum(momentum)
@@ -7119,10 +7112,7 @@ class SelfImprovementEngine:
                     self.logger.exception("alignment review agent failed to start")
             settings = SandboxSettings()
             delta = after_roi - baseline_roi
-            self.success_history.append(delta > 0)
             self._check_chain_stagnation()
-            self._check_momentum()
-            self._check_delta_score()
             warnings: dict[str, list[dict[str, Any]]] = {}
             if delta > 0:
                 try:
@@ -7464,6 +7454,8 @@ class SelfImprovementEngine:
             self.baseline_tracker.update(
                 pass_rate=pass_rate, roi=roi_realish, entropy=entropy, energy=energy
             )
+            self._check_momentum()
+            self._check_delta_score()
             self.roi_baseline.append(roi_realish)
             self.entropy_baseline.append(entropy)
             self._check_roi_stagnation()
@@ -7474,7 +7466,7 @@ class SelfImprovementEngine:
                 (1 - self.entropy_weight) * self.entropy_delta_ema
                 + self.entropy_weight * entropy_delta
             )
-            momentum = self.momentum_coefficient
+            momentum = self.baseline_tracker.momentum
             combined_delta = (
                 self.roi_weight * roi_delta
                 + self.pass_rate_weight * pass_rate_delta
@@ -7579,7 +7571,7 @@ class SelfImprovementEngine:
                     current_energy *= 0.8
             else:
                 self._last_growth_type = None
-            momentum = self.momentum_coefficient
+            momentum = self.baseline_tracker.momentum
             if momentum != self._last_momentum:
                 self.logger.info(
                     "momentum update",
