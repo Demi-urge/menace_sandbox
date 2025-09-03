@@ -6325,6 +6325,43 @@ class SelfImprovementEngine:
                     self.logger.exception("policy momentum adjustment failed")
             workflow_evolution_details: list[dict[str, object]] = []
             evo_allowed = self._should_trigger()
+            trigger = evo_allowed
+            if not evo_allowed:
+                entropy_delta = 0.0
+                entropy_anomaly = False
+                try:
+                    entropy_delta = getattr(self.baseline_tracker, "entropy_delta", 0.0)
+                    entropy_anomaly = entropy_delta < 0
+                    if not entropy_anomaly and getattr(self, "meta_logger", None):
+                        deltas = getattr(self.meta_logger, "module_entropy_deltas", {})
+                        for vals in deltas.values():
+                            if vals and vals[-1] < 0:
+                                entropy_delta = float(vals[-1])
+                                entropy_anomaly = True
+                                break
+                except Exception:
+                    entropy_anomaly = False
+                error_traces: list[Any] = []
+                try:
+                    eb = getattr(self, "error_bot", None)
+                    if eb:
+                        if hasattr(eb, "recent_errors"):
+                            error_traces = eb.recent_errors(limit=5)
+                        elif hasattr(eb, "recent_events"):
+                            error_traces = eb.recent_events(limit=5)
+                        elif hasattr(getattr(eb, "db", None), "recent_errors"):
+                            error_traces = eb.db.recent_errors(limit=5)  # type: ignore[attr-defined]
+                        elif hasattr(getattr(eb, "db", None), "recent_events"):
+                            error_traces = eb.db.recent_events(limit=5)  # type: ignore[attr-defined]
+                except Exception:
+                    error_traces = []
+                if entropy_anomaly or error_traces:
+                    evo_allowed = True
+                    trigger = True
+                    self.logger.debug(
+                        "fallback trigger activated",
+                        extra=log_record(entropy_delta=entropy_delta, error_traces=len(error_traces)),
+                    )
             planner_chains: list[list[str]] = []
             meta_records: list[dict[str, Any]] = []
             if self._cycle_count % PLANNER_INTERVAL == 0:
