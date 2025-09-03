@@ -131,7 +131,6 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     from prompt_optimizer import PromptOptimizer  # type: ignore
 from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
-from .vector_utils import cosine_similarity
 try:
     from .self_improvement.prompt_memory import log_prompt_attempt
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -140,7 +139,8 @@ except Exception:  # pragma: no cover - fallback for flat layout
     except Exception:  # pragma: no cover - final fallback
         def log_prompt_attempt(*_a: Any, **_k: Any) -> None:  # type: ignore
             return None
-from .failure_fingerprint import FailureFingerprint, log_fingerprint, find_similar
+from .failure_fingerprint import FailureFingerprint, find_similar, log_fingerprint
+from .failure_retry_utils import check_similarity_and_warn, record_failure
 from .self_improvement.baseline_tracker import (
     BaselineTracker,
     TRACKER as METRIC_BASELINES,
@@ -2121,24 +2121,12 @@ class SelfCodingEngine:
             warning = ""
             if attempts > 0 and last_fp is not None:
                 threshold = self.failure_similarity_threshold
-                try:
-                    all_matches = find_similar(last_fp.embedding, 0.0)
-                    best_sim = 0.0
-                    matches: List[FailureFingerprint] = []
-                    for m in all_matches:
-                        try:
-                            sim = cosine_similarity(last_fp.embedding, m.embedding)
-                        except Exception:
-                            sim = 0.0
-                        if m.timestamp == last_fp.timestamp:
-                            continue
-                        if sim > best_sim:
-                            best_sim = sim
-                        if sim >= threshold:
-                            matches.append(m)
-                except Exception:
-                    matches = []
-                    best_sim = 0.0
+                description, skip, best_sim, matches, _ = check_similarity_and_warn(
+                    last_fp,
+                    find_similar,
+                    threshold,
+                    description,
+                )
                 self.failure_similarity_tracker.update(similarity=best_sim)
                 self._save_state()
                 if matches:
@@ -2147,7 +2135,7 @@ class SelfCodingEngine:
                         f"Previous similar failure '{prior.error_message}' "
                         f"in {prior.filename}:{prior.function_name}"
                     )
-                    if (
+                    if skip or (
                         len(matches) >= self.failure_similarity_limit
                         or self.skip_retry_on_similarity
                     ):
@@ -2321,10 +2309,7 @@ class SelfCodingEngine:
                 error_msg,
                 getattr(self, "_last_prompt", ""),
             )
-            try:
-                log_fingerprint(fp)
-            except Exception:
-                self.logger.exception("failed to log failure fingerprint")
+            record_failure(fp, log_fingerprint)
             last_fp = fp
         roi_val = 0.0
         if self.data_bot:
