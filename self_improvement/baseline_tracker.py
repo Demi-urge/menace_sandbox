@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from typing import Deque, Dict, Iterable
+from typing import Deque, Dict, Iterable, Mapping
 
 
 class BaselineTracker:
@@ -109,6 +109,27 @@ class BaselineTracker:
     def to_dict(self) -> Dict[str, list[float]]:
         """Expose raw metric histories (primarily for testing)."""
         return {k: list(v) for k, v in self._history.items()}
+
+    # ------------------------------------------------------------------
+    def to_state(self) -> Dict[str, object]:
+        """Serialise tracker histories including success records."""
+
+        return {"history": self.to_dict(), "success": list(self._success_history)}
+
+    # ------------------------------------------------------------------
+    def load_state(self, state: Mapping[str, object]) -> None:
+        """Restore histories from :meth:`to_state` output."""
+
+        history = state.get("history", {})
+        if isinstance(history, Mapping):
+            self._history = {
+                k: deque((float(v) for v in values), maxlen=self.window)
+                for k, values in history.items()
+            }
+        success = state.get("success", [])
+        self._success_history = deque(
+            (bool(x) for x in success), maxlen=self.window
+        )
 
     # ------------------------------------------------------------------
     def delta_history(self, metric: str) -> list[float]:
