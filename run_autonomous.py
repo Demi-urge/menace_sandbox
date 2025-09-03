@@ -32,6 +32,7 @@ import math
 import uuid
 from scipy.stats import t
 from db_router import init_db_router
+from dynamic_path_router import resolve_path
 from sandbox_settings import SandboxSettings
 from sandbox_runner.bootstrap import (
     bootstrap_environment,
@@ -210,7 +211,7 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner", _pkg_dir / "sandbox_runner.py"
+        "sandbox_runner", resolve_path("sandbox_runner.py")
     )
     sr_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sr_mod)
