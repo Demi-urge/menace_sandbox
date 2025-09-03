@@ -233,7 +233,7 @@ def test_side_effect_metric_increments(monkeypatch, tmp_path):
     env = importlib.import_module("sandbox_runner.environment")
 
     res = env.try_integrate_into_workflows(
-        [str(mod)], side_effects={"skip.py": 11}, side_effect_threshold=10
+        [str(mod)], side_effects={"skip.py": 11}
     )
 
     assert res == []
