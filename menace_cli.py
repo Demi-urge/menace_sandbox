@@ -11,6 +11,7 @@ import subprocess
 import sys
 import uuid
 
+from dynamic_path_router import resolve_path
 from db_router import init_db_router
 
 # Expose a DBRouter for CLI operations early so imported modules can rely on
@@ -94,14 +95,16 @@ def _normalise_hits(hits, origin=None):
 
 def handle_new_db(args: argparse.Namespace) -> int:
     """Handle ``new-db`` command."""
-    return _run([sys.executable, "scripts/new_db_template.py", args.name])
+    script_path = str(resolve_path("scripts/new_db_template.py"))
+    return _run([sys.executable, script_path, args.name])
 
 
 def handle_new_vector(args: argparse.Namespace) -> int:
     """Handle ``new-vector`` command."""
+    script_path = str(resolve_path("scripts/new_vector_module.py"))
     cmd = [
         sys.executable,
-        "scripts/new_vector_module.py",
+        script_path,
         args.name,
     ]
     if args.root:
