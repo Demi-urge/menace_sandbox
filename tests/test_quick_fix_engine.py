@@ -54,7 +54,7 @@ sys.modules.setdefault("vector_service.patch_logger", types.SimpleNamespace(Patc
 # Load QuickFixEngine without importing the full package
 spec = importlib.util.spec_from_file_location(
     "menace.quick_fix_engine",
-    str(dynamic_path_router.resolve_path("quick_fix_engine.py")),
+    dynamic_path_router.path_for_prompt("quick_fix_engine.py"),
 )
 quick_fix = importlib.util.module_from_spec(spec)
 sys.modules["menace.quick_fix_engine"] = quick_fix

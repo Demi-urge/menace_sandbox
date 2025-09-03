@@ -228,7 +228,7 @@ sys.modules.setdefault(
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_coding_engine",
-    str(dynamic_path_router.resolve_path("self_coding_engine.py")),
+    dynamic_path_router.path_for_prompt("self_coding_engine.py"),
 )
 sce = importlib.util.module_from_spec(spec)
 sys.modules["menace.self_coding_engine"] = sce

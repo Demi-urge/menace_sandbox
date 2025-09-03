@@ -147,7 +147,7 @@ sys.modules.setdefault(
 
 rt_spec = importlib.util.spec_from_file_location(
     "menace.roi_tracker",
-    str(dynamic_path_router.resolve_path("roi_tracker.py")),
+    dynamic_path_router.path_for_prompt("roi_tracker.py"),
 )
 rt = importlib.util.module_from_spec(rt_spec)
 assert rt_spec.loader is not None
@@ -252,7 +252,7 @@ from pathlib import Path as _P
 
 _spec = importlib.util.spec_from_file_location(
     "menace.self_debugger_sandbox",
-    str(dynamic_path_router.resolve_path("self_debugger_sandbox.py")),
+    dynamic_path_router.path_for_prompt("self_debugger_sandbox.py"),
 )
 sds = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sds)
