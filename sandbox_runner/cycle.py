@@ -779,7 +779,13 @@ def _sandbox_cycle_runner(
         if section:
             mapped_sec = map_module_identifier(section, ctx.repo, 0.0)
             if mapped_sec in ctx.meta_log.flagged_sections:
-                logger.debug("section %s already complete", section)
+                logger.info(
+                    "section already evaluated",
+                    extra=log_record(
+                        section=section,
+                        flagged_total=len(ctx.meta_log.flagged_sections),
+                    ),
+                )
                 break
 
         logger.debug(
@@ -1359,6 +1365,7 @@ def _sandbox_cycle_runner(
         if ctx.gpt_client:
             brainstorm_summary = "; ".join(ctx.brainstorm_history[-3:])
             early_exit = False
+            early_exit_reason: Dict[str, Any] | None = None
             for mod in flagged:
                 if section and mod != section:
                     continue
@@ -1543,10 +1550,20 @@ def _sandbox_cycle_runner(
                     if roi_delta <= tracker.diminishing() and patch_id:
                         logger.info(
                             "rolling back patch",
-                            extra={"module": mod, "patch_id": patch_id},
+                            extra={
+                                "module": mod,
+                                "patch_id": patch_id,
+                                "roi_delta": roi_delta,
+                                "threshold": tracker.diminishing(),
+                            },
                         )
                         ctx.engine.rollback_patch(str(patch_id))
                         early_exit = True
+                        early_exit_reason = {
+                            "module": mod,
+                            "roi_delta": roi_delta,
+                            "threshold": tracker.diminishing(),
+                        }
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors:
                             ids = {f"{o}:{v}": s for o, v, s in vectors}
@@ -1594,6 +1611,7 @@ def _sandbox_cycle_runner(
                         except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
                     early_exit = True
+                    early_exit_reason = {"module": mod, "patch_id": patch_id or ""}
                     continue
                 patch_logger = ctx.patch_logger
                 if patch_id is None and patch_logger and session_id and vectors:
@@ -1612,7 +1630,10 @@ def _sandbox_cycle_runner(
                 if early_exit:
                     break
             if early_exit:
-                break
+                logger.info(
+                    "module loop exited early",
+                    extra=log_record(**(early_exit_reason or {})),
+                )
             delta = abs(roi - ctx.prev_roi)
             if delta <= tracker.diminishing():
                 low_roi_streak += 1
@@ -1797,6 +1818,7 @@ def _sandbox_cycle_runner(
                 low_roi_streak = 0
         elif ctx.offline_suggestions:
             early_exit = False
+            early_exit_reason: Dict[str, Any] | None = None
             for mod in flagged:
                 if section and mod != section:
                     continue
@@ -1888,10 +1910,20 @@ def _sandbox_cycle_runner(
                     if roi_delta <= tracker.diminishing() and patch_id:
                         logger.info(
                             "rolling back patch",
-                            extra={"module": mod, "patch_id": patch_id},
+                            extra={
+                                "module": mod,
+                                "patch_id": patch_id,
+                                "roi_delta": roi_delta,
+                                "threshold": tracker.diminishing(),
+                            },
                         )
                         ctx.engine.rollback_patch(str(patch_id))
                         early_exit = True
+                        early_exit_reason = {
+                            "module": mod,
+                            "roi_delta": roi_delta,
+                            "threshold": tracker.diminishing(),
+                        }
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors:
                             ids = {f"{o}:{v}": s for o, v, s in vectors}
@@ -1939,6 +1971,7 @@ def _sandbox_cycle_runner(
                         except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
                     early_exit = True
+                    early_exit_reason = {"module": mod, "patch_id": patch_id or ""}
                     continue
                 patch_logger = ctx.patch_logger
                 if patch_id is None and patch_logger and session_id and vectors:
@@ -1957,7 +1990,10 @@ def _sandbox_cycle_runner(
                 if early_exit:
                     break
             if early_exit:
-                break
+                logger.info(
+                    "module loop exited early",
+                    extra=log_record(**(early_exit_reason or {})),
+                )
             delta = abs(roi - ctx.prev_roi)
             if delta <= tracker.diminishing():
                 low_roi_streak += 1

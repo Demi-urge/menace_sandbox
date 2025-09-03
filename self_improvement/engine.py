@@ -3271,98 +3271,105 @@ class SelfImprovementEngine:
             self._force_rerun = False
             return True
 
-        if time.time() - self.last_run < self.interval:
+        elapsed = time.time() - self.last_run
+        should_run = True
+        if elapsed < self.interval:
             self.logger.debug(
                 "skipping self-improvement cycle",
-                extra=log_record(metrics={}, reason="interval_not_elapsed"),
+                extra=log_record(
+                    metrics={},
+                    reason="interval_not_elapsed",
+                    elapsed=elapsed,
+                    interval=self.interval,
+                ),
             )
-            return False
-
-        # Gather per-metric deltas from the baseline tracker
-        history = self.baseline_tracker.to_dict()
-        metrics: dict[str, float] = {}
-        for name in history.keys():
-            if name.endswith("_delta"):
-                continue
-            try:
-                metrics[name] = float(self.baseline_tracker.delta(name))
-            except Exception:
-                continue
-
-        # Include any available ROI tracker deltas
-        roi_tracker = getattr(self, "roi_tracker", None)
-        if roi_tracker and hasattr(roi_tracker, "get_scenario_metrics_delta"):
-            try:
-                metrics.update(
-                    roi_tracker.get_scenario_metrics_delta("overall")
-                )
-            except Exception:
-                pass
-
-        # Fetch recent errors and check for critical severity
-        events = None
-        try:
-            eb = getattr(self, "error_bot", None)
-            if eb is not None:
-                if hasattr(eb, "recent_errors"):
-                    events = eb.recent_errors(limit=5)
-                elif hasattr(eb, "recent_events"):
-                    events = eb.recent_events(limit=5)
-                elif hasattr(getattr(eb, "db", None), "recent_errors"):
-                    events = eb.db.recent_errors(limit=5)  # type: ignore[attr-defined]
-        except Exception:
-            events = None
-
-        threshold = getattr(settings, "critical_severity_threshold", 75.0)
-
-        def _severity_to_score(sev: object) -> float | None:
-            mapping = {
-                "critical": 100.0,
-                "crit": 100.0,
-                "fatal": 100.0,
-                "high": 75.0,
-                "error": 75.0,
-                "warn": 50.0,
-                "warning": 50.0,
-                "medium": 50.0,
-                "low": 25.0,
-                "info": 0.0,
-            }
-            if isinstance(sev, str):
-                s = sev.lower()
-                if s in mapping:
-                    return mapping[s]
+            should_run = False
+        else:
+            # Gather per-metric deltas from the baseline tracker
+            history = self.baseline_tracker.to_dict()
+            metrics: dict[str, float] = {}
+            for name in history.keys():
+                if name.endswith("_delta"):
+                    continue
                 try:
-                    sev = float(sev)
-                except ValueError:
-                    return None
-            if isinstance(sev, (int, float)):
-                val = float(sev)
-                if 0 <= val <= 1:
-                    return val * 100
-                if 0 <= val <= 5:
-                    return val * 20
-                if 0 <= val <= 10:
-                    return val * 10
-                return val
-            return None
+                    metrics[name] = float(self.baseline_tracker.delta(name))
+                except Exception:
+                    continue
 
-        critical_error = False
-        for ev in events or []:
-            sev = getattr(getattr(ev, "error_type", None), "severity", None)
-            score = _severity_to_score(sev)
-            if score is not None and score >= threshold:
-                critical_error = True
-                break
+            # Include any available ROI tracker deltas
+            roi_tracker = getattr(self, "roi_tracker", None)
+            if roi_tracker and hasattr(roi_tracker, "get_scenario_metrics_delta"):
+                try:
+                    metrics.update(
+                        roi_tracker.get_scenario_metrics_delta("overall")
+                    )
+                except Exception:
+                    pass
 
-        if metrics and all(v > 0 for v in metrics.values()) and not critical_error:
-            self.logger.debug(
-                "skipping self-improvement cycle",
-                extra=log_record(metrics=metrics, reason="all_deltas_positive"),
-            )
-            return False
+            # Fetch recent errors and check for critical severity
+            events = None
+            try:
+                eb = getattr(self, "error_bot", None)
+                if eb is not None:
+                    if hasattr(eb, "recent_errors"):
+                        events = eb.recent_errors(limit=5)
+                    elif hasattr(eb, "recent_events"):
+                        events = eb.recent_events(limit=5)
+                    elif hasattr(getattr(eb, "db", None), "recent_errors"):
+                        events = eb.db.recent_errors(limit=5)  # type: ignore[attr-defined]
+            except Exception:
+                events = None
 
-        return True
+            threshold = getattr(settings, "critical_severity_threshold", 75.0)
+
+            def _severity_to_score(sev: object) -> float | None:
+                mapping = {
+                    "critical": 100.0,
+                    "crit": 100.0,
+                    "fatal": 100.0,
+                    "high": 75.0,
+                    "error": 75.0,
+                    "warn": 50.0,
+                    "warning": 50.0,
+                    "medium": 50.0,
+                    "low": 25.0,
+                    "info": 0.0,
+                }
+                if isinstance(sev, str):
+                    s = sev.lower()
+                    if s in mapping:
+                        return mapping[s]
+                    try:
+                        sev = float(sev)
+                    except ValueError:
+                        return None
+                if isinstance(sev, (int, float)):
+                    val = float(sev)
+                    if 0 <= val <= 1:
+                        return val * 100
+                    if 0 <= val <= 5:
+                        return val * 20
+                    if 0 <= val <= 10:
+                        return val * 10
+                    return val
+                return None
+
+            critical_error = False
+            for ev in events or []:
+                sev = getattr(getattr(ev, "error_type", None), "severity", None)
+                score = _severity_to_score(sev)
+                if score is not None and score >= threshold:
+                    critical_error = True
+                    break
+
+            if metrics and all(v > 0 for v in metrics.values()) and not critical_error:
+                self.logger.debug(
+                    "skipping self-improvement cycle",
+                    extra=log_record(metrics=metrics, reason="all_deltas_positive"),
+                )
+                should_run = False
+
+        return should_run
 
     def _record_state(self) -> None:
         """Store metrics and discrepancies as research items."""
