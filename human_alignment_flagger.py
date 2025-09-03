@@ -50,6 +50,7 @@ import re
 from collections import Counter
 from importlib import import_module, util
 
+from dynamic_path_router import resolve_path
 from ethics_violation_detector import flag_violations, scan_log_entry
 from risk_domain_classifier import classify_action
 from reward_sanity_checker import check_risk_reward_alignment
@@ -194,12 +195,18 @@ class HumanAlignmentFlagger:
                 except Exception:
                     try:
                         rel = Path(mod.replace(".", "/") + ".py")
-                        search_paths = [Path.cwd(), Path(__file__).resolve().parent]
+                        search_paths = [Path.cwd(), resolve_path(".")]
                         search_paths.extend(Path(p) for p in sys.path if p)
                         if rel.is_absolute():
                             candidate = rel
                         else:
-                            candidate = next((p / rel for p in search_paths if (p / rel).exists()), None)
+                            candidate = None
+                            for base in search_paths:
+                                try:
+                                    candidate = resolve_path(str(base / rel))
+                                    break
+                                except FileNotFoundError:
+                                    continue
                         if candidate and candidate.exists():
                             spec = util.spec_from_file_location(mod, candidate)
                             module = util.module_from_spec(spec)
