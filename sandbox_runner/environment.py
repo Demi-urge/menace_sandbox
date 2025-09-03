@@ -68,7 +68,11 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from lock_utils import SandboxLock as FileLock
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
-from self_improvement.baseline_tracker import TRACKER as GLOBAL_BASELINE_TRACKER
+from self_improvement.baseline_tracker import (
+    BaselineTracker,
+    TRACKER as GLOBAL_BASELINE_TRACKER,
+)
+from collections import deque
 
 from .workflow_sandbox_runner import WorkflowSandboxRunner
 from metrics_exporter import Gauge, environment_failure_total
@@ -97,6 +101,12 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover - optional dependency
     def get_synergy_cluster(*_args: object, **_kwargs: object) -> set[str]:  # type: ignore
         return set()
+
+# Pre-populate baseline histories for integration metrics
+for _metric in ("side_effects", "intent_similarity", "synergy"):
+    GLOBAL_BASELINE_TRACKER._history.setdefault(
+        _metric, deque(maxlen=GLOBAL_BASELINE_TRACKER.window)
+    )
 
 if TYPE_CHECKING:  # pragma: no cover
     from foresight_tracker import ForesightTracker
@@ -7241,12 +7251,12 @@ def try_integrate_into_workflows(
     modules: Iterable[str],
     workflows_db: str | Path = "workflows.db",
     side_effects: Mapping[str, float] | None = None,
-    side_effect_threshold: float = 10,
     *,
+    side_effect_k: float | None = None,
     router: DBRouter | None = None,
     intent_clusterer: IntentClusterer | None = None,
-    intent_threshold: float = 0.5,
-    synergy_threshold: float = 0.7,
+    intent_k: float = 0.5,
+    synergy_k: float | None = None,
 ) -> list[int]:
     """Append orphan ``modules`` to related workflows if possible.
 
@@ -7254,12 +7264,15 @@ def try_integrate_into_workflows(
     filename collisions. Workflows already containing tasks from the same
     module group will receive the orphan module as an additional step. The list
     of updated workflow IDs is returned. Modules with heavy side-effect metrics
-    are skipped based on ``side_effect_threshold``.
+    are skipped based on a dynamic threshold derived from recent history and
+    ``side_effect_k``.
 
     When an :class:`IntentClusterer` is available, each module is expanded by
     its synergy neighbourhood (via :func:`get_synergy_cluster`) and workflows
-    whose intent vectors intersect with this cluster above ``intent_threshold``
-    are preferred. Modules without suitable intent matches are ignored.
+    whose intent vectors intersect with this cluster above a dynamic
+    ``intent_k`` threshold are preferred. Modules without suitable intent
+    matches are ignored. Synergy neighbourhood size is also recorded using the
+    shared :class:`~self_improvement.baseline_tracker.BaselineTracker`.
     """
 
     from menace.task_handoff_bot import WorkflowDB
@@ -7282,7 +7295,10 @@ def try_integrate_into_workflows(
     names: dict[str, str] = {}
     tracker = GLOBAL_BASELINE_TRACKER
     settings = SandboxSettings()
-    multiplier = getattr(settings, "side_effect_dev_multiplier", 1.0)
+    if side_effect_k is None:
+        side_effect_k = getattr(settings, "side_effect_dev_multiplier", 1.0)
+    if synergy_k is None:
+        synergy_k = 1.0
     for m in modules:
         p = Path(m)
         if p.is_absolute():
@@ -7295,23 +7311,31 @@ def try_integrate_into_workflows(
         rel_str = rel.as_posix()
         metric = side_effects.get(rel_str) or side_effects.get(str(p), 0)
         hist = tracker.to_dict().get("side_effects", [])
+        avg = tracker.get("side_effects")
+        std = tracker.std("side_effects")
+        delta = metric - avg
+        tracker.update(side_effects=metric)
         if len(hist) >= 2:
-            avg = tracker.get("side_effects")
-            std = tracker.std("side_effects")
-            threshold = avg + multiplier * std
+            if delta > side_effect_k * std:
+                logger.info(
+                    "skipping %s due to side effects score %.2f", rel_str, metric
+                )
+                try:
+                    _me.orphan_modules_side_effects_total.inc()
+                except Exception:
+                    logger.exception('unexpected error')
+                continue
         else:
-            threshold = side_effect_threshold
-        if metric:
-            tracker.update(side_effects=metric)
-        if metric and metric > threshold:
-            logger.info(
-                "skipping %s due to side effects score %.2f", rel_str, metric
-            )
-            try:
-                _me.orphan_modules_side_effects_total.inc()
-            except Exception:
-                logger.exception('unexpected error')
-            continue
+            threshold = getattr(settings, "side_effect_threshold", 10)
+            if metric > threshold:
+                logger.info(
+                    "skipping %s due to side effects score %.2f", rel_str, metric
+                )
+                try:
+                    _me.orphan_modules_side_effects_total.inc()
+                except Exception:
+                    logger.exception('unexpected error')
+                continue
         names[rel_str] = rel.with_suffix("").as_posix().replace("/", ".")
     if not names:
         return []
@@ -7380,7 +7404,17 @@ def try_integrate_into_workflows(
             expanded = {dotted}
             if _USE_MODULE_SYNERGY:
                 try:
-                    expanded |= get_synergy_cluster(dotted, synergy_threshold)
+                    base_thr = getattr(settings, "synergy_threshold", 0.7)
+                    cluster = get_synergy_cluster(dotted, base_thr)
+                    hist = tracker.to_dict().get("synergy", [])
+                    avg_s = tracker.get("synergy")
+                    std_s = tracker.std("synergy")
+                    metric = max(len(cluster) - 1, 0)
+                    delta_s = metric - avg_s
+                    tracker.update(synergy=metric)
+                    if len(hist) >= 2 and delta_s < synergy_k * std_s:
+                        cluster = {dotted}
+                    expanded |= cluster
                 except Exception:
                     logger.exception('unexpected error')
             ids: set[int] = set()
@@ -7442,7 +7476,15 @@ def try_integrate_into_workflows(
                     if intent_ids
                     else 0.0
                 )
-                if score >= intent_threshold:
+                hist = tracker.to_dict().get("intent_similarity", [])
+                avg_i = tracker.get("intent_similarity")
+                std_i = tracker.std("intent_similarity")
+                delta_i = score - avg_i
+                tracker.update(intent=score)
+                if len(hist) >= 2:
+                    if delta_i >= intent_k * std_i:
+                        new_mods.append(mod)
+                elif score >= intent_k:
                     new_mods.append(mod)
             elif (
                 gid in step_groups

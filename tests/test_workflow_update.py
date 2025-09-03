@@ -223,7 +223,6 @@ def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
         ["b.py"],
         workflows_db=db_path,
         intent_clusterer=clusterer,
-        intent_threshold=0.5,
     )
     recs = {r.wid: r for r in wf_db.fetch(limit=10)}
     assert wid in updated
