@@ -20,6 +20,7 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `meta_roi_weight`: `1.0`
 - `meta_domain_penalty`: `1.0`
 - `meta_entropy_threshold`: `0.2`
+- `overfitting_entropy_threshold`: `0.2`
 
 ## ROI defaults
 - `threshold`: `null`

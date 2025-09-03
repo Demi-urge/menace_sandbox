@@ -984,6 +984,11 @@ class SandboxSettings(BaseSettings):
         env="META_DOMAIN_PENALTY",
         description="Penalty for domain transitions in meta planning.",
     )
+    overfitting_entropy_threshold: float = Field(
+        0.2,
+        env="OVERFITTING_ENTROPY_THRESHOLD",
+        description="Entropy delta triggering overfitting fallback.",
+    )
     meta_entropy_threshold: float | None = Field(
         0.2,
         env="META_ENTROPY_THRESHOLD",
@@ -1270,6 +1275,12 @@ class SandboxSettings(BaseSettings):
     def _validate_meta_entropy_threshold(cls, v: float | None) -> float | None:
         if v is not None and not 0 <= v <= 1:
             raise ValueError("meta_entropy_threshold must be between 0 and 1")
+        return v
+
+    @field_validator("overfitting_entropy_threshold")
+    def _validate_overfitting_entropy_threshold(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("overfitting_entropy_threshold must be non-negative")
         return v
 
     @field_validator("meta_entropy_weight")

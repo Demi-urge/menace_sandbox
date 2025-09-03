@@ -2,6 +2,7 @@ import ast
 import asyncio
 import logging
 import sys
+import threading
 import time
 import types
 from pathlib import Path
@@ -225,6 +226,16 @@ def test_cycle_thread_logs_cancellation(monkeypatch, caplog):
         types.SimpleNamespace(SandboxSettings=object),
     )
     monkeypatch.setitem(
+        sys.modules,
+        "menace_sandbox.error_logger",
+        types.SimpleNamespace(TelemetryEvent=object),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "audit",
+        types.SimpleNamespace(log_db_access=lambda *a, **k: None),
+    )
+    monkeypatch.setitem(
         sys.modules, "menace_sandbox.self_improvement.meta_planning", mp
     )
     assert spec.loader is not None
@@ -264,3 +275,68 @@ def test_cycle_thread_logs_cancellation(monkeypatch, caplog):
         thread.join()
 
     assert me.self_improvement_failure_total.count > 0
+
+
+def test_overfitting_fallback_runs_when_entropy_shift_high():
+    meta = _load_meta_planning()
+    logs: list[tuple[str, Any]] = []
+    stop_event = threading.Event()
+
+    class DummyPlanner:
+        roi_db = None
+        stability_db = None
+
+        def __init__(self) -> None:
+            self.cluster_map = {}
+
+        def discover_and_persist(self, workflows):
+            stop_event.set()
+            return [
+                {
+                    "chain": ["a"],
+                    "roi_gain": 0.1,
+                    "failures": 0,
+                    "entropy": 0.0,
+                    "errors": [],
+                }
+            ]
+
+    meta.update(
+        {
+            "MetaWorkflowPlanner": None,
+            "_FallbackPlanner": DummyPlanner,
+            "get_logger": lambda name: types.SimpleNamespace(
+                debug=lambda msg, extra=None: logs.append((msg, extra)),
+                warning=lambda *a, **k: None,
+                exception=lambda *a, **k: None,
+            ),
+            "log_record": lambda **kw: kw,
+            "_init": types.SimpleNamespace(
+                settings=types.SimpleNamespace(
+                    meta_mutation_rate=0.0,
+                    meta_roi_weight=0.0,
+                    meta_domain_penalty=0.0,
+                    meta_entropy_threshold=0.2,
+                    overfitting_entropy_threshold=0.05,
+                )
+            ),
+            "get_stable_workflows": lambda: types.SimpleNamespace(),
+            "evaluate_cycle": lambda record, tracker, errors: (
+                True,
+                "all_deltas_positive",
+            ),
+            "BASELINE_TRACKER": types.SimpleNamespace(
+                get=lambda m: 0.0,
+                update=lambda **kw: None,
+                delta=lambda m: 0.1 if m == "entropy" else 0.0,
+                to_dict=lambda: {},
+            ),
+        }
+    )
+
+    asyncio.run(meta["self_improvement_cycle"]({"a": lambda: None}, stop_event=stop_event))
+
+    assert any(
+        msg == "run" and extra.get("reason") == "overfitting_fallback"
+        for msg, extra in logs
+    )
