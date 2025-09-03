@@ -2,12 +2,12 @@ import ast
 import importlib
 import logging
 import types
-from pathlib import Path
 from typing import Callable
+from dynamic_path_router import resolve_path
 
 
 def _load_build_callable():
-    src = Path("workflow_evolution_manager.py").read_text()
+    src = resolve_path("workflow_evolution_manager.py").read_text()
     tree = ast.parse(src)
     func_node = next(
         n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_build_callable"

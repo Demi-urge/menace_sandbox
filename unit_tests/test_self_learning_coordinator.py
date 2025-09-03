@@ -1,10 +1,10 @@
 import ast
 import asyncio
+from dynamic_path_router import resolve_path
 
 
 def _build_coordinator():
-    from pathlib import Path
-    src = Path("self_learning_coordinator.py").read_text()
+    src = resolve_path("self_learning_coordinator.py").read_text()
     tree = ast.parse(src)
     class_node = next(
         n
@@ -145,9 +145,8 @@ def test_train_record_restarts_failed_tasks(tmp_path):
     import asyncio
     import ast
     import logging
-    from pathlib import Path
 
-    src = Path("self_learning_coordinator.py").read_text()
+    src = resolve_path("self_learning_coordinator.py").read_text()
     tree = ast.parse(src)
     class_node = next(
         n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfLearningCoordinator"

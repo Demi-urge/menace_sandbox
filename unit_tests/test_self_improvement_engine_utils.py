@@ -2,8 +2,8 @@ import ast
 import importlib
 import logging
 import time
-from pathlib import Path
 from unittest.mock import patch
+from dynamic_path_router import resolve_path
 from typing import Callable, Any, Awaitable
 import types
 import asyncio
@@ -19,7 +19,7 @@ import pytest
 
 
 def _load_utils():
-    src = Path("self_improvement/utils.py").read_text()
+    src = resolve_path("self_improvement/utils.py").read_text()
     tree = ast.parse(src)
     wanted_funcs = {"_load_callable", "_call_with_retries", "_import_callable"}
     wanted_assigns = {"_diagnostics_lock", "_diagnostics"}

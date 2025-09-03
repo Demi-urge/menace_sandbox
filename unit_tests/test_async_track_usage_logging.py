@@ -1,6 +1,6 @@
-from pathlib import Path
 import ast
 import types
+from dynamic_path_router import resolve_path
 
 
 class DummyLogger:
@@ -29,7 +29,7 @@ class DummyQueue:
 
 
 def _load_async_track_usage():
-    src = Path("sandbox_runner/cycle.py").read_text()
+    src = resolve_path("sandbox_runner/cycle.py").read_text()
     tree = ast.parse(src)
     async_fn = next(
         n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_async_track_usage"

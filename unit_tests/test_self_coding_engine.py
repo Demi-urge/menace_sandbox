@@ -1,12 +1,13 @@
 import ast
 import logging
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 import pytest
 
 
 def _build_check_permission():
-    src = Path("self_coding_engine.py").read_text()
+    src = resolve_path("self_coding_engine.py").read_text()
     tree = ast.parse(src)
     class_node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SelfCodingEngine")
     method = next(m for m in class_node.body if isinstance(m, ast.FunctionDef) and m.name == "_check_permission")
@@ -15,7 +16,7 @@ def _build_check_permission():
     module = ast.fix_missing_locations(module)
 
     import importlib.util, sys
-    spec = importlib.util.spec_from_file_location("menace", Path("__init__.py"))
+    spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
     menace = importlib.util.module_from_spec(spec)
     menace.__path__ = [str(Path().resolve())]
     sys.modules.setdefault("menace", menace)
