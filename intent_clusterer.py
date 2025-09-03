@@ -38,6 +38,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback used in tests
     from knowledge_graph import _SimpleKMeans as KMeans  # type: ignore
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 try:  # pragma: no cover - optional dependency
     from sklearn.metrics import silhouette_score  # type: ignore
 except Exception:  # pragma: no cover - fallback when sklearn is absent
@@ -553,7 +558,7 @@ class IntentClusterer:
         """Return mapping of ``group_id`` to module paths under ``root``."""
 
         groups: Dict[str, List[str]] = {}
-        map_file = root / "sandbox_data" / "module_map.json"
+        map_file = Path(resolve_path("sandbox_data")) / "module_map.json"
         if map_file.exists():
             try:
                 mapping = json.loads(map_file.read_text())

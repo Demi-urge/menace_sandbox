@@ -84,15 +84,17 @@ except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
 
 # Path to the persistent usage statistics file.
-_BASE_DIR = Path(__file__).resolve().parent
-_MODULE_USAGE_FILE = _BASE_DIR / "sandbox_data" / "module_usage.json"
-_RELEVANCY_FLAGS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_flags.json"
+_SANDBOX_DATA_DIR = Path(resolve_path("sandbox_data"))
+_MODULE_USAGE_FILE = _SANDBOX_DATA_DIR / "module_usage.json"
+_RELEVANCY_FLAGS_FILE = _SANDBOX_DATA_DIR / "relevancy_flags.json"
 # File used by :class:`RelevancyRadar` to persist detailed usage metrics.
-_RELEVANCY_METRICS_FILE = Path(resolve_path("sandbox_data/relevancy_metrics.json"))
+_RELEVANCY_METRICS_FILE = _SANDBOX_DATA_DIR / "relevancy_metrics.json"
 # Default location of the SQLite metrics store consumed by :func:`scan`.
-_RELEVANCY_METRICS_DB = _BASE_DIR / "sandbox_data" / "relevancy_metrics.db"
+_RELEVANCY_METRICS_DB = _SANDBOX_DATA_DIR / "relevancy_metrics.db"
 # File used to persist the call graph between runs.
-_RELEVANCY_CALL_GRAPH_FILE = _BASE_DIR / "sandbox_data" / "relevancy_call_graph.json"
+_RELEVANCY_CALL_GRAPH_FILE = _SANDBOX_DATA_DIR / "relevancy_call_graph.json"
+# File used to persist the orphan module list between runs.
+_ORPHAN_MODULES_FILE = _SANDBOX_DATA_DIR / "orphan_modules.json"
 
 # In-memory counter for module usage storing timestamps for each call.
 _module_usage_counter: Dict[str, List[int]] = defaultdict(list)
@@ -650,7 +652,7 @@ class RelevancyRadar:
         )
         update_relevancy_metrics(flags)
 
-        orphan_file = _BASE_DIR / "sandbox_data" / "orphan_modules.json"
+        orphan_file = _ORPHAN_MODULES_FILE
         existing: list[str] = []
         if orphan_file.exists():
             try:
