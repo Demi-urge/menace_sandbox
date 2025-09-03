@@ -135,6 +135,10 @@ def _run_cycle(
                 )
             ),
             "BASELINE_TRACKER": tracker,
+            "_get_overfit_thresholds": lambda cfg, _tracker: (
+                getattr(cfg, "max_allowed_errors", 0),
+                getattr(cfg, "entropy_overfit_threshold", 1.0),
+            ),
         }
     )
     if recent is not None:
@@ -179,6 +183,20 @@ def test_evaluate_cycle_runs_on_critical_error():
     should_run, reason = meta["evaluate_cycle"](record, tracker, [err])
     assert should_run is True
     assert reason == ""
+
+
+def test_evaluate_cycle_skips_with_noncritical_error():
+    meta = _load_cycle_funcs()
+    tracker = DummyTracker({"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1})
+    now = datetime.now()
+    record = {"timestamp": now.isoformat()}
+    err = types.SimpleNamespace(
+        error_type=types.SimpleNamespace(severity="warning"),
+        timestamp=(now + timedelta(seconds=1)).isoformat(),
+    )
+    should_run, reason = meta["evaluate_cycle"](record, tracker, [err])
+    assert should_run is False
+    assert reason == "all_deltas_positive"
 
 
 def test_evaluate_cycle_skips_when_deltas_positive():
@@ -273,6 +291,32 @@ def test_cycle_overfitting_fallback_logs_before_planner():
     )
     overfit = [rec for msg, rec in logs if rec.get("outcome") == "fallback"]
     assert any(r.get("reason") == "overfitting" for r in overfit)
+
+
+def test_cycle_reruns_on_recent_error_traces():
+    logs = _run_cycle(
+        {"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1},
+        {"chain": [], "roi_gain": 0.0, "failures": 0, "entropy": 0.0},
+        recent=(["trace"], 0.0, 2, 0.0, 1.0),
+    )
+    assert any(
+        msg == "cycle" and rec.get("outcome") == "fallback" and rec.get("reason") == "overfitting"
+        for msg, rec in logs
+    )
+
+
+def test_cycle_debug_logs_reason_for_positive_skip():
+    logs = _run_cycle(
+        {"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1},
+        {"chain": [], "roi_gain": 0.0, "failures": 0, "entropy": 0.0},
+        recent=([], 0.0, 0, 0.0, 1.0),
+    )
+    assert any(
+        msg == "cycle"
+        and rec.get("outcome") == "skipped"
+        and rec.get("reason") == "all_deltas_positive"
+        for msg, rec in logs
+    )
 
 
 def test_cycle_logs_skip_on_stop_event():
