@@ -7466,11 +7466,11 @@ class SelfImprovementEngine:
                 (1 - self.entropy_weight) * self.entropy_delta_ema
                 + self.entropy_weight * entropy_delta
             )
-            momentum = self.baseline_tracker.momentum
+            momentum_delta = self.baseline_tracker.delta("momentum")
             combined_delta = (
                 self.roi_weight * roi_delta
                 + self.pass_rate_weight * pass_rate_delta
-                + self.momentum_weight * momentum
+                + self.momentum_weight * momentum_delta
                 - self.entropy_weight * entropy_delta
             )
             if combined_delta > 0:
@@ -7513,6 +7513,7 @@ class SelfImprovementEngine:
                     roi_delta=roi_delta,
                     entropy_delta=entropy_delta,
                     energy_delta=energy_delta,
+                    momentum_delta=momentum_delta,
                 ),
             )
             return result
