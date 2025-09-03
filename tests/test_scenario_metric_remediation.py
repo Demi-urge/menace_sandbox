@@ -29,9 +29,13 @@ class DummyMID:
         return 0
 mid.ModuleIndexDB = DummyMID
 sys.modules.setdefault("menace.module_index_db", mid)
+err = types.ModuleType("error_logger")
+err.ErrorLogger = object
+sys.modules.setdefault("error_logger", err)
 
-from tests import test_self_improvement_rl_synergy as base
+from tests import test_self_improvement_engine_rl_synergy as base
 sie = base.sie
+BaselineTracker = sie.baseline_tracker.BaselineTracker
 
 
 class DummyLearner:
@@ -67,6 +71,12 @@ def make_engine():
     eng._scenario_pass_rate = 0.0
     eng._force_rerun = False
     eng._last_mutation_id = None
+    eng.baseline_tracker = BaselineTracker(
+        window=3,
+        latency_error_rate=[0.1, 0.1, 0.1],
+        hostile_failures=[0.0, 0.0, 0.0],
+        concurrency_throughput=[200.0, 200.0, 200.0],
+    )
     return eng
 
 
