@@ -35,6 +35,11 @@ These optional variables control where prompt execution results are stored:
 - `PROMPT_SUCCESS_LOG_PATH` – path for successful prompt logs (default `prompt_success_log.json`).
 - `PROMPT_FAILURE_LOG_PATH` – path for failed prompt logs (default `prompt_failure_log.json`).
 
+## Container execution variables
+
+- `CONTAINER_SNIPPET_PATH` – path inside the container where snippets are
+  executed (default `/code/snippet.py`).
+
 ## Optional dependencies
 
 Some features rely on additional tools. Missing components degrade

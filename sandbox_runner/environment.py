@@ -3664,6 +3664,8 @@ async def _execute_in_container(
     locally with the same environment variables and resource limits.
     """
 
+    snippet_path = env.get("CONTAINER_SNIPPET_PATH", "/code/snippet.py")
+
     def _execute_locally(err_msg: str | None = None) -> Dict[str, float]:
         """Fallback local execution with basic metrics."""
         with tempfile.TemporaryDirectory(prefix="sim_local_") as td:
@@ -3899,7 +3901,7 @@ async def _execute_in_container(
 
                     container = client.containers.run(
                         image,
-                        ["python", "/code/snippet.py"],
+                        ["python", snippet_path],
                         **kwargs,
                     )
                     _register_container_finalizer(container)
@@ -4025,7 +4027,7 @@ async def _execute_in_container(
                 timeout = int(env.get("TIMEOUT", 300))
                 try:
                     result = container.exec_run(
-                        ["python", "/code/snippet.py"],
+                        ["python", snippet_path],
                         environment={k: str(v) for k, v in env.items()},
                         workdir=workdir,
                         demux=True,
