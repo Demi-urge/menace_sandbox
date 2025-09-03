@@ -2216,6 +2216,9 @@ class SelfImprovementEngine:
 
         score, components = self._compute_delta_score()
         self.baseline_tracker.update(score=score)
+        score_threshold = (
+            self.baseline_tracker.std("score") * settings.delta_score_dev_multiplier
+        )
         self.delta_score_history.append(score)
         avg = sum(self.delta_score_history) / len(self.delta_score_history)
         self.logger.debug(
@@ -2224,7 +2227,7 @@ class SelfImprovementEngine:
         )
         if (
             len(self.delta_score_history) >= self.baseline_window
-            and avg < 0.0
+            and avg < self.baseline_tracker.get("score") - score_threshold
         ):
             self._delta_score_streak += 1
             if self._delta_score_streak >= self.stagnation_cycles:
