@@ -38,8 +38,19 @@ SelfImprovementEngine = ns["SelfImprovementEngine"]
 
 
 def _make_engine():
+    class TrackerWrapper:
+        def __init__(self) -> None:
+            self.window = 5
+            self._inner = BaselineTracker(window=self.window)
+
+        def update(self, **metrics: float) -> None:
+            self._inner.update(**metrics)
+
+        def delta(self, metric: str) -> float:
+            return self._inner.delta(metric)
+
     eng = SelfImprovementEngine.__new__(SelfImprovementEngine)
-    eng.baseline_tracker = BaselineTracker(window=5)
+    eng.baseline_tracker = TrackerWrapper()
     eng.urgency_tier = 0
     eng.urgency_recovery_threshold = 0.05
     eng.logger = types.SimpleNamespace(warning=lambda *a, **k: None, exception=lambda *a, **k: None)
@@ -51,7 +62,7 @@ def _make_engine():
 def test_roi_stagnation_escalates():
     alerts.clear()
     eng = _make_engine()
-    for roi in [1.0, 0.9, 0.8]:
+    for roi in [1.0, 0.9]:
         eng.baseline_tracker.update(roi=roi)
         eng._check_roi_stagnation()
         assert eng.urgency_tier == 0
@@ -65,12 +76,12 @@ def test_roi_stagnation_escalates():
 def test_roi_recovery_resets():
     alerts.clear()
     eng = _make_engine()
-    for roi in [1.0, 0.9, 0.8, 0.8]:
+    for roi in [1.0, 0.9, 0.8]:
         eng.baseline_tracker.update(roi=roi)
         eng._check_roi_stagnation()
     assert eng._stagnation_streak == 3
     assert eng.urgency_tier == 1
-    eng.baseline_tracker.update(roi=0.9)
+    eng.baseline_tracker.update(roi=1.0)
     eng._check_roi_stagnation()
     assert eng._stagnation_streak == 0
     assert eng.urgency_tier == 0

@@ -25,16 +25,21 @@ exec(compile(engine_module, "<engine>", "exec"), ns)
 SelfImprovementEngine = ns["SelfImprovementEngine"]
 
 
-def _make_engine():
+def _make_engine(deltas: list[float] | None = None):
+    class Tracker:
+        def __init__(self, deltas: list[float]):
+            self._deltas = iter(deltas)
+
+        def delta(self, metric: str) -> float:
+            return next(self._deltas)
+
     eng = SelfImprovementEngine.__new__(SelfImprovementEngine)
     eng.urgency_tier = 0
     eng.logger = types.SimpleNamespace(warning=lambda *a, **k: None)
-    eng.baseline_tracker = types.SimpleNamespace(
-        get=lambda m: 0.75, std=lambda m: 0.05, momentum=0.25
-    )
-    eng.momentum_dev_multiplier = 1.0
+    eng.baseline_tracker = Tracker(deltas or [-0.1, -0.1])
     eng.stagnation_cycles = 2
     eng._momentum_streak = 0
+    eng.urgency_recovery_threshold = 0.05
     return eng
 
 
@@ -44,3 +49,12 @@ def test_momentum_stagnation_escalates():
     assert eng.urgency_tier == 0
     eng._check_momentum()
     assert eng.urgency_tier == 1
+
+
+def test_momentum_recovery_resets():
+    eng = _make_engine([-0.1, -0.1, 0.1])
+    eng._check_momentum()
+    eng._check_momentum()
+    assert eng.urgency_tier == 1
+    eng._check_momentum()
+    assert eng.urgency_tier == 0
