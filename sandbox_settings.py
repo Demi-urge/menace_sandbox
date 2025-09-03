@@ -8,6 +8,10 @@ from typing import Any
 from pathlib import Path
 
 import yaml
+try:
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover
+    from dynamic_path_router import resolve_path  # type: ignore
 
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -414,8 +418,12 @@ class SandboxSettings(BaseSettings):
         if v < 0:
             raise ValueError(f"{info.field_name} must be non-negative")
         return v
-    menace_env_file: str = Field(".env", env="MENACE_ENV_FILE")
-    sandbox_data_dir: str = Field("sandbox_data", env="SANDBOX_DATA_DIR")
+    menace_env_file: str = Field(
+        (resolve_path(".") / ".env").as_posix(), env="MENACE_ENV_FILE"
+    )
+    sandbox_data_dir: str = Field(
+        resolve_path("sandbox_data").as_posix(), env="SANDBOX_DATA_DIR"
+    )
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
     required_env_vars: list[str] = Field(
         default_factory=lambda: [
@@ -437,7 +445,7 @@ class SandboxSettings(BaseSettings):
         description="SQLite database files expected in the sandbox data directory.",
     )
     sandbox_repo_path: str = Field(
-        ".",
+        resolve_path(".").as_posix(),
         env="SANDBOX_REPO_PATH",
         description="Path to repository root for sandbox operations.",
     )
@@ -485,7 +493,8 @@ class SandboxSettings(BaseSettings):
     )
     menace_local_db_path: str | None = Field(None, env="MENACE_LOCAL_DB_PATH")
     menace_shared_db_path: str = Field(
-        "./shared/global.db", env="MENACE_SHARED_DB_PATH"
+        (resolve_path(".") / "shared" / "global.db").as_posix(),
+        env="MENACE_SHARED_DB_PATH",
     )
     visual_agent_token: str = Field("", env="VISUAL_AGENT_TOKEN")
     visual_agent_token_rotate: str | None = Field(None, env="VISUAL_AGENT_TOKEN_ROTATE")
@@ -829,7 +838,7 @@ class SandboxSettings(BaseSettings):
         description="Comma-separated fallback order for stub strategies.",
     )
     input_templates_file: str = Field(
-        "sandbox_data/input_stub_templates.json",
+        (resolve_path("sandbox_data") / "input_stub_templates.json").as_posix(),
         env="SANDBOX_INPUT_TEMPLATES_FILE",
         description="Path to input stub templates JSON file.",
     )
@@ -1013,12 +1022,12 @@ class SandboxSettings(BaseSettings):
         description="Weight penalising workflow entropy when scoring chains.",
     )
     workflows_db: str = Field(
-        "workflows.db",
+        (resolve_path(".") / "workflows.db").as_posix(),
         env="WORKFLOWS_DB",
         description="SQLite database storing workflow definitions.",
     )
     gpt_memory_db: str = Field(
-        "gpt_memory.db",
+        (resolve_path(".") / "gpt_memory.db").as_posix(),
         env="GPT_MEMORY_DB",
         description="Path to GPT memory database file.",
     )
@@ -1038,22 +1047,22 @@ class SandboxSettings(BaseSettings):
         description="Training steps between summary logs.",
     )
     self_test_lock_file: str = Field(
-        "sandbox_data/self_test.lock",
+        (resolve_path("sandbox_data") / "self_test.lock").as_posix(),
         env="SELF_TEST_LOCK_FILE",
         description="File used to serialise self-test runs.",
     )
     self_test_report_dir: str = Field(
-        "sandbox_data/self_test_reports",
+        (resolve_path("sandbox_data") / "self_test_reports").as_posix(),
         env="SELF_TEST_REPORT_DIR",
         description="Directory storing self-test reports.",
     )
     synergy_weights_path: str = Field(
-        "sandbox_data/synergy_weights.json",
+        (resolve_path("sandbox_data") / "synergy_weights.json").as_posix(),
         env="SYNERGY_WEIGHTS_PATH",
         description="Persisted synergy weight JSON file.",
     )
     synergy_weight_file: str = Field(
-        "sandbox_data/synergy_weights.json",
+        (resolve_path("sandbox_data") / "synergy_weights.json").as_posix(),
         env="SYNERGY_WEIGHT_FILE",
         description="File storing persisted synergy weights between runs.",
     )
@@ -1071,17 +1080,17 @@ class SandboxSettings(BaseSettings):
         description="Fallback synergy weights used when no persisted file is found.",
     )
     alignment_flags_path: str = Field(
-        "sandbox_data/alignment_flags.jsonl",
+        (resolve_path("sandbox_data") / "alignment_flags.jsonl").as_posix(),
         env="ALIGNMENT_FLAGS_PATH",
         description="Path for persisted alignment flag reports.",
     )
     module_synergy_graph_path: str = Field(
-        "sandbox_data/module_synergy_graph.json",
+        (resolve_path("sandbox_data") / "module_synergy_graph.json").as_posix(),
         env="MODULE_SYNERGY_GRAPH_PATH",
         description="Synergy graph persistence path.",
     )
     relevancy_metrics_db_path: str = Field(
-        "sandbox_data/relevancy_metrics.db",
+        (resolve_path("sandbox_data") / "relevancy_metrics.db").as_posix(),
         env="RELEVANCY_METRICS_DB_PATH",
         description="Database for relevancy metrics.",
     )
@@ -1699,7 +1708,10 @@ class SandboxSettings(BaseSettings):
     roi_stagnation_cycles: int = Field(3, env="ROI_STAGNATION_CYCLES")
     roi_deviation_tolerance: float = Field(0.05, env="ROI_DEVIATION_TOLERANCE")
     roi_stagnation_threshold: float = Field(0.01, env="ROI_STAGNATION_THRESHOLD")
-    sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
+    sandbox_score_db: str = Field(
+        (resolve_path(".") / "score_history.db").as_posix(),
+        env="SANDBOX_SCORE_DB",
+    )
     synergy_weights_lr: float = Field(
         0.1,
         env="SYNERGY_WEIGHTS_LR",
@@ -1976,7 +1988,7 @@ class SandboxSettings(BaseSettings):
         description="Seconds between integrity checks for self-modification detection.",
     )
     self_mod_reference_path: str = Field(
-        "immutable_reference.json",
+        (resolve_path(".") / "immutable_reference.json").as_posix(),
         env="SELF_MOD_REFERENCE_PATH",
         description="Path to reference hash snapshot.",
     )
@@ -1986,7 +1998,7 @@ class SandboxSettings(BaseSettings):
         description="Optional URL providing reference hashes.",
     )
     self_mod_lockdown_flag_path: str = Field(
-        "lockdown.flag",
+        (resolve_path(".") / "lockdown.flag").as_posix(),
         env="SELF_MOD_LOCKDOWN_FLAG_PATH",
         description="Location of lockdown flag written on tampering.",
     )
@@ -2058,8 +2070,12 @@ class SandboxSettings(BaseSettings):
 
     @field_validator("sandbox_data_dir", "self_test_report_dir")
     def _ensure_dirs(cls, v: str) -> str:
-        Path(v).mkdir(parents=True, exist_ok=True)
-        return v
+        try:
+            path = resolve_path(v)
+        except FileNotFoundError:
+            path = Path(v)
+        path.mkdir(parents=True, exist_ok=True)
+        return path.as_posix()
 
     @field_validator(
         "self_test_lock_file",
@@ -2071,8 +2087,12 @@ class SandboxSettings(BaseSettings):
         "self_mod_lockdown_flag_path",
     )
     def _ensure_parent_dirs(cls, v: str) -> str:
-        Path(v).parent.mkdir(parents=True, exist_ok=True)
-        return v
+        try:
+            path = resolve_path(v)
+        except FileNotFoundError:
+            path = Path(v)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path.as_posix()
 
     # Grouped settings
     roi: ROISettings = Field(default_factory=ROISettings, exclude=True)
