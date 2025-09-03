@@ -97,6 +97,7 @@ def test_scenario_metric_degradation_triggers_actions(monkeypatch):
     assert patches
     assert engine._force_rerun
     assert engine._scenario_pass_rate < 0
+    assert engine._pass_rate_delta == engine.baseline_tracker.get("pass_rate_delta")
     captured = {}
     def fake_update(roi_delta, deltas, extra=None):
         captured["extra"] = extra

@@ -962,6 +962,7 @@ class SelfImprovementEngine:
         self._last_scenario_metrics: dict[str, float] = {}
         self._last_scenario_trend: dict[str, float] = {}
         self._scenario_pass_rate: float = 0.0
+        self._pass_rate_delta: float = 0.0
         self._force_rerun = False
         if self.event_bus:
             if self.learning_engine:
@@ -1876,7 +1877,9 @@ class SelfImprovementEngine:
         """
 
         roi_delta = getattr(self, "roi_delta_ema", 0.0)
-        pass_rate_delta = self.baseline_tracker.get("pass_rate_delta")
+        pass_rate_delta = getattr(
+            self, "_pass_rate_delta", self.baseline_tracker.get("pass_rate_delta")
+        )
         pass_rate_std = self.baseline_tracker.std("pass_rate")
         pass_rate_threshold = self.pass_rate_dev_multiplier * pass_rate_std
         if pass_rate_delta > pass_rate_threshold:
@@ -2031,13 +2034,14 @@ class SelfImprovementEngine:
                     self._force_rerun = True
         total = len(metrics)
         passed = total - len(failing)
-        pass_rate = passed / total if total else 1.0
+        frac = passed / total if total else 1.0
         try:
-            self.baseline_tracker.update(pass_rate=pass_rate, **metrics)
+            self.baseline_tracker.update(pass_rate=frac, **metrics)
+            self._pass_rate_delta = self.baseline_tracker.get("pass_rate_delta")
         except Exception:
-            pass
+            self._pass_rate_delta = 0.0
         # store negative value when scenarios fail so reward is penalised
-        self._scenario_pass_rate = pass_rate - 1.0
+        self._scenario_pass_rate = frac - 1.0
         self._last_scenario_trend = trend
         self._last_scenario_metrics = dict(metrics)
 
