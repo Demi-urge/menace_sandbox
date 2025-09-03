@@ -12,6 +12,7 @@ from .implementation_optimiser_bot import ImplementationOptimiserBot
 from .bot_development_bot import BotDevelopmentBot, BotSpec
 from contextlib import nullcontext
 from .models_repo import clone_to_new_repo, model_build_lock
+from dynamic_path_router import resolve_path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - optional heavy deps
@@ -275,12 +276,12 @@ class ImplementationPipeline:
                 self.logger.exception("developer build failed: %s", exc)
                 raise
 
-            setup_script = Path(__file__).resolve().parent.parent / "scripts" / "setup_tests.sh"
+            setup_script = str(resolve_path("scripts/setup_tests.sh"))
             for path in paths:
                 repo_dir = path.parent
                 try:
                     setup_proc = subprocess.run(
-                        [str(setup_script)],
+                        [setup_script],
                         cwd=repo_dir,
                         capture_output=True,
                         text=True,
