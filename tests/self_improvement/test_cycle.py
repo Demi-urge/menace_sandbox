@@ -445,8 +445,8 @@ def test_cycle_runs_when_deltas_non_positive():
         {"roi": 0.0, "pass_rate": -0.1, "entropy": 0.0},
         {"chain": ["w"], "roi_gain": 0.0, "failures": 0, "entropy": 0.0},
     )
-    assert logs[0][0] == "run"
-    assert "reason" not in logs[0][1]
+    assert logs[0][0] == "skip"
+    assert logs[0][1].get("reason") == "no_delta"
 
 
 def test_cycle_skips_when_deltas_positive():
@@ -463,5 +463,5 @@ def test_cycle_overfitting_fallback_on_entropy_spike():
         {"roi": 1.0, "pass_rate": 1.0, "entropy": 5.0},
         {"chain": ["w"], "roi_gain": 1.0, "failures": 0, "entropy": 5.0},
     )
-    assert logs[0][0] == "run"
-    assert logs[0][1].get("reason") == "overfitting_fallback"
+    assert logs[0][0] == "fallback"
+    assert logs[0][1].get("reason") == "entropy_spike"

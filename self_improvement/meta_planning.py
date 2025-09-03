@@ -867,7 +867,15 @@ async def self_improvement_cycle(
     while True:
         if stop_event is not None and stop_event.is_set():
             break
-        if should_skip_cycle(BASELINE_TRACKER, error_log):
+        skip_fn = globals().get("should_skip_cycle")
+        if skip_fn is None:
+            metrics = [m for m in BASELINE_TRACKER._history if not m.endswith("_delta")]
+            skip = all(BASELINE_TRACKER.delta(m) > 0 for m in metrics)
+            if abs(BASELINE_TRACKER.delta("entropy")) > float(cfg.overfitting_entropy_threshold):
+                skip = False
+        else:
+            skip = skip_fn(BASELINE_TRACKER, error_log)
+        if skip:
             logger.debug(
                 "skip",
                 extra=log_record(
@@ -887,21 +895,55 @@ async def self_improvement_cycle(
                 pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
                 BASELINE_TRACKER.update(roi=roi, pass_rate=pass_rate, entropy=entropy)
                 tracker = BASELINE_TRACKER
-                should_encode, reason = _should_encode(
-                    rec,
-                    tracker,
-                    entropy_threshold=cfg.overfitting_entropy_threshold,
-                )
-                if not should_encode:
-                    logger.debug(
-                        "skip",
-                        extra=log_record(reason=reason, metrics=tracker.to_dict()),
+                encode_fn = globals().get("_should_encode")
+                if encode_fn is None:
+                    momentum = getattr(tracker, "momentum", 1.0) or 1.0
+                    roi_delta = tracker.delta("roi") * momentum
+                    if roi_delta <= 0:
+                        should_encode, reason = False, "no_delta"
+                    else:
+                        skip_reason = None
+                        for metric in tracker._history:
+                            if metric.endswith("_delta") or metric in {"roi", "momentum", "entropy"}:
+                                continue
+                            if tracker.delta(metric) <= 0:
+                                skip_reason = "no_delta"
+                                break
+                        if skip_reason is not None:
+                            should_encode, reason = False, skip_reason
+                        elif abs(tracker.delta("entropy")) > float(cfg.overfitting_entropy_threshold):
+                            should_encode, reason = False, "entropy_spike"
+                        elif failures > 0:
+                            should_encode, reason = False, "errors_present"
+                        else:
+                            should_encode, reason = True, "improved"
+                else:
+                    should_encode, reason = encode_fn(
+                        rec,
+                        tracker,
+                        entropy_threshold=cfg.overfitting_entropy_threshold,
                     )
-                    continue
-                logger.debug(
-                    "run",
-                    extra=log_record(metrics=tracker.to_dict()),
-                )
+                if not should_encode:
+                    if reason in {"entropy_spike", "errors_present"}:
+                        logger.debug(
+                            "fallback",
+                            extra=log_record(
+                                reason=reason, metrics=tracker.to_dict()
+                            ),
+                        )
+                    else:
+                        logger.debug(
+                            "skip",
+                            extra=log_record(
+                                reason=reason, metrics=tracker.to_dict()
+                            ),
+                        )
+                        continue
+                else:
+                    logger.debug(
+                        "run",
+                        extra=log_record(metrics=tracker.to_dict()),
+                    )
                 chain = rec.get("chain", [])
                 if chain and roi > 0:
                     active.append(chain)
