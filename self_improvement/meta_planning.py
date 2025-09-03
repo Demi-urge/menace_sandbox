@@ -652,13 +652,20 @@ def _should_encode(
     # All other tracked metrics (excluding momentum and entropy) require
     # positive deltas.
     for metric in tracker._history:
-        if metric.endswith("_delta") or metric in {"roi", "momentum", "entropy"}:
+        if metric.endswith("_delta") or metric in {
+            "roi",
+            "momentum",
+            "entropy",
+        }:
             continue
-        if tracker.delta(metric) <= 0:
+        if tracker.delta(metric) < 0:
             return False, "no_delta"
 
     # Treat entropy spikes as potential overfitting even when ROI is high.
-    if abs(tracker.delta("entropy")) > float(entropy_threshold):
+    history = tracker._history.get("entropy", [])
+    prev_entropy = history[-2] if len(history) > 1 else (history[-1] if history else 0.0)
+    current_entropy = float(record.get("entropy", prev_entropy))
+    if abs(current_entropy - prev_entropy) >= float(entropy_threshold):
         return False, "entropy_spike"
 
     # Any failures or critical errors invalidate the improvement signal.
@@ -879,7 +886,9 @@ async def self_improvement_cycle(
             logger.debug(
                 "skip",
                 extra=log_record(
-                    reason="all_deltas_positive", metrics=BASELINE_TRACKER.to_dict()
+                    reason="all_deltas_positive",
+                    decision="skip",
+                    metrics=BASELINE_TRACKER.to_dict(),
                 ),
             )
             await asyncio.sleep(interval)
@@ -904,14 +913,20 @@ async def self_improvement_cycle(
                     else:
                         skip_reason = None
                         for metric in tracker._history:
-                            if metric.endswith("_delta") or metric in {"roi", "momentum", "entropy"}:
+                            if metric.endswith("_delta") or metric in {
+                                "roi",
+                                "momentum",
+                                "entropy",
+                            }:
                                 continue
                             if tracker.delta(metric) <= 0:
                                 skip_reason = "no_delta"
                                 break
                         if skip_reason is not None:
                             should_encode, reason = False, skip_reason
-                        elif abs(tracker.delta("entropy")) > float(cfg.overfitting_entropy_threshold):
+                        elif abs(tracker.delta("entropy")) > float(
+                            cfg.overfitting_entropy_threshold
+                        ):
                             should_encode, reason = False, "entropy_spike"
                         elif failures > 0:
                             should_encode, reason = False, "errors_present"
@@ -924,25 +939,24 @@ async def self_improvement_cycle(
                         entropy_threshold=cfg.overfitting_entropy_threshold,
                     )
                 if not should_encode:
-                    if reason in {"entropy_spike", "errors_present"}:
-                        logger.debug(
-                            "fallback",
-                            extra=log_record(
-                                reason=reason, metrics=tracker.to_dict()
-                            ),
-                        )
-                    else:
-                        logger.debug(
-                            "skip",
-                            extra=log_record(
-                                reason=reason, metrics=tracker.to_dict()
-                            ),
-                        )
-                        continue
+                    msg = (
+                        "fallback" if reason in {"entropy_spike", "errors_present"} else "skip"
+                    )
+                    logger.debug(
+                        msg,
+                        extra=log_record(
+                            reason=reason,
+                            decision="skip",
+                            metrics=tracker.to_dict(),
+                        ),
+                    )
+                    continue
                 else:
                     logger.debug(
                         "run",
-                        extra=log_record(metrics=tracker.to_dict()),
+                        extra=log_record(
+                            decision="improve", metrics=tracker.to_dict()
+                        ),
                     )
                 chain = rec.get("chain", [])
                 if chain and roi > 0:
