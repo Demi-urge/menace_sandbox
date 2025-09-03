@@ -1318,7 +1318,12 @@ class SandboxSettings(BaseSettings):
             raise ValueError(f"{info.field_name} must be a positive integer")
         return v
 
-    @field_validator("weight_update_interval", "test_run_timeout", "side_effect_dev_multiplier")
+    @field_validator(
+        "weight_update_interval",
+        "test_run_timeout",
+        "side_effect_dev_multiplier",
+        "synergy_dev_multiplier",
+    )
     def _validate_positive_float(cls, v: float, info: Any) -> float:
         if v <= 0:
             raise ValueError(f"{info.field_name} must be positive")
@@ -1332,6 +1337,9 @@ class SandboxSettings(BaseSettings):
     side_effect_threshold: int = Field(10, env="SANDBOX_SIDE_EFFECT_THRESHOLD")
     side_effect_dev_multiplier: float = Field(
         1.0, env="SANDBOX_SIDE_EFFECT_DEV_MULTIPLIER"
+    )
+    synergy_dev_multiplier: float = Field(
+        1.0, env="SANDBOX_SYNERGY_DEV_MULTIPLIER"
     )
     auto_patch_high_risk: bool = Field(
         True,

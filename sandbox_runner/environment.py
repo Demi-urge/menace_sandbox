@@ -7298,7 +7298,7 @@ def try_integrate_into_workflows(
     if side_effect_k is None:
         side_effect_k = getattr(settings, "side_effect_dev_multiplier", 1.0)
     if synergy_k is None:
-        synergy_k = 1.0
+        synergy_k = getattr(settings, "synergy_dev_multiplier", 1.0)
     for m in modules:
         p = Path(m)
         if p.is_absolute():
@@ -7404,7 +7404,7 @@ def try_integrate_into_workflows(
             expanded = {dotted}
             if _USE_MODULE_SYNERGY:
                 try:
-                    base_thr = getattr(settings, "synergy_threshold", 0.7)
+                    base_thr = tracker.get("synergy") + synergy_k * tracker.std("synergy")
                     cluster = get_synergy_cluster(dotted, base_thr)
                     hist = tracker.to_dict().get("synergy", [])
                     avg_s = tracker.get("synergy")
