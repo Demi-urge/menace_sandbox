@@ -488,7 +488,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
     if not getattr(settings, "auto_include_isolated", False):
         return
 
-    repo = getattr(ctx, "repo")
+    repo = Path(resolve_path(getattr(ctx, "repo")))
     traces = getattr(ctx, "orphan_traces", {})
 
     # Load cached traces
@@ -554,12 +554,36 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
     try:
         mapping = discover_recursive_orphans(str(repo))
         for name, info in mapping.items():
-            rel = Path(*name.split(".")).with_suffix(".py").as_posix()
-            parents = [Path(*p.split(".")).with_suffix(".py").as_posix() for p in info.get("parents", [])]
+            try:
+                path = Path(resolve_path(repo / Path(*name.split(".")).with_suffix(".py")))
+            except FileNotFoundError:
+                try:
+                    path = Path(resolve_path(repo / Path(*name.split(".")) / "__init__.py"))
+                except FileNotFoundError:
+                    continue
+            rel = path.relative_to(repo).as_posix()
+            parents: list[str] = []
+            for p in info.get("parents", []):
+                try:
+                    parent_path = Path(
+                        resolve_path(repo / Path(*p.split(".")).with_suffix(".py"))
+                    )
+                except FileNotFoundError:
+                    try:
+                        parent_path = Path(
+                            resolve_path(repo / Path(*p.split(".")) / "__init__.py")
+                        )
+                    except FileNotFoundError:
+                        continue
+                parents.append(parent_path.relative_to(repo).as_posix())
             ent = traces.setdefault(rel, {"parents": []})
-            ent["classification"] = info.get("classification", ent.get("classification", "candidate"))
+            ent["classification"] = info.get(
+                "classification", ent.get("classification", "candidate")
+            )
             ent["redundant"] = info.get("redundant", ent.get("redundant", False))
-            ent["parents"] = list(dict.fromkeys(ent.get("parents", []) + parents))
+            ent["parents"] = list(
+                dict.fromkeys(ent.get("parents", []) + parents)
+            )
             _classify(rel)
     except Exception:
         logger.exception("discover_recursive_orphans failed")
