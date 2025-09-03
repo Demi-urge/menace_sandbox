@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
+
+from dynamic_path_router import resolve_path
 
 from workflow_synthesizer import (
     WorkflowSynthesizer,
@@ -38,7 +39,7 @@ def run(args: argparse.Namespace) -> int:
     """
 
     if getattr(args, "list", False):
-        directory = Path("sandbox_data/generated_workflows")
+        directory = resolve_path("sandbox_data") / "generated_workflows"
         if directory.exists():
             for path in sorted(directory.glob("*.workflow.json")):
                 print(path.name)
@@ -118,7 +119,7 @@ def run(args: argparse.Namespace) -> int:
     elif args.save is not None:
         name = args.save or args.start
         safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in name)
-        directory = Path("sandbox_data/generated_workflows")
+        directory = resolve_path("sandbox_data") / "generated_workflows"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{safe}.workflow.json"
         save_workflow(chosen, path)

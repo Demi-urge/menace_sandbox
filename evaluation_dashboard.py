@@ -53,7 +53,7 @@ from .telemetry_backend import TelemetryBackend
 from .violation_logger import load_persisted_alignment_warnings
 from .scope_utils import Scope
 
-GOVERNANCE_LOG = Path("sandbox_data/governance_outcomes.jsonl")
+GOVERNANCE_LOG = resolve_path("sandbox_data") / "governance_outcomes.jsonl"
 
 
 def append_governance_result(

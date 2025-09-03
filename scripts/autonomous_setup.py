@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 from auto_env_setup import ensure_env, interactive_setup
 from auto_resource_setup import ensure_proxies, ensure_accounts
 from setup_dependencies import check_and_install
@@ -77,8 +79,9 @@ def main() -> None:
     logger.info("generating presets")
     presets = generate_presets()
     presets = adapt_presets(ROITracker(), presets)
-    Path("sandbox_data").mkdir(exist_ok=True)
-    Path("sandbox_data/latest_presets.json").write_text(
+    data_dir = resolve_path("sandbox_data")
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "latest_presets.json").write_text(
         json.dumps(presets, indent=2)
     )
 

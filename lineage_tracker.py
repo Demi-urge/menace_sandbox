@@ -22,9 +22,13 @@ except Exception:  # pragma: no cover - gracefully degrade
     def get_patch_provenance(patch_id: int) -> List[dict]:
         return []
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
 
 _SUMMARY_STORE = Path(
-    os.environ.get("WORKFLOW_SUMMARY_STORE", Path("sandbox_data") / "workflows")
+    os.environ.get("WORKFLOW_SUMMARY_STORE", str(resolve_path("sandbox_data") / "workflows"))
 )
 
 

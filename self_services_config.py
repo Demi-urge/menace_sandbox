@@ -5,6 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 try:  # pragma: no cover - compatibility with pydantic v1/v2
     from pydantic_settings import BaseSettings, SettingsConfigDict
     PYDANTIC_V2 = True
@@ -70,12 +75,12 @@ class SelfTestConfig(BaseSettings):
     """Configuration for the self-test service."""
 
     lock_file: Path = Field(
-        default=Path("sandbox_data/self_test.lock"),
+        default=resolve_path("sandbox_data") / "self_test.lock",
         validation_alias="SELF_TEST_LOCK_FILE",
         description="File used to serialise self-test runs.",
     )
     report_dir: Path = Field(
-        default=Path("sandbox_data/self_test_reports"),
+        default=resolve_path("sandbox_data") / "self_test_reports",
         validation_alias="SELF_TEST_REPORT_DIR",
         description="Directory used to store self-test reports.",
     )

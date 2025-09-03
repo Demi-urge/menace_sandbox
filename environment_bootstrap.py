@@ -30,6 +30,11 @@ from .external_dependency_provisioner import ExternalDependencyProvisioner
 from . import startup_checks
 from .vector_service.embedding_scheduler import start_scheduler_from_env
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 
 class EnvironmentBootstrapper:
     """Bootstrap dependencies and infrastructure on startup."""
@@ -253,7 +258,7 @@ class EnvironmentBootstrapper:
             except Exception as exc:  # pragma: no cover - log only
                 self.logger.warning("VectorMetricsDB bootstrap failed: %s", exc)
 
-            hist = Path("sandbox_data/roi_history.json")
+            hist = resolve_path("sandbox_data") / "roi_history.json"
             if not hist.exists():
                 try:
                     hist.parent.mkdir(parents=True, exist_ok=True)

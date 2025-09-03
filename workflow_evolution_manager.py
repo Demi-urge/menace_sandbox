@@ -21,6 +21,10 @@ from . import workflow_run_summary
 from . import sandbox_runner
 from .workflow_synergy_comparator import WorkflowSynergyComparator
 from .meta_workflow_planner import MetaWorkflowPlanner
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
 try:  # pragma: no cover - optional dependency
     from vector_service.retriever import Retriever  # type: ignore
 except Exception:  # pragma: no cover - allow running without retriever
@@ -52,7 +56,7 @@ def consume_planner_suggestions(chains: Iterable[Sequence[str]]) -> None:
     """Persist planner-suggested chains for later evaluation."""
     for idx, chain in enumerate(chains, start=1):
         try:
-            path = Path("sandbox_data") / f"planner_chain_{idx}.workflow.json"
+            path = resolve_path("sandbox_data") / f"planner_chain_{idx}.workflow.json"
             save_workflow([{"module": m} for m in chain], path)
         except Exception:
             logger.exception("failed to save planner suggestion", extra={"chain": chain})

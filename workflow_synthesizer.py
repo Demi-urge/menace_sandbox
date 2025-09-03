@@ -52,6 +52,11 @@ from typing import (
     get_type_hints,
 )
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 try:  # pragma: no cover - support running as a package
     from .fcntl_compat import flock, LOCK_EX, LOCK_SH, LOCK_UN
 except Exception:  # pragma: no cover - allow running as script
@@ -88,7 +93,7 @@ except Exception:  # pragma: no cover - gracefully degrade
 
 logger = logging.getLogger(__name__)
 
-WINNING_SEQUENCES_PATH = Path("sandbox_data/winning_sequences.json")
+WINNING_SEQUENCES_PATH = resolve_path("sandbox_data") / "winning_sequences.json"
 
 
 def record_winning_sequence(sequence: List[str]) -> None:
@@ -180,7 +185,7 @@ class WorkflowStep:
 class ModuleIOAnalyzer:
     """Analyze modules to determine their IO signatures with caching."""
 
-    def __init__(self, cache_path: Path = Path("sandbox_data/io_signatures.json")) -> None:
+    def __init__(self, cache_path: Path = resolve_path("sandbox_data") / "io_signatures.json") -> None:
         self.cache_path = cache_path
         self._cache: Dict[str, Dict[str, Any]] = {}
         try:
@@ -359,7 +364,7 @@ class WorkflowSynthesizer:
         self.synergy_graph_path = (
             Path(synergy_graph_path)
             if synergy_graph_path is not None
-            else Path("sandbox_data/module_synergy_graph.json")
+            else resolve_path("sandbox_data") / "module_synergy_graph.json"
         )
 
         # Load synergy graph if available
@@ -1345,7 +1350,7 @@ class WorkflowSynthesizer:
         self.workflow_scores = []
         self.generated_workflows = []
         self.workflow_score_details = []
-        out_dir = Path("sandbox_data/generated_workflows")
+        out_dir = resolve_path("sandbox_data") / "generated_workflows"
         out_dir.mkdir(parents=True, exist_ok=True)
         for idx, (score, wf, syn, intent, penalty) in enumerate(entries[:limit]):
             details: Dict[str, Any] = {
@@ -1418,7 +1423,7 @@ class WorkflowSynthesizer:
         """
 
         data = self.to_dict()
-        base = Path(path) if path is not None else Path("sandbox_data/generated_workflows")
+        base = Path(path) if path is not None else resolve_path("sandbox_data") / "generated_workflows"
         if base.suffix:
             out_dir = base.parent
             stem = base.stem
@@ -1656,7 +1661,7 @@ def consume_planner_suggestions(chains: Iterable[Sequence[str]]) -> List[Path]:
     paths: List[Path] = []
     for idx, chain in enumerate(chains, start=1):
         steps = [WorkflowStep(module=str(m)) for m in chain]
-        path = Path("sandbox_data") / f"planner_chain_{idx}.workflow.json"
+        path = resolve_path("sandbox_data") / f"planner_chain_{idx}.workflow.json"
         try:
             save_workflow(steps, path)
             paths.append(path)

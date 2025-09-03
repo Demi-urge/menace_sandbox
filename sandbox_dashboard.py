@@ -42,8 +42,8 @@ class SandboxDashboard(MetricsDashboard):
         self,
         history_file: str | Path = "roi_history.json",
         weights_log: str | Path = synergy_weight_cli.LOG_PATH,
-        summary_file: str | Path = Path("sandbox_data") / "scenario_summary.json",
-        alignment_flags_file: str | Path = Path("sandbox_data") / "alignment_flags.jsonl",
+        summary_file: str | Path = resolve_path("sandbox_data") / "scenario_summary.json",
+        alignment_flags_file: str | Path = resolve_path("sandbox_data") / "alignment_flags.jsonl",
         auth: Callable[[Request], bool] | None = None,
     ) -> None:
         super().__init__(history_file)
@@ -203,12 +203,12 @@ def cli(argv: List[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Sandbox dashboard")
     parser.add_argument(
         '--file',
-        default=str(Path('sandbox_data') / 'roi_history.json'),
+        default=str(resolve_path('sandbox_data') / 'roi_history.json'),
         help='Path to roi_history.json'
     )
     parser.add_argument(
         '--summary-file',
-        default=str(Path('sandbox_data') / 'scenario_summary.json'),
+        default=str(resolve_path('sandbox_data') / 'scenario_summary.json'),
         help='Path to scenario_summary.json'
     )
     parser.add_argument('--port', type=int, default=8002, help='HTTP port')
