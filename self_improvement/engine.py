@@ -1918,25 +1918,27 @@ class SelfImprovementEngine:
         """Evaluate scenario metrics and trigger remediation based on deviations."""
         prev = getattr(self, "_last_scenario_metrics", {})
         trend = {k: float(v) - float(prev.get(k, 0.0)) for k, v in metrics.items()}
-        action_map = {
-            "latency_error_rate": "alert",
-            "hostile_failures": "patch",
-            "misuse_failures": "patch",
-            "concurrency_throughput": "rerun",
-        }
         failing: list[str] = []
-        dev_mult = getattr(settings, "scenario_deviation_multiplier", 1.0)
         histories = self.baseline_tracker.to_dict()
+        alert_mult = getattr(settings, "scenario_alert_dev_multiplier", 1.0)
+        patch_mult = getattr(settings, "scenario_patch_dev_multiplier", 2.0)
+        rerun_mult = getattr(settings, "scenario_rerun_dev_multiplier", 3.0)
         for name, val in metrics.items():
             avg = self.baseline_tracker.get(name)
             std = self.baseline_tracker.std(name)
             hist_len = len(histories.get(name, []))
-            action = action_map.get(name)
-            if not action or hist_len == 0:
+            if hist_len == 0:
                 continue
             delta = float(val) - avg
-            deviation = std * dev_mult
-            if abs(delta) > deviation:
+            ratio = abs(delta) / std if std else (float("inf") if delta else 0.0)
+            action: str | None = None
+            if ratio > rerun_mult:
+                action = "rerun"
+            elif ratio > patch_mult:
+                action = "patch"
+            elif ratio > alert_mult:
+                action = "alert"
+            if action:
                 failing.append(name)
                 self.logger.info(
                     "scenario_metric_action",
