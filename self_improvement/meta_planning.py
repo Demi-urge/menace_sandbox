@@ -1048,6 +1048,7 @@ async def self_improvement_cycle(
 
     while True:
         if stop_event is not None and stop_event.is_set():
+            _debug_cycle("skipped", reason="stop_event")
             break
         eval_fn = globals().get("_evaluate_cycle")
         if eval_fn is None:
