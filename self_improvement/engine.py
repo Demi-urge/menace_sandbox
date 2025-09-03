@@ -542,6 +542,7 @@ class SelfImprovementEngine:
         self.baseline_tracker.window = self.baseline_window
         self.roi_weight = getattr(settings, "roi_weight", 1.0)
         self.momentum_weight = getattr(settings, "momentum_weight", 1.0)
+        self.pass_rate_weight = getattr(settings, "pass_rate_weight", 1.0)
         self.momentum_window = getattr(
             getattr(cfg, "roi", None), "momentum_window", self.baseline_window
         )
@@ -560,6 +561,7 @@ class SelfImprovementEngine:
         self.acc_dev_multiplier = getattr(cfg, "acc_deviation", 1.0)
         self.borderline_dev_multiplier = getattr(cfg, "roi_deviation", 1.0)
         self.entropy_dev_multiplier = getattr(cfg, "entropy_deviation", 1.0)
+        self.pass_rate_dev_multiplier = getattr(cfg, "pass_rate_deviation", 1.0)
         self.learning_engine = learning_engine
         self.self_coding_engine = self_coding_engine
         self.event_bus = event_bus
@@ -1854,13 +1856,22 @@ class SelfImprovementEngine:
     def _compute_delta_score(self) -> tuple[float, dict[str, float]]:
         """Return combined delta score and its components.
 
-        The score combines ROI, momentum, and entropy deltas with configurable
-        weights. Positive ROI and momentum changes increase the score while
-        entropy increases decrease it. Individual components are returned for
-        audit logging.
+        The score combines ROI, pass rate, momentum, and entropy deltas with
+        configurable weights. Positive ROI, pass rate, and momentum changes
+        increase the score while entropy increases decrease it. Individual
+        components are returned for audit logging.
         """
 
         roi_delta = getattr(self, "roi_delta_ema", 0.0)
+        pass_rate_delta = self.baseline_tracker.get("pass_rate_delta")
+        pass_rate_std = self.baseline_tracker.std("pass_rate")
+        pass_rate_threshold = self.pass_rate_dev_multiplier * pass_rate_std
+        if pass_rate_delta > pass_rate_threshold:
+            pass_rate_delta -= pass_rate_threshold
+        elif pass_rate_delta < -pass_rate_threshold:
+            pass_rate_delta += pass_rate_threshold
+        else:
+            pass_rate_delta = 0.0
         entropy_delta = abs(getattr(self, "entropy_delta_ema", 0.0))
         entropy_std = self.baseline_tracker.std("entropy")
         entropy_threshold = self.entropy_dev_multiplier * entropy_std
@@ -1871,14 +1882,17 @@ class SelfImprovementEngine:
         momentum_delta = self._metric_delta("success_rate")
         score = (
             self.roi_weight * roi_delta
+            + self.pass_rate_weight * pass_rate_delta
             + self.momentum_weight * momentum_delta
             - self.entropy_weight * entropy_delta
         )
         components = {
             "roi_delta": roi_delta,
+            "pass_rate_delta": pass_rate_delta,
             "entropy_delta": entropy_delta,
             "momentum_delta": momentum_delta,
             "roi_component": self.roi_weight * roi_delta,
+            "pass_rate_component": self.pass_rate_weight * pass_rate_delta,
             "momentum_component": self.momentum_weight * momentum_delta,
             "entropy_component": -self.entropy_weight * entropy_delta,
         }
@@ -7396,20 +7410,20 @@ class SelfImprovementEngine:
                     )
                 except Exception:
                     self.logger.exception("workflow scoring failed")
-            score = getattr(getattr(result, "roi", None), "success_rate", 0.0)
+            pass_rate = getattr(getattr(result, "roi", None), "success_rate", 0.0)
             files = list(_repo_path.rglob("*.py"))
             entropy = _si_metrics.compute_code_entropy(files)
-            score_avg = self.baseline_tracker.get("score")
+            pass_rate_avg = self.baseline_tracker.get("pass_rate")
             roi_avg = self.roi_baseline.average()
             entropy_avg = self.entropy_baseline.average()
             energy_avg = self.baseline_tracker.get("energy")
             self.baseline_tracker.update(
-                score=score, roi=roi_realish, entropy=entropy, energy=energy
+                pass_rate=pass_rate, roi=roi_realish, entropy=entropy, energy=energy
             )
             self.roi_baseline.append(roi_realish)
             self.entropy_baseline.append(entropy)
             self._check_roi_stagnation()
-            score_delta = score - score_avg
+            pass_rate_delta = pass_rate - pass_rate_avg
             roi_delta = roi_realish - roi_avg
             entropy_delta = entropy - entropy_avg
             self.entropy_delta_ema = (
@@ -7431,7 +7445,7 @@ class SelfImprovementEngine:
                         workflow_id="self_improvement_cycle",
                         run_id=str(self._cycle_count),
                         runtime=0.0,
-                        success_rate=score,
+                        success_rate=pass_rate,
                         roi_gain=roi_realish,
                         workflow_synergy_score=max(0.0, 1.0 - entropy),
                         bottleneck_index=0.0,
@@ -7447,7 +7461,7 @@ class SelfImprovementEngine:
                 extra=log_record(
                     roi=roi_realish,
                     predicted_roi=pred_realish,
-                    score_delta=score_delta,
+                    pass_rate_delta=pass_rate_delta,
                     roi_delta=roi_delta,
                     entropy_delta=entropy_delta,
                     energy_delta=energy_delta,
@@ -7528,8 +7542,11 @@ class SelfImprovementEngine:
             roi_delta = roi_deltas[-1] if roi_deltas else 0.0
             pr_deltas = self.baseline_tracker.delta_history("pass_rate")
             pass_rate_delta = pr_deltas[-1] if pr_deltas else 0.0
+            combined_delta = (
+                self.roi_weight * roi_delta + self.pass_rate_weight * pass_rate_delta
+            )
             within_baseline = current_energy >= threshold
-            if roi_delta > 0 and pass_rate_delta > 0 and within_baseline:
+            if combined_delta > 0 and within_baseline:
                 self.logger.info(
                     "positive deltas - skipping cycle",
                     extra=log_record(

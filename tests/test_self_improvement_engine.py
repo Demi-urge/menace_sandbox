@@ -1555,18 +1555,25 @@ def test_compute_delta_score_weights():
     eng.roi_delta_ema = 1.0
     eng.entropy_delta_ema = 0.5
     eng.entropy_dev_multiplier = 0.0
-    eng.baseline_tracker = types.SimpleNamespace(std=lambda metric: 0.0)
+    eng.pass_rate_dev_multiplier = 0.0
+    eng.baseline_tracker = types.SimpleNamespace(
+        std=lambda metric: 0.0,
+        get=lambda name: 0.3 if name == "pass_rate_delta" else 0.0,
+    )
     eng._metric_delta = lambda metric: 0.2
     eng.roi_weight = 2.0
     eng.momentum_weight = 3.0
     eng.entropy_weight = 4.0
+    eng.pass_rate_weight = 5.0
     score, components = sie.SelfImprovementEngine._compute_delta_score(eng)
-    assert score == pytest.approx(2.0 * 1.0 + 3.0 * 0.2 - 4.0 * 0.5)
+    assert score == pytest.approx(2.0 * 1.0 + 5.0 * 0.3 + 3.0 * 0.2 - 4.0 * 0.5)
     assert components == {
         "roi_delta": 1.0,
+        "pass_rate_delta": 0.3,
         "entropy_delta": 0.5,
         "momentum_delta": 0.2,
         "roi_component": 2.0,
+        "pass_rate_component": 1.5,
         "momentum_component": 0.6,
         "entropy_component": -2.0,
     }
