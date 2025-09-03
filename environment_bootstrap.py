@@ -227,9 +227,8 @@ class EnvironmentBootstrapper:
         try:
             from .vector_service import download_model as _dm
 
-            dest = (
-                Path(_dm.__file__).with_name("minilm")
-                / "tiny-distilroberta-base.tar.xz"
+            dest = resolve_path(
+                "vector_service/minilm/tiny-distilroberta-base.tar.xz"
             )
             if not dest.exists():
                 _dm.bundle(dest)
@@ -237,10 +236,8 @@ class EnvironmentBootstrapper:
             self.logger.warning("embedding model download failed: %s", exc)
 
         try:
-            reg_path = (
-                Path(__file__).resolve().parent
-                / "vector_service"
-                / "embedding_registry.json"
+            reg_path = resolve_path(
+                "vector_service/embedding_registry.json"
             )
             with open(reg_path, "r", encoding="utf-8") as fh:
                 names = list(json.load(fh).keys())
