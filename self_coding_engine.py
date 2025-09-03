@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
+from itertools import zip_longest
 from dataclasses import dataclass
 import subprocess
 import json
@@ -990,6 +991,7 @@ class SelfCodingEngine:
                 retry_trace=retry_trace,
                 tone=self.prompt_tone,
                 summaries=summaries,
+                target_region=target_region,
             )
         except TypeError:
             prompt_obj = self.prompt_engine.build_prompt(
@@ -997,6 +999,7 @@ class SelfCodingEngine:
                 context=context_block,
                 retrieval_context=retrieval_context,
                 retry_trace=retry_trace,
+                target_region=target_region,
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
@@ -1200,8 +1203,37 @@ class SelfCodingEngine:
             start = max(target_region.start_line - 1, 0)
             end = min(target_region.end_line, len(original_lines))
             patch_lines = code.rstrip().splitlines()
-            original_lines[start:end] = patch_lines
-            path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+            new_lines = original_lines[:start] + patch_lines + original_lines[end:]
+            changed = [
+                idx + 1
+                for idx, (a, b) in enumerate(zip_longest(original_lines, new_lines))
+                if (a or "") != (b or "")
+            ]
+            out_of_range = [
+                i
+                for i in changed
+                if i < target_region.start_line or i > target_region.end_line
+            ]
+            if out_of_range:
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "patch:scope_violation",
+                            {
+                                "path": str(path),
+                                "allowed": [
+                                    target_region.start_line,
+                                    target_region.end_line,
+                                ],
+                                "modified": out_of_range,
+                            },
+                        )
+                    except Exception:
+                        self.logger.exception("event bus publish failed")
+                raise ValueError(
+                    "patch modified lines outside the permitted range"
+                )
+            path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         else:
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write("\n" + code)

@@ -24,6 +24,7 @@ from dynamic_path_router import resolve_path
 from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
+from failure_localization import TargetRegion
 
 try:  # pragma: no cover - optional settings dependency
     from sandbox_settings import SandboxSettings  # type: ignore
@@ -680,6 +681,7 @@ class PromptEngine:
         retrieval_context: str | None = None,
         retry_trace: str | None = None,
         tone: str | None = None,
+        target_region: TargetRegion | None = None,
     ) -> Prompt:
         """Return a :class:`Prompt` for *task* using retrieved patch examples.
 
@@ -810,11 +812,20 @@ class PromptEngine:
             lines.extend(snippet_lines)
             lines.append("")
 
+        if target_region is not None:
+            file_name = (
+                Path(getattr(target_region, "path", "")).name
+                if getattr(target_region, "path", None)
+                else "the file"
+            )
+            lines.append(
+                f"Change only lines {target_region.start_line}-{target_region.end_line} of {file_name} unless adjacent logic is required."
+            )
+        else:
+            lines.append(
+                "Change only the provided lines unless adjacent logic is required."
+            )
         lines.append(f"Given the following pattern, {task}")
-        lines.append(
-            "Modify only the provided lines unless additional changes are"
-            " causally necessary."
-        )
         lines.append("")
 
         if self.trained_example_placement not in {"start", "middle"}:
@@ -824,6 +835,19 @@ class PromptEngine:
             lines.extend(self._format_retry_trace(retry_trace))
         text = "\n".join(line for line in lines if line)
         text = self._trim_tokens(text, self.token_threshold)
+        meta: Dict[str, Any] = {"vector_confidences": scores}
+        if target_region is not None:
+            region_meta = {
+                "path": getattr(target_region, "path", ""),
+                "start_line": target_region.start_line,
+                "end_line": target_region.end_line,
+                "func_name": getattr(target_region, "func_name", ""),
+            }
+            meta["target_region"] = region_meta
+            try:
+                self.last_metadata.update({"target_region": region_meta})
+            except Exception:
+                self.last_metadata = {"target_region": region_meta}
         prompt_obj = Prompt(
             system="",
             user=text,
@@ -831,7 +855,7 @@ class PromptEngine:
             vector_confidence=confidence,
             vector_confidences=scores,
             tags=outcome_tags,
-            metadata={"vector_confidences": scores},
+            metadata=meta,
         )
         self._optimizer_applied = False
         return prompt_obj
@@ -1119,6 +1143,7 @@ class PromptEngine:
         trainer: PromptMemoryTrainer | None = None,
         optimizer: PromptOptimizer | None = None,
         optimizer_refresh_interval: int | None = None,
+        target_region: TargetRegion | None = None,
     ) -> Prompt:
         """Class method wrapper used by existing callers and tests."""
 
@@ -1142,6 +1167,7 @@ class PromptEngine:
             retry_trace=retry_trace,
             tone=tone,
             summaries=summaries,
+            target_region=target_region,
         )
 
 
@@ -1159,6 +1185,7 @@ def build_prompt(
     trainer: PromptMemoryTrainer | None = None,
     optimizer: PromptOptimizer | None = None,
     optimizer_refresh_interval: int | None = None,
+    target_region: TargetRegion | None = None,
 ) -> Prompt:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`.
 
@@ -1179,6 +1206,7 @@ def build_prompt(
         trainer=trainer,
         optimizer=optimizer,
         optimizer_refresh_interval=optimizer_refresh_interval,
+        target_region=target_region,
     )
 
 

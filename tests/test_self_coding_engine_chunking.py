@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import types
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -359,3 +360,28 @@ def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
     assert "Chunk 0: sum1" in captured["context"]
     assert "Chunk 1: sum2" in captured["context"]
     assert captured["summaries"] == ["Chunk 0: sum1", "Chunk 1: sum2"]
+
+
+def test_patch_file_rejects_scope_violation(tmp_path):
+    events: list[tuple[str, dict[str, object]]] = []
+
+    engine = sce.SelfCodingEngine(
+        object(),
+        object(),
+        prompt_chunk_token_threshold=50,
+        chunk_summary_cache_dir=tmp_path,
+    )
+    engine.formal_verifier = None
+    engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
+    engine.event_bus = types.SimpleNamespace(
+        publish=lambda name, data: events.append((name, data))
+    )
+    engine.generate_helper = lambda desc, **_: "print('x')\nprint('y')\nprint('z')\n"
+
+    target = tmp_path / "mod.py"
+    target.write_text("print('a')\nprint('b')\nprint('c')\n")
+    region = sce.TargetRegion(start_line=2, end_line=2, func_name="f")
+
+    with pytest.raises(ValueError):
+        engine.patch_file(target, "desc", target_region=region)
+    assert events and events[0][0] == "patch:scope_violation"
