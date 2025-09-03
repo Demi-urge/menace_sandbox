@@ -33,6 +33,12 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 - `entropy_ceiling_threshold`: `null`
 - `entropy_ceiling_consecutive`: `null`
 
+## Delta weight defaults
+- `roi_weight`: `1.0`
+- `pass_rate_weight`: `1.0`
+- `momentum_weight`: `1.0`
+- `entropy_weight`: `0.1`
+
 ## Synergy defaults
 - `threshold`: `null`
 - `confidence`: `null`

@@ -1495,6 +1495,7 @@ class SandboxSettings(BaseSettings):
     entropy_weight: float = Field(0.1, env="ENTROPY_WEIGHT")
     roi_weight: float = Field(1.0, env="ROI_WEIGHT")
     momentum_weight: float = Field(1.0, env="MOMENTUM_WEIGHT")
+    pass_rate_weight: float = Field(1.0, env="PASS_RATE_WEIGHT")
     min_integration_roi: float = Field(
         0.0,
         env="MIN_INTEGRATION_ROI",
@@ -1515,7 +1516,7 @@ class SandboxSettings(BaseSettings):
         description="confidence for variance tests; defaults to 0.95",
     )
 
-    @field_validator("roi_weight", "entropy_weight", "momentum_weight")
+    @field_validator("roi_weight", "entropy_weight", "momentum_weight", "pass_rate_weight")
     def _validate_delta_weights(cls, v: float, info: Any) -> float:
         if v < 0:
             raise ValueError(f"{info.field_name} must be non-negative")
