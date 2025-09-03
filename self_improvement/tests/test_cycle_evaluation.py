@@ -85,6 +85,7 @@ class DummyLogger:
 def _run_cycle(
     deltas: Mapping[str, float],
     record: Mapping[str, Any],
+    recent: tuple[Sequence[Any], float] | None = None,
 ) -> list[tuple[str, Mapping[str, Any]]]:
     meta = _load_cycle_funcs()
     tracker = DummyTracker(deltas)
@@ -120,6 +121,8 @@ def _run_cycle(
             "BASELINE_TRACKER": tracker,
         }
     )
+    if recent is not None:
+        meta["_recent_error_entropy"] = lambda *a, **k: recent
 
     async def _run():
         stop = threading.Event()
@@ -184,3 +187,13 @@ def test_cycle_fallback_on_error_traces():
     )
     assert logs[0][0] == "fallback"
     assert logs[0][1].get("reason") == "errors_present"
+
+
+def test_cycle_overfitting_fallback_logs_before_planner():
+    logs = _run_cycle(
+        {"roi": 1.0, "pass_rate": 1.0, "entropy": 0.0},
+        {"chain": [], "roi_gain": 0.0, "failures": 0, "entropy": 0.0},
+        recent=(["trace"], 2.0),
+    )
+    overfit = [rec for msg, rec in logs if rec.get("outcome") == "fallback"]
+    assert any(r.get("reason") == "overfitting" for r in overfit)
