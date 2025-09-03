@@ -805,13 +805,22 @@ async def self_improvement_cycle(
                 entropy = float(rec.get("entropy", 0.0))
                 pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
                 BASELINE_TRACKER.update(roi=roi, pass_rate=pass_rate, entropy=entropy)
-                should_skip, _ = evaluate_cycle(
+                tracker = BASELINE_TRACKER
+                should_skip, reason = evaluate_cycle(
                     rec,
-                    BASELINE_TRACKER,
+                    tracker,
                     rec.get("errors", []),
                 )
                 if should_skip:
+                    logger.debug(
+                        "skip",
+                        extra=log_record(reason=reason, metrics=tracker.to_dict()),
+                    )
                     continue
+                logger.debug(
+                    "run",
+                    extra=log_record(metrics=tracker.to_dict()),
+                )
                 chain = rec.get("chain", [])
                 if chain and roi > 0:
                     active.append(chain)
@@ -827,6 +836,7 @@ async def self_improvement_cycle(
                             exc_info=exc,
                         )
         except Exception as exc:  # pragma: no cover - planner is best effort
+            logger.debug("error", extra=log_record(err=str(exc)))
             logger.exception("meta planner execution failed", exc_info=exc)
 
         for chain in list(active):
