@@ -40,6 +40,7 @@ def _load_cycle_funcs() -> dict[str, Any]:
         "_get_entropy_threshold": lambda cfg, tracker: 1.0,
     }
     exec(compile(module, "<ast>", "exec"), ns)
+    ns["REQUIRED_METRICS"] = ("roi", "pass_rate", "entropy")
     return ns
 
 
@@ -176,6 +177,37 @@ def test_evaluate_cycle_skips_when_deltas_positive():
     should_run, reason = meta["evaluate_cycle"](record, tracker, [])
     assert should_run is False
     assert reason == "all_deltas_positive"
+
+
+def test__evaluate_cycle_skips_when_required_deltas_positive():
+    meta = _load_cycle_funcs()
+    tracker = DummyTracker({"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1})
+    decision, info = meta["_evaluate_cycle"](tracker, [])
+    assert decision == "skip"
+    assert info["reason"] == "all_deltas_positive"
+
+
+@pytest.mark.parametrize("missing", ["roi", "pass_rate", "entropy"])
+def test__evaluate_cycle_runs_when_metric_missing(missing):
+    meta = _load_cycle_funcs()
+    deltas = {"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1}
+    del deltas[missing]
+    tracker = DummyTracker(deltas)
+    decision, info = meta["_evaluate_cycle"](tracker, [])
+    assert decision == "run"
+    assert info["reason"] == "missing_metrics"
+    assert missing in info["missing"]
+
+
+@pytest.mark.parametrize("metric", ["roi", "pass_rate", "entropy"])
+def test__evaluate_cycle_runs_on_non_positive_delta(metric):
+    meta = _load_cycle_funcs()
+    deltas = {"roi": 1.0, "pass_rate": 1.0, "entropy": 0.1}
+    deltas[metric] = 0.0
+    tracker = DummyTracker(deltas)
+    decision, info = meta["_evaluate_cycle"](tracker, [])
+    assert decision == "run"
+    assert info["reason"] == "non_positive_delta"
 
 
 def test_cycle_fallback_on_entropy_spike():

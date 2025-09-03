@@ -859,6 +859,10 @@ def _recent_error_entropy(
     return list(events or []), float(entropy_delta), error_count
 
 
+# Canonical metrics that must be tracked for cycle evaluation.
+REQUIRED_METRICS: tuple[str, ...] = ("roi", "pass_rate", "entropy")
+
+
 def _evaluate_cycle(
     tracker: BaselineTracker, error_state: Any
 ) -> tuple[str, Mapping[str, Any]]:
@@ -886,6 +890,8 @@ def _evaluate_cycle(
             continue
         metrics[name] = float(tracker.delta(name))
 
+    missing = [m for m in REQUIRED_METRICS if m not in metrics]
+
     # Examine recent errors for critical severity
     critical = False
     events: Sequence[TelemetryEvent] | Sequence[Any] | None = None
@@ -907,8 +913,10 @@ def _evaluate_cycle(
             critical = True
             break
 
-    if not critical and metrics and all(v > 0 for v in metrics.values()):
+    if not missing and not critical and metrics and all(v > 0 for v in metrics.values()):
         return "skip", {"reason": "all_deltas_positive", "metrics": metrics}
+    if missing:
+        return "run", {"reason": "missing_metrics", "metrics": metrics, "missing": missing}
     if critical:
         reason = "critical_error"
     else:
@@ -1056,6 +1064,12 @@ async def self_improvement_cycle(
             _debug_cycle("skipped", reason="stop_event")
             break
         decision, info = evaluate_cycle(BASELINE_TRACKER, error_log)
+        if info.get("reason") == "missing_metrics":
+            _debug_cycle(
+                "run",
+                reason="missing_metrics",
+                missing_metrics=",".join(info.get("missing", [])),
+            )
         if decision == "skip":
             traces, ent_delta, err_count = _recent_error_entropy(
                 error_log, BASELINE_TRACKER
