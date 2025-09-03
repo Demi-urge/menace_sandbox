@@ -98,7 +98,7 @@ except ImportError:  # pragma: no cover - fallback for flat layout
 
 router = GLOBAL_ROUTER or init_db_router("self_improvement")
 STABLE_WORKFLOWS = WorkflowStabilityDB()
-from .meta_planning import PLANNER_INTERVAL, evaluate_cycle
+from .meta_planning import PLANNER_INTERVAL
 from . import meta_planning
 # Time based interval (in seconds) used to periodically trigger the meta
 # workflow planner in a background thread.  Keeping the configuration separate
@@ -7671,10 +7671,24 @@ class SelfImprovementEngine:
                 )
                 self._last_momentum = momentum
             current_energy *= 1 + momentum
+            # Fetch recent error telemetry and record the count so deltas can be
+            # tracked.  The count is used as a proxy for overall system health.
+            error_count = 0.0
+            critical_errors = False
+            if self.error_bot and hasattr(getattr(self.error_bot, "db", None), "recent_errors"):
+                try:
+                    events = self.error_bot.db.recent_errors(limit=5)
+                    error_count = float(len(events or []))
+                    critical_errors = any(
+                        getattr(getattr(ev, "error_type", None), "severity", None)
+                        == "critical"
+                        for ev in events or []
+                    )
+                except Exception as exc:
+                    self.logger.exception("error log retrieval failed: %s", exc)
             moving_avg = self.baseline_tracker.get("energy")
             std = self.baseline_tracker.std("energy")
-            delta = current_energy - moving_avg
-            self.baseline_tracker.update(energy=current_energy)
+            self.baseline_tracker.update(energy=current_energy, error_count=error_count)
             self._save_state()
             scale = 1.0 + (0.5 - momentum)
             threshold = moving_avg - self.energy_threshold * scale * std
@@ -7682,18 +7696,33 @@ class SelfImprovementEngine:
             # system movement.  Entropy increases and momentum drops will
             # reduce the score while ROI and pass rate gains increase it.
             _, components = self._compute_delta_score()
-            should_skip, _ = evaluate_cycle(
-                {"timestamp": datetime.now().isoformat()},
-                self.baseline_tracker,
-                [],
-            )
+            error_deltas = self.baseline_tracker.delta_history("error_count")
+            error_count_delta = error_deltas[-1] if error_deltas else 0.0
+            components["error_count_delta"] = error_count_delta
+            roi_delta = components.get("roi_delta", 0.0)
+            pass_rate_delta = components.get("pass_rate_delta", 0.0)
+            momentum_delta = components.get("momentum_delta", 0.0)
             within_baseline = current_energy >= threshold
-            if not should_skip and within_baseline:
+            metric_values = {
+                "roi": self.baseline_tracker.current("roi"),
+                "pass_rate": self.baseline_tracker.current("pass_rate"),
+                "momentum": self.baseline_tracker.momentum,
+                "error_count": error_count,
+            }
+            if (
+                roi_delta > 0
+                and pass_rate_delta > 0
+                and momentum_delta > 0
+                and error_count_delta <= 0
+                and within_baseline
+                and not critical_errors
+            ):
                 self.logger.info(
                     "positive deltas - skipping cycle",
                     extra=log_record(
                         energy=current_energy,
                         baseline=threshold,
+                        **metric_values,
                         **components,
                         decision="skip",
                     ),
@@ -7704,6 +7733,7 @@ class SelfImprovementEngine:
                     extra=log_record(
                         energy=current_energy,
                         baseline=threshold,
+                        **metric_values,
                         **components,
                         decision="cycle",
                     ),
@@ -7725,6 +7755,7 @@ class SelfImprovementEngine:
                     extra=log_record(
                         energy=current_energy,
                         baseline=threshold,
+                        **metric_values,
                         **components,
                         tier=self.urgency_tier,
                         decision="escalate",
