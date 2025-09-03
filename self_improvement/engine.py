@@ -865,6 +865,9 @@ class SelfImprovementEngine:
         self._last_momentum: float = 0.0
         self.urgency_tier: int = 0
         self.stagnation_cycles: int = getattr(cfg.roi, "stagnation_cycles", 3)
+        self.roi_stagnation_dev_multiplier: float = getattr(
+            cfg.roi, "roi_stagnation_dev_multiplier", 1.0
+        )
         # Tracks consecutive cycles without positive ROI delta
         self._roi_stagnation_count: int = 0
         self._momentum_streak: int = 0
@@ -2140,12 +2143,15 @@ class SelfImprovementEngine:
         """Escalate urgency when ROI fails to improve over consecutive cycles."""
 
         last_delta = self.baseline_tracker.delta("roi")
-        if last_delta <= 0:
+        roi_threshold = (
+            self.baseline_tracker.std("roi") * self.roi_stagnation_dev_multiplier
+        )
+        if last_delta < -roi_threshold:
             self._roi_stagnation_count += 1
             if self._roi_stagnation_count > self.stagnation_cycles:
                 self.urgency_tier += 1
                 self.logger.warning(
-                    "ROI momentum non-positive; increasing urgency tier",
+                    "ROI momentum below threshold; increasing urgency tier",
                     extra=log_record(
                         tier=self.urgency_tier, streak=self._roi_stagnation_count
                     ),
@@ -2154,7 +2160,7 @@ class SelfImprovementEngine:
                     dispatch_alert(
                         "roi_negative_trend",
                         2,
-                        "ROI momentum non-positive; increasing urgency tier",
+                        "ROI momentum below threshold; increasing urgency tier",
                         {
                             "tier": self.urgency_tier,
                             "streak": self._roi_stagnation_count,

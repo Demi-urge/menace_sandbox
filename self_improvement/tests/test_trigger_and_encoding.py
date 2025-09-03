@@ -87,21 +87,26 @@ def test_should_encode_uses_roi_delta_and_momentum():
     assert not _should_encode(record, tracker, entropy_threshold=0.5)
 
 
-def test_urgency_escalates_after_three_non_positive_roi_deltas():
+def test_urgency_escalates_after_persistent_roi_decline():
     alerts.clear()
     eng = SelfImprovementEngine.__new__(SelfImprovementEngine)
     eng.baseline_tracker = BaselineTracker(window=5)
+    eng.roi_stagnation_dev_multiplier = 1.0
     eng.urgency_tier = 0
     eng.urgency_recovery_threshold = 0.05
     eng.logger = types.SimpleNamespace(warning=lambda *a, **k: None, exception=lambda *a, **k: None)
     eng.stagnation_cycles = 3
-    eng._stagnation_streak = 0
-    for roi in [1.0, 0.9]:
+    eng._roi_stagnation_count = 0
+    for roi in [1.0, 0.8, 0.6, 0.4]:
         eng.baseline_tracker.update(roi=roi)
         eng._check_roi_stagnation()
         assert eng.urgency_tier == 0
-    eng.baseline_tracker.update(roi=0.8)
+    eng.baseline_tracker.update(roi=0.2)
     eng._check_roi_stagnation()
-    assert eng._stagnation_streak == 3
+    assert eng._roi_stagnation_count == 3
+    assert eng.urgency_tier == 0
+    eng.baseline_tracker.update(roi=0.0)
+    eng._check_roi_stagnation()
+    assert eng._roi_stagnation_count == 4
     assert eng.urgency_tier == 1
     assert alerts and alerts[0][0][0] == "roi_negative_trend"

@@ -49,26 +49,34 @@ def _make_engine():
         def delta(self, metric: str) -> float:
             return self._inner.delta(metric)
 
+        def std(self, metric: str) -> float:
+            return self._inner.std(metric)
+
     eng = SelfImprovementEngine.__new__(SelfImprovementEngine)
     eng.baseline_tracker = TrackerWrapper()
+    eng.roi_stagnation_dev_multiplier = 1.0
     eng.urgency_tier = 0
     eng.urgency_recovery_threshold = 0.05
     eng.logger = types.SimpleNamespace(warning=lambda *a, **k: None, exception=lambda *a, **k: None)
     eng.stagnation_cycles = 3
-    eng._stagnation_streak = 0
+    eng._roi_stagnation_count = 0
     return eng
 
 
 def test_roi_stagnation_escalates():
     alerts.clear()
     eng = _make_engine()
-    for roi in [1.0, 0.9]:
+    for roi in [1.0, 0.8, 0.6, 0.4]:
         eng.baseline_tracker.update(roi=roi)
         eng._check_roi_stagnation()
         assert eng.urgency_tier == 0
-    eng.baseline_tracker.update(roi=0.8)
+    eng.baseline_tracker.update(roi=0.2)
     eng._check_roi_stagnation()
-    assert eng._stagnation_streak == 3
+    assert eng._roi_stagnation_count == 3
+    assert eng.urgency_tier == 0
+    eng.baseline_tracker.update(roi=0.0)
+    eng._check_roi_stagnation()
+    assert eng._roi_stagnation_count == 4
     assert eng.urgency_tier == 1
     assert alerts and alerts[0][0][0] == "roi_negative_trend"
 
@@ -76,12 +84,12 @@ def test_roi_stagnation_escalates():
 def test_roi_recovery_resets():
     alerts.clear()
     eng = _make_engine()
-    for roi in [1.0, 0.9, 0.8]:
+    for roi in [1.0, 0.8, 0.6, 0.4, 0.2, 0.0]:
         eng.baseline_tracker.update(roi=roi)
         eng._check_roi_stagnation()
-    assert eng._stagnation_streak == 3
+    assert eng._roi_stagnation_count == 4
     assert eng.urgency_tier == 1
     eng.baseline_tracker.update(roi=1.0)
     eng._check_roi_stagnation()
-    assert eng._stagnation_streak == 0
+    assert eng._roi_stagnation_count == 0
     assert eng.urgency_tier == 0
