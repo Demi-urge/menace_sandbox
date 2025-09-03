@@ -13,16 +13,14 @@ import logging
 import os
 import pkgutil
 import sys
-from pathlib import Path
 from typing import Iterable, List
 import uuid
 
 from db_router import init_db_router
+from dynamic_path_router import get_project_root
 
-# allow running directly from the package directory
-_pkg_dir = Path(__file__).resolve().parent
-if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
-    sys.path.insert(0, str(_pkg_dir.parent))
+# Ensure repository root on sys.path for direct execution
+sys.path.insert(0, str(get_project_root()))
 
 logger = logging.getLogger(__name__)
 
@@ -92,4 +90,3 @@ def cli(argv: Iterable[str] | None = None) -> None:
 
 if __name__ == "__main__":
     cli()
-
