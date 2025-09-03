@@ -40,7 +40,8 @@ def main(args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Build sandbox module map")
     parser.add_argument("repo", nargs="?", default=".", help="Repository path")
     parser.add_argument(
-        "--output", default=resolve_path("sandbox_data/module_map.json")
+        "--output",
+        default=Path(resolve_path("sandbox_data")) / "module_map.json",
     )
     parser.add_argument(
         "--algorithm",
