@@ -14,6 +14,10 @@ from typing import Iterable, Callable, TYPE_CHECKING
 from . import RAISE_ERRORS
 from db_router import GLOBAL_ROUTER
 from .scope_utils import Scope, build_scope_clause, apply_scope
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 
 try:
     import pandas as pd  # type: ignore
@@ -172,6 +176,8 @@ class Notifier:
         if not handled:
             urgent = f"URGENT: {message}"
             self.notify(urgent, attachments)
+
+
 class Watchdog:
     """Monitor failure metrics and summon a human when thresholds are breached."""
 
@@ -428,6 +434,7 @@ class Watchdog:
                         raise
         except Exception:
             self.logger.exception("automated debugging failed")
+
     def record_fault(
         self,
         action: str,
@@ -466,7 +473,6 @@ class Watchdog:
         if orchestrator:
             orchestrator.update_confidence_metrics(results)
         return results
-
 
     def compile_dossier(self, limit: int = 5) -> tuple[str, list[str]]:
         """Gather recent traces and metrics and build a runbook."""
@@ -589,7 +595,7 @@ class Watchdog:
         if playbook_path:
             attachments.append(playbook_path)
 
-        templates_dir = os.path.join(os.path.dirname(__file__), "docs", "runbooks")
+        templates_dir = resolve_path("docs/runbooks").as_posix()
         try:
             for name in os.listdir(templates_dir):
                 path = os.path.join(templates_dir, name)
