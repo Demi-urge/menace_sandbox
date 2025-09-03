@@ -7,6 +7,9 @@ shell commands remain portable across forked layouts or nested repositories.
 The resolver honours the `SANDBOX_REPO_PATH` environment variable when set and
 otherwise falls back to Git metadata or a `.git` directory search.
 
+For details on runtime resolution, caching behaviour and migration tips see
+[docs/dynamic_path_router.md](docs/dynamic_path_router.md).
+
 ```bash
 python "$(python - <<'PY'
 from dynamic_path_router import resolve_path
@@ -17,6 +20,8 @@ PY
 
 The router enables experimenting with alternative directory structures without
 breaking tooling, and nested clones can share the same lookup logic.
+When adding new scripts or documentation, resolve paths with
+`dynamic_path_router.resolve_path` rather than hard‑coding file locations.
 
 ## Self-Improvement Sandbox Setup
 

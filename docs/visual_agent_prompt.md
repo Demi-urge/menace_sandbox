@@ -192,7 +192,11 @@ Save this file as `va.tmpl` and pass it to the sandbox with
 `VA_PROMPT_TEMPLATE=va.tmpl`:
 
 ```bash
-VA_PROMPT_PREFIX="[internal]" VA_PROMPT_TEMPLATE=va.tmpl python sandbox_runner.py full-autonomous-run
+VA_PROMPT_PREFIX="[internal]" VA_PROMPT_TEMPLATE=va.tmpl python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" full-autonomous-run
 ```
 
 ## Sample prompt
