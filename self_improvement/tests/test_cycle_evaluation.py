@@ -1,15 +1,16 @@
 import asyncio
 import threading
 import ast
-from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping, Sequence
 import types
+
 import pytest
+from dynamic_path_router import resolve_path
 
 
 def _load_cycle_funcs() -> dict[str, Any]:
-    src = Path("self_improvement/meta_planning.py").read_text()
+    src = resolve_path("self_improvement/meta_planning.py").read_text()
     tree = ast.parse(src)
     wanted = {
         "self_improvement_cycle",
