@@ -78,10 +78,27 @@ class ErrorParser:
     def parse_failure(output: str) -> dict[str, Optional[str]]:
         report = parse_failure(output)
         first_tag = report.tags[0] if report.tags else ""
+
+        file: Optional[str] = None
+        line_no: Optional[str] = None
+        function: Optional[str] = None
+
+        for frame_line in reversed(report.trace.splitlines()):
+            frame_line = frame_line.strip()
+            m = re.match(r'File "([^"]+)", line (\d+), in (.+)', frame_line)
+            if m:
+                file, line_no, function = m.group(1), m.group(2), m.group(3)
+                break
+            m = re.match(r'([^:\s]+\.py):(\d+): in (.+)', frame_line)
+            if m:
+                file, line_no, function = m.group(1), m.group(2), m.group(3)
+                break
+
         return {
             "exception": first_tag,
-            "file": None,
-            "line": None,
+            "file": file,
+            "line": line_no,
+            "function": function,
             "context": "",
             "strategy_tag": first_tag,
             "signature": _signature(report.trace),
