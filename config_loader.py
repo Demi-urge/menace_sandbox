@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 import yaml
+from dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ _CONFIG_PATH: str | None = None
 def _create_template(path: str) -> None:
     """Create a template configuration file at *path* if missing."""
     template = {
-        "log_paths": {"events": "./logs/events.log"},
+        "log_paths": {"events": str(resolve_path("logs/events.log"))},
         "risk_thresholds": {"low": 0.2, "high": 0.8},
         "forbidden_domains": ["example.com"],
         "domain_risk_map": {"example.com": 1.0},
