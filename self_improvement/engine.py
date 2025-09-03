@@ -1551,6 +1551,22 @@ class SelfImprovementEngine:
             }
             self.last_run = float(data.get("last_run", self.last_run))
             self.roi_delta_ema = float(data.get("roi_delta_ema", self.roi_delta_ema))
+            self._pass_rate_delta = float(
+                data.get("pass_rate_delta", self._pass_rate_delta)
+            )
+            self.entropy_delta_ema = float(
+                data.get("entropy_delta_ema", self.entropy_delta_ema)
+            )
+            self.roi_weight = float(data.get("roi_weight", self.roi_weight))
+            self.pass_rate_weight = float(
+                data.get("pass_rate_weight", self.pass_rate_weight)
+            )
+            self.entropy_weight = float(
+                data.get("entropy_weight", self.entropy_weight)
+            )
+            self.momentum_weight = float(
+                data.get("momentum_weight", self.momentum_weight)
+            )
             scores = [float(x) for x in data.get("sandbox_scores", [])]
             self.baseline_tracker = GLOBAL_BASELINE_TRACKER
             self.baseline_tracker.window = self.baseline_window
@@ -1581,6 +1597,12 @@ class SelfImprovementEngine:
                         "roi_group_history": self.roi_group_history,
                         "last_run": self.last_run,
                         "roi_delta_ema": self.roi_delta_ema,
+                        "pass_rate_delta": self._pass_rate_delta,
+                        "entropy_delta_ema": self.entropy_delta_ema,
+                        "roi_weight": self.roi_weight,
+                        "pass_rate_weight": self.pass_rate_weight,
+                        "entropy_weight": self.entropy_weight,
+                        "momentum_weight": self.momentum_weight,
                         "sandbox_scores": self.baseline_tracker.to_dict().get("score", []),
                         "success_history": list(self.success_history),
                         "roi_baseline": self.roi_baseline.to_list(),
@@ -1876,26 +1898,27 @@ class SelfImprovementEngine:
         components are returned for audit logging.
         """
 
-        roi_delta = getattr(self, "roi_delta_ema", 0.0)
-        pass_rate_delta = getattr(
-            self, "_pass_rate_delta", self.baseline_tracker.get("pass_rate_delta")
-        )
+        roi_hist = self.baseline_tracker.delta_history("roi")
+        roi_delta = roi_hist[-1] if roi_hist else 0.0
+        pr_hist = self.baseline_tracker.delta_history("pass_rate")
+        pass_rate_delta = pr_hist[-1] if pr_hist else 0.0
         pass_rate_std = self.baseline_tracker.std("pass_rate")
         pass_rate_threshold = self.pass_rate_dev_multiplier * pass_rate_std
-        if pass_rate_delta > pass_rate_threshold:
-            pass_rate_delta -= pass_rate_threshold
-        elif pass_rate_delta < -pass_rate_threshold:
-            pass_rate_delta += pass_rate_threshold
-        else:
+        if abs(pass_rate_delta) <= pass_rate_threshold:
             pass_rate_delta = 0.0
-        entropy_delta = abs(getattr(self, "entropy_delta_ema", 0.0))
+        else:
+            pass_rate_delta -= math.copysign(pass_rate_threshold, pass_rate_delta)
+        ent_hist = self.baseline_tracker.delta_history("entropy")
+        entropy_delta = ent_hist[-1] if ent_hist else 0.0
         entropy_std = self.baseline_tracker.std("entropy")
         entropy_threshold = self.entropy_dev_multiplier * entropy_std
-        if entropy_delta <= entropy_threshold:
+        if abs(entropy_delta) <= entropy_threshold:
             entropy_delta = 0.0
         else:
-            entropy_delta -= entropy_threshold
-        momentum_delta = self._metric_delta("success_rate")
+            entropy_delta -= math.copysign(entropy_threshold, entropy_delta)
+        momentum_delta = (
+            self.baseline_tracker.momentum - self.baseline_tracker.get("momentum")
+        )
         score = (
             self.roi_weight * roi_delta
             + self.pass_rate_weight * pass_rate_delta
@@ -7063,11 +7086,12 @@ class SelfImprovementEngine:
                             "scenario metrics",
                             extra=log_record(**scenario_metrics),
                         )
+                    baseline_roi = self.baseline_tracker.get("roi")
                     self.logger.info(
                         "cycle metrics",
                         extra=log_record(
                             patch_success=patch_rate,
-                            roi_delta=after_roi - before_roi,
+                            roi_delta=after_roi - baseline_roi,
                             roi_trend=trend,
                             anomaly=anomaly,
                         ),
@@ -7092,7 +7116,8 @@ class SelfImprovementEngine:
                     self._alignment_agent.start()
                 except Exception:
                     self.logger.exception("alignment review agent failed to start")
-            delta = after_roi - before_roi
+            settings = SandboxSettings()
+            delta = after_roi - baseline_roi
             self.success_history.append(delta > 0)
             self._check_chain_stagnation()
             self._check_momentum()
@@ -7101,7 +7126,6 @@ class SelfImprovementEngine:
             if delta > 0:
                 try:
                     metrics = result.roi.__dict__ if result.roi else None
-                    settings = SandboxSettings()
                     agent = HumanAlignmentAgent(settings=settings)
                     logs: list[dict[str, Any]] | None = getattr(result, "logs", None)
                     if logs is None:
@@ -7147,7 +7171,6 @@ class SelfImprovementEngine:
                     warnings = agent.evaluate_changes(actions, metrics, logs, commit_info)
                     if any(warnings.values()):
                         result.warnings = warnings
-                    update_alignment_baseline(settings)
                 except Exception as exc:
                     self.logger.exception("improvement flagging failed: %s", exc)
             self.logger.info(
@@ -7450,6 +7473,18 @@ class SelfImprovementEngine:
                 (1 - self.entropy_weight) * self.entropy_delta_ema
                 + self.entropy_weight * entropy_delta
             )
+            momentum = self.momentum_coefficient
+            combined_delta = (
+                self.roi_weight * roi_delta
+                + self.pass_rate_weight * pass_rate_delta
+                + self.momentum_weight * momentum
+                - self.entropy_weight * entropy_delta
+            )
+            if combined_delta > 0:
+                try:
+                    update_alignment_baseline(settings)
+                except Exception:
+                    self.logger.exception("alignment baseline update failed")
             energy_delta = energy - energy_avg
             roi_db = getattr(self, "roi_db", None)
             if roi_db is None:
