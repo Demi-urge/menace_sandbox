@@ -43,6 +43,7 @@ class BaselineTracker:
         -----
         For every metric the delta from the current moving average is recorded
         under ``<metric>_delta`` before the new value is added to the history.
+        This includes commonly used metrics like ``roi`` and ``pass_rate``.
         ``roi`` deltas also update the internal success history used for
         momentum calculations.
         """
@@ -73,6 +74,22 @@ class BaselineTracker:
         if not hist:
             return 0.0
         return sum(hist) / len(hist)
+
+    # ------------------------------------------------------------------
+    def current(self, metric: str) -> float:
+        """Return the most recent value recorded for *metric*."""
+        hist = self._history.get(metric)
+        if not hist:
+            return 0.0
+        return hist[-1]
+
+    # ------------------------------------------------------------------
+    def delta(self, metric: str) -> float:
+        """Return the deviation of the latest value from ``get(metric)``."""
+        hist = self._history.get(metric)
+        if not hist:
+            return 0.0
+        return hist[-1] - self.get(metric)
 
     # ------------------------------------------------------------------
     def variance(self, metric: str) -> float:
