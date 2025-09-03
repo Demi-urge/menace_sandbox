@@ -243,7 +243,7 @@ except Exception:  # pragma: no cover - optional dependency
 if TYPE_CHECKING:  # pragma: no cover
     from menace.roi_tracker import ROITracker
 
-__path__ = [os.path.join(os.path.dirname(__file__), "sandbox_runner")]
+__path__ = [resolve_path("sandbox_runner").as_posix()]
 logger = get_logger(__name__)
 
 def _get_local_knowledge() -> LocalKnowledgeModule:
