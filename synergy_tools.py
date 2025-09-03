@@ -5,14 +5,11 @@ from __future__ import annotations
 import argparse
 import atexit
 import contextlib
-import json
 import os
 import signal
 import socket
 import sys
-import threading
 import time
-import urllib.request
 from pathlib import Path
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
@@ -24,6 +21,7 @@ from menace.audit_trail import AuditTrail
 from logging_utils import get_logger, setup_logging
 from synergy_monitor import ExporterMonitor
 from menace.metrics_exporter import start_metrics_server
+from dynamic_path_router import resolve_path
 
 
 logger = get_logger(__name__)
@@ -46,8 +44,6 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-
-
 # ----------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> None:
@@ -55,7 +51,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--sandbox-data-dir",
-        default="sandbox_data",
+        default=resolve_path("sandbox_data"),
         help="directory containing synergy data files",
     )
     args = parser.parse_args(argv)
