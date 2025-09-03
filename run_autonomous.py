@@ -132,7 +132,9 @@ def _visual_agent_running(urls: str) -> bool:
     return False
 
 
-spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
+spec = importlib.util.spec_from_file_location(
+    "menace", str(resolve_path("__init__.py"))
+)
 menace_pkg = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace_pkg
 spec.loader.exec_module(menace_pkg)
@@ -208,7 +210,7 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner", resolve_path("sandbox_runner.py")
+        "sandbox_runner", str(resolve_path("sandbox_runner.py"))
     )
     sr_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sr_mod)
