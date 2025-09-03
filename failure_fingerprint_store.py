@@ -180,6 +180,31 @@ class FailureFingerprintStore:
             self._ensure_embedding(fp)
             self._assign_cluster(record_id, fp)
 
+    def cluster_stats(self) -> Dict[int, Dict[str, Any]]:
+        """Return basic statistics about all known clusters.
+
+        The returned mapping contains one entry per cluster ID with the total
+        number of fingerprints assigned to that cluster (respecting the
+        ``count`` field of each fingerprint) and a representative example
+        fingerprint.
+        """
+
+        stats: Dict[int, Dict[str, Any]] = {}
+        for cid, ids in self._clusters.items():
+            example = None
+            size = 0
+            for rid in ids:
+                fp = self._cache.get(rid)
+                if fp is None:
+                    continue
+                if example is None:
+                    example = fp
+                size += fp.count
+            if example is None:
+                continue
+            stats[cid] = {"size": size, "example": example}
+        return stats
+
     def similarity_stats(self, window: int = 50) -> tuple[float, float]:
         """Return moving average and deviation of recent similarities."""
 

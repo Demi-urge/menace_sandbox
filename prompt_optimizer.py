@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -30,8 +29,10 @@ except Exception:  # pragma: no cover - allow running without dependency
 
 try:  # pragma: no cover - optional dependency
     from failure_fingerprint_store import FailureFingerprintStore
+    from failure_fingerprint import FailureFingerprint
 except Exception:  # pragma: no cover - allow running without dependency
     FailureFingerprintStore = None  # type: ignore
+    FailureFingerprint = None  # type: ignore
 
 
 @dataclass
@@ -369,123 +370,91 @@ class PromptOptimizer:
                 )
                 self.stats[key] = stat
             stat.update(success, roi, weight, runtime_val)
-
-        # Apply penalties from failure fingerprints if provided
-        if self.failure_store is not None:
-            self._apply_store_penalties()
-        elif (
-            self.failure_fingerprints_path
-            and self.failure_fingerprints_path.exists()
-        ):
-            counts: Counter[Tuple[Any, ...]] = Counter()
-            with self.failure_fingerprints_path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except Exception:
-                        continue
-                    prompt = str(data.get("prompt_text", ""))
-                    if not prompt:
-                        continue
-                    feats = self._extract_features(prompt)
-                    module = data.get("filename", "unknown")
-                    action = data.get("function_name", "unknown")
-                    has_system = prompt.lstrip().lower().startswith("system:")
-                    key = (
-                        module,
-                        action,
-                        feats["tone"],
-                        feats["header_set"],
-                        feats["example_placement"],
-                        feats["has_code"],
-                        feats["has_bullets"],
-                        has_system,
-                    )
-                    count_val = int(data.get("count", 1))
-                    counts[key] += count_val
-            for key, count in counts.items():
-                stat = self.stats.get(key)
-                if not stat:
-                    stat = _Stat(
-                        module=key[0],
-                        action=key[1],
-                        tone=key[2],
-                        header_set=key[3],
-                        example_placement=key[4],
-                        has_code=key[5],
-                        has_bullets=key[6],
-                        has_system=key[7],
-                    )
-                    self.stats[key] = stat
-                stat.success = max(0, stat.success - count)
-                if count > self.fingerprint_threshold:
-                    penalty = count - self.fingerprint_threshold
-                    factor = 1 / (1 + penalty)
-                    stat.penalty_factor *= factor
+        self._apply_cluster_penalties()
         self.persist_statistics()
         return self.stats
 
     # ------------------------------------------------------------------
-    def _apply_store_penalties(self) -> None:
-        """Apply score penalties using a :class:`FailureFingerprintStore`."""
+    def _cluster_stats_from_file(self, path: Path) -> Dict[Any, Dict[str, Any]]:
+        """Return cluster statistics parsed from a JSONL fingerprint log."""
 
-        store = self.failure_store
-        if not store:
-            return
+        clusters: Dict[Any, Dict[str, Any]] = {}
         try:
-            clusters = getattr(store, "_clusters", {})
-            cache = getattr(store, "_cache", {})
-        except Exception:  # pragma: no cover - best effort
-            return
-        counts: Counter[Tuple[Any, ...]] = Counter()
-        for cid, ids in clusters.items():
-            for record_id in ids:
-                fp = cache.get(record_id)
-                if not fp:
+            fh = path.open("r", encoding="utf-8")
+        except Exception:
+            return clusters
+        with fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
                     continue
-                prompt = getattr(fp, "prompt_text", "")
-                if not prompt:
+                try:
+                    data = json.loads(line)
+                except Exception:
                     continue
-                module = getattr(fp, "filename", "unknown")
-                action = getattr(fp, "function", getattr(fp, "function_name", "unknown"))
-                feats = self._extract_features(prompt)
-                has_system = prompt.lstrip().lower().startswith("system:")
-                key = (
-                    module,
-                    action,
-                    feats["tone"],
-                    feats["header_set"],
-                    feats["example_placement"],
-                    feats["has_code"],
-                    feats["has_bullets"],
-                    has_system,
+                cid = data.get("cluster_id") or data.get("hash") or data.get(
+                    "prompt_text"
                 )
-                stat = self.stats.get(key)
-                if not stat:
-                    stat = _Stat(
-                        module=module,
-                        action=action,
-                        tone=feats["tone"],
-                        header_set=feats["header_set"],
-                        example_placement=feats["example_placement"],
-                        has_code=feats["has_code"],
-                        has_bullets=feats["has_bullets"],
-                        has_system=has_system,
-                    )
-                    self.stats[key] = stat
-                occurrences = getattr(fp, "count", 1)
-                stat.total += occurrences
-                counts[key] += occurrences
-        for key, count in counts.items():
+                info = clusters.setdefault(cid, {"size": 0, "example": None})
+                info["size"] += int(data.get("count", 1))
+                if info["example"] is None and FailureFingerprint is not None:
+                    try:
+                        info["example"] = FailureFingerprint(**data)
+                    except Exception:
+                        info["example"] = data
+        return clusters
+
+    def _apply_cluster_penalties(self) -> None:
+        """Apply score penalties based on failure fingerprint clusters."""
+
+        clusters: Dict[Any, Dict[str, Any]] = {}
+        if self.failure_store is not None:
+            try:
+                clusters = self.failure_store.cluster_stats()
+            except Exception:  # pragma: no cover - best effort
+                clusters = {}
+        elif self.failure_fingerprints_path and self.failure_fingerprints_path.exists():
+            clusters = self._cluster_stats_from_file(self.failure_fingerprints_path)
+
+        for info in clusters.values():
+            fp = info.get("example")
+            if not fp:
+                continue
+            prompt = getattr(fp, "prompt_text", "")
+            if not prompt:
+                continue
+            module = getattr(fp, "filename", "unknown")
+            action = getattr(fp, "function", getattr(fp, "function_name", "unknown"))
+            feats = self._extract_features(prompt)
+            has_system = prompt.lstrip().lower().startswith("system:")
+            key = (
+                module,
+                action,
+                feats["tone"],
+                feats["header_set"],
+                feats["example_placement"],
+                feats["has_code"],
+                feats["has_bullets"],
+                has_system,
+            )
             stat = self.stats.get(key)
             if not stat:
-                continue
-            stat.success = max(0, stat.success - count)
-            if count > self.fingerprint_threshold:
-                penalty = count - self.fingerprint_threshold
+                stat = _Stat(
+                    module=module,
+                    action=action,
+                    tone=feats["tone"],
+                    header_set=feats["header_set"],
+                    example_placement=feats["example_placement"],
+                    has_code=feats["has_code"],
+                    has_bullets=feats["has_bullets"],
+                    has_system=has_system,
+                )
+                self.stats[key] = stat
+            size = int(info.get("size", 0))
+            stat.total += size
+            stat.success = max(0, stat.success - size)
+            if size > self.fingerprint_threshold:
+                penalty = size - self.fingerprint_threshold
                 stat.penalty_factor *= 1 / (1 + penalty)
 
     # ------------------------------------------------------------------
