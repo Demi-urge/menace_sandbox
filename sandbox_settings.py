@@ -1490,6 +1490,8 @@ class SandboxSettings(BaseSettings):
     )
     entropy_window: int = Field(5, env="ENTROPY_WINDOW")
     entropy_weight: float = Field(0.1, env="ENTROPY_WEIGHT")
+    roi_weight: float = Field(1.0, env="ROI_WEIGHT")
+    momentum_weight: float = Field(1.0, env="MOMENTUM_WEIGHT")
     min_integration_roi: float = Field(
         0.0,
         env="MIN_INTEGRATION_ROI",
@@ -1509,6 +1511,12 @@ class SandboxSettings(BaseSettings):
         env="SYNERGY_VARIANCE_CONFIDENCE",
         description="confidence for variance tests; defaults to 0.95",
     )
+
+    @field_validator("roi_weight", "entropy_weight", "momentum_weight")
+    def _validate_delta_weights(cls, v: float, info: Any) -> float:
+        if v < 0:
+            raise ValueError(f"{info.field_name} must be non-negative")
+        return v
 
     relevancy_threshold: int = Field(
         20,
