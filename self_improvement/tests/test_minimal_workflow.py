@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+from dynamic_path_router import resolve_path  # noqa: E402
 from sandbox_settings import SandboxSettings  # noqa: E402
 
 
@@ -72,7 +73,7 @@ def test_minimal_workflow(tmp_path, monkeypatch):
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
 
     sr_pkg = types.ModuleType("sandbox_runner")
@@ -129,15 +130,15 @@ def test_minimal_workflow(tmp_path, monkeypatch):
     sys.modules["menace.sandbox_settings"] = sandbox_settings_module
 
     init_module = _load_module(
-        "menace.self_improvement.init", Path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
     )
     meta_planning = _load_module(
         "menace.self_improvement.meta_planning",
-        Path("self_improvement/meta_planning.py"),
+        resolve_path("self_improvement/meta_planning.py"),
     )
     patch_generation = _load_module(
         "menace.self_improvement.patch_generation",
-        Path("self_improvement/patch_generation.py"),
+        resolve_path("self_improvement/patch_generation.py"),
     )
 
     monkeypatch.setattr(meta_planning, "ROIResultsDB", InMemoryROIResultsDB)
