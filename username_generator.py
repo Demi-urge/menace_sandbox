@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Iterable, Set, List
 from urllib.request import urlopen
 
+from dynamic_path_router import resolve_path
+
 
 try:
     from nltk.corpus import wordnet as wn  # type: ignore
@@ -52,7 +54,7 @@ def _fetch_online_adjectives() -> Set[str]:
         logger.exception("failed to fetch adjectives from %s: %s", _ADJ_SOURCE_URL, exc)
         return set()
 
-_ADJ_FILE = Path(__file__).with_name("adjectives.txt")
+_ADJ_FILE = resolve_path("adjectives.txt")
 
 
 def _load_adjectives() -> List[str]:
@@ -76,8 +78,9 @@ def _load_adjectives() -> List[str]:
         words.update(_fetch_online_adjectives())
     if not words:
         try:
-            if _ADJ_FILE.exists():
-                with _ADJ_FILE.open(encoding="utf-8") as fh:
+            adj_path = Path(str(_ADJ_FILE))
+            if adj_path.exists():
+                with open(str(adj_path), encoding="utf-8") as fh:
                     words.update({w.strip() for w in fh if w.strip()})
         except Exception as exc:  # pragma: no cover - file access failures
             logger.exception("failed to load adjectives: %s", exc)
