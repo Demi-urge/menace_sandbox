@@ -8,7 +8,7 @@ import os
 import logging
 from typing import Callable, Iterable, List, Mapping, Set, Tuple
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, clear_cache
 
 
 DependencyCallback = Callable[[str, str, List[str]], None]
@@ -63,6 +63,7 @@ def collect_local_dependencies(
         logging and continuing.
     """
 
+    clear_cache()
     repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
     queue: List[Tuple[Path, List[str]]] = []
 
