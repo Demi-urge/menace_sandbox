@@ -464,6 +464,7 @@ class SelfImprovementEngine:
         baseline_window: int | None = None,
         roi_baseline_window: int | None = None,
         baseline_margin: float = 0.0,
+        delta_score_dev_multiplier: float | None = None,
         recovery_threshold: float = 0.0,
         learning_engine: LearningEngine | None = None,
         self_coding_engine: SelfCodingEngine | None = None,
@@ -573,6 +574,11 @@ class SelfImprovementEngine:
         )
         self.roi_baseline = MovingBaseline(self.roi_baseline_window)
         self.baseline_margin = baseline_margin
+        self.delta_score_dev_multiplier = (
+            delta_score_dev_multiplier
+            if delta_score_dev_multiplier is not None
+            else getattr(cfg, "delta_score_deviation", 0.0)
+        )
         self.urgency_recovery_threshold = recovery_threshold
         self.mae_dev_multiplier = getattr(cfg, "mae_deviation", 1.0)
         self.acc_dev_multiplier = getattr(cfg, "acc_deviation", 1.0)
@@ -3187,13 +3193,21 @@ class SelfImprovementEngine:
         if time.time() - self.last_run < self.interval:
             return False
         score, components = self._compute_delta_score()
+        baseline = self.baseline_tracker.get("score")
+        deviation = self.baseline_tracker.std("score")
         self.logger.debug(
             "delta score evaluation",
-            extra=log_record(delta_score=score, **components),
+            extra=log_record(
+                delta_score=score,
+                delta_score_baseline=baseline,
+                delta_score_std=deviation,
+                **components,
+            ),
         )
         if all(v == 0.0 for v in components.values()):
             return True
-        return score > 0.0
+        threshold = baseline + self.delta_score_dev_multiplier * deviation
+        return score > threshold
 
     def _record_state(self) -> None:
         """Store metrics and discrepancies as research items."""
