@@ -24,6 +24,10 @@ try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
 except Exception:  # pragma: no cover - optional dependency
     cdh = None  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 
 
 @dataclass
@@ -147,7 +151,8 @@ class EnhancementBot:
 
     # ------------------------------------------------------------------
     def evaluate(self, proposal: RefactorProposal) -> bool:
-        orig_text = proposal.file_path.read_text()
+        file_path = resolve_path(proposal.file_path)
+        orig_text = file_path.read_text()
         if not self._logic_preserved(orig_text, proposal.new_code):
             return False
 
@@ -172,13 +177,13 @@ class EnhancementBot:
         if codex_summary:
             summary = codex_summary
 
-        proposal.file_path.write_text(proposal.new_code)
+        file_path.write_text(proposal.new_code)
 
         subprocess.run(["pytest", "-q"], check=False)
 
         self.enh_db.record_history(
             EnhancementHistory(
-                file_path=str(proposal.file_path),
+                file_path=str(file_path),
                 original_hash=orig_hash,
                 enhanced_hash=new_hash,
                 metric_delta=delta,
@@ -205,9 +210,10 @@ class EnhancementBot:
         for prop in proposals:
             try:
                 if self.evaluate(prop):
-                    subprocess.run(["git", "add", str(prop.file_path)], check=False)
+                    resolved = resolve_path(prop.file_path)
+                    subprocess.run(["git", "add", str(resolved)], check=False)
                     subprocess.run(
-                        ["git", "commit", "-m", f"auto enhance {prop.file_path.name}"],
+                        ["git", "commit", "-m", f"auto enhance {resolved.name}"],
                         check=False,
                     )
             except Exception:

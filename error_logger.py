@@ -67,6 +67,10 @@ except Exception:
         generate_patch = None  # type: ignore
 
 from governed_embeddings import governed_embed, get_embedder
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
@@ -667,10 +671,11 @@ class ErrorLogger:
         )
 
         for module, hint in suggestions:
+            resolved_module = str(resolve_path(module)) if module else None
             payload = {
                 "task_id": task_id,
                 "bot_id": bot_id,
-                "module": module,
+                "module": resolved_module,
                 "suggestion": hint,
             }
             event = TelemetryEvent(
@@ -680,16 +685,16 @@ class ErrorLogger:
                 category=ErrorCategory.MetricBottleneck,
                 root_cause=hint,
                 stack_trace=json.dumps(payload, sort_keys=True),
-                root_module=module or "fix_suggestions",
-                module=module or "fix_suggestions",
-                module_counts={module: 1} if module else {},
+                root_module=resolved_module or "fix_suggestions",
+                module=resolved_module or "fix_suggestions",
+                module_counts={resolved_module: 1} if resolved_module else {},
                 inferred_cause="",
                 timestamp=datetime.utcnow().isoformat(),
                 resolution_status="unresolved",
                 patch_id=None,
                 deploy_id=None,
                 fix_suggestions=[hint],
-                bottlenecks=[module] if module else [],
+                bottlenecks=[resolved_module] if resolved_module else [],
             )
             try:
                 self.db.add_telemetry(event)
@@ -701,8 +706,8 @@ class ErrorLogger:
                     self.graph.add_telemetry_event(
                         bot_id,
                         ErrorCategory.MetricBottleneck.value,
-                        module or None,
-                        {module: 1} if module else None,
+                        resolved_module or None,
+                        {resolved_module: 1} if resolved_module else None,
                     )
                 except Exception as e:  # pragma: no cover - graph issues
                     self.logger.error("failed to update knowledge graph: %s", e)
@@ -725,14 +730,14 @@ class ErrorLogger:
             ticket_file = os.getenv("FIX_TICKET_FILE")
             if ticket_file:
                 try:
-                    with open(ticket_file, "a", encoding="utf-8") as fh:
+                    with open(resolve_path(ticket_file), "a", encoding="utf-8") as fh:
                         fh.write(json.dumps(payload, sort_keys=True) + "\n")
                 except Exception as e:  # pragma: no cover - I/O issues
                     self.logger.error("failed to open fix ticket: %s", e)
 
-            if generate_patch is not None and module:
+            if generate_patch is not None and resolved_module:
                 try:
-                    patch_id = generate_patch(module)
+                    patch_id = generate_patch(resolved_module)
                     if patch_id is not None:
                         try:
                             from sandbox_runner import integrate_new_orphans
@@ -741,15 +746,15 @@ class ErrorLogger:
                         except Exception as e2:  # pragma: no cover - integration issues
                             self.logger.error(
                                 "integrate_new_orphans after patch for %s failed: %s",
-                                module,
+                                resolved_module,
                                 e2,
                             )
                 except Exception as e:  # pragma: no cover - patch failures
                     self.logger.error(
-                        "quick fix generation failed for %s: %s", module, e
+                        "quick fix generation failed for %s: %s", resolved_module, e
                     )
             else:
-                prompt = f"Fix bottleneck in {module or 'unknown module'}: {hint}"
+                prompt = f"Fix bottleneck in {resolved_module or 'unknown module'}: {hint}"
                 if prompt_context:
                     prompt += "\n\n### Training Examples\n" + prompt_context
                 if discrepancy_context:

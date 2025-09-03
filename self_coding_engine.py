@@ -723,6 +723,7 @@ class SelfCodingEngine:
         joined summaries are returned.  For smaller files the full source is
         returned truncated to :attr:`token_threshold`.
         """
+        path = resolve_path(path)
         try:
             code = path.read_text(encoding="utf-8")
         except Exception:
@@ -789,7 +790,8 @@ class SelfCodingEngine:
         """Return a prompt formatted for :class:`VisualAgentClient`."""
         func = f"auto_{description.replace(' ', '_')}"
         repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
-        self._apply_prompt_style(description, module=path or "visual_agent")
+        resolved = str(resolve_path(path)) if path else None
+        self._apply_prompt_style(description, module=resolved or "visual_agent")
         retry_trace = self._last_retry_trace
         try:
             prompt_obj = self.prompt_engine.build_prompt(
@@ -822,7 +824,7 @@ class SelfCodingEngine:
             except Exception:
                 text = VA_PROMPT_TEMPLATE
             data = {
-                "path": path or "unknown file",
+                "path": resolved or "unknown file",
                 "description": description,
                 "context": context.strip(),
                 "retrieval_context": retrieval_context or "",
@@ -867,6 +869,7 @@ class SelfCodingEngine:
         summaries: List[str] | None = None
         file_context = ""
         if path:
+            path = resolve_path(path)
             file_context, summaries = self._build_file_context(path, chunk_index)
         context = "\n\n".join(p for p in (file_context, snippet_context) if p)
 
