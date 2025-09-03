@@ -149,7 +149,7 @@ def estimate_impact_strength(from_id: str, to_id: str) -> tuple[float, str]:
 
         tracker = ROITracker()
         try:
-            tracker.load_history(os.path.join("sandbox_data", "roi_history.json"))
+            tracker.load_history(str(resolve_path("sandbox_data/roi_history.json")))
         except Exception:
             pass
         hist_a = tracker.final_roi_history.get(str(from_id), [])

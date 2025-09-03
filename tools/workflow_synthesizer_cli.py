@@ -7,6 +7,8 @@ import argparse
 from pathlib import Path
 from typing import List, Dict
 
+from dynamic_path_router import resolve_path
+
 from workflow_synthesizer import WorkflowSynthesizer
 from workflow_spec import to_spec, save
 
@@ -40,16 +42,17 @@ def main() -> None:
     synth = WorkflowSynthesizer()
 
     start = args.start
-    module_path = Path(start.replace(".", "/")).with_suffix(".py")
-    if module_path.exists():
+    try:
+        resolve_path(start.replace(".", "/") + ".py")
+    except FileNotFoundError:
+        result = synth.synthesize(start)
+        modules = [step.get("module", "") for step in result.get("steps", [])]
+    else:
         workflows = synth.generate_workflows(start_module=start)
         if workflows:
             modules = [step.get("module", "") for step in workflows[0] if step.get("module")]
         else:
             modules = [start]
-    else:
-        result = synth.synthesize(start)
-        modules = [step.get("module", "") for step in result.get("steps", [])]
 
     if not modules:
         print("No modules found")

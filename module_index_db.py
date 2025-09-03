@@ -3,6 +3,11 @@ import os
 from pathlib import Path
 from typing import Dict, Iterable
 
+try:  # pragma: no cover - prefer package import
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - allow running as script
+    from dynamic_path_router import resolve_path  # type: ignore
+
 try:  # optional dependency only needed when auto mapping
     from scripts.generate_module_map import generate_module_map
 except Exception:  # pragma: no cover - during tests optional dep may be missing
@@ -18,7 +23,7 @@ class ModuleIndexDB:
         *,
         auto_map: bool | None = None,
     ) -> None:
-        default_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        default_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
         default_path = default_dir / "module_map.json"
         self.path = Path(path) if path is not None else default_path
         if not self.path.exists() and self.path != default_path and default_path.exists():
@@ -108,12 +113,12 @@ class ModuleIndexDB:
                             key = str(grp)
                             idx = grp_idx.setdefault(key, abs(hash(key)) % 1000)
                             self._groups.setdefault(key, idx)
-                                norm = self._norm(mod)
-                                self._map[norm] = idx
-                                if "tags" in data:
-                                    tags = data.get("tags", {}).get(mod)
-                                    if isinstance(tags, list):
-                                        self._tags[norm] = [str(t) for t in tags]
+                            norm = self._norm(mod)
+                            self._map[norm] = idx
+                            if "tags" in data:
+                                tags = data.get("tags", {}).get(mod)
+                                if isinstance(tags, list):
+                                    self._tags[norm] = [str(t) for t in tags]
             except Exception:
                 self._map = {}
                 self._groups = {}
