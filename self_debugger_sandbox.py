@@ -1377,6 +1377,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     with create_ephemeral_env(repo_src) as (repo, run):
                         test_path = repo / "test_auto.py"
                         test_path.write_text(code)
+                        test_path = resolve_path(test_path)
                         env = os.environ.copy()
                         env["PYTHONPATH"] = str(repo)
                         try:
@@ -1481,6 +1482,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
                     root_test = resolve_path(".") / f"test_auto_{idx}.py"
                     root_test.write_text(code)
+                    root_test = resolve_path(root_test)
                     result = "failed"
                     before_cov = after_cov = None
                     before_runtime = after_runtime = 0.0
@@ -1683,6 +1685,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 code = best["code"]
                 root_test = resolve_path(".") / "test_auto.py"
                 root_test.write_text(code)
+                root_test = resolve_path(root_test)
                 code_hash: str | None = None
                 try:
                     with open(root_test, "rb") as fh:

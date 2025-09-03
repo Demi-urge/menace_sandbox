@@ -2390,8 +2390,9 @@ class SelfCodingEngine:
         if not bot:
             return
         root_path = resolve_path(str(root_dir))
-        path = root_path / f"{bot}.py"
-        if not path.exists():
+        try:
+            path = resolve_path(root_path / f"{bot}.py")
+        except FileNotFoundError:
             return
         self.apply_patch(path, "refactor", reason="refactor", trigger="refactor_worst_bot")
 
