@@ -1,11 +1,11 @@
 """Utilities for resolving files within this repository.
 
 The module provides :func:`resolve_path` which locates files relative to the
-project root.  The root is determined by consulting ``SANDBOX_REPO_PATH``,
-falling back to ``git rev-parse --show-toplevel`` and finally searching parent
-directories for a ``.git`` directory.  When a direct lookup fails a full
-``os.walk`` search is used.  Successful lookups are cached to avoid repeated
-scans.
+project root.  The root is determined by consulting an optional environment
+override (``MENACE_ROOT`` or the legacy ``SANDBOX_REPO_PATH``), falling back to
+``git rev-parse --show-toplevel`` and finally searching parent directories for a
+``.git`` directory.  When a direct lookup fails a full ``os.walk`` search is
+used.  Successful lookups are cached to avoid repeated scans.
 """
 
 from __future__ import annotations
@@ -26,22 +26,24 @@ def _normalize(name: str | Path) -> str:
     return Path(str(name).replace("\\", "/")).as_posix().lstrip("./")
 
 
-def project_root() -> Path:
+def get_project_root() -> Path:
     """Return the repository root directory.
 
     Preference order:
 
-    1. ``SANDBOX_REPO_PATH`` environment variable.
+    1. ``MENACE_ROOT`` or legacy ``SANDBOX_REPO_PATH`` environment variable.
     2. ``git rev-parse --show-toplevel``.
     3. Upward search from this file for a ``.git`` directory.
-    4. Current working directory.
+    4. Directory containing this file.
     """
 
     global _PROJECT_ROOT
     if _PROJECT_ROOT is not None:
         return _PROJECT_ROOT
 
-    env_path = os.environ.get("SANDBOX_REPO_PATH")
+    env_path = os.environ.get("MENACE_ROOT") or os.environ.get(
+        "SANDBOX_REPO_PATH"
+    )
     if env_path:
         path = Path(env_path).expanduser().resolve()
         if path.exists():
@@ -60,18 +62,19 @@ def project_root() -> Path:
     except Exception:
         pass
 
-    current = Path(__file__).resolve()
+    current = Path(__file__).resolve().parent
     for parent in [current] + list(current.parents):
         if (parent / ".git").exists():
             _PROJECT_ROOT = parent
             return parent
 
-    _PROJECT_ROOT = current.parent
+    _PROJECT_ROOT = current
     return _PROJECT_ROOT
 
 
-# Backwards compatible alias
-repo_root = project_root
+# Backwards compatible aliases
+project_root = get_project_root
+repo_root = get_project_root
 
 
 def resolve_path(name: str) -> Path:
@@ -89,7 +92,7 @@ def resolve_path(name: str) -> Path:
             return resolved
         raise FileNotFoundError(f"{name!r} does not exist")
 
-    root = project_root()
+    root = get_project_root()
     candidate = root / path
     if candidate.exists():
         resolved = candidate.resolve()
@@ -98,6 +101,8 @@ def resolve_path(name: str) -> Path:
 
     target = Path(key)
     for base, dirs, files in os.walk(root):
+        if ".git" in dirs:
+            dirs.remove(".git")
         if target.name in files or target.name in dirs:
             match = Path(base) / target.name
             rel = match.relative_to(root).as_posix()
@@ -136,11 +141,19 @@ def clear_cache() -> None:
     _PROJECT_ROOT = None
 
 
+def list_files() -> Dict[str, Path]:
+    """Return a copy of the internal cache mapping."""
+
+    return dict(_PATH_CACHE)
+
+
 __all__ = [
+    "get_project_root",
     "resolve_path",
     "resolve_module_path",
     "resolve_dir",
     "project_root",
     "repo_root",
     "clear_cache",
+    "list_files",
 ]

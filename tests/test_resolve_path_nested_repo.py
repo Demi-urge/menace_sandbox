@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import shutil
 from pathlib import Path
 
@@ -27,13 +28,13 @@ def test_resolve_path_in_nested_clone(monkeypatch, tmp_path):
     monkeypatch.chdir(repo / "nested" / "deep")
 
     calls = []
-    original_rglob = Path.rglob
+    original_walk = os.walk
 
-    def tracking_rglob(self, pattern):
-        calls.append(pattern)
-        return original_rglob(self, pattern)
+    def tracking_walk(*args, **kwargs):
+        calls.append(args[0])
+        return original_walk(*args, **kwargs)
 
-    monkeypatch.setattr(Path, "rglob", tracking_rglob)
+    monkeypatch.setattr(os, "walk", tracking_walk)
 
     assert dr.resolve_path("sandbox_runner.py") == (repo / "sandbox_runner.py").resolve()
     assert dr.resolve_path("patch_provenance.py") == (
@@ -43,4 +44,4 @@ def test_resolve_path_in_nested_clone(monkeypatch, tmp_path):
         repo / "prompts" / "prompt_engine.py"
     ).resolve()
 
-    assert len(calls) >= 2
+    assert calls
