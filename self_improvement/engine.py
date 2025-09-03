@@ -3265,27 +3265,32 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _should_trigger(self) -> bool:
+        """Return ``True`` when a new improvement cycle should run."""
+
+        trigger = False
         if getattr(self, "_force_rerun", False):
             self._force_rerun = False
-            return True
-        if time.time() - self.last_run < self.interval:
-            return False
-        score, components = self._compute_delta_score()
-        baseline = self.baseline_tracker.get("score")
-        deviation = self.baseline_tracker.std("score")
-        self.logger.debug(
-            "delta score evaluation",
-            extra=log_record(
-                delta_score=score,
-                delta_score_baseline=baseline,
-                delta_score_std=deviation,
-                **components,
-            ),
-        )
-        if all(v == 0.0 for v in components.values()):
-            return True
-        threshold = baseline + self.delta_score_dev_multiplier * deviation
-        return score > threshold
+            trigger = True
+        else:
+            if time.time() - self.last_run >= self.interval:
+                score, components = self._compute_delta_score()
+                baseline = self.baseline_tracker.get("score")
+                deviation = self.baseline_tracker.std("score")
+                self.logger.debug(
+                    "delta score evaluation",
+                    extra=log_record(
+                        delta_score=score,
+                        delta_score_baseline=baseline,
+                        delta_score_std=deviation,
+                        **components,
+                    ),
+                )
+                if all(v == 0.0 for v in components.values()):
+                    trigger = True
+                else:
+                    threshold = baseline + self.delta_score_dev_multiplier * deviation
+                    trigger = score > threshold
+        return trigger
 
     def _record_state(self) -> None:
         """Store metrics and discrepancies as research items."""
@@ -7699,7 +7704,7 @@ class SelfImprovementEngine:
             # Combine weighted deltas from multiple metrics to assess overall
             # system movement.  Entropy increases and momentum drops will
             # reduce the score while ROI and pass rate gains increase it.
-            _, components = self._compute_delta_score()
+            delta_score, components = self._compute_delta_score()
             error_deltas = self.baseline_tracker.delta_history("error_count")
             error_count_delta = error_deltas[-1] if error_deltas else 0.0
             components["error_count_delta"] = error_count_delta
@@ -7741,28 +7746,22 @@ class SelfImprovementEngine:
                 signals["entropy_delta"] = entropy_delta
             if overfit_signal:
                 signals["overfitting"] = True
+            decision = "escalate"
+            run_energy: int | None = None
+            log_fields: dict[str, object] = {
+                "energy": current_energy,
+                "baseline": threshold,
+                **metric_values,
+                **components,
+                "delta_score": delta_score,
+            }
+            if signals:
+                log_fields.update(signals)
+
             if signals and not self._cycle_running:
-                self.logger.info(
-                    "forcing run_cycle due to fallback signals",
-                    extra=log_record(
-                        energy=current_energy,
-                        baseline=threshold,
-                        **metric_values,
-                        **components,
-                        **signals,
-                        decision="fallback",
-                    ),
-                )
-                try:
-                    await asyncio.to_thread(
-                        self.run_cycle, energy=int(round(current_energy * 5))
-                    )
-                except Exception as exc:
-                    self.logger.exception(
-                        "self improvement run_cycle failed with energy %s: %s",
-                        int(round(current_energy * 5)),
-                        exc,
-                    )
+                decision = "fallback"
+                run_energy = int(round(current_energy * 5))
+                msg = "forcing run_cycle due to fallback signals"
             elif (
                 roi_delta > 0
                 and pass_rate_delta > 0
@@ -7771,50 +7770,33 @@ class SelfImprovementEngine:
                 and within_baseline
                 and not critical_errors
             ):
-                self.logger.info(
-                    "positive deltas - skipping cycle",
-                    extra=log_record(
-                        energy=current_energy,
-                        baseline=threshold,
-                        **metric_values,
-                        **components,
-                        decision="skip",
-                    ),
-                )
+                decision = "skip"
+                msg = "positive deltas - skipping cycle"
             elif not within_baseline and not self._cycle_running:
-                self.logger.info(
-                    "triggering run_cycle due to low energy",
-                    extra=log_record(
-                        energy=current_energy,
-                        baseline=threshold,
-                        **metric_values,
-                        **components,
-                        decision="cycle",
-                    ),
-                )
+                decision = "cycle"
+                run_energy = int(round(current_energy * 5))
+                msg = "triggering run_cycle due to low energy"
+            else:
+                self.urgency_tier += 1
+                log_fields["tier"] = self.urgency_tier
+                msg = "non-positive deltas - escalating urgency"
+
+            log_fields["decision"] = decision
+            record = log_record(**log_fields)
+            if decision == "escalate":
+                self.logger.warning(msg, extra=record)
+            else:
+                self.logger.info(msg, extra=record)
+
+            if run_energy is not None:
                 try:
-                    await asyncio.to_thread(
-                        self.run_cycle, energy=int(round(current_energy * 5))
-                    )
+                    await asyncio.to_thread(self.run_cycle, energy=run_energy)
                 except Exception as exc:
                     self.logger.exception(
                         "self improvement run_cycle failed with energy %s: %s",
-                        int(round(current_energy * 5)),
+                        run_energy,
                         exc,
                     )
-            else:
-                self.urgency_tier += 1
-                self.logger.warning(
-                    "non-positive deltas - escalating urgency",
-                    extra=log_record(
-                        energy=current_energy,
-                        baseline=threshold,
-                        **metric_values,
-                        **components,
-                        tier=self.urgency_tier,
-                        decision="escalate",
-                    ),
-                )
             await asyncio.sleep(self.interval)
 
     def schedule(
