@@ -32,6 +32,16 @@ class PatchRecord:
     applied_at: str
 
 
+@dataclass
+class RegionPatchRecord:
+    patch_id: str
+    node: str
+    file: str
+    start_line: int
+    end_line: int
+    applied_at: str
+
+
 
 
 class RollbackManager:
@@ -98,6 +108,10 @@ class RollbackManager:
             "CREATE TABLE IF NOT EXISTS healing_actions ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "bot TEXT, action TEXT, patch_id TEXT, ts TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS region_patches ("
+            "patch_id TEXT, node TEXT, file TEXT, start_line INTEGER, end_line INTEGER, applied_at TEXT)"
         )
         conn.commit()
 
@@ -169,6 +183,43 @@ class RollbackManager:
             ).fetchall()
         return [PatchRecord(*r) for r in rows]
 
+    # ------------------------------------------------------------------
+    def register_region_patch(
+        self,
+        patch_id: str,
+        node: str,
+        file: str,
+        start_line: int,
+        end_line: int,
+    ) -> None:
+        ts = datetime.utcnow().isoformat()
+        conn = router.get_connection("patches")
+        conn.execute(
+            "INSERT INTO region_patches (patch_id, node, file, start_line, end_line, applied_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (patch_id, node, file, start_line, end_line, ts),
+        )
+        conn.commit()
+
+    def applied_region_patches(
+        self,
+        file: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> list[RegionPatchRecord]:
+        conn = router.get_connection("patches")
+        if file is not None and start_line is not None and end_line is not None:
+            rows = conn.execute(
+                "SELECT patch_id, node, file, start_line, end_line, applied_at FROM region_patches "
+                "WHERE file=? AND start_line=? AND end_line=?",
+                (file, start_line, end_line),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT patch_id, node, file, start_line, end_line, applied_at FROM region_patches",
+            ).fetchall()
+        return [RegionPatchRecord(*r) for r in rows]
+
     def rollback(
         self,
         patch_id: str,
@@ -232,6 +283,107 @@ class RollbackManager:
         conn.execute("DELETE FROM patches WHERE patch_id=?", (patch_id,))
         conn.commit()
 
+    def rollback_region(
+        self,
+        file: str,
+        start_line: int,
+        end_line: int,
+        *,
+        requesting_bot: str | None = None,
+        rpc_client: Optional[object] = None,
+        endpoints: Optional[Dict[str, str]] = None,
+        alignment_status: str = "pass",
+        scenario_raroi_deltas: Iterable[float] | None = None,
+    ) -> None:
+        allow_ship, allow_rollback, reasons = evaluate_rules(
+            {}, alignment_status, scenario_raroi_deltas or []
+        )
+        if not allow_rollback:
+            for msg in reasons:
+                self.logger.warning("governance veto: %s", msg)
+            return
+
+        try:
+            self._check_permission(WRITE, requesting_bot)
+        except PermissionError:
+            self._log_attempt(
+                requesting_bot,
+                "rollback_denied",
+                {"file": file, "start_line": start_line, "end_line": end_line},
+            )
+            raise
+
+        conn = router.get_connection("patches")
+        rows = conn.execute(
+            "SELECT patch_id, node FROM region_patches WHERE file=? AND start_line=? AND end_line=?",
+            (file, start_line, end_line),
+        ).fetchall()
+
+        for patch_id, node in rows:
+            ok = False
+            if rpc_client and hasattr(rpc_client, "rollback_region"):
+                try:
+                    ok = bool(
+                        rpc_client.rollback_region(
+                            node=node,
+                            patch_id=patch_id,
+                            file=file,
+                            start_line=start_line,
+                            end_line=end_line,
+                        )
+                    )
+                except Exception:
+                    self.logger.exception("rpc rollback failed for %s", node)
+            elif rpc_client and hasattr(rpc_client, "rollback"):
+                try:
+                    ok = bool(
+                        rpc_client.rollback(
+                            node=node,
+                            patch_id=patch_id,
+                            file=file,
+                            start_line=start_line,
+                            end_line=end_line,
+                        )
+                    )
+                except Exception:
+                    self.logger.exception("rpc rollback failed for %s", node)
+            elif endpoints and requests and node in endpoints:
+                try:
+                    url = endpoints[node].rstrip("/") + "/rollback_region"
+                    payload = {
+                        "patch_id": patch_id,
+                        "node": node,
+                        "file": file,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                    }
+                    resp = requests.post(url, json=payload, timeout=5)
+                    ok = resp.status_code == 200
+                    if not ok:
+                        self.logger.warning(
+                            "rollback on %s returned %s", node, resp.status_code
+                        )
+                except Exception:
+                    self.logger.exception("http rollback failed for %s", node)
+            else:
+                self.logger.info(
+                    "rolling back lines %s-%s in %s on %s",
+                    start_line,
+                    end_line,
+                    file,
+                    node,
+                )
+                ok = True
+
+            if not ok:
+                self.logger.warning("rollback notification failed for %s", node)
+
+        conn.execute(
+            "DELETE FROM region_patches WHERE file=? AND start_line=? AND end_line=?",
+            (file, start_line, end_line),
+        )
+        conn.commit()
+
     # ------------------------------------------------------------------
     def start_rpc_server(self, host: str = "127.0.0.1", port: int = 0) -> None:
         """Expose simple HTTP endpoints for patch registration and rollback."""
@@ -254,6 +406,24 @@ class RollbackManager:
                     mgr.rollback(data.get("patch_id", ""))
                     self.send_response(200)
                     self.end_headers()
+                elif self.path == "/register_region":
+                    mgr.register_region_patch(
+                        data.get("patch_id", ""),
+                        data.get("node", ""),
+                        data.get("file", ""),
+                        int(data.get("start_line", 0)),
+                        int(data.get("end_line", 0)),
+                    )
+                    self.send_response(200)
+                    self.end_headers()
+                elif self.path == "/rollback_region":
+                    mgr.rollback_region(
+                        data.get("file", ""),
+                        int(data.get("start_line", 0)),
+                        int(data.get("end_line", 0)),
+                    )
+                    self.send_response(200)
+                    self.end_headers()
                 else:
                     self.send_response(404)
                     self.end_headers()
@@ -273,4 +443,4 @@ class RollbackManager:
             thread.join(timeout=0)
 
 
-__all__ = ["RollbackManager", "PatchRecord"]
+__all__ = ["RollbackManager", "PatchRecord", "RegionPatchRecord"]
