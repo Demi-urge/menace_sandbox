@@ -1562,10 +1562,16 @@ class SelfImprovementEngine:
                         or delta_vals.get("entropy", 0.0) < 0
                     ):
                         try:
+                            reason = (
+                                "roi_drop"
+                                if delta_vals.get("roi", 0.0) < 0
+                                else "entropy_regression"
+                            )
                             log_prompt_attempt(
                                 getattr(self.self_coding_engine, "_last_prompt", None),
                                 False,
                                 {"delta": delta_vals, "patch_diff": patch_diff},
+                                failure_reason=reason,
                             )
                         except Exception:
                             self.logger.exception("log_prompt_attempt failed")
@@ -1647,12 +1653,18 @@ class SelfImprovementEngine:
                 fails.append(trace)
             if fails:
                 exec_res["failures"] = fails
+            failure_reason = None
+            if roi_meta.get("tests_passed") is False:
+                failure_reason = "test_failed"
+            elif roi_meta.get("roi_delta", 0.0) < 0:
+                failure_reason = "roi_drop"
         try:
             log_prompt_attempt(
                 getattr(self.self_coding_engine, "_last_prompt", None),
                 success,
                 exec_res,
                 roi_meta,
+                failure_reason=failure_reason if not success else None,
             )
         except Exception:
             self.logger.exception("log_prompt_attempt failed")
@@ -6457,7 +6469,19 @@ class SelfImprovementEngine:
             pass
 
         success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) > 0)
-        log_prompt_attempt(prompt, success=success, exec_result={"diff": diff}, roi_meta=delta)
+        failure_reason = None
+        if not success:
+            if delta.get("roi", 0.0) < 0:
+                failure_reason = "roi_drop"
+            elif delta.get("entropy", 0.0) > 0:
+                failure_reason = "entropy_regression"
+        log_prompt_attempt(
+            prompt,
+            success=success,
+            exec_result={"diff": diff},
+            roi_meta=delta,
+            failure_reason=failure_reason,
+        )
         if success:
             for f in files or []:
                 try:

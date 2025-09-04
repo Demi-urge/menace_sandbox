@@ -17,13 +17,14 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
     assert func_node is not None
     module = ast.Module(body=[func_node], type_ignores=[])
 
-    def _log(prompt, success, exec_result, roi_meta, prompt_id=None):  # pragma: no cover
+    def _log(prompt, success, exec_result, roi_meta, prompt_id=None, failure_reason=None):  # pragma: no cover
         log_entries.append(
             {
                 "prompt": prompt,
                 "success": success,
                 "exec_result": exec_result,
                 "roi_meta": roi_meta,
+                "failure_reason": failure_reason,
             }
         )
 
@@ -53,6 +54,7 @@ def test_record_snapshot_delta_regression(tmp_path):
     assert json.loads(path.read_text().strip()) == delta
     assert logs and not logs[0]["success"]
     assert logs[0]["exec_result"]["diff"] == "d"
+    assert logs[0]["failure_reason"] == "roi_drop"
     assert not updates
 
 
@@ -63,4 +65,5 @@ def test_record_snapshot_delta_success(tmp_path):
     delta = {"roi": 1.0, "entropy": 0.5}
     func(eng, "p", "d", delta)
     assert logs and logs[0]["success"]
+    assert logs[0]["failure_reason"] is None
     assert updates and updates[0] == delta

@@ -253,6 +253,7 @@ class PromptOptimizer:
                         entry["prompt"] = entry.get("prompt_text")
                     # If success flag is missing, infer from log type
                     entry.setdefault("success", idx == 0)
+                    entry.setdefault("failure_reason", None)
                     entries.append(entry)
         return entries
 
