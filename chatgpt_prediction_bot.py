@@ -90,24 +90,20 @@ from dynamic_path_router import resolve_path
 
 
 def _resolve_model_path(path_str: str) -> Path:
-    """Resolve *path_str* using :func:`resolve_path` with graceful fallback."""
+    """Resolve *path_str* using :func:`resolve_path`."""
 
-    try:
-        return resolve_path(path_str)
-    except FileNotFoundError:
-        path = Path(path_str)
-        if not path.is_absolute():
-            path = Path(__file__).parent / path
-        return path
+    return resolve_path(path_str)
 
 
 def _env_model_path() -> Path:
-    return _resolve_model_path(
-        os.environ.get(
-            "CHATGPT_PREDICTION_MODEL_PATH",
-            "chatgpt_prediction_bot/prediction_model.joblib",
-        )
+    path_str = os.environ.get(
+        "CHATGPT_PREDICTION_MODEL_PATH",
+        "chatgpt_prediction_bot/prediction_model.joblib",
     )
+    try:
+        return _resolve_model_path(path_str)
+    except FileNotFoundError:
+        return Path(path_str)
 
 
 @dataclass
@@ -600,7 +596,12 @@ except Exception:  # pragma: no cover - optional dependency
     _SKLEARN_AVAILABLE = False
 _define_fallback()
 
-DEFAULT_MODEL_PATH = _resolve_model_path("chatgpt_prediction_bot/prediction_model.joblib")
+try:
+    DEFAULT_MODEL_PATH = _resolve_model_path(
+        "chatgpt_prediction_bot/prediction_model.joblib"
+    )
+except FileNotFoundError:
+    DEFAULT_MODEL_PATH = Path("chatgpt_prediction_bot/prediction_model.joblib")
 MODEL_PATH = CFG.model_path
 DEFAULT_THRESHOLD = CFG.threshold
 
