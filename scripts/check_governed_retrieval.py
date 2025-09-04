@@ -9,19 +9,18 @@ status when ungoverned calls are found so CI can flag violations.
 """
 from __future__ import annotations
 
-from pathlib import Path
 import re
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from dynamic_path_router import get_project_root, resolve_path
+
+sys.path.insert(0, str(get_project_root()))
 
 # Match ``something.retrieve(``
 RETRIEVE_CALL = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\.retrieve\(")
 
 
 def main() -> int:
-    from dynamic_path_router import get_project_root
-
     root = get_project_root()
     offenders: list[str] = []
     for path in root.rglob("*.py"):
@@ -29,13 +28,13 @@ def main() -> int:
             "tests" in path.parts
             or "docs" in path.parts
             or path.name in {
-                "governed_retrieval.py",  # path-ignore
-                "check_governed_embeddings.py",  # path-ignore
-                "check_governed_retrieval.py",  # path-ignore
-                "universal_retriever.py",  # path-ignore
-                "stripe_billing_router.py",  # path-ignore
+                resolve_path("governed_retrieval.py").name,
+                resolve_path("check_governed_embeddings.py").name,
+                resolve_path("check_governed_retrieval.py").name,
+                resolve_path("universal_retriever.py").name,
+                resolve_path("stripe_billing_router.py").name,
             }
-            or path.parts[-2:] == ("vector_service", "retriever.py")  # path-ignore
+            or path.name == resolve_path("vector_service/retriever.py").name
         ):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
