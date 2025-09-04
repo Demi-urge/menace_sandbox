@@ -12,35 +12,42 @@ from pathlib import Path
 
 PATTERN = "sqlite3.connect("
 
+# Ensure dynamic_path_router is importable regardless of the CWD.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from dynamic_path_router import get_project_root, resolve_path  # noqa: E402
+
 # Resolve repository root so the check works regardless of the current working
 # directory. Paths in ``ALLOWLIST`` are defined relative to this directory.
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-ALLOW_FILE = REPO_ROOT / "tests" / "approved_sqlite3_usage.txt"
+REPO_ROOT = get_project_root()
 
 
-def _load_allowlist() -> set[Path]:
+def _load_allowlist(root: Path) -> set[Path]:
     try:
-        text = ALLOW_FILE.read_text(encoding="utf-8")
+        text = resolve_path("tests/approved_sqlite3_usage.txt").read_text(
+            encoding="utf-8"
+        )
     except OSError:
         return set()
     items: set[Path] = set()
     for line in text.splitlines():
         entry = line.strip()
         if entry and not entry.startswith("#"):
-            items.add((REPO_ROOT / entry).resolve())
+            items.add((root / entry).resolve())
     return items
 
 
-ALLOWLIST = _load_allowlist()
+ALLOWLIST = _load_allowlist(REPO_ROOT)
 
 
 def main() -> int:
+    root = REPO_ROOT
     offenders: list[str] = []
     for filename in sys.argv[1:]:
         path = Path(filename)
         if not path.is_absolute():
-            path = (REPO_ROOT / path).resolve()
+            path = (root / path).resolve()
         else:
             path = path.resolve()
         if path.suffix != ".py" or path in ALLOWLIST:
@@ -52,7 +59,7 @@ def main() -> int:
         for lineno, line in enumerate(text.splitlines(), start=1):
             if PATTERN in line:
                 try:
-                    rel = path.relative_to(REPO_ROOT)
+                    rel = path.relative_to(root)
                 except ValueError:
                     rel = path
                 offenders.append(f"{rel}:{lineno}:{line.strip()}")
