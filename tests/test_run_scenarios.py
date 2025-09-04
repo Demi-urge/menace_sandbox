@@ -4,6 +4,8 @@ from tests.test_scenario_roi_deltas import _setup_tracker
 from pathlib import Path
 import json
 
+from dynamic_path_router import resolve_path
+
 
 def test_run_scenarios_records_all_deltas(monkeypatch):
     _setup_mm_stubs(monkeypatch)
@@ -27,7 +29,7 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
 
     monkeypatch.setattr(env, "_section_worker", fake_worker)
 
-    out = Path("sandbox_data/scenario_deltas.json")
+    out = resolve_path("sandbox_data") / "scenario_deltas.json"
     out.unlink(missing_ok=True)
     tracker_obj, cards, summary = env.run_scenarios(
         ["simple_functions:print_ten"], tracker=rt.ROITracker(filter_outliers=False)

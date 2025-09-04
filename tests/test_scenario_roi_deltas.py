@@ -2,6 +2,7 @@ import types, sys, importlib.util
 from pathlib import Path
 import json
 import pytest
+from dynamic_path_router import resolve_path
 from tests.test_menace_master import _setup_mm_stubs
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -173,7 +174,7 @@ def test_generate_scorecard(monkeypatch):
     )
 
     wf_id = card["workflow_id"]
-    out_path = Path("sandbox_data") / f"scorecard_{wf_id}.json"
+    out_path = resolve_path("sandbox_data") / f"scorecard_{wf_id}.json"
     assert out_path.exists()
     persisted = json.loads(out_path.read_text())
     assert persisted == card
