@@ -2,15 +2,11 @@ from __future__ import annotations
 
 """Automatic patching feedback loop using telemetry."""
 
-from pathlib import Path
 import threading
 import time
 from typing import Optional, List, Tuple
 
-try:  # pragma: no cover - prefer package import
-    from .dynamic_path_router import resolve_path  # type: ignore
-except Exception:  # pragma: no cover - allow running as script
-    from dynamic_path_router import resolve_path  # type: ignore
+from .dynamic_path_router import resolve_path
 
 from .db_router import (
     DBRouter,
