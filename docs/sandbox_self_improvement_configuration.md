@@ -19,6 +19,14 @@ advice for common setup problems.
 - `POLICY_TEMPERATURE` – temperature for softmax exploration.
 - `POLICY_EXPLORATION` – exploration strategy to use, such as `epsilon_greedy`.
 
+## Snapshot and regression settings
+- `ENABLE_SNAPSHOT_TRACKER` – toggles capturing metric snapshots and computing
+  deltas between improvement cycles.
+- `ROI_DROP_THRESHOLD` – ROI delta at or below this value marks a regression
+  and records a failed prompt attempt.
+- `ENTROPY_REGRESSION_THRESHOLD` – drop in entropy at or below this threshold
+  is treated as a regression during patch evaluation.
+
 ## Security considerations
 - Resource and network limits are controlled through environment variables.
   `SECURITY_LEVEL` and `THREAT_INTENSITY` tune the simulated security posture,
