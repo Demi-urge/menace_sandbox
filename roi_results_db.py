@@ -15,6 +15,7 @@ from typing import Dict, Any, List
 import json
 from statistics import fmean, pvariance
 
+from dynamic_path_router import resolve_path
 from db_router import DBRouter, LOCAL_TABLES
 
 # ``workflow_results`` is always treated as a local table so unit tests can
@@ -22,6 +23,11 @@ from db_router import DBRouter, LOCAL_TABLES
 LOCAL_TABLES.add("workflow_results")
 LOCAL_TABLES.add("workflow_module_deltas")
 
+
+try:  # pragma: no cover - compute default ROI results DB path
+    _ROI_RESULTS_DB_PATH = resolve_path("roi_results.db")
+except FileNotFoundError:  # pragma: no cover - file may not exist yet
+    _ROI_RESULTS_DB_PATH = resolve_path(".") / "roi_results.db"
 
 @dataclass
 class ROIResult:
@@ -52,12 +58,15 @@ class ROIResultsDB:
 
     def __init__(
         self,
-        path: str | Path = "roi_results.db",
+        path: str | Path = _ROI_RESULTS_DB_PATH,
         *,
         router: DBRouter | None = None,
         window: int = 5,
     ) -> None:
-        self.path = Path(path)
+        try:
+            self.path = Path(resolve_path(str(path)))
+        except FileNotFoundError:
+            self.path = Path(path)
         self.router = router or DBRouter(
             "workflow_results", str(self.path), str(self.path)
         )
@@ -665,7 +674,7 @@ class ROIResultsDB:
 
 
 def module_impact_report(
-    workflow_id: str, run_id: str, db_path: str | Path = "roi_results.db"
+    workflow_id: str, run_id: str, db_path: str | Path = _ROI_RESULTS_DB_PATH
 ) -> Dict[str, Dict[str, float]]:
     """Convenience wrapper returning module impact report from ``db_path``."""
 
@@ -676,7 +685,7 @@ def module_impact_report(
 def module_performance_trajectories(
     workflow_id: str,
     module: str | None = None,
-    db_path: str | Path = "roi_results.db",
+    db_path: str | Path = _ROI_RESULTS_DB_PATH,
 ) -> Dict[str, List[Dict[str, float]]]:
     """Convenience wrapper returning module trend data from ``db_path``.
 
@@ -692,7 +701,7 @@ def module_performance_trajectories(
 def module_volatility(
     workflow_id: str,
     module: str,
-    db_path: str | Path = "roi_results.db",
+    db_path: str | Path = _ROI_RESULTS_DB_PATH,
 ) -> Dict[str, float]:
     """Convenience wrapper returning latest volatility metrics."""
 
@@ -701,7 +710,7 @@ def module_volatility(
 
 
 def workflow_trends(
-    workflow_id: str, db_path: str | Path = "roi_results.db"
+    workflow_id: str, db_path: str | Path = _ROI_RESULTS_DB_PATH
 ) -> List[Dict[str, float]]:
     """Convenience wrapper returning aggregate workflow trends from ``db_path``."""
 

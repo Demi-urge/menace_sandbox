@@ -10,6 +10,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence, TYPE_CHECKING
+import sys
 from statistics import fmean, pvariance
 from concurrent.futures import ThreadPoolExecutor
 
@@ -32,6 +33,11 @@ logger = get_logger(__name__)
 _DECAY_FACTOR = 0.9
 # Number of consecutive runs without improvement before pruning a chain
 _PRUNE_RUNS = 50
+
+try:  # pragma: no cover - compute default path for chain embeddings
+    _CHAIN_EMBEDDINGS_PATH = resolve_path("sandbox_data/embeddings.jsonl")
+except FileNotFoundError:  # pragma: no cover - file may not exist yet
+    _CHAIN_EMBEDDINGS_PATH = resolve_path("sandbox_data") / "embeddings.jsonl"
 
 try:  # pragma: no cover - optional heavy dependency
     from vector_service.retriever import Retriever  # type: ignore
@@ -94,6 +100,7 @@ try:  # pragma: no cover - optional code database
 except Exception:  # pragma: no cover - database unavailable
     logger.warning("code_database import failed; code context features disabled")
     CodeDB = None  # type: ignore
+    sys.modules.pop("code_database", None)
 
 try:  # pragma: no cover - optional persistence helper
     from . import synergy_history_db as shd  # type: ignore
@@ -369,9 +376,15 @@ class MetaWorkflowPlanner:
             workflow = {"workflow": [{"function": step} for step in chain]}
             vec = self.encode(chain_id, workflow)
             try:
-                persist_embedding("workflow_chain", chain_id, vec, origin_db="workflow")
+                persist_embedding(
+                    "workflow_chain",
+                    chain_id,
+                    vec,
+                    origin_db="workflow",
+                    path=_CHAIN_EMBEDDINGS_PATH,
+                )
             except TypeError:  # pragma: no cover - compatibility shim
-                persist_embedding("workflow_chain", chain_id, vec)
+                persist_embedding("workflow_chain", chain_id, vec, path=_CHAIN_EMBEDDINGS_PATH)
             set_cached_chain(chain_id, vec)
         info = self.cluster_map.setdefault(tuple(chain), {})
         info["embedding"] = vec
@@ -379,11 +392,11 @@ class MetaWorkflowPlanner:
         return vec
 
     # ------------------------------------------------------------------
-    def cleanup_chain_embeddings(self, *, path: str | Path = "embeddings.jsonl") -> None:
+    def cleanup_chain_embeddings(self, *, path: str | Path = _CHAIN_EMBEDDINGS_PATH) -> None:
         """Remove obsolete chain embeddings from the vector store."""
 
         active = {"->".join(k) for k in self.cluster_map}
-        store = Path(path)
+        store = Path(resolve_path(path)) if isinstance(path, str) else Path(path)
         if not store.exists():
             return
         try:  # pragma: no cover - best effort
@@ -1206,9 +1219,10 @@ class MetaWorkflowPlanner:
                     chain_id,
                     chain_vec,
                     metadata={"roi": roi_gain, "entropy": entropy},
+                    path=_CHAIN_EMBEDDINGS_PATH,
                 )
             except TypeError:  # pragma: no cover - compatibility shim
-                persist_embedding("workflow_chain", chain_id, chain_vec)
+                persist_embedding("workflow_chain", chain_id, chain_vec, path=_CHAIN_EMBEDDINGS_PATH)
 
         return {
             "chain": list(chain),
@@ -2732,7 +2746,9 @@ def _load_embeddings(path: Path = Path("embeddings.jsonl")) -> Dict[str, List[fl
     return embeddings
 
 
-def _load_chain_embeddings(path: Path = Path("embeddings.jsonl")) -> List[Dict[str, Any]]:
+def _load_chain_embeddings(
+    path: Path = _CHAIN_EMBEDDINGS_PATH,
+) -> List[Dict[str, Any]]:
     """Return stored workflow chain embeddings with metadata."""
 
     chains: List[Dict[str, Any]] = []
@@ -2963,7 +2979,10 @@ def find_synergy_chain(
         return best_chain[:length]
 
     tracker = ROITracker()
-    history_file = Path("roi_history.json")
+    try:
+        history_file = resolve_path("roi_history.json")
+    except FileNotFoundError:
+        history_file = Path("roi_history.json")
     if history_file.exists():
         try:
             tracker.load_history(str(history_file))

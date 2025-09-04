@@ -7,7 +7,9 @@ from typing import List, Sequence, Dict, Any, Tuple, Iterable, Set
 import random
 import json
 from pathlib import Path
+import sys
 
+from dynamic_path_router import resolve_path
 from vector_utils import cosine_similarity
 from roi_results_db import ROIResultsDB
 from workflow_stability_db import WorkflowStabilityDB
@@ -38,9 +40,17 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - used in tests without the real DB
     logger.warning("code_database import failed; context tag support disabled")
     CodeDB = None  # type: ignore
+    sys.modules.pop("code_database", None)
+
+try:  # pragma: no cover - compute default embedding path
+    _CHAIN_EMBEDDINGS_PATH = resolve_path("sandbox_data/embeddings.jsonl")
+except FileNotFoundError:  # pragma: no cover - file may not exist yet
+    _CHAIN_EMBEDDINGS_PATH = resolve_path("sandbox_data") / "embeddings.jsonl"
 
 
-def _load_chain_embeddings(path: Path = Path("embeddings.jsonl")) -> List[Dict[str, Any]]:
+def _load_chain_embeddings(
+    path: Path = _CHAIN_EMBEDDINGS_PATH,
+) -> List[Dict[str, Any]]:
     """Return stored workflow chain embeddings with metadata."""
 
     records: List[Dict[str, Any]] = []

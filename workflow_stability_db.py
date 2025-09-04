@@ -25,7 +25,10 @@ class WorkflowStabilityDB:
     """
 
     def __init__(self, path: str | Path = _DEFAULT_PATH) -> None:
-        self.path = Path(path)
+        try:
+            self.path = Path(resolve_path(str(path)))
+        except FileNotFoundError:
+            self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._load()
 

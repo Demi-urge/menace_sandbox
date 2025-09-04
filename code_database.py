@@ -15,15 +15,36 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 import os
+import sys
 
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from dataclasses import asdict
 
 import license_detector
-from vector_service import EmbeddableDBMixin
-from embeddable_db_mixin import log_embedding_metrics
+try:  # pragma: no cover - allow running without vector_service
+    from vector_service import EmbeddableDBMixin
+except Exception:  # pragma: no cover - lightweight stub for tests
+    class EmbeddableDBMixin:  # type: ignore
+        def __init__(self, *a, **k):
+            pass
+
+        def add_embedding(self, *a, **k):  # pragma: no cover - simple stub
+            pass
+
+        def encode_text(self, text):  # pragma: no cover - simple stub
+            return [0.0]
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
+from dynamic_path_router import resolve_path
+
+try:  # pragma: no cover - support both package and flat imports
+    from embeddable_db_mixin import log_embedding_metrics  # type: ignore
+except Exception:  # pragma: no cover - fallback for package context
+    try:
+        from .embeddable_db_mixin import log_embedding_metrics  # type: ignore
+    except Exception:  # pragma: no cover - ultimate fallback
+        def log_embedding_metrics(*_a, **_k):  # type: ignore
+            return None
 
 try:  # optional dependency for future scalability
     from sqlalchemy.engine import Engine  # type: ignore
@@ -202,7 +223,11 @@ def _default_db_path(env_var: str, filename: str) -> Path:
     """Return a Path from ``env_var`` falling back to ``MENACE_DATA_DIR``."""
     base = os.getenv("MENACE_DATA_DIR", "")
     default = Path(base) / filename if base else Path(filename)
-    return Path(os.getenv(env_var, default))
+    candidate = os.getenv(env_var, default)
+    try:
+        return Path(resolve_path(str(candidate)))
+    except FileNotFoundError:
+        return Path(candidate)
 
 
 def _current_menace_id(router: DBRouter | None) -> str:
@@ -257,11 +282,16 @@ class CodeDB(EmbeddableDBMixin):
         if self.engine is None and self.router is None:
             raise ValueError("router must be provided when engine is None")
 
-        self.path = (
-            Path(path or _default_db_path("CODE_DB_PATH", "code.db"))
-            if self.engine is None
-            else Path("")
-        )
+        if self.engine is None:
+            if path is None:
+                self.path = _default_db_path("CODE_DB_PATH", "code.db")
+            else:
+                try:
+                    self.path = Path(resolve_path(str(path)))
+                except FileNotFoundError:
+                    self.path = Path(path)
+        else:
+            self.path = Path("")
         self.event_bus = event_bus
         self._lock = threading.Lock()
         self.has_fts = False
@@ -287,7 +317,9 @@ class CodeDB(EmbeddableDBMixin):
                 self._ensure_schema(conn)
 
         index_path = (
-            self.path.with_suffix(".index") if self.path else Path("code_embeddings.index")
+            self.path.with_suffix(".index")
+            if self.path
+            else resolve_path(".") / "code_embeddings.index"
         )
         meta_path = index_path.with_suffix(".json")
         EmbeddableDBMixin.__init__(
@@ -2166,5 +2198,7 @@ class PatchHistoryDB:
         with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
         logger.info("patch deleted", extra={"patch_id": patch_id})
 
+
+sys.modules["code_database"] = sys.modules[__name__]
 
 __all__ = ["CodeRecord", "CodeDB", "PatchRecord", "PatchHistoryDB"]
