@@ -22,7 +22,7 @@ try:  # optional dependency
 except Exception:  # pragma: no cover - optional dep
     GraphDatabase = None  # type: ignore
 
-from stripe_policy import PAYMENT_ROUTER_NOTICE
+from billing.prompt_notice import prepend_payment_notice
 import stripe_billing_router  # noqa: F401
 logger = logging.getLogger(__name__)
 
@@ -126,9 +126,10 @@ class GPT4Client:
             f"archetype:{archetype}; objective:{objective}; emotion:{emotion_tensor}"
         )
         messages = [
-            {"role": "system", "content": PAYMENT_ROUTER_NOTICE + " " + system_msg},
+            {"role": "system", "content": system_msg},
             {"role": "user", "content": text},
         ]
+        messages = prepend_payment_notice(messages)
         resp = openai.ChatCompletion.create(
             model="gpt-4", messages=messages, stream=True
         )

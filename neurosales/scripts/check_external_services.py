@@ -1,6 +1,7 @@
 import sys
 from dotenv import load_dotenv
 from neurosales import config
+from billing.prompt_notice import prepend_payment_notice
 
 load_dotenv()
 
@@ -18,7 +19,9 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
     try:
         openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": "ping"}],
+            messages=prepend_payment_notice(
+                [{"role": "user", "content": "ping"}]
+            ),
             max_tokens=1,
         )
         print("OpenAI reachable")
