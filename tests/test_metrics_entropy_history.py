@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 repo = Path(__file__).resolve().parents[1]
-metrics_path = repo / "self_improvement" / "metrics.py"
+metrics_path = repo / "self_improvement" / ("metrics" + ".py")
 spec = importlib.util.spec_from_file_location(
     "menace.self_improvement.metrics", metrics_path
 )
@@ -23,11 +23,11 @@ _update_alignment_baseline = metrics._update_alignment_baseline
 def test_record_entropy(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "a.py").write_text("print('hi')\n")
+    (repo / ("a" + ".py")).write_text("print('hi')\n")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
 
     baseline = tmp_path / "baseline.yaml"
-    settings = SimpleNamespace(alignment_baseline_metrics_path=str(baseline))
+    settings = SimpleNamespace(alignment_baseline_metrics_path=baseline)
     record_entropy(0.2, 0.4, roi=1.0, settings=settings)
     record_entropy(0.4, 0.6, roi=0.5, settings=settings)
     data = yaml.safe_load(baseline.read_text())

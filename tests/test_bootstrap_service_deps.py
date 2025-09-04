@@ -42,6 +42,7 @@ sys.modules["sandbox_runner.environment"] = env_stub
 si_api = types.ModuleType("self_improvement.api")
 si_api.init_self_improvement = lambda settings: None
 
+
 class _DummyThread:
     def __init__(self):
         self._alive = True
@@ -71,6 +72,8 @@ class SandboxSettings:
         self.alignment_baseline_metrics_path = alignment_baseline_metrics_path
         self.menace_mode = "test"
         self.menace_env_file = "env"
+        self.menace_light_imports = False
+        self.sandbox_required_db_files = []
         self.optional_service_versions = {
             "relevancy_radar": "1.0.0",
             "quick_fix_engine": "1.0.0",

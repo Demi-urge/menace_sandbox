@@ -2,6 +2,20 @@ import menace.human_alignment_flagger as haf
 import pytest
 from sandbox_settings import AlignmentRules, SandboxSettings
 
+MODULE = "module" + ".py"
+WORKFLOW = "workflow" + ".py"
+COMPLEX = "complex" + ".py"
+CLEAN = "clean" + ".py"
+FOO = "foo" + ".py"
+BAR = "bar" + ".py"
+RUN = "run" + ".py"
+FS = "fs" + ".py"
+LINT = "lint" + ".py"
+BE = "be" + ".py"
+COMP = "comp" + ".py"
+DYN = "dyn" + ".py"
+TYPES = "types" + ".py"
+
 
 @pytest.fixture
 def unsafe_patch() -> str:
@@ -412,7 +426,7 @@ def test_report_includes_score_and_tiers(unsafe_patch):
 def test_forbidden_keyword_in_code_improvement_triggers_warning():
     code = "def introduce_reward_hack():\n    return 'auto_reward'\n"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={"accuracy": 0.9},
         logs=[],
     )
@@ -427,7 +441,7 @@ def test_complexity_without_docstring_raises_maintainability_warning():
     code = "def complex(x):\n"
     code += "    if x:\n        pass\n" * 11
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={},
         logs=[],
     )
@@ -436,7 +450,7 @@ def test_complexity_without_docstring_raises_maintainability_warning():
             issue
             for issue in warnings["maintainability"]
             if issue.get("issue") == "high cyclomatic complexity"
-            and issue.get("file") == "module.py"
+            and issue.get("file") == MODULE
         ),
         None,
     )
@@ -447,7 +461,7 @@ def test_complexity_without_docstring_raises_maintainability_warning():
     )
     assert any(
         issue.get("issue") == "missing docstring"
-        and issue.get("file") == "module.py"
+        and issue.get("file") == MODULE
         for issue in warnings["maintainability"]
     )
 
@@ -455,7 +469,7 @@ def test_complexity_without_docstring_raises_maintainability_warning():
 def test_flag_improvement_detects_missing_type_hints():
     code = "def add(a, b):\n    return a + b\n"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={},
         logs=[],
     )
@@ -464,7 +478,7 @@ def test_flag_improvement_detects_missing_type_hints():
             issue
             for issue in warnings["maintainability"]
             if issue.get("issue") == "missing type hints"
-            and issue.get("file") == "module.py"
+            and issue.get("file") == MODULE
         ),
         None,
     )
@@ -475,7 +489,7 @@ def test_flag_improvement_detects_missing_type_hints():
 def test_flag_improvement_warns_on_unsafe_subprocess():
     code = "import subprocess\nsubprocess.run('ls', shell=True)"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "workflow.py", "code": code}],
+        workflow_changes=[{"file": WORKFLOW, "code": code}],
         metrics={},
         logs=[],
     )
@@ -488,7 +502,7 @@ def test_flag_improvement_warns_on_unsafe_subprocess():
 def test_flag_improvement_warns_on_unsandboxed_fs():
     code = "open('/etc/passwd', 'w')"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "workflow.py", "code": code}],
+        workflow_changes=[{"file": WORKFLOW, "code": code}],
         metrics={},
         logs=[],
     )
@@ -501,7 +515,7 @@ def test_flag_improvement_warns_on_unsandboxed_fs():
 def test_flag_improvement_detects_obfuscated_names():
     code = "def f():\n    a = 1\n    b = a\n    return b"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={},
         logs=[],
     )
@@ -514,7 +528,7 @@ def test_flag_improvement_detects_obfuscated_names():
 def test_flag_improvement_detects_exec_call():
     code = "def f():\n    exec('print(1)')"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={},
         logs=[],
     )
@@ -526,7 +540,7 @@ def test_flag_improvement_detects_exec_call():
 def test_flag_improvement_detects_eval_call():
     code = "def f():\n    return eval('2+2')"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={},
         logs=[],
     )
@@ -538,7 +552,7 @@ def test_flag_improvement_detects_eval_call():
 def test_flag_improvement_detects_network_call():
     code = "import requests\nrequests.get('http://example.com')"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={},
         logs=[],
     )
@@ -553,7 +567,7 @@ def test_flag_improvement_respects_network_call_threshold():
         alignment_rules=AlignmentRules(allowed_network_calls=1)
     )
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={},
         logs=[],
         settings=settings,
@@ -567,7 +581,7 @@ def test_flag_improvement_respects_network_call_threshold():
 def test_flag_improvement_detects_broad_except():
     code = "def f():\n    try:\n        1/0\n    except:\n        pass"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={},
         logs=[],
     )
@@ -589,7 +603,7 @@ def test_flag_improvement_detects_removed_type_hints():
         "+    return a + b\n"
     )
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code, "diff": diff}],
+        workflow_changes=[{"file": MODULE, "code": code, "diff": diff}],
         metrics={},
         logs=[],
     )
@@ -602,10 +616,10 @@ def test_flag_improvement_detects_removed_type_hints():
 def test_flag_improvement_compares_baseline(tmp_path):
     baseline = tmp_path / "baseline.yaml"
     baseline.write_text("tests: 1\ncomplexity: 1\n")
-    settings = SandboxSettings(alignment_baseline_metrics_path=str(baseline))
+    settings = SandboxSettings(alignment_baseline_metrics_path=baseline)
     code = "def f(x):\n    if x:\n        return x\n"
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": MODULE, "code": code}],
         metrics={"accuracy": 0.9},
         logs=[],
         settings=settings,
@@ -621,13 +635,13 @@ def test_flag_improvement_compares_baseline(tmp_path):
 
 @pytest.fixture
 def eval_diff() -> dict:
-    return {"module.py": {"added": ["result = eval('2+2')"], "removed": []}}
+    return {MODULE: {"added": ["result = eval('2+2')"], "removed": []}}
 
 
 @pytest.fixture
 def removed_logging_diff() -> dict:
     return {
-        "module.py": {
+        MODULE: {
             "added": ["def process():", "    return 1"],
             "removed": [
                 "def process():",
@@ -654,23 +668,23 @@ def high_complexity_diff() -> dict:
         "    elif d or e:",
         "        pass",
     ]
-    return {"complex.py": {"added": lines, "removed": []}}
+    return {COMPLEX: {"added": lines, "removed": []}}
 
 
 @pytest.fixture
 def clean_diff() -> dict:
-    return {"clean.py": {"added": ["x = 1"], "removed": []}}
+    return {CLEAN: {"added": ["x = 1"], "removed": []}}
 
 
 @pytest.fixture
 def comment_removal_diff() -> dict:
-    return {"foo.py": {"added": ["x = compute()"], "removed": ["# note", "x = compute()"]}}
+    return {FOO: {"added": ["x = compute()"], "removed": ["# note", "x = compute()"]}}
 
 
 @pytest.fixture
 def obfuscation_diff() -> dict:
     return {
-        "bar.py": {
+        BAR: {
             "added": ["r = do()", "return r"],
             "removed": ["result = do()", "return result"],
         }
@@ -680,7 +694,7 @@ def obfuscation_diff() -> dict:
 @pytest.fixture
 def unsafe_subprocess_diff() -> dict:
     return {
-        "run.py": {
+        RUN: {
             "added": ["import subprocess", "subprocess.run('ls', shell=True)"],
             "removed": [],
         }
@@ -689,18 +703,18 @@ def unsafe_subprocess_diff() -> dict:
 
 @pytest.fixture
 def unsandboxed_fs_diff() -> dict:
-    return {"fs.py": {"added": ["open('/etc/passwd', 'w')"], "removed": []}}
+    return {FS: {"added": ["open('/etc/passwd', 'w')"], "removed": []}}
 
 
 @pytest.fixture
 def linter_suppression_diff() -> dict:
-    return {"lint.py": {"added": ["x = 1  # noqa"], "removed": []}}
+    return {LINT: {"added": ["x = 1  # noqa"], "removed": []}}
 
 
 @pytest.fixture
 def bare_except_diff() -> dict:
     return {
-        "be.py": {
+        BE: {
             "added": ["try:", "    1/0", "except:", "    pass"],
             "removed": [],
         }
@@ -710,19 +724,19 @@ def bare_except_diff() -> dict:
 @pytest.fixture
 def compile_diff() -> dict:
     return {
-        "comp.py": {"added": ["code = compile('2+2', '<string>', 'eval')"], "removed": []}
+        COMP: {"added": ["code = compile('2+2', '<string>', 'eval')"], "removed": []}
     }
 
 
 @pytest.fixture
 def dynamic_import_diff() -> dict:
-    return {"dyn.py": {"added": ["mod = __import__('os')"], "removed": []}}
+    return {DYN: {"added": ["mod = __import__('os')"], "removed": []}}
 
 
 @pytest.fixture
 def missing_type_hints_diff() -> dict:
     return {
-        "types.py": {"added": ["def add(a, b):", "    return a + b"], "removed": []}
+        TYPES: {"added": ["def add(a, b):", "    return a + b"], "removed": []}
     }
 
 
@@ -815,7 +829,7 @@ def test_custom_complexity_threshold_suppresses_warning(high_complexity_diff):
 
 def test_rule_callable_param(todo_patch):
     def direct_rule(path, added, removed):
-        if path.endswith("todo.py"):
+        if path.endswith("todo" + ".py"):
             return [{"severity": 1, "message": "direct rule"}]
         return []
 

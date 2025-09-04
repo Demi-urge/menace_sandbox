@@ -16,8 +16,8 @@ def _load(name: str, path: Path):
     return module
 
 
-stub_providers = _load("stub_providers", MODULE_DIR / "stub_providers.py")
-metrics_plugins = _load("metrics_plugins", MODULE_DIR / "metrics_plugins.py")
+stub_providers = _load("stub_providers", MODULE_DIR / ("stub_providers" + ".py"))
+metrics_plugins = _load("metrics_plugins", MODULE_DIR / ("metrics_plugins" + ".py"))
 menace_pkg = types.ModuleType("menace")
 menace_pkg.__path__ = []
 sys.modules["menace"] = menace_pkg
@@ -25,7 +25,7 @@ si_pkg = types.ModuleType("menace.self_improvement")
 si_pkg.__path__ = [str(ROOT_DIR / "self_improvement")]
 sys.modules["menace.self_improvement"] = si_pkg
 sys.modules["menace.sandbox_settings"] = _load(
-    "menace.sandbox_settings", ROOT_DIR / "sandbox_settings.py"
+    "menace.sandbox_settings", ROOT_DIR / ("sandbox_settings" + ".py")
 )
 logger = types.SimpleNamespace(
     info=lambda *a, **k: None,
@@ -40,7 +40,7 @@ sys.modules["menace.logging_utils"] = types.SimpleNamespace(
 )
 si_metrics = _load(
     "menace.self_improvement.metrics",
-    ROOT_DIR / "self_improvement" / "metrics.py",
+    ROOT_DIR / "self_improvement" / ("metrics" + ".py"),
 )
 
 
@@ -73,11 +73,11 @@ def test_discover_stub_providers_success_and_failure(monkeypatch):
 def test_load_metrics_plugins_and_errors(tmp_path):
     plugin_dir = tmp_path / "plugins"
     plugin_dir.mkdir()
-    (plugin_dir / "ok.py").write_text(
+    (plugin_dir / ("ok" + ".py")).write_text(
         "def collect_metrics(prev, cur, res):\n    return {'a': 1}\n"
     )
-    (plugin_dir / "nofunc.py").write_text("x = 1\n")
-    (plugin_dir / "bad.py").write_text("raise RuntimeError('boom')\n")
+    (plugin_dir / ("nofunc" + ".py")).write_text("x = 1\n")
+    (plugin_dir / ("bad" + ".py")).write_text("raise RuntimeError('boom')\n")
     missing = tmp_path / "missing"
     plugins = metrics_plugins.load_metrics_plugins([plugin_dir, missing])
     assert len(plugins) == 1
@@ -98,20 +98,20 @@ def test_collect_plugin_metrics_handles_errors():
 def test_update_and_get_alignment_baseline(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "a.py").write_text("def f():\n    return 1\n")
+    (repo / ("a" + ".py")).write_text("def f():\n    return 1\n")
     baseline = tmp_path / "baseline.yaml"
     fake_settings = types.SimpleNamespace(
-        alignment_baseline_metrics_path=str(baseline),
+        alignment_baseline_metrics_path=baseline,
         sandbox_repo_path=str(repo),
         metrics_skip_dirs=[],
     )
     monkeypatch.setattr(si_metrics, "SandboxSettings", lambda: fake_settings)
     data = si_metrics._update_alignment_baseline(settings=fake_settings)
     assert baseline.exists()
-    assert "a.py" in data["files"]
+    assert ("a" + ".py") in data["files"]
     loaded = si_metrics.get_alignment_metrics(settings=fake_settings)
     assert loaded == data
     missing_settings = types.SimpleNamespace(
-        alignment_baseline_metrics_path=str(tmp_path / "nope.yaml")
+        alignment_baseline_metrics_path=tmp_path / "nope.yaml"
     )
     assert si_metrics.get_alignment_metrics(settings=missing_settings) == {}

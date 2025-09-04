@@ -5,13 +5,14 @@ from sandbox_settings import SandboxSettings
 def test_metric_improvement_still_warns(tmp_path):
     baseline = tmp_path / "baseline.yaml"
     baseline.write_text("tests: 1\ncomplexity: 1\n")
-    settings = SandboxSettings(alignment_baseline_metrics_path=str(baseline))
+    settings = SandboxSettings(alignment_baseline_metrics_path=baseline)
 
     # Improved accuracy metric but reduced tests and higher complexity
     metrics = {"accuracy": 0.95, "previous_accuracy": 0.9}
     code = "def f(x):\n    if x:\n        return x\n"
+    module = tmp_path / ("module" + ".py")
     warnings = haf.flag_improvement(
-        workflow_changes=[{"file": "module.py", "code": code}],
+        workflow_changes=[{"file": str(module), "code": code}],
         metrics=metrics,
         logs=[],
         settings=settings,

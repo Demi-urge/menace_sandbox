@@ -229,7 +229,9 @@ class AlignmentSettings(BaseModel):
     failure_threshold: float = 0.9
     improvement_warning_threshold: float = 0.5
     improvement_failure_threshold: float = 0.9
-    baseline_metrics_path: str = "sandbox_metrics.yaml"
+    baseline_metrics_path: Path = Field(
+        default_factory=lambda: resolve_path("sandbox_metrics.yaml")
+    )
 
     @field_validator(
         "warning_threshold",
@@ -1967,8 +1969,8 @@ class SandboxSettings(BaseSettings):
             "issues as failures."
         ),
     )
-    alignment_baseline_metrics_path: str = Field(
-        "sandbox_metrics.yaml",
+    alignment_baseline_metrics_path: Path = Field(
+        default_factory=lambda: resolve_path("sandbox_metrics.yaml"),
         env="ALIGNMENT_BASELINE_METRICS_PATH",
         description=(
             "Path to baseline metrics file for maintainability comparisons. By "

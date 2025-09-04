@@ -321,7 +321,11 @@ def get_default_synergy_weights() -> dict[str, float]:
     cfg = SandboxSettings()
     weights: dict[str, float] | None = None
 
-    metrics_path = Path(getattr(cfg, "alignment_baseline_metrics_path", ""))
+    baseline_path = getattr(cfg, "alignment_baseline_metrics_path", "")
+    try:
+        metrics_path = resolve_path(str(baseline_path))
+    except FileNotFoundError:
+        metrics_path = Path(str(baseline_path))
     if metrics_path.is_file():
         try:
             with open(metrics_path, "r", encoding="utf-8") as fh:
