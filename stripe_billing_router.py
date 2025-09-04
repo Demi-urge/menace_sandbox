@@ -291,25 +291,55 @@ def _resolve_route(
 
 def charge(
     bot_id: str,
-    amount: float,
+    amount: float | None = None,
     description: str | None = None,
     *,
+    price_id: str | None = None,
     overrides: Optional[Mapping[str, str]] = None,
 ) -> dict[str, Any]:
-    """Charge a customer for the given bot."""
+    """Charge a customer for the given bot.
+
+    ``price_id`` can be supplied to bill using a preconfigured Stripe Price.  In
+    that case an Invoice Item is created for the price and immediately charged
+    via the Invoice API.  When ``price_id`` is omitted, a one‑off charge is
+    performed using the PaymentIntent API and ``amount`` must be provided.
+    """
+
     route = _resolve_route(bot_id, overrides)
     api_key = route["secret_key"]
     client = _client(api_key)
+
+    price = price_id or route.get("price_id")
+    customer = route.get("customer_id")
+    description = description or route.get("product_id", "")
+
+    if price:
+        if not customer:
+            logger.error("customer_id required for price based billing for bot '%s'", bot_id)
+            raise RuntimeError("customer_id required for price based billing")
+        item_params = {"customer": customer, "price": price}
+        if client:
+            client.InvoiceItem.create(**item_params)
+            invoice = client.Invoice.create(customer=customer, description=description)
+            return client.Invoice.pay(invoice["id"])
+        stripe.InvoiceItem.create(api_key=api_key, **item_params)
+        invoice = stripe.Invoice.create(api_key=api_key, customer=customer, description=description)
+        return stripe.Invoice.pay(invoice["id"], api_key=api_key)
+
+    if amount is None:
+        logger.error("amount must be provided when price_id is not supplied for bot '%s'", bot_id)
+        raise ValueError("amount required when price_id is not provided")
+
     params = {
         "amount": int(amount * 100),
         "currency": "usd",
-        "description": description or route.get("product_id", ""),
+        "description": description,
     }
-    if customer := route.get("customer_id"):
+    if customer:
         params["customer"] = customer
     if client:
-        return client.Charge.create(**params)
-    return stripe.Charge.create(api_key=api_key, **params)
+        return client.PaymentIntent.create(**params)
+    return stripe.PaymentIntent.create(api_key=api_key, **params)
 
 
 # Backward compatibility
@@ -351,12 +381,45 @@ def create_customer(
     return stripe.Customer.create(api_key=api_key, **customer_info)
 
 
+def create_subscription(
+    bot_id: str,
+    *,
+    price_id: str | None = None,
+    customer_id: str | None = None,
+    overrides: Optional[Mapping[str, str]] = None,
+    **params: Any,
+) -> dict[str, Any]:
+    """Create a recurring subscription for the given bot.
+
+    ``price_id`` and ``customer_id`` default to values resolved from the routing
+    table.  Additional Stripe ``Subscription.create`` parameters may be supplied
+    via ``params``.
+    """
+
+    route = _resolve_route(bot_id, overrides)
+    api_key = route["secret_key"]
+    client = _client(api_key)
+    price = price_id or route.get("price_id")
+    customer = customer_id or route.get("customer_id")
+    if not price or not customer:
+        logger.error(
+            "price_id and customer_id are required for subscriptions for bot '%s'",
+            bot_id,
+        )
+        raise RuntimeError("price_id and customer_id are required for subscriptions")
+    sub_params = {"customer": customer, "items": [{"price": price}], **params}
+    if client:
+        return client.Subscription.create(**sub_params)
+    return stripe.Subscription.create(api_key=api_key, **sub_params)
+
+
 __all__ = [
     "initiate_charge",
     "init_charge",
     "charge",
     "get_balance",
     "create_customer",
+    "create_subscription",
     "register_route",
     "register_override",
     "register_strategy",

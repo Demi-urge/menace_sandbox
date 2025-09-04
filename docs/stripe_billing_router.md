@@ -2,13 +2,14 @@
 
 `stripe_billing_router` maps bots to Stripe products, prices and customers and
 acts as the **sole payment interface**.  API keys are pulled from a secure vault
-provider or fall back to baked‑in production values.  A `RuntimeError` is raised
-if the keys are missing, empty or test mode keys.  Routing attempts for
-unsupported domains, business categories or missing rules also raise
-`RuntimeError`.  Routes must never supply `secret_key` or `public_key`
-values—the router injects centrally managed keys and prevents per‑route
-overrides.  Stripe keys and billing logic must not be duplicated outside this
-module.
+provider or fall back to baked‑in production values.  Charges are created via
+Stripe's modern PaymentIntent or Invoice APIs—`Charge.create` is no longer
+used. A `RuntimeError` is raised if keys are missing, empty or test‑mode keys.
+Routing attempts for unsupported domains, business categories or missing rules
+also raise `RuntimeError`.  Routes must never supply `secret_key` or
+`public_key` values—the router injects centrally managed keys and prevents
+per‑route overrides.  Stripe keys and billing logic must not be duplicated
+outside this module.
 
 ## Bot Invocation and Routing Rules
 
@@ -40,13 +41,26 @@ change routes. Use `register_override` for dynamic adjustments.
 
 Bots are identified by a `"business_category:bot_name"` string or
 ``"domain:business_category:bot_name"``.  The router looks up routing details
-for that bot and adds the Stripe keys.  Bots request charges or create
-customers by calling router helpers:
+for that bot and adds the Stripe keys.  Bots request charges, subscriptions or
+create customers by calling router helpers:
 
 ```python
-from stripe_billing_router import charge, create_customer, get_balance
+from stripe_billing_router import (
+    charge,
+    create_customer,
+    create_subscription,
+    get_balance,
+)
 
+# One‑off payment via PaymentIntent
 charge("finance:finance_router_bot", amount=10.0)
+
+# Price based invoice using the route's price_id
+charge("finance:finance_router_bot", price_id="price_finance_standard")
+
+# Create a recurring subscription
+create_subscription("finance:finance_router_bot")
+
 create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
 bal = get_balance("finance:finance_router_bot")
 ```
@@ -89,7 +103,6 @@ register_route(
 
 charge(
     "finance:finance_router_bot",
-    amount=10.0,
     overrides={"region": "eu"},
 )
 ```
@@ -112,7 +125,6 @@ register_override(
 
 charge(
     "finance:finance_router_bot",
-    amount=10.0,
     overrides={"business": "enterprise"},
 )
 ```
