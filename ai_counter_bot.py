@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import time
 import urllib.request
 import joblib
@@ -19,12 +18,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
+from dynamic_path_router import resolve_path
+
 import numpy as np
 import logging
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 from . import RAISE_ERRORS
+from .prediction_manager_bot import PredictionManager
+from .strategy_prediction_bot import StrategyPredictionBot
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +39,6 @@ try:
     from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     TfidfVectorizer = None  # type: ignore
-
-from .prediction_manager_bot import PredictionManager
-from .strategy_prediction_bot import StrategyPredictionBot
 
 
 def _fetch_remote_list(url: str) -> list[str]:
@@ -77,7 +77,9 @@ def _load_keywords() -> tuple[list[str], list[str]]:
     ext_file = os.getenv("AI_COUNTER_EXTENDED_FILE")
     ext_env = os.getenv("AI_COUNTER_EXTENDED")
     ext_url = os.getenv("AI_COUNTER_EXTENDED_URL")
-    defaults_file = os.getenv("AI_COUNTER_DEFAULTS", "config/default_keywords.json")
+    defaults_file = os.getenv("AI_COUNTER_DEFAULTS") or resolve_path(
+        "config/default_keywords.json"
+    )
 
     keywords: list[str] = []
     if kw_env:
@@ -141,6 +143,7 @@ _MIN_TRAIN_SAMPLES = int(os.getenv("AI_MIN_TRAIN_SAMPLES", "2"))
 # basic labelled outputs for reverse engineering
 _REVERSE_MODEL = None
 
+
 def _load_reverse_train() -> list[tuple[str, str]]:
     data_env = os.getenv("AI_REVERSE_TRAIN_DATA")
     data_url = os.getenv("AI_REVERSE_TRAIN_URL")
@@ -161,7 +164,7 @@ def _load_reverse_train() -> list[tuple[str, str]]:
                     pairs.append((text.strip(), label.strip()))
             if pairs:
                 return pairs
-    default_path = "config/reverse_train_data.json"
+    default_path = resolve_path("config/reverse_train_data.json")
     if Path(default_path).exists():
         try:
             return [tuple(item) for item in json.loads(Path(default_path).read_text())]
@@ -222,14 +225,14 @@ if LogisticRegression is not None:
         for text, label in _REVERSE_TRAIN:
             toks = text.lower().split()
             length = len(toks)
-            rand = sum(1 for w in toks if w in {"random", "noise", "entropy", "rand"}) / max(length, 1)
-            sched = sum(1 for w in toks if w.endswith("am") or w.endswith("pm") or w == "utc" or "schedule" in w or "daily" in w or "every" in w) / max(length, 1)
-            learn = sum(1 for w in toks if w in {"learn", "training", "model", "update", "loss", "accuracy"}) / max(length, 1)
+            rand = sum(1 for w in toks if w in {"random", "noise", "entropy", "rand"}) / max(length, 1)  # noqa: E501
+            sched = sum(1 for w in toks if w.endswith("am") or w.endswith("pm") or w == "utc" or "schedule" in w or "daily" in w or "every" in w) / max(length, 1)  # noqa: E501
+            learn = sum(1 for w in toks if w in {"learn", "training", "model", "update", "loss", "accuracy"}) / max(length, 1)  # noqa: E501
             rep = 0.0
             num = sum(1 for t in toks if t.isdigit()) / max(length, 1)
             avg_word_len = sum(len(t) for t in toks) / max(length, 1)
             upper_ratio = sum(1 for c in text if c.isupper()) / max(len(text), 1)
-            X.append([rand, sched, learn, rep, num, avg_word_len / 10.0, upper_ratio, length / 1000.0])
+            X.append([rand, sched, learn, rep, num, avg_word_len / 10.0, upper_ratio, length / 1000.0])  # noqa: E501
             y.append(label)
         try:  # pragma: no cover - optional fitting
             _REVERSE_MODEL.fit(X, y)
@@ -266,6 +269,7 @@ def _load_threat_config() -> dict:
 
 _THREAT_WEIGHTS = _load_threat_config()
 
+
 @dataclass
 class TrafficSample:
     """Observable features from competitor activity."""
@@ -289,7 +293,9 @@ class CounterDB:
         engine: str | None = None,
         router: DBRouter | None = None,
     ) -> None:
-        self.path = Path(path or os.getenv("AI_COUNTER_DB", "ai_counter.db"))
+        self.path = Path(
+            resolve_path(path or os.getenv("AI_COUNTER_DB", "ai_counter.db"))
+        )
         eng = engine or os.getenv("AI_COUNTER_DB_ENGINE", "sqlite").lower()
         self.engine = "duckdb" if eng == "duckdb" and duckdb is not None else "sqlite"
         self.router = router or GLOBAL_ROUTER or init_db_router("ai_counter")
@@ -596,7 +602,7 @@ class AICounterBot:
             if sample.pattern:
                 counts = Counter(sample.pattern)
                 total = len(sample.pattern)
-                ent = -sum((c / total) * np.log2(c / total) for c in counts.values()) / max(np.log2(total), 1e-9)
+                ent = -sum((c / total) * np.log2(c / total) for c in counts.values()) / max(np.log2(total), 1e-9)  # noqa: E501
             score = (
                 0.05 * sample.frequency
                 + 0.5 * sample.similarity
@@ -614,9 +620,13 @@ class AICounterBot:
             prob = self._apply_prediction_bots(prob, sample)
         return float(prob)
 
-    def calculate_threat_score(self, algorithm: str, adaptation_prob: float, similarity: float) -> int:
+    def calculate_threat_score(
+        self, algorithm: str, adaptation_prob: float, similarity: float
+    ) -> int:
         """Compute threat score on a 0-100 scale."""
-        sample = TrafficSample(pattern=algorithm, frequency=0, timing_std=0.0, similarity=similarity)
+        sample = TrafficSample(
+            pattern=algorithm, frequency=0, timing_std=0.0, similarity=similarity
+        )
         return self.threat_score(sample, algorithm, adaptation_prob)
 
     def threat_score(self, sample: TrafficSample, algorithm: str, adaptation_prob: float) -> int:
@@ -671,7 +681,7 @@ class AICounterBot:
         else:
             try:
                 day = time.strftime("%Y-%m-%d")
-                path = Path("logs/fallback") / f"{day}.txt"
+                path = resolve_path("logs/fallback") / f"{day}.txt"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, "a", encoding="utf-8") as f:
                     f.write(self.log_line(text, detected, algorithm, counter) + "\n")
@@ -679,10 +689,10 @@ class AICounterBot:
                 logger.warning("fallback log failed: %s", exc)
         logger.info("Threat score: %s", threat)
         try:
-            ts_path = Path("logs/threat_scores.log")
+            ts_path = resolve_path("logs/threat_scores.log")
             ts_path.parent.mkdir(parents=True, exist_ok=True)
             with open(ts_path, "a", encoding="utf-8") as f:
-                f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} | {threat} | {text[:50]}...\n")
+                f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} | {threat} | {text[:50]}...\n")  # noqa: E501
         except Exception:  # pragma: no cover - best effort
             logger.debug("failed to log threat score")
         self.escalate_if_needed(threat, text)
