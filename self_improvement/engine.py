@@ -161,7 +161,11 @@ from .orchestration import (
 )
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
-from .prompt_memory import log_prompt_attempt
+from .prompt_memory import (
+    log_prompt_attempt,
+    load_prompt_penalties,
+    load_strategy_roi_stats,
+)
 from . import strategy_rotator
 from .snapshot_tracker import (
     capture as capture_snapshot,
@@ -1485,6 +1489,13 @@ class SelfImprovementEngine:
                 gen_kwargs["delay"] = delay
             if target_region is None:
                 target_region = getattr(self, "_cycle_target_region", None)
+            # Select the prompt strategy for this patch attempt
+            try:
+                strategy = self.next_prompt_strategy(strategy_rotator.TEMPLATES)
+            except Exception:
+                strategy = None
+            if strategy:
+                gen_kwargs["strategy"] = strategy
             patch_id = self._patch_generator(
                 module,
                 self.self_coding_engine,
@@ -6532,20 +6543,21 @@ class SelfImprovementEngine:
                     self.logger.exception("confidence update failed")
         else:
             if strategy:
-                try:
-                    self.pending_strategy = strategy_rotator.next_strategy(
-                        str(strategy), failure_reason or "regression"
-                    )
-                except Exception:
-                    self.logger.exception("strategy rotator failed")
+                # Mark failed strategy to avoid immediate reuse and pick a new one
+                self.deprioritized_strategies.add(str(strategy))
                 try:
                     count = snapshot_tracker.record_downgrade(str(strategy))
                     threshold = SandboxSettings().prompt_failure_threshold
                 except Exception:
                     count = 0
                     threshold = 0
-                if threshold and count >= threshold:
-                    self.deprioritized_strategies.add(str(strategy))
+                try:
+                    remaining = [
+                        s for s in strategy_rotator.TEMPLATES if s not in self.deprioritized_strategies
+                    ]
+                    self.pending_strategy = self._select_prompt_strategy(remaining)
+                except Exception:
+                    self.logger.exception("strategy selection failed")
 
         if strategy and hasattr(self, "strategy_manager"):
             try:
@@ -6554,6 +6566,37 @@ class SelfImprovementEngine:
                 )
             except Exception:
                 self.logger.exception("strategy metrics update failed")
+
+    def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
+        """Pick the best prompt strategy given historical ROI and penalties."""
+
+        penalties = load_prompt_penalties()
+        stats = load_strategy_roi_stats()
+        settings = SandboxSettings()
+        threshold = settings.prompt_failure_threshold
+        mult = settings.prompt_penalty_multiplier
+        eligible: list[tuple[str, float]] = []
+        penalised: list[tuple[str, float]] = []
+        for strat in strategies:
+            if strat in self.deprioritized_strategies:
+                continue
+            count = penalties.get(str(strat), 0)
+            weight = mult if threshold and count >= threshold else 1.0
+            rec = stats.get(str(strat))
+            if rec:
+                roi_factor = rec.get("avg_roi", 0.0)
+                roi_factor = roi_factor if roi_factor > 0 else 0.1
+                weight *= roi_factor
+            target = penalised if threshold and count >= threshold else eligible
+            target.append((strat, weight))
+        pool = eligible or penalised
+        best: str | None = None
+        best_weight = -1.0
+        for strat, weight in pool:
+            if weight > best_weight:
+                best_weight = weight
+                best = strat
+        return best
 
     def next_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
         """Return the next prompt strategy based on historical performance."""
@@ -6564,7 +6607,7 @@ class SelfImprovementEngine:
             return pending
 
         candidates = [s for s in strategies if s not in self.deprioritized_strategies]
-        return self.strategy_manager.best_strategy(candidates)
+        return self._select_prompt_strategy(candidates)
 
     @radar.track
     def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:
