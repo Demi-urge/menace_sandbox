@@ -389,23 +389,26 @@ def evolve(
         if variant_spec:
             comparator = WorkflowSynergyComparator()
             candidates: list[tuple[str, Path]] = []
+            seen_paths: set[Path] = set()
             try:
                 if _load_specs is not None:
                     for spec in _load_specs("workflows"):
                         wid = str(spec.get("workflow_id"))
                         if wid and STABLE_WORKFLOWS.is_stable(wid):
-                            path = Path("workflows") / f"{wid}.workflow.json"
-                            if path.exists():
+                            path = resolve_path(f"workflows/{wid}.workflow.json")
+                            if path.exists() and path not in seen_paths:
                                 candidates.append((wid, path))
+                                seen_paths.add(path)
                 elif WorkflowGraph is not None:
                     graph = WorkflowGraph()
                     node_ids = getattr(getattr(graph, "graph", graph), "nodes", lambda: [])
                     for wid in node_ids() if callable(node_ids) else node_ids:
                         wid_str = str(wid)
                         if STABLE_WORKFLOWS.is_stable(wid_str):
-                            path = Path("workflows") / f"{wid_str}.workflow.json"
-                            if path.exists():
+                            path = resolve_path(f"workflows/{wid_str}.workflow.json")
+                            if path.exists() and path not in seen_paths:
                                 candidates.append((wid_str, path))
+                                seen_paths.add(path)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed loading candidate workflows")
 
@@ -716,23 +719,26 @@ def evolve(
             promoted_spec = None
         candidates: list[tuple[str, Path]] = []
         if new_id is not None and promoted_spec is not None:
+            seen_paths: set[Path] = set()
             try:
                 if _load_specs is not None:
                     for spec in _load_specs("workflows"):
                         wid = str(spec.get("workflow_id"))
                         if wid and wid != str(new_id) and STABLE_WORKFLOWS.is_stable(wid):
-                            path = Path("workflows") / f"{wid}.workflow.json"
-                            if path.exists():
+                            path = resolve_path(f"workflows/{wid}.workflow.json")
+                            if path.exists() and path not in seen_paths:
                                 candidates.append((wid, path))
+                                seen_paths.add(path)
                 elif WorkflowGraph is not None:
                     graph = WorkflowGraph()
                     node_ids = getattr(getattr(graph, "graph", graph), "nodes", lambda: [])
                     for wid in node_ids() if callable(node_ids) else node_ids:
                         wid_str = str(wid)
                         if wid_str != str(new_id) and STABLE_WORKFLOWS.is_stable(wid_str):
-                            path = Path("workflows") / f"{wid_str}.workflow.json"
-                            if path.exists():
+                            path = resolve_path(f"workflows/{wid_str}.workflow.json")
+                            if path.exists() and path not in seen_paths:
                                 candidates.append((wid_str, path))
+                                seen_paths.add(path)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed loading candidate workflows")
 
