@@ -19,62 +19,63 @@ sys.modules.setdefault(
     "dynamic_path_router", SimpleNamespace(resolve_path=lambda p: Path(p))
 )
 
-from menace_sandbox.self_improvement.baseline_tracker import BaselineTracker
-state_snapshot = importlib.import_module(
-    "menace_sandbox.self_improvement.state_snapshot"
+tracker_mod = importlib.import_module(
+    "menace_sandbox.self_improvement.snapshot_tracker"
 )
 
 
-def _patch_helpers(monkeypatch, entropies, diversities, edges, scores):
+def _patch_helpers(monkeypatch, tmp_path, entropies, diversities, complexities):
     ent_iter = iter(entropies)
     div_iter = iter(diversities)
-    edge_iter = iter(edges)
-    score_iter = iter(scores)
+    comp_iter = iter(complexities)
 
     monkeypatch.setattr(
-        state_snapshot.metrics,
-        "compute_code_entropy",
-        lambda files, settings=None: next(ent_iter),
-    )
-
-    def fake_collect(files, repo, settings=None):
-        return {}, 0, 0, 0, 0, next(div_iter)
-
-    monkeypatch.setattr(state_snapshot.metrics, "_collect_metrics", fake_collect)
-
-    class Graph:
-        def __init__(self, count):
-            self._count = count
-
-        def number_of_edges(self):
-            return self._count
-
-    monkeypatch.setattr(
-        state_snapshot, "build_import_graph", lambda repo: Graph(next(edge_iter))
+        tracker_mod,
+        "collect_snapshot_metrics",
+        lambda files, settings=None: (next(ent_iter), next(div_iter)),
     )
     monkeypatch.setattr(
-        state_snapshot, "SandboxSettings", lambda: SimpleNamespace(sandbox_score_db="db")
+        tracker_mod, "compute_call_graph_complexity", lambda repo: next(comp_iter)
     )
     monkeypatch.setattr(
-        state_snapshot, "get_latest_sandbox_score", lambda db: next(score_iter)
+        tracker_mod,
+        "SandboxSettings",
+        lambda: SimpleNamespace(
+            snapshot_metrics={
+                "roi",
+                "sandbox_score",
+                "entropy",
+                "call_graph_complexity",
+                "token_diversity",
+            },
+            sandbox_data_dir=str(tmp_path),
+            sandbox_repo_path=str(tmp_path),
+        ),
     )
 
 
 def test_capture_and_compare(monkeypatch, tmp_path):
-    tracker = BaselineTracker(window=3)
-    tracker.update(roi=1.0)
     (tmp_path / "mod.py").write_text("print('hi')")
 
-    _patch_helpers(monkeypatch, [0.5, 0.6], [0.1, 0.2], [1, 2], [0.0, 0.1])
+    _patch_helpers(monkeypatch, tmp_path, [0.5, 0.6], [0.1, 0.2], [1, 2])
 
-    snap1 = state_snapshot.capture_state(tmp_path, tracker)
-    tracker.update(roi=2.0)
-    snap2 = state_snapshot.capture_state(tmp_path, tracker)
+    snap1 = tracker_mod.capture(
+        stage="pre",
+        files=[tmp_path / "mod.py"],
+        roi=1.0,
+        sandbox_score=0.0,
+    )
+    snap2 = tracker_mod.capture(
+        stage="post",
+        files=[tmp_path / "mod.py"],
+        roi=2.0,
+        sandbox_score=0.1,
+    )
 
-    d = state_snapshot.compare_snapshots(snap1, snap2)
+    d = tracker_mod.compute_delta(snap1, snap2)
 
     assert pytest.approx(d["roi"], rel=1e-6) == 1.0
     assert pytest.approx(d["sandbox_score"], rel=1e-6) == 0.1
     assert pytest.approx(d["entropy"], rel=1e-6) == 0.1
-    assert pytest.approx(d["call_graph_edge_count"], rel=1e-6) == 1.0
+    assert pytest.approx(d["call_graph_complexity"], rel=1e-6) == 1.0
     assert pytest.approx(d["token_diversity"], rel=1e-6) == 0.1

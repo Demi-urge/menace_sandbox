@@ -162,9 +162,13 @@ from .orchestration import (
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt, load_prompt_penalties
-from .state_snapshot import capture_snapshot, delta as snapshot_delta
-from .snapshot_tracker import SnapshotTracker
+from .snapshot_tracker import (
+    capture as capture_snapshot,
+    compute_delta as snapshot_delta,
+    SnapshotTracker,
+)
 from . import snapshot_tracker
+from .sandbox_score import get_latest_sandbox_score
 from db_router import DBRouter
 
 
@@ -1492,7 +1496,14 @@ class SelfImprovementEngine:
             patch_id = None
         else:
             if patch_id is not None:
-                pre_snap = capture_snapshot(self.baseline_tracker, SandboxSettings())
+                pre_snap = capture_snapshot(
+                    stage="pre",
+                    files=list(Path(_repo_path()).rglob("*.py")),
+                    roi=self.baseline_tracker.current("roi"),
+                    sandbox_score=get_latest_sandbox_score(
+                        SandboxSettings().sandbox_score_db
+                    ),
+                )
                 commit_hash = ""
                 try:
                     commit_hash, patch_diff = apply_patch(patch_id, _repo_path())
@@ -1503,7 +1514,14 @@ class SelfImprovementEngine:
                     )
                     patch_id = None
                 else:
-                    post_snap = capture_snapshot(self.baseline_tracker, SandboxSettings())
+                    post_snap = capture_snapshot(
+                        stage="post",
+                        files=list(Path(_repo_path()).rglob("*.py")),
+                        roi=self.baseline_tracker.current("roi"),
+                        sandbox_score=get_latest_sandbox_score(
+                            SandboxSettings().sandbox_score_db
+                        ),
+                    )
                     delta_vals = snapshot_delta(pre_snap, post_snap)
                     improved = all(
                         delta_vals.get(k, 0.0) > 0

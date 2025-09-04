@@ -36,12 +36,10 @@ from .dashboards import (
 )
 from .registry import ImprovementEngineRegistry, auto_x
 from .orchestration_utils import benchmark_workflow_variants
-from .state_snapshot import (
+from .snapshot_tracker import (
     Snapshot,
-    capture_snapshot,
-    delta,
-    save_snapshot,
-    load_snapshot,
+    capture as capture_snapshot,
+    compute_delta as delta,
     save_checkpoint,
 )
 
@@ -78,7 +76,5 @@ __all__ = [
     "Snapshot",
     "capture_snapshot",
     "delta",
-    "save_snapshot",
-    "load_snapshot",
     "save_checkpoint",
 ]
