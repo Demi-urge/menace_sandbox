@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 import json
 import time
+import shutil
 from pathlib import Path
 from typing import Dict, Sequence
 
@@ -38,6 +39,39 @@ class Snapshot:
 
 
 _cycle_id = 0
+
+# ---------------------------------------------------------------------------
+# Persistent downgrade tracking
+
+settings = SandboxSettings()
+_downgrade_path = Path(resolve_path(settings.sandbox_data_dir)) / "prompt_downgrades.json"
+try:
+    _downgrade_counts_raw = json.loads(_downgrade_path.read_text(encoding="utf-8"))
+    downgrade_counts: Dict[str, int] = {
+        str(k): int(v) for k, v in _downgrade_counts_raw.items()
+        if isinstance(k, str)
+    }
+except Exception:
+    downgrade_counts = {}
+
+
+def _save_downgrades() -> None:
+    """Persist :data:`downgrade_counts` to disk."""
+
+    try:
+        _downgrade_path.parent.mkdir(parents=True, exist_ok=True)
+        _downgrade_path.write_text(json.dumps(downgrade_counts), encoding="utf-8")
+    except Exception:  # pragma: no cover - best effort
+        pass
+
+
+def record_downgrade(name: str) -> int:
+    """Increment downgrade counter for ``name`` and persist it."""
+
+    count = downgrade_counts.get(name, 0) + 1
+    downgrade_counts[name] = count
+    _save_downgrades()
+    return count
 
 
 def _snapshot_path(settings: SandboxSettings, cycle_id: int, stage: str) -> Path:
@@ -119,4 +153,31 @@ def compute_delta(prev: Snapshot, curr: Snapshot) -> Dict[str, float]:
     }
 
 
-__all__ = ["Snapshot", "capture", "compute_delta"]
+# ---------------------------------------------------------------------------
+
+def save_checkpoint(module_path: Path | str, cycle_id: str) -> Path:
+    """Copy *module_path* to a checkpoint named after ``cycle_id``.
+
+    The file is stored under ``sandbox_data/checkpoints/<module>/<cycle_id>.py``.
+    Returns the destination path.
+    """
+
+    module_path = Path(module_path)
+    base = Path(resolve_path(settings.sandbox_data_dir)) / "checkpoints" / module_path.stem
+    base.mkdir(parents=True, exist_ok=True)
+    dest = base / f"{cycle_id}{module_path.suffix}"
+    try:
+        shutil.copy2(module_path, dest)
+    except Exception:  # pragma: no cover - best effort
+        dest.write_text(module_path.read_text(encoding="utf-8"), encoding="utf-8")
+    return dest
+
+
+__all__ = [
+    "Snapshot",
+    "capture",
+    "compute_delta",
+    "save_checkpoint",
+    "downgrade_counts",
+    "record_downgrade",
+]
