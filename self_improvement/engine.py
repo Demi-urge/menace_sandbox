@@ -162,6 +162,7 @@ from .orchestration import (
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt, load_prompt_penalties
+from .prompt_strategy_manager import PromptStrategyManager
 from .snapshot_tracker import (
     capture as capture_snapshot,
     compute_delta as snapshot_delta,
@@ -898,6 +899,9 @@ class SelfImprovementEngine:
         self.warning_summary: list[dict[str, Any]] = []
         self.strategy_confidence: Dict[str, int] = {}
         self.deprioritized_strategies: set[str] = set()
+        self.prompt_strategy_manager = PromptStrategyManager(
+            state_path=_data_dir() / "prompt_strategy_state.json"
+        )
         self._snapshot_tracker = SnapshotTracker()
         self._last_delta: dict[str, float] | None = None
         self.logger = get_logger("SelfImprovementEngine")
@@ -6502,6 +6506,10 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("confidence update failed")
         else:
+            try:
+                self.prompt_strategy_manager.record_failure()
+            except Exception:
+                self.logger.exception("strategy rotation failed")
             strategy = None
             if prompt is not None:
                 metadata = getattr(prompt, "metadata", {})
@@ -6516,6 +6524,12 @@ class SelfImprovementEngine:
                     threshold = 0
                 if threshold and count >= threshold:
                     self.deprioritized_strategies.add(str(strategy))
+
+    def next_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
+        """Return the next prompt strategy using the strategy manager."""
+
+        self.prompt_strategy_manager.set_strategies(strategies)
+        return self.prompt_strategy_manager.select(self._select_prompt_strategy)
 
     def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
         """Select a strategy taking failure penalties into account.
