@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 import yaml
 
+from dynamic_path_router import resolve_path
+
 
 def malformed_json() -> str:
     """Return a JSON string with broken syntax."""
@@ -52,7 +54,10 @@ def _load_extra_payloads() -> Dict[str, Any]:
 
     file_path = os.getenv("SANDBOX_HOSTILE_PAYLOADS_FILE")
     if file_path:
-        path = Path(file_path)
+        try:
+            path = Path(resolve_path(file_path))
+        except FileNotFoundError:
+            path = Path(file_path)
         if path.exists():
             try:
                 content = path.read_text(encoding="utf-8")

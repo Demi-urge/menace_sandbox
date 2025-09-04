@@ -58,6 +58,8 @@ from time import perf_counter, process_time
 from typing import Any, Callable, Iterable, Mapping
 from unittest import mock
 
+from dynamic_path_router import resolve_path
+
 try:  # pragma: no cover - resource module may be missing on some platforms
     import resource  # type: ignore
 except Exception:  # pragma: no cover - resource unavailable
@@ -1484,7 +1486,11 @@ class WorkflowSandboxRunner:
                     outfile = os.environ.get("SANDBOX_COVERAGE_FILE")
                     if outfile:
                         try:
-                            cov.json_report(outfile=outfile)
+                            target = resolve_path(outfile)
+                        except FileNotFoundError:
+                            target = resolve_path(".") / outfile
+                        try:
+                            cov.json_report(outfile=str(target))
                         except Exception:
                             logger.exception("coverage json generation failed")
                 except Exception:

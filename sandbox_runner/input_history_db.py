@@ -7,6 +7,7 @@ from typing import Any, List
 import json
 import threading
 
+from dynamic_path_router import resolve_path
 from db_router import GLOBAL_ROUTER, init_db_router
 
 router = GLOBAL_ROUTER or init_db_router("sandbox_runner_input_history_db")
@@ -22,7 +23,13 @@ class InputHistoryDB:
     """Simple SQLite-backed store for sandbox input stubs."""
 
     def __init__(self, path: Path | str = "input_history.db") -> None:
-        self.path = Path(path)
+        if isinstance(path, Path):
+            self.path = path
+        else:
+            try:
+                self.path = Path(resolve_path(path))
+            except FileNotFoundError:
+                self.path = Path(resolve_path(".")) / path
         self._lock = threading.Lock()
         conn = router.get_connection("history")
         conn.execute(

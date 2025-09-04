@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
 from logging_utils import get_logger, setup_logging
+from dynamic_path_router import resolve_path
 
 logger = get_logger(__name__)
 
@@ -16,7 +17,7 @@ MetricsFunc = Callable[[float, float, Optional[Dict[str, float]]], Dict[str, flo
 
 def _load_plugin_dirs_from_file(path: str | Path) -> List[str]:
     """Return plugin directories listed in ``path``."""
-    p = Path(path)
+    p = Path(resolve_path(str(path)))
     if not p.exists():
         return []
     try:
@@ -32,9 +33,9 @@ def _load_plugin_dirs_from_file(path: str | Path) -> List[str]:
         return []
     dirs = data.get("plugin_dirs", []) if isinstance(data, dict) else []
     if isinstance(dirs, str):
-        return [dirs]
+        return [str(resolve_path(dirs))]
     if isinstance(dirs, list):
-        return [str(d) for d in dirs]
+        return [str(resolve_path(str(d))) for d in dirs]
     return []
 
 
@@ -71,10 +72,10 @@ def discover_metrics_plugins(env: dict | None = None) -> List[MetricsFunc]:
     dirs: List[str] = []
     env_dir = env.get("SANDBOX_METRICS_PLUGIN_DIR")
     if env_dir:
-        dirs.extend(env_dir.split(os.pathsep))
+        dirs.extend(str(resolve_path(d)) for d in env_dir.split(os.pathsep))
     cfg_file = env.get("SANDBOX_METRICS_FILE")
     if cfg_file:
-        dirs.extend(_load_plugin_dirs_from_file(cfg_file))
+        dirs.extend(_load_plugin_dirs_from_file(resolve_path(cfg_file)))
     return load_metrics_plugins(dirs)
 
 
