@@ -71,8 +71,37 @@ except Exception:  # pragma: no cover - dependency missing or failed
     tiktoken = None  # type: ignore
     _ENCODER = None
 
+try:  # pragma: no cover - optional dependency
+    import yaml
+except Exception:  # pragma: no cover - degrade gracefully when unavailable
+    yaml = None  # type: ignore
+
 
 DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh implementation."
+
+_STRATEGY_TEMPLATE_PATH = Path(resolve_path("prompt_strategy.yaml"))
+_STRATEGY_TEMPLATES: Dict[str, str] | None = None
+
+
+def _load_strategy_templates() -> Dict[str, str]:
+    """Return cached strategy templates loaded from ``prompt_strategy.yaml``."""
+
+    global _STRATEGY_TEMPLATES
+    if _STRATEGY_TEMPLATES is None:
+        templates: Dict[str, str] = {}
+        if yaml is not None:
+            try:  # pragma: no cover - best effort
+                if _STRATEGY_TEMPLATE_PATH.exists():
+                    data = yaml.safe_load(
+                        _STRATEGY_TEMPLATE_PATH.read_text(encoding="utf-8")
+                    )
+                    if isinstance(data, dict):
+                        raw = data.get("templates", {})
+                        templates = {str(k): str(v) for k, v in raw.items() if isinstance(k, str)}
+            except Exception:
+                templates = {}
+        _STRATEGY_TEMPLATES = templates
+    return _STRATEGY_TEMPLATES
 
 
 try:  # pragma: no cover - optional heavy imports for type checking
@@ -701,6 +730,7 @@ class PromptEngine:
         retrieval_context: str | None = None,
         retry_trace: str | None = None,
         tone: str | None = None,
+        strategy: str | None = None,
         target_region: TargetRegion | None = None,
     ) -> Prompt:
         """Return a :class:`Prompt` for *task* using retrieved patch examples.
@@ -709,11 +739,13 @@ class PromptEngine:
         additional information such as the snippet body, repository layout or
         metadata from vector retrieval.  ``summaries`` may contain short
         descriptions of file chunks when the full source is too large to
-        include.  ``retry_trace`` may contain failure
-        logs or tracebacks from a prior attempt.  When supplied a "Previous
-        failure" section is appended and the details are de-duplicated so
-        repeated retries do not accumulate duplicate traces.  When retrieval
-        fails or the average confidence of returned patches falls below
+        include.  ``retry_trace`` may contain failure logs or tracebacks from a
+        prior attempt.  ``strategy`` selects an optional template from
+        ``prompt_strategy.yaml`` that is inserted near the start of the prompt
+        and recorded in the prompt metadata.  When supplied a "Previous failure"
+        section is appended and the details are de-duplicated so repeated
+        retries do not accumulate duplicate traces.  When retrieval fails or
+        the average confidence of returned patches falls below
         ``confidence_threshold`` a static fallback template is returned.
         """
         self._maybe_refresh_optimizer()
@@ -845,6 +877,12 @@ class PromptEngine:
 
         lines: List[str] = [instr, ""]
 
+        if strategy:
+            tmpl = _load_strategy_templates().get(strategy)
+            if tmpl:
+                lines.append(str(tmpl).strip())
+                lines.append("")
+
         if summaries:
             summary_text = "\n".join(summaries).strip()
             if summary_text:
@@ -881,6 +919,8 @@ class PromptEngine:
         text = "\n".join(line for line in lines if line)
         text = self._trim_tokens(text, self.token_threshold)
         meta: Dict[str, Any] = {"vector_confidences": scores}
+        if strategy:
+            meta["strategy"] = strategy
         if target_region is not None:
             region_meta = {
                 "filename": filename or "",
@@ -1194,6 +1234,7 @@ class PromptEngine:
         optimizer: PromptOptimizer | None = None,
         optimizer_refresh_interval: int | None = None,
         target_region: TargetRegion | None = None,
+        strategy: str | None = None,
     ) -> Prompt:
         """Class method wrapper used by existing callers and tests."""
 
@@ -1217,6 +1258,7 @@ class PromptEngine:
             retry_trace=retry_trace,
             tone=tone,
             summaries=summaries,
+            strategy=strategy,
             target_region=target_region,
         )
 
@@ -1236,6 +1278,7 @@ def build_prompt(
     optimizer: PromptOptimizer | None = None,
     optimizer_refresh_interval: int | None = None,
     target_region: TargetRegion | None = None,
+    strategy: str | None = None,
 ) -> Prompt:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`.
 
@@ -1257,6 +1300,7 @@ def build_prompt(
         optimizer=optimizer,
         optimizer_refresh_interval=optimizer_refresh_interval,
         target_region=target_region,
+        strategy=strategy,
     )
 
 

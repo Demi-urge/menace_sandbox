@@ -1050,6 +1050,13 @@ class SelfCodingEngine:
             str(metadata.get("retrieval_context", "")) if metadata else ""
         )
         retry_trace = self._fetch_retry_trace(metadata)
+        strategy = None
+        if metadata:
+            strategy = (
+                metadata.get("strategy")
+                or metadata.get("prompt_id")
+                or metadata.get("prompt_strategy")
+            )
         try:
             prompt_obj = self.prompt_engine.build_prompt(
                 description,
@@ -1059,6 +1066,7 @@ class SelfCodingEngine:
                 tone=self.prompt_tone,
                 summaries=summaries,
                 target_region=target_region,
+                strategy=strategy,
             )
         except TypeError:
             if target_region is not None:
@@ -1080,6 +1088,7 @@ class SelfCodingEngine:
                 retrieval_context=retrieval_context,
                 retry_trace=retry_trace,
                 summaries=summaries,
+                strategy=strategy,
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
