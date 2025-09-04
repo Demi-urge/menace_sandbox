@@ -146,17 +146,18 @@ def register_strategy(strategy: RouteStrategy) -> None:
 
 
 def register_route(
-    domain: str,
     business_category: str,
     bot_name: str,
     route: Mapping[str, str],
     *,
+    domain: str = "stripe",
     region: str = "default",
 ) -> None:
     """Register or update a base routing rule.
 
-    The rule is stored within :data:`ROUTING_TABLE` under the specified domain
-    and region.
+    ``domain`` is optional and defaults to ``"stripe"`` for backwards
+    compatibility.  The rule is stored within :data:`ROUTING_TABLE` under the
+    specified domain and region.
     """
 
     _validate_no_api_keys(route)
@@ -166,12 +167,12 @@ def register_route(
 def register_override(rule: Mapping[str, Any]) -> None:
     """Register a routing override for a specific bot and qualifier.
 
-    The ``rule`` mapping requires the keys ``domain``, ``business_category``,
-    ``bot_name``, ``key``, ``value`` and ``route``.  The optional ``region`` key
-    defaults to ``"default"``.
+    The ``rule`` mapping requires the keys ``business_category``, ``bot_name``,
+    ``key``, ``value`` and ``route``. Optional ``domain`` defaults to
+    ``"stripe"`` and ``region`` defaults to ``"default"``.
     """
 
-    domain = rule["domain"]
+    domain = rule.get("domain", "stripe")
     region = rule.get("region", "default")
     business_category = rule["business_category"]
     bot_name = rule["bot_name"]
@@ -200,13 +201,24 @@ def _client(api_key: str):
 
 
 def _parse_bot_id(bot_id: str) -> tuple[str, str, str]:
+    """Return ``(domain, business_category, bot_name)`` from ``bot_id``.
+
+    ``bot_id`` can be provided either as ``"domain:category:bot"`` or the
+    legacy ``"category:bot"`` format.  In the latter case the domain defaults to
+    ``"stripe"`` for backwards compatibility.
+    """
+
     parts = bot_id.split(":")
-    if len(parts) != 3:
+    if len(parts) == 2:
+        business_category, bot_name = parts
+        domain = "stripe"
+    elif len(parts) == 3:
+        domain, business_category, bot_name = parts
+    else:
         logger.error("Invalid bot_id '%s'", bot_id)
         raise ValueError(
             "bot_id must be in 'domain:business_category:bot_name' format"
         )
-    domain, business_category, bot_name = parts
     return domain, business_category, bot_name
 
 

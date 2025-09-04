@@ -13,9 +13,10 @@ module.
 ## Bot Invocation and Routing Rules
 
 Bots import `stripe_billing_router` directly. Each bot supplies a
-`"domain:business_category:bot_name"` string which the router uses to look up
-billing information and attach the appropriate Stripe keys. The ``domain``
-component identifies the billing provider (currently only ``stripe``).
+`"business_category:bot_name"` string and may optionally prefix the domain,
+resulting in ``"domain:business_category:bot_name"``.  When omitted, the domain
+defaults to ``stripe``.  The router uses this identifier to look up billing
+information and attach the appropriate Stripe keys.
 
 Routing rules are loaded from ``config/stripe_billing_router.yaml`` (override
 via the ``STRIPE_ROUTING_CONFIG`` environment variable) and stored in
@@ -37,16 +38,17 @@ change routes. Use `register_override` for dynamic adjustments.
 
 ## Usage
 
-Bots are identified by a `"domain:business_category:bot_name"` string.  The
-router looks up routing details for that bot and adds the Stripe keys.  Bots
-request charges or create customers by calling router helpers:
+Bots are identified by a `"business_category:bot_name"` string or
+``"domain:business_category:bot_name"``.  The router looks up routing details
+for that bot and adds the Stripe keys.  Bots request charges or create
+customers by calling router helpers:
 
 ```python
 from stripe_billing_router import charge, create_customer, get_balance
 
-charge("stripe:finance:finance_router_bot", amount=10.0)
-create_customer("stripe:finance:finance_router_bot", {"email": "bot@example.com"})
-bal = get_balance("stripe:finance:finance_router_bot")
+charge("finance:finance_router_bot", amount=10.0)
+create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
+bal = get_balance("finance:finance_router_bot")
 ```
 
 ## Extending to New Bots
@@ -57,7 +59,6 @@ New bots can be supported by registering a route:
 from stripe_billing_router import register_route
 
 register_route(
-    "stripe",
     "analytics",
     "new_bot",
     {
@@ -76,7 +77,6 @@ selecting it at call time:
 from stripe_billing_router import charge, register_route
 
 register_route(
-    "stripe",
     "finance",
     "finance_router_bot",
     {
@@ -88,7 +88,7 @@ register_route(
 )
 
 charge(
-    "stripe:finance:finance_router_bot",
+    "finance:finance_router_bot",
     amount=10.0,
     overrides={"region": "eu"},
 )
@@ -102,7 +102,6 @@ qualifier:
 ```python
 register_override(
     {
-        "domain": "stripe",
         "business_category": "finance",
         "bot_name": "finance_router_bot",
         "key": "business",
@@ -112,7 +111,7 @@ register_override(
 )
 
 charge(
-    "stripe:finance:finance_router_bot",
+    "finance:finance_router_bot",
     amount=10.0,
     overrides={"business": "enterprise"},
 )
