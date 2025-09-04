@@ -37,7 +37,6 @@ from .models_repo import (
 from vector_service import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
-    CriticalGenerationFailure,
 )
 
 try:  # pragma: no cover - optional dependency
@@ -148,6 +147,7 @@ SECTION_METADATA = "metadata"
 SECTION_VERSION_CONTROL = "version_control"
 SECTION_TESTING = "testing"
 SECTION_CONTEXT = "context"
+SECTION_BILLING = "billing"
 
 INSTRUCTION_SECTIONS = [
     SECTION_CODING_STANDARDS,
@@ -155,14 +155,15 @@ INSTRUCTION_SECTIONS = [
     SECTION_METADATA,
     SECTION_VERSION_CONTROL,
     SECTION_TESTING,
+    SECTION_BILLING,
     SECTION_CONTEXT,
 ]
 
 PREVIOUS_FAILURE_TEMPLATE = "Previous failure: {error}"
 
 PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must defer to stripe_billing_router.py. "
-    "No raw Stripe keys, API calls, or checkout logic may exist elsewhere. "
+    "All payment logic must import and use stripe_billing_router. "
+    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
     "Missing the import must raise a critical generation failure."
 )
 

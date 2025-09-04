@@ -74,8 +74,8 @@ except Exception:  # pragma: no cover - dependency missing or failed
 DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh implementation."
 
 PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must defer to stripe_billing_router.py. "
-    "No raw Stripe keys, API calls, or checkout logic may exist elsewhere. "
+    "All payment logic must import and use stripe_billing_router. "
+    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
     "Missing the import must raise a critical generation failure."
 )
 
