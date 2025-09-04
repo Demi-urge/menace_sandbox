@@ -9,6 +9,11 @@ from typing import Any, Iterator
 import logging
 import yaml
 
+try:  # pragma: no cover - fallback for package/local imports
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    from dynamic_path_router import resolve_path  # type: ignore
+
 
 EXPECTED_METRICS = {
     "profitability",
@@ -43,7 +48,9 @@ def _load_remediation_hints() -> dict[str, str]:
     """
 
     try:
-        with Path("configs/roi_fix_rules.yaml").open("r", encoding="utf-8") as fh:
+        with resolve_path("configs/roi_fix_rules.yaml").open(
+            "r", encoding="utf-8"
+        ) as fh:
             file_hints: dict[str, str] = yaml.safe_load(fh) or {}
     except FileNotFoundError:
         file_hints = {}
@@ -83,7 +90,7 @@ class ROICalculator:
 
     def __init__(
         self,
-        profiles_path: str | Path = "configs/roi_profiles.yaml",
+        profiles_path: str | Path | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         """Initialise calculator with profiles loaded from *profiles_path*.
@@ -91,12 +98,19 @@ class ROICalculator:
         Parameters
         ----------
         profiles_path:
-            Path to the YAML file containing ROI profiles.
+            Path to the YAML file containing ROI profiles. If ``None`` or a
+            string, :func:`resolve_path` is used to locate the file. Defaults to
+            ``configs/roi_profiles.yaml``.
         logger:
             Optional logger instance. If omitted, ``logging.getLogger(__name__)``
             is used.
         """
-        path = Path(profiles_path)
+        if profiles_path is None:
+            path = Path(resolve_path("configs/roi_profiles.yaml"))
+        elif isinstance(profiles_path, str):
+            path = Path(resolve_path(profiles_path))
+        else:
+            path = Path(profiles_path)
         with path.open("r", encoding="utf-8") as fh:
             self.profiles: dict[str, dict[str, Any]] = yaml.safe_load(fh) or {}
         self._validate_profiles()
@@ -154,7 +168,8 @@ class ROICalculator:
             ]
             if non_numeric:
                 raise ValueError(
-                    f"profile '{name}' has non-numeric weight(s) for: {', '.join(sorted(non_numeric))}"
+                    f"profile '{name}' has non-numeric weight(s) for: "
+                    f"{', '.join(sorted(non_numeric))}"
                 )
             total = float(
                 sum(abs(float(weights[m])) for m in EXPECTED_METRICS)
@@ -209,7 +224,7 @@ def propose_fix(
 
     if isinstance(profile, str):
         try:
-            with Path("configs/roi_profiles.yaml").open(
+            with resolve_path("configs/roi_profiles.yaml").open(
                 "r", encoding="utf-8"
             ) as fh:
                 profiles: dict[str, Any] = yaml.safe_load(fh) or {}
