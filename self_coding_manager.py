@@ -250,9 +250,12 @@ class SelfCodingManager:
 
             def _run(repo: Path, changed: Path | None) -> TestHarnessResult:
                 try:
-                    return run_tests(repo, changed, backend=backend)
+                    res = run_tests(repo, changed, backend=backend)
                 except TypeError:
-                    return run_tests(repo, changed)
+                    res = run_tests(repo, changed)
+                if isinstance(res, list):
+                    return res[0]
+                return res
 
             baseline = _run(clone_root, cloned_path)
             coverage_before = _coverage_ratio(baseline.stdout, baseline.success)

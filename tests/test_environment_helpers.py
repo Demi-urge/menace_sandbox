@@ -562,6 +562,8 @@ def test_harness_failure_frames(tmp_path, monkeypatch):
 
     monkeypatch.setattr(th, "_python_bin", lambda v: Path(sys.executable))
     result = th.run_tests(repo)
+    if isinstance(result, list):
+        result = result[0]
     assert not result.success
     assert result.failure is not None
     assert result.failure["function"] == "helper"

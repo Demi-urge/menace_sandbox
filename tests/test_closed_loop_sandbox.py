@@ -277,6 +277,8 @@ def test_harness_filters_specific_test_file(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     result = th.run_tests(repo, tests / "test_mod.py")
+    if isinstance(result, list):
+        result = result[0]
 
     assert pytest_cmds and str(Path("tests/test_mod.py")) in pytest_cmds[0]
     assert "-k" not in pytest_cmds[0]
@@ -309,6 +311,8 @@ def test_harness_uses_k_filter_for_module(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     result = th.run_tests(repo, repo / "mod.py")
+    if isinstance(result, list):
+        result = result[0]
 
     assert pytest_cmds and "-k" in pytest_cmds[0]
     k_index = pytest_cmds[0].index("-k") + 1

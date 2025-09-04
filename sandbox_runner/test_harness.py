@@ -566,4 +566,6 @@ def run_tests(
                         os.environ["SANDBOX_EDGE_CASE_STUBS"] = old_edges
                 results.append(res)
 
-    return results[0]
+    if len(results) == 1:
+        return results[0]
+    return results
