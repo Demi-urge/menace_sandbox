@@ -3,12 +3,36 @@ import types
 import sys
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-sys.modules.setdefault("menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object))
-sys.modules.setdefault("menace.data_bot", types.SimpleNamespace(MetricsDB=object, DataBot=object))
+sys.modules.setdefault(
+    "menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object)
+)
+sys.modules.setdefault(
+    "menace.data_bot", types.SimpleNamespace(MetricsDB=object, DataBot=object)
+)
+sys.modules.setdefault(
+    "vector_service",
+    types.SimpleNamespace(
+        EmbeddableDBMixin=type(
+            "EmbeddableDBMixin", (), {"__init__": lambda self, *a, **k: None}
+        ),
+        CognitionLayer=object,
+        Retriever=object,
+        FallbackResult=object,
+        ContextBuilder=object,
+        PatchLogger=object,
+        EmbeddingBackfill=object,
+        SharedVectorService=object,
+        VectorServiceError=Exception,
+        RateLimitError=Exception,
+        MalformedPromptError=Exception,
+        ErrorResult=Exception,
+    ),
+)
 
 import menace.error_bot as eb  # noqa: E402
 import menace.error_logger as elog  # noqa: E402
 import menace.telemetry_feedback as tf  # noqa: E402
+import menace.dynamic_path_router as dpr  # noqa: E402
 from pathlib import Path  # noqa: E402
 import pytest  # noqa: E402
 
@@ -36,7 +60,13 @@ class DummyGraph:
 
 def _setup(tmp_path, monkeypatch):
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dpr._PROJECT_ROOT = None
+    dpr._PATH_CACHE.clear()
     db = eb.ErrorDB(tmp_path / "e.db")
+    db.conn.execute(
+        "CREATE TABLE IF NOT EXISTS error_stats(category TEXT, module TEXT, count INTEGER, PRIMARY KEY(category, module))"
+    )
     logger = elog.ErrorLogger(db)
     engine = DummyEngine()
     mod = tmp_path / "bot.py"
@@ -62,7 +92,7 @@ def test_feedback_triggers_patch(tmp_path, monkeypatch, scope, src):
         )
     fb = tf.TelemetryFeedback(logger, engine, threshold=3)
     fb._run_cycle(scope=scope)
-    assert engine.calls and engine.calls[0][0] == Path("bot.py")
+    assert engine.calls and engine.calls[0][0] == mod.resolve()
 
 
 def test_feedback_threshold(tmp_path, monkeypatch):
