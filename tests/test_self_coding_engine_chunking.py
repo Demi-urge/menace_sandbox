@@ -309,6 +309,64 @@ def test_generate_helper_uses_cached_chunk_summaries(monkeypatch, tmp_path):
     assert calls["n"] == 2  # summaries computed once and then served from cache
 
 
+def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
+    monkeypatch.setattr(sce, "_count_tokens", lambda text: 0)
+
+    captured: dict[str, str] = {}
+
+    class DummyPrompt:
+        def __init__(self, text: str = "") -> None:
+            self.text = text
+            self.system = ""
+            self.examples: list[str] = []
+
+    class DummyPromptEngine:
+        def build_prompt(
+            self,
+            goal,
+            *,
+            context=None,
+            retrieval_context=None,
+            retry_trace=None,
+            tone=None,
+            summaries=None,
+        ):
+            captured["context"] = context
+            return DummyPrompt()
+
+    monkeypatch.setattr(sce, "PromptEngine", lambda *a, **k: DummyPromptEngine())
+
+    class DummyLLM:
+        gpt_memory = None
+
+        def generate(self, prompt):
+            return types.SimpleNamespace(text="")
+
+    engine = sce.SelfCodingEngine(
+        object(),
+        object(),
+        llm_client=DummyLLM(),
+        prompt_chunk_token_threshold=50,
+        chunk_summary_cache_dir=tmp_path,
+    )
+    engine.formal_verifier = None
+    engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
+
+    monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
+    monkeypatch.setattr(engine, "_get_repo_layout", lambda lines: "")
+
+    target = tmp_path / "mod.py"
+    target.write_text("a=1\nb=2\nc=3\n")
+    region = sce.TargetRegion(start_line=2, end_line=2, func_name="f")
+
+    engine.generate_helper("do something", path=target, target_region=region)
+
+    ctx = captured["context"]
+    assert "Modify only lines 2-2" in ctx
+    assert "# start\nb=2\n# end" in ctx
+    assert "a=1" not in ctx
+
+
 def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
 
