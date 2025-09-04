@@ -9,6 +9,7 @@ from menace.environment_generator import generate_presets
 from sandbox_runner.cli import _run_sandbox
 from sandbox_runner import _sandbox_main
 from metrics_dashboard import MetricsDashboard
+from dynamic_path_router import resolve_path
 from pathlib import Path
 from threading import Thread
 
@@ -86,7 +87,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     if args.dashboard_port:
-        history_file = Path(args.sandbox_data_dir or "sandbox_data") / "roi_history.json"
+        history_file = Path(resolve_path(args.sandbox_data_dir or "sandbox_data")) / "roi_history.json"
         dash = MetricsDashboard(str(history_file))
         Thread(target=dash.run, kwargs={"port": args.dashboard_port}, daemon=True).start()
 
@@ -101,7 +102,7 @@ def main() -> None:
         for preset in presets:
             os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
             run_args = argparse.Namespace(
-                sandbox_data_dir=args.sandbox_data_dir,
+                sandbox_data_dir=resolve_path(args.sandbox_data_dir or "sandbox_data"),
                 workflow_db="workflows.db",
                 workflow_sim=False,
                 preset_count=None,
