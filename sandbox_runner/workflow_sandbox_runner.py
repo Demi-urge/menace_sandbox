@@ -279,6 +279,7 @@ class WorkflowSandboxRunner:
             else:
                 file_data[key] = value
 
+        capture_cov = bool(os.getenv("SANDBOX_CAPTURE_COVERAGE")) and coverage is not None
         if use_subprocess:
             if audit_hook is not None:
                 try:
@@ -303,6 +304,12 @@ class WorkflowSandboxRunner:
                 "audit_hook": audit_hook,
                 "use_subprocess": False,
             }
+            cov_file: pathlib.Path | None = None
+            if capture_cov:
+                tmp = tempfile.NamedTemporaryFile(prefix="cov_", suffix=".json", delete=False)
+                tmp.close()
+                cov_file = pathlib.Path(tmp.name)
+                os.environ["SANDBOX_COVERAGE_FILE"] = str(cov_file)
 
             p = multiprocessing.Process(
                 target=_subprocess_worker, args=(child_conn, funcs, params)
@@ -330,6 +337,19 @@ class WorkflowSandboxRunner:
                         p.join()
                 parent_conn.close()
                 child_conn.close()
+                if cov_file is not None:
+                    try:
+                        if cov_file.exists():
+                            data = json.loads(cov_file.read_text())
+                            try:
+                                from .environment import load_coverage_report  # type: ignore
+
+                                load_coverage_report(data)
+                            except Exception:
+                                pass
+                    finally:
+                        cov_file.unlink(missing_ok=True)
+                        os.environ.pop("SANDBOX_COVERAGE_FILE", None)
             self.metrics = metrics
             self.telemetry = telemetry
             return metrics
@@ -1041,6 +1061,11 @@ class WorkflowSandboxRunner:
                 logger.warning("urllib sandboxing skipped: %s", exc, exc_info=True)
 
             metrics = RunMetrics()
+            cov = coverage.Coverage(
+                data_file=os.environ.get("SANDBOX_COVERAGE_FILE")
+            ) if capture_cov else None
+            if cov:
+                cov.start()
 
             for fn in funcs:
                 name = getattr(fn, "__name__", repr(fn))
@@ -1066,9 +1091,11 @@ class WorkflowSandboxRunner:
                     os.environ[key] = str(value)
                 cov_files: list[str] = []
                 cov_funcs: list[str] = []
-                cov = coverage.Coverage(data_file=None) if coverage else None
-                if cov:
-                    cov.start()
+                before: dict[str, set[int]] = {}
+                if capture_cov and cov:
+                    data_before = cov.get_data()
+                    for f in data_before.measured_files():
+                        before[f] = set(data_before.lines(f) or [])
 
                 start = perf_counter()
                 cpu_before = cpu_after = 0.0
@@ -1194,11 +1221,16 @@ class WorkflowSandboxRunner:
                         logger.exception("module %s terminated unexpectedly", name)
                         raise
                 finally:
-                    if cov:
+                    if capture_cov and cov:
                         try:
-                            cov.stop()
                             data = cov.get_data()
+                            after: dict[str, set[int]] = {}
                             for f in data.measured_files():
+                                after[f] = set(data.lines(f) or [])
+                            for f, lines in after.items():
+                                new_lines = lines - before.get(f, set())
+                                if not new_lines:
+                                    continue
                                 orig = pathlib.Path(f)
                                 fp = orig
                                 fpath = orig.as_posix()
@@ -1217,13 +1249,12 @@ class WorkflowSandboxRunner:
                                 with fh:
                                     source = fh.read()
                                 cov_files.append(fpath)
-                                lines = data.lines(f) or []
                                 try:
                                     tree = ast.parse(source)
                                     for node in ast.walk(tree):
                                         if isinstance(node, ast.FunctionDef):
                                             end = getattr(node, "end_lineno", node.lineno)
-                                            if any(l in lines for l in range(node.lineno, end + 1)):
+                                            if any(l in new_lines for l in range(node.lineno, end + 1)):
                                                 cov_funcs.append(f"{fpath}:{node.name}")
                                 except Exception:
                                     continue
@@ -1337,6 +1368,18 @@ class WorkflowSandboxRunner:
                         metrics.crash_count += nested_metrics.crash_count
                         self.metrics = prev_metrics
                         self.telemetry = prev_telemetry
+
+            if capture_cov and cov:
+                try:
+                    cov.stop()
+                    outfile = os.environ.get("SANDBOX_COVERAGE_FILE")
+                    if outfile:
+                        try:
+                            cov.json_report(outfile=outfile)
+                        except Exception:
+                            logger.exception("coverage json generation failed")
+                except Exception:
+                    logger.exception("coverage finalisation failed")
 
             # ------------------------------------------------------------------
             # Aggregate metrics into a simple telemetry dictionary
