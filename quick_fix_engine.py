@@ -34,7 +34,8 @@ except Exception:  # pragma: no cover - chunking unavailable
     get_chunk_summaries = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
-    from .self_coding_engine import SelfCodingEngine, TargetRegion
+    from .self_coding_engine import SelfCodingEngine
+    from .self_improvement.target_region import TargetRegion
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable

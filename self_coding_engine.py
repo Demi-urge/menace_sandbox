@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
 from itertools import zip_longest
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 import subprocess
 import json
 import base64
@@ -138,6 +138,22 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from prompt_optimizer import PromptOptimizer  # type: ignore
 from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
 try:
+    from .self_improvement.target_region import TargetRegion
+except Exception:  # pragma: no cover - fallback for direct execution
+    import importlib.util
+    import pathlib
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "_target_region_fallback",
+        pathlib.Path(__file__).resolve().parent / "self_improvement" / "target_region.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_target_region_fallback"] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)  # type: ignore[attr-defined]
+    TargetRegion = module.TargetRegion  # type: ignore
+try:
     from .self_improvement.prompt_memory import log_prompt_attempt
 except Exception:  # pragma: no cover - fallback for flat layout
     try:
@@ -191,15 +207,6 @@ def _count_tokens(text: str) -> int:
         except Exception:
             pass
     return len(text.split())
-
-
-@dataclass
-class TargetRegion:
-    """Represents a contiguous region within a source file."""
-
-    start_line: int
-    end_line: int
-    func_name: str | None = None
 
 
 class SelfCodingEngine:

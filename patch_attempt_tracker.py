@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-from .target_region import TargetRegion
+from .self_improvement.target_region import TargetRegion
 
 
 @dataclass

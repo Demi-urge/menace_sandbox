@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Utilities for locating failing regions from stack traces."""
 
-from dataclasses import dataclass
 from pathlib import Path
 import ast
 import re
@@ -10,15 +9,21 @@ import traceback
 from types import TracebackType
 from typing import Optional
 
+try:
+    from .self_improvement.target_region import TargetRegion
+except Exception:  # pragma: no cover - fallback for direct execution
+    import importlib.util
+    import sys
 
-@dataclass
-class TargetRegion:
-    """Represents a region of code implicated by a failure."""
-
-    path: str
-    start_line: int
-    end_line: int
-    func_name: str
+    spec = importlib.util.spec_from_file_location(
+        "_target_region_fallback",
+        Path(__file__).resolve().parent / "self_improvement" / "target_region.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_target_region_fallback"] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)  # type: ignore[attr-defined]
+    TargetRegion = module.TargetRegion  # type: ignore
 
 
 _FRAME_RE = re.compile(r'File "([^"]+)", line (\d+), in (\w+)')

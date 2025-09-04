@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import self_improvement.targeting as targeting
+import self_improvement.target_region as targeting
 from tests.self_improvement.test_patch_application import _load_patch_module
 
 
