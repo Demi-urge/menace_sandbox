@@ -19,8 +19,11 @@ from .chatgpt_enhancement_bot import (
 )
 from .micro_models.diff_summarizer import summarize_diff
 from .micro_models.prefix_injector import inject_prefix
-from stripe_policy import PAYMENT_ROUTER_NOTICE
-import stripe_billing_router  # noqa: F401
+from billing.prompt_notice import prepend_payment_notice
+try:  # pragma: no cover - optional billing dependency
+    import stripe_billing_router  # noqa: F401
+except Exception:  # pragma: no cover - best effort
+    stripe_billing_router = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -141,14 +144,7 @@ class EnhancementBot:
                 confidence,
                 role="system",
             )
-        if messages and messages[0].get("role") == "system":
-            messages[0]["content"] = (
-                PAYMENT_ROUTER_NOTICE + "\n" + messages[0].get("content", "")
-            )
-        else:
-            messages = (
-                [{"role": "system", "content": PAYMENT_ROUTER_NOTICE}] + messages
-            )
+        messages = prepend_payment_notice(messages)
         try:
             resp = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",

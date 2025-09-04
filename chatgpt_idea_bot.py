@@ -8,8 +8,11 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
-from stripe_policy import PAYMENT_ROUTER_NOTICE
-import stripe_billing_router  # noqa: F401
+from billing.prompt_notice import prepend_payment_notice
+try:  # pragma: no cover - optional billing dependency
+    import stripe_billing_router  # noqa: F401
+except Exception:  # pragma: no cover - best effort
+    stripe_billing_router = None  # type: ignore
 from dynamic_path_router import resolve_path
 
 OPENAI_CHAT_URL = os.environ.get(
@@ -183,16 +186,7 @@ class ChatGPTClient:
                 logger.exception("failed to log interaction")
 
         user_prompt = messages[-1].get("content", "") if messages else ""
-        messages_for_api = list(messages)
-        if messages_for_api and messages_for_api[0].get("role") == "system":
-            messages_for_api[0]["content"] = (
-                PAYMENT_ROUTER_NOTICE + "\n" + messages_for_api[0].get("content", "")
-            )
-        else:
-            messages_for_api = (
-                [{"role": "system", "content": PAYMENT_ROUTER_NOTICE}]
-                + messages_for_api
-            )
+        messages_for_api = prepend_payment_notice(list(messages))
         if use_mem:
             try:
                 ctx_parts: List[str] = []
