@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import List, Dict, Iterable, Optional, Any, TYPE_CHECKING
+from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
 
 OPENAI_CHAT_URL = os.environ.get(
@@ -26,8 +26,8 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must defer to stripe_billing_router.py. "
-    "No raw Stripe keys, API calls, or checkout logic may exist elsewhere. "
+    "All payment logic must import and use stripe_billing_router. "
+    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
     "Missing the import must raise a critical generation failure."
 )
 

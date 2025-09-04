@@ -30,8 +30,8 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
 
 PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must defer to stripe_billing_router.py. "
-    "No raw Stripe keys, API calls, or checkout logic may exist elsewhere. "
+    "All payment logic must import and use stripe_billing_router. "
+    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
     "Missing the import must raise a critical generation failure."
 )
 

@@ -4,8 +4,7 @@
     "coding_standards": [
       "- Follow PEP8 style guidelines with 4 space indents and lines under 79 characters.",
       "- Provide Google style docstrings for modules, classes and functions.",
-      "- Include inline comments explaining complex logic.",
-      "- All payment logic must defer to stripe_billing_router.py. No raw Stripe keys, API calls, or checkout logic may exist elsewhere. Missing the import must raise a critical generation failure."
+      "- Include inline comments explaining complex logic."
     ],
     "repository_layout": [
       "- Place source code in {name}.py at the repository root.",
@@ -22,6 +21,10 @@
     "testing": [
       "- Run scripts/setup_tests.sh then use pytest and ensure all tests pass.",
       "- Include at least one test per function and output coverage with 'pytest --cov'."
+    ],
+    "billing": [
+      "- All payment logic must import and use stripe_billing_router.",
+      "- Direct Stripe SDK calls or raw Stripe keys are forbidden."
     ]
   }
 }
