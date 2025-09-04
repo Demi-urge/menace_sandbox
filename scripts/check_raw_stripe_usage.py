@@ -25,7 +25,19 @@ PATTERN = re.compile(r"api\.stripe\.com|['\"](?:sk_|pk_)[^'\"]*['\"]")
 
 def _tracked_files() -> list[Path]:
     result = subprocess.run(
-        ["git", "ls-files", "*.py", "*.js", "*.ts", "*.md", "*.yaml"],
+        [
+            "git",
+            "ls-files",
+            "*.py",
+            "*.js",
+            "*.ts",
+            "*.md",
+            "*.yaml",
+            "*.html",
+            "*.json",
+            "*.jsx",
+            "*.tsx",
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
