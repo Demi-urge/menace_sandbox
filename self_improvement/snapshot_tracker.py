@@ -28,6 +28,11 @@ try:  # pragma: no cover - optional module
 except Exception:  # pragma: no cover
     relevancy_radar = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from ..module_index_db import ModuleIndexDB
+except Exception:  # pragma: no cover
+    ModuleIndexDB = None  # type: ignore
+
 
 @dataclass
 class Snapshot:
@@ -167,6 +172,44 @@ class SnapshotTracker:
     def __init__(self) -> None:
         self._snaps: dict[str, Snapshot] = {}
         self._context: dict[str, Mapping[str, Any]] = {}
+        settings = SandboxSettings()
+        base = Path(resolve_path(settings.sandbox_data_dir))
+        self._conf_path = base / "strategy_confidence.json"
+        try:
+            data = json.loads(self._conf_path.read_text(encoding="utf-8"))
+            self.strategy_confidence: Dict[str, int] = {
+                str(k): int(v) for k, v in data.items() if isinstance(k, str)
+            }
+        except Exception:
+            self.strategy_confidence = {}
+        self._module_map_path = base / "module_checkpoints.json"
+        try:
+            mapping = json.loads(self._module_map_path.read_text(encoding="utf-8"))
+            self._module_map: Dict[str, Dict[str, str]] = {
+                str(k): {str(sk): str(sv) for sk, sv in v.items()}
+                for k, v in mapping.items()
+                if isinstance(v, dict)
+            }
+        except Exception:
+            self._module_map = {}
+
+    def _save_conf(self) -> None:
+        try:
+            self._conf_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conf_path.write_text(
+                json.dumps(self.strategy_confidence), encoding="utf-8"
+            )
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+    def _save_module_map(self) -> None:
+        try:
+            self._module_map_path.parent.mkdir(parents=True, exist_ok=True)
+            self._module_map_path.write_text(
+                json.dumps(self._module_map), encoding="utf-8"
+            )
+        except Exception:  # pragma: no cover - best effort
+            pass
 
     def capture(self, stage: str, context: Mapping[str, Any]) -> Snapshot:
         files = context.get("files", [])
@@ -197,8 +240,8 @@ class SnapshotTracker:
         entropy_delta = float(delta.get("entropy", 0.0))
         regression = roi_delta < 0 or entropy_delta > 0
         delta["regression"] = regression
+        ctx = self._context.get("after") or self._context.get("post") or {}
         if regression:
-            ctx = self._context.get("after") or self._context.get("post") or {}
             prompt = ctx.get("prompt")
             diff = ctx.get("diff") or ctx.get("diff_path")
             try:
@@ -216,6 +259,52 @@ class SnapshotTracker:
                 )
             except Exception:  # pragma: no cover - best effort
                 pass
+        else:
+            improved = (
+                delta.get("roi", 0.0) >= 0.0
+                and delta.get("sandbox_score", 0.0) >= 0.0
+                and delta.get("entropy", 0.0) <= 0.0
+                and delta.get("call_graph_complexity", 0.0) >= 0.0
+                and delta.get("token_diversity", 0.0) >= 0.0
+            )
+            if improved:
+                files = ctx.get("files") or []
+                prompt = ctx.get("prompt")
+                strategy: str | None = None
+                if isinstance(prompt, dict):
+                    strategy = prompt.get("strategy") or prompt.get("strategy_name")
+                elif hasattr(prompt, "strategy"):
+                    strategy = getattr(prompt, "strategy")
+                elif isinstance(prompt, str):
+                    strategy = prompt
+                timestamp = str(int(time.time()))
+                base = Path(resolve_path(SandboxSettings().sandbox_data_dir))
+                ckpt_dir = base / "checkpoints" / timestamp
+                for f in files:
+                    try:
+                        src = Path(f)
+                        ckpt_dir.mkdir(parents=True, exist_ok=True)
+                        dest = ckpt_dir / src.name
+                        try:
+                            shutil.copy2(src, dest)
+                        except Exception:  # pragma: no cover - best effort
+                            dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                        if ModuleIndexDB:
+                            try:
+                                ModuleIndexDB().get(str(src))
+                            except Exception:
+                                pass
+                        if strategy:
+                            rel = Path("checkpoints") / timestamp / src.name
+                            self._module_map.setdefault(src.name, {})[str(strategy)] = rel.as_posix()
+                    except Exception:  # pragma: no cover - best effort
+                        pass
+                if strategy:
+                    self.strategy_confidence[str(strategy)] = int(
+                        self.strategy_confidence.get(str(strategy), 0)
+                    ) + 1
+                    self._save_conf()
+                    self._save_module_map()
         return delta
 
 def save_checkpoint(module_path: Path | str, cycle_id: str) -> Path:
@@ -236,12 +325,41 @@ def save_checkpoint(module_path: Path | str, cycle_id: str) -> Path:
     return dest
 
 
+def get_best_checkpoint(module: Path | str) -> Path | None:
+    """Return path to highest confidence checkpoint for ``module`` if any."""
+
+    settings = SandboxSettings()
+    base = Path(resolve_path(settings.sandbox_data_dir))
+    conf_path = base / "strategy_confidence.json"
+    map_path = base / "module_checkpoints.json"
+    try:
+        conf = json.loads(conf_path.read_text(encoding="utf-8"))
+        if not isinstance(conf, dict):
+            conf = {}
+    except Exception:
+        conf = {}
+    try:
+        mapping = json.loads(map_path.read_text(encoding="utf-8"))
+        if not isinstance(mapping, dict):
+            mapping = {}
+    except Exception:
+        mapping = {}
+    key = Path(module).name
+    strategies = mapping.get(key, {})
+    if not strategies:
+        return None
+    best = max(strategies, key=lambda s: conf.get(s, 0))
+    rel = Path(strategies[best])
+    return base / rel
+
+
 __all__ = [
     "Snapshot",
     "SnapshotTracker",
     "capture",
     "compute_delta",
     "save_checkpoint",
+    "get_best_checkpoint",
     "downgrade_counts",
     "record_downgrade",
 ]
