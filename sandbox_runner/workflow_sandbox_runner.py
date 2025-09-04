@@ -179,7 +179,7 @@ class WorkflowSandboxRunner:
         timeout: float | None = None,
         memory_limit: int | None = None,
         cpu_limit: int | None = None,
-        use_subprocess: bool = False,
+        use_subprocess: bool = True,
         audit_hook: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return telemetry.
@@ -214,12 +214,16 @@ class WorkflowSandboxRunner:
         available; otherwise the limit is ignored.
 
         ``cpu_limit`` specifies the maximum amount of CPU time (in seconds)
-        available to the workflow when executed in a subprocess.  This is
-        enforced using ``resource`` limits or cgroups when available.
+        available to the workflow when executed in a subprocess or container.
+        This is enforced using ``resource`` limits or cgroups when available.
 
-        When ``use_subprocess`` is ``True`` the entire workflow executes in a
-        separate Python process with the supplied CPU and memory limits applied.
-        This provides an additional OS-level isolation layer.
+        ``use_subprocess`` controls whether the workflow runs in a separate
+        process, defaulting to ``True`` for OS-level isolation.  Container
+        engines may be selected by supplying container parameters such as
+        ``container_image`` or ``container_runtime``.  When provided, the
+        workflow executes inside the chosen container instead of a plain
+        subprocess.  Setting ``use_subprocess`` to ``False`` executes the
+        workflow in the current process.
 
         ``audit_hook`` if provided is invoked for every file and network access
         attempt.  The first argument is a string describing the event and the
