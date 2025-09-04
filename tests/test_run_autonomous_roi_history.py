@@ -4,13 +4,12 @@ import types
 import json
 from pathlib import Path
 import pytest
+from dynamic_path_router import resolve_path
 from tests.test_run_autonomous_env_vars import _load_module
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_module():
-    path = ROOT / "run_autonomous.py"
+    path = resolve_path("run_autonomous.py")
     sys.modules.pop("menace", None)
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
@@ -51,7 +50,7 @@ def setup_stubs(monkeypatch):
     cli_stub = types.ModuleType("sandbox_runner.cli")
 
     def fake_run(args, *, synergy_history=None, synergy_ma_history=None):
-        data_dir = Path(args.sandbox_data_dir or "sandbox_data")
+        data_dir = Path(resolve_path(args.sandbox_data_dir or "sandbox_data"))
         data_dir.mkdir(parents=True, exist_ok=True)
         roi_file = data_dir / "roi_history.json"
         with open(roi_file, "w", encoding="utf-8") as fh:
@@ -70,6 +69,7 @@ def setup_stubs(monkeypatch):
     cli_stub._adaptive_threshold = lambda *a, **k: 0.0
     cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
     cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
+
     def _adapt_conv(history, window, *, threshold=None, threshold_window=None, **k):
         if threshold is None:
             threshold_window = threshold_window or window
@@ -210,7 +210,11 @@ def test_previous_synergy_initialises_threshold(monkeypatch, tmp_path):
         return 0.0
 
     monkeypatch.setattr(mod.sandbox_runner.cli, "_adaptive_synergy_threshold", fake_thr)
-    monkeypatch.setattr(mod.sandbox_runner.cli, "_synergy_converged", lambda *a, **k: (True, 0.0, {}))
+    monkeypatch.setattr(
+        mod.sandbox_runner.cli,
+        "_synergy_converged",
+        lambda *a, **k: (True, 0.0, {}),
+    )
 
     mod.main(
         [
@@ -318,7 +322,7 @@ def test_auto_thresholds_uses_saved_synergy(monkeypatch, tmp_path):
 
     def make_run(val: float):
         def fake_run(args, *, synergy_history=None, synergy_ma_history=None):
-            data_dir = Path(args.sandbox_data_dir or "sandbox_data")
+            data_dir = Path(resolve_path(args.sandbox_data_dir or "sandbox_data"))
             data_dir.mkdir(parents=True, exist_ok=True)
             roi_file = data_dir / "roi_history.json"
             with open(roi_file, "w", encoding="utf-8") as fh:
@@ -388,8 +392,9 @@ def test_threshold_gauges_updated(monkeypatch, tmp_path):
         load_history=lambda p: None,
         diminishing=lambda: 0.0,
     )
+
     def fake_run(args, *, synergy_history=None, synergy_ma_history=None):
-        data_dir = Path(args.sandbox_data_dir or "sandbox_data")
+        data_dir = Path(resolve_path(args.sandbox_data_dir or "sandbox_data"))
         data_dir.mkdir(parents=True, exist_ok=True)
         with open(data_dir / "roi_history.json", "w", encoding="utf-8") as fh:
             json.dump(
@@ -403,6 +408,7 @@ def test_threshold_gauges_updated(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mod.sandbox_runner.cli, "full_autonomous_run", fake_run)
     monkeypatch.setattr(mod, "full_autonomous_run", fake_run)
+
     class DummySettings:
         def __init__(self):
             self.sandbox_data_dir = str(tmp_path)
