@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import smtplib
 import ssl
 import time
@@ -11,19 +10,20 @@ from datetime import datetime
 from email.message import EmailMessage
 from typing import Any, Dict
 
+from dynamic_path_router import resolve_path
+
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "config", "alert_settings.json")
-LOG_PATH = os.path.join(BASE_DIR, "logs", "alert_failures.log")
+CONFIG_PATH = resolve_path("config/alert_settings.json")
+LOG_PATH = resolve_path("logs/alert_failures.log")
 
 logger = logging.getLogger("AlertDispatcher")
 if not logger.handlers:
-    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(LOG_PATH)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
@@ -36,14 +36,14 @@ def _log_failure(message: str) -> None:
         logger.error(message)
     except Exception:
         # fallback plain file write if logger misconfigured
-        with open(LOG_PATH, "a", encoding="utf-8") as fh:
+        with LOG_PATH.open("a", encoding="utf-8") as fh:
             fh.write(f"{time.time()}: {message}\n")
 
 
 def _load_config() -> dict[str, Any]:
     """Load alert configuration from ``CONFIG_PATH``."""
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+        with CONFIG_PATH.open("r", encoding="utf-8") as fh:
             return json.load(fh)
     except FileNotFoundError:
         _log_failure(f"alert config not found at {CONFIG_PATH}")
@@ -106,7 +106,12 @@ def send_email_alert(
         return False
 
 
-def dispatch_alert(alert_type: str, severity: int, message: str, context: Dict[str, Any] | None = None) -> None:
+def dispatch_alert(
+    alert_type: str,
+    severity: int,
+    message: str,
+    context: Dict[str, Any] | None = None,
+) -> None:
     """Dispatch an alert to the appropriate channels."""
     cfg = CONFIG
     if not cfg:

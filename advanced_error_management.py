@@ -8,9 +8,20 @@ import logging
 import time
 import os
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Callable
+
+from dynamic_path_router import resolve_path
+from .knowledge_graph import KnowledgeGraph
+from .rollback_manager import RollbackManager
+from .error_bot import ErrorDB
+from .error_logger import TelemetryEvent
+from .data_bot import MetricsDB
+from .meta_logging import SecureLog
+from .sentry_client import SentryClient
+from .governance import evaluate_rules
+from .anomaly_detection import _ae_scores, _cluster_scores
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +41,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
     logger.warning("requests not available; remote actions will be skipped")
-
-from .knowledge_graph import KnowledgeGraph
-from .rollback_manager import RollbackManager
-from .error_bot import ErrorDB
-from .error_logger import TelemetryEvent
-from .data_bot import MetricsDB
-from .meta_logging import SecureLog
-from .sentry_client import SentryClient
-from .governance import evaluate_rules
-from .anomaly_detection import _ae_scores, _cluster_scores
-
-
-logger = logging.getLogger(__name__)
 
 
 class FormalVerifier:
@@ -182,7 +180,7 @@ class TelemetryReplicator:
         if not self.disk_path:
             return
         if len(self.queue) > self.disk_limit:
-            self.queue = self.queue[-self.disk_limit :]
+            self.queue = self.queue[-self.disk_limit:]
         try:
             with open(self.disk_path, "w", encoding="utf-8") as fh:
                 for ev in self.queue:
@@ -422,10 +420,10 @@ class SelfHealingOrchestrator:
         self.error_db = error_db
         self.failure_threshold = failure_threshold
         self.command_provider = command_provider
-        self.script_dir = os.getenv("BOT_SCRIPT_DIR", ".")
+        self.script_dir = resolve_path(os.getenv("BOT_SCRIPT_DIR", "."))
         self.extension = os.getenv("BOT_EXTENSION", ".py")
         if config:
-            self.script_dir = config.get("script_dir", self.script_dir)
+            self.script_dir = resolve_path(config.get("script_dir", self.script_dir))
             self.extension = config.get("extension", self.extension)
         self.failures: dict[str, int] = {}
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -450,14 +448,11 @@ class SelfHealingOrchestrator:
             self.client = None
 
     def heal(self, bot: str, patch_id: str | None = None) -> None:
-        change_id = None
         if self.rollback_mgr is not None:
             try:
-                change_id = self.rollback_mgr.log_healing_action(
-                    bot, "heal", patch_id
-                )
+                self.rollback_mgr.log_healing_action(bot, "heal", patch_id)
             except Exception:
-                change_id = None
+                pass
         try:
             if self.backend == "docker" and self.client is not None:
                 container = self.client.containers.get(bot)
@@ -467,7 +462,7 @@ class SelfHealingOrchestrator:
             elif self.backend == "vm":
                 subprocess.run(["virsh", "reboot", bot], check=False)
             else:
-                script_path = Path(self.script_dir) / f"{bot}{self.extension}"
+                script_path = self.script_dir / f"{bot}{self.extension}"
                 cmd = ["python", str(script_path)]
                 if self.command_provider:
                     try:
@@ -525,7 +520,7 @@ class PlaybookGenerator:
 
         salt = secrets.token_hex(4)
         digest = hashlib.md5((salt + str(anomalies)).encode()).hexdigest()
-        path = Path(f"playbook_{stamp}_{digest}.json")
+        path = resolve_path(".") / f"playbook_{stamp}_{digest}.json"
         path.write_text(json.dumps(playbook, indent=2))
         return str(path)
 

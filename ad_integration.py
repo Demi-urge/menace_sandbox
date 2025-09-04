@@ -11,9 +11,10 @@ import importlib
 import logging
 import json
 import hashlib
-from pathlib import Path
+import urllib.request
 from urllib.parse import urlencode
 
+from dynamic_path_router import resolve_path
 from .retry_utils import retry
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,6 @@ try:
 except Exception as exc:  # pragma: no cover - optional dependency
     logger.warning("requests library missing, using urllib fallback: %s", exc)
     import types
-    import json
-    from urllib.request import urlopen
 
     class _LocalResponse:
         def __init__(self, data: bytes, status_code: int = 200) -> None:
@@ -41,7 +40,7 @@ except Exception as exc:  # pragma: no cover - optional dependency
     class _LocalSession:
         def get(self, url: str, timeout: int = 10) -> _LocalResponse:
             logger.warning("LocalSession GET %s", url)
-            with urlopen(url, timeout=timeout) as fh:
+            with urllib.request.urlopen(url, timeout=timeout) as fh:
                 data = fh.read()
             return _LocalResponse(data, 200)
 
@@ -52,8 +51,6 @@ try:  # optional async HTTP client
 except Exception as exc:  # pragma: no cover - optional dependency
     logger.warning("httpx library missing, using async urllib fallback: %s", exc)
     import types
-    import json
-    from urllib.request import urlopen
 
     class _LocalAsyncResponse:
         def __init__(self, data: bytes, status_code: int = 200) -> None:
@@ -79,7 +76,7 @@ except Exception as exc:  # pragma: no cover - optional dependency
             loop = asyncio.get_running_loop()
 
             def _fetch() -> bytes:
-                with urlopen(url, timeout=timeout) as fh:
+                with urllib.request.urlopen(url, timeout=timeout) as fh:
                     return fh.read()
 
             data = await loop.run_in_executor(None, _fetch)
@@ -87,8 +84,8 @@ except Exception as exc:  # pragma: no cover - optional dependency
 
     httpx = types.SimpleNamespace(AsyncClient=_LocalAsyncClient)  # type: ignore
 
-from .finance_router_bot import FinanceRouterBot
-from .revenue_amplifier import SalesSpikeMonitor
+from .finance_router_bot import FinanceRouterBot  # noqa: E402
+from .revenue_amplifier import SalesSpikeMonitor  # noqa: E402
 
 
 @dataclass
@@ -137,8 +134,9 @@ class AdIntegration:
         self.retry_delay = retry_delay
         self._cache: Dict[str, tuple[List[AdSale], float]] = {}
         self._seen_sales: set[tuple[str, float, str, str, str]] = set()
-        self.seen_cache_path = Path(
-            seen_cache_path or os.getenv("AD_SALES_CACHE_PATH", "sales_seen.json")
+        self.seen_cache_path = resolve_path(
+            seen_cache_path
+            or os.getenv("AD_SALES_CACHE_PATH", "sales_seen.json")
         )
         self._load_seen_sales()
         self._last_raw_response: object | None = None
