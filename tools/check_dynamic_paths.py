@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-TRIGGER_SUBSTRINGS = ["sandbox_data"]
+TRIGGER_SUBSTRINGS = ["sandbox_data", "logs"]
 SCRIPT_NAME = Path(__file__).name
 
 # File extensions that should be treated as potential path references. ``.py``
@@ -23,7 +23,7 @@ SCRIPT_NAME = Path(__file__).name
 # path separator so that bare filenames like ``sandbox_settings.yaml`` are
 # caught.
 _EXTENSIONS_NEED_SLASH = (".py",)
-_EXTENSIONS_ALWAYS = (".yaml", ".yml", ".json", ".db")
+_EXTENSIONS_ALWAYS = (".yaml", ".yml", ".json", ".jsonl", ".db", ".log")
 
 
 def _triggers(value: str) -> bool:
