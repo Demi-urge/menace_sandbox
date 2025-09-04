@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
-from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+from stripe_policy import PAYMENT_ROUTER_NOTICE
 import stripe_billing_router  # noqa: F401
 from dynamic_path_router import resolve_path
 
