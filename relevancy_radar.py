@@ -336,6 +336,41 @@ def _save_usage_counts() -> None:
         json.dump({k: v for k, v in merged.items()}, fh, indent=2, sort_keys=True)
 
 
+def call_graph_complexity() -> float:
+    """Return a complexity score for the persisted relevancy call graph.
+
+    The score is calculated as ``edges / nodes`` for the stored directed
+    graph.  If the call graph file is missing or malformed ``0.0`` is
+    returned.
+    """
+
+    if not _RELEVANCY_CALL_GRAPH_FILE.exists():
+        return 0.0
+    try:
+        with _RELEVANCY_CALL_GRAPH_FILE.open("r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except json.JSONDecodeError:
+        return 0.0
+    if not isinstance(raw, dict):
+        return 0.0
+
+    graph = nx.DiGraph()
+    for caller, callees in raw.items():
+        if isinstance(callees, list):
+            for callee in callees:
+                graph.add_edge(str(caller), str(callee))
+
+    try:
+        nodes = graph.number_of_nodes()
+        edges = graph.number_of_edges()
+    except AttributeError:  # pragma: no cover - fallback graph
+        adj = getattr(graph, "_adj", {})
+        nodes = len(adj)
+        edges = sum(len(v) for v in adj.values())
+
+    return float(edges) / nodes if nodes else 0.0
+
+
 # Ensure counters are persisted when the interpreter exits.
 atexit.register(_save_usage_counts)
 
@@ -351,6 +386,7 @@ __all__ = [
     "evaluate_relevance",
     "evaluate_final_contribution",
     "radar",
+    "call_graph_complexity",
 ]
 
 
