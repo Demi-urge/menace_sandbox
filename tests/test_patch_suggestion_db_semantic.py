@@ -40,7 +40,7 @@ def test_add_unsafe_suggestion(tmp_path):
 
 
 def test_failure_similarity_rejected(tmp_path):
-    safety = PatchSafety()
+    safety = PatchSafety(failure_db_path=None)
     safety.record_failure({"category": "fail", "module": "m.py"})
     db = PatchSuggestionDB(tmp_path / "s.db", safety=safety)
     with pytest.raises(ValueError):

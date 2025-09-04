@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
+from dynamic_path_router import resolve_path
+
 from db_router import DBRouter, GLOBAL_ROUTER
 
 from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
@@ -101,6 +103,11 @@ class PatchSafety:
 
     # ------------------------------------------------------------------
     def __post_init__(self) -> None:  # pragma: no cover - simple IO
+        root = resolve_path(".")
+        if self.storage_path and not Path(self.storage_path).is_absolute():
+            self.storage_path = str((root / self.storage_path).resolve())
+        if self.failure_db_path and not Path(self.failure_db_path).is_absolute():
+            self.failure_db_path = str((root / self.failure_db_path).resolve())
         self.load_failures()
 
     # ------------------------------------------------------------------
@@ -146,6 +153,10 @@ class PatchSafety:
             return
         self._last_refresh = now
         pth = path or self.storage_path
+        if pth and not Path(pth).is_absolute():
+            pth = str((resolve_path(".") / pth).resolve())
+            if path is None:
+                self.storage_path = pth
         reload_needed = force
         if pth:
             p = Path(pth)
@@ -158,6 +169,9 @@ class PatchSafety:
                     self._jsonl_mtime = mtime
                     reload_needed = True
         db_path = self.failure_db_path
+        if db_path and not Path(db_path).is_absolute():
+            db_path = str((resolve_path(".") / db_path).resolve())
+            self.failure_db_path = db_path
         if db_path:
             try:
                 db_mtime = Path(db_path).stat().st_mtime

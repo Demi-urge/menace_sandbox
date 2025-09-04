@@ -2,7 +2,7 @@ from patch_safety import PatchSafety
 
 
 def test_origin_specific_similarity_penalty():
-    ps = PatchSafety()
+    ps = PatchSafety(failure_db_path=None)
     err = {"category": "fail", "module": "m"}
     ps.record_failure(err, origin="error")
     ok_same, score_same, _ = ps.evaluate({}, err, origin="error")

@@ -11,7 +11,7 @@ from patch_safety import PatchSafety
 
 def test_rejects_semantic_risk(tmp_path):
     db = PatchHistoryDB(tmp_path / "p.db")
-    app = create_app(db, PatchSuggestionDB(tmp_path / "s.db"), PatchSafety())
+    app = create_app(db, PatchSuggestionDB(tmp_path / "s.db"), PatchSafety(failure_db_path=None))
     client = app.test_client()
     res = client.post(
         "/patches",
