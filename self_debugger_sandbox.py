@@ -463,7 +463,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
     # ------------------------------------------------------------------
     async def _coverage_percent(
-        self, paths: list[Path], env: dict[str, str] | None = None
+        self,
+        paths: list[Path],
+        env: dict[str, str] | None = None,
+        *,
+        python: str | Path | None = None,
+        cwd: Path | None = None,
     ) -> tuple[float, dict[str, dict[str, float]]]:
         """Run tests for *paths* under coverage using parallel workers asynchronously.
 
@@ -478,8 +483,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             data_file = tmp_dir / f".coverage.{idx}"
             p_env = dict(env or os.environ)
             p_env["COVERAGE_FILE"] = str(data_file)
+            py_bin = str(python or sys.executable)
             cmd = [
-                sys.executable,
+                py_bin,
                 "-m",
                 "coverage",
                 "run",
@@ -489,6 +495,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 "-q",
                 "-n",
                 "auto",
+                "-p",
+                "sandbox_runner.edge_case_plugin",
                 *[str(p) for p in set_paths],
             ]
             proc = await asyncio.create_subprocess_exec(
@@ -496,6 +504,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 env=p_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=str(cwd) if cwd else None,
             )
             try:
                 out_b, err_b = await asyncio.wait_for(
@@ -634,96 +643,134 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             self.logger.exception("failed to create telemetry tests")
 
-        start = time.perf_counter()
+        repo_src = resolve_path(self._settings.sandbox_repo_path or ".")
         failure: ErrorReport | None = None
         cov_details: dict[str, dict[str, float]] = {}
-        try:
-            percent, cov_details = with_retry(
-                lambda: asyncio.run(self._coverage_percent(test_paths, env)),
-                attempts=self._test_retries,
-                logger=self.logger,
-                exc=CoverageSubprocessError,
-            )
-        except CoverageSubprocessError as exc:
-            runtime = time.perf_counter() - start
-            output = str(exc.output)
-            log_file = sandbox_dir / f"fail_{int(time.time()*1000)}.log"
+
+        with create_ephemeral_env(repo_src) as (repo, run):
+            repo = resolve_path(repo)
+            paths_in_repo: list[Path] = []
+            for p in test_paths:
+                try:
+                    rel = p.relative_to(repo_src)
+                    target = repo / rel
+                except ValueError:
+                    target = repo / p.name
+                    try:
+                        shutil.copy2(p, target)
+                    except Exception:
+                        self.logger.exception("failed to copy telemetry test")
+                paths_in_repo.append(resolve_path(target))
+
+            env_local = dict(env or os.environ)
+            env_local["PYTHONPATH"] = str(repo)
             try:
-                log_file.write_text(output)
-                self._last_test_log = log_file
+                env_local["SANDBOX_EDGE_CASES"] = json.dumps(generate_edge_cases())
             except Exception:
-                self.logger.exception("failed to write test log")
-            failure = parse_failure(output)
-            region = extract_target_region(failure.trace)
-            if region:
-                failure.target_region = region
-                level, _ = self._attempt_tracker.level_for(region, region)
-                self._attempt_tracker.record_failure(level, region, region)
-                failure.attempts = self._attempt_tracker.attempts_for(region)
-                self._last_region = region
-            if not self._failure_cache.seen(failure):
-                self._failure_cache.add(failure)
-            self._record_failed_strategy(failure)
+                env_local["SANDBOX_EDGE_CASES"] = "{}"
+
+            proc = run(
+                ["python", "-c", "import sys; print(sys.executable)"] ,
+                capture_output=True,
+                text=True,
+            )
+            python_bin = proc.stdout.strip() or "python"
+
+            start = time.perf_counter()
             try:
-                self.error_logger.log(
-                    TelemetryEvent(
-                        stack_trace=failure.trace,
-                        root_cause=",".join(failure.tags),
-                    )
+                percent, cov_details = with_retry(
+                    lambda: asyncio.run(
+                        self._coverage_percent(
+                            paths_in_repo,
+                            env_local,
+                            python=python_bin,
+                            cwd=repo,
+                        )
+                    ),
+                    attempts=self._test_retries,
+                    logger=self.logger,
+                    exc=CoverageSubprocessError,
                 )
-            except Exception:
-                self.logger.exception("failed to log parsed failure")
-            self._record_exception(exc)
-            percent = 0.0
-            record_run(
-                {
-                    "success": False,
-                    "entropy_delta": 0.0,
-                    "runtime": runtime,
-                    "error": failure.trace if failure else output,
-                    "coverage": {},
-                    "executed_functions": [],
-                }
-            )
-        except Exception as exc:
-            runtime = time.perf_counter() - start
-            output = str(exc)
-            failure = parse_failure(output)
-            region = extract_target_region(failure.trace)
-            if region:
-                failure.target_region = region
-                level, _ = self._attempt_tracker.level_for(region, region)
-                self._attempt_tracker.record_failure(level, region, region)
-                failure.attempts = self._attempt_tracker.attempts_for(region)
-                self._last_region = region
-            if not self._failure_cache.seen(failure):
-                self._failure_cache.add(failure)
-            self._record_failed_strategy(failure)
-            try:
-                self.error_logger.log(
-                    TelemetryEvent(
-                        stack_trace=failure.trace,
-                        root_cause=",".join(failure.tags),
+            except CoverageSubprocessError as exc:
+                runtime = time.perf_counter() - start
+                output = str(exc.output)
+                log_file = sandbox_dir / f"fail_{int(time.time()*1000)}.log"
+                try:
+                    log_file.write_text(output)
+                    self._last_test_log = log_file
+                except Exception:
+                    self.logger.exception("failed to write test log")
+                failure = parse_failure(output)
+                region = extract_target_region(failure.trace)
+                if region:
+                    failure.target_region = region
+                    level, _ = self._attempt_tracker.level_for(region, region)
+                    self._attempt_tracker.record_failure(level, region, region)
+                    failure.attempts = self._attempt_tracker.attempts_for(region)
+                    self._last_region = region
+                if not self._failure_cache.seen(failure):
+                    self._failure_cache.add(failure)
+                self._record_failed_strategy(failure)
+                try:
+                    self.error_logger.log(
+                        TelemetryEvent(
+                            stack_trace=failure.trace,
+                            root_cause=",".join(failure.tags),
+                        )
                     )
+                except Exception:
+                    self.logger.exception("failed to log parsed failure")
+                self._record_exception(exc)
+                percent = 0.0
+                record_run(
+                    {
+                        "success": False,
+                        "entropy_delta": 0.0,
+                        "runtime": runtime,
+                        "error": failure.trace if failure else output,
+                        "coverage": {},
+                        "executed_functions": [],
+                    }
                 )
-            except Exception:
-                self.logger.exception("failed to log parsed failure")
-            percent = 0.0
-            self._record_exception(exc)
-            self.logger.exception("coverage generation failed")
-            record_run(
-                {
-                    "success": False,
-                    "entropy_delta": 0.0,
-                    "runtime": runtime,
-                    "error": failure.trace if failure else output,
-                    "coverage": {},
-                    "executed_functions": [],
-                }
-            )
-        else:
-            runtime = time.perf_counter() - start
-            percent = float(percent or 0.0)
+            except Exception as exc:
+                runtime = time.perf_counter() - start
+                output = str(exc)
+                failure = parse_failure(output)
+                region = extract_target_region(failure.trace)
+                if region:
+                    failure.target_region = region
+                    level, _ = self._attempt_tracker.level_for(region, region)
+                    self._attempt_tracker.record_failure(level, region, region)
+                    failure.attempts = self._attempt_tracker.attempts_for(region)
+                    self._last_region = region
+                if not self._failure_cache.seen(failure):
+                    self._failure_cache.add(failure)
+                self._record_failed_strategy(failure)
+                try:
+                    self.error_logger.log(
+                        TelemetryEvent(
+                            stack_trace=failure.trace,
+                            root_cause=",".join(failure.tags),
+                        )
+                    )
+                except Exception:
+                    self.logger.exception("failed to log parsed failure")
+                percent = 0.0
+                self._record_exception(exc)
+                self.logger.exception("coverage generation failed")
+                record_run(
+                    {
+                        "success": False,
+                        "entropy_delta": 0.0,
+                        "runtime": runtime,
+                        "error": failure.trace if failure else output,
+                        "coverage": {},
+                        "executed_functions": [],
+                    }
+                )
+            else:
+                runtime = time.perf_counter() - start
+                percent = float(percent or 0.0)
 
         if tmp:
             tmp.unlink(missing_ok=True)

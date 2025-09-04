@@ -8,6 +8,8 @@ import json
 import asyncio
 import time
 import dynamic_path_router
+import subprocess
+from contextlib import contextmanager
 
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
 sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
@@ -113,6 +115,24 @@ menace_pkg.__path__ = []
 sys.modules.setdefault("menace", menace_pkg)
 import logging_utils as _logging_utils
 sys.modules.setdefault("menace.logging_utils", _logging_utils)
+
+
+@contextmanager
+def _fake_env(workdir):
+    def _run(cmd, *, env=None, capture_output=False, text=False, **_kw):
+        stdout = ""
+        if (
+            capture_output
+            and text
+            and len(cmd) >= 2
+            and cmd[0] == "python"
+            and cmd[1].startswith("-c")
+        ):
+            stdout = sys.executable
+        return subprocess.CompletedProcess(cmd, 0, stdout, "")
+
+    yield workdir, _run
+
 
 cfg_stub = types.SimpleNamespace(
     get_impact_severity=lambda *a, **k: {},
@@ -260,6 +280,8 @@ sys.modules["menace.self_debugger_sandbox"] = sds
 
 # Provide a minimal error logger stub to avoid heavy dependencies during tests
 sds.ErrorLogger = lambda *a, **k: types.SimpleNamespace(record=lambda *a, **k: None)
+sds.create_ephemeral_env = _fake_env
+sds.generate_edge_cases = lambda: {}
 
 
 class DummyTelem:
@@ -315,7 +337,7 @@ def test_sandbox_failing_patch(monkeypatch, tmp_path):
         dbg, "_generate_tests", lambda logs: ["def test_fail():\n    assert False\n"]
     )
 
-    async def fake_cov(p, env=None):
+    async def fake_cov(p, env=None, **kwargs):
         return 50.0, {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
@@ -402,7 +424,7 @@ def test_sandbox_success(monkeypatch, tmp_path):
     monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
-    async def fake_cov_ok(p, env=None):
+    async def fake_cov_ok(p, env=None, **kwargs):
         return 80.0, {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov_ok)
@@ -425,7 +447,7 @@ def test_sandbox_failed_audit(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
 
-    async def fake_cov_ok(p, env=None):
+    async def fake_cov_ok(p, env=None, **kwargs):
         return 80.0, {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov_ok)
@@ -550,7 +572,7 @@ def test_select_best_patch(monkeypatch, tmp_path):
 
     cov_vals = [50.0, 60.0, 50.0, 70.0, 50.0, 80.0]
 
-    async def fake_cov(p, env=None):
+    async def fake_cov(p, env=None, **kwargs):
         return cov_vals.pop(0), {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
@@ -570,7 +592,7 @@ def test_run_tests_includes_telemetry(monkeypatch, tmp_path):
 
     called = {}
 
-    async def fake_cov(paths, env=None):
+    async def fake_cov(paths, env=None, **kwargs):
         called["paths"] = [Path(p) for p in paths]
         return 100.0, {}
 
@@ -751,7 +773,7 @@ def test_run_tests_retries_on_subprocess_failure(monkeypatch):
 
     calls = {"n": 0}
 
-    async def fake_cov(paths, env=None):
+    async def fake_cov(paths, env=None, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise sds.CoverageSubprocessError("boom")
@@ -1058,10 +1080,15 @@ def test_run_tests_logs_output(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
-    async def fake_cov(paths, env=None):
+    async def fake_cov(paths, env=None, **kwargs):
         raise sds.CoverageSubprocessError("boom")
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
+    monkeypatch.setattr(
+        dbg,
+        "_record_exception",
+        lambda exc: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
 
     with pytest.raises(RuntimeError):
         dbg._run_tests(Path("test_dummy.py"))
@@ -1250,7 +1277,7 @@ def test_coverage_revert_records_history(monkeypatch, tmp_path):
 
     cov_vals = [80.0, 50.0]
 
-    async def fake_cov(p, env=None):
+    async def fake_cov(p, env=None, **kwargs):
         return cov_vals.pop(0), {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
