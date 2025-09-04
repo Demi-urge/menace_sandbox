@@ -67,7 +67,7 @@ class SelfCodingScheduler:
             if error_increase is not None
             else self.settings.self_coding_error_increase
         )
-        self.patch_path = patch_path or (resolve_path(".") / "auto_helpers.py")
+        self.patch_path = Path(patch_path) if patch_path else resolve_path("auto_helpers.py")
         self.description = description
         self.last_roi = self.data_bot.roi(self.manager.bot_name)
         self.last_errors = 0.0
