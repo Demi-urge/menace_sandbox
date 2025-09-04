@@ -1077,7 +1077,7 @@ def adapt_presets(
     agent = None
     rl_path = os.getenv("SANDBOX_PRESET_RL_PATH")
     if not rl_path:
-        rl_path = resolve_path("sandbox_data/preset_policy.json")
+        rl_path = str(resolve_path("sandbox_data/preset_policy.json"))
     rl_strategy = os.getenv("SANDBOX_PRESET_RL_STRATEGY")
     if rl_path:
         os.makedirs(os.path.dirname(rl_path), exist_ok=True)
@@ -1924,14 +1924,18 @@ def generate_presets_from_history(
     data_dir: str = "sandbox_data", count: int | None = None
 ) -> List[Dict[str, Any]]:
     """Return presets adapted using ROI/security history from ``data_dir``."""
-    history = Path(resolve_path(data_dir)) / "roi_history.json"
+    history_path = Path(data_dir) / "roi_history.json"
+    try:
+        history = str(resolve_path(history_path))
+    except FileNotFoundError:
+        history = history_path.as_posix()
     tracker = None
-    if history.exists():
+    if Path(history).exists():
         try:
             from .roi_tracker import ROITracker
 
             tracker = ROITracker()
-            tracker.load_history(str(history))
+            tracker.load_history(history)
         except Exception:
             tracker = None
     presets = generate_presets(count)
