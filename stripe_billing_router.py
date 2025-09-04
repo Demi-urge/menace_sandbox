@@ -9,7 +9,10 @@ the keys are missing or no routing rule matches the supplied bot.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Mapping, Optional
+
+from vault_secret_provider import VaultSecretProvider
 
 try:  # optional dependency
     import stripe  # type: ignore
@@ -19,17 +22,26 @@ except Exception as exc:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-# Hard-coded Stripe keys used for all routed requests.  These placeholder
-# values must never be empty and should point to live keys in production.
-STRIPE_SECRET_KEY = "sk_live_dummy"
-STRIPE_PUBLIC_KEY = "pk_live_dummy"
-if not STRIPE_SECRET_KEY or not STRIPE_PUBLIC_KEY:
-    logger.error("Stripe API keys must be configured and non-empty")
-    raise RuntimeError("Stripe API keys must be configured and non-empty")
 
-if STRIPE_SECRET_KEY.startswith("sk_test") or STRIPE_PUBLIC_KEY.startswith("pk_test"):
-    logger.error("Test mode Stripe API keys are not permitted")
-    raise RuntimeError("Test mode Stripe API keys are not permitted")
+def _load_key(name: str, prefix: str) -> str:
+    """Fetch a Stripe key from env or the secret vault and validate it."""
+
+    provider = VaultSecretProvider()
+    key = os.getenv(name.upper()) or provider.get(name)
+    if not key:
+        logger.error("Stripe API keys must be configured and non-empty")
+        raise RuntimeError("Stripe API keys must be configured and non-empty")
+    if not key.startswith(prefix):
+        logger.error("Invalid Stripe API key format for %s", name)
+        raise RuntimeError("Invalid Stripe API key format")
+    if key.startswith(f"{prefix}test"):
+        logger.error("Test mode Stripe API keys are not permitted for %s", name)
+        raise RuntimeError("Test mode Stripe API keys are not permitted")
+    return key
+
+
+STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
+STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
 
 # Base routing rules organised by region -> domain -> bot -> category
 # Each leaf mapping contains identifiers used for billing.  The default region
@@ -118,6 +130,9 @@ def _client(api_key: str):
     if not api_key:
         logger.error("Attempted to initialise Stripe client without API key")
         raise RuntimeError("Stripe API key must be configured and non-empty")
+    if api_key.startswith("sk_test"):
+        logger.error("Test mode Stripe API keys are not permitted")
+        raise RuntimeError("Test mode Stripe API keys are not permitted")
     if stripe is None:
         logger.error("Stripe library unavailable")
         raise RuntimeError("stripe library unavailable")
@@ -169,9 +184,17 @@ def _resolve_route(
     route.setdefault("public_key", STRIPE_PUBLIC_KEY)
     for strategy in _STRATEGIES:
         route = strategy.apply(bot_id, dict(route))
-    if not route.get("secret_key") or not route.get("public_key"):
+    secret = route.get("secret_key", "")
+    public = route.get("public_key", "")
+    if not secret or not public:
         logger.error("Resolved route missing Stripe keys for bot '%s'", bot_id)
         raise RuntimeError("Stripe keys are not configured for the resolved route")
+    if secret.startswith("sk_test") or public.startswith("pk_test"):
+        logger.error("Test mode Stripe API keys are not permitted for bot '%s'", bot_id)
+        raise RuntimeError("Test mode Stripe API keys are not permitted")
+    if not secret.startswith("sk_") or not public.startswith("pk_"):
+        logger.error("Invalid Stripe API key format for bot '%s'", bot_id)
+        raise RuntimeError("Invalid Stripe API key format")
     return route
 
 
