@@ -28,7 +28,10 @@ def _import_module(monkeypatch):
     monkeypatch.setattr(
         vsp.VaultSecretProvider,
         "get",
-        lambda self, name: {"stripe_secret_key": "sk_test", "stripe_public_key": "pk_test"}.get(name, ""),
+        lambda self, name: {
+            "stripe_secret_key": "sk_test",
+            "stripe_public_key": "pk_test",
+        }.get(name, ""),
     )
 
     _load("stripe_handler")
@@ -73,3 +76,38 @@ def test_override_updates_route(monkeypatch):
         "finance:finance_router_bot:monetization", overrides={"region": "eu"}
     )
     assert route["price_id"] == "price_finance_eu"
+
+
+def test_charge_and_customer_creation(monkeypatch):
+    sbr = _import_module(monkeypatch)
+
+    charge_params: dict[str, object] = {}
+    customer_params: dict[str, object] = {}
+
+    def fake_charge_create(**params):
+        charge_params.update(params)
+        return {"status": "succeeded", **params}
+
+    def fake_customer_create(**params):
+        customer_params.update(params)
+        return {"id": "cus_test", **params}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="",
+        Charge=types.SimpleNamespace(create=fake_charge_create),
+        Customer=types.SimpleNamespace(create=fake_customer_create),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+
+    charge = sbr.init_charge(
+        "finance:finance_router_bot:monetization", 12.5, "desc"
+    )
+    assert charge["status"] == "succeeded"
+    assert charge_params["amount"] == 1250
+    assert charge_params["customer"] == "cus_finance_default"
+
+    cust = sbr.create_customer(
+        "finance:finance_router_bot:monetization", {"email": "a@b"}
+    )
+    assert cust["id"] == "cus_test"
+    assert customer_params == {"email": "a@b"}
