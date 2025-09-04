@@ -233,8 +233,8 @@ def test_new_module_included_after_scan(monkeypatch, tmp_path):
         repo, modules=["new_mod.py"], logger=None, router=None
     )
 
-    assert added == ["new_mod.py"]
-    assert workflow_list == ["new_mod.py"]
+    assert added == [str(repo / "new_mod.py")]
+    assert workflow_list == [str(repo / "new_mod.py")]
     assert syn_ok is True and intent_ok is True
 
 

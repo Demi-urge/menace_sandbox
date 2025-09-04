@@ -57,8 +57,8 @@ def test_partial_success_marked_for_retry(tmp_path, monkeypatch):
 
     assert syn_ok is False
     assert cl_ok is True
-    assert results["retry"] == ["a.py"]
+    assert results["retry"] == [str(repo / "a.py")]
 
     log_path = repo / "sandbox_data" / "orphan_integration.log"
     data = [json.loads(line) for line in log_path.read_text().splitlines()]
-    assert data[-1]["retry"] == ["a.py"]
+    assert data[-1]["retry"] == [str(repo / "a.py")]

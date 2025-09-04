@@ -74,11 +74,11 @@ def test_orphan_cycle_integration(tmp_path, monkeypatch):
 
     assert calls["discover"] is True
     assert calls["tests"] is True
-    assert calls["auto_include"] == ["new_mod.py"]  # path-ignore
-    assert calls["workflows"] == ["new_mod.py"]  # path-ignore
+    assert calls["auto_include"] == [str(repo / "new_mod.py")]  # path-ignore
+    assert calls["workflows"] == [str(repo / "new_mod.py")]  # path-ignore
     assert calls["synergy"] == ["new_mod"]
     assert calls["cluster"] == [str(repo / "new_mod.py")]  # path-ignore
-    assert added == ["new_mod.py"]  # path-ignore
+    assert added == [str(repo / "new_mod.py")]  # path-ignore
     assert syn_ok and cl_ok
 
     metrics = yaml.safe_load((repo / "sandbox_metrics.yaml").read_text())
@@ -86,4 +86,4 @@ def test_orphan_cycle_integration(tmp_path, monkeypatch):
 
     log_path = repo / "sandbox_data" / "orphan_integration.log"
     log_entry = json.loads(log_path.read_text().splitlines()[-1])
-    assert log_entry["modules"] == ["new_mod.py"]  # path-ignore
+    assert log_entry["modules"] == [str(repo / "new_mod.py")]  # path-ignore
