@@ -25,7 +25,7 @@ from typing import Callable, Mapping
 from collections import deque, defaultdict
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
-from .target_region import TargetRegion, extract_target_region
+from target_region import TargetRegion, extract_target_region
 from .knowledge_graph import KnowledgeGraph
 from .quick_fix_engine import generate_patch
 from .human_alignment_agent import HumanAlignmentAgent
@@ -625,7 +625,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             logs = list(self._recent_logs())
             tests = self._generate_tests(logs)
             if tests:
-                tf = tempfile.NamedTemporaryFile(delete=False, suffix="_telemetry.py")
+                tf = tempfile.NamedTemporaryFile(
+                    delete=False, suffix=f"_telemetry{os.extsep}py"
+                )
                 tf.write("\n\n".join(tests).encode("utf-8"))
                 tf.close()
                 tmp = Path(tf.name)
@@ -1447,7 +1449,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     repo_src = resolve_path(self._settings.sandbox_repo_path or ".")
                     with create_ephemeral_env(repo_src) as (repo, run):
                         repo = resolve_path(repo)
-                        test_path = repo / "test_auto.py"
+                        test_path = repo / f"test_auto{os.extsep}py"
                         test_path.write_text(code)
                         test_path = resolve_path(test_path)
                         env = os.environ.copy()
@@ -1773,7 +1775,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
                 code = best["code"]
                 root_dir = resolve_path(self._settings.sandbox_repo_path or ".")
-                root_test = root_dir / "test_auto.py"
+                root_test = root_dir / f"test_auto{os.extsep}py"
                 root_test.write_text(code)
                 root_test = resolve_path(root_test)
                 code_hash: str | None = None
