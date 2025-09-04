@@ -84,6 +84,10 @@ roi_mod.ROITracker = lambda: object()
 sys.modules.setdefault("roi_tracker", roi_mod)
 
 # Import the SelfCodingEngine after stubs
+import importlib
+menace_pkg = importlib.import_module("menace")
+sys.modules["code_database"] = code_db_mod
+sys.modules["menace.code_database"] = code_db_mod
 import menace.self_coding_engine as sce
 SelfCodingEngine = sce.SelfCodingEngine
 
@@ -147,7 +151,8 @@ def test_knowledge_service_logging(monkeypatch, caplog):
     )
     caplog.set_level(logging.WARNING)
     caplog.clear()
-    engine.generate_helper("desc", path=dynamic_path_router.resolve_path(".") / "a.py")
+    target = dynamic_path_router.resolve_path("tests/fixtures/semantic/a.py")
+    engine.generate_helper("desc", path=target)
     messages = [record.message for record in caplog.records]
     assert any("recent_feedback" in m for m in messages)
     assert any("recent_improvement_path" in m for m in messages)

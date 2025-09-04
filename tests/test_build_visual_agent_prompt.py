@@ -4,6 +4,8 @@ import importlib.machinery
 import os
 import sys
 
+# access canonical repository paths
+from dynamic_path_router import resolve_path, path_for_prompt
 # stub heavy optional deps
 jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None
@@ -113,6 +115,70 @@ sys.modules.setdefault("vector_service.roi_tags", roi_mod)
 data_bot_mod = types.ModuleType("data_bot")
 data_bot_mod.MetricsDB = object
 sys.modules.setdefault("data_bot", data_bot_mod)
+# Minimal stubs for heavy code database dependencies
+code_db_mod = types.ModuleType("code_database")
+code_db_mod.CodeDB = object
+code_db_mod.CodeRecord = object
+code_db_mod.PatchHistoryDB = object
+code_db_mod.PatchRecord = object
+sys.modules.setdefault("code_database", code_db_mod)
+sys.modules.setdefault("menace.code_database", code_db_mod)
+# Additional stubs required by SelfCodingEngine
+sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
+sys.modules.setdefault("trend_predictor", types.SimpleNamespace(TrendPredictor=object))
+sys.modules.setdefault("gpt_memory_interface", types.SimpleNamespace(GPTMemoryInterface=object))
+sys.modules.setdefault("safety_monitor", types.SimpleNamespace(SafetyMonitor=object))
+sys.modules.setdefault("advanced_error_management", types.SimpleNamespace(FormalVerifier=object))
+sys.modules.setdefault("chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
+sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
+sys.modules.setdefault(
+    "memory_aware_gpt_client", types.SimpleNamespace(ask_with_memory=lambda *a, **k: {})
+)
+sys.modules.setdefault("shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None))
+log_tags_mod = types.SimpleNamespace(
+    FEEDBACK="feedback",
+    ERROR_FIX="error_fix",
+    IMPROVEMENT_PATH="improvement_path",
+    INSIGHT="insight",
+)
+sys.modules.setdefault("log_tags", log_tags_mod)
+
+class _GKS:
+    def __init__(self, *a, **k):
+        pass
+
+sys.modules.setdefault("gpt_knowledge_service", types.SimpleNamespace(GPTKnowledgeService=_GKS))
+know_mod = types.ModuleType("knowledge_retriever")
+know_mod.get_feedback = lambda *a, **k: []
+know_mod.get_error_fixes = lambda *a, **k: []
+know_mod.recent_feedback = lambda *a, **k: None
+know_mod.recent_error_fix = lambda *a, **k: None
+know_mod.recent_improvement_path = lambda *a, **k: None
+sys.modules.setdefault("knowledge_retriever", know_mod)
+sys.modules.setdefault("rollback_manager", types.SimpleNamespace(RollbackManager=object))
+audit_mod = types.ModuleType("audit_trail")
+audit_mod.AuditTrail = lambda *a, **k: types.SimpleNamespace(record=lambda self, payload: None)
+sys.modules.setdefault("audit_trail", audit_mod)
+access_mod = types.SimpleNamespace(READ="r", WRITE="w", check_permission=lambda *a, **k: None)
+sys.modules.setdefault("access_control", access_mod)
+sys.modules.setdefault(
+    "patch_suggestion_db",
+    types.SimpleNamespace(PatchSuggestionDB=object, SuggestionRecord=object),
+)
+sys.modules.setdefault(
+    "sandbox_runner.workflow_sandbox_runner",
+    types.SimpleNamespace(WorkflowSandboxRunner=object),
+)
+sys.modules.setdefault(
+    "sandbox_settings",
+    types.SimpleNamespace(
+        SandboxSettings=lambda: types.SimpleNamespace(
+            va_prompt_template="",
+            va_prompt_prefix="",
+            va_repo_layout_lines=0,
+        )
+    ),
+)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]
@@ -120,6 +186,9 @@ pkg_spec = importlib.util.spec_from_file_location(
 menace_pkg = importlib.util.module_from_spec(pkg_spec)
 sys.modules["menace"] = menace_pkg
 pkg_spec.loader.exec_module(menace_pkg)
+# Re-assert code_database stub after package initialisation
+sys.modules["code_database"] = code_db_mod
+sys.modules["menace.code_database"] = code_db_mod
 
 import menace.self_coding_engine as sce  # noqa: E402
 
@@ -145,8 +214,9 @@ def test_build_visual_agent_prompt_basic(monkeypatch):
         return "PROMPT"
 
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
+    helper_path = resolve_path("tests/fixtures/semantic/a.py")
     prompt = sce.SelfCodingEngine(None, None).build_visual_agent_prompt(
-        "helper.py", "print hello", "def hello():\n    pass"
+        helper_path, "print hello", "def hello():\n    pass"
     )
     assert prompt == "PROMPT"
     assert captured["description"] == "print hello"
@@ -163,11 +233,13 @@ def test_build_visual_agent_prompt_env(monkeypatch, tmp_path):
     import importlib
     importlib.reload(sce)
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", lambda self, d, **k: "PROMPT")
+    target_path = resolve_path("tests/fixtures/semantic/a.py")
     prompt = sce.SelfCodingEngine(None, None).build_visual_agent_prompt(
-        "a.py", "do things", "ctx"
+        target_path, "do things", "ctx"
     )
     assert prompt.startswith("NOTE: ")
-    assert "FUNC auto_do_things DESC do things CONT ctx PATH a.py" in prompt
+    expected_path = path_for_prompt("tests/fixtures/semantic/a.py")
+    assert f"FUNC auto_do_things DESC do things CONT ctx PATH {expected_path}" in prompt
     assert prompt.strip().endswith("PROMPT")
 
 
@@ -192,7 +264,8 @@ def test_build_visual_agent_prompt_layout(monkeypatch):
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
     eng = sce.SelfCodingEngine(None, None)
     expected = eng._get_repo_layout(2)
-    eng.build_visual_agent_prompt("a.py", "desc", "ctx")
+    target_path = resolve_path("tests/fixtures/semantic/a.py")
+    eng.build_visual_agent_prompt(target_path, "desc", "ctx")
     for line in expected.splitlines():
         assert line in captured["context"]
 
@@ -215,5 +288,6 @@ def test_build_visual_agent_prompt_retrieval_context(monkeypatch):
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
     eng = sce.SelfCodingEngine(None, None)
     rc = "{\"bots\": []}"
-    eng.build_visual_agent_prompt("a.py", "desc", "ctx", rc)
+    target_path = resolve_path("tests/fixtures/semantic/a.py")
+    eng.build_visual_agent_prompt(target_path, "desc", "ctx", rc)
     assert captured["retrieval_context"] == rc
