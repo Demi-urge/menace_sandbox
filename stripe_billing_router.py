@@ -1,16 +1,15 @@
 """Stripe billing router for mapping bots to Stripe products and customers.
 
-This module selects Stripe API keys and product/customer identifiers based on
-bot metadata. Keys are obtained from a secure vault provider or fall back to
-hard coded production values. A fatal exception is raised if API keys are
-missing or no routing rule matches the supplied bot.
+The router contains the Stripe API keys as module level constants and exposes
+helpers that resolve a routing table to determine which Stripe product, price
+and customer should be used for a given bot.  A fatal exception is raised if
+the keys are missing or no routing rule matches the supplied bot.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any, Mapping, Optional
-from .vault_secret_provider import VaultSecretProvider
 
 try:  # optional dependency
     import stripe  # type: ignore
@@ -20,13 +19,10 @@ except Exception as exc:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-# Retrieve keys from the vault provider with baked‑in fallbacks. These
-# placeholders represent production keys and must never be empty.
-_vault = VaultSecretProvider()
-OFFICIAL_SECRET_KEY = "sk_live_official_placeholder"
-OFFICIAL_PUBLIC_KEY = "pk_live_official_placeholder"
-STRIPE_SECRET_KEY = _vault.get("stripe_secret_key") or OFFICIAL_SECRET_KEY
-STRIPE_PUBLIC_KEY = _vault.get("stripe_public_key") or OFFICIAL_PUBLIC_KEY
+# Hard-coded Stripe keys used for all routed requests.  These placeholder
+# values must never be empty and should point to live keys in production.
+STRIPE_SECRET_KEY = "sk_live_dummy"
+STRIPE_PUBLIC_KEY = "pk_live_dummy"
 if not STRIPE_SECRET_KEY or not STRIPE_PUBLIC_KEY:
     logger.error("Stripe API keys must be configured and non-empty")
     raise RuntimeError("Stripe API keys must be configured and non-empty")
@@ -179,7 +175,7 @@ def _resolve_route(
     return route
 
 
-def initiate_charge(
+def charge(
     bot_id: str,
     amount: float,
     description: str | None = None,
@@ -200,8 +196,8 @@ def initiate_charge(
 
 
 # Backward compatibility
-init_charge = initiate_charge
-charge = initiate_charge
+initiate_charge = charge
+init_charge = charge
 
 
 def get_balance(
