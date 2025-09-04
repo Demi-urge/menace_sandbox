@@ -49,6 +49,8 @@ from stripe_billing_router import (
     charge,
     create_customer,
     create_subscription,
+    refund,
+    create_checkout_session,
     get_balance,
 )
 
@@ -60,6 +62,15 @@ charge("finance:finance_router_bot", price_id="price_finance_standard")
 
 # Create a recurring subscription
 create_subscription("finance:finance_router_bot")
+
+# Issue a refund for a previous payment
+refund("finance:finance_router_bot", "pi_test")
+
+# Create a Checkout session
+create_checkout_session(
+    "finance:finance_router_bot",
+    {"success_url": "https://example.com/s", "cancel_url": "https://example.com/c"},
+)
 
 create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
 bal = get_balance("finance:finance_router_bot")

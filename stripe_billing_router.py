@@ -530,9 +530,182 @@ def create_subscription(
         )
         raise RuntimeError("price_id and customer_id are required for subscriptions")
     sub_params = {"customer": customer, "items": [{"price": price}], **params}
-    if client:
-        return client.Subscription.create(**sub_params)
-    return stripe.Subscription.create(api_key=api_key, **sub_params)
+    timestamp_ms = int(time.time() * 1000)
+    event: dict[str, Any] | None = None
+    try:
+        if client:
+            event = client.Subscription.create(**sub_params)
+        else:
+            event = stripe.Subscription.create(api_key=api_key, **sub_params)
+        return event
+    finally:
+        currency = route.get("currency")
+        user_email = route.get("user_email")
+        destination = None
+        if isinstance(event, Mapping):
+            destination = (
+                event.get("on_behalf_of")
+                or event.get("account")
+                or (event.get("transfer_data") or {}).get("destination")
+            )
+        if destination is None:
+            destination = route.get("secret_key")
+        raw_json = None
+        if isinstance(event, Mapping):
+            try:
+                raw_json = json.dumps(event)
+            except Exception:  # pragma: no cover - serialization issues
+                raw_json = None
+        billing_logger.log_event(
+            id=event.get("id") if isinstance(event, Mapping) else None,
+            action_type="subscription",
+            amount=None,
+            currency=currency,
+            timestamp_ms=timestamp_ms,
+            user_email=user_email,
+            bot_id=bot_id,
+            destination_account=destination,
+            raw_event_json=raw_json,
+        )
+
+
+def refund(
+    bot_id: str,
+    payment_intent_id: str,
+    *,
+    amount: float | None = None,
+    overrides: Optional[Mapping[str, str]] = None,
+    **params: Any,
+) -> dict[str, Any]:
+    """Refund a payment for the given bot."""
+
+    route = _resolve_route(bot_id, overrides)
+    api_key = route["secret_key"]
+    client = _client(api_key)
+    refund_params: dict[str, Any] = {"payment_intent": payment_intent_id, **params}
+    if amount is not None:
+        try:
+            refund_params["amount"] = int(float(amount) * 100)
+        except (TypeError, ValueError):
+            logger.error(
+                "amount must be a positive, non-zero float for bot '%s'", bot_id
+            )
+            raise ValueError("amount must be a positive, non-zero float")
+        if refund_params["amount"] <= 0:
+            logger.error(
+                "amount must be a positive, non-zero float for bot '%s'", bot_id
+            )
+            raise ValueError("amount must be a positive, non-zero float")
+    timestamp_ms = int(time.time() * 1000)
+    event: dict[str, Any] | None = None
+    try:
+        if client:
+            event = client.Refund.create(**refund_params)
+        else:
+            event = stripe.Refund.create(api_key=api_key, **refund_params)
+        return event
+    finally:
+        currency = route.get("currency")
+        user_email = route.get("user_email")
+        destination = None
+        logged_amount: float | None = None
+        if isinstance(event, Mapping):
+            destination = (
+                event.get("on_behalf_of")
+                or event.get("account")
+                or (event.get("transfer_data") or {}).get("destination")
+            )
+            possible = event.get("amount")
+            if possible is not None:
+                try:
+                    logged_amount = float(possible) / 100.0
+                except (TypeError, ValueError):
+                    logged_amount = None
+        if destination is None:
+            destination = route.get("secret_key")
+        raw_json = None
+        if isinstance(event, Mapping):
+            try:
+                raw_json = json.dumps(event)
+            except Exception:  # pragma: no cover - serialization issues
+                raw_json = None
+        billing_logger.log_event(
+            id=event.get("id") if isinstance(event, Mapping) else None,
+            action_type="refund",
+            amount=logged_amount,
+            currency=currency,
+            timestamp_ms=timestamp_ms,
+            user_email=user_email,
+            bot_id=bot_id,
+            destination_account=destination,
+            raw_event_json=raw_json,
+        )
+
+
+def create_checkout_session(
+    bot_id: str,
+    session_params: Mapping[str, Any],
+    *,
+    overrides: Optional[Mapping[str, str]] = None,
+) -> dict[str, Any]:
+    """Create a Stripe Checkout session for the given bot."""
+
+    route = _resolve_route(bot_id, overrides)
+    api_key = route["secret_key"]
+    client = _client(api_key)
+    params = dict(session_params)
+    if "line_items" not in params and route.get("price_id"):
+        params["line_items"] = [{"price": route["price_id"], "quantity": 1}]
+    if "customer" not in params and route.get("customer_id"):
+        params["customer"] = route["customer_id"]
+    timestamp_ms = int(time.time() * 1000)
+    event: dict[str, Any] | None = None
+    try:
+        if client:
+            event = client.checkout.Session.create(**params)
+        else:
+            event = stripe.checkout.Session.create(api_key=api_key, **params)
+        return event
+    finally:
+        currency = route.get("currency")
+        user_email = route.get("user_email")
+        destination = None
+        logged_amount: float | None = None
+        if isinstance(event, Mapping):
+            destination = (
+                event.get("on_behalf_of")
+                or event.get("account")
+                or (event.get("transfer_data") or {}).get("destination")
+            )
+            possible = (
+                event.get("amount_total")
+                or event.get("amount")
+                or event.get("amount_subtotal")
+            )
+            if possible is not None:
+                try:
+                    logged_amount = float(possible) / 100.0
+                except (TypeError, ValueError):
+                    logged_amount = None
+        if destination is None:
+            destination = route.get("secret_key")
+        raw_json = None
+        if isinstance(event, Mapping):
+            try:
+                raw_json = json.dumps(event)
+            except Exception:  # pragma: no cover - serialization issues
+                raw_json = None
+        billing_logger.log_event(
+            id=event.get("id") if isinstance(event, Mapping) else None,
+            action_type="checkout",
+            amount=logged_amount,
+            currency=currency,
+            timestamp_ms=timestamp_ms,
+            user_email=user_email,
+            bot_id=bot_id,
+            destination_account=destination,
+            raw_event_json=raw_json,
+        )
 
 
 __all__ = [
@@ -542,6 +715,8 @@ __all__ = [
     "get_balance",
     "create_customer",
     "create_subscription",
+    "refund",
+    "create_checkout_session",
     "register_route",
     "register_override",
     "register_strategy",
