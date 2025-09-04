@@ -79,7 +79,7 @@ class VisualAgentManager:
         """Start the visual agent using ``token``."""
         env = os.environ.copy()
         env["VISUAL_AGENT_TOKEN"] = token
-        data_dir = Path(env.get("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
+        data_dir = Path(resolve_path(env.get("SANDBOX_DATA_DIR", "sandbox_data")))
         queue_db = data_dir / "visual_agent_queue.db"
         queue = VisualAgentQueue(queue_db)
         recovered = False

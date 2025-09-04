@@ -221,7 +221,7 @@ class SandboxRecoveryManager:
         errors—such as an open circuit or exceeding ``max_retries``—raise
         :class:`SandboxRecoveryError`.
         """
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
+        data_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
         attempts = 0
         delay = self.retry_delay
         while True:

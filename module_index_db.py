@@ -23,7 +23,7 @@ class ModuleIndexDB:
         *,
         auto_map: bool | None = None,
     ) -> None:
-        default_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
+        default_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
         default_path = default_dir / "module_map.json"
         self.path = Path(path) if path is not None else default_path
         if not self.path.exists() and self.path != default_path and default_path.exists():
