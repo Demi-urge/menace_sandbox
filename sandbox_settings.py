@@ -348,6 +348,7 @@ class SandboxSettings(BaseSettings):
         env="AUTO_INSTALL_DEPENDENCIES",
         description="Automatically install missing Python packages when possible.",
     )
+    inject_edge_cases: bool = Field(True, env="INJECT_EDGE_CASES")
     roi_cycles: int | None = Field(None, env="ROI_CYCLES")
     synergy_cycles: int | None = Field(None, env="SYNERGY_CYCLES")
     baseline_window: int = Field(10, env="BASELINE_WINDOW")
