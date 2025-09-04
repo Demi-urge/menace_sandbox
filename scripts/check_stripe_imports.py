@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-"""Detect direct Stripe SDK imports or Stripe live keys.
-
-This script guards against direct usage of the Stripe SDK and accidental
+"""This script guards against direct usage of the Stripe SDK and accidental
 exposure of live Stripe credentials. Run it in two modes:
 
 * Default mode checks Python files for ``stripe`` imports, raw ``api.stripe.com``
@@ -30,30 +27,28 @@ import re
 import sys
 from pathlib import Path
 
-
-def resolve_path(path: str) -> str:
-    return path
-
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+from dynamic_path_router import resolve_path, get_project_root  # noqa: E402
 from stripe_detection import HTTP_LIBRARIES  # noqa: E402
 from stripe_detection import contains_payment_keyword  # noqa: E402
 
+REPO_ROOT = get_project_root()
+
 ALLOWED = {
-    (REPO_ROOT / "stripe_billing_router.py").resolve(),  # path-ignore
-    (REPO_ROOT / "scripts/check_stripe_imports.py").resolve(),  # path-ignore
-    (REPO_ROOT / "startup_checks.py").resolve(),  # path-ignore
-    (REPO_ROOT / "bot_development_bot.py").resolve(),  # path-ignore
-    (REPO_ROOT / "config_loader.py").resolve(),  # path-ignore
-    (REPO_ROOT / "codex_output_analyzer.py").resolve(),  # path-ignore
-    (REPO_ROOT / "stripe_detection.py").resolve(),  # path-ignore
+    resolve_path("stripe_billing_router.py"),  # path-ignore
+    resolve_path("scripts/check_stripe_imports.py"),  # path-ignore
+    resolve_path("startup_checks.py"),  # path-ignore
+    resolve_path("bot_development_bot.py"),  # path-ignore
+    resolve_path("config_loader.py"),  # path-ignore
+    resolve_path("codex_output_analyzer.py"),  # path-ignore
+    resolve_path("stripe_detection.py"),  # path-ignore
 }
 # Detect exposures of Stripe keys, including partially redacted ones with ``*``.
 KEY_PATTERN = re.compile(
     r"(?:sk|pk)_(?:live|test)?_[A-Za-z0-9]*\*+[A-Za-z0-9*]*|sk_live|pk_live|STRIPE_SECRET_KEY|STRIPE_PUBLIC_KEY"
 )
-
 
 class StripeAnalyzer(ast.NodeVisitor):
     def __init__(self) -> None:
@@ -198,8 +193,7 @@ def main(argv: list[str] | None = None) -> int:
 
     paths: list[Path] = []
     for filename in files:
-        p = Path(resolve_path(filename))
-        paths.append(p if p.is_absolute() else (REPO_ROOT / p).resolve())
+        paths.append(resolve_path(filename))
 
     if args.keys:
         offenders = _check_keys(paths)

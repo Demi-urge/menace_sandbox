@@ -8,11 +8,7 @@ import os
 import tempfile
 from typing import Callable, Sequence
 
-try:  # pragma: no cover - optional helper for dynamic paths
-    from dynamic_path_router import resolve_path
-except Exception:  # pragma: no cover - fallback
-    def resolve_path(p: str | Path) -> str | Path:  # type: ignore
-        return p
+from dynamic_path_router import resolve_path
 
 
 class PromptStrategyManager:
@@ -37,9 +33,9 @@ class PromptStrategyManager:
 
                 state_path = _data_dir() / "prompt_strategy_state.json"
             except Exception:  # pragma: no cover - fallback when init unavailable
-                state_path = Path(resolve_path("prompt_strategy_state.json"))
+                state_path = resolve_path("prompt_strategy_state.json")
         if not isinstance(state_path, Path):
-            state_path = Path(resolve_path(state_path))
+            state_path = resolve_path(state_path)
         self.state_path = state_path
         self.index: int = 0
         self._load_state()
