@@ -25,6 +25,7 @@ from self_improvement.baseline_tracker import TRACKER as BASELINE_TRACKER
 
 from ..error_parser import ErrorParser
 from sandbox_settings import SandboxSettings
+from .environment import get_edge_case_stubs
 
 
 logger = logging.getLogger(__name__)
@@ -154,9 +155,10 @@ def _run_once(
             raise ValueError(f"unknown backend: {backend}")
 
         edge_data = edge_cases
+        old_edge_env = os.environ.get("SANDBOX_EDGE_CASES")
         if write_edge_cases:
             if edge_data is None:
-                raw = os.getenv("SANDBOX_EDGE_CASE_STUBS")
+                raw = os.getenv("SANDBOX_EDGE_CASES")
                 if raw:
                     try:
                         parsed = json.loads(raw)
@@ -175,6 +177,11 @@ def _run_once(
                         dest.write_text(content, encoding="utf-8")
                     except Exception:
                         pass
+
+        if edge_data is not None:
+            os.environ["SANDBOX_EDGE_CASES"] = json.dumps(edge_data)
+        else:
+            os.environ.pop("SANDBOX_EDGE_CASES", None)
 
         req_file = tmpdir / "requirements.txt"
         rel_paths: list[Path] = []
@@ -243,7 +250,7 @@ def _run_once(
                     if cov_install.returncode != 0:
                         capture_cov = False
 
-            pytest_args = ["-q", "--tb=short"]
+            pytest_args = ["-q", "--tb=short", "-p", "sandbox_runner.edge_case_plugin"]
             if rel_paths:
                 try:
                     rel_paths = [p.relative_to(repo_path) for p in rel_paths]
@@ -284,7 +291,14 @@ def _run_once(
                 text=True,
             )
         else:  # backend == "docker"
-            pytest_args = ["-m", "pytest", "-q", "--tb=short"]
+            pytest_args = [
+                "-m",
+                "pytest",
+                "-q",
+                "--tb=short",
+                "-p",
+                "sandbox_runner.edge_case_plugin",
+            ]
             if rel_paths:
                 try:
                     rel_paths = [p.relative_to(repo_path) for p in rel_paths]
@@ -336,7 +350,7 @@ def _run_once(
             for key in (
                 "SANDBOX_INPUT_STUBS",
                 "SANDBOX_ENV_PRESETS",
-                "SANDBOX_EDGE_CASE_STUBS",
+                "SANDBOX_EDGE_CASES",
             ):
                 val = os.environ.get(key)
                 if val is not None:
@@ -449,6 +463,10 @@ def _run_once(
             logger.exception("failed to record test run")
         return res
     finally:
+        if old_edge_env is None:
+            os.environ.pop("SANDBOX_EDGE_CASES", None)
+        else:
+            os.environ["SANDBOX_EDGE_CASES"] = old_edge_env
         if tmpdir_obj is not None:
             tmpdir_obj.cleanup()
 
@@ -493,8 +511,6 @@ def run_tests(
             edge_cases: dict[str, Any] = {}
             if inject_edges:
                 try:
-                    from .environment import get_edge_case_stubs
-
                     edge_cases = get_edge_case_stubs()
                 except Exception:
                     edge_cases = {}
@@ -536,10 +552,8 @@ def run_tests(
 
                 old_stub = os.environ.get("SANDBOX_INPUT_STUBS")
                 old_presets = os.environ.get("SANDBOX_ENV_PRESETS")
-                old_edges = os.environ.get("SANDBOX_EDGE_CASE_STUBS")
                 os.environ["SANDBOX_INPUT_STUBS"] = json.dumps([stub])
                 os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
-                os.environ["SANDBOX_EDGE_CASE_STUBS"] = json.dumps(edge_cases)
                 try:
                     res = _run_once(
                         repo_tmp,
@@ -560,10 +574,6 @@ def run_tests(
                         os.environ.pop("SANDBOX_ENV_PRESETS", None)
                     else:
                         os.environ["SANDBOX_ENV_PRESETS"] = old_presets
-                    if old_edges is None:
-                        os.environ.pop("SANDBOX_EDGE_CASE_STUBS", None)
-                    else:
-                        os.environ["SANDBOX_EDGE_CASE_STUBS"] = old_edges
                 results.append(res)
 
     if len(results) == 1:
