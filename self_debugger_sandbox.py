@@ -20,6 +20,7 @@ from statistics import pstdev
 import sqlite3
 import threading
 import importlib
+from types import SimpleNamespace
 from contextlib import contextmanager
 from typing import Callable, Mapping
 from collections import deque
@@ -31,7 +32,7 @@ from .quick_fix_engine import generate_patch
 from .human_alignment_agent import HumanAlignmentAgent
 from .human_alignment_flagger import _collect_diff_data
 from .violation_logger import log_violation
-from .sandbox_results_logger import record_run
+from .sandbox_runner.scoring import record_run
 from db_router import GLOBAL_ROUTER, init_db_router
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
@@ -605,15 +606,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 except Exception:
                     self.logger.exception("coverage cleanup failed")
             runtime = time.perf_counter() - start
+            metrics = {
+                "success": True,
+                "entropy_delta": 0.0,
+                "runtime": runtime,
+                "error": None,
+                "coverage": func_cov,
+                "executed_functions": executed_funcs,
+            }
             record_run(
-                {
-                    "success": True,
-                    "entropy_delta": 0.0,
-                    "runtime": runtime,
-                    "error": None,
-                    "coverage": func_cov,
-                    "executed_functions": executed_funcs,
-                }
+                SimpleNamespace(
+                    success=metrics.get("success"),
+                    duration=metrics.get("runtime"),
+                    failure=metrics.get("error"),
+                ),
+                metrics,
             )
             return float(percent or 0.0), func_cov
         finally:
@@ -722,15 +729,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     self.logger.exception("failed to log parsed failure")
                 self._record_exception(exc)
                 percent = 0.0
+                metrics = {
+                    "success": False,
+                    "entropy_delta": 0.0,
+                    "runtime": runtime,
+                    "error": failure.trace if failure else output,
+                    "coverage": {},
+                    "executed_functions": [],
+                }
                 record_run(
-                    {
-                        "success": False,
-                        "entropy_delta": 0.0,
-                        "runtime": runtime,
-                        "error": failure.trace if failure else output,
-                        "coverage": {},
-                        "executed_functions": [],
-                    }
+                    SimpleNamespace(
+                        success=metrics.get("success"),
+                        duration=metrics.get("runtime"),
+                        failure=metrics.get("error"),
+                    ),
+                    metrics,
                 )
             except Exception as exc:
                 runtime = time.perf_counter() - start
@@ -758,15 +771,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 percent = 0.0
                 self._record_exception(exc)
                 self.logger.exception("coverage generation failed")
+                metrics = {
+                    "success": False,
+                    "entropy_delta": 0.0,
+                    "runtime": runtime,
+                    "error": failure.trace if failure else output,
+                    "coverage": {},
+                    "executed_functions": [],
+                }
                 record_run(
-                    {
-                        "success": False,
-                        "entropy_delta": 0.0,
-                        "runtime": runtime,
-                        "error": failure.trace if failure else output,
-                        "coverage": {},
-                        "executed_functions": [],
-                    }
+                    SimpleNamespace(
+                        success=metrics.get("success"),
+                        duration=metrics.get("runtime"),
+                        failure=metrics.get("error"),
+                    ),
+                    metrics,
                 )
             else:
                 runtime = time.perf_counter() - start
@@ -1792,17 +1811,23 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             ),
                         )
                         try:
+                            metrics = {
+                                "success": result != "reverted",
+                                "entropy_delta": entropy_delta,
+                                "runtime": runtime_delta,
+                                "error": reason,
+                                "coverage": {
+                                    "before": before_cov,
+                                    "after": after_cov,
+                                },
+                            }
                             record_run(
-                                {
-                                    "success": result != "reverted",
-                                    "entropy_delta": entropy_delta,
-                                    "runtime": runtime_delta,
-                                    "error": reason,
-                                    "coverage": {
-                                        "before": before_cov,
-                                        "after": after_cov,
-                                    },
-                                }
+                                SimpleNamespace(
+                                    success=metrics.get("success"),
+                                    duration=metrics.get("runtime"),
+                                    failure=metrics.get("error"),
+                                ),
+                                metrics,
                             )
                         except Exception:
                             pass
@@ -2032,17 +2057,23 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         reason=reason,
                     )
                     try:
+                        metrics = {
+                            "success": result != "reverted",
+                            "entropy_delta": entropy_delta if "entropy_delta" in locals() else 0.0,
+                            "runtime": runtime_delta if "runtime_delta" in locals() else 0.0,
+                            "error": reason,
+                            "coverage": {
+                                "before": before_cov,
+                                "after": after_cov,
+                            },
+                        }
                         record_run(
-                            {
-                                "success": result != "reverted",
-                                "entropy_delta": entropy_delta if "entropy_delta" in locals() else 0.0,
-                                "runtime": runtime_delta if "runtime_delta" in locals() else 0.0,
-                                "error": reason,
-                                "coverage": {
-                                    "before": before_cov,
-                                    "after": after_cov,
-                                },
-                            }
+                            SimpleNamespace(
+                                success=metrics.get("success"),
+                                duration=metrics.get("runtime"),
+                                failure=metrics.get("error"),
+                            ),
+                            metrics,
                         )
                     except Exception:
                         pass
