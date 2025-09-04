@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from collections import Counter
 
+from .dynamic_path_router import resolve_path
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -148,9 +150,12 @@ class SynergyScores:
 class WorkflowSynergyComparator:
     """Compare workflow specifications using structural heuristics."""
 
-    workflow_dir = Path("workflows")
+    workflow_dir = resolve_path("workflows")
     _embed_cache: Dict[str, List[float]] = {}
-    best_practices_file: Path = Path("workflow_best_practices.json")
+    try:
+        best_practices_file: Path = resolve_path("workflow_best_practices.json")
+    except FileNotFoundError:
+        best_practices_file = workflow_dir.parent / "workflow_best_practices.json"
 
     # ------------------------------------------------------------------
     # Helpers
@@ -168,7 +173,11 @@ class WorkflowSynergyComparator:
         if isinstance(src, dict):
             return src
 
-        path = Path(str(src))
+        try:
+            path = resolve_path(str(src))
+        except FileNotFoundError:
+            path = Path(str(src))
+
         if path.is_file():
             try:
                 return json.loads(path.read_text())
@@ -237,7 +246,7 @@ class WorkflowSynergyComparator:
         for m in union:
             if m in index:
                 start = index[m] * dim
-                aligned.extend(base_vec[start : start + dim])
+                aligned.extend(base_vec[start:start + dim])
             else:
                 aligned.extend([0.0] * dim)
         return aligned
@@ -670,7 +679,13 @@ class WorkflowSynergyComparator:
         comparator's :attr:`workflow_dir` is used.
         """
 
-        directory = Path(out_dir) if out_dir is not None else cls.workflow_dir
+        if out_dir is not None:
+            try:
+                directory = resolve_path(str(out_dir))
+            except FileNotFoundError:
+                directory = Path(out_dir)
+        else:
+            directory = cls.workflow_dir
         return merge_duplicate(base_id, dup_id, directory)
 
 
@@ -700,7 +715,10 @@ def merge_duplicate(
         Path to the merged workflow specification or ``None`` on failure.
     """
 
-    directory = Path(out_dir)
+    try:
+        directory = resolve_path(str(out_dir))
+    except FileNotFoundError:
+        directory = Path(out_dir)
     base = directory / f"{base_id}.workflow.json"
     dup = directory / f"{dup_id}.workflow.json"
     out = directory / f"{base_id}.merged.json"
