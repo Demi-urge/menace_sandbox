@@ -17,6 +17,7 @@ from governed_retrieval import govern_retrieval
 import joblib
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import build_scope_clause
+from dynamic_path_router import resolve_path
 
 _ALIASES = (
     "universal_retriever",
@@ -1698,7 +1699,7 @@ class UniversalRetriever:
         for entry in dataset_entries:
             entry["hit_rate"] = hit_rate
 
-        dataset_path = Path(__file__).resolve().parent / "analytics" / "retrieval_outcomes.jsonl"
+        dataset_path = resolve_path("analytics/retrieval_outcomes.jsonl")
         try:
             dataset_path.parent.mkdir(parents=True, exist_ok=True)
             with dataset_path.open("a", encoding="utf8") as fh:
