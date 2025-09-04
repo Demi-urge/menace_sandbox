@@ -1389,6 +1389,7 @@ class SandboxSettings(BaseSettings):
         "adaptive_roi_retrain_interval",
         "adaptive_roi_train_interval",
         "backup_rotation_count",
+        "checkpoint_retention",
     )
     def _validate_positive_training(cls, v: int, info: Any) -> int:
         if v <= 0:
@@ -1774,9 +1775,39 @@ class SandboxSettings(BaseSettings):
         env="ENTROPY_REGRESSION_THRESHOLD",
         description="Entropy delta at or below this value flags a regression.",
     )
+    roi_penalty_threshold: float = Field(
+        0.0,
+        env="ROI_PENALTY_THRESHOLD",
+        description="ROI delta at or below this value applies prompt penalties.",
+    )
+    entropy_penalty_threshold: float = Field(
+        0.0,
+        env="ENTROPY_PENALTY_THRESHOLD",
+        description="Entropy delta at or above this value applies prompt penalties.",
+    )
     sandbox_score_db: str = Field(
         (resolve_path(".") / "score_history.db").as_posix(),
         env="SANDBOX_SCORE_DB",
+    )
+    snapshot_dir: str = Field(
+        (resolve_path("sandbox_data") / "snapshots").as_posix(),
+        env="SNAPSHOT_DIR",
+        description="Directory where state snapshots are stored.",
+    )
+    snapshot_diff_dir: str = Field(
+        (resolve_path("sandbox_data") / "diffs").as_posix(),
+        env="SNAPSHOT_DIFF_DIR",
+        description="Directory where snapshot diffs are written.",
+    )
+    checkpoint_dir: str = Field(
+        (resolve_path("sandbox_data") / "checkpoints").as_posix(),
+        env="CHECKPOINT_DIR",
+        description="Directory where state checkpoints are saved.",
+    )
+    checkpoint_retention: int = Field(
+        5,
+        env="CHECKPOINT_RETENTION",
+        description="Number of checkpoint directories to retain.",
     )
     synergy_weights_lr: float = Field(
         0.1,

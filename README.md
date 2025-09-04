@@ -1515,6 +1515,15 @@ Self-improvement compares ROI gains against this moving baseline and escalates
 an internal urgency tier when momentum stalls, encouraging more aggressive
 mutations.
 
+#### State snapshots
+
+The sandbox records ROI, entropy and call graph metrics for every cycle via
+[`self_improvement/state_snapshot.py`](self_improvement/state_snapshot.py).
+Snapshots and diffs are written to `SNAPSHOT_DIR` / `SNAPSHOT_DIFF_DIR` and
+successful changes are checkpointed under `CHECKPOINT_DIR`.  Tune retention and
+penalty behaviour with `CHECKPOINT_RETENTION`, `ROI_PENALTY_THRESHOLD` and
+`ENTROPY_PENALTY_THRESHOLD` in `SandboxSettings`.
+
 #### Example workflow
 
 ```bash
