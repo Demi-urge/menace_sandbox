@@ -19,9 +19,7 @@ import tempfile
 import time
 import json
 from typing import Any
-from statistics import fmean
 
-from self_improvement.baseline_tracker import TRACKER as BASELINE_TRACKER
 
 from ..error_parser import ErrorParser
 from sandbox_settings import SandboxSettings
@@ -403,7 +401,10 @@ def _run_once(
         entropy_delta = None
         if cov_data is not None:
             try:
-                from self_improvement.metrics import compute_entropy_metrics
+                from self_improvement.metrics import (
+                    compute_entropy_metrics,
+                    compute_entropy_delta,
+                )
 
                 files: list[Path] = []
                 for f in cov_data.get("files", {}):
@@ -414,13 +415,9 @@ def _run_once(
                         continue
                 if files:
                     code_diversity, token_complexity = compute_entropy_metrics(files)
-                    current_entropy = fmean([code_diversity, token_complexity])
-                    prev_entropy = BASELINE_TRACKER.current("entropy")
-                    try:
-                        BASELINE_TRACKER.update(entropy=current_entropy)
-                    except Exception:
-                        pass
-                    entropy_delta = current_entropy - prev_entropy
+                    entropy_delta, _ = compute_entropy_delta(
+                        code_diversity, token_complexity
+                    )
             except Exception:
                 pass
         if tests.returncode != 0:
