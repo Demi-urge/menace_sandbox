@@ -2,6 +2,7 @@ import pathlib
 import sys
 
 import pytest
+import base64
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -68,3 +69,15 @@ def test_js_snippet_keyword_without_router_raises() -> None:
 def test_generic_text_with_router_passes() -> None:
     text = "Payments are processed via stripe_billing_router"
     validate_stripe_usage_generic(text)
+
+
+def test_base64_encoded_key_without_router_raises() -> None:
+    encoded = base64.b64encode(b"sk_" + b"live_" + b"12345678").decode("ascii")
+    with pytest.raises(CriticalGenerationFailure):
+        validate_stripe_usage_generic(encoded)
+
+
+def test_partially_masked_key_without_router_raises() -> None:
+    masked = "sk_" + "live_" + "****1234"
+    with pytest.raises(CriticalGenerationFailure):
+        validate_stripe_usage_generic(masked)
