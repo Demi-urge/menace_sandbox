@@ -124,6 +124,7 @@ def log_prompt_attempt(
     roi_meta: Dict[str, Any] | None = None,
     prompt_id: str | None = None,
     failure_reason: str | None = None,
+    sandbox_metrics: Dict[str, Any] | None = None,
 ) -> None:
     """Record a prompt attempt outcome.
 
@@ -143,8 +144,9 @@ def log_prompt_attempt(
     roi_meta:
         Optional ROI metrics or other contextual information.
     failure_reason:
-        Optional string describing why the attempt failed. Only stored for
-        unsuccessful attempts and omitted from success logs.
+        Optional string describing why the attempt failed.
+    sandbox_metrics:
+        Optional dictionary containing sandbox execution metrics.
     """
 
     metadata = getattr(prompt, "metadata", {}) if prompt is not None else {}
@@ -183,8 +185,9 @@ def log_prompt_attempt(
             roi_delta = roi_meta.get("roi_delta") if isinstance(roi_meta, dict) else None
         if roi_delta is None and isinstance(roi_meta, dict):
             roi_delta = roi_meta.get("roi")
-    if not success and failure_reason is not None:
+    if not success:
         entry["failure_reason"] = failure_reason
+        entry["sandbox_metrics"] = sandbox_metrics
 
     if prompt_id and roi_delta is not None:
         try:

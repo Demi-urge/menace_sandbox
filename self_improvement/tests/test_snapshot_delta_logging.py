@@ -25,6 +25,7 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
         roi_meta,
         prompt_id=None,
         failure_reason=None,
+        sandbox_metrics=None,
     ):  # pragma: no cover
         log_entries.append(
             {
@@ -33,6 +34,7 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
                 "exec_result": exec_result,
                 "roi_meta": roi_meta,
                 "failure_reason": failure_reason,
+                "sandbox_metrics": sandbox_metrics,
             }
         )
 
@@ -75,6 +77,7 @@ def test_record_snapshot_delta_failures(tmp_path, delta, reason):
     assert json.loads(path.read_text().strip()) == delta
     assert logs and not logs[0]["success"]
     assert logs[0]["failure_reason"] == reason
+    assert logs[0]["sandbox_metrics"] == delta
     assert not updates
 
 
@@ -86,4 +89,5 @@ def test_record_snapshot_delta_success(tmp_path):
     func(eng, "p", "d", delta)
     assert logs and logs[0]["success"]
     assert logs[0]["failure_reason"] is None
+    assert logs[0]["sandbox_metrics"] is None
     assert updates and updates[0] == delta
