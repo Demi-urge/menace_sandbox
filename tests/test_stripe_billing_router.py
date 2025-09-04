@@ -121,3 +121,39 @@ def test_domain_routing_and_invalid_domain(monkeypatch):
     assert route["customer_id"] == "cus_alt"
     with pytest.raises(RuntimeError, match="Unsupported billing domain"):
         sbr._resolve_route("unknown:finance:finance_router_bot")
+
+
+def test_key_override_errors(monkeypatch):
+    sbr = _import_module(monkeypatch)
+    with pytest.raises(RuntimeError):
+        sbr._resolve_route(
+            "stripe:finance:finance_router_bot",
+            overrides={"secret_key": "sk_live_other"},
+        )
+    with pytest.raises(RuntimeError):
+        sbr._resolve_route(
+            "stripe:finance:finance_router_bot",
+            overrides={"public_key": "pk_live_other"},
+        )
+
+
+def test_register_rejects_api_keys(monkeypatch):
+    sbr = _import_module(monkeypatch)
+    with pytest.raises(ValueError):
+        sbr.register_route(
+            "stripe",
+            "finance",
+            "finance_router_bot",
+            {"secret_key": "sk_live_other"},
+        )
+    with pytest.raises(ValueError):
+        sbr.register_override(
+            {
+                "domain": "stripe",
+                "business_category": "finance",
+                "bot_name": "finance_router_bot",
+                "key": "tier",
+                "value": "enterprise",
+                "route": {"public_key": "pk_live_other"},
+            }
+        )
