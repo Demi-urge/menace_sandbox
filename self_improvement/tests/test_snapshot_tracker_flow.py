@@ -19,8 +19,10 @@ sys.modules.setdefault(
     "dynamic_path_router", SimpleNamespace(resolve_path=lambda p: Path(p))
 )
 
+from dynamic_path_router import resolve_path
+
 tracker_mod = importlib.import_module(
-    "menace_sandbox.self_improvement.snapshot_tracker"
+    "menace_sandbox.self_improvement.snapshot_tracker",
 )
 
 
@@ -56,19 +58,19 @@ def _patch_helpers(monkeypatch, tmp_path, entropies, diversities, complexities):
 
 
 def test_capture_and_compare(monkeypatch, tmp_path):
-    (tmp_path / "mod.py").write_text("print('hi')")
+    (tmp_path / resolve_path("mod.py")).write_text("print('hi')")
 
     _patch_helpers(monkeypatch, tmp_path, [0.5, 0.6], [0.1, 0.2], [1, 2])
 
     snap1 = tracker_mod.capture(
         stage="pre",
-        files=[tmp_path / "mod.py"],
+        files=[tmp_path / resolve_path("mod.py")],
         roi=1.0,
         sandbox_score=0.0,
     )
     snap2 = tracker_mod.capture(
         stage="post",
-        files=[tmp_path / "mod.py"],
+        files=[tmp_path / resolve_path("mod.py")],
         roi=2.0,
         sandbox_score=0.1,
     )
@@ -80,3 +82,4 @@ def test_capture_and_compare(monkeypatch, tmp_path):
     assert pytest.approx(d["entropy"], rel=1e-6) == 0.1
     assert pytest.approx(d["call_graph_complexity"], rel=1e-6) == 1.0
     assert pytest.approx(d["token_diversity"], rel=1e-6) == 0.1
+
