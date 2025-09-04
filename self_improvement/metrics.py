@@ -247,6 +247,23 @@ def compute_entropy_metrics(
     return avg_entropy, avg_complexity, avg_diversity
 
 
+def collect_snapshot_metrics(
+    files: Sequence[Path | str],
+    settings: SandboxSettings | None = None,
+) -> tuple[float, float]:
+    """Return ``(entropy, token_diversity)`` for ``files``.
+
+    The helper wraps :func:`compute_entropy_metrics` and combines the returned
+    code diversity and token complexity values into a single entropy score.
+    """
+
+    code_div, token_complexity, token_div = compute_entropy_metrics(
+        files, settings=settings
+    )
+    entropy = fmean([float(code_div), float(token_complexity)])
+    return float(entropy), float(token_div)
+
+
 def compute_code_entropy(
     files: Sequence[Path | str],
     settings: SandboxSettings | None = None,
@@ -445,6 +462,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 __all__ = [
     "_update_alignment_baseline",
     "get_alignment_metrics",
+    "collect_snapshot_metrics",
     "compute_call_graph_complexity",
     "compute_entropy_metrics",
     "compute_code_entropy",
