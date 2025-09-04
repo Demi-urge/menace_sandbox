@@ -46,6 +46,17 @@ def record_regression(prompt_id: str) -> int:
         return penalties[prompt_id]
 
 
+def reset_penalty(prompt_id: str) -> None:
+    """Reset regression count for ``prompt_id`` to zero."""
+
+    with _penalty_lock:
+        penalties = load_prompt_penalties()
+        if prompt_id in penalties and penalties[prompt_id] != 0:
+            penalties[prompt_id] = 0
+            _penalty_path.parent.mkdir(parents=True, exist_ok=True)
+            _penalty_path.write_text(json.dumps(penalties), encoding="utf-8")
+
+
 def _log_path(success: bool) -> Path:
     """Return the log file path based on *success* state."""
 
