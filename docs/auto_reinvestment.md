@@ -19,7 +19,7 @@ Menace periodically reinvests a portion of its billing balance into expanding it
 ```python
 from stripe_billing_router import get_balance
 
-balance = get_balance("finance:finance_router_bot:monetization")
+balance = get_balance("finance:finance_router_bot")
 reinvestable = balance * cap_percentage
 predicted = predict_optimal_spend()
 amount_to_spend = min(predicted, reinvestable)
