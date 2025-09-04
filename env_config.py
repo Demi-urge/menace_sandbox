@@ -23,8 +23,6 @@ load_env(os.getenv('MENACE_ENV_FILE'))
 # Convenience accessors for secrets
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 SERP_API_KEY = os.getenv('SERP_API_KEY')
-STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
-STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY')
 ANTICAPTCHA_API_KEY = os.getenv('ANTICAPTCHA_API_KEY')
 
 MENACE_MODE = os.getenv('MENACE_MODE', 'test')

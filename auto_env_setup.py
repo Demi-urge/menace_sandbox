@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-"""Automatic environment setup utilities."""
+"""Automatic environment setup utilities.
+
+Stripe API keys are intentionally excluded from generated configuration;
+``stripe_billing_router`` reads them directly from the environment to avoid
+writing sensitive values to disk."""
 
 import os
 import json
