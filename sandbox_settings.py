@@ -2056,6 +2056,18 @@ class SandboxSettings(BaseSettings):
         description="Directories to skip when collecting code metrics.",
     )
 
+    snapshot_metrics: list[str] = Field(
+        default_factory=lambda: [
+            "roi",
+            "sandbox_score",
+            "entropy",
+            "call_graph_complexity",
+            "token_diversity",
+        ],
+        env="SNAPSHOT_METRICS",
+        description="Metrics captured and tracked for each self-improvement snapshot.",
+    )
+
     # self test integration scoring knobs
     integration_score_threshold: float = Field(
         0.0,
