@@ -54,7 +54,7 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
 
     success = bool(getattr(result, "success", result))
     runtime = float(metrics.get("runtime", getattr(result, "duration", 0.0)))
-    entropy_delta = float(metrics.get("entropy_delta", 0.0))
+    entropy_delta = metrics.get("entropy_delta")
     roi = metrics.get("roi")
     coverage = metrics.get("coverage")
 
@@ -96,7 +96,8 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
             summary["successes"] = summary.get("successes", 0) + (1 if success else 0)
             summary["failures"] = summary.get("failures", 0) + (0 if success else 1)
             summary["runtime_total"] = summary.get("runtime_total", 0.0) + runtime
-            summary["entropy_total"] = summary.get("entropy_total", 0.0) + entropy_delta
+            if entropy_delta is not None:
+                summary["entropy_total"] = summary.get("entropy_total", 0.0) + float(entropy_delta)
             _SUMMARY_FILE.write_text(json.dumps(summary))
         except Exception:  # pragma: no cover - logging is best effort
             logger.exception("failed to persist run metrics")

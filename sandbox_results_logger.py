@@ -21,7 +21,7 @@ def record_run(metrics: Dict[str, Any]) -> None:
     metrics:
         Mapping containing runtime information. Keys such as ``success``,
         ``runtime`` and ``error`` are translated for the new API. Additional
-        keys are passed through unchanged.
+        values like ``entropy_delta`` are forwarded unchanged for persistence.
     """
 
     _record_run(

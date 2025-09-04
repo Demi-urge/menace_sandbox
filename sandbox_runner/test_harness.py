@@ -324,11 +324,41 @@ def _run_once(
                     )
                 except Exception:
                     cov_data = None
+            function_cov = None
+            entropy_delta = None
             if cov_data is not None:
                 try:
                     from .environment import load_coverage_report  # type: ignore
 
                     load_coverage_report(cov_data)
+                except Exception:
+                    pass
+                # Derive function coverage and entropy delta
+                try:
+                    from self_improvement.metrics import (
+                        compute_entropy_delta as _compute_entropy_delta,
+                        compute_entropy_metrics,
+                    )
+
+                    funcs: list[float] = []
+                    for info in cov_data.get("files", {}).values():
+                        for meta in (info.get("functions") or {}).values():
+                            pct = meta.get("summary", {}).get("percent_covered")
+                            if pct is not None:
+                                funcs.append(float(pct))
+                    if funcs:
+                        function_cov = sum(funcs) / len(funcs)
+
+                    files: list[Path] = []
+                    for f in cov_data.get("files", {}):
+                        try:
+                            rel = Path(f).relative_to(tmpdir)
+                            files.append(repo_path / rel)
+                        except Exception:
+                            continue
+                    if function_cov is not None and files:
+                        _, token_complexity = compute_entropy_metrics(files)
+                        entropy_delta, _ = _compute_entropy_delta(function_cov, token_complexity)
                 except Exception:
                     pass
         if tests.returncode != 0:
@@ -361,7 +391,7 @@ def _run_once(
                         coverage_pct if coverage_pct is not None else (1.0 if res.success else 0.0)
                     ),
                     "coverage": coverage_pct,
-                    "entropy_delta": 0.0,
+                    "entropy_delta": entropy_delta,
                 },
             )
         except Exception:  # pragma: no cover - best effort
