@@ -4,6 +4,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,6 +59,12 @@ class StubIndex:
 
 
 def test_try_integrate_into_workflows(tmp_path, monkeypatch):
+    local_db = tmp_path / "local.db"
+    shared_db = tmp_path / "shared.db"
+    local_db.touch()
+    shared_db.touch()
+    monkeypatch.setenv("MENACE_LOCAL_DB_PATH", str(local_db))
+    monkeypatch.setenv("MENACE_SHARED_DB_PATH", str(shared_db))
     env = _load_env(monkeypatch)
     thb = _load_thb()
     db_path = tmp_path / "wf.db"
@@ -102,6 +109,12 @@ def test_try_integrate_into_workflows(tmp_path, monkeypatch):
 
 
 def test_try_integrate_no_match(tmp_path, monkeypatch):
+    local_db = tmp_path / "local.db"
+    shared_db = tmp_path / "shared.db"
+    local_db.touch()
+    shared_db.touch()
+    monkeypatch.setenv("MENACE_LOCAL_DB_PATH", str(local_db))
+    monkeypatch.setenv("MENACE_SHARED_DB_PATH", str(shared_db))
     env = _load_env(monkeypatch)
     thb = _load_thb()
     db_path = tmp_path / "wf.db"
@@ -130,6 +143,13 @@ def test_try_integrate_no_match(tmp_path, monkeypatch):
 
 
 def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
+    local_db = tmp_path / "local.db"
+    shared_db = tmp_path / "shared.db"
+    local_db.touch()
+    shared_db.touch()
+    monkeypatch.setenv("MENACE_LOCAL_DB_PATH", str(local_db))
+    monkeypatch.setenv("MENACE_SHARED_DB_PATH", str(shared_db))
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     env = _load_env(monkeypatch)
     thb = _load_thb()
     db_path = tmp_path / "wf.db"
@@ -170,7 +190,12 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
     sts_stub.SelfTestService = DummySTS
     monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
 
-    mods = ["pkg1/orphan.py", "pkg2/orphan.py"]
+    (tmp_path / "existing.py").write_text("def existing():\n    pass\n")
+    (tmp_path / "pkg1").mkdir()
+    (tmp_path / "pkg1" / "orphan.py").write_text("def o1():\n    pass\n")
+    (tmp_path / "pkg2").mkdir()
+    (tmp_path / "pkg2" / "orphan.py").write_text("def o2():\n    pass\n")
+    mods = [resolve_path("pkg1/orphan.py"), resolve_path("pkg2/orphan.py")]
     updated = env.try_integrate_into_workflows(mods, workflows_db=db_path)
     rec = {r.wid: r for r in wf_db.fetch(limit=10)}[wid]
     assert wid in updated
@@ -178,6 +203,12 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
 
 
 def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
+    local_db = tmp_path / "local.db"
+    shared_db = tmp_path / "shared.db"
+    local_db.touch()
+    shared_db.touch()
+    monkeypatch.setenv("MENACE_LOCAL_DB_PATH", str(local_db))
+    monkeypatch.setenv("MENACE_SHARED_DB_PATH", str(shared_db))
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     env = _load_env(monkeypatch)
     thb = _load_thb()
@@ -207,8 +238,8 @@ def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
     class DummyClusterer:
         def __init__(self):
             self.clusters = {
-                str((tmp_path / "a.py").resolve()): [1],
-                str((tmp_path / "b.py").resolve()): [2],
+                str(resolve_path("a.py")): [1],
+                str(resolve_path("b.py")): [2],
             }
 
     clusterer = DummyClusterer()
@@ -220,7 +251,7 @@ def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
     )
 
     updated = env.try_integrate_into_workflows(
-        ["b.py"],
+        [resolve_path("b.py")],
         workflows_db=db_path,
         intent_clusterer=clusterer,
     )
