@@ -29,6 +29,12 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
 
+PAYMENT_ROUTER_NOTICE = (
+    "All payment logic must defer to stripe_billing_router.py. "
+    "No raw Stripe keys, API calls, or checkout logic may exist elsewhere. "
+    "Missing the import must raise a critical generation failure."
+)
+
 
 @dataclass
 class RefactorProposal:
@@ -138,6 +144,14 @@ class EnhancementBot:
                 f"Diff summary hint: {hint}",
                 confidence,
                 role="system",
+            )
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = (
+                PAYMENT_ROUTER_NOTICE + "\n" + messages[0].get("content", "")
+            )
+        else:
+            messages = (
+                [{"role": "system", "content": PAYMENT_ROUTER_NOTICE}] + messages
             )
         try:
             resp = openai.ChatCompletion.create(

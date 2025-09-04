@@ -161,8 +161,9 @@ INSTRUCTION_SECTIONS = [
 PREVIOUS_FAILURE_TEMPLATE = "Previous failure: {error}"
 
 PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must defer to stripe_billing_router; "
-    "no raw Stripe keys or direct Stripe API calls elsewhere."
+    "All payment logic must defer to stripe_billing_router.py. "
+    "No raw Stripe keys, API calls, or checkout logic may exist elsewhere. "
+    "Missing the import must raise a critical generation failure."
 )
 
 FALLBACK_SYSTEM_PROMPT = (

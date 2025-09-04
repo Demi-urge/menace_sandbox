@@ -5,7 +5,7 @@
       "- Follow PEP8 style guidelines with 4 space indents and lines under 79 characters.",
       "- Provide Google style docstrings for modules, classes and functions.",
       "- Include inline comments explaining complex logic.",
-      "- All payment logic must defer to stripe_billing_router; no raw Stripe keys or direct Stripe API calls elsewhere."
+      "- All payment logic must defer to stripe_billing_router.py. No raw Stripe keys, API calls, or checkout logic may exist elsewhere. Missing the import must raise a critical generation failure."
     ],
     "repository_layout": [
       "- Place source code in {name}.py at the repository root.",

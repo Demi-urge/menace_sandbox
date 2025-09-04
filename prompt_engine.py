@@ -73,6 +73,12 @@ except Exception:  # pragma: no cover - dependency missing or failed
 
 DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh implementation."
 
+PAYMENT_ROUTER_NOTICE = (
+    "All payment logic must defer to stripe_billing_router.py. "
+    "No raw Stripe keys, API calls, or checkout logic may exist elsewhere. "
+    "Missing the import must raise a critical generation failure."
+)
+
 
 try:  # pragma: no cover - optional heavy imports for type checking
     from vector_service.retriever import (
@@ -726,7 +732,7 @@ class PromptEngine:
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
             self._optimizer_applied = False
-            return self._static_prompt()
+            return Prompt(system=PAYMENT_ROUTER_NOTICE, user=self._static_prompt())
 
         try:
             result = retriever.search(task, top_k=self.top_n)
@@ -737,7 +743,7 @@ class PromptEngine:
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
             )
             self._optimizer_applied = False
-            return self._static_prompt()
+            return Prompt(system=PAYMENT_ROUTER_NOTICE, user=self._static_prompt())
 
         if isinstance(result, FallbackResult):
             logging.info(
@@ -753,7 +759,7 @@ class PromptEngine:
                 },
             )
             self._optimizer_applied = False
-            return self._static_prompt()
+            return Prompt(system=PAYMENT_ROUTER_NOTICE, user=self._static_prompt())
 
         if isinstance(result, tuple):
             records = result[0]
@@ -793,7 +799,7 @@ class PromptEngine:
                 },
             )
             self._optimizer_applied = False
-            return self._static_prompt()
+            return Prompt(system=PAYMENT_ROUTER_NOTICE, user=self._static_prompt())
 
         examples: List[str] = []
         outcome_tags: List[str] = []
@@ -898,7 +904,7 @@ class PromptEngine:
             except Exception:
                 self.last_metadata = {"target_region": region_meta}
         prompt_obj = Prompt(
-            system="",
+            system=PAYMENT_ROUTER_NOTICE,
             user=text,
             examples=examples,
             vector_confidence=confidence,
