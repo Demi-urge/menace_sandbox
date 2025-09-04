@@ -75,10 +75,9 @@ class TestHarnessResult:
 
 def _python_bin(venv: Path) -> Path:
     """Return the path to the Python executable inside ``venv``."""
-
-    if sys.platform == "win32":  # pragma: no cover - Windows not used in tests
-        return venv / "Scripts" / "python.exe"
-    return venv / "bin" / "python"
+    subdir = "Scripts" if sys.platform == "win32" else "bin"
+    exe = "python.exe" if sys.platform == "win32" else "python"
+    return resolve_path(venv / subdir / exe)
 
 
 _FRAME_RE = re.compile(r'File "([^"]+)", line (\d+), in (.+)')
@@ -389,16 +388,12 @@ def _run_once(
             stdout_parts.append(tests.stdout)
             failure = None
             cov_json = tmpdir / "cov.json"
-            coverage_pct = None
             cov_data = None
             executed_functions: list[str] | None = None
             coverage_map: dict[str, list[str]] | None = None
             if cov_json.exists():
                 try:
                     cov_data = json.loads(cov_json.read_text())
-                    coverage_pct = float(
-                        cov_data.get("totals", {}).get("percent_covered", 0.0)
-                    )
                 except Exception:
                     cov_data = None
                 if cov_data is not None:
