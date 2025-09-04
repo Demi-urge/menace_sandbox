@@ -7,9 +7,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 
-pkg = types.ModuleType("self_improvement")
+pkg = types.ModuleType("menace_sandbox.self_improvement")
 pkg.__path__ = [str(ROOT / "self_improvement")]
-sys.modules.setdefault("self_improvement", pkg)
+sys.modules["menace_sandbox.self_improvement"] = pkg
 
 sys.modules.setdefault(
     "dynamic_path_router",
@@ -19,10 +19,13 @@ boot = types.ModuleType("sandbox_runner.bootstrap")
 boot.initialize_autonomous_sandbox = lambda *a, **k: None
 sys.modules.setdefault("sandbox_runner.bootstrap", boot)
 
-prompt_memory = importlib.import_module("self_improvement.prompt_memory")
+prompt_memory = importlib.import_module(
+    "menace_sandbox.self_improvement.prompt_memory"
+)
 PromptStrategyManager = importlib.import_module(
-    "self_improvement.prompt_strategy_manager"
+    "menace_sandbox.self_improvement.prompt_strategy_manager"
 ).PromptStrategyManager
+from dynamic_path_router import resolve_path  # noqa: E402
 
 
 @pytest.fixture
@@ -33,9 +36,9 @@ def strategy_templates():
 @pytest.fixture
 def mock_roi_stats(strategy_templates):
     return {
-        "alpha": {"success": 1, "avg_roi": 1.0, "trials": 1},
-        "beta": {"success": 1, "avg_roi": 5.0, "trials": 1},
-        "gamma": {"success": 1, "avg_roi": 2.0, "trials": 1},
+        "alpha": {"avg_roi": 1.0, "trials": 1},
+        "beta": {"avg_roi": 5.0, "trials": 1},
+        "gamma": {"avg_roi": 2.0, "trials": 1},
     }
 
 
@@ -82,27 +85,27 @@ def test_strategies_rotate_after_failure(tmp_path, strategy_templates):
     assert second == strategy_templates[1]
 
 
-def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats):
+def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats, monkeypatch):
     penalties = {s: 5 for s in strategy_templates}
 
     class MiniEngine:
-        def __init__(self, stats):
-            self.strategy_stats = stats
+        def __init__(self):
             self.deprioritized_strategies = set()
 
         def select(self, strategies, threshold=3, multiplier=0.5):
             eligible = []
             penalised = []
+            stats = prompt_memory.load_strategy_roi_stats()
             for strat in strategies:
                 if strat in self.deprioritized_strategies:
                     continue
                 count = penalties.get(str(strat), 0)
                 weight = multiplier if threshold and count >= threshold else 1.0
-                stats = self.strategy_stats.get(str(strat))
-                if stats:
-                    roi_factor = stats.get("avg_roi", 0.0)
+                rs = stats.get(str(strat))
+                if rs:
+                    roi_factor = rs.get("avg_roi", 0.0)
                     roi_factor = roi_factor if roi_factor > 0 else 0.1
-                    weight *= roi_factor * max(stats.get("success", 0), 1)
+                    weight *= roi_factor
                 target = penalised if threshold and count >= threshold else eligible
                 target.append((strat, weight))
             pool = eligible or penalised
@@ -114,7 +117,24 @@ def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats):
                     best = strat
             return best
 
-    eng = MiniEngine(mock_roi_stats)
+    monkeypatch.setattr(
+        prompt_memory, "load_strategy_roi_stats", lambda: mock_roi_stats
+    )
+    eng = MiniEngine()
     selected = eng.select(strategy_templates)
     assert selected == "beta"
 
+
+def test_roi_stats_logged(tmp_path, monkeypatch, dummy_prompt):
+    path = Path(resolve_path(str(tmp_path / "stats.json")))
+    monkeypatch.setattr(prompt_memory, "_repo_path", lambda: tmp_path)
+    monkeypatch.setattr(prompt_memory, "_strategy_stats_path", path)
+    from filelock import FileLock
+    monkeypatch.setattr(
+        prompt_memory, "_strategy_lock", FileLock(str(path) + ".lock")
+    )
+    prompt_memory.log_prompt_attempt(
+        dummy_prompt, True, exec_result={}, roi_meta={"roi_delta": 1.5}
+    )
+    stats = prompt_memory.load_strategy_roi_stats()
+    assert pytest.approx(stats[dummy_prompt.metadata["prompt_id"]]["avg_roi"], 0.01) == 1.5

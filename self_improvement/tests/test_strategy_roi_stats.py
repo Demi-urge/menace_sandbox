@@ -1,7 +1,5 @@
 import types
 import sys
-import json
-import logging
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,34 +17,16 @@ sys.modules.setdefault("sandbox_runner.bootstrap", boot)
 pkg = types.ModuleType("menace_sandbox.self_improvement")
 pkg.__path__ = [str(ROOT / "self_improvement")]
 sys.modules["menace_sandbox.self_improvement"] = pkg
-from menace_sandbox.sandbox_settings import SandboxSettings
 
-class DummyPrompt:
-    def __init__(self, strategy):
-        self.metadata = {"strategy": strategy}
+from menace_sandbox.sandbox_settings import SandboxSettings  # noqa: E402
+from menace_sandbox.self_improvement import prompt_memory  # noqa: E402
+from filelock import FileLock  # noqa: E402
+from dynamic_path_router import resolve_path  # noqa: E402
+
 
 class MiniEngine:
-    def __init__(self, path):
-        self.strategy_stats_path = path
-        self.strategy_stats = {}
+    def __init__(self):
         self.deprioritized_strategies = set()
-        self.logger = logging.getLogger("test")
-
-    def _save_strategy_stats(self):
-        self.strategy_stats_path.parent.mkdir(parents=True, exist_ok=True)
-        self.strategy_stats_path.write_text(json.dumps(self.strategy_stats))
-
-    def _update_strategy_stats(self, prompt, success, delta):
-        strategy = getattr(prompt, "metadata", {}).get("strategy") if prompt else None
-        if not strategy:
-            return
-        stats = self.strategy_stats.setdefault(strategy, {"success": 0, "avg_roi": 0.0, "trials": 0})
-        roi = float(delta.get("roi", 0.0))
-        stats["trials"] += 1
-        stats["avg_roi"] = ((stats["avg_roi"] * (stats["trials"] - 1)) + roi) / stats["trials"]
-        if success:
-            stats["success"] += 1
-        self._save_strategy_stats()
 
     def _select_prompt_strategy(self, strategies):
         penalties = {}
@@ -54,16 +34,21 @@ class MiniEngine:
         threshold = settings.prompt_failure_threshold
         eligible = []
         penalised = []
+        stats = prompt_memory.load_strategy_roi_stats()
         for strat in strategies:
             if strat in self.deprioritized_strategies:
                 continue
             count = penalties.get(str(strat), 0)
-            weight = settings.prompt_penalty_multiplier if threshold and count >= threshold else 1.0
-            stats = self.strategy_stats.get(str(strat))
-            if stats:
-                roi_factor = stats.get("avg_roi", 0.0)
+            weight = (
+                settings.prompt_penalty_multiplier
+                if threshold and count >= threshold
+                else 1.0
+            )
+            rs = stats.get(str(strat))
+            if rs:
+                roi_factor = rs.get("avg_roi", 0.0)
                 roi_factor = roi_factor if roi_factor > 0 else 0.1
-                weight *= roi_factor * max(stats.get("success", 0), 1)
+                weight *= roi_factor
             target = penalised if threshold and count >= threshold else eligible
             target.append((strat, weight))
         pool = eligible or penalised
@@ -75,14 +60,18 @@ class MiniEngine:
                 best = strat
         return best
 
-def test_roi_weighted_selection(tmp_path):
-    stats_path = tmp_path / "stats.json"
-    eng = MiniEngine(stats_path)
-    eng._update_strategy_stats(DummyPrompt("s1"), True, {"roi": 2.0})
-    eng._update_strategy_stats(DummyPrompt("s2"), True, {"roi": 0.5})
-    assert json.loads(stats_path.read_text())["s1"]["avg_roi"] > 1.9
-    choice = eng._select_prompt_strategy(["s1", "s2"])
-    assert choice == "s1"
-    eng2 = MiniEngine(stats_path)
-    eng2.strategy_stats = json.loads(stats_path.read_text())
+
+def test_roi_weighted_selection(tmp_path, monkeypatch):
+    path = Path(resolve_path(str(tmp_path / "stats.json")))
+    monkeypatch.setattr(prompt_memory, "_strategy_stats_path", path)
+    monkeypatch.setattr(
+        prompt_memory, "_strategy_lock", FileLock(str(path) + ".lock")
+    )
+    prompt_memory.update_strategy_roi("s1", 2.0)
+    prompt_memory.update_strategy_roi("s2", 0.5)
+    stats = prompt_memory.load_strategy_roi_stats()
+    assert stats["s1"]["avg_roi"] > 1.9
+    eng = MiniEngine()
+    assert eng._select_prompt_strategy(["s1", "s2"]) == "s1"
+    eng2 = MiniEngine()
     assert eng2._select_prompt_strategy(["s1", "s2"]) == "s1"
