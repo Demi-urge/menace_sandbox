@@ -14,8 +14,10 @@ import json
 import os
 from typing import Dict, List, Set, Tuple
 
+from dynamic_path_router import resolve_path
 
-DEFAULT_PATH = os.path.join("sandbox_data", "workflow_graph.json")
+
+DEFAULT_PATH = str(resolve_path("sandbox_data/workflow_graph.json"))
 
 
 def _load_graph(path: str) -> Dict[str, List[str]]:
@@ -89,13 +91,15 @@ def _latest_snapshots(base_path: str) -> List[str]:
 
 
 def cmd_chain(args: argparse.Namespace) -> None:
-    graph = _load_graph(args.path)
+    path = str(resolve_path(args.path))
+    graph = _load_graph(path)
     chains = _dependency_chains(graph, str(args.workflow_id))
     print(json.dumps(chains))
 
 
 def cmd_diff(args: argparse.Namespace) -> None:
-    snaps = _latest_snapshots(args.path)
+    path = str(resolve_path(args.path))
+    snaps = _latest_snapshots(path)
     if len(snaps) < 2:
         print(json.dumps({"error": "not enough snapshots"}))
         return
