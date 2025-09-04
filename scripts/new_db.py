@@ -151,7 +151,7 @@ def create_db_scaffold(name: str, root: Path = Path('.')) -> None:
         )
     )
 
-    emb_file = root / 'vector_service' / resolve_path('vector_service/embedding_backfill.py').name
+    emb_file = resolve_path("vector_service/embedding_backfill.py")
     if emb_file.exists():
         text = emb_file.read_text()
         if module_name not in text:
