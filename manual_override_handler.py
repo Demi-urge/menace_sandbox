@@ -13,13 +13,15 @@ from datetime import datetime
 from uuid import uuid4
 from typing import Any, Dict
 
+from dynamic_path_router import resolve_dir, resolve_path
+
 from .override_validator import verify_signature
 
 # ---------------------------------------------------------------------------
 # Paths for violation logs and override records
-LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
-VIOLATION_LOG = os.path.join(LOG_DIR, "violation_log.jsonl")
-OVERRIDE_LOG = os.path.join(LOG_DIR, "violation_overrides.jsonl")
+LOG_DIR = resolve_dir("logs")
+VIOLATION_LOG = resolve_path("logs/violation_log.jsonl")
+OVERRIDE_LOG = resolve_path("logs/violation_overrides.jsonl")
 
 
 def _ensure_log_dir() -> None:

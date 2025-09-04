@@ -12,6 +12,8 @@ from typing import List, Dict, Any
 from string import Template
 from pydantic import BaseModel, ValidationError
 
+from dynamic_path_router import resolve_dir, resolve_path
+
 logger = logging.getLogger(__name__)
 
 try:  # transformers is optional and only used for offline models
@@ -25,16 +27,11 @@ except Exception:  # pragma: no cover - optional dependency
 # Configuration
 _SETTINGS_PATH = os.getenv(
     "JUSTIFIER_SETTINGS_PATH",
-    os.path.join(os.path.dirname(__file__), "config", "justifier_settings.json"),
+    str(resolve_path("config/justifier_settings.json")),
 )
-_LOG_DIR = os.getenv(
-    "JUSTIFIER_LOG_DIR",
-    os.path.join(os.path.dirname(__file__), "logs"),
-)
-_JUSTIFICATION_LOG = os.path.join(
-    _LOG_DIR, os.getenv("JUSTIFICATION_LOG_FILE", "justifications.jsonl")
-)
-_CACHE_DIR = Path(os.getenv("JUSTIFIER_CACHE_DIR", os.path.join(_LOG_DIR, "cache")))
+_LOG_DIR = Path(os.getenv("JUSTIFIER_LOG_DIR") or resolve_dir("logs"))
+_JUSTIFICATION_LOG = _LOG_DIR / os.getenv("JUSTIFICATION_LOG_FILE", "justifications.jsonl")
+_CACHE_DIR = Path(os.getenv("JUSTIFIER_CACHE_DIR") or (_LOG_DIR / "cache"))
 
 
 class ActionLogModel(BaseModel):
