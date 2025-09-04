@@ -118,8 +118,8 @@ class FinanceRouterBot:
     def route_payment(self, amount: float, model_id: str) -> str:
         """Charge via Stripe and log the result."""
         try:
-            resp = stripe_billing_router.charge(
-                "finance:finance_router_bot:monetization",
+            resp = stripe_billing_router.init_charge(
+                model_id,
                 amount,
                 description=model_id,
             )

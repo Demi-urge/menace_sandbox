@@ -4,8 +4,6 @@ import sys
 import types
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test")
-os.environ.setdefault("STRIPE_PUBLIC_KEY", "pk_test")
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *a, **k: None))
 jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None
