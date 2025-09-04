@@ -419,12 +419,16 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
             leftovers.append(str(path))
             logger.debug("artifact cleanup failed for %s", path, exc_info=True)
 
-    cov_files = [
-        _env_path("SANDBOX_COVERAGE_FILE", "sandbox_data/coverage.json"),
-        _env_path("SANDBOX_COVERAGE_SUMMARY", "sandbox_data/coverage_summary.json"),
-        Path(".coverage"),
-        Path("cov.json"),
-    ]
+    cov_files: list[Path] = []
+    for env_name, default in [
+        ("SANDBOX_COVERAGE_FILE", "sandbox_data/coverage.json"),
+        ("SANDBOX_COVERAGE_SUMMARY", "sandbox_data/coverage_summary.json"),
+    ]:
+        try:
+            cov_files.append(_env_path(env_name, default))
+        except FileNotFoundError:
+            cov_files.append(Path(os.getenv(env_name, default)))
+    cov_files.extend([Path(".coverage"), Path("cov.json")])
     for path in cov_files:
         try:
             path.unlink(missing_ok=True)  # type: ignore[arg-type]
@@ -523,10 +527,15 @@ from db_router import GLOBAL_ROUTER, init_db_router
 
 
 def _env_path(name: str, default: str) -> Path:
-    path = Path(os.getenv(name, str(resolve_path(default))))
-    if not path.is_absolute():
-        path = repo_root() / path
-    return path
+    """Resolve *name* from the environment to an absolute :class:`Path`.
+
+    The value of ``name`` is looked up in the environment, falling back to
+    ``default`` if unset. The resulting string is passed directly to
+    :func:`resolve_path` which handles resolution relative to the repository
+    root.
+    """
+
+    return resolve_path(os.getenv(name, default))
 
 # Persistent module usage tracking -------------------------------------------
 MODULE_USAGE_PATH = _env_path("SANDBOX_MODULE_USAGE_PATH", "sandbox_data/module_usage.json")
@@ -559,7 +568,9 @@ def record_module_usage(module_name: str) -> None:
             )
 
 # path to cleanup log file
-_CLEANUP_LOG_PATH = _env_path("SANDBOX_CLEANUP_LOG", "sandbox_data/cleanup.log")
+_CLEANUP_LOG_PATH = Path(os.getenv("SANDBOX_CLEANUP_LOG", "sandbox_data/cleanup.log"))
+if not _CLEANUP_LOG_PATH.is_absolute():
+    _CLEANUP_LOG_PATH = repo_root() / _CLEANUP_LOG_PATH
 _CLEANUP_LOG_LOCK = threading.Lock()
 POOL_LOCK_FILE = _env_path("SANDBOX_POOL_LOCK", "sandbox_data/pool.lock")
 
