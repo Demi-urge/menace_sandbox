@@ -60,7 +60,7 @@ def test_run_startup_checks_warns(monkeypatch, tmp_path, caplog):
     pyproj = tmp_path / "pyproject.toml"
     _write_pyproject(pyproj, ["fake_package_123"])
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
-    monkeypatch.setattr(sc, "verify_stripe_router", lambda: None)
+    monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
     sc.run_startup_checks(pyproject_path=pyproj)
     assert "Missing required dependencies" in caplog.text
 
@@ -76,7 +76,7 @@ def test_optional_dependency_install(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
     monkeypatch.setattr(sc, "_install_packages", lambda pkgs: called.extend(pkgs))
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
-    monkeypatch.setattr(sc, "verify_stripe_router", lambda: None)
+    monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
 
     sc.run_startup_checks(pyproject_path=pyproj)
 
@@ -88,7 +88,7 @@ def test_run_startup_checks_fails(monkeypatch, tmp_path):
     pyproj = tmp_path / "pyproject.toml"
     _write_pyproject(pyproj, ["fake_package_456"])
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
-    monkeypatch.setattr(sc, "verify_stripe_router", lambda: None)
+    monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
     with pytest.raises(RuntimeError):
         sc.run_startup_checks(pyproject_path=pyproj)
 
@@ -115,13 +115,13 @@ def test_audit_log_verification(monkeypatch, tmp_path):
     monkeypatch.setenv("AUDIT_LOG_PATH", str(path))
     monkeypatch.setenv("AUDIT_PUBKEY", pub_b64)
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
-    monkeypatch.setattr(sc, "verify_stripe_router", lambda: None)
+    monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
     sc.run_startup_checks(pyproject_path=pyproj)
     # Corrupt the log
     with open(path, "a") as fh:
         fh.write("bad entry\n")
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
-    monkeypatch.setattr(sc, "verify_stripe_router", lambda: None)
+    monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
     with pytest.raises(RuntimeError):
         sc.run_startup_checks(pyproject_path=pyproj)
 
@@ -138,7 +138,7 @@ def test_run_startup_checks_invokes_optional_verifier(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sc, "verify_optional_dependencies", fake_verify)
     monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
-    monkeypatch.setattr(sc, "verify_stripe_router", lambda: None)
+    monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
 
     sc.run_startup_checks(pyproject_path=pyproj)
 
@@ -151,7 +151,7 @@ def test_run_startup_checks_invokes_stripe_router(monkeypatch, tmp_path):
     _write_pyproject(pyproj, [])
     called = {"val": False}
 
-    def fake_verify() -> None:
+    def fake_verify(*a, **k) -> None:
         called["val"] = True
 
     monkeypatch.setattr(sc, "verify_stripe_router", fake_verify)
@@ -211,6 +211,45 @@ def test_verify_stripe_router_missing_route(monkeypatch):
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
     with pytest.raises(RuntimeError):
         sc.verify_stripe_router()
+
+
+def test_verify_stripe_router_required_bots(monkeypatch):
+    class FakeRegistry:
+        def __init__(self, *a, **k):
+            self.graph = types.SimpleNamespace(nodes=[])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "scpkg.bot_registry",
+        types.SimpleNamespace(BotRegistry=FakeRegistry),
+    )
+
+    called: list[str] = []
+
+    def fake_resolve(bot_id, overrides=None):
+        called.append(bot_id)
+        if bot_id == "finance:finance_router_bot":
+            return {}
+        raise RuntimeError("missing route")
+
+    mod = types.SimpleNamespace(
+        BILLING_RULES={("stripe", "default", "finance", "finance_router_bot"): {}},
+        STRIPE_SECRET_KEY="sk",
+        STRIPE_PUBLIC_KEY="pk",
+        ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
+        _resolve_route=fake_resolve,
+    )
+    monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
+
+    sc.verify_stripe_router(["finance:finance_router_bot"])
+    assert called == ["finance:finance_router_bot"]
+    called.clear()
+    with pytest.raises(RuntimeError):
+        sc.verify_stripe_router([
+            "finance:finance_router_bot",
+            "finance:missing_bot",
+        ])
+    assert called == ["finance:finance_router_bot", "finance:missing_bot"]
 
 
 def test_verify_optional_dependencies_reports_missing(monkeypatch):

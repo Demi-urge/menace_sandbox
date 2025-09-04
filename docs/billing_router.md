@@ -16,6 +16,19 @@ charge("finance:finance_router_bot", 12.5)
 create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
 ```
 
+### Startup verification
+
+`startup_checks.verify_stripe_router` validates the router configuration during
+application startup.  Pass a list of bot identifiers that must resolve to a
+billing route; the check raises a `RuntimeError` when any required bot lacks a
+valid route.
+
+```python
+from startup_checks import verify_stripe_router
+
+verify_stripe_router(["finance:finance_router_bot"])
+```
+
 ### Extending routing
 
 New bots register billing information with `register_route` or apply conditional
