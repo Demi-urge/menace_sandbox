@@ -26,8 +26,14 @@ from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
 from target_region import TargetRegion, extract_target_region
-from stripe_policy import PAYMENT_ROUTER_NOTICE
-import stripe_billing_router  # noqa: F401
+from billing.prompt_notice import prepend_payment_notice
+try:  # pragma: no cover - optional billing dependency
+    import stripe_billing_router  # noqa: F401
+except Exception:  # pragma: no cover - best effort
+    stripe_billing_router = None  # type: ignore
+
+
+SYSTEM_NOTICE = prepend_payment_notice([])[0]["content"]
 
 try:  # pragma: no cover - optional settings dependency
     from sandbox_settings import SandboxSettings  # type: ignore
@@ -759,7 +765,7 @@ class PromptEngine:
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
             self._optimizer_applied = False
-            return Prompt(system=PAYMENT_ROUTER_NOTICE, user=self._static_prompt())
+            return Prompt(system=SYSTEM_NOTICE, user=self._static_prompt())
 
         try:
             result = retriever.search(task, top_k=self.top_n)
@@ -770,7 +776,7 @@ class PromptEngine:
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
             )
             self._optimizer_applied = False
-            return Prompt(system=PAYMENT_ROUTER_NOTICE, user=self._static_prompt())
+            return Prompt(system=SYSTEM_NOTICE, user=self._static_prompt())
 
         if isinstance(result, FallbackResult):
             logging.info(
@@ -786,7 +792,7 @@ class PromptEngine:
                 },
             )
             self._optimizer_applied = False
-            return Prompt(system=PAYMENT_ROUTER_NOTICE, user=self._static_prompt())
+            return Prompt(system=SYSTEM_NOTICE, user=self._static_prompt())
 
         if isinstance(result, tuple):
             records = result[0]
@@ -826,7 +832,7 @@ class PromptEngine:
                 },
             )
             self._optimizer_applied = False
-            return Prompt(system=PAYMENT_ROUTER_NOTICE, user=self._static_prompt())
+            return Prompt(system=SYSTEM_NOTICE, user=self._static_prompt())
 
         examples: List[str] = []
         outcome_tags: List[str] = []
@@ -939,7 +945,7 @@ class PromptEngine:
             except Exception:
                 self.last_metadata = {"target_region": region_meta}
         prompt_obj = Prompt(
-            system=PAYMENT_ROUTER_NOTICE,
+            system=SYSTEM_NOTICE,
             user=text,
             examples=examples,
             vector_confidence=confidence,
