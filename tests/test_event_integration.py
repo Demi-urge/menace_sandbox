@@ -3,8 +3,8 @@ pytest.importorskip("jinja2")
 pytest.importorskip("git")
 import os  # noqa: E402
 
-os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test")
-os.environ.setdefault("STRIPE_PUBLIC_KEY", "pk_test")
+os.environ.setdefault("STRIPE_SECRET_KEY", "sk_live_dummy")
+os.environ.setdefault("STRIPE_PUBLIC_KEY", "pk_live_dummy")
 
 import menace.data_bot as db  # noqa: E402
 from menace.unified_event_bus import UnifiedEventBus  # noqa: E402
