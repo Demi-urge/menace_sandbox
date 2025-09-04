@@ -31,6 +31,7 @@ import threading
 import inspect
 import subprocess
 import ast
+from types import SimpleNamespace
 from contextlib import AsyncExitStack, contextmanager
 
 from db_router import init_db_router
@@ -108,7 +109,7 @@ from logging_utils import log_record, get_logger
 from pydantic import ValidationError
 
 from .self_services_config import SelfTestConfig
-from .sandbox_results_logger import record_run
+from .sandbox_runner.scoring import record_run
 
 try:
     from .data_bot import DataBot
@@ -842,14 +843,20 @@ class SelfTestService:
         except Exception:
             self.logger.exception("failed to store history")
         try:
+            metrics = {
+                "success": int(rec.get("failed", 0)) == 0,
+                "entropy_delta": 0.0,
+                "runtime": float(rec.get("runtime", 0.0)),
+                "error": None,
+                "coverage": {"total": float(rec.get("coverage", 0.0))},
+            }
             record_run(
-                {
-                    "success": int(rec.get("failed", 0)) == 0,
-                    "entropy_delta": 0.0,
-                    "runtime": float(rec.get("runtime", 0.0)),
-                    "error": None,
-                    "coverage": {"total": float(rec.get("coverage", 0.0))},
-                }
+                SimpleNamespace(
+                    success=metrics.get("success"),
+                    duration=metrics.get("runtime"),
+                    failure=metrics.get("error"),
+                ),
+                metrics,
             )
         except Exception:
             pass
