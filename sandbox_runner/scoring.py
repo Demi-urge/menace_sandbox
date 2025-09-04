@@ -14,7 +14,7 @@ import json
 import threading
 
 from logging_utils import get_logger, log_record
-from sandbox_results_logger import record_run as _legacy_record_run
+from sandbox_results_logger import record_run as _db_record_run
 
 try:  # pragma: no cover - optional dependency during tests
     from .dynamic_path_router import resolve_path  # type: ignore
@@ -102,10 +102,6 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
         "error": error_trace,
     }
     logger.info("run", extra=log_record(**record))
-    try:  # pragma: no cover - legacy logging best effort
-        _legacy_record_run(record)
-    except Exception:  # pragma: no cover - don't fail caller
-        logger.exception("failed to forward run metrics to legacy logger")
 
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     with _lock:
@@ -129,6 +125,11 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
                     "functions_hit_total", 0
                 ) + int(functions_hit)
             _SUMMARY_FILE.write_text(json.dumps(summary))
+
+            try:  # propagate to SQLite logger
+                _db_record_run(record)
+            except Exception:  # pragma: no cover - don't fail caller
+                logger.exception("failed to forward run metrics to legacy logger")
         except Exception:  # pragma: no cover - logging is best effort
             logger.exception("failed to persist run metrics")
 
