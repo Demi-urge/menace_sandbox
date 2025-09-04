@@ -15,6 +15,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BOT_ID = "finance:finance_router_bot:monetization"
+
 
 @dataclass
 class InvestmentRecord:
@@ -146,7 +148,7 @@ class AutoReinvestmentBot:
         minimum_threshold: float = 10.0,
         predictor: PredictiveSpendEngine | None = None,
         db: InvestmentDB | None = None,
-        bot_id: str = "finance:finance_router_bot:monetization",
+        bot_id: str = DEFAULT_BOT_ID,
     ) -> None:
         self.cap_percentage = cap_percentage
         self.safety_reserve = safety_reserve
@@ -162,7 +164,7 @@ class AutoReinvestmentBot:
 
     def _execute_spending(self, amount: float) -> str:
         try:
-            resp = stripe_billing_router.init_charge(
+            resp = stripe_billing_router.charge(
                 self.bot_id, amount, description="reinvestment"
             )
             status = resp.get("status")

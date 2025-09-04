@@ -11,8 +11,6 @@ from typing import Dict, List, Optional
 import asyncio
 import logging
 
-from dotenv import load_dotenv
-
 from dynamic_path_router import resolve_path
 
 from . import stripe_billing_router
@@ -37,6 +35,8 @@ class Transaction:
 class FinanceRouterBot:
     """Route payments and log payouts for Menace."""
 
+    BOT_ID = "finance:finance_router_bot:monetization"
+
     def __init__(
         self,
         payout_log_path: Path | str | None = None,
@@ -45,7 +45,6 @@ class FinanceRouterBot:
         event_bus: Optional[UnifiedEventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
     ) -> None:
-        load_dotenv()
         self.capital_manager = capital_manager
         raw_log_path = str(
             payout_log_path
@@ -118,8 +117,8 @@ class FinanceRouterBot:
     def route_payment(self, amount: float, model_id: str) -> str:
         """Charge via Stripe and log the result."""
         try:
-            resp = stripe_billing_router.init_charge(
-                model_id,
+            resp = stripe_billing_router.charge(
+                self.BOT_ID,
                 amount,
                 description=model_id,
             )

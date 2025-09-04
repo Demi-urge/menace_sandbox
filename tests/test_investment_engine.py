@@ -51,16 +51,23 @@ def test_reinvest_cap(monkeypatch, tmp_path):
         predictor=engine,
         db=db,
     )
-    monkeypatch.setattr(
-        ie.stripe_billing_router, "get_balance", lambda *a, **k: 200.0
-    )
-    monkeypatch.setattr(
-        ie.stripe_billing_router, "init_charge", lambda *a, **k: {"status": "succeeded"}
-    )
+    calls = {}
+
+    def fake_balance(bot_id, *a, **k):
+        calls["bal"] = bot_id
+        return 200.0
+
+    def fake_charge(bot_id, amount, description=None, *, overrides=None):
+        calls["charge"] = bot_id
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(ie.stripe_billing_router, "get_balance", fake_balance)
+    monkeypatch.setattr(ie.stripe_billing_router, "charge", fake_charge)
     monkeypatch.setattr(engine, "predict", lambda balance, cap: (150.0, 0.2))
 
     spent = bot.reinvest()
     assert spent == 100.0  # capped at 50% of 200
+    assert calls == {"bal": bot.bot_id, "charge": bot.bot_id}
     rows = db.fetch()
     assert rows and rows[0][0] == 100.0
 
@@ -70,19 +77,21 @@ def test_reinvest_error_propagates(monkeypatch, tmp_path):
     db = ie.InvestmentDB(tmp_path / "i.db")
     engine = ie.PredictiveSpendEngine(db)
     bot = ie.AutoReinvestmentBot(predictor=engine, db=db)
-    monkeypatch.setattr(
-        ie.stripe_billing_router, "get_balance", lambda *a, **k: 200.0
-    )
     calls = {}
 
+    def fake_balance(bot_id, *a, **k):
+        calls["bal"] = bot_id
+        return 200.0
+
     def bad_charge(bot_id, amount, description=None, *, overrides=None):
-        calls["bot_id"] = bot_id
+        calls["charge"] = bot_id
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(ie.stripe_billing_router, "init_charge", bad_charge)
+    monkeypatch.setattr(ie.stripe_billing_router, "get_balance", fake_balance)
+    monkeypatch.setattr(ie.stripe_billing_router, "charge", bad_charge)
     monkeypatch.setattr(engine, "predict", lambda balance, cap: (50.0, 0.2))
 
     spent = bot.reinvest()
     assert spent == 0.0
-    assert calls["bot_id"] == bot.bot_id
+    assert calls == {"bal": bot.bot_id, "charge": bot.bot_id}
     assert db.fetch() == []
