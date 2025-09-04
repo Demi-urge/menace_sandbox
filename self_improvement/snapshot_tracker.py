@@ -14,9 +14,17 @@ from .metrics import collect_snapshot_metrics, compute_call_graph_complexity
 from ..sandbox_settings import SandboxSettings
 from ..audit_logger import log_event as audit_log_event
 try:  # pragma: no cover - optional dependency location
-    from ..snapshot_history_db import log_regression
+    from ..snapshot_history_db import (
+        log_regression,
+        record_snapshot,
+        record_delta,
+    )
 except Exception:  # pragma: no cover
-    from snapshot_history_db import log_regression  # type: ignore
+    from snapshot_history_db import (  # type: ignore
+        log_regression,
+        record_snapshot,
+        record_delta,
+    )
 
 try:  # pragma: no cover - optional dependency location
     from ..dynamic_path_router import resolve_path
@@ -46,6 +54,7 @@ class Snapshot:
     prompt: str | None = None
     diff: str | None = None
     timestamp: float = 0.0
+    id: int | None = None
 
 
 _cycle_id = 0
@@ -146,7 +155,10 @@ def capture(
     path = _snapshot_path(settings, _cycle_id, stage)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(asdict(snap), fh)
-
+    try:
+        snap.id = record_snapshot(_cycle_id, stage, snap)
+    except Exception:  # pragma: no cover - best effort
+        pass
     return snap
 
 
@@ -240,6 +252,11 @@ class SnapshotTracker:
         entropy_delta = float(delta.get("entropy", 0.0))
         regression = roi_delta < 0 or entropy_delta > 0
         delta["regression"] = regression
+        if before.id is not None and after.id is not None:
+            try:
+                record_delta(_cycle_id, before.id, after.id, delta, after.timestamp)
+            except Exception:  # pragma: no cover - best effort
+                pass
         ctx = self._context.get("after") or self._context.get("post") or {}
         if regression:
             prompt = ctx.get("prompt")
