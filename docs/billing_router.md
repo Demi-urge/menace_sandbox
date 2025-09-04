@@ -69,3 +69,8 @@ stored outside this module.  Bypassing the router skips key management and audit
 checks and risks charging the wrong customer.  Always call the router helpers
 and let them obtain a configured Stripe client.
 
+The repository includes `scripts/check_raw_stripe_usage.py` which scans all
+tracked text files for raw Stripe keys or payment related keywords such as
+"payment", "checkout" or "billing".  Any file mentioning these keywords must
+also reference ``stripe_billing_router`` or the check fails.
+
