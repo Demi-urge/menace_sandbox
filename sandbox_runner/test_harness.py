@@ -444,21 +444,6 @@ def _run_once(
             entropy_delta=entropy_delta,
             executed_functions=executed_functions,
         )
-        try:
-            from .scoring import record_run as _score_record_run
-            _score_record_run(
-                res,
-                {
-                    "roi": (
-                        coverage_pct if coverage_pct is not None else (1.0 if res.success else 0.0)
-                    ),
-                    "coverage": coverage_map or {},
-                    "entropy_delta": entropy_delta,
-                    "executed_functions": executed_functions or [],
-                },
-            )
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("failed to record test run")
         return res
     finally:
         if old_edge_env is None:
