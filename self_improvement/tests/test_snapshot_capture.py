@@ -8,7 +8,16 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-sys.modules.setdefault("dynamic_path_router", types.SimpleNamespace(resolve_path=lambda p: Path(p)))
+dyn_stub = types.ModuleType("dynamic_path_router")
+dyn_stub.resolve_path = lambda p: Path(p)
+dyn_stub.repo_root = lambda: Path(".")
+dyn_stub.resolve_dir = lambda p: Path(p)
+sys.modules["dynamic_path_router"] = dyn_stub
+from dynamic_path_router import resolve_path
+sandbox_pkg = types.ModuleType("sandbox_runner")
+sandbox_pkg.bootstrap = types.SimpleNamespace(initialize_autonomous_sandbox=lambda: None)
+sys.modules["sandbox_runner"] = sandbox_pkg
+sys.modules["sandbox_runner.bootstrap"] = sandbox_pkg.bootstrap
 sys.modules.setdefault("audit_logger", types.SimpleNamespace(log_event=lambda *a, **k: None))
 sys.modules.setdefault(
     "snapshot_history_db",
@@ -60,7 +69,7 @@ def test_snapshot_capture(monkeypatch, tmp_path):
 
     monkeypatch.setattr(tracker_mod, "compute_call_graph_complexity", fake_call_graph)
 
-    f = tmp_path / "m.py"
+    f = tmp_path / resolve_path("m.py")
     f.write_text("print('hi')")
 
     snap = tracker_mod.capture("pre", [f], roi=1.0, sandbox_score=0.2)
@@ -90,8 +99,8 @@ def test_capture_with_repo_path(monkeypatch, tmp_path):
 
     tracker_instance = tracker_mod.SnapshotTracker()
 
-    (tmp_path / "a.py").write_text("a=1")
-    (tmp_path / "b.py").write_text("b=2")
+    (tmp_path / resolve_path("a.py")).write_text("a=1")
+    (tmp_path / resolve_path("b.py")).write_text("b=2")
 
     snap1 = tracker_instance.capture(
         "before", {"roi": 0.0, "sandbox_score": 0.0}, repo_path=tmp_path
@@ -99,7 +108,7 @@ def test_capture_with_repo_path(monkeypatch, tmp_path):
     assert snap1.entropy == 2.0
     assert snap1.token_diversity == 2.0
 
-    (tmp_path / "c.py").write_text("c=3")
+    (tmp_path / resolve_path("c.py")).write_text("c=3")
 
     snap2 = tracker_instance.capture(
         "after", {"roi": 0.0, "sandbox_score": 0.0}, repo_path=tmp_path
