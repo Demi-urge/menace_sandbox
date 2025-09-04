@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import types
+from dynamic_path_router import resolve_path
 
 
 def _prepare_repo(tmp_path: Path) -> Path:
@@ -21,7 +22,7 @@ def _prepare_repo(tmp_path: Path) -> Path:
 
 def test_run_tests_supports_backends(monkeypatch, tmp_path):
     repo = _prepare_repo(tmp_path)
-    path = Path(__file__).resolve().parents[1] / "sandbox_runner/test_harness.py"
+    path = resolve_path("sandbox_runner/test_harness.py")
     pkg = types.ModuleType("menace.sandbox_runner")
     pkg.__path__ = []  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "menace.sandbox_runner", pkg)

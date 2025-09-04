@@ -4,10 +4,10 @@ import json
 import sys
 import types
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(resolve_path("")))
 
-from dynamic_path_router import resolve_path  # noqa: E402
 from sandbox_settings import SandboxSettings  # noqa: E402
 
 

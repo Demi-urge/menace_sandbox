@@ -2,9 +2,10 @@ import os
 import sys
 import urllib.request
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(resolve_path("")))
 
 from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 

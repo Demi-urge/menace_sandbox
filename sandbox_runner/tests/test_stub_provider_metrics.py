@@ -3,9 +3,10 @@ from pathlib import Path
 import sys
 import types
 import pytest
+from dynamic_path_router import resolve_path
 
-MODULE_DIR = Path(__file__).resolve().parents[1]
-ROOT_DIR = Path(__file__).resolve().parents[2]
+MODULE_DIR = resolve_path("sandbox_runner")
+ROOT_DIR = resolve_path("")
 sys.path.append(str(ROOT_DIR))
 
 

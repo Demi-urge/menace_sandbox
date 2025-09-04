@@ -3,20 +3,14 @@ import subprocess
 import sys
 from pathlib import Path
 import types
+from dynamic_path_router import get_project_root
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(get_project_root()))
+root = get_project_root()
 data_dir = root / "sandbox_data"
 data_dir.mkdir(exist_ok=True)
 (data_dir / "cleanup.log").write_text("", encoding="utf-8")
-
-sys.modules["dynamic_path_router"] = types.SimpleNamespace(
-    resolve_path=lambda p: Path(p),
-    repo_root=lambda: root,
-    path_for_prompt=lambda p: p,
-    get_project_root=lambda: root,
-)
 
 
 class _DummyLogger:
