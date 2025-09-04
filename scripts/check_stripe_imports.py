@@ -49,8 +49,9 @@ ALLOWED = {
     (REPO_ROOT / "codex_output_analyzer.py").resolve(),  # path-ignore
     (REPO_ROOT / "stripe_detection.py").resolve(),  # path-ignore
 }
+# Detect exposures of Stripe keys, including partially redacted ones with ``*``.
 KEY_PATTERN = re.compile(
-    r"sk_live|pk_live|STRIPE_SECRET_KEY|STRIPE_PUBLIC_KEY"
+    r"(?:sk|pk)_(?:live|test)?_[A-Za-z0-9]*\*+[A-Za-z0-9*]*|sk_live|pk_live|STRIPE_SECRET_KEY|STRIPE_PUBLIC_KEY"
 )
 
 

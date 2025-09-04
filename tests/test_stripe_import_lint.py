@@ -38,3 +38,11 @@ def test_clean_file_passes(tmp_path: Path) -> None:
     result = _run([str(good)])
     assert result.returncode == 0, result.stdout + result.stderr
 
+
+def test_flags_partially_redacted_key(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.log"
+    bad.write_text("oops sk_live_1234****5678\n")
+    result = _run(["--keys", str(bad)])
+    assert result.returncode == 1
+    assert "Potential Stripe live keys" in result.stdout
+

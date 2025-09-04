@@ -22,7 +22,10 @@ from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
 
 logger = logging.getLogger(__name__)
 
-_STRIPE_KEY_RE = re.compile(r"(?:sk|pk)_(?:live|test)?_[A-Za-z0-9]+")
+# Match Stripe keys that may be partially masked with ``*`` characters.
+# This ensures that even keys like ``sk_live_1234****5678`` are fully
+# redacted rather than leaking their visible prefix.
+_STRIPE_KEY_RE = re.compile(r"(?:sk|pk)_(?:live|test)?_[A-Za-z0-9*]+")
 
 
 def _sanitize_stripe_keys(text: str) -> str:
