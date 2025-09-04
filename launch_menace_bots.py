@@ -18,25 +18,30 @@ import uuid
 
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
+from dynamic_path_router import resolve_path
 
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 # Placeholder assigned during runtime import within ``debug_and_deploy`` so
 # tests can monkeypatch :class:`SelfDebuggerSandbox`.
 SelfDebuggerSandbox = None  # type: ignore
 
-from menace.code_database import CodeDB
-from menace.menace_memory_manager import MenaceMemoryManager
-from menace.self_coding_engine import SelfCodingEngine
-from menace.error_bot import ErrorDB
-from menace.error_logger import ErrorLogger
-from menace.knowledge_graph import KnowledgeGraph
-from menace.task_handoff_bot import TaskInfo
-from menace.bot_testing_bot import BotTestingBot
-from menace.deployment_bot import DeploymentBot, DeploymentSpec
+from menace.code_database import CodeDB  # noqa: E402
+from menace.menace_memory_manager import MenaceMemoryManager  # noqa: E402
+from menace.self_coding_engine import SelfCodingEngine  # noqa: E402
+from menace.error_bot import ErrorDB  # noqa: E402
+from menace.error_logger import ErrorLogger  # noqa: E402
+from menace.knowledge_graph import KnowledgeGraph  # noqa: E402
+from menace.task_handoff_bot import TaskInfo  # noqa: E402
+from menace.bot_testing_bot import BotTestingBot  # noqa: E402
+from menace.deployment_bot import DeploymentBot, DeploymentSpec  # noqa: E402
 
 
 def _extract_functions(code: str) -> list[str]:
@@ -93,12 +98,12 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
     """Run tests, apply fixes and deploy existing bots in *repo*."""
 
     try:
-        code_db = CodeDB(router=DB_ROUTER)
+        code_db = CodeDB(router=GLOBAL_ROUTER)
     except TypeError:
         code_db = CodeDB()
     memory_mgr = MenaceMemoryManager()
     engine = SelfCodingEngine(code_db, memory_mgr)
-    error_db = ErrorDB(router=DB_ROUTER)
+    error_db = ErrorDB(router=GLOBAL_ROUTER)
     tester = BotTestingBot()
     # instantiate telemetry logger for completeness
     try:
@@ -161,7 +166,7 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
         deployer = DeploymentBot(
             code_db=code_db,
             error_db=error_db,
-            db_router=DB_ROUTER,
+            db_router=GLOBAL_ROUTER,
             memory_mgr=memory_mgr,
         )
     except TypeError:
@@ -218,7 +223,6 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
                 },
             )
         )
-
 
     # Run the unit tests first using the importable module names
     tester.run_unit_tests(module_names)

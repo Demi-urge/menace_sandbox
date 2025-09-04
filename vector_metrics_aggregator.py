@@ -7,20 +7,24 @@ import csv
 import json
 from datetime import datetime
 from pathlib import Path
-import sqlite3
 from typing import Iterable, Dict, Tuple, List
 import os
 import uuid
 
 from db_router import init_db_router
+from dynamic_path_router import resolve_path
 
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
-from analytics.session_roi import per_origin_stats
-from vector_metrics_db import VectorMetricsDB
+from analytics.session_roi import per_origin_stats  # noqa: E402
+from vector_metrics_db import VectorMetricsDB  # noqa: E402
 
 router = GLOBAL_ROUTER
 

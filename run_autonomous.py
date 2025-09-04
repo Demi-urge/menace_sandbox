@@ -56,8 +56,12 @@ _LKM_REFRESH_THREAD: threading.Thread | None = None
 # through the router.  Import modules requiring database access afterwards so
 # they can rely on ``GLOBAL_ROUTER``.
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = settings.menace_local_db_path or f"./menace_{MENACE_ID}_local.db"
-SHARED_DB_PATH = settings.menace_shared_db_path
+LOCAL_DB_PATH = settings.menace_local_db_path or str(
+    resolve_path(f"menace_{MENACE_ID}_local.db")
+)
+SHARED_DB_PATH = settings.menace_shared_db_path or str(
+    resolve_path("shared/global.db")
+)
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from gpt_memory import GPTMemoryManager

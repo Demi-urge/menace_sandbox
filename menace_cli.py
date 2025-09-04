@@ -17,8 +17,12 @@ from db_router import init_db_router
 # Expose a DBRouter for CLI operations early so imported modules can rely on
 # ``GLOBAL_ROUTER``.
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from menace.plugins import load_plugins  # noqa: E402
@@ -300,7 +304,9 @@ def main(argv: list[str] | None = None) -> int:
     p_quick.add_argument("module")
     p_quick.add_argument("--desc", required=True, help="Patch description")
     p_quick.add_argument("--context", help="JSON encoded context", default=None)
-    p_quick.add_argument("--effort-estimate", type=float, default=None, help="Estimated effort for patch")
+    p_quick.add_argument(
+        "--effort-estimate", type=float, default=None, help="Estimated effort for patch"
+    )
     p_quick.set_defaults(func=handle_patch)
 
     p_patch = sub.add_parser("patches", help="Patch provenance helpers")

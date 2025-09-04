@@ -11,10 +11,18 @@ try:  # pragma: no cover - allow running as script
     from .db_router import init_db_router  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
     from db_router import init_db_router  # type: ignore
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
 
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 try:
@@ -142,7 +150,7 @@ def compute_retriever_stats(
 
         if MetricsDB is not None:
             try:
-                MetricsDB(m_path).log_retriever_kpi(
+                MetricsDB(metrics_db).log_retriever_kpi(
                     origin, win_rate, regret_rate, stale_cost, roi_total, total
                 )
             except Exception:
@@ -162,7 +170,9 @@ def compute_retriever_stats(
 class MetricsAggregator:
     """Aggregate raw metrics and produce visualisations."""
 
-    def __init__(self, db_path: Path | str = "metrics.db", out_dir: Path | str = "analytics") -> None:
+    def __init__(
+        self, db_path: Path | str = "metrics.db", out_dir: Path | str = "analytics"
+    ) -> None:
         self.db_path = Path(db_path)
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)

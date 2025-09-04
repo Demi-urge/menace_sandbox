@@ -51,11 +51,12 @@ class SelfTestEnvSettings(BaseSettings):
     """Environment configuration for :mod:`self_test_service`."""
 
     menace_local_db_path: str = Field(
-        default_factory=lambda: f"./menace_{MENACE_ID}_local.db",
+        default_factory=lambda: str(resolve_path(f"menace_{MENACE_ID}_local.db")),
         validation_alias="MENACE_LOCAL_DB_PATH",
     )
     menace_shared_db_path: str = Field(
-        "./shared/global.db", validation_alias="MENACE_SHARED_DB_PATH"
+        str(resolve_path("shared/global.db")),
+        validation_alias="MENACE_SHARED_DB_PATH",
     )
     self_test_retries: int | None = Field(None, validation_alias="SELF_TEST_RETRIES")
     self_test_timeout: float | None = Field(None, validation_alias="SELF_TEST_TIMEOUT")
