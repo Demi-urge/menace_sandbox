@@ -25,3 +25,13 @@ respects environment overrides like `MENACE_ROOT` or `SANDBOX_REPO_PATH`,
 keeping scripts portable. The pre-commit hook
 `tools/check_dynamic_paths.py` enforces this rule by failing if a file contains
 these patterns without a corresponding `resolve_path` call.
+
+## Static path references
+
+Avoid hard coding string literals that end with `.py`. Such paths must be
+wrapped by `resolve_path` or `path_for_prompt` to remain portable across forks
+and clones. The `tools/check_static_paths.py` pre-commit hook scans for these
+violations.
+
+Before submitting a pull request, run `pre-commit run --all-files` to execute
+this and other checks locally.
