@@ -29,6 +29,11 @@ def test_generate_edge_cases_defaults():
         "empty.txt",
         "null.txt",
         "invalid.bin",
+        "http://edge-case.test/malformed",
+        "http://edge-case.test/timeout",
+        "http://edge-case.test/empty",
+        "http://edge-case.test/null",
+        "http://edge-case.test/invalid",
     }.issubset(cases.keys())
 
 

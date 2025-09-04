@@ -6,6 +6,28 @@ import types
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+root = Path(__file__).resolve().parents[3]
+data_dir = root / "sandbox_data"
+data_dir.mkdir(exist_ok=True)
+(data_dir / "cleanup.log").write_text("", encoding="utf-8")
+
+sys.modules["dynamic_path_router"] = types.SimpleNamespace(
+    resolve_path=lambda p: Path(p),
+    repo_root=lambda: root,
+    path_for_prompt=lambda p: p,
+    get_project_root=lambda: root,
+)
+
+
+class _DummyLogger:
+    def __init__(self, **_kwargs):
+        pass
+
+    def log(self, *_args, **_kwargs):
+        pass
+
+
+sys.modules.setdefault("error_logger", types.SimpleNamespace(ErrorLogger=_DummyLogger))
 
 metric_stub = types.SimpleNamespace(
     inc=lambda: None, labels=lambda **k: types.SimpleNamespace(inc=lambda: None)
@@ -53,10 +75,11 @@ def test_edge_cases_serialized(hostile_payloads):
     _git(["git", "add", name, "requirements.txt"], repo)
     _git(["git", "commit", "-m", "init"], repo)
 
-    stubs = {"alpha.txt": "beta", "null.txt": None}
+    stubs = {"alpha.txt": "beta", "null.txt": None, "http://edge-case.test/data": "payload"}
     monkeypatch.setattr(th, "get_edge_case_stubs", lambda: stubs)
     result = th.run_tests(repo, input_stubs=[{}], presets=[{}])
     assert result.success
+    assert result.edge_cases == stubs
     for name in stubs:
         assert not (repo / name).exists()
 
