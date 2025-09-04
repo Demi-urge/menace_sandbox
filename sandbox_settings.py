@@ -754,6 +754,21 @@ class SandboxSettings(BaseSettings):
         env="PROMPT_FAILURE_LOG_PATH",
         description="Path for recording failed prompt executions.",
     )
+    prompt_penalty_path: str = Field(
+        "sandbox_data/prompt_penalties.json",
+        env="PROMPT_PENALTY_PATH",
+        description="File storing per-prompt regression counts.",
+    )
+    prompt_failure_threshold: int = Field(
+        3,
+        env="PROMPT_FAILURE_THRESHOLD",
+        description="Failure count after which prompt selection is penalised.",
+    )
+    prompt_penalty_multiplier: float = Field(
+        0.1,
+        env="PROMPT_PENALTY_MULTIPLIER",
+        description="Multiplier applied to value estimates of penalised prompts.",
+    )
     failure_fingerprint_path: str = Field(
         "failure_fingerprints.jsonl",
         env="FAILURE_FINGERPRINT_PATH",

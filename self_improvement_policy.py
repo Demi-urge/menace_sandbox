@@ -17,6 +17,7 @@ import logging
 from typing import List
 from dataclasses import dataclass, asdict
 from sandbox_settings import SandboxSettings
+from self_improvement.prompt_memory import load_prompt_penalties
 
 logger = logging.getLogger(__name__)
 
@@ -982,9 +983,16 @@ class SelfImprovementPolicy:
                 temperature=self.temperature,
                 exploration=self.exploration,
             )
-        actions = self.values.get(state)
-        if not actions:
-            actions = {0: 0.0, 1: 0.0}
+        actions = dict(self.values.get(state, {0: 0.0, 1: 0.0}))
+        penalties = load_prompt_penalties()
+        settings = SandboxSettings()
+        penalised = {
+            act
+            for act in actions
+            if penalties.get(str(act), 0) >= settings.prompt_failure_threshold
+        }
+        for act in penalised:
+            actions[act] *= settings.prompt_penalty_multiplier
         if self.exploration == "softmax":
             t = max(0.01, self.temperature)
             probs = [math.exp(v / t) for v in actions.values()]
@@ -997,6 +1005,9 @@ class SelfImprovementPolicy:
                     return act
             return list(actions.keys())[-1]
         if random.random() < self.epsilon:
+            eligible = [a for a in actions if a not in penalised]
+            if eligible:
+                return random.choice(eligible)
             return random.choice(list(actions.keys()))
         return max(actions, key=actions.get)
 
