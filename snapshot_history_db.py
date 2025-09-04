@@ -14,16 +14,12 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from self_improvement import prompt_memory  # type: ignore
 from db_router import DBRouter
 
-try:  # pragma: no cover - optional dependency location
-    from dynamic_path_router import resolve_path
-except Exception:  # pragma: no cover
-    def resolve_path(p: str) -> str:  # type: ignore
-        return p
+from dynamic_path_router import resolve_path
 
 
 def _db_path(settings: SandboxSettings | None = None) -> Path:
     settings = settings or SandboxSettings()
-    return Path(resolve_path(settings.sandbox_data_dir)) / "snapshot_history.db"
+    return resolve_path(settings.sandbox_data_dir) / "snapshot_history.db"
 
 
 def _get_conn(settings: SandboxSettings | None = None):
