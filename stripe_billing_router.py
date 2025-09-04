@@ -73,7 +73,10 @@ def _load_routing_table(path: str) -> dict[tuple[str, str, str, str], dict[str, 
     ``domain -> region -> business_category -> bot_name -> route``.
 
     The file may be JSON or YAML based on its extension. Missing files result in
-    an empty routing table with a warning.
+    an empty routing table with a warning.  Each route must include the
+    identifiers ``product_id``, ``price_id`` and ``customer_id`` with non-empty
+    string values.  A :class:`RuntimeError` is raised if any route is
+    misconfigured.
     """
 
     try:
@@ -87,6 +90,7 @@ def _load_routing_table(path: str) -> dict[tuple[str, str, str, str], dict[str, 
         return {}
 
     table: dict[tuple[str, str, str, str], dict[str, str]] = {}
+    required = {"product_id", "price_id", "customer_id"}
     for domain, regions in (data or {}).items():
         if not isinstance(regions, Mapping):
             continue
@@ -100,6 +104,33 @@ def _load_routing_table(path: str) -> dict[tuple[str, str, str, str], dict[str, 
                     if not isinstance(route, Mapping):
                         continue
                     _validate_no_api_keys(route)
+                    missing = required.difference(route.keys())
+                    if missing:
+                        logger.error(
+                            "Billing route %s/%s/%s/%s missing required keys: %s",
+                            domain,
+                            region,
+                            business_category,
+                            bot_name,
+                            ", ".join(sorted(missing)),
+                        )
+                        raise RuntimeError(
+                            "Billing route missing required keys: "
+                            + ", ".join(sorted(missing))
+                        )
+                    for key, value in route.items():
+                        if not isinstance(value, str) or not value.strip():
+                            logger.error(
+                                "Billing route %s/%s/%s/%s has empty value for %s",
+                                domain,
+                                region,
+                                business_category,
+                                bot_name,
+                                key,
+                            )
+                            raise RuntimeError(
+                                f"Billing route requires non-empty string for {key}"
+                            )
                     table[(str(domain), str(region), str(business_category), str(bot_name))] = {
                         str(k): str(v) for k, v in route.items()
                     }
