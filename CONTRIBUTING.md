@@ -40,7 +40,11 @@ and the workflow fails if any static path is detected.
 To centralize billing logic and API configuration, the `stripe` Python package
 must only be imported by `stripe_billing_router.py`. Other modules should rely
 on the router's helpers rather than interacting with Stripe directly. The
-`check-stripe-imports` pre-commit hook enforces this restriction.
+`check-stripe-imports` pre-commit hook enforces this restriction. The repository
+also guards against accidental exposure of live credentials. The
+`forbid-stripe-keys` hook scans all text files for strings resembling live
+Stripe keys (e.g., `sk_live_` or `pk_live_`) or hard-coded Stripe API endpoints
+such as `api.stripe.com`.
 
 Before submitting a pull request, run `pre-commit run --all-files` to execute
 this and other checks locally.

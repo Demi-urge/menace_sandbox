@@ -31,6 +31,12 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
+      - id: forbid-stripe-keys
+        name: Prevent Stripe live keys or endpoints
+        entry: python scripts/check_stripe_imports.py --keys
+        language: system
+        pass_filenames: true
+        types: [text]
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:
