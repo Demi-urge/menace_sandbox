@@ -58,7 +58,12 @@ sys.modules["menace_sandbox.sandbox_runner"] = types.SimpleNamespace(
     LOCAL_KNOWLEDGE_MODULE=None
 )
 
-vector_service = types.SimpleNamespace(Retriever=None, FallbackResult=list)
+vector_service = types.SimpleNamespace(
+    Retriever=None,
+    FallbackResult=list,
+    ErrorResult=Exception,
+    ContextBuilder=type("ContextBuilder", (), {}),
+)
 sys.modules.setdefault("vector_service", vector_service)
 
 governed = types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x)
@@ -92,6 +97,7 @@ sys.modules.setdefault(
 
 from menace_sandbox.enhancement_bot import EnhancementBot
 from menace_sandbox.chatgpt_idea_bot import ChatGPTClient
+from menace_sandbox.bot_development_bot import BotDevelopmentBot
 
 
 def test_prepend_payment_notice_helper():
@@ -145,3 +151,18 @@ def test_prompt_engine_build_prompt_contains_notice():
     engine = PromptEngine(retriever=None)
     prompt = engine.build_prompt("task")
     assert prompt.system.startswith(PAYMENT_ROUTER_NOTICE)
+
+
+def test_bot_development_bot_injects_notice(monkeypatch):
+    captured = {}
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(
+            create=lambda *a, **k: captured.update(messages=k.get("messages")) or {}
+        )
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.bot_development_bot.openai", fake_openai, raising=False
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    BotDevelopmentBot._call_codex_api(object(), "m", [{"role": "user", "content": "hi"}])
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)

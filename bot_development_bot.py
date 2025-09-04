@@ -39,7 +39,7 @@ from vector_service import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from stripe_policy import PAYMENT_ROUTER_NOTICE
+from billing.prompt_notice import prepend_payment_notice
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -164,9 +164,7 @@ INSTRUCTION_SECTIONS = [
 PREVIOUS_FAILURE_TEMPLATE = "Previous failure: {error}"
 
 
-FALLBACK_SYSTEM_PROMPT = (
-    "You are fallback mode. " + PAYMENT_ROUTER_NOTICE
-)
+FALLBACK_SYSTEM_PROMPT = "You are fallback mode."
 
 RESPONSE_FORMAT_HINT = (
     "Return JSON like {'status': 'completed', 'message': <optional string>}"
@@ -909,6 +907,7 @@ class BotDevelopmentBot:
         self, model: str, messages: list[dict[str, str]]
     ) -> Any:
         """Call either local or cloud Codex API and return the raw response."""
+        messages = prepend_payment_notice(list(messages))
         if openai and os.getenv("OPENAI_API_KEY"):
             openai.api_key = os.getenv("OPENAI_API_KEY")
             return openai.ChatCompletion.create(

@@ -31,6 +31,32 @@ sys.modules.setdefault(
     types.SimpleNamespace(SandboxSettings=lambda: types.SimpleNamespace()),
 )
 
+# Stub neurosales package and optional billing dependencies
+neuro_pkg = types.ModuleType("neurosales")
+neuro_pkg.__path__ = [
+    str(Path(__file__).resolve().parent / "neurosales" / "neurosales"),
+    str(Path(__file__).resolve().parent / "neurosales" / "scripts"),
+]
+sys.modules.setdefault("neurosales", neuro_pkg)
+scripts_pkg = types.ModuleType("neurosales.scripts")
+scripts_pkg.__path__ = [str(Path(__file__).resolve().parent / "neurosales" / "scripts")]
+sys.modules.setdefault("neurosales.scripts", scripts_pkg)
+sys.modules.setdefault(
+    "stripe_billing_router", types.ModuleType("stripe_billing_router")
+)
+sqlalchemy_pkg = types.ModuleType("sqlalchemy")
+sqlalchemy_orm_pkg = types.ModuleType("sqlalchemy.orm")
+sqlalchemy_orm_pkg.declarative_base = lambda *a, **k: None
+sqlalchemy_orm_pkg.sessionmaker = lambda *a, **k: None
+sqlalchemy_orm_pkg.relationship = lambda *a, **k: None
+sys.modules.setdefault("sqlalchemy", sqlalchemy_pkg)
+sys.modules.setdefault("sqlalchemy.orm", sqlalchemy_orm_pkg)
+neo4j_stub = types.ModuleType("neo4j")
+neo4j_stub.GraphDatabase = type(
+    "GraphDatabase", (), {"driver": staticmethod(lambda *a, **k: None)}
+)
+sys.modules.setdefault("neo4j", neo4j_stub)
+
 # Provide a lightweight dynamic_path_router to satisfy imports during tests
 sys.modules.setdefault(
     "dynamic_path_router",

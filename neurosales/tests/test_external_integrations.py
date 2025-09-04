@@ -10,6 +10,8 @@ from neurosales.external_integrations import (
     InfluenceGraphUpdater,
 )
 from unittest.mock import patch, MagicMock
+import types
+from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
 
 
 def test_reddit_harvester_basic():
@@ -41,17 +43,31 @@ def test_twitter_tracker_refresh():
     assert len(calls) >= 2
 
 
-def test_gpt4_client_stream():
-    client = GPT4Client("k")
+def test_gpt4_client_stream(monkeypatch):
+    captured = {}
     chunk1 = {"choices": [{"delta": {"content": "Hi"}}]}
     chunk2 = {"choices": [{"delta": {"content": "!"}}]}
-    with patch("neurosales.external_integrations.openai.ChatCompletion.create", return_value=[chunk1, chunk2]):
-        out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
+    def fake_create(*args, **kwargs):
+        captured["messages"] = kwargs.get("messages")
+        return [chunk1, chunk2]
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(create=fake_create)
+    )
+    monkeypatch.setattr(
+        "neurosales.external_integrations.openai", fake_openai, raising=False
+    )
+    client = GPT4Client("k")
+    out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
     assert "".join(out) == "Hi!"
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
 
 
 def test_gpt4_client_env(monkeypatch, caplog):
     caplog.set_level("WARNING")
+    fake_openai = types.SimpleNamespace(ChatCompletion=types.SimpleNamespace())
+    monkeypatch.setattr(
+        "neurosales.external_integrations.openai", fake_openai, raising=False
+    )
     monkeypatch.setenv("NEURO_OPENAI_KEY", "env-k")
     client = GPT4Client(None)
     assert client.api_key == "env-k"
@@ -151,3 +167,20 @@ def test_influence_graph_updater_env(monkeypatch):
         updater = InfluenceGraphUpdater()
     drv.assert_called_with("bolt://env", auth=("user", "pass"))
     assert updater.enabled
+
+
+def test_check_external_services_injects_notice(monkeypatch):
+    captured = {}
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(
+            create=lambda *a, **k: captured.update(messages=k.get("messages")) or None
+        )
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    from types import SimpleNamespace
+    from neurosales.scripts import check_external_services as ces
+
+    monkeypatch.setattr(ces.config, "is_openai_enabled", lambda cfg: True)
+    cfg = SimpleNamespace(openai_key="k")
+    assert ces.check_openai(cfg)
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)

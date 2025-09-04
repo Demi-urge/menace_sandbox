@@ -1,23 +1,16 @@
-import os, sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-import neurosales
-import importlib
-
-REAL_USER_PREFS = importlib.import_module("neurosales.user_preferences")
-REAL_SENTIMENT = importlib.import_module("neurosales.sentiment")
-
+import os, sys, types
+pkg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "neurosales"))
+sys.path.insert(0, pkg_path)
+# Provide minimal neurosales package stubs for tests
+neuro_pkg = types.ModuleType("neurosales")
+neuro_pkg.__path__ = [pkg_path]
+sys.modules.setdefault("neurosales", neuro_pkg)
+sys.modules.setdefault(
+    "neurosales.user_preferences", types.ModuleType("neurosales.user_preferences")
+)
+sys.modules.setdefault("neurosales.sentiment", types.ModuleType("neurosales.sentiment"))
 import pytest
-
-# Import candidate_response_scorer early so its stubs don't interfere
-try:
-    import tests.test_candidate_response_scorer  # noqa: F401
-finally:
-    sys.modules["neurosales.user_preferences"] = REAL_USER_PREFS
-    sys.modules["neurosales.sentiment"] = REAL_SENTIMENT
 
 @pytest.fixture(autouse=True)
 def restore_modules():
     yield
-    import sys
-    sys.modules["neurosales.user_preferences"] = REAL_USER_PREFS
-    sys.modules["neurosales.sentiment"] = REAL_SENTIMENT
