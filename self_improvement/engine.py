@@ -166,6 +166,7 @@ from .prompt_memory import (
     load_prompt_penalties,
     load_strategy_roi_stats,
 )
+from .prompt_strategies import PromptStrategy
 from . import strategy_rotator
 from .snapshot_tracker import (
     capture as capture_snapshot,
@@ -1491,11 +1492,14 @@ class SelfImprovementEngine:
                 target_region = getattr(self, "_cycle_target_region", None)
             # Select the prompt strategy for this patch attempt
             try:
-                strategy = self.next_prompt_strategy(strategy_rotator.TEMPLATES)
+                strat_name = self.next_prompt_strategy(strategy_rotator.TEMPLATES)
             except Exception:
-                strategy = None
-            if strategy:
-                gen_kwargs["strategy"] = strategy
+                strat_name = None
+            if strat_name:
+                try:
+                    gen_kwargs["strategy"] = PromptStrategy(strat_name)
+                except Exception:
+                    pass
             patch_id = self._patch_generator(
                 module,
                 self.self_coding_engine,
@@ -4328,8 +4332,18 @@ class SelfImprovementEngine:
                 cls = "error"
             patch_id = None
             if gen_patch:
+                kwargs: dict[str, object] = {}
                 try:
-                    patch_id = gen_patch(str(path))
+                    strat_name = self.next_prompt_strategy(strategy_rotator.TEMPLATES)
+                except Exception:
+                    strat_name = None
+                if strat_name:
+                    try:
+                        kwargs["strategy"] = PromptStrategy(strat_name)
+                    except Exception:
+                        pass
+                try:
+                    patch_id = gen_patch(str(path), **kwargs)
                 except RuntimeError as exc:
                     self.logger.error("quick_fix_engine unavailable: %s", exc)
                     raise
@@ -6316,6 +6330,15 @@ class SelfImprovementEngine:
                         gen_kwargs["retries"] = retries
                     if delay is not None:
                         gen_kwargs["delay"] = delay
+                    try:
+                        strat_name = self.next_prompt_strategy(strategy_rotator.TEMPLATES)
+                    except Exception:
+                        strat_name = None
+                    if strat_name:
+                        try:
+                            gen_kwargs["strategy"] = PromptStrategy(strat_name)
+                        except Exception:
+                            pass
                     task_id = self._patch_generator(
                         mod, self.self_coding_engine, **gen_kwargs
                     )

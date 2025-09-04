@@ -32,6 +32,14 @@ try:  # pragma: no cover - optional dependency
     from chunking import get_chunk_summaries
 except Exception:  # pragma: no cover - chunking unavailable
     get_chunk_summaries = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from self_improvement.prompt_strategies import PromptStrategy, render_prompt
+except Exception:  # pragma: no cover - fallback for tests
+    class PromptStrategy(str):  # type: ignore
+        pass
+
+    def render_prompt(*a: object, **k: object) -> str:  # type: ignore
+        return ""
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
     from .self_coding_engine import SelfCodingEngine
@@ -68,6 +76,7 @@ def generate_patch(
     *,
     context_builder: ContextBuilder | None = None,
     description: str | None = None,
+    strategy: PromptStrategy | None = None,
     patch_logger: PatchLogger | None = None,
     context: Dict[str, Any] | None = None,
     effort_estimate: float | None = None,
@@ -89,6 +98,10 @@ def generate_patch(
     description:
         Optional patch description.  When omitted, a generic description is
         used.
+    strategy:
+        Optional :class:`self_improvement.prompt_strategies.PromptStrategy` to
+        tailor the prompt. When provided the corresponding template is appended
+        to the description.
     patch_logger:
         Optional :class:`patch_provenance.PatchLogger` for recording vector
         provenance.
@@ -135,6 +148,14 @@ def generate_patch(
             vectors = []
         if context_block:
             description += "\n\n" + context_block
+    if strategy is not None:
+        try:
+            template = render_prompt(strategy, {"module": prompt_path})
+        except Exception:
+            template = ""
+        if template:
+            description += "\n\n" + template
+        context_meta["prompt_strategy"] = str(strategy)
     base_description = description
 
     if patch_logger is None:
