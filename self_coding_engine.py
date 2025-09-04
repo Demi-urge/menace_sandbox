@@ -1056,7 +1056,8 @@ class SelfCodingEngine:
                     metadata = None
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         context_block = "\n".join([p for p in (context, repo_layout) if p])
-        self._apply_prompt_style(description, module=str(path) if path else "generate_helper")
+        module_name = path_for_prompt(path) if path else "generate_helper"
+        self._apply_prompt_style(description, module=module_name)
         retrieval_context = (
             str(metadata.get("retrieval_context", "")) if metadata else ""
         )
