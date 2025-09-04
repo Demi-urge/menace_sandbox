@@ -367,6 +367,7 @@ from ..learning_engine import LearningEngine
 from ..unified_event_bus import UnifiedEventBus
 from ..neuroplasticity import PathwayRecord, Outcome
 from ..self_coding_engine import SelfCodingEngine
+from .target_region import TargetRegion
 from ..action_planner import ActionPlanner
 from ..evolution_history_db import EvolutionHistoryDB
 from .. import synergy_weight_cli
@@ -1415,6 +1416,7 @@ class SelfImprovementEngine:
         tags: Sequence[str] | None = None,
         retries: int | None = None,
         delay: float | None = None,
+        target_region: "TargetRegion | None" = None,
     ) -> int | None:
         start = time.perf_counter()
         error_trace: str | None = None
@@ -1460,8 +1462,13 @@ class SelfImprovementEngine:
                 gen_kwargs["retries"] = retries
             if delay is not None:
                 gen_kwargs["delay"] = delay
+            if target_region is None:
+                target_region = getattr(self, "_cycle_target_region", None)
             patch_id = self._patch_generator(
-                module, self.self_coding_engine, **gen_kwargs
+                module,
+                self.self_coding_engine,
+                target_region=target_region,
+                **gen_kwargs,
             )
         except RuntimeError as exc:
             self.logger.error("quick_fix_engine unavailable: %s", exc)
@@ -6324,7 +6331,7 @@ class SelfImprovementEngine:
         return results
 
     @radar.track
-    def run_cycle(self, energy: int = 1) -> AutomationResult:
+    def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:
         """Execute a self-improvement cycle.
 
         The ``workflow_id`` used for foresight tracking is derived from the
@@ -6334,6 +6341,7 @@ class SelfImprovementEngine:
         self._cycle_count += 1
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
+        self._cycle_target_region = target_region
         try:
             momentum = self.baseline_tracker.momentum
             if self.policy:

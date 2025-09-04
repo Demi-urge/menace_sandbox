@@ -836,12 +836,17 @@ def _sandbox_cycle_runner(
             # Include any newly discovered modules after orchestrator modifications
             include_orphan_modules(ctx)
         logger.info("patch engine start", extra=log_record(cycle=idx))
+        region = getattr(ctx, "target_region", None)
         try:
-            result = ctx.improver.run_cycle()
+            if region is not None:
+                result = ctx.improver.run_cycle(target_region=region)
+            else:
+                result = ctx.improver.run_cycle()
         except Exception as exc:
             record_error(exc)
             result = SimpleNamespace(roi=None)
         finally:
+            ctx.target_region = None
             # Include modules introduced during the improvement cycle
             include_orphan_modules(ctx)
         warnings = getattr(result, "warnings", None)
@@ -864,6 +869,7 @@ def _sandbox_cycle_runner(
                 if region:
                     results["target_region"] = region
                     ctx.last_failure_region = region
+                    ctx.target_region = region
         except Exception as exc:
             record_error(exc)
             results = {}
