@@ -3,9 +3,9 @@ import sys
 import types
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
-
 import dynamic_path_router as dpr  # noqa: E402
+
+SR_NAME = Path(dpr.resolve_path("sandbox_runner.py")).name
 
 
 def _make_repo(tmp_path: Path, layout: str) -> tuple[Path, Path]:
@@ -17,13 +17,13 @@ def _make_repo(tmp_path: Path, layout: str) -> tuple[Path, Path]:
     if layout == "submodule":
         sub = root / "submodule"
         (sub / ".git").mkdir(parents=True)
-        target = sub / "sandbox_runner.py"
+        target = sub / SR_NAME
         target.parent.mkdir(parents=True, exist_ok=True)
     elif layout == "nested":
-        target = root / "other" / "sandbox_runner.py"
+        target = root / "other" / SR_NAME
         target.parent.mkdir(parents=True, exist_ok=True)
     else:
-        target = root / "sandbox_runner.py"
+        target = root / SR_NAME
     target.write_text("print('hi')\n")
     return root, target
 
@@ -76,12 +76,16 @@ def test_self_coding_scheduler_invokes_resolve_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr(dpr, "resolve_path", spy)
     menace_pkg = types.ModuleType("menace")
-    menace_pkg.__path__ = [str(Path(__file__).resolve().parents[2])]
+    menace_pkg.__path__ = [str(Path(dpr.resolve_path(".")))]
     sys.modules["menace"] = menace_pkg
     stubs = {
-        "menace.self_coding_manager": types.SimpleNamespace(SelfCodingManager=object),
+        "menace.self_coding_manager": types.SimpleNamespace(
+            SelfCodingManager=object
+        ),
         "menace.data_bot": types.SimpleNamespace(DataBot=object),
-        "menace.advanced_error_management": types.SimpleNamespace(AutomatedRollbackManager=object),
+        "menace.advanced_error_management": types.SimpleNamespace(
+            AutomatedRollbackManager=object
+        ),
         "menace.sandbox_settings": types.SimpleNamespace(
             SandboxSettings=type(
                 "S", (), {
@@ -92,12 +96,16 @@ def test_self_coding_scheduler_invokes_resolve_path(monkeypatch, tmp_path):
             )
         ),
         "menace.error_parser": types.SimpleNamespace(ErrorParser=object),
-        "sandbox_runner.workflow_sandbox_runner": types.SimpleNamespace(WorkflowSandboxRunner=object),
+        "sandbox_runner.workflow_sandbox_runner": types.SimpleNamespace(
+            WorkflowSandboxRunner=object
+        ),
     }
     for name, mod in stubs.items():
         sys.modules[name] = mod
     scheduler_mod = importlib.import_module("menace.self_coding_scheduler")
     manager = types.SimpleNamespace(bot_name="bot", engine=object())
-    data_bot = types.SimpleNamespace(roi=lambda _: 0.0, db=types.SimpleNamespace(fetch=lambda _: []))
+    data_bot = types.SimpleNamespace(
+        roi=lambda _: 0.0, db=types.SimpleNamespace(fetch=lambda _: [])
+    )
     scheduler_mod.SelfCodingScheduler(manager, data_bot)
     assert calls

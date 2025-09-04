@@ -1,14 +1,15 @@
 import ast
-import pathlib
 import subprocess
 from types import SimpleNamespace
 from typing import Any, Dict
 import logging
 
 import pytest
+from pathlib import Path
+from dynamic_path_router import resolve_path
 
 # Load _analyse_module from cycle.py without importing heavy dependencies
-cycle_path = pathlib.Path(__file__).resolve().parents[1] / "cycle.py"
+cycle_path = Path(resolve_path("sandbox_runner/cycle.py"))
 source = cycle_path.read_text()
 module = ast.parse(source)
 func_src = None
@@ -20,7 +21,7 @@ if func_src is None:  # pragma: no cover - sanity
     raise RuntimeError("_analyse_module not found")
 
 globals_dict: Dict[str, Any] = {
-    "Path": pathlib.Path,
+    "Path": Path,
     "subprocess": subprocess,
     "router": SimpleNamespace(),
     "mi_visit": None,
@@ -33,7 +34,7 @@ analyse_module = globals_dict["_analyse_module"]
 
 
 def test_analyse_module_weighted_score(monkeypatch, tmp_path):
-    mod = tmp_path / "dummy.py"
+    mod = tmp_path / "dummy.py"  # path-ignore
     mod.write_text("print('hi')")
 
     monkeypatch.setattr(
@@ -58,7 +59,7 @@ def test_analyse_module_weighted_score(monkeypatch, tmp_path):
 
     analyse_module.__globals__["router"] = DummyRouter()
 
-    score, signals = analyse_module(SimpleNamespace(repo=tmp_path), "dummy.py")
+    score, signals = analyse_module(SimpleNamespace(repo=tmp_path), "dummy.py")  # path-ignore
     assert score == pytest.approx(0.5)
     assert signals["commit"] == pytest.approx(0.5)
     assert signals["complexity"] == pytest.approx(0.7)
@@ -66,7 +67,7 @@ def test_analyse_module_weighted_score(monkeypatch, tmp_path):
 
 
 def test_analyse_module_custom_weights(monkeypatch, tmp_path):
-    mod = tmp_path / "dummy.py"
+    mod = tmp_path / "dummy.py"  # path-ignore
     mod.write_text("print('hi')")
 
     monkeypatch.setattr(
@@ -95,7 +96,7 @@ def test_analyse_module_custom_weights(monkeypatch, tmp_path):
         risk_weight_commit=0.0, risk_weight_complexity=0.0, risk_weight_failures=1.0
     )
     ctx = SimpleNamespace(repo=tmp_path, settings=settings)
-    score, signals = analyse_module(ctx, "dummy.py")
+    score, signals = analyse_module(ctx, "dummy.py")  # path-ignore
     assert score == pytest.approx(0.3)
     assert signals["commit"] == pytest.approx(0.5)
     assert signals["complexity"] == pytest.approx(0.7)

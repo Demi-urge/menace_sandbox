@@ -33,7 +33,7 @@ class ImproverStub:
         self.received.append(target_region)
         if target_region is not None:
             self.self_coding_engine.apply_patch_with_retry(
-                Path("buggy.py"), "fix", target_region=target_region
+                Path("buggy.py"), "fix", target_region=target_region  # path-ignore
             )
         return SimpleNamespace(roi=None)
 
@@ -51,7 +51,7 @@ class TesterStub:
 
 
 def test_target_region_flows(tmp_path):
-    buggy = tmp_path / "buggy.py"
+    buggy = tmp_path / "buggy.py"  # path-ignore
     buggy.write_text("def divide(a,b):\n    return a/0\n")
     trace = _build_trace(buggy)
 
