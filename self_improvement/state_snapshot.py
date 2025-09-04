@@ -6,12 +6,12 @@ from dataclasses import dataclass, asdict
 import json
 from pathlib import Path
 from typing import Dict
-import sqlite3
 import time
 import shutil
 
 from .baseline_tracker import BaselineTracker
 from ..sandbox_settings import SandboxSettings
+from .sandbox_score import get_latest_sandbox_score
 
 try:  # pragma: no cover - optional dependency location
     from ..dynamic_path_router import resolve_path
@@ -32,36 +32,6 @@ class Snapshot:
     token_diversity: float
     timestamp: float
 
-
-# ---------------------------------------------------------------------------
-
-def _latest_sandbox_score(path: str | Path) -> float:
-    """Return most recent sandbox score from *path*.
-
-    Returns ``0`` when the database or expected tables are missing.
-    """
-
-    try:
-        conn = sqlite3.connect(str(resolve_path(str(path))))
-    except Exception:
-        return 0.0
-    try:
-        for query in (
-            "SELECT score FROM sandbox_scores ORDER BY timestamp DESC LIMIT 1",
-            "SELECT score FROM score_history ORDER BY ts DESC LIMIT 1",
-        ):
-            try:
-                cur = conn.execute(query)
-                row = cur.fetchone()
-                if row:
-                    return float(row[0])
-            except Exception:
-                continue
-    finally:
-        conn.close()
-    return 0.0
-
-
 def _token_diversity(repo: Path, settings: SandboxSettings) -> float:
     """Return average token diversity for *repo* using metrics helper."""
     files = list(repo.rglob("*.py"))
@@ -80,7 +50,7 @@ def capture_snapshot(tracker: BaselineTracker, settings: SandboxSettings) -> Sna
     repo = Path(settings.sandbox_repo_path)
     roi = float(tracker.current("roi"))
     entropy = float(tracker.current("entropy"))
-    sandbox_score = _latest_sandbox_score(settings.sandbox_score_db)
+    sandbox_score = get_latest_sandbox_score(settings.sandbox_score_db)
 
     try:
         call_complexity = compute_call_graph_complexity(repo)
