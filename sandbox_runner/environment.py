@@ -108,6 +108,55 @@ def generate_edge_cases() -> dict[str, Any]:
 
     return _gen()
 
+# ---------------------------------------------------------------------------
+# Reusable edge case stubs
+
+from .edge_case_generator import (
+    malformed_json as _ec_malformed_json,
+    timeout_sentinel as _ec_timeout,
+    null_or_empty as _ec_null_or_empty,
+    invalid_format as _ec_invalid_format,
+)
+
+_EDGE_CASE_ENV = {
+    "malformed_json": "SANDBOX_EC_MALFORMED_JSON",
+    "timeouts": "SANDBOX_EC_TIMEOUTS",
+    "nulls": "SANDBOX_EC_NULLS",
+    "empty_strings": "SANDBOX_EC_EMPTY_STRINGS",
+    "invalid_formats": "SANDBOX_EC_INVALID_FORMATS",
+}
+
+
+def _edge_case_enabled(name: str) -> bool:
+    """Return True if the given edge case category is enabled."""
+    flag = os.getenv(_EDGE_CASE_ENV[name], "1")
+    return flag not in {"0", "false", "False"}
+
+
+def get_edge_case_profiles() -> list[dict[str, Any]]:
+    """Return enabled edge case profiles."""
+    none_val, empty_val = _ec_null_or_empty()
+    profiles: list[dict[str, Any]] = []
+    if _edge_case_enabled("malformed_json"):
+        profiles.append({"malformed.json": _ec_malformed_json()})
+    if _edge_case_enabled("timeouts"):
+        profiles.append({"timeout": _ec_timeout()})
+    if _edge_case_enabled("nulls"):
+        profiles.append({"null.txt": none_val})
+    if _edge_case_enabled("empty_strings"):
+        profiles.append({"empty.txt": empty_val})
+    if _edge_case_enabled("invalid_formats"):
+        profiles.append({"invalid.bin": _ec_invalid_format()})
+    return profiles
+
+
+def get_edge_case_stubs() -> dict[str, Any]:
+    """Return merged edge case stubs respecting configuration flags."""
+    merged: dict[str, Any] = {}
+    for prof in get_edge_case_profiles():
+        merged.update(prof)
+    return merged
+
 _USE_MODULE_SYNERGY = os.getenv("SANDBOX_USE_MODULE_SYNERGY") == "1"
 try:  # pragma: no cover - optional dependency
     from module_synergy_grapher import get_synergy_cluster
@@ -4776,6 +4825,17 @@ async def _section_worker(
                 rc.setdefault("use_subprocess", True)
                 if env_input.get("INJECT_EDGE_CASES"):
                     rc["inject_edge_cases"] = True
+                profiles = get_edge_case_profiles()
+                if profiles:
+                    stubs: Dict[str, Any] = {}
+                    for prof in profiles:
+                        stubs.update(prof)
+                    td = dict(rc.get("test_data") or {})
+                    stubs.update(td)
+                    rc["test_data"] = stubs
+                    existing = list(rc.get("edge_case_profiles", []))
+                    existing.extend(profiles)
+                    rc["edge_case_profiles"] = existing
                 runner = WorkflowSandboxRunner()
                 runner.run(lambda: exec(snip, {}), **rc)
             except Exception:
