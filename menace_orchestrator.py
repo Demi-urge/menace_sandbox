@@ -11,6 +11,7 @@ import time
 import threading
 import asyncio
 import uuid
+from dynamic_path_router import resolve_path
 from .knowledge_graph import KnowledgeGraph
 
 from .advanced_error_management import AutomatedRollbackManager
@@ -219,8 +220,8 @@ class MenaceOrchestrator:
         if router is None:
             router = DBRouter(
                 menace_id,
-                f"./menace_{menace_id}_local.db",
-                "./shared/global.db",
+                str(resolve_path(f"menace_{menace_id}_local.db")),
+                str(resolve_path("shared/global.db")),
             )
         db_router.GLOBAL_ROUTER = router
         self.router = router
