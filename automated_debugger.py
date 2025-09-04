@@ -12,7 +12,7 @@ from typing import Iterable
 
 from .self_coding_engine import SelfCodingEngine
 from .retry_utils import retry
-from .target_region import TargetRegion, extract_target_region
+from .self_improvement.target_region import TargetRegion, extract_target_region
 from .patch_attempt_tracker import PatchAttemptTracker
 
 

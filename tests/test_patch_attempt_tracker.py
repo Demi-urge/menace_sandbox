@@ -5,10 +5,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 _spec_tr = importlib.util.spec_from_file_location(
-    "menace.target_region", ROOT / "target_region.py"
+    "menace.self_improvement.target_region",
+    ROOT / "self_improvement" / "target_region.py",
 )
 tr_module = importlib.util.module_from_spec(_spec_tr)
-sys.modules.setdefault("menace.target_region", tr_module)
+sys.modules.setdefault("menace.self_improvement.target_region", tr_module)
 _spec_tr.loader.exec_module(tr_module)  # type: ignore[attr-defined]
 TargetRegion = tr_module.TargetRegion
 

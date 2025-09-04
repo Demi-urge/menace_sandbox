@@ -10,7 +10,7 @@ from ..metrics_exporter import self_improvement_failure_total
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ..self_coding_engine import TargetRegion
+    from .target_region import TargetRegion
 
 try:  # pragma: no cover - simplified environments
     from ..logging_utils import log_record

@@ -15,9 +15,25 @@ from datetime import datetime
 from typing import Optional
 
 try:
-    from .target_region import TargetRegion, extract_target_region as _extract_target_region
-except ImportError:  # pragma: no cover - fallback for direct execution
-    from target_region import TargetRegion, extract_target_region as _extract_target_region  # type: ignore
+    from .self_improvement.target_region import (
+        TargetRegion,
+        extract_target_region as _extract_target_region,
+    )
+except Exception:  # pragma: no cover - fallback for direct execution
+    import importlib.util
+    import pathlib
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "_target_region_fallback",
+        pathlib.Path(__file__).resolve().parent / "self_improvement" / "target_region.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_target_region_fallback"] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)  # type: ignore[attr-defined]
+    TargetRegion = module.TargetRegion  # type: ignore
+    _extract_target_region = module.extract_target_region  # type: ignore
 
 
 @dataclass
