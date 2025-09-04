@@ -106,6 +106,38 @@ class _Stat:
         return base * self.penalty_factor
 
 
+@dataclass
+class _StrategyStat:
+    """Aggregate statistics for a particular prompt strategy."""
+
+    strategy: str
+    success: int = 0
+    total: int = 0
+    roi_sum: float = 0.0
+    weighted_roi_sum: float = 0.0
+    weight_sum: float = 0.0
+
+    def update(self, success: bool, roi: float, weight: float) -> None:
+        self.total += 1
+        self.roi_sum += roi
+        self.weighted_roi_sum += roi * weight
+        self.weight_sum += weight
+        if success:
+            self.success += 1
+
+    def success_rate(self) -> float:
+        return self.success / self.total if self.total else 0.0
+
+    def weighted_roi(self) -> float:
+        if self.weight_sum:
+            return self.weighted_roi_sum / self.weight_sum
+        return self.roi_sum / self.total if self.total else 0.0
+
+    def score(self, roi_weight: float = 1.0) -> float:
+        roi = max(self.weighted_roi(), 0.0)
+        return self.success_rate() * (roi ** roi_weight)
+
+
 class PromptOptimizer:
     """Analyse logs and recommend high-performing prompt formats.
 
@@ -143,6 +175,7 @@ class PromptOptimizer:
         failure_log: str | Path,
         *,
         stats_path: str | Path = "prompt_optimizer_stats.json",
+        strategy_path: str | Path = "_strategy_stats.json",
         weight_by: str | None = None,
         roi_weight: float = 1.0,
         failure_store: FailureFingerprintStore | None = None,
@@ -165,6 +198,7 @@ class PromptOptimizer:
         else:
             self.failure_fingerprints_path = None
         self.stats_path = _resolve(stats_path)
+        self.strategy_path = _resolve(strategy_path)
         self.weight_by = weight_by
         self.roi_weight = roi_weight
         self.failure_store = failure_store
@@ -173,8 +207,11 @@ class PromptOptimizer:
             SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
         )
         self.stats: Dict[Tuple[Any, ...], _Stat] = {}
+        self.strategy_stats: Dict[str, _StrategyStat] = {}
         if self.stats_path.exists():
             self._load_stats()
+        if self.strategy_path.exists():
+            self._load_strategy_stats()
         # build initial statistics
         self.aggregate()
 
@@ -208,6 +245,28 @@ class PromptOptimizer:
                             item.get("runtime_improvement_sum", 0.0)
                         ),
                         penalty_factor=float(item.get("penalty_factor", 1.0)),
+                    )
+                except Exception:
+                    continue
+
+    # ------------------------------------------------------------------
+    def _load_strategy_stats(self) -> None:
+        """Load persisted per-strategy statistics if available."""
+
+        try:
+            data = json.loads(self.strategy_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if isinstance(data, dict):
+            for k, v in data.items():
+                try:
+                    self.strategy_stats[str(k)] = _StrategyStat(
+                        strategy=str(k),
+                        success=int(v.get("success", 0)),
+                        total=int(v.get("total", 0)),
+                        roi_sum=float(v.get("roi_sum", 0.0)),
+                        weighted_roi_sum=float(v.get("weighted_roi_sum", 0.0)),
+                        weight_sum=float(v.get("weight_sum", 0.0)),
                     )
                 except Exception:
                     continue
@@ -344,6 +403,7 @@ class PromptOptimizer:
                 weight = 1.0
             module = entry.get("module", "unknown")
             action = entry.get("action", "unknown")
+            strategy = entry.get("strategy") or entry.get("prompt_id")
             feats = self._extract_features(prompt)
             has_system = bool(
                 entry.get("system")
@@ -380,8 +440,15 @@ class PromptOptimizer:
                 )
                 self.stats[key] = stat
             stat.update(success, roi, weight, runtime_val)
+            if strategy:
+                sstat = self.strategy_stats.get(str(strategy))
+                if not sstat:
+                    sstat = _StrategyStat(strategy=str(strategy))
+                    self.strategy_stats[str(strategy)] = sstat
+                sstat.update(success, roi, weight)
         self._apply_cluster_penalties()
         self.persist_statistics()
+        self.persist_strategy_statistics()
         return self.stats
 
     # ------------------------------------------------------------------
@@ -481,6 +548,21 @@ class PromptOptimizer:
         self.stats_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     # ------------------------------------------------------------------
+    def persist_strategy_statistics(self) -> None:
+        """Persist per-strategy statistics to ``strategy_path``."""
+
+        data: Dict[str, Dict[str, float]] = {}
+        for stat in self.strategy_stats.values():
+            data[stat.strategy] = {
+                "success": stat.success,
+                "total": stat.total,
+                "roi_sum": stat.roi_sum,
+                "weighted_roi_sum": stat.weighted_roi_sum,
+                "weight_sum": stat.weight_sum,
+            }
+        self.strategy_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    # ------------------------------------------------------------------
     def select_format(self, module: str, action: str) -> Dict[str, Any]:
         """Return the best performing configuration for ``module`` and ``action``."""
 
@@ -531,6 +613,7 @@ class PromptOptimizer:
 
 
 DEFAULT_WEIGHTS_PATH = Path("prompt_format_weights.json")
+DEFAULT_STRATEGY_PATH = Path("_strategy_stats.json")
 
 
 def load_logs(success_path: str | Path, failure_path: str | Path) -> List[Dict[str, Any]]:
@@ -598,6 +681,51 @@ def rank_formats() -> List[Dict[str, Any]]:
 
     ranked.sort(key=lambda x: x["score"], reverse=True)
     return ranked
+
+
+def load_strategy_stats(path: str | Path | None = None) -> Dict[str, Dict[str, float]]:
+    """Return per-strategy statistics including scores."""
+
+    p = Path(path) if path is not None else DEFAULT_STRATEGY_PATH
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    stats: Dict[str, Dict[str, float]] = {}
+    for k, v in data.items():
+        total = max(int(v.get("total", 0)), 1)
+        success = int(v.get("success", 0))
+        roi_sum = float(v.get("roi_sum", 0.0))
+        weighted_roi_sum = float(v.get("weighted_roi_sum", 0.0))
+        weight_sum = float(v.get("weight_sum", 0.0))
+        success_rate = success / total
+        if weight_sum:
+            weighted_roi = weighted_roi_sum / weight_sum
+        else:
+            weighted_roi = roi_sum / total
+        score = success_rate * max(weighted_roi, 0.0)
+        stats[str(k)] = {
+            "success_rate": success_rate,
+            "weighted_roi": weighted_roi,
+            "score": score,
+        }
+    return stats
+
+
+def select_strategy(path: str | Path | None = None) -> str | None:
+    """Return the strategy with the highest combined score."""
+
+    stats = load_strategy_stats(path)
+    best: str | None = None
+    best_score = -1.0
+    for strat, rec in stats.items():
+        score = rec.get("score", 0.0)
+        if score > best_score:
+            best = strat
+            best_score = score
+    return best
 
 
 def select_format() -> Dict[str, Any]:

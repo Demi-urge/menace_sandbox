@@ -164,8 +164,8 @@ from .patch_application import generate_patch, apply_patch
 from .prompt_memory import (
     log_prompt_attempt,
     load_prompt_penalties,
-    load_strategy_roi_stats,
 )
+from prompt_optimizer import load_strategy_stats
 from .prompt_strategies import PromptStrategy
 from . import strategy_rotator
 from .snapshot_tracker import (
@@ -6594,7 +6594,7 @@ class SelfImprovementEngine:
         """Pick the best prompt strategy given historical ROI and penalties."""
 
         penalties = load_prompt_penalties()
-        stats = load_strategy_roi_stats()
+        stats = load_strategy_stats()
         settings = SandboxSettings()
         threshold = settings.prompt_failure_threshold
         mult = settings.prompt_penalty_multiplier
@@ -6607,9 +6607,9 @@ class SelfImprovementEngine:
             weight = mult if threshold and count >= threshold else 1.0
             rec = stats.get(str(strat))
             if rec:
-                roi_factor = rec.get("avg_roi", 0.0)
-                roi_factor = roi_factor if roi_factor > 0 else 0.1
-                weight *= roi_factor
+                score = rec.get("score", 0.0)
+                score = score if score > 0 else 0.1
+                weight *= score
             target = penalised if threshold and count >= threshold else eligible
             target.append((strat, weight))
         pool = eligible or penalised
