@@ -24,6 +24,7 @@ from typing import Any
 from ..error_parser import ErrorParser
 from sandbox_settings import SandboxSettings
 from .environment import get_edge_case_stubs
+from .scoring import record_run
 
 
 logger = logging.getLogger(__name__)
@@ -557,6 +558,15 @@ def run_tests(
                         os.environ.pop("SANDBOX_ENV_PRESETS", None)
                     else:
                         os.environ["SANDBOX_ENV_PRESETS"] = old_presets
+                record_run(
+                    result=res,
+                    metrics={
+                        "coverage": res.coverage,
+                        "executed_functions": res.executed_functions,
+                        "entropy_delta": res.entropy_delta,
+                        "runtime": res.duration,
+                    },
+                )
                 results.append(res)
 
     if len(results) == 1:
