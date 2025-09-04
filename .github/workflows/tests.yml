@@ -52,6 +52,8 @@ jobs:
         run: pre-commit run forbid-sqlite3-connect --all-files
       - name: Prevent direct Stripe imports
         run: pre-commit run forbid-stripe-imports --all-files
+      - name: Prevent Stripe live keys or endpoints
+        run: pre-commit run forbid-stripe-keys --all-files
       - name: Run flake8
         run: pre-commit run flake8 --all-files
       - name: Enforce DB router usage
