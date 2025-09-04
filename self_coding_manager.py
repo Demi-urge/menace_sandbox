@@ -40,6 +40,7 @@ from .rollback_manager import RollbackManager
 from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings
+from .patch_attempt_tracker import PatchAttemptTracker
 
 try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
@@ -224,7 +225,7 @@ class SelfCodingManager:
             attempt = 0
             patch_id: int | None = None
             reverted = False
-            ctx_meta = context_meta
+            ctx_meta = context_meta or {}
             builder = getattr(
                 getattr(self.engine, "cognition_layer", None),
                 "context_builder",
@@ -233,7 +234,8 @@ class SelfCodingManager:
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None
-            failure_counts: Dict[Tuple[str, int, int, str], int] = {}
+            func_region: TargetRegion | None = None
+            tracker = PatchAttemptTracker(self.logger)
 
             def _coverage_ratio(output: str, success: bool) -> float:
                 try:
@@ -386,6 +388,21 @@ class SelfCodingManager:
                             except Exception:
                                 self.logger.exception("failed to record retry status")
                         raise RuntimeError("similar failure detected")
+                if target_region is not None:
+                    func_region = func_region or TargetRegion(
+                        file=target_region.file,
+                        start_line=0,
+                        end_line=0,
+                        function=target_region.function,
+                    )
+                    level, patch_region = tracker.level_for(target_region, func_region)
+                else:
+                    level, patch_region = "module", None
+                ctx_meta["escalation_level"] = level
+                if patch_region is not None:
+                    ctx_meta["target_region"] = asdict(patch_region)
+                else:
+                    ctx_meta.pop("target_region", None)
                 patch_id, reverted, _ = self.engine.apply_patch(
                     cloned_path,
                     desc,
@@ -395,7 +412,7 @@ class SelfCodingManager:
                     context_meta=ctx_meta,
                     baseline_coverage=coverage_before,
                     baseline_runtime=runtime_before,
-                    target_region=target_region,
+                    target_region=patch_region,
                 )
                 harness_result: TestHarnessResult = _run(clone_root, cloned_path)
                 if harness_result.success:
@@ -403,7 +420,8 @@ class SelfCodingManager:
                         harness_result.stdout, harness_result.success
                     )
                     runtime_after = harness_result.duration
-                    failure_counts.clear()
+                    if target_region is not None:
+                        tracker.reset(target_region)
                     break
 
                 if attempt >= max_attempts:
@@ -473,48 +491,18 @@ class SelfCodingManager:
                 last_fp = fingerprint
                 record_failure(fingerprint, self.failure_store)
 
-                if target_region is not None:
-                    key = (
-                        target_region.file,
-                        target_region.start_line,
-                        target_region.end_line,
-                        target_region.function,
+                if target_region is not None and func_region is None:
+                    func_region = TargetRegion(
+                        file=target_region.file,
+                        start_line=0,
+                        end_line=0,
+                        function=target_region.function,
                     )
-                    count = failure_counts.get(key, 0) + 1
-                    failure_counts[key] = count
-                    if (
-                        count >= 2
-                        and target_region.start_line
-                        and target_region.end_line
-                    ):
-                        target_region = TargetRegion(
-                            file=target_region.file,
-                            start_line=0,
-                            end_line=0,
-                            function=target_region.function,
-                        )
-                        self.logger.info(
-                            "escalating target region to function scope",
-                            extra={"file": target_region.file, "function": target_region.function},
-                        )
-                        failure_counts[(target_region.file, 0, 0, target_region.function)] = 0
-                    elif (
-                        count >= 2
-                        and not target_region.start_line
-                        and not target_region.end_line
-                        and target_region.function
-                    ):
-                        target_region = TargetRegion(
-                            file=target_region.file,
-                            start_line=0,
-                            end_line=0,
-                            function="",
-                        )
-                        self.logger.info(
-                            "escalating target region to module scope",
-                            extra={"file": target_region.file},
-                        )
-                        failure_counts[(target_region.file, 0, 0, "")] = 0
+                if target_region is not None and func_region is not None:
+                    tracker.record_failure(level, target_region, func_region)
+                    level, patch_region = tracker.level_for(target_region, func_region)
+                else:
+                    level, patch_region = "module", None
 
                 self.logger.info(
                     "rebuilding context",
@@ -527,9 +515,10 @@ class SelfCodingManager:
                     ctx_meta = {
                         "retrieval_context": ctx,
                         "retrieval_session_id": sid,
+                        "escalation_level": level,
                     }
-                    if target_region is not None:
-                        ctx_meta["target_region"] = asdict(target_region)
+                    if patch_region is not None:
+                        ctx_meta["target_region"] = asdict(patch_region)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.error("context rebuild failed: %s", exc)
                     raise RuntimeError("patch tests failed")
