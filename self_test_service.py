@@ -108,6 +108,7 @@ from logging_utils import log_record, get_logger
 from pydantic import ValidationError
 
 from .self_services_config import SelfTestConfig
+from .sandbox_results_logger import record_run
 
 try:
     from .data_bot import DataBot
@@ -830,6 +831,18 @@ class SelfTestService:
                     json.dump(data, fh)
         except Exception:
             self.logger.exception("failed to store history")
+        try:
+            record_run(
+                {
+                    "success": int(rec.get("failed", 0)) == 0,
+                    "entropy_delta": 0.0,
+                    "runtime": float(rec.get("runtime", 0.0)),
+                    "error": None,
+                    "coverage": {"total": float(rec.get("coverage", 0.0))},
+                }
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def _save_state(
@@ -2260,8 +2273,11 @@ class SelfTestService:
                         err_snip,
                         log_snip,
                         records,
-                    )
-tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name, _ in proc_info]
+            )
+            tasks = [
+                asyncio.create_task(_process(cmd, tmp, is_c, name))
+                for cmd, tmp, is_c, name, _ in proc_info
+            ]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             first_exc: Exception | None = None

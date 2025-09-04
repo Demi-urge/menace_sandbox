@@ -31,6 +31,7 @@ from .quick_fix_engine import generate_patch
 from .human_alignment_agent import HumanAlignmentAgent
 from .human_alignment_flagger import _collect_diff_data
 from .violation_logger import log_violation
+from .sandbox_results_logger import record_run
 from db_router import GLOBAL_ROUTER, init_db_router
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
@@ -463,8 +464,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     async def _coverage_percent(
         self, paths: list[Path], env: dict[str, str] | None = None
-    ) -> float:
-        """Run tests for *paths* under coverage using parallel workers asynchronously."""
+    ) -> tuple[float, dict[str, dict[str, float]]]:
+        """Run tests for *paths* under coverage using parallel workers asynchronously.
+
+        Returns
+        -------
+        tuple
+            A pair of ``(percent, function_coverage)`` where ``function_coverage``
+            maps filenames to functions and their line coverage ratio.
+        """
 
         async def run_one(idx: int, set_paths: list[Path]) -> tuple[Path, int, str]:
             data_file = tmp_dir / f".coverage.{idx}"
@@ -523,6 +531,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             sets = [[p] for p in paths]
 
         tmp_dir = Path(tempfile.mkdtemp())
+        start = time.perf_counter()
         try:
             results = await asyncio.gather(
                 *(run_one(idx, sp) for idx, sp in enumerate(sets))
@@ -539,6 +548,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
             xml_tmp.close()
             percent = 0.0
+            func_cov: dict[str, dict[str, float]] = {}
             try:
                 cov.xml_report(
                     outfile=xml_tmp.name,
@@ -548,6 +558,26 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     include=[str(p) for paths in sets for p in paths],
                     file=buf,
                 )
+                try:
+                    import xml.etree.ElementTree as ET
+
+                    tree = ET.parse(xml_tmp.name)
+                    for cls in tree.findall(".//class"):
+                        fname = cls.get("filename")
+                        methods: dict[str, float] = {}
+                        for meth in cls.findall("methods/method"):
+                            name = meth.get("name")
+                            lines = meth.findall("lines/line")
+                            total = len(lines)
+                            covered = sum(
+                                1 for ln in lines if int(ln.get("hits", "0")) > 0
+                            )
+                            if name and total:
+                                methods[name] = covered / total
+                        if fname and methods:
+                            func_cov[fname] = methods
+                except Exception:
+                    func_cov = {}
                 self.logger.debug(
                     "coverage report", extra=log_record(output=buf.getvalue())
                 )
@@ -561,7 +591,17 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     os.unlink(xml_tmp.name)
                 except Exception:
                     self.logger.exception("coverage cleanup failed")
-            return float(percent or 0.0)
+            runtime = time.perf_counter() - start
+            record_run(
+                {
+                    "success": True,
+                    "entropy_delta": 0.0,
+                    "runtime": runtime,
+                    "error": None,
+                    "coverage": func_cov,
+                }
+            )
+            return float(percent or 0.0), func_cov
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -591,8 +631,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
         start = time.perf_counter()
         failure: ErrorReport | None = None
+        cov_details: dict[str, dict[str, float]] = {}
         try:
-            percent = with_retry(
+            percent, cov_details = with_retry(
                 lambda: asyncio.run(self._coverage_percent(test_paths, env)),
                 attempts=self._test_retries,
                 logger=self.logger,
@@ -629,6 +670,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 self.logger.exception("failed to log parsed failure")
             self._record_exception(exc)
             percent = 0.0
+            record_run(
+                {
+                    "success": False,
+                    "entropy_delta": 0.0,
+                    "runtime": runtime,
+                    "error": failure.trace if failure else output,
+                    "coverage": {},
+                }
+            )
         except Exception as exc:
             runtime = time.perf_counter() - start
             output = str(exc)
@@ -655,6 +705,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             percent = 0.0
             self._record_exception(exc)
             self.logger.exception("coverage generation failed")
+            record_run(
+                {
+                    "success": False,
+                    "entropy_delta": 0.0,
+                    "runtime": runtime,
+                    "error": failure.trace if failure else output,
+                    "coverage": {},
+                }
+            )
         else:
             runtime = time.perf_counter() - start
             percent = float(percent or 0.0)
@@ -1678,6 +1737,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 result=result,
                             ),
                         )
+                        try:
+                            record_run(
+                                {
+                                    "success": result != "reverted",
+                                    "entropy_delta": entropy_delta,
+                                    "runtime": runtime_delta,
+                                    "error": reason,
+                                    "coverage": {
+                                        "before": before_cov,
+                                        "after": after_cov,
+                                    },
+                                }
+                            )
+                        except Exception:
+                            pass
                         if progress_cb:
                             try:
                                 progress_cb(idx + 1, total_candidates)
@@ -1903,6 +1977,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         log_path=str(self._last_test_log) if self._last_test_log else None,
                         reason=reason,
                     )
+                    try:
+                        record_run(
+                            {
+                                "success": result != "reverted",
+                                "entropy_delta": entropy_delta if "entropy_delta" in locals() else 0.0,
+                                "runtime": runtime_delta if "runtime_delta" in locals() else 0.0,
+                                "error": reason,
+                                "coverage": {
+                                    "before": before_cov,
+                                    "after": after_cov,
+                                },
+                            }
+                        )
+                    except Exception:
+                        pass
                     root_test.unlink(missing_ok=True)
                 if patched and pid is not None:
                     try:
