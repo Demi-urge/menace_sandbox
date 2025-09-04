@@ -405,6 +405,19 @@ ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
 # Track how many times each module/scenario combination was executed
 COVERAGE_TRACKER: Dict[str, Dict[str, int]] = {}
+COVERAGE_FILES: Dict[str, set[str]] = {}
+COVERAGE_FUNCTIONS: Dict[str, set[str]] = {}
+
+
+def record_module_coverage(
+    module: str, files: Iterable[str], functions: Iterable[str]
+) -> None:
+    """Record executed ``files`` and ``functions`` for ``module``."""
+
+    if files:
+        COVERAGE_FILES.setdefault(module, set()).update(files)
+    if functions:
+        COVERAGE_FUNCTIONS.setdefault(module, set()).update(functions)
 
 
 @contextmanager
@@ -581,7 +594,7 @@ def _update_coverage(module: str, scenario: str) -> None:
 
 
 def coverage_summary() -> Dict[str, Dict[str, Any]]:
-    """Return coverage counts and missing canonical scenarios per module."""
+    """Return coverage counts and executed files/functions per module."""
     try:
         from menace.environment_generator import CANONICAL_PROFILES
     except ImportError as exc:  # pragma: no cover - environment generator optional
@@ -590,9 +603,18 @@ def coverage_summary() -> Dict[str, Dict[str, Any]]:
     else:
         profiles = list(CANONICAL_PROFILES)
     summary: Dict[str, Dict[str, Any]] = {}
-    for mod, scen_map in COVERAGE_TRACKER.items():
+    modules = set(COVERAGE_TRACKER) | set(COVERAGE_FILES) | set(COVERAGE_FUNCTIONS)
+    for mod in modules:
+        scen_map = COVERAGE_TRACKER.get(mod, {})
         missing = [p for p in profiles if p not in scen_map]
-        summary[mod] = {"counts": dict(scen_map), "missing": missing}
+        info: Dict[str, Any] = {"counts": dict(scen_map), "missing": missing}
+        files = COVERAGE_FILES.get(mod)
+        if files:
+            info["files"] = sorted(files)
+        funcs = COVERAGE_FUNCTIONS.get(mod)
+        if funcs:
+            info["functions"] = sorted(funcs)
+        summary[mod] = info
     return summary
 
 

@@ -37,6 +37,7 @@ import builtins
 import contextlib
 import inspect
 import asyncio
+import ast
 import json
 import os
 import pathlib
@@ -77,6 +78,11 @@ except Exception:  # pragma: no cover - meta logger missing
 
 import tracemalloc
 
+try:  # pragma: no cover - coverage is optional
+    import coverage  # type: ignore
+except Exception:  # pragma: no cover - coverage unavailable
+    coverage = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,6 +105,8 @@ class ModuleMetrics:
     frames: list[tuple[str, int, str]] | None = None
     result: Any | None = None
     fixtures: Mapping[str, Any] = field(default_factory=dict)
+    coverage_files: list[str] | None = None
+    coverage_functions: list[str] | None = None
 
 
 @dataclass
@@ -1049,6 +1057,11 @@ class WorkflowSandboxRunner:
                     # provided via fixtures to ``str`` to avoid ``TypeError``
                     # when callers supply non-string objects such as numbers.
                     os.environ[key] = str(value)
+                cov_files: list[str] = []
+                cov_funcs: list[str] = []
+                cov = coverage.Coverage(data_file=None) if coverage else None
+                if cov:
+                    cov.start()
 
                 start = perf_counter()
                 cpu_before = cpu_after = 0.0
@@ -1174,6 +1187,41 @@ class WorkflowSandboxRunner:
                         logger.exception("module %s terminated unexpectedly", name)
                         raise
                 finally:
+                    if cov:
+                        try:
+                            cov.stop()
+                            data = cov.get_data()
+                            for f in data.measured_files():
+                                orig = pathlib.Path(f)
+                                fp = orig
+                                fpath = orig.as_posix()
+                                try:
+                                    fh = original_open(orig, "r", encoding="utf-8")
+                                except Exception:
+                                    copy = root / orig.name
+                                    if not copy.exists():
+                                        continue
+                                    fp = copy
+                                    fpath = copy.relative_to(root).as_posix()
+                                    try:
+                                        fh = original_open(copy, "r", encoding="utf-8")
+                                    except Exception:
+                                        continue
+                                with fh:
+                                    source = fh.read()
+                                cov_files.append(fpath)
+                                lines = data.lines(f) or []
+                                try:
+                                    tree = ast.parse(source)
+                                    for node in ast.walk(tree):
+                                        if isinstance(node, ast.FunctionDef):
+                                            end = getattr(node, "end_lineno", node.lineno)
+                                            if any(l in lines for l in range(node.lineno, end + 1)):
+                                                cov_funcs.append(f"{fpath}:{node.name}")
+                                except Exception:
+                                    continue
+                        except Exception:
+                            logger.exception("coverage collection failed")
                     if timeout:
                         if old_alarm is not None:
                             signal.setitimer(signal.ITIMER_REAL, 0)
@@ -1229,8 +1277,18 @@ class WorkflowSandboxRunner:
                         frames=frames,
                         result=result,
                         fixtures=fixtures,
+                        coverage_files=cov_files or None,
+                        coverage_functions=cov_funcs or None,
                     )
                     metrics.modules.append(module_metric)
+
+                    if cov_files or cov_funcs:
+                        try:
+                            from .environment import record_module_coverage  # type: ignore
+
+                            record_module_coverage(name, cov_files, cov_funcs)
+                        except Exception:
+                            pass
 
                     # Recursively execute nested workflows returned by the module
                     nested_funcs: list[Callable[[], Any]] = []
