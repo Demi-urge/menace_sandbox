@@ -112,6 +112,18 @@ from .self_services_config import SelfTestConfig
 from .sandbox_runner.scoring import record_run
 
 try:
+    from self_improvement.metrics import (
+        compute_entropy_metrics,
+        compute_entropy_delta,
+    )
+except Exception:  # pragma: no cover - fallback when metrics unavailable
+    def compute_entropy_metrics(files):  # type: ignore
+        return 0.0, 0.0
+
+    def compute_entropy_delta(code_diversity, token_complexity):  # type: ignore
+        return 0.0, 0.0
+
+try:
     from .data_bot import DataBot
     from .error_bot import ErrorDB
     from .error_logger import ErrorLogger
@@ -843,9 +855,17 @@ class SelfTestService:
         except Exception:
             self.logger.exception("failed to store history")
         try:
+            entropy_delta = 0.0
+            try:
+                test_paths = [a for a in self.pytest_args if not a.startswith("-")]
+                test_path = test_paths[0] if test_paths else "."
+                code_div, complexity = compute_entropy_metrics([test_path])
+                entropy_delta, _ = compute_entropy_delta(code_div, complexity)
+            except Exception:
+                self.logger.exception("failed to compute entropy metrics")
             metrics = {
                 "success": int(rec.get("failed", 0)) == 0,
-                "entropy_delta": 0.0,
+                "entropy_delta": entropy_delta,
                 "runtime": float(rec.get("runtime", 0.0)),
                 "error": None,
                 "coverage": {"total": float(rec.get("coverage", 0.0))},
