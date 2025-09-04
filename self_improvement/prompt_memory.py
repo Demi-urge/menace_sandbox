@@ -167,6 +167,11 @@ def log_prompt_attempt(
         "exec_result": exec_result,
     }
     roi_delta: float | None = None
+    if failure_reason is not None:
+        # Treat the presence of a failure reason as an unsuccessful attempt even
+        # if ``success`` was erroneously marked True by the caller.
+        success = False
+
     if prompt_id:
         entry["prompt_id"] = prompt_id
         if not success:

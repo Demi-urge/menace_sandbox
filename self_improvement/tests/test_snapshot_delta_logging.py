@@ -1,6 +1,7 @@
 import ast
 import json
 import types
+import pytest
 from dynamic_path_router import resolve_path
 
 
@@ -17,7 +18,14 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
     assert func_node is not None
     module = ast.Module(body=[func_node], type_ignores=[])
 
-    def _log(prompt, success, exec_result, roi_meta, prompt_id=None, failure_reason=None):  # pragma: no cover
+    def _log(
+        prompt,
+        success,
+        exec_result,
+        roi_meta,
+        prompt_id=None,
+        failure_reason=None,
+    ):  # pragma: no cover
         log_entries.append(
             {
                 "prompt": prompt,
@@ -28,10 +36,15 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
             }
         )
 
+    from pathlib import Path
+    from typing import Sequence
+
     ns = {
         "_data_dir": lambda: tmp_path,
         "json": json,
         "log_prompt_attempt": _log,
+        "Path": Path,
+        "Sequence": Sequence,
     }
     exec(compile(module, str(resolve_path("self_improvement/engine.py")), "exec"), ns)
     func = ns["_record_snapshot_delta"]
@@ -44,17 +57,24 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
     return func, Stub()
 
 
-def test_record_snapshot_delta_regression(tmp_path):
+@pytest.mark.parametrize(
+    "delta,reason",
+    [
+        ({"roi": -1.0}, "roi_drop"),
+        ({"sandbox_score": -0.1}, "score_drop"),
+        ({"entropy": 0.1}, "entropy_regression"),
+        ({"tests_passed": False}, "tests_failed"),
+    ],
+)
+def test_record_snapshot_delta_failures(tmp_path, delta, reason):
     logs: list[dict] = []
     updates: list[dict] = []
     func, eng = _load_record_snapshot_delta(tmp_path, logs, updates)
-    delta = {"roi": -1.0, "entropy": 0.0}
     func(eng, "p", "d", delta)
     path = tmp_path / "snapshots" / "deltas.jsonl"
     assert json.loads(path.read_text().strip()) == delta
     assert logs and not logs[0]["success"]
-    assert logs[0]["exec_result"]["diff"] == "d"
-    assert logs[0]["failure_reason"] == "roi_drop"
+    assert logs[0]["failure_reason"] == reason
     assert not updates
 
 
@@ -62,7 +82,7 @@ def test_record_snapshot_delta_success(tmp_path):
     logs: list[dict] = []
     updates: list[dict] = []
     func, eng = _load_record_snapshot_delta(tmp_path, logs, updates)
-    delta = {"roi": 1.0, "entropy": 0.5}
+    delta = {"roi": 1.0, "entropy": -0.5, "sandbox_score": 0.1}
     func(eng, "p", "d", delta)
     assert logs and logs[0]["success"]
     assert logs[0]["failure_reason"] is None

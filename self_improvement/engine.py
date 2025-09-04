@@ -6485,13 +6485,21 @@ class SelfImprovementEngine:
         except Exception:
             pass
 
-        success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
+        # Determine whether the snapshot delta represents a regression.  Any
+        # negative ROI or sandbox score, entropy increase or failed tests are
+        # considered failures and logged with an explicit reason.
         failure_reason = None
-        if not success:
-            if delta.get("roi", 0.0) < 0:
-                failure_reason = "roi_drop"
-            elif delta.get("entropy", 0.0) < 0:
-                failure_reason = "entropy_regression"
+        tests_passed = delta.get("tests_passed")
+        if tests_passed is False or delta.get("tests_failed", 0) > 0:
+            failure_reason = "tests_failed"
+        elif delta.get("roi", 0.0) < 0:
+            failure_reason = "roi_drop"
+        elif delta.get("sandbox_score", 0.0) < 0:
+            failure_reason = "score_drop"
+        elif delta.get("entropy", 0.0) > 0:
+            failure_reason = "entropy_regression"
+
+        success = failure_reason is None
         log_prompt_attempt(
             prompt,
             success=success,

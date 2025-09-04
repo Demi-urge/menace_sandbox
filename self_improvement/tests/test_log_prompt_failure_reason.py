@@ -3,8 +3,9 @@ import sys
 import types
 from pathlib import Path
 import importlib
+from dynamic_path_router import resolve_path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(resolve_path(__file__)).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -30,14 +31,18 @@ def test_log_prompt_attempt_records_failure_reason(tmp_path, monkeypatch):
 
     monkeypatch.setattr(prompt_memory, "_log_path", _mock_log_path)
 
+    # Even if ``success`` is passed as True the presence of ``failure_reason``
+    # should ensure the entry is written to the failure log.
     prompt_memory.log_prompt_attempt(
         prompt=None,
-        success=False,
+        success=True,
         exec_result={"detail": "x"},
         failure_reason="bad_result",
     )
 
-    log_file = tmp_path / "failure.jsonl"
-    assert log_file.exists()
-    entry = json.loads(log_file.read_text().strip())
+    failure_log = tmp_path / "failure.jsonl"
+    assert failure_log.exists()
+    entry = json.loads(failure_log.read_text().strip())
     assert entry["failure_reason"] == "bad_result"
+    # No success log should be written
+    assert not (tmp_path / "success.jsonl").exists()
