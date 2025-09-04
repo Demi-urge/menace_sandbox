@@ -16,6 +16,7 @@ import logging
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .unified_event_bus import UnifiedEventBus
 from .chatgpt_enhancement_bot import EnhancementDB, Enhancement
+from dynamic_path_router import resolve_path
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
@@ -250,7 +251,7 @@ def fork_model_from_candidate(
     *,
     threshold: float = 0.8,
     models_db: Path = DB_PATH,
-    workflows_db: Path = Path("workflows.db"),
+    workflows_db: Path = resolve_path("workflows.db"),
     event_bus: UnifiedEventBus | None = None,
 ) -> Optional[str]:
     matches = find_matching_models(candidate, threshold=threshold, db_path=models_db)
@@ -258,6 +259,7 @@ def fork_model_from_candidate(
         return None
     match = matches[0]
 
+    workflows_db = Path(workflows_db).resolve()
     wf_db = WorkflowDB(workflows_db, event_bus=event_bus)
     base = None
     for rec in wf_db.fetch():
@@ -342,11 +344,12 @@ def insert_forked_entry(
     fork: ForkedModel,
     *,
     models_db: Path = DB_PATH,
-    workflows_db: Path = Path("workflows.db"),
-    enhancements_db: Path = Path("enhancements.db"),
+    workflows_db: Path = resolve_path("workflows.db"),
+    enhancements_db: Path = resolve_path("enhancements.db"),
     event_bus: UnifiedEventBus | None = None,
 ) -> bool:
     try:
+        workflows_db = Path(workflows_db).resolve()
         wf_db = WorkflowDB(workflows_db, event_bus=event_bus)
         workflow_id = wf_db.add(fork.workflow)
     except Exception as exc:
@@ -400,6 +403,7 @@ def insert_forked_entry(
         return False
 
     try:
+        enhancements_db = Path(enhancements_db).resolve()
         enh_db = EnhancementDB(enhancements_db)
         enh_db.add(
             Enhancement(
