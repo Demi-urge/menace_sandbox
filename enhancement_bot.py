@@ -20,10 +20,7 @@ from .chatgpt_enhancement_bot import (
 from .micro_models.diff_summarizer import summarize_diff
 from .micro_models.prefix_injector import inject_prefix
 from billing.prompt_notice import prepend_payment_notice
-try:  # pragma: no cover - optional billing dependency
-    import stripe_billing_router  # noqa: F401
-except Exception:  # pragma: no cover - best effort
-    stripe_billing_router = None  # type: ignore
+import stripe_billing_router  # noqa: F401
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
