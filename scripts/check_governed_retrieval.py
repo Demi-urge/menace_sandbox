@@ -33,7 +33,6 @@ def main() -> int:
                 "check_governed_embeddings.py",
                 "check_governed_retrieval.py",
                 "universal_retriever.py",
-                "stripe_handler.py",
             }
             or path.parts[-2:] == ("vector_service", "retriever.py")
         ):

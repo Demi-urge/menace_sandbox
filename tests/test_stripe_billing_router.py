@@ -34,7 +34,6 @@ def _import_module(monkeypatch):
         }.get(name, ""),
     )
 
-    _load("stripe_handler")
     return _load("stripe_billing_router")
 
 
