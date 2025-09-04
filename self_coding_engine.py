@@ -1063,6 +1063,19 @@ class SelfCodingEngine:
                 target_region=target_region,
             )
         except TypeError:
+            if target_region is not None:
+                path_hint = path_for_prompt(path) if path else None
+                instr = (
+                    f"Modify only lines {target_region.start_line}-{target_region.end_line}"
+                )
+                if path_hint:
+                    instr += f" in {path_hint}"
+                instr += " unless dependent code requires changes."
+                context_block = (
+                    "\n".join([instr, context_block])
+                    if context_block
+                    else instr
+                )
             prompt_obj = self.prompt_engine.build_prompt(
                 description,
                 context=context_block,
