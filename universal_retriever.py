@@ -59,8 +59,12 @@ except Exception:  # pragma: no cover - fallback when event bus unavailable
     UnifiedEventBus = None  # type: ignore
 
 MENACE_ID = "universal_retriever"
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 router: DBRouter = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 

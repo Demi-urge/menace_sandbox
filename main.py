@@ -17,7 +17,7 @@ from typing import Iterable, List
 import uuid
 
 from db_router import init_db_router
-from dynamic_path_router import get_project_root
+from dynamic_path_router import get_project_root, resolve_path
 
 # Ensure repository root on sys.path for direct execution
 sys.path.insert(0, str(get_project_root()))
@@ -28,8 +28,12 @@ logger = logging.getLogger(__name__)
 # without explicit dependency injection.  A unique ``menace_id`` keeps local
 # tables isolated for this process. Explicit paths avoid relying on defaults.
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 

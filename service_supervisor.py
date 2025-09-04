@@ -13,44 +13,52 @@ from threading import Event
 from typing import Callable, Dict, Tuple, Optional
 
 from .db_router import GLOBAL_ROUTER, init_db_router
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
 
 # Initialise a global DB router with a unique menace_id before importing modules
 # that may touch the database. When a router already exists it is reused to
 # avoid spawning multiple routers.
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
-from .menace_master import _init_unused_bots
-from .menace_orchestrator import MenaceOrchestrator
-from .microtrend_service import MicrotrendService
-from .self_evaluation_service import SelfEvaluationService
-from .self_learning_service import main as learning_main
-from .cross_model_scheduler import ModelRankingService
-from .dependency_update_service import DependencyUpdateService
-from .advanced_error_management import SelfHealingOrchestrator
-from .knowledge_graph import KnowledgeGraph
-from .chaos_monitoring_service import ChaosMonitoringService
-from .model_evaluation_service import ModelEvaluationService
-from .secret_rotation_service import SecretRotationService
-from .environment_bootstrap import EnvironmentBootstrapper
-from .external_dependency_provisioner import ExternalDependencyProvisioner
-from .dependency_watchdog import DependencyWatchdog
-from .environment_restoration_service import EnvironmentRestorationService
-from .startup_checks import run_startup_checks
-from .autoscaler import Autoscaler
-from .unified_update_service import UnifiedUpdateService
-from .self_test_service import SelfTestService
-from .auto_escalation_manager import AutoEscalationManager
-from .self_coding_manager import PatchApprovalPolicy, SelfCodingManager
-from .advanced_error_management import AutomatedRollbackManager
-from .error_bot import ErrorDB
-from .self_coding_engine import SelfCodingEngine
-from .code_database import CodeDB
-from .menace_memory_manager import MenaceMemoryManager
-from .model_automation_pipeline import ModelAutomationPipeline
-from .quick_fix_engine import QuickFixEngine
+from .menace_master import _init_unused_bots  # noqa: E402
+from .menace_orchestrator import MenaceOrchestrator  # noqa: E402
+from .microtrend_service import MicrotrendService  # noqa: E402
+from .self_evaluation_service import SelfEvaluationService  # noqa: E402
+from .self_learning_service import main as learning_main  # noqa: E402
+from .cross_model_scheduler import ModelRankingService  # noqa: E402
+from .dependency_update_service import DependencyUpdateService  # noqa: E402
+from .advanced_error_management import SelfHealingOrchestrator  # noqa: E402
+from .knowledge_graph import KnowledgeGraph  # noqa: E402
+from .chaos_monitoring_service import ChaosMonitoringService  # noqa: E402
+from .model_evaluation_service import ModelEvaluationService  # noqa: E402
+from .secret_rotation_service import SecretRotationService  # noqa: E402
+from .environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
+from .external_dependency_provisioner import ExternalDependencyProvisioner  # noqa: E402
+from .dependency_watchdog import DependencyWatchdog  # noqa: E402
+from .environment_restoration_service import EnvironmentRestorationService  # noqa: E402
+from .startup_checks import run_startup_checks  # noqa: E402
+from .autoscaler import Autoscaler  # noqa: E402
+from .unified_update_service import UnifiedUpdateService  # noqa: E402
+from .self_test_service import SelfTestService  # noqa: E402
+from .auto_escalation_manager import AutoEscalationManager  # noqa: E402
+from .self_coding_manager import PatchApprovalPolicy, SelfCodingManager  # noqa: E402
+from .advanced_error_management import AutomatedRollbackManager  # noqa: E402
+from .error_bot import ErrorDB  # noqa: E402
+from .self_coding_engine import SelfCodingEngine  # noqa: E402
+from .code_database import CodeDB  # noqa: E402
+from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
+from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
+from .quick_fix_engine import QuickFixEngine  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -70,6 +78,7 @@ def _parse_map(value: str) -> dict[str, str]:
             k, v = pair.split('=', 1)
             result[k.strip()] = v.strip()
     return result
+
 
 def _orchestrator_worker() -> None:
     """Run the main Menace orchestration loop."""
@@ -101,7 +110,10 @@ def _microtrend_worker() -> None:
     logger = logging.getLogger("microtrend_worker")
     service = MicrotrendService()
     stop = Event()
-    service.run_continuous(interval=float(os.getenv("MICROTREND_INTERVAL", "3600")), stop_event=stop)
+    service.run_continuous(
+        interval=float(os.getenv("MICROTREND_INTERVAL", "3600")),
+        stop_event=stop,
+    )
     try:
         while not stop.is_set():
             time.sleep(1)
@@ -204,7 +216,6 @@ def _debug_worker() -> None:
     except KeyboardInterrupt:
         logger.info("debug worker interrupted")
         stop.set()
-
 
 
 def _dependency_provision_worker() -> None:
@@ -310,6 +321,7 @@ def _autoscale_worker() -> None:
     except KeyboardInterrupt:
         logger.info("autoscale worker interrupted")
 
+
 def _secret_rotation_worker() -> None:
     """Periodically rotate configured secrets."""
     logger = logging.getLogger("secret_rotation_worker")
@@ -329,7 +341,13 @@ def _secret_rotation_worker() -> None:
 class ServiceSupervisor:
     """Supervisor managing Menace background processes."""
 
-    def __init__(self, check_interval: float = 5.0, *, log_path: str = "supervisor.log", restart_log: str = "restart.log") -> None:
+    def __init__(
+        self,
+        check_interval: float = 5.0,
+        *,
+        log_path: str = "supervisor.log",
+        restart_log: str = "restart.log",
+    ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         handler = logging.handlers.RotatingFileHandler(log_path, maxBytes=10**6, backupCount=3)
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -406,7 +424,12 @@ class ServiceSupervisor:
                     self._record_failure("rollback_failure")
 
     # ------------------------------------------------------------------
-    def register(self, name: str, target: Callable[[], None], health_url: str | None = None) -> None:
+    def register(
+        self,
+        name: str,
+        target: Callable[[], None],
+        health_url: str | None = None,
+    ) -> None:
         self.targets[name] = (target, health_url)
 
     # ------------------------------------------------------------------

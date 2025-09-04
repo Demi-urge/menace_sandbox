@@ -42,72 +42,71 @@ PARENT = ROOT.parent
 if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
 
-from menace.db_router import init_db_router
+from menace.db_router import init_db_router  # noqa: E402
 
 MENACE_ID = os.getenv("MENACE_ID", uuid.uuid4().hex)
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
-from menace.unified_config_store import UnifiedConfigStore
-from menace.dependency_self_check import self_check
+from menace.unified_config_store import UnifiedConfigStore  # noqa: E402
+from menace.dependency_self_check import self_check  # noqa: E402
 
-from menace.menace_orchestrator import MenaceOrchestrator
-from menace.self_coding_manager import PatchApprovalPolicy, SelfCodingManager
-from menace.advanced_error_management import AutomatedRollbackManager
-from menace.environment_bootstrap import EnvironmentBootstrapper
-from menace.auto_env_setup import ensure_env, interactive_setup
-from menace.auto_resource_setup import ensure_proxies, ensure_accounts
-from menace.external_dependency_provisioner import ExternalDependencyProvisioner
-from menace.unified_event_bus import UnifiedEventBus
-from menace.retry_utils import retry
-from menace.disaster_recovery import DisasterRecovery
-from sandbox_runner import _run_sandbox
-from menace.bot_development_bot import BotDevelopmentBot
-from menace.bot_testing_bot import BotTestingBot
-from menace.chatgpt_enhancement_bot import ChatGPTEnhancementBot
-from menace.chatgpt_prediction_bot import ChatGPTPredictionBot
-from menace.chatgpt_research_bot import ChatGPTResearchBot
-from menace.competitive_intelligence_bot import CompetitiveIntelligenceBot
-from menace.contrarian_model_bot import ContrarianModelBot
-from menace.conversation_manager_bot import ConversationManagerBot
-from menace.database_steward_bot import DatabaseStewardBot
-from menace.deployment_bot import DeploymentBot
-from menace.enhancement_bot import EnhancementBot
-from menace.error_bot import ErrorBot, ErrorDB
-from menace.ga_prediction_bot import GAPredictionBot
-from menace.genetic_algorithm_bot import GeneticAlgorithmBot
-from menace.ipo_bot import IPOBot
-from menace.implementation_optimiser_bot import ImplementationOptimiserBot
-from menace.mirror_bot import MirrorBot
-from menace.niche_saturation_bot import NicheSaturationBot
-from menace.market_manipulation_bot import MarketManipulationBot
-from menace.passive_discovery_bot import PassiveDiscoveryBot
-from menace.preliminary_research_bot import PreliminaryResearchBot
-from menace.report_generation_bot import ReportGenerationBot
-from menace.resource_allocation_bot import ResourceAllocationBot
-from menace.resources_bot import ResourcesBot
-from menace.scalability_assessment_bot import ScalabilityAssessmentBot
-from menace.strategy_prediction_bot import StrategyPredictionBot
-from menace.structural_evolution_bot import StructuralEvolutionBot
-from menace.text_research_bot import TextResearchBot
-from menace.video_research_bot import VideoResearchBot
-from menace.ai_counter_bot import AICounterBot
-from menace.dynamic_resource_allocator_bot import DynamicResourceAllocator
-from menace.diagnostic_manager import DiagnosticManager
-from menace.idea_search_bot import KeywordBank
-from menace.newsreader_bot import NewsDB
-from menace.chatgpt_idea_bot import ChatGPTClient
-from menace.shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE
-from menace.self_learning_service import main as learning_service_main
-from menace.self_service_override import SelfServiceOverride
-from menace.resource_allocation_optimizer import ROIDB
-from menace.data_bot import MetricsDB
-from menace.self_improvement import SelfImprovementEngine
-from menace.self_improvement_policy import SelfImprovementPolicy
-from menace.self_test_service import SelfTestService
-from menace.code_database import PatchHistoryDB
-from menace.audit_trail import AuditTrail
+from menace.menace_orchestrator import MenaceOrchestrator  # noqa: E402
+from menace.self_coding_manager import PatchApprovalPolicy, SelfCodingManager  # noqa: E402
+from menace.advanced_error_management import AutomatedRollbackManager  # noqa: E402
+from menace.environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
+from menace.auto_env_setup import ensure_env, interactive_setup  # noqa: E402
+from menace.auto_resource_setup import ensure_proxies, ensure_accounts  # noqa: E402
+from menace.external_dependency_provisioner import ExternalDependencyProvisioner  # noqa: E402
+from menace.unified_event_bus import UnifiedEventBus  # noqa: E402
+from menace.retry_utils import retry  # noqa: E402
+from menace.disaster_recovery import DisasterRecovery  # noqa: E402
+from sandbox_runner import _run_sandbox  # noqa: E402
+from menace.bot_development_bot import BotDevelopmentBot  # noqa: E402
+from menace.bot_testing_bot import BotTestingBot  # noqa: E402
+from menace.chatgpt_enhancement_bot import ChatGPTEnhancementBot  # noqa: E402
+from menace.chatgpt_prediction_bot import ChatGPTPredictionBot  # noqa: E402
+from menace.chatgpt_research_bot import ChatGPTResearchBot  # noqa: E402
+from menace.competitive_intelligence_bot import CompetitiveIntelligenceBot  # noqa: E402
+from menace.contrarian_model_bot import ContrarianModelBot  # noqa: E402
+from menace.conversation_manager_bot import ConversationManagerBot  # noqa: E402
+from menace.database_steward_bot import DatabaseStewardBot  # noqa: E402
+from menace.deployment_bot import DeploymentBot  # noqa: E402
+from menace.enhancement_bot import EnhancementBot  # noqa: E402
+from menace.error_bot import ErrorBot  # noqa: E402
+from menace.ga_prediction_bot import GAPredictionBot  # noqa: E402
+from menace.genetic_algorithm_bot import GeneticAlgorithmBot  # noqa: E402
+from menace.ipo_bot import IPOBot  # noqa: E402
+from menace.implementation_optimiser_bot import ImplementationOptimiserBot  # noqa: E402
+from menace.mirror_bot import MirrorBot  # noqa: E402
+from menace.niche_saturation_bot import NicheSaturationBot  # noqa: E402
+from menace.market_manipulation_bot import MarketManipulationBot  # noqa: E402
+from menace.passive_discovery_bot import PassiveDiscoveryBot  # noqa: E402
+from menace.preliminary_research_bot import PreliminaryResearchBot  # noqa: E402
+from menace.report_generation_bot import ReportGenerationBot  # noqa: E402
+from menace.resource_allocation_bot import ResourceAllocationBot  # noqa: E402
+from menace.resources_bot import ResourcesBot  # noqa: E402
+from menace.scalability_assessment_bot import ScalabilityAssessmentBot  # noqa: E402
+from menace.strategy_prediction_bot import StrategyPredictionBot  # noqa: E402
+from menace.structural_evolution_bot import StructuralEvolutionBot  # noqa: E402
+from menace.text_research_bot import TextResearchBot  # noqa: E402
+from menace.video_research_bot import VideoResearchBot  # noqa: E402
+from menace.ai_counter_bot import AICounterBot  # noqa: E402
+from menace.dynamic_resource_allocator_bot import DynamicResourceAllocator  # noqa: E402
+from menace.diagnostic_manager import DiagnosticManager  # noqa: E402
+from menace.idea_search_bot import KeywordBank  # noqa: E402
+from menace.newsreader_bot import NewsDB  # noqa: E402
+from menace.chatgpt_idea_bot import ChatGPTClient  # noqa: E402
+from menace.shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE  # noqa: E402
+from menace.self_learning_service import main as learning_service_main  # noqa: E402
+from menace.self_service_override import SelfServiceOverride  # noqa: E402
+from menace.resource_allocation_optimizer import ROIDB  # noqa: E402
+from menace.data_bot import MetricsDB  # noqa: E402
 
 
 def _parse_map(value: str) -> dict[str, str]:
@@ -440,8 +439,6 @@ def deploy_patch(path: Path, description: str) -> None:
         rb.auto_rollback("latest", [])
 
 
-
-
 def main(argv: Iterable[str] | None = None) -> None:
     """Entry point running automation in a continuous loop."""
     args = _parse_args(argv)
@@ -505,7 +502,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("dependency installation failed: %s", exc)
 
-    watchdog_thread = _start_dependency_watchdog()
+    _start_dependency_watchdog()
     if os.getenv("AUTO_BOOTSTRAP", "1").lower() not in {"0", "false", "no"}:
         EnvironmentBootstrapper().bootstrap()
     if os.getenv("AUTO_BACKUP") == "1":

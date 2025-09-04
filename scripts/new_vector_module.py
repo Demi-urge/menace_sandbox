@@ -13,7 +13,6 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Any
 import os
 import uuid
 
@@ -21,8 +20,12 @@ from db_router import init_db_router
 from dynamic_path_router import resolve_path
 
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 MODULE_TEMPLATE = '''from __future__ import annotations
@@ -251,7 +254,6 @@ def _create_migration(snake: str) -> None:
         print(f'Warning: migration {mig_path} already exists', file=sys.stderr)
         return
     mig_path.write_text(MIGRATION_TEMPLATE.format(revision=rev, snake=snake))
-
 
 
 def cli(argv: list[str] | None = None) -> int:

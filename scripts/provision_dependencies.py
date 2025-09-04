@@ -9,18 +9,25 @@ import time
 import uuid
 
 from db_router import init_db_router
+from dynamic_path_router import resolve_path
 
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
-SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH", "./shared/global.db")
+LOCAL_DB_PATH = os.getenv(
+    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
+)
+SHARED_DB_PATH = os.getenv(
+    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
+)
 init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
-from menace import RAISE_ERRORS
+from menace import RAISE_ERRORS  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-from menace.external_dependency_provisioner import ExternalDependencyProvisioner
-from menace.dependency_watchdog import DependencyWatchdog
+from menace.external_dependency_provisioner import (  # noqa: E402
+    ExternalDependencyProvisioner,
+)
+from menace.dependency_watchdog import DependencyWatchdog  # noqa: E402
 
 
 def _cleanup(compose_file: str) -> None:
