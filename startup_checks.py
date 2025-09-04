@@ -112,8 +112,29 @@ def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None
     ``stripe_billing_router._resolve_route`` and a ``RuntimeError`` is raised if
     any lookup fails.
     """
+    repo_root = Path(__file__).resolve().parent
+    scripts = repo_root / "scripts"
+    try:
+        files = subprocess.check_output(
+            ["git", "ls-files", "*.py"],
+            cwd=repo_root,
+            text=True,
+        ).splitlines()
+    except Exception as exc:  # pragma: no cover - git failure
+        raise RuntimeError(f"git ls-files failed: {exc}") from exc
+
+    checks = [
+        [sys.executable, str(scripts / "check_stripe_imports.py"), *files],
+        [sys.executable, str(scripts / "check_raw_stripe_usage.py")],
+    ]
+    for cmd in checks:
+        result = subprocess.run(
+            cmd, cwd=repo_root, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stdout + result.stderr)
+
     import importlib
-    import sys
 
     module_name = f"{__package__}.stripe_billing_router" if __package__ else "stripe_billing_router"
     try:
