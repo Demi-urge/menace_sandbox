@@ -1,0 +1,57 @@
+import sys
+import types
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+# Set up a lightweight package structure to import metrics without executing
+# the heavy package __init__ from the repository root.
+ROOT = Path(__file__).resolve().parents[2]
+PKG = "pkg"
+
+root_pkg = types.ModuleType(PKG)
+root_pkg.__path__ = [str(ROOT)]
+sys.modules.setdefault(PKG, root_pkg)
+
+sub_pkg = types.ModuleType(f"{PKG}.self_improvement")
+sub_pkg.__path__ = [str(ROOT / "self_improvement")]
+sys.modules.setdefault(f"{PKG}.self_improvement", sub_pkg)
+sys.modules.setdefault("self_improvement", sub_pkg)
+
+# Stub out dynamic_path_router to simple path operations
+stub = types.ModuleType("dynamic_path_router")
+stub.resolve_path = lambda p: Path(p)
+stub.resolve_dir = lambda p: Path(p)
+stub.repo_root = lambda: ROOT
+sys.modules.setdefault("dynamic_path_router", stub)
+sys.modules.setdefault(f"{PKG}.dynamic_path_router", stub)
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+    sys.modules[name] = mod
+    return mod
+
+sandbox_mod = _load(f"{PKG}.sandbox_settings", ROOT / "sandbox_settings.py")
+metrics_mod = _load(f"{PKG}.self_improvement.metrics", ROOT / "self_improvement" / "metrics.py")
+
+SandboxSettings = sandbox_mod.SandboxSettings
+collect_snapshot_metrics = metrics_mod.collect_snapshot_metrics
+_collect_metrics = metrics_mod._collect_metrics
+
+
+def test_collect_snapshot_metrics_matches_internal(tmp_path):
+    file1 = tmp_path / "a.py"
+    file1.write_text("a=1\n")
+    file2 = tmp_path / "b.py"
+    file2.write_text("b=2\n")
+    settings = SandboxSettings(sandbox_repo_path=str(tmp_path))
+    files = [file1, file2]
+    _, _, _, _, exp_entropy, exp_div = _collect_metrics(files, tmp_path, settings=settings)
+    entropy, diversity = collect_snapshot_metrics(files, settings=settings)
+    assert entropy == pytest.approx(exp_entropy)
+    assert diversity == pytest.approx(exp_div)

@@ -251,17 +251,22 @@ def collect_snapshot_metrics(
     files: Sequence[Path | str],
     settings: SandboxSettings | None = None,
 ) -> tuple[float, float]:
-    """Return ``(entropy, token_diversity)`` for ``files``.
+    """Return ``(avg_entropy, token_diversity)`` for ``files``.
 
-    The helper wraps :func:`compute_entropy_metrics` and combines the returned
-    code diversity and token complexity values into a single entropy score.
+    This is a thin wrapper around :func:`_collect_metrics` that aggregates the
+    token level entropy and diversity across the supplied ``files``.
     """
 
-    code_div, token_complexity, token_div = compute_entropy_metrics(
-        files, settings=settings
+    settings = settings or SandboxSettings()
+    repo = Path(settings.sandbox_repo_path)
+    file_iter: list[Path] = []
+    for f in files:
+        p = Path(f)
+        file_iter.append(p if p.is_absolute() else repo / p)
+    _, _, _, _, avg_entropy, avg_diversity = _collect_metrics(
+        file_iter, repo, settings=settings
     )
-    entropy = fmean([float(code_div), float(token_complexity)])
-    return float(entropy), float(token_div)
+    return float(avg_entropy), float(avg_diversity)
 
 
 def compute_code_entropy(
