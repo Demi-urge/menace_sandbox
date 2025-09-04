@@ -136,6 +136,8 @@ def register_override(rule: Mapping[str, Any]) -> None:
 
 
 def _client(api_key: str):
+    """Return a per-request Stripe client without mutating global state."""
+
     if not api_key:
         logger.error("Attempted to initialise Stripe client without API key")
         raise RuntimeError("Stripe API key must be configured and non-empty")
@@ -145,8 +147,9 @@ def _client(api_key: str):
     if stripe is None:
         logger.error("Stripe library unavailable")
         raise RuntimeError("stripe library unavailable")
-    stripe.api_key = api_key
-    return stripe
+    if hasattr(stripe, "StripeClient"):
+        return stripe.StripeClient(api_key)
+    return None
 
 
 def _parse_bot_id(bot_id: str) -> tuple[str, str, str]:
@@ -236,7 +239,8 @@ def charge(
 ) -> dict[str, Any]:
     """Charge a customer for the given bot."""
     route = _resolve_route(bot_id, overrides)
-    client = _client(route["secret_key"])
+    api_key = route["secret_key"]
+    client = _client(api_key)
     params = {
         "amount": int(amount * 100),
         "currency": "usd",
@@ -244,7 +248,9 @@ def charge(
     }
     if customer := route.get("customer_id"):
         params["customer"] = customer
-    return client.Charge.create(**params)
+    if client:
+        return client.Charge.create(**params)
+    return stripe.Charge.create(api_key=api_key, **params)
 
 
 # Backward compatibility
@@ -257,9 +263,13 @@ def get_balance(
 ) -> float:
     """Return available balance for the given bot."""
     route = _resolve_route(bot_id, overrides)
-    client = _client(route["secret_key"])
+    api_key = route["secret_key"]
+    client = _client(api_key)
     try:
-        bal = client.Balance.retrieve()
+        if client:
+            bal = client.Balance.retrieve()
+        else:
+            bal = stripe.Balance.retrieve(api_key=api_key)
         amount = bal.get("available", [{"amount": 0}])[0]["amount"] / 100.0
         return float(amount)
     except Exception as exc:  # pragma: no cover - network/API issues
@@ -275,8 +285,11 @@ def create_customer(
 ) -> dict[str, Any]:
     """Create a new Stripe customer for the given bot."""
     route = _resolve_route(bot_id, overrides)
-    client = _client(route["secret_key"])
-    return client.Customer.create(**customer_info)
+    api_key = route["secret_key"]
+    client = _client(api_key)
+    if client:
+        return client.Customer.create(**customer_info)
+    return stripe.Customer.create(api_key=api_key, **customer_info)
 
 
 __all__ = [
