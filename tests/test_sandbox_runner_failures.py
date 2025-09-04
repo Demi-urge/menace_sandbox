@@ -4,10 +4,11 @@ import shutil
 import subprocess
 import sys
 import pytest
+from dynamic_path_router import resolve_path
 
 
 def _load_test_harness(monkeypatch):
-    path = Path(__file__).resolve().parents[1] / "sandbox_runner/test_harness.py"
+    path = resolve_path("sandbox_runner/test_harness.py")
     spec = importlib.util.spec_from_file_location("menace.sandbox_runner.test_harness", path)
     th = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

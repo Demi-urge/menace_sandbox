@@ -2,10 +2,11 @@ import sys
 import types
 import logging
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(resolve_path("")))
 
 
 def _setup_base_packages():

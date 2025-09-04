@@ -3,10 +3,11 @@ import sys
 import threading
 import types
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(resolve_path("")))
 
 from sandbox_settings import SandboxSettings  # noqa: E402
 

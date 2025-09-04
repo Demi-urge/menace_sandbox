@@ -2,12 +2,13 @@ import json
 import sys
 import types
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 sys.modules.setdefault(
     "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None, init_db_router=lambda *a, **k: None)
 )
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(resolve_path("")))
 
 from sandbox_runner import generative_stub_provider as gsp  # noqa: E402
 

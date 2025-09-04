@@ -4,6 +4,7 @@ import sys
 import types
 import shutil
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 import pytest
 
@@ -84,7 +85,7 @@ def _load_run_autonomous(monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_stub)
 
     cli_spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.cli", str(Path("sandbox_runner/cli.py"))
+        "sandbox_runner.cli", str(resolve_path("sandbox_runner/cli.py"))
     )
     cli_mod = importlib.util.module_from_spec(cli_spec)
     sys.modules["sandbox_runner.cli"] = cli_mod
