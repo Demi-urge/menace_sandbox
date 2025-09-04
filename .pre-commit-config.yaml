@@ -37,6 +37,12 @@ repos:
         language: system
         pass_filenames: true
         types: [text]
+      - id: forbid-raw-stripe-usage
+        name: Prevent raw Stripe keys or endpoints
+        entry: python scripts/check_raw_stripe_usage.py
+        language: system
+        pass_filenames: false
+        files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:
