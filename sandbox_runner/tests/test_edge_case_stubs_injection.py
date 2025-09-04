@@ -65,3 +65,34 @@ def test_edge_cases_written():
     monkeypatch.setitem(sys.modules, "menace_sandbox.sandbox_runner.environment", env_stub)
     result = run_tests(repo, input_stubs=[{}], presets=[{}])
     assert result.success
+    for name in stubs:
+        assert not (repo / name).exists()
+
+
+def test_inject_edge_cases_flag(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    test_file = repo / "test_edge_cases.py"
+    test_file.write_text(
+        """
+from pathlib import Path
+
+
+def test_no_edge_cases_written():
+    assert not Path('alpha.txt').exists()
+""",
+        encoding="utf-8",
+    )
+    (repo / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+    _git(["git", "init"], repo)
+    _git(["git", "add", "test_edge_cases.py", "requirements.txt"], repo)
+    _git(["git", "commit", "-m", "init"], repo)
+
+    stubs = {"alpha.txt": "beta"}
+    env_stub = types.SimpleNamespace(get_edge_case_stubs=lambda: stubs)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.sandbox_runner.environment", env_stub)
+    import menace_sandbox.sandbox_runner.test_harness as th
+
+    monkeypatch.setattr(th, "SandboxSettings", lambda: types.SimpleNamespace(inject_edge_cases=False))
+    result = run_tests(repo, input_stubs=[{}], presets=[{}])
+    assert result.success

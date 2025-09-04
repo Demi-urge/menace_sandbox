@@ -24,6 +24,7 @@ from statistics import fmean
 from self_improvement.baseline_tracker import TRACKER as BASELINE_TRACKER
 
 from ..error_parser import ErrorParser
+from sandbox_settings import SandboxSettings
 
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,8 @@ def _run_once(
     stub: dict | None = None,
     preset: dict | None = None,
     edge_cases: dict | None = None,
+    clone_repo: bool = True,
+    write_edge_cases: bool = True,
 ) -> TestHarnessResult:
     """Execute unit tests for ``repo_path`` inside an isolated environment.
 
@@ -122,44 +125,56 @@ def _run_once(
     """
 
     start = time.time()
-    tmpdir_obj = tempfile.TemporaryDirectory(prefix="ci-")
-    tmpdir = Path(tmpdir_obj.name)
-    stdout_parts: list[str] = []
-    try:
-        clone = subprocess.run(
-            ["git", "clone", str(repo_path), str(tmpdir)],
-            capture_output=True,
-            text=True,
-        )
-        stdout_parts.append(clone.stdout)
-        stdout_parts.append(clone.stderr)
-        if clone.returncode != 0:
-            msg = f"git clone failed with code {clone.returncode}: {clone.stderr}"
-            logger.error(msg.strip())
-            raise RuntimeError(msg)
+    if clone_repo:
+        tmpdir_obj = tempfile.TemporaryDirectory(prefix="ci-")
+        tmpdir = Path(tmpdir_obj.name)
+        stdout_parts: list[str] = []
+        try:
+            clone = subprocess.run(
+                ["git", "clone", str(repo_path), str(tmpdir)],
+                capture_output=True,
+                text=True,
+            )
+            stdout_parts.append(clone.stdout)
+            stdout_parts.append(clone.stderr)
+            if clone.returncode != 0:
+                msg = f"git clone failed with code {clone.returncode}: {clone.stderr}"
+                logger.error(msg.strip())
+                raise RuntimeError(msg)
+        except Exception:
+            tmpdir_obj.cleanup()
+            raise
+    else:
+        tmpdir_obj = None
+        tmpdir = repo_path
+        stdout_parts = []
 
+    try:
         if backend not in {"venv", "docker"}:
             raise ValueError(f"unknown backend: {backend}")
 
         edge_data = edge_cases
-        if edge_data is None:
-            raw = os.getenv("SANDBOX_EDGE_CASE_STUBS")
-            if raw:
-                try:
-                    parsed = json.loads(raw)
-                    if isinstance(parsed, dict):
-                        edge_data = parsed
-                except Exception:
-                    edge_data = None
-        if edge_data:
-            for name, payload in edge_data.items():
-                try:
-                    dest = tmpdir / name
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    content = payload if isinstance(payload, str) else json.dumps(payload)
-                    dest.write_text(content, encoding="utf-8")
-                except Exception:
-                    pass
+        if write_edge_cases:
+            if edge_data is None:
+                raw = os.getenv("SANDBOX_EDGE_CASE_STUBS")
+                if raw:
+                    try:
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict):
+                            edge_data = parsed
+                    except Exception:
+                        edge_data = None
+            if edge_data:
+                for name, payload in edge_data.items():
+                    try:
+                        dest = tmpdir / name
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        content = (
+                            payload if isinstance(payload, str) else json.dumps(payload)
+                        )
+                        dest.write_text(content, encoding="utf-8")
+                    except Exception:
+                        pass
 
         req_file = tmpdir / "requirements.txt"
         rel_paths: list[Path] = []
@@ -434,7 +449,8 @@ def _run_once(
             logger.exception("failed to record test run")
         return res
     finally:
-        tmpdir_obj.cleanup()
+        if tmpdir_obj is not None:
+            tmpdir_obj.cleanup()
 
 
 def run_tests(
@@ -468,46 +484,86 @@ def run_tests(
 
     if not presets:
         presets = [{}]
-
-    try:
-        from .environment import get_edge_case_stubs
-
-        edge_cases = get_edge_case_stubs()
-    except Exception:
-        edge_cases = {}
-    edge_json = json.dumps(edge_cases)
+    settings = SandboxSettings()
+    inject_edges = getattr(settings, "inject_edge_cases", True)
 
     results: list[TestHarnessResult] = []
     for stub in input_stubs:
         for preset in presets:
-            old_stub = os.environ.get("SANDBOX_INPUT_STUBS")
-            old_presets = os.environ.get("SANDBOX_ENV_PRESETS")
-            old_edges = os.environ.get("SANDBOX_EDGE_CASE_STUBS")
-            os.environ["SANDBOX_INPUT_STUBS"] = json.dumps([stub])
-            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
-            os.environ["SANDBOX_EDGE_CASE_STUBS"] = edge_json
-            try:
-                res = _run_once(
-                    repo_path,
-                    changed_path,
-                    backend=backend,
-                    stub=stub,
-                    preset=preset,
-                    edge_cases=edge_cases,
+            edge_cases: dict[str, Any] = {}
+            if inject_edges:
+                try:
+                    from .environment import get_edge_case_stubs
+
+                    edge_cases = get_edge_case_stubs()
+                except Exception:
+                    edge_cases = {}
+            with tempfile.TemporaryDirectory(prefix="repo-") as repodir:
+                repo_tmp = Path(repodir)
+                clone = subprocess.run(
+                    ["git", "clone", str(repo_path), str(repo_tmp)],
+                    capture_output=True,
+                    text=True,
                 )
-            finally:
-                if old_stub is None:
-                    os.environ.pop("SANDBOX_INPUT_STUBS", None)
-                else:
-                    os.environ["SANDBOX_INPUT_STUBS"] = old_stub
-                if old_presets is None:
-                    os.environ.pop("SANDBOX_ENV_PRESETS", None)
-                else:
-                    os.environ["SANDBOX_ENV_PRESETS"] = old_presets
-                if old_edges is None:
-                    os.environ.pop("SANDBOX_EDGE_CASE_STUBS", None)
-                else:
-                    os.environ["SANDBOX_EDGE_CASE_STUBS"] = old_edges
-            results.append(res)
+                if clone.returncode != 0:
+                    msg = f"git clone failed with code {clone.returncode}: {clone.stderr}"
+                    logger.error(msg.strip())
+                    raise RuntimeError(msg)
+                if edge_cases:
+                    for name, payload in edge_cases.items():
+                        try:
+                            dest = repo_tmp / name
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            content = (
+                                payload if isinstance(payload, str) else json.dumps(payload)
+                            )
+                            dest.write_text(content, encoding="utf-8")
+                        except Exception:
+                            pass
+
+                tmp_changed: Path | None = None
+                if changed_path:
+                    try:
+                        rel = changed_path.relative_to(repo_path)
+                        tmp_changed = repo_tmp / rel
+                        if changed_path.is_file() and changed_path.suffix == ".txt":
+                            tmp_changed.write_text(
+                                changed_path.read_text(encoding="utf-8"),
+                                encoding="utf-8",
+                            )
+                    except Exception:
+                        tmp_changed = changed_path
+
+                old_stub = os.environ.get("SANDBOX_INPUT_STUBS")
+                old_presets = os.environ.get("SANDBOX_ENV_PRESETS")
+                old_edges = os.environ.get("SANDBOX_EDGE_CASE_STUBS")
+                os.environ["SANDBOX_INPUT_STUBS"] = json.dumps([stub])
+                os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
+                os.environ["SANDBOX_EDGE_CASE_STUBS"] = json.dumps(edge_cases)
+                try:
+                    res = _run_once(
+                        repo_tmp,
+                        tmp_changed,
+                        backend=backend,
+                        stub=stub,
+                        preset=preset,
+                        edge_cases=edge_cases,
+                        clone_repo=False,
+                        write_edge_cases=False,
+                    )
+                finally:
+                    if old_stub is None:
+                        os.environ.pop("SANDBOX_INPUT_STUBS", None)
+                    else:
+                        os.environ["SANDBOX_INPUT_STUBS"] = old_stub
+                    if old_presets is None:
+                        os.environ.pop("SANDBOX_ENV_PRESETS", None)
+                    else:
+                        os.environ["SANDBOX_ENV_PRESETS"] = old_presets
+                    if old_edges is None:
+                        os.environ.pop("SANDBOX_EDGE_CASE_STUBS", None)
+                    else:
+                        os.environ["SANDBOX_EDGE_CASE_STUBS"] = old_edges
+                results.append(res)
 
     return results[0]
