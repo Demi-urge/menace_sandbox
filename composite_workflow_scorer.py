@@ -73,7 +73,7 @@ class ROIScorer(BaseROIScorer):
         except Exception as exc:  # pragma: no cover - configuration errors
             logging.critical("Failed to initialise ROICalculator: %s", exc)
             try:
-                with Path("configs/roi_profiles.yaml").open(
+                with resolve_path("configs/roi_profiles.yaml").open(
                     "r", encoding="utf-8"
                 ) as fh:
                     profiles: Dict[str, Dict[str, Any]] = yaml.safe_load(fh) or {}
