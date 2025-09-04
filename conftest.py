@@ -18,10 +18,14 @@ sys.modules.setdefault("self_improvement", sub_pkg)
 metric_stub = types.SimpleNamespace(
     labels=lambda **k: types.SimpleNamespace(inc=lambda: None)
 )
-sys.modules.setdefault(
-    "menace.metrics_exporter",
-    types.SimpleNamespace(self_improvement_failure_total=metric_stub),
+metrics_stub = types.SimpleNamespace(
+    Gauge=lambda *a, **k: metric_stub,
+    CollectorRegistry=object,
+    self_improvement_failure_total=metric_stub,
+    environment_failure_total=metric_stub,
 )
+sys.modules.setdefault("metrics_exporter", metrics_stub)
+sys.modules.setdefault("menace.metrics_exporter", metrics_stub)
 sys.modules.setdefault(
     "menace.sandbox_settings",
     types.SimpleNamespace(SandboxSettings=lambda: types.SimpleNamespace()),
@@ -30,7 +34,11 @@ sys.modules.setdefault(
 # Provide a lightweight dynamic_path_router to satisfy imports during tests
 sys.modules.setdefault(
     "dynamic_path_router",
-    types.SimpleNamespace(resolve_path=lambda p: Path(p), resolve_dir=lambda p: Path(p)),
+    types.SimpleNamespace(
+        resolve_path=lambda p: Path(p),
+        resolve_dir=lambda p: Path(p),
+        path_for_prompt=lambda p: Path(p).as_posix(),
+    ),
 )
 
 os.environ.setdefault("VISUAL_AGENT_URLS", "http://127.0.0.1:8001")

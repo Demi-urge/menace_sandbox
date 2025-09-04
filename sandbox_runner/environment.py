@@ -7391,7 +7391,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
     diagnostics: Dict[str, str] = {}
     try:
         repo_path = sandbox_config.get_sandbox_repo_path()
-        runner_path = resolve_path("sandbox_runner.py")
+        runner_path = Path(path_for_prompt("sandbox_runner.py"))
         data_dir = Path(tmp_dir) / "data"
         env = os.environ.copy()
         env.update({k: str(v) for k, v in preset.items()})
