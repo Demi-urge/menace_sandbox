@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 OPTIONAL_LIBS = [
     "pandas",
     "sklearn",
-    "stripe",
+    "stripe",  # router will fail at runtime if this is absent
     "httpx",
 ]
 
@@ -104,6 +104,20 @@ def verify_project_dependencies(path: Path = PYPROJECT_PATH) -> list[str]:
     return verify_modules(modules)
 
 
+def verify_stripe_router() -> None:
+    """Import ``stripe_billing_router`` and ensure keys and routes exist."""
+    try:
+        from . import stripe_billing_router as sbr
+    except Exception as exc:  # pragma: no cover - import failure
+        raise RuntimeError(f"stripe_billing_router import failed: {exc}") from exc
+    if not getattr(sbr, "BILLING_RULES", None):
+        raise RuntimeError("stripe_billing_router has no billing rules configured")
+    if not getattr(sbr, "STRIPE_SECRET_KEY", "") or not getattr(
+        sbr, "STRIPE_PUBLIC_KEY", ""
+    ):
+        raise RuntimeError("stripe_billing_router is missing Stripe API keys")
+
+
 def validate_config(vars: Iterable[str] = REQUIRED_VARS) -> list[str]:
     """Return missing vars and raise in production mode."""
     missing = [v for v in vars if not os.getenv(v)]
@@ -161,6 +175,7 @@ def run_startup_checks(pyproject_path: Path | None = None) -> None:
         _install_packages(missing_optional)
     verify_optional_dependencies()
     missing = verify_project_dependencies(pyproject_path or PYPROJECT_PATH)
+    verify_stripe_router()
     mode = os.getenv("MENACE_MODE", "test").lower()
     if missing:
         msg = f"Missing required dependencies: {', '.join(missing)}"
@@ -199,4 +214,5 @@ __all__ = [
     "verify_project_dependencies",
     "dependencies_from_pyproject",
     "verify_optional_dependencies",
+    "verify_stripe_router",
 ]
