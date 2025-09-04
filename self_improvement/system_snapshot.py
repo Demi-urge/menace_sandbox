@@ -15,7 +15,7 @@ from ..sandbox_settings import SandboxSettings
 from .baseline_tracker import BaselineTracker
 from .sandbox_score import get_latest_sandbox_score
 from . import metrics as _si_metrics
-from ..module_graph_analyzer import build_import_graph
+from .metrics import compute_call_graph_complexity
 
 try:  # pragma: no cover - sandbox results logger is optional
     import sandbox_results_logger  # type: ignore
@@ -86,11 +86,7 @@ def capture_snapshot(engine: Any) -> SystemSnapshot:
         token_diversity = 0.0
 
     try:
-        graph = build_import_graph(repo_path)
-        nodes = graph.number_of_nodes()
-        call_complexity = (
-            float(graph.number_of_edges()) / float(nodes) if nodes else 0.0
-        )
+        call_complexity = compute_call_graph_complexity(repo_path)
     except Exception:  # pragma: no cover - best effort
         call_complexity = 0.0
 

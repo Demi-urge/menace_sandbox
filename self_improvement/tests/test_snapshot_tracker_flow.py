@@ -37,6 +37,7 @@ def _patch_helpers(monkeypatch, tmp_path, entropies, diversities, complexities):
     monkeypatch.setattr(
         tracker_mod, "compute_call_graph_complexity", lambda repo: next(comp_iter)
     )
+    monkeypatch.setattr(tracker_mod, "relevancy_radar", None)
     monkeypatch.setattr(
         tracker_mod,
         "SandboxSettings",

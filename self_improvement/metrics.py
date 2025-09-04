@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, Sequence
 
 import yaml
 from statistics import fmean
+import networkx as nx
 
 try:  # pragma: no cover - radon is an optional dependency
     from radon.complexity import cc_visit
@@ -205,19 +206,45 @@ def get_alignment_metrics(settings: SandboxSettings | None = None) -> Dict[str, 
 
 
 def compute_call_graph_complexity(root: Path) -> float:
-    """Return a simple complexity metric for the call graph under ``root``.
+    """Return a composite complexity metric for the call graph under ``root``.
 
-    The metric is defined as the average degree of the directed import/call
-    graph produced by :func:`module_graph_analyzer.build_import_graph`. A value
-    of ``0.0`` is returned when the graph is empty or analysis fails.
+    The metric combines three structural properties of the directed import
+    graph produced by :func:`module_graph_analyzer.build_import_graph`:
+
+    ``avg_out``
+        Average out-degree across all nodes.
+    ``cyclomatic``
+        Cyclomatic complexity of the call graph calculated as ``E - N + C``
+        where ``E`` is the number of edges, ``N`` the number of nodes and ``C``
+        the number of weakly connected components.
+    ``diameter``
+        Diameter of the largest undirected connected component.
+
+    The final score is the arithmetic mean of these values. ``0.0`` is returned
+    when analysis fails or the graph is empty.
     """
 
     try:
         graph = build_import_graph(root)
         nodes = graph.number_of_nodes()
+        edges = graph.number_of_edges()
         if nodes == 0:
             return 0.0
-        return float(graph.number_of_edges()) / float(nodes)
+
+        avg_out = edges / nodes
+        components = nx.number_weakly_connected_components(graph)
+        cyclomatic = edges - nodes + components
+
+        undirected = graph.to_undirected()
+        try:
+            diam = max(
+                nx.diameter(undirected.subgraph(c))
+                for c in nx.connected_components(undirected)
+            )
+        except Exception:
+            diam = 0
+
+        return float(fmean([avg_out, float(cyclomatic), float(diam)]))
     except Exception:  # pragma: no cover - best effort
         return 0.0
 
