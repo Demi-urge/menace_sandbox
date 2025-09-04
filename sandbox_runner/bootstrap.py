@@ -123,9 +123,7 @@ def _default_env_value(name: str, settings: SandboxSettings) -> str:
     """
 
     if name == "DATABASE_URL":
-        data_dir = Path(settings.sandbox_data_dir)
-        if not data_dir.is_absolute():
-            data_dir = repo_root() / data_dir
+        data_dir = resolve_path(settings.sandbox_data_dir)
         return f"sqlite:///{data_dir / 'sandbox.db'}"
     if name == "MODELS":
         return "micro_models"
@@ -258,9 +256,7 @@ def _initialize_autonomous_sandbox(
         logger.warning("optional module verification failed", exc_info=True)
         missing_optional = set()
 
-    data_dir = Path(settings.sandbox_data_dir)
-    if not data_dir.is_absolute():
-        data_dir = repo_root() / data_dir
+    data_dir = resolve_path(settings.sandbox_data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     try:
         probe = data_dir / ".write-test"
@@ -420,9 +416,9 @@ def sandbox_health() -> dict[str, bool | dict[str, str]]:
     alive = bool(getattr(inner, "is_alive", lambda: False)())
 
     settings = load_sandbox_settings()
-    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", settings.sandbox_data_dir))
-    if not data_dir.is_absolute():
-        data_dir = repo_root() / data_dir
+    data_dir = resolve_path(
+        os.getenv("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
+    )
     db_errors: dict[str, str] = {}
     for name in settings.sandbox_required_db_files:
         db_path = data_dir / name
@@ -598,10 +594,10 @@ def launch_sandbox(
     logger.info("launch sandbox start", extra=log_record(event="start"))
     try:
         settings = bootstrap_environment(settings, verifier)
-        os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
-        data_dir = Path(settings.sandbox_data_dir)
-        if not data_dir.is_absolute():
-            data_dir = repo_root() / data_dir
+        os.environ.setdefault(
+            "SANDBOX_REPO_PATH", str(resolve_path(settings.sandbox_repo_path))
+        )
+        data_dir = resolve_path(settings.sandbox_data_dir)
         os.environ.setdefault("SANDBOX_DATA_DIR", str(data_dir))
         _cli_main([])
         logger.info("launch sandbox shutdown", extra=log_record(event="shutdown"))
