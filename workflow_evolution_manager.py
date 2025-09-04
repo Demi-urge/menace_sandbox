@@ -22,9 +22,9 @@ from . import sandbox_runner
 from .workflow_synergy_comparator import WorkflowSynergyComparator
 from .meta_workflow_planner import MetaWorkflowPlanner
 try:  # pragma: no cover - allow running as script
-    from .dynamic_path_router import resolve_path  # type: ignore
+    from .dynamic_path_router import resolve_path, get_project_root  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, get_project_root  # type: ignore
 try:  # pragma: no cover - optional dependency
     from vector_service.retriever import Retriever  # type: ignore
 except Exception:  # pragma: no cover - allow running without retriever
@@ -56,7 +56,7 @@ def consume_planner_suggestions(chains: Iterable[Sequence[str]]) -> None:
     """Persist planner-suggested chains for later evaluation."""
     for idx, chain in enumerate(chains, start=1):
         try:
-            path = resolve_path("sandbox_data") / f"planner_chain_{idx}.workflow.json"
+            path = resolve_path(f"sandbox_data/planner_chain_{idx}.workflow.json")
             save_workflow([{"module": m} for m in chain], path)
         except Exception:
             logger.exception("failed to save planner suggestion", extra={"chain": chain})
@@ -343,7 +343,7 @@ def evolve(
                     and ent_delta <= settings.workflow_merge_entropy_delta
                     and not _scores_overfit(scores)
                 ):
-                    tmp_dir = Path(f"{wf_id_str}.merge")
+                    tmp_dir = get_project_root() / f"{wf_id_str}.merge"
                     merged_file: Path | None = None
                     try:
                         tmp_dir.mkdir(exist_ok=True)
@@ -637,7 +637,7 @@ def evolve(
                     for s in best_variant_seq.split("-")
                     if s
                 ]
-            path = Path(f"{workflow_id}.workflow.json")
+            path = resolve_path(f"{workflow_id}.workflow.json")
             saved_path, metadata = save_workflow(
                 steps,
                 path,
@@ -707,7 +707,7 @@ def evolve(
         except Exception:
             integrate_orphans = None  # type: ignore
         if integrate_orphans is not None:
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            repo = get_project_root()
             integrate_orphans(repo, router=GLOBAL_ROUTER)
 
         # Deduplicate against existing stable workflows
