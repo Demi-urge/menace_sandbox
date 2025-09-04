@@ -22,7 +22,7 @@ try:  # optional dependency
 except Exception:  # pragma: no cover - optional dep
     GraphDatabase = None  # type: ignore
 
-from billing.prompt_notice import prepend_payment_notice
+from billing.openai_wrapper import chat_completion_create
 import stripe_billing_router  # noqa: F401
 logger = logging.getLogger(__name__)
 
@@ -129,9 +129,11 @@ class GPT4Client:
             {"role": "system", "content": system_msg},
             {"role": "user", "content": text},
         ]
-        messages = prepend_payment_notice(messages)
-        resp = openai.ChatCompletion.create(
-            model="gpt-4", messages=messages, stream=True
+        resp = chat_completion_create(
+            messages,
+            model="gpt-4",
+            stream=True,
+            openai_client=openai,
         )
         for chunk in resp:
             delta = chunk["choices"][0]["delta"].get("content")

@@ -39,7 +39,7 @@ from vector_service import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from billing.prompt_notice import prepend_payment_notice
+from billing.openai_wrapper import chat_completion_create
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -907,11 +907,13 @@ class BotDevelopmentBot:
         self, model: str, messages: list[dict[str, str]]
     ) -> Any:
         """Call either local or cloud Codex API and return the raw response."""
-        messages = prepend_payment_notice(list(messages))
         if openai and os.getenv("OPENAI_API_KEY"):
             openai.api_key = os.getenv("OPENAI_API_KEY")
-            return openai.ChatCompletion.create(
-                model=model, messages=messages, temperature=0.1
+            return chat_completion_create(
+                list(messages),
+                model=model,
+                temperature=0.1,
+                openai_client=openai,
             )
         url = os.getenv("LOCAL_CODEX_URL")
         if url and requests:
