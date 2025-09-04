@@ -1,13 +1,14 @@
 import importlib.util
 import sys
 import types
-from pathlib import Path
 
 import pytest
 
+from dynamic_path_router import resolve_path
+
 # Prepare fake package hierarchy to satisfy relative imports
-ROOT_DIR = Path(__file__).resolve().parents[2]
-PACKAGE_DIR = ROOT_DIR / "self_improvement"
+ROOT_DIR = resolve_path(".")
+PACKAGE_DIR = resolve_path("self_improvement")
 root_name = "menace_sandbox"
 if root_name not in sys.modules:
     root_pkg = types.ModuleType(root_name)
@@ -22,7 +23,8 @@ if package_name not in sys.modules:
 
 # Load BaselineTracker without executing package __init__
 spec = importlib.util.spec_from_file_location(
-    f"{package_name}.baseline_tracker", PACKAGE_DIR / "baseline_tracker.py"
+    f"{package_name}.baseline_tracker",
+    resolve_path("self_improvement/baseline_tracker.py"),
 )
 baseline_tracker = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = baseline_tracker
@@ -31,7 +33,8 @@ BaselineTracker = baseline_tracker.BaselineTracker
 
 # Load system_snapshot module
 spec = importlib.util.spec_from_file_location(
-    f"{package_name}.system_snapshot", PACKAGE_DIR / "system_snapshot.py"
+    f"{package_name}.system_snapshot",
+    resolve_path("self_improvement/system_snapshot.py"),
 )
 system_snapshot = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = system_snapshot
@@ -42,7 +45,7 @@ class DummyEngine:
     def __init__(self, tracker):
         self.roi_tracker = tracker
         self.last_prompt = "test prompt"
-        self.module_paths = ["a.py", "b.py"]
+        self.module_paths = ["a.py", "b.py"]  # path-ignore
 
 
 def test_capture_snapshot(monkeypatch, tmp_path):
