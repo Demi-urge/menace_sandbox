@@ -10,6 +10,7 @@ import threading
 import time
 import re
 import json
+from dataclasses import asdict
 from typing import Dict, Any, TYPE_CHECKING
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
@@ -37,6 +38,7 @@ from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
 from . import mutation_logger as MutationLogger
 from .rollback_manager import RollbackManager
 from .self_improvement.baseline_tracker import BaselineTracker
+from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - allow package/flat imports
@@ -230,6 +232,7 @@ class SelfCodingManager:
             )
             desc = description
             last_fp: FailureFingerprint | None = None
+            target_region: TargetRegion | None = None
 
             def _coverage_ratio(output: str, success: bool) -> float:
                 try:
@@ -391,6 +394,7 @@ class SelfCodingManager:
                     context_meta=ctx_meta,
                     baseline_coverage=coverage_before,
                     baseline_runtime=runtime_before,
+                    target_region=target_region,
                 )
                 harness_result: TestHarnessResult = _run(clone_root, cloned_path)
                 if harness_result.success:
@@ -438,6 +442,17 @@ class SelfCodingManager:
 
                 parsed = ErrorParser.parse(trace)
                 stack_trace = parsed.get("trace", trace)
+                region_obj = parsed.get("target_region")
+                if region_obj is not None:
+                    try:
+                        target_region = TargetRegion(
+                            file=getattr(region_obj, "file", getattr(region_obj, "filename", "")),
+                            start_line=getattr(region_obj, "start_line", 0),
+                            end_line=getattr(region_obj, "end_line", 0),
+                            function=getattr(region_obj, "function", getattr(region_obj, "func_name", "")),
+                        )
+                    except Exception:
+                        target_region = None
                 function_name = ""
                 error_msg = ""
                 m = re.findall(r'File "[^"]+", line \d+, in ([^\n]+)', stack_trace)
@@ -467,6 +482,8 @@ class SelfCodingManager:
                         "retrieval_context": ctx,
                         "retrieval_session_id": sid,
                     }
+                    if target_region is not None:
+                        ctx_meta["target_region"] = asdict(target_region)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.error("context rebuild failed: %s", exc)
                     raise RuntimeError("patch tests failed")
