@@ -59,6 +59,7 @@ class TestHarnessResult:
     coverage: dict | None = None
     edge_cases: dict | None = None
     entropy_delta: float | None = None
+    executed_functions: list[str] | None = None
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial
         return self.success
@@ -342,49 +343,57 @@ def _run_once(
         duration = time.time() - start
         stdout_parts.append(tests.stdout)
         failure = None
+        cov_json = tmpdir / "cov.json"
         coverage_pct = None
         cov_data = None
         executed_functions: list[str] | None = None
-        if capture_cov:
-            cov_json = tmpdir / "cov.json"
-            if cov_json.exists():
-                try:
-                    cov_data = json.loads(cov_json.read_text())
-                    coverage_pct = float(
-                        cov_data.get("totals", {}).get("percent_covered", 0.0)
-                    )
-                except Exception:
-                    cov_data = None
-            entropy_delta = None
+        coverage_map: dict[str, list[str]] | None = None
+        if cov_json.exists():
+            try:
+                cov_data = json.loads(cov_json.read_text())
+                coverage_pct = float(
+                    cov_data.get("totals", {}).get("percent_covered", 0.0)
+                )
+            except Exception:
+                cov_data = None
             if cov_data is not None:
                 try:
                     from .environment import load_coverage_report  # type: ignore
 
                     executed_functions = load_coverage_report(cov_data)
-                except Exception:
-                    executed_functions = None
-                # Derive entropy delta from coverage metrics
-                try:
-                    from self_improvement.metrics import compute_entropy_metrics
-
-                    files: list[Path] = []
-                    for f in cov_data.get("files", {}):
+                    coverage_map = {}
+                    for func in executed_functions:
                         try:
-                            rel = Path(f).relative_to(tmpdir)
-                            files.append(repo_path / rel)
-                        except Exception:
+                            path, fn = func.split(":", 1)
+                        except ValueError:
                             continue
-                    if files:
-                        code_diversity, token_complexity = compute_entropy_metrics(files)
-                        current_entropy = fmean([code_diversity, token_complexity])
-                        prev_entropy = BASELINE_TRACKER.current("entropy")
-                        try:
-                            BASELINE_TRACKER.update(entropy=current_entropy)
-                        except Exception:
-                            pass
-                        entropy_delta = current_entropy - prev_entropy
+                        coverage_map.setdefault(path, []).append(fn)
                 except Exception:
-                    pass
+                    executed_functions = []
+                    coverage_map = {}
+        entropy_delta = None
+        if cov_data is not None:
+            try:
+                from self_improvement.metrics import compute_entropy_metrics
+
+                files: list[Path] = []
+                for f in cov_data.get("files", {}):
+                    try:
+                        rel = Path(f).relative_to(tmpdir)
+                        files.append(repo_path / rel)
+                    except Exception:
+                        continue
+                if files:
+                    code_diversity, token_complexity = compute_entropy_metrics(files)
+                    current_entropy = fmean([code_diversity, token_complexity])
+                    prev_entropy = BASELINE_TRACKER.current("entropy")
+                    try:
+                        BASELINE_TRACKER.update(entropy=current_entropy)
+                    except Exception:
+                        pass
+                    entropy_delta = current_entropy - prev_entropy
+            except Exception:
+                pass
         if tests.returncode != 0:
             failure = ErrorParser.parse(tests.stdout + tests.stderr)
             frames = _extract_frames(failure.get("trace", ""))
@@ -406,6 +415,7 @@ def _run_once(
             coverage=cov_data,
             edge_cases=edge_data,
             entropy_delta=entropy_delta,
+            executed_functions=executed_functions,
         )
         try:
             from .scoring import record_run as _score_record_run
@@ -415,7 +425,7 @@ def _run_once(
                     "roi": (
                         coverage_pct if coverage_pct is not None else (1.0 if res.success else 0.0)
                     ),
-                    "coverage": coverage_pct,
+                    "coverage": coverage_map or {},
                     "entropy_delta": entropy_delta,
                     "executed_functions": executed_functions or [],
                 },
