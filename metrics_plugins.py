@@ -5,6 +5,11 @@ from pathlib import Path
 from statistics import mean
 from typing import Callable, Dict, List, Optional
 
+try:  # pragma: no cover - allow running as script
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 MetricsFunc = Callable[[float, float, Optional[Dict[str, float]]], Dict[str, float]]
@@ -77,11 +82,7 @@ def fetch_retrieval_stats(path: str | Path | None = None) -> Dict[str, float]:
     """
 
     if path is None:
-        path = (
-            Path(__file__).resolve().parent
-            / "analytics"
-            / "retrieval_outcomes.jsonl"
-        )
+        path = resolve_path("analytics/retrieval_outcomes.jsonl")
     else:
         path = Path(path)
     if not path.exists():
