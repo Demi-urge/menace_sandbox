@@ -11,7 +11,7 @@ import time
 import re
 import json
 from dataclasses import asdict
-from typing import Dict, Any, TYPE_CHECKING
+from typing import Dict, Any, TYPE_CHECKING, Tuple
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
 from .failure_fingerprint_store import (
@@ -233,6 +233,7 @@ class SelfCodingManager:
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None
+            failure_counts: Dict[Tuple[str, int, int, str], int] = {}
 
             def _coverage_ratio(output: str, success: bool) -> float:
                 try:
@@ -402,6 +403,7 @@ class SelfCodingManager:
                         harness_result.stdout, harness_result.success
                     )
                     runtime_after = harness_result.duration
+                    failure_counts.clear()
                     break
 
                 if attempt >= max_attempts:
@@ -443,7 +445,7 @@ class SelfCodingManager:
                 parsed = ErrorParser.parse(trace)
                 stack_trace = parsed.get("trace", trace)
                 region_obj = parsed.get("target_region")
-                if region_obj is not None:
+                if target_region is None and region_obj is not None:
                     try:
                         target_region = TargetRegion(
                             file=getattr(region_obj, "file", getattr(region_obj, "filename", "")),
@@ -470,6 +472,50 @@ class SelfCodingManager:
                 )
                 last_fp = fingerprint
                 record_failure(fingerprint, self.failure_store)
+
+                if target_region is not None:
+                    key = (
+                        target_region.file,
+                        target_region.start_line,
+                        target_region.end_line,
+                        target_region.function,
+                    )
+                    count = failure_counts.get(key, 0) + 1
+                    failure_counts[key] = count
+                    if (
+                        count >= 2
+                        and target_region.start_line
+                        and target_region.end_line
+                    ):
+                        target_region = TargetRegion(
+                            file=target_region.file,
+                            start_line=0,
+                            end_line=0,
+                            function=target_region.function,
+                        )
+                        self.logger.info(
+                            "escalating target region to function scope",
+                            extra={"file": target_region.file, "function": target_region.function},
+                        )
+                        failure_counts[(target_region.file, 0, 0, target_region.function)] = 0
+                    elif (
+                        count >= 2
+                        and not target_region.start_line
+                        and not target_region.end_line
+                        and target_region.function
+                    ):
+                        target_region = TargetRegion(
+                            file=target_region.file,
+                            start_line=0,
+                            end_line=0,
+                            function="",
+                        )
+                        self.logger.info(
+                            "escalating target region to module scope",
+                            extra={"file": target_region.file},
+                        )
+                        failure_counts[(target_region.file, 0, 0, "")] = 0
+
                 self.logger.info(
                     "rebuilding context",
                     extra={"tags": tags, "attempt": attempt},

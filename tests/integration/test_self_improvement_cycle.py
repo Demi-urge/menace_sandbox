@@ -5,6 +5,12 @@ import asyncio
 from collections import deque
 from statistics import mean
 import pytest
+from pathlib import Path
+import types
+import shutil
+import tempfile
+import subprocess
+import logging
 
 
 class DummyROITracker:
@@ -340,3 +346,157 @@ def test_background_self_improvement_loop(monkeypatch):
     assert {"roi", "stability"}.issubset(events)
     assert planner.roi_db.logged
     assert planner.stability_db.recorded
+
+
+def test_target_region_escalation(monkeypatch, tmp_path, caplog):
+    import sys
+    stub_env = types.ModuleType("menace_sandbox.environment_bootstrap")
+    stub_env.EnvironmentBootstrapper = object
+    monkeypatch.setitem(sys.modules, "menace_sandbox.environment_bootstrap", stub_env)
+
+    db_stub = types.ModuleType("menace_sandbox.data_bot")
+    db_stub.MetricsDB = object
+    db_stub.DataBot = object
+    monkeypatch.setitem(sys.modules, "menace_sandbox.data_bot", db_stub)
+    monkeypatch.setitem(sys.modules, "data_bot", db_stub)
+
+    sce_stub = types.ModuleType("menace_sandbox.self_coding_engine")
+    sce_stub.SelfCodingEngine = object
+    monkeypatch.setitem(sys.modules, "menace_sandbox.self_coding_engine", sce_stub)
+
+    mapl_stub = types.ModuleType("menace_sandbox.model_automation_pipeline")
+    class AutomationResult:
+        def __init__(self, package=None, roi=None):
+            self.package = package
+            self.roi = roi
+
+    class ModelAutomationPipeline: ...
+
+    mapl_stub.AutomationResult = AutomationResult
+    mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
+    monkeypatch.setitem(sys.modules, "menace_sandbox.model_automation_pipeline", mapl_stub)
+
+    prb_stub = types.ModuleType("menace_sandbox.pre_execution_roi_bot")
+    class ROIResult:
+        def __init__(self, roi, errors, proi, perr, risk):
+            self.roi = roi
+            self.errors = errors
+            self.predicted_roi = proi
+            self.predicted_errors = perr
+            self.risk = risk
+
+    prb_stub.ROIResult = ROIResult
+    monkeypatch.setitem(sys.modules, "menace_sandbox.pre_execution_roi_bot", prb_stub)
+
+    monkeypatch.setitem(sys.modules, "menace", types.SimpleNamespace(RAISE_ERRORS=False))
+
+    th_stub = types.ModuleType("menace_sandbox.sandbox_runner.test_harness")
+    class DummyHarnessResult:
+        def __init__(self, success, failure=None, stdout="", stderr="", duration=0.0):
+            self.success = success
+            self.failure = failure
+            self.stdout = stdout
+            self.stderr = stderr
+            self.duration = duration
+
+    th_stub.run_tests = lambda repo, changed, backend="venv": DummyHarnessResult(True)
+    th_stub.TestHarnessResult = DummyHarnessResult
+    sandbox_stub = types.ModuleType("menace_sandbox.sandbox_runner")
+    sandbox_stub.test_harness = th_stub
+    monkeypatch.setitem(sys.modules, "menace_sandbox.sandbox_runner", sandbox_stub)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.sandbox_runner.test_harness", th_stub)
+
+    import menace_sandbox.self_coding_manager as scm
+    class DummyBuilder:
+        def query(self, desc, exclude_tags=None):
+            return [], "sid"
+
+    class DummyCognitionLayer:
+        def __init__(self):
+            self.context_builder = DummyBuilder()
+
+        def record_patch_outcome(self, session_id, success, contribution=0.0):
+            pass
+
+    class DummyEngine:
+        def __init__(self):
+            self.regions = []
+            self.cognition_layer = DummyCognitionLayer()
+            self.last_prompt_text = ""
+
+        def apply_patch(self, path: Path, desc: str, **kw):
+            self.regions.append(kw.get("target_region"))
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("# patched\n")
+            return len(self.regions), False, 0.0
+
+    class DummyPipeline:
+        def run(self, model, energy=1):
+            return types.SimpleNamespace(roi=types.SimpleNamespace(confidence=1.0))
+
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
+
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("def foo():\n    return 1\n")
+
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    outputs = [
+        types.SimpleNamespace(
+            success=False,
+            failure={"strategy_tag": "x", "stack": "trace"},
+            stdout="",
+            stderr="",
+            duration=0.0,
+        )
+        for _ in range(4)
+    ]
+    outputs.append(
+        types.SimpleNamespace(success=True, failure=None, stdout="", stderr="", duration=0.0)
+    )
+
+    def run_tests_stub(repo, changed, backend="venv"):
+        return outputs.pop(0)
+
+    monkeypatch.setattr(scm, "run_tests", run_tests_stub)
+
+    tr = scm.TargetRegion(file=file_path.name, start_line=1, end_line=2, function="foo")
+
+    def parse_stub(trace):
+        return {"trace": trace, "target_region": tr}
+
+    monkeypatch.setattr(scm.ErrorParser, "parse", staticmethod(parse_stub))
+
+    caplog.set_level(logging.INFO)
+    mgr.run_patch(file_path, "desc", max_attempts=5)
+
+    regions = engine.regions
+    assert len(regions) == 5
+    assert regions[0].start_line == 1 and regions[0].function == "foo"
+    assert regions[2].start_line == 0 and regions[2].function == "foo"
+    assert regions[-1].function == ""
+    assert any("function scope" in r.message for r in caplog.records)
+    assert any("module scope" in r.message for r in caplog.records)
