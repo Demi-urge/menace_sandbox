@@ -25,7 +25,7 @@ from logging_utils import get_logger, log_record
 from metrics_exporter import sandbox_crashes_total
 from alert_dispatcher import dispatch_alert
 import re
-from dynamic_path_router import resolve_path, repo_root
+from dynamic_path_router import resolve_path, repo_root, path_for_prompt
 
 from .orphan_integration import integrate_and_graph_orphans
 
@@ -3664,12 +3664,16 @@ async def _execute_in_container(
     locally with the same environment variables and resource limits.
     """
 
-    snippet_path = env.get("CONTAINER_SNIPPET_PATH", "/code/snippet.py")
+    snippet_path = Path(
+        env.get("CONTAINER_SNIPPET_PATH", path_for_prompt("snippet.py"))
+    )
+    snippet_name = snippet_path.name
+    snippet_dir = snippet_path.parent.as_posix()
 
     def _execute_locally(err_msg: str | None = None) -> Dict[str, float]:
         """Fallback local execution with basic metrics."""
         with tempfile.TemporaryDirectory(prefix="sim_local_") as td:
-            path = Path(td) / "snippet.py"
+            path = Path(td) / snippet_name
             path.write_text(code_str, encoding="utf-8")
             stdout_path = Path(td) / "stdout.log"
             stderr_path = Path(td) / "stderr.log"
@@ -3838,7 +3842,7 @@ async def _execute_in_container(
         while attempt < _CREATE_RETRY_LIMIT:
             try:
                 with tempfile.TemporaryDirectory(prefix="sim_cont_") as td:
-                    path = Path(td) / "snippet.py"
+                    path = Path(td) / snippet_name
                     path.write_text(code_str, encoding="utf-8")
 
                     image = env.get("CONTAINER_IMAGE")
@@ -3850,7 +3854,7 @@ async def _execute_in_container(
                                 f"SANDBOX_CONTAINER_IMAGE_{os_type.upper()}", image
                             )
 
-                    volumes = {td: {"bind": "/code", "mode": "rw"}}
+                    volumes = {td: {"bind": snippet_dir, "mode": "rw"}}
                     if mounts:
                         for host, dest in mounts.items():
                             volumes[host] = {"bind": dest, "mode": "rw"}
@@ -3901,7 +3905,7 @@ async def _execute_in_container(
 
                     container = client.containers.run(
                         image,
-                        ["python", snippet_path],
+                        ["python", snippet_path.as_posix()],
                         **kwargs,
                     )
                     _register_container_finalizer(container)
@@ -4021,13 +4025,13 @@ async def _execute_in_container(
                     )
 
             async with pooled_container(image) as (container, td):
-                path = Path(td) / "snippet.py"
+                path = Path(td) / snippet_name
                 path.write_text(code_str, encoding="utf-8")
 
                 timeout = int(env.get("TIMEOUT", 300))
                 try:
                     result = container.exec_run(
-                        ["python", snippet_path],
+                        ["python", snippet_path.as_posix()],
                         environment={k: str(v) for k, v in env.items()},
                         workdir=workdir,
                         demux=True,
