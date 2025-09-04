@@ -1,9 +1,18 @@
 #!/bin/sh
 # Run the Menace sandbox Docker image with persistent data
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+env_file=$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('.env'))
+PY
+)
+data_dir=$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_data'))
+PY
+)
 image_name="${IMAGE:-menace_sandbox}"
 
 docker run --rm -it \
-  --env-file "$repo_root/.env" \
-  -v "$repo_root/sandbox_data:/app/sandbox_data" \
+  --env-file "$env_file" \
+  -v "$data_dir:/app/sandbox_data" \
   "$image_name" "$@"

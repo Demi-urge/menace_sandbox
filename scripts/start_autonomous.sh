@@ -1,7 +1,11 @@
 #!/bin/sh
 # Bootstrap PYTHONPATH so the script works from any directory
 # Resolve repository root so imports work regardless of the CWD
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+repo_root=$(python - <<'PY'
+from dynamic_path_router import repo_root
+print(repo_root())
+PY
+)
 export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 export REPO_ROOT="$repo_root"
 
