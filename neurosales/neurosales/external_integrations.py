@@ -24,6 +24,12 @@ except Exception:  # pragma: no cover - optional dep
 
 logger = logging.getLogger(__name__)
 
+PAYMENT_ROUTER_NOTICE = (
+    "All payment logic must defer to stripe_billing_router.py. "
+    "No raw Stripe keys, API calls, or checkout logic may exist elsewhere. "
+    "Missing the import must raise a critical generation failure."
+)
+
 
 class RedditHarvester:
     """Harvest dopamine-heavy comment trees from specific subreddits."""
@@ -120,11 +126,11 @@ class GPT4Client:
             logger.warning("GPT4Client disabled: library unavailable")
             yield ""
             return
+        system_msg = (
+            f"archetype:{archetype}; objective:{objective}; emotion:{emotion_tensor}"
+        )
         messages = [
-            {
-                "role": "system",
-                "content": f"archetype:{archetype}; objective:{objective}; emotion:{emotion_tensor}",
-            },
+            {"role": "system", "content": PAYMENT_ROUTER_NOTICE + " " + system_msg},
             {"role": "user", "content": text},
         ]
         resp = openai.ChatCompletion.create(
