@@ -713,7 +713,11 @@ def test_coverage_records_executed_functions(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sds, "Coverage", Cov)
     captured = {}
-    monkeypatch.setattr(sds, "record_run", lambda m: captured.update(m))
+    monkeypatch.setattr(
+        sds,
+        "record_run",
+        lambda *a, **k: captured.update(a[1] if len(a) > 1 else a[0]),
+    )
 
     percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
     assert percent == 100.0

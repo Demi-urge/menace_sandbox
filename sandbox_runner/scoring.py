@@ -48,8 +48,10 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
         Object describing the run outcome. It may be a boolean or an object
         exposing ``success``/``duration``/``failure`` attributes.
     metrics:
-        Mapping containing optional ``roi``, ``coverage``, ``entropy_delta`` or
-        ``runtime`` overrides.
+        Mapping containing optional ``roi``, ``coverage`` (mapping of files to
+        executed function names), ``executed_functions`` (flattened
+        ``"file:function"`` entries), ``entropy_delta`` or ``runtime``
+        overrides.
     """
 
     success = bool(getattr(result, "success", result))
@@ -58,6 +60,12 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
     roi = metrics.get("roi")
     coverage = metrics.get("coverage")
     executed_functions = metrics.get("executed_functions")
+    if executed_functions is None and isinstance(coverage, dict):
+        executed_functions = [
+            f"{path}:{fn}"
+            for path, funcs in coverage.items()
+            for fn in funcs
+        ]
     functions_hit = len(executed_functions) if executed_functions is not None else None
 
     failure = getattr(result, "failure", None)
