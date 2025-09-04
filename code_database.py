@@ -71,7 +71,7 @@ except Exception:  # pragma: no cover - fallback when module unavailable
 
 logger = logging.getLogger(__name__)
 
-SQL_DIR = Path(__file__).with_name("sql_templates")
+SQL_DIR = resolve_path("sql_templates")
 
 
 def _load_sql(name: str) -> str:
