@@ -165,6 +165,7 @@ from .prompt_memory import log_prompt_attempt, load_prompt_penalties
 from .state_snapshot import capture_snapshot, delta as snapshot_delta
 from .snapshot_tracker import SnapshotTracker
 from . import snapshot_tracker
+from db_router import DBRouter
 
 
 from ..self_test_service import SelfTestService
@@ -6420,10 +6421,11 @@ class SelfImprovementEngine:
             fh.write(json.dumps(delta) + "\n")
 
         try:
-            import sqlite3, time
+            import time
 
             db_path = _data_dir() / "snapshots" / "deltas.db"
-            conn = sqlite3.connect(db_path)
+            router = DBRouter("snapshot_deltas", str(db_path), str(db_path))
+            conn = router.get_connection("deltas")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS deltas (ts REAL, data TEXT)"
             )
@@ -6436,7 +6438,7 @@ class SelfImprovementEngine:
         except Exception:
             pass
 
-        success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
+        success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) > 0)
         log_prompt_attempt(prompt, success=success, exec_result={"diff": diff}, roi_meta=delta)
         if success:
             for f in files or []:
@@ -6483,17 +6485,25 @@ class SelfImprovementEngine:
 
         penalties = load_prompt_penalties()
         settings = SandboxSettings()
-        best: str | None = None
-        best_weight = -1.0
+        threshold = settings.prompt_failure_threshold
+        eligible: list[tuple[str, float]] = []
+        penalised: list[tuple[str, float]] = []
         for strat in strategies:
             if strat in self.deprioritized_strategies:
                 continue
             count = penalties.get(str(strat), 0)
             weight = (
                 settings.prompt_penalty_multiplier
-                if count >= settings.prompt_failure_threshold
+                if threshold and count >= threshold
                 else 1.0
             )
+            target = penalised if threshold and count >= threshold else eligible
+            target.append((strat, weight))
+
+        pool = eligible or penalised
+        best: str | None = None
+        best_weight = -1.0
+        for strat, weight in pool:
             if weight > best_weight:
                 best_weight = weight
                 best = strat

@@ -4,6 +4,7 @@ import types
 import sys
 from pathlib import Path
 
+sys.modules.setdefault("dynamic_path_router", types.SimpleNamespace(resolve_path=lambda p: p))
 from menace_sandbox.sandbox_settings import SandboxSettings
 from menace_sandbox.dynamic_path_router import resolve_path
 
@@ -17,6 +18,7 @@ prompt_memory = importlib.import_module("menace_sandbox.self_improvement.prompt_
 snapshot_tracker = importlib.import_module(
     "menace_sandbox.self_improvement.snapshot_tracker"
 )
+snapshot_history_db = importlib.import_module("menace_sandbox.snapshot_history_db")
 
 
 class DummyPrompt:
@@ -75,5 +77,27 @@ def test_deprioritized_strategy_skipped(tmp_path, monkeypatch):
     monkeypatch.setattr(prompt_memory, "load_prompt_penalties", lambda: {"s1": thr})
 
     assert "s1" in eng.deprioritized_strategies
+    choice = eng._select_prompt_strategy(["s1", "s2"])
+    assert choice == "s2"
+
+
+def test_log_regression_penalises_prompt(tmp_path, monkeypatch):
+    monkeypatch.setattr(prompt_memory, "_repo_path", lambda: tmp_path)
+    monkeypatch.setattr(prompt_memory._settings, "prompt_penalty_path", "penalties.json")
+    monkeypatch.setattr(prompt_memory, "_penalty_path", tmp_path / "penalties.json")
+    monkeypatch.setattr(
+        prompt_memory,
+        "_penalty_lock",
+        prompt_memory.FileLock(str(tmp_path / "penalties.json") + ".lock"),
+    )
+    monkeypatch.setattr(
+        snapshot_history_db,
+        "_db_path",
+        lambda settings=None: tmp_path / "snapshot_history.db",
+    )
+    eng = MiniEngine()
+    thr = SandboxSettings().prompt_failure_threshold
+    for _ in range(thr):
+        snapshot_history_db.log_regression("s1", None, {"roi": -1})
     choice = eng._select_prompt_strategy(["s1", "s2"])
     assert choice == "s2"
