@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
-from itertools import zip_longest
 import subprocess
 import json
 import base64
@@ -129,7 +128,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - graceful degradation
     def record_patch_metadata(*_a: Any, **_k: Any) -> None:  # type: ignore
         return None
-from .prompt_engine import PromptEngine, _ENCODER
+from .prompt_engine import PromptEngine, _ENCODER, diff_within_target_region
 from .prompt_memory_trainer import PromptMemoryTrainer
 from chunking import split_into_chunks, get_chunk_summaries, summarize_code
 try:
@@ -1335,12 +1334,11 @@ class SelfCodingEngine:
             ]
 
         new_lines = original_lines[:start] + patch_lines + original_lines[end:]
-        changed = [
-            idx + 1
-            for idx, (a, b) in enumerate(zip_longest(original_lines, new_lines))
-            if (a or "") != (b or "")
-        ]
-        if any(i < target_region.start_line or i > target_region.end_line for i in changed):
+        if not diff_within_target_region(original_lines, new_lines, target_region):
+            self.logger.warning(
+                "patch modified lines outside target region",
+                extra={"path": str(path), "tags": [FEEDBACK]},
+            )
             return False
         text = "\n".join(new_lines) + "\n"
         try:
