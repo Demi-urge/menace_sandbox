@@ -5,7 +5,11 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from codex_output_analyzer import CriticalGenerationFailure, validate_stripe_usage  # noqa: E402
+from codex_output_analyzer import (  # noqa: E402
+    CriticalGenerationFailure,
+    validate_stripe_usage,
+    validate_stripe_usage_generic,
+)
 
 
 def test_router_import_without_usage_raises() -> None:
@@ -41,3 +45,26 @@ def test_js_snippet_without_router_raises() -> None:
 def test_js_snippet_with_router_import_passes() -> None:
     code = "import stripe_billing_router\nfetch('https://api.stripe.com/v1/charges')"
     validate_stripe_usage(code)
+
+
+def test_plain_text_keyword_without_router_raises() -> None:
+    text = "This page handles billing for users"
+    with pytest.raises(CriticalGenerationFailure):
+        validate_stripe_usage_generic(text)
+
+
+def test_html_snippet_keyword_without_router_raises() -> None:
+    html = "<div>Start checkout now</div>"
+    with pytest.raises(CriticalGenerationFailure):
+        validate_stripe_usage_generic(html)
+
+
+def test_js_snippet_keyword_without_router_raises() -> None:
+    js = "function sendInvoice() { return true; }"
+    with pytest.raises(CriticalGenerationFailure):
+        validate_stripe_usage_generic(js)
+
+
+def test_generic_text_with_router_passes() -> None:
+    text = "Payments are processed via stripe_billing_router"
+    validate_stripe_usage_generic(text)
