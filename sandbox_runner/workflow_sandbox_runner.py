@@ -83,6 +83,11 @@ try:  # pragma: no cover - coverage is optional
 except Exception:  # pragma: no cover - coverage unavailable
     coverage = None  # type: ignore
 
+try:  # pragma: no cover - optional ROI tracker
+    from roi_tracker import ROITracker  # type: ignore
+except Exception:  # pragma: no cover - ROI tracker unavailable
+    ROITracker = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,6 +112,7 @@ class ModuleMetrics:
     fixtures: Mapping[str, Any] = field(default_factory=dict)
     coverage_files: list[str] | None = None
     coverage_functions: list[str] | None = None
+    entropy_delta: float | None = None
 
 
 @dataclass
@@ -190,6 +196,7 @@ class WorkflowSandboxRunner:
         use_subprocess: bool = True,
         audit_hook: Callable[[str, Mapping[str, Any]], None] | None = None,
         inject_edge_cases: bool = False,
+        roi_tracker: "ROITracker | None" = None,
     ) -> RunMetrics:
         """Execute ``workflow`` inside a sandbox and return telemetry.
 
@@ -1262,6 +1269,15 @@ class WorkflowSandboxRunner:
                         mem_after, mem_peak = tracemalloc.get_traced_memory()
                         tracemalloc.stop()
 
+                    entropy_val: float | None = None
+                    if roi_tracker is not None:
+                        try:
+                            hist = roi_tracker.entropy_delta_history(name)
+                            if hist:
+                                entropy_val = float(hist[-1])
+                        except Exception:
+                            entropy_val = None
+
                     module_metric = ModuleMetrics(
                         name=name,
                         duration=duration,
@@ -1279,6 +1295,7 @@ class WorkflowSandboxRunner:
                         fixtures=fixtures,
                         coverage_files=cov_files or None,
                         coverage_functions=cov_funcs or None,
+                        entropy_delta=entropy_val,
                     )
                     metrics.modules.append(module_metric)
 
@@ -1418,11 +1435,19 @@ class WorkflowSandboxRunner:
             # Forward telemetry to _SandboxMetaLogger if available.
             if _SandboxMetaLogger:
                 try:
-                    _SandboxMetaLogger(root / "sandbox_meta.log").audit.record(
-                        telemetry
+                    meta = _SandboxMetaLogger(root / "sandbox_meta.log")
+                    meta.log_cycle(
+                        cycle=len(meta.records),
+                        roi=roi_delta or 0.0,
+                        modules=[m.name for m in metrics.modules],
+                        reason="workflow_run",
+                        exec_time=sum(m.duration for m in metrics.modules),
+                        module_metrics=metrics.modules,
                     )
                 except Exception as exc:
-                    logger.warning("failed to log sandbox metadata: %s", exc, exc_info=True)
+                    logger.warning(
+                        "failed to log sandbox metadata: %s", exc, exc_info=True
+                    )
 
             self.metrics = metrics
             self.telemetry = telemetry
