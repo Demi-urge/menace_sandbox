@@ -123,7 +123,7 @@ def _resolve_route(
     return route
 
 
-def init_charge(
+def initiate_charge(
     bot_id: str,
     amount: float,
     description: str | None = None,
@@ -144,7 +144,8 @@ def init_charge(
 
 
 # Backward compatibility
-charge = init_charge
+init_charge = initiate_charge
+charge = initiate_charge
 
 
 def get_balance(
@@ -175,6 +176,7 @@ def create_customer(
 
 
 __all__ = [
+    "initiate_charge",
     "init_charge",
     "charge",
     "get_balance",
