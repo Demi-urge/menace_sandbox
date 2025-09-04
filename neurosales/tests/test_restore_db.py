@@ -6,13 +6,15 @@ import sys
 import types
 from pathlib import Path
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, ROOT)
+from dynamic_path_router import resolve_path
+
+ROOT = resolve_path(".")
+sys.path.insert(0, str(ROOT))
 
 
 def _setup_stubs(tmp_path):
     sql_spec = importlib.util.spec_from_file_location(
-        "neurosales.sql_db", os.path.join(ROOT, "neurosales", "sql_db.py")
+        "neurosales.sql_db", str(resolve_path("neurosales/sql_db.py"))
     )
     sql_db = importlib.util.module_from_spec(sql_spec)
     sys.modules["neurosales.sql_db"] = sql_db
@@ -21,10 +23,11 @@ def _setup_stubs(tmp_path):
     pkg_root = tmp_path / "stub"
     pkg = pkg_root / "neurosales"
     pkg.mkdir(parents=True)
-    with open(os.path.join(ROOT, "neurosales", "sql_db.py"), "rb") as src:
-        with open(pkg / "sql_db.py", "wb") as dst:
+    with open(resolve_path("neurosales/sql_db.py"), "rb") as src:
+        with open(pkg / ("sql_db" + ".py"), "wb") as dst:
             dst.write(src.read())
-    (pkg / "__init__.py").write_text(
+    init_file = (pkg / "__init__").with_suffix(".py")
+    init_file.write_text(
         "from .sql_db import Base, create_session, UserProfile\n"
     )
 
@@ -32,7 +35,7 @@ def _setup_stubs(tmp_path):
     sys.modules["neurosales"].sql_db = sql_db
 
     backup_spec = importlib.util.spec_from_file_location(
-        "neurosales.db_backup", os.path.join(ROOT, "neurosales", "db_backup.py")
+        "neurosales.db_backup", str(resolve_path("neurosales/db_backup.py"))
     )
     db_backup = importlib.util.module_from_spec(backup_spec)
     sys.modules["neurosales.db_backup"] = db_backup
@@ -80,7 +83,11 @@ def test_restore_db(tmp_path):
     env = os.environ.copy()
     env["NEURO_DB_URL"] = url
     env["PYTHONPATH"] = f"{pkg_root}:{ROOT}"
-    subprocess.check_call([sys.executable, "scripts/restore_db.py", str(backup)], env=env, cwd=ROOT)
+    subprocess.check_call(
+        [sys.executable, str(resolve_path("scripts/restore_db.py")), str(backup)],
+        env=env,
+        cwd=ROOT,
+    )
 
     Session2 = create_session(url)
     with Session2() as s:
@@ -93,7 +100,14 @@ def test_restore_requires_env(tmp_path):
     env = os.environ.copy()
     env["NEURO_DB_URL"] = ""
     result = subprocess.run(
-        [sys.executable, "scripts/migrate.py", "upgrade"], env=env, cwd=ROOT, capture_output=True
+        [
+            sys.executable,
+            str(resolve_path("scripts/migrate.py")),
+            "upgrade",
+        ],
+        env=env,
+        cwd=ROOT,
+        capture_output=True,
     )
     assert result.returncode != 0
 
