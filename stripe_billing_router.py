@@ -26,6 +26,16 @@ except Exception as exc:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 
 
+def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:
+    """Ensure a route mapping does not attempt to override Stripe keys."""
+
+    forbidden = {"secret_key", "public_key"}
+    present = forbidden.intersection(mapping.keys())
+    if present:
+        logger.error("Stripe API keys cannot be supplied in routes: %s", present)
+        raise ValueError("Stripe API keys cannot be overridden")
+
+
 def _load_key(name: str, prefix: str) -> str:
     """Fetch a Stripe key from env or the secret vault and validate it."""
 
@@ -102,6 +112,7 @@ def register_route(
     and region.
     """
 
+    _validate_no_api_keys(route)
     ROUTING_TABLE[(domain, region, business_category, bot_name)] = dict(route)
 
 
@@ -120,6 +131,7 @@ def register_override(rule: Mapping[str, Any]) -> None:
     key = rule["key"]
     value = rule["value"]
     route = rule["route"]
+    _validate_no_api_keys(route)
     OVERRIDES[(domain, region, business_category, bot_name, key, value)] = dict(route)
 
 
@@ -173,10 +185,16 @@ def _resolve_route(
         )
 
     route = ROUTING_TABLE.get((domain, region, business_category, bot_name))
+    if route:
+        route = dict(route)
+        _validate_no_api_keys(route)
     if overrides:
         for key, value in overrides.items():
             if key == "region":
                 continue
+            if key in {"secret_key", "public_key"}:
+                logger.error("Stripe API keys cannot be overridden for bot '%s'", bot_id)
+                raise RuntimeError("Stripe API keys cannot be overridden")
             update = OVERRIDES.get(
                 (domain, region, business_category, bot_name, key, value)
             )
@@ -185,10 +203,12 @@ def _resolve_route(
                     (domain, "default", business_category, bot_name, key, value)
                 )
             if update:
+                _validate_no_api_keys(update)
                 route = {**route, **update} if route else dict(update)
     if not route:
         logger.error("No billing route configured for bot '%s'", bot_id)
         raise RuntimeError(f"No billing route configured for bot '{bot_id}'")
+    _validate_no_api_keys(route)
     route.setdefault("secret_key", STRIPE_SECRET_KEY)
     route.setdefault("public_key", STRIPE_PUBLIC_KEY)
     for strategy in _STRATEGIES:
