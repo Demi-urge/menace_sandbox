@@ -49,8 +49,9 @@ except Exception:  # pragma: no cover - fallback for flat layout
 
 from db_router import GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
+from dynamic_path_router import resolve_path
 
-DB_PATH = Path(__file__).parent / "news.db"
+DB_PATH = resolve_path("news.db")
 
 
 @dataclass
