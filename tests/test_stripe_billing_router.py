@@ -133,6 +133,39 @@ def test_charge_uses_payment_intent_when_no_price(monkeypatch, tmp_path):
     assert recorded["amount"] == 1250
     assert recorded["customer"] == "cus_finance_default"
     assert recorded["api_key"] == "sk_live_dummy"
+    assert recorded["currency"] == "usd"
+    assert recorded["idempotency_key"] == expected_key
+    assert fake_stripe.api_key == "orig"
+
+
+def test_charge_uses_currency_from_route(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
+    # remove price to force PaymentIntent path and set non-default currency
+    sbr.ROUTING_TABLE[("stripe", "default", "finance", "finance_router_bot")] = {
+        "product_id": "prod_finance_router",
+        "customer_id": "cus_finance_default",
+        "currency": "eur",
+    }
+    monkeypatch.setattr(sbr.time, "time", lambda: 1700000000.0)
+
+    recorded: dict[str, object] = {}
+
+    def fake_pi_create(*, api_key: str, **params):
+        recorded.update(params)
+        recorded["api_key"] = api_key
+        return {"id": "pi_test", **params}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        PaymentIntent=types.SimpleNamespace(create=fake_pi_create),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+
+    res = sbr.charge("finance:finance_router_bot", 10.0, "desc")
+    expected_key = "finance:finance_router_bot-10.0-1700000000000"
+    assert res["id"] == "pi_test"
+    assert recorded["currency"] == "eur"
+    assert recorded["api_key"] == "sk_live_dummy"
     assert recorded["idempotency_key"] == expected_key
     assert fake_stripe.api_key == "orig"
 
@@ -187,6 +220,7 @@ def test_region_and_business_overrides(monkeypatch, tmp_path):
             "product_id": "prod_finance_eu",
             "price_id": "price_finance_eu",
             "customer_id": "cus_finance_eu",
+            "currency": "eur",
         },
         region="eu",
     )
@@ -205,6 +239,7 @@ def test_region_and_business_overrides(monkeypatch, tmp_path):
     assert route["product_id"] == "prod_finance_eu"
     assert route["customer_id"] == "cus_finance_eu"
     assert route["price_id"] == "price_finance_enterprise"
+    assert route["currency"] == "eur"
 
 
 def test_domain_routing_and_invalid_domain(monkeypatch, tmp_path):
