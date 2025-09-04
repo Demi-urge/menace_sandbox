@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import types
+import importlib.util
 import pytest
 
 
@@ -132,6 +133,13 @@ _setmod(
     "self_improvement.prompt_memory",
     types.SimpleNamespace(log_prompt_attempt=lambda *a, **k: None),
 )
+_spec_tr = importlib.util.spec_from_file_location(
+    "self_improvement.target_region", ROOT / "self_improvement" / "target_region.py"
+)
+tr_module = importlib.util.module_from_spec(_spec_tr)
+sys.modules.setdefault("self_improvement.target_region", tr_module)
+sys.modules.setdefault("menace_sandbox.self_improvement.target_region", tr_module)
+_spec_tr.loader.exec_module(tr_module)  # type: ignore[attr-defined]
 
 
 class _DummyBaselineTracker:

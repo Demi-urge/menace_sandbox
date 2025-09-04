@@ -64,6 +64,11 @@ def test_second_run_warns_on_similar_failure(monkeypatch, tmp_path):
         "prev.py", "main", SAMPLE_TRACE, "Boom", "p"
     )
     monkeypatch.setattr(sce, "find_similar", lambda emb, thresh: [prior])
+    monkeypatch.setattr(
+        sce,
+        "check_similarity_and_warn",
+        lambda *a, **k: (a[3], False, 0.0, [prior], "WARNING"),
+    )
     pid, reverted, delta = eng2.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=2)
     assert pid == 1 and not reverted
     assert any("WARNING" in d for d in calls[1:])
@@ -84,5 +89,10 @@ def test_second_run_skips_after_similarity_limit(monkeypatch, tmp_path):
         "mod.py", "<module>", SAMPLE_TRACE, "ZeroDivisionError: division by zero", "prompt!"
     )
     monkeypatch.setattr(sce, "find_similar", lambda emb, thresh: [prior, prior, prior])
+    monkeypatch.setattr(
+        sce,
+        "check_similarity_and_warn",
+        lambda *a, **k: (a[3], False, 0.0, [prior, prior, prior], "WARNING"),
+    )
     pid, reverted, delta = eng.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=3)
     assert pid is None and len(calls) == 1

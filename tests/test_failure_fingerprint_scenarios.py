@@ -6,6 +6,7 @@ from pathlib import Path
 from .test_failure_fingerprint_logging import _make_engine, SAMPLE_TRACE, sce
 from failure_fingerprint import FailureFingerprint
 from prompt_optimizer import PromptOptimizer
+import prompt_optimizer as po
 
 
 def test_repeated_failures_record_fingerprints(monkeypatch, tmp_path):
@@ -64,6 +65,11 @@ def test_retry_warns_on_matching_fingerprint(monkeypatch, tmp_path):
         "find_similar",
         lambda emb, thresh, path="failure_fingerprints.jsonl": [prior],
     )
+    monkeypatch.setattr(
+        sce,
+        "check_similarity_and_warn",
+        lambda *a, **k: (a[3], False, 0.0, [prior], "WARNING"),
+    )
 
     pid, reverted, _ = eng2.apply_patch_with_retry(Path("mod.py"), "second", max_attempts=2)
     assert pid == 1 and not reverted
@@ -103,6 +109,11 @@ def test_retry_skips_after_similarity_limit(monkeypatch, tmp_path):
         "find_similar",
         lambda emb, thresh, path="failure_fingerprints.jsonl": [prior, prior, prior],
     )
+    monkeypatch.setattr(
+        sce,
+        "check_similarity_and_warn",
+        lambda *a, **k: (a[3], False, 0.0, [prior, prior, prior], "WARNING"),
+    )
 
     pid, _, _ = eng2.apply_patch_with_retry(Path("mod.py"), "second", max_attempts=3)
     assert pid is None and len(calls) == 1
@@ -130,11 +141,14 @@ def test_prompt_optimizer_penalizes_from_fingerprint_log(tmp_path):
     failure.write_text("", encoding="utf-8")
 
     fp = FailureFingerprint("mod.py", "<module>", "err", "trace", "prompt!")
+    fp_data = asdict(fp)
+    fp_data.pop("hash", None)
     log_file.write_text(
-        "\n".join([json.dumps(asdict(fp)), json.dumps(asdict(fp))]) + "\n",
+        "\n".join([json.dumps(fp_data), json.dumps(fp_data)]) + "\n",
         encoding="utf-8",
     )
 
+    po.FailureFingerprint = FailureFingerprint
     opt = PromptOptimizer(
         success,
         failure,
