@@ -34,7 +34,7 @@ import ast
 from contextlib import AsyncExitStack, contextmanager
 
 from db_router import init_db_router
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 
 MENACE_ID = uuid.uuid4().hex
 
@@ -224,7 +224,7 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
         logger = get_logger(__name__)
 
         def _iter_package(pkg: Path) -> Iterable[Path]:
-            for child in pkg.rglob("*.py"):
+            for child in pkg.rglob(path_for_prompt("*.py")):
                 yield child
 
         def _resolve(parts: list[str], *, star: bool = False) -> list[Path]:
@@ -420,11 +420,21 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
         return seen
 
 try:
-    from sandbox_runner.environment import create_ephemeral_env
+    from sandbox_runner.environment import create_ephemeral_env, generate_edge_cases
 except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
     @contextmanager
     def create_ephemeral_env(workdir: Path):  # type: ignore[misc]
         yield Path(workdir), lambda cmd, **kw: subprocess.run(cmd, **kw)
+
+    def generate_edge_cases() -> dict[str, Any]:  # type: ignore[misc]
+        try:
+            from sandbox_runner.edge_case_generator import (
+                generate_edge_cases as _generate_edge_cases,
+            )
+
+            return _generate_edge_cases()
+        except Exception:
+            return {}
 
 try:
     from sandbox_runner.orphan_discovery import (
@@ -1426,7 +1436,7 @@ class SelfTestService:
                 tests = scenarios or {}
                 fixtures = {}
 
-            stub_path = tmp_dir / f"test_{Path(mod).stem}_stub.py"
+            stub_path = tmp_dir / path_for_prompt(f"test_{Path(mod).stem}_stub.py")
             hook_line = (
                 f"HOOK_PATH = '{self.fixture_hook}'\n" if self.fixture_hook else "HOOK_PATH = ''\n"
             )
@@ -1574,6 +1584,8 @@ class SelfTestService:
             "-q",
             "--json-report",
             "--json-report-file=-",
+            "-p",
+            "sandbox_runner.edge_case_plugin",
             target_path.as_posix(),
         ]
 
@@ -1581,12 +1593,18 @@ class SelfTestService:
         warnings: list[Any] = []
         metrics: dict[str, Any] = {}
         try:
+            env = dict(os.environ)
+            try:
+                env["SANDBOX_EDGE_CASES"] = json.dumps(generate_edge_cases())
+            except Exception:
+                env["SANDBOX_EDGE_CASES"] = json.dumps({})
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 check=True,
                 timeout=self.container_timeout,
+                env=env,
             )
             out = proc.stdout
             report: dict[str, Any] = {}
@@ -1673,13 +1691,21 @@ class SelfTestService:
                 "-q",
                 "--json-report",
                 "--json-report-file=-",
+                "-p",
+                "sandbox_runner.edge_case_plugin",
                 target,
             ]
             try:
+                env = dict(os.environ)
+                try:
+                    env["SANDBOX_EDGE_CASES"] = json.dumps(generate_edge_cases())
+                except Exception:
+                    env["SANDBOX_EDGE_CASES"] = json.dumps({})
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    env=env,
                 )
                 out, _ = await proc.communicate()
                 report: dict[str, Any] = {}
@@ -1757,6 +1783,13 @@ class SelfTestService:
         }
         original_env = {k: os.environ.get(k) for k in env_flags}
         os.environ.update(env_flags)
+        edge_env: dict[str, str] | None = None
+        if not self.ephemeral:
+            edge_env = dict(os.environ)
+            try:
+                edge_env["SANDBOX_EDGE_CASES"] = json.dumps(generate_edge_cases())
+            except Exception:
+                edge_env["SANDBOX_EDGE_CASES"] = json.dumps({})
 
         def _restore_env():
             for k, v in original_env.items():
@@ -2009,6 +2042,8 @@ class SelfTestService:
                         self.test_runner,
                         "-q",
                         "--json-report",
+                        "-p",
+                        "sandbox_runner.edge_case_plugin",
                     ]
                     if use_pipe:
                         cmd.append("--json-report-file=-")
@@ -2051,7 +2086,8 @@ class SelfTestService:
                                 os.getcwd(),
                             ]
                         )
-                        for k, v in os.environ.items():
+                        env_vars = edge_env if edge_env is not None else os.environ
+                        for k, v in env_vars.items():
                             docker_cmd.extend(["-e", f"{k}={v}"])
                         docker_cmd.append(self.container_image)
 
@@ -2081,13 +2117,20 @@ class SelfTestService:
                                 _repo, runner = env_stack.enter_context(
                                     create_ephemeral_env(Path.cwd())
                                 )
+                                edge_env_local = dict(os.environ)
+                                try:
+                                    edge_env_local["SANDBOX_EDGE_CASES"] = json.dumps(
+                                        generate_edge_cases()
+                                    )
+                                except Exception:
+                                    edge_env_local["SANDBOX_EDGE_CASES"] = json.dumps({})
                                 try:
                                     proc = await asyncio.to_thread(
                                         runner,
                                         cmd,
                                         capture_output=True,
                                         text=True,
-                                        env=os.environ,
+                                        env=edge_env_local,
                                         timeout=self.container_timeout,
                                     )
                                     out = proc.stdout or ""
@@ -2143,6 +2186,7 @@ class SelfTestService:
                                 *cmd,
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE,
+                                env=edge_env,
                             )
                             try:
                                 out, err = await asyncio.wait_for(
