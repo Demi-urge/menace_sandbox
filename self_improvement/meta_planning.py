@@ -25,6 +25,7 @@ from ..roi_results_db import ROIResultsDB
 from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 from ..error_logger import TelemetryEvent
+from .metrics import compute_call_graph_complexity, compute_entropy_metrics
 
 
 _cycle_thread: Any | None = None
@@ -1103,7 +1104,24 @@ async def self_improvement_cycle(
                 failures = int(rec.get("failures", 0))
                 entropy = float(rec.get("entropy", 0.0))
                 pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
-                BASELINE_TRACKER.update(roi=roi, pass_rate=pass_rate, entropy=entropy)
+                repo = _init._repo_path()
+                try:
+                    call_complexity = compute_call_graph_complexity(repo)
+                except Exception:
+                    call_complexity = 0.0
+                try:
+                    _, _, token_div = compute_entropy_metrics(
+                        list(repo.rglob("*.py")), settings=cfg
+                    )
+                except Exception:
+                    token_div = 0.0
+                BASELINE_TRACKER.update(
+                    roi=roi,
+                    pass_rate=pass_rate,
+                    entropy=entropy,
+                    call_graph_complexity=call_complexity,
+                    token_diversity=token_div,
+                )
                 tracker = BASELINE_TRACKER
                 encode_fn = should_encode
                 if encode_fn is None:

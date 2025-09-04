@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover - fall back to AST-based metrics
 from ..sandbox_settings import SandboxSettings
 from ..dynamic_path_router import resolve_path
 from ..logging_utils import setup_logging
+from ..module_graph_analyzer import build_import_graph
 
 logger = logging.getLogger(__name__)
 
@@ -203,16 +204,35 @@ def get_alignment_metrics(settings: SandboxSettings | None = None) -> Dict[str, 
         return {}
 
 
+def compute_call_graph_complexity(root: Path) -> float:
+    """Return a simple complexity metric for the call graph under ``root``.
+
+    The metric is defined as the average degree of the directed import/call
+    graph produced by :func:`module_graph_analyzer.build_import_graph`. A value
+    of ``0.0`` is returned when the graph is empty or analysis fails.
+    """
+
+    try:
+        graph = build_import_graph(root)
+        nodes = graph.number_of_nodes()
+        if nodes == 0:
+            return 0.0
+        return float(graph.number_of_edges()) / float(nodes)
+    except Exception:  # pragma: no cover - best effort
+        return 0.0
+
+
 def compute_entropy_metrics(
     files: Sequence[Path | str],
     settings: SandboxSettings | None = None,
-) -> tuple[float, float]:
-    """Return ``(code_diversity, token_complexity)`` for ``files``.
+) -> tuple[float, float, float]:
+    """Return ``(code_diversity, token_complexity, token_diversity)`` for ``files``.
 
     ``code_diversity`` is the average token entropy across the supplied files
-    while ``token_complexity`` reflects the average cyclomatic complexity.  Both
-    values are normalised so callers can compare entropy trends across
-    self‑improvement cycles.
+    while ``token_complexity`` reflects the average cyclomatic complexity.
+    ``token_diversity`` represents the average ratio of unique tokens to total
+    tokens. All values are normalised so callers can compare entropy trends
+    across self‑improvement cycles.
     """
 
     repo = Path(SandboxSettings().sandbox_repo_path)
@@ -220,11 +240,11 @@ def compute_entropy_metrics(
     for f in files:
         p = Path(f)
         file_iter.append(p if p.is_absolute() else repo / p)
-    per_file, total_complexity, _, _, avg_entropy, _ = _collect_metrics(
+    per_file, total_complexity, _, _, avg_entropy, avg_diversity = _collect_metrics(
         file_iter, repo, settings=settings
     )
     avg_complexity = total_complexity / len(per_file) if per_file else 0.0
-    return avg_entropy, avg_complexity
+    return avg_entropy, avg_complexity, avg_diversity
 
 
 def compute_code_entropy(
@@ -425,6 +445,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 __all__ = [
     "_update_alignment_baseline",
     "get_alignment_metrics",
+    "compute_call_graph_complexity",
     "compute_entropy_metrics",
     "compute_code_entropy",
     "compute_entropy_delta",

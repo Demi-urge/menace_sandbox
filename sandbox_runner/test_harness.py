@@ -433,7 +433,7 @@ def _run_once(
                         except Exception:
                             continue
                     if files:
-                        code_diversity, token_complexity = compute_entropy_metrics(files)
+                        code_diversity, token_complexity, _ = compute_entropy_metrics(files)
                         entropy_delta, _ = compute_entropy_delta(
                             code_diversity, token_complexity
                         )
