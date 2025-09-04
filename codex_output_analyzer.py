@@ -8,6 +8,7 @@ import logging
 import logging.config
 import os
 import argparse
+import re
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
@@ -60,6 +61,21 @@ class CriticalGenerationFailure(RuntimeError):
     """Raised when forbidden payment integrations are detected."""
 
 
+_RAW_STRIPE_PATTERN = re.compile(
+    r"api\.stripe\.com|(?:sk_|pk_)[A-Za-z0-9]+"
+)
+
+
+def validate_stripe_usage_generic(text: str) -> None:
+    """Raise if *text* contains raw Stripe endpoints or keys without router."""
+
+    if _RAW_STRIPE_PATTERN.search(text):
+        if "stripe_billing_router" not in text:
+            raise CriticalGenerationFailure(
+                "critical generation failure: raw Stripe usage detected"
+            )
+
+
 def validate_stripe_usage(code: str) -> None:
     """Scan *code* for disallowed Stripe usage.
 
@@ -79,6 +95,7 @@ def validate_stripe_usage(code: str) -> None:
         If Stripe is used directly or payment keywords appear without
         importing ``stripe_billing_router``.
     """
+    validate_stripe_usage_generic(code)
     try:
         tree = ast.parse(code)
     except SyntaxError as exc:  # pragma: no cover - invalid code
