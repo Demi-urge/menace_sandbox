@@ -53,18 +53,17 @@ class ModuleIndexDB:
                 if sem_env is None:
                     sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")  # legacy
                 use_semantic = sem_env == "1"
-                repo_path = get_project_root()
                 exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
                 exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
                 mapping = generate_module_map(
                     self.path,
-                    root=repo_path,
+                    root=get_project_root(),
                     algorithm=algo,
                     threshold=threshold,
                     semantic=use_semantic,
                     exclude=exclude,
                 )
-                if self.path != repo_path / "sandbox_data" / "module_map.json":
+                if self.path != resolve_path("sandbox_data/module_map.json"):
                     self.path.parent.mkdir(parents=True, exist_ok=True)
                     with open(self.path, "w", encoding="utf-8") as fh:
                         json.dump(mapping, fh, indent=2)
