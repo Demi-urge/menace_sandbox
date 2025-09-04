@@ -1,22 +1,24 @@
+import importlib.machinery
 import importlib.util
 import sys
 import types
-from pathlib import Path
+
+import yaml
+from dynamic_path_router import resolve_path
 
 # Tests previously mocked a deprecated ``stripe_handler``.  These tests ensure
 # ``stripe_billing_router`` is patched instead.
 
-ROOT = Path(__file__).resolve().parents[1]
 
-
-def _import_investment_engine(monkeypatch):
+def _import_investment_engine(monkeypatch, tmp_path):
     pkg = types.ModuleType("iepkg")
-    pkg.__path__ = [str(ROOT)]
+    pkg.__path__ = [str(resolve_path("."))]
+    pkg.__spec__ = importlib.machinery.ModuleSpec("iepkg", loader=None, is_package=True)
     sys.modules["iepkg"] = pkg
 
     def _load(name: str):
         spec = importlib.util.spec_from_file_location(
-            f"iepkg.{name}", ROOT / f"{name}.py"
+            f"iepkg.{name}", resolve_path(f"{name}.py")
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[f"iepkg.{name}"] = module
@@ -34,6 +36,22 @@ def _import_investment_engine(monkeypatch):
             "stripe_public_key": "pk_live_dummy",
         }.get(name, ""),
     )
+    routes = {
+        "stripe": {
+            "default": {
+                "finance": {
+                    "finance_router_bot": {
+                        "product_id": "prod_finance_router",
+                        "price_id": "price_finance_standard",
+                        "customer_id": "cus_finance_default",
+                    }
+                }
+            }
+        }
+    }
+    cfg = tmp_path / "routes.yaml"
+    cfg.write_text(yaml.safe_dump(routes))
+    monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
     sbr = _load("stripe_billing_router")
     sys.modules["iepkg.stripe_billing_router"] = sbr
     sys.modules["stripe_billing_router"] = sbr
@@ -44,7 +62,7 @@ def _import_investment_engine(monkeypatch):
 
 
 def test_reinvest_cap(monkeypatch, tmp_path):
-    ie = _import_investment_engine(monkeypatch)
+    ie = _import_investment_engine(monkeypatch, tmp_path)
     db = ie.InvestmentDB(tmp_path / "i.db")
     engine = ie.PredictiveSpendEngine(db)
     bot = ie.AutoReinvestmentBot(
@@ -76,7 +94,7 @@ def test_reinvest_cap(monkeypatch, tmp_path):
 
 
 def test_reinvest_error_propagates(monkeypatch, tmp_path):
-    ie = _import_investment_engine(monkeypatch)
+    ie = _import_investment_engine(monkeypatch, tmp_path)
     db = ie.InvestmentDB(tmp_path / "i.db")
     engine = ie.PredictiveSpendEngine(db)
     bot = ie.AutoReinvestmentBot(predictor=engine, db=db)

@@ -1,23 +1,23 @@
 import importlib.util
+import importlib.machinery
 import sys
 import types
-from pathlib import Path
 import threading
 
 import pytest
+import yaml
+from dynamic_path_router import resolve_path
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _import_module(monkeypatch, secrets=None):
+def _import_module(monkeypatch, tmp_path, secrets=None):
     pkg = types.ModuleType("sbrpkg")
-    pkg.__path__ = [str(ROOT)]
+    pkg.__path__ = [str(resolve_path("."))]
+    pkg.__spec__ = importlib.machinery.ModuleSpec("sbrpkg", loader=None, is_package=True)
     sys.modules["sbrpkg"] = pkg
 
     def _load(name: str):
         spec = importlib.util.spec_from_file_location(
-            f"sbrpkg.{name}", ROOT / f"{name}.py"
+            f"sbrpkg.{name}", resolve_path(f"{name}.py")
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[f"sbrpkg.{name}"] = module
@@ -30,6 +30,22 @@ def _import_module(monkeypatch, secrets=None):
         "stripe_secret_key": "sk_live_dummy",
         "stripe_public_key": "pk_live_dummy",
     }
+    routes = {
+        "stripe": {
+            "default": {
+                "finance": {
+                    "finance_router_bot": {
+                        "product_id": "prod_finance_router",
+                        "price_id": "price_finance_standard",
+                        "customer_id": "cus_finance_default",
+                    }
+                }
+            }
+        }
+    }
+    cfg = tmp_path / "routes.yaml"
+    cfg.write_text(yaml.safe_dump(routes))
+    monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
     vsp = _load("vault_secret_provider")
     monkeypatch.setattr(
         vsp.VaultSecretProvider, "get", lambda self, n: secrets.get(n, "")
@@ -39,8 +55,8 @@ def _import_module(monkeypatch, secrets=None):
     return _load("stripe_billing_router")
 
 
-def test_successful_route_and_charge(monkeypatch):
-    sbr = _import_module(monkeypatch)
+def test_successful_route_and_charge(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
 
     recorded: dict[str, object] = {}
 
@@ -66,8 +82,8 @@ def test_successful_route_and_charge(monkeypatch):
     assert fake_stripe.api_key == "original"
 
 
-def test_missing_keys_or_rule(monkeypatch):
-    sbr = _import_module(monkeypatch)
+def test_missing_keys_or_rule(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
 
     monkeypatch.setattr(sbr, "STRIPE_SECRET_KEY", "")
     monkeypatch.setattr(sbr, "STRIPE_PUBLIC_KEY", "")
@@ -78,8 +94,8 @@ def test_missing_keys_or_rule(monkeypatch):
         sbr._resolve_route("stripe:finance:unknown_bot")
 
 
-def test_region_and_business_overrides(monkeypatch):
-    sbr = _import_module(monkeypatch)
+def test_region_and_business_overrides(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
     sbr.register_route(
         "stripe",
         "finance",
@@ -109,8 +125,8 @@ def test_region_and_business_overrides(monkeypatch):
     assert route["price_id"] == "price_finance_enterprise"
 
 
-def test_domain_routing_and_invalid_domain(monkeypatch):
-    sbr = _import_module(monkeypatch)
+def test_domain_routing_and_invalid_domain(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
     sbr.register_route(
         "alt",
         "finance",
@@ -127,8 +143,8 @@ def test_domain_routing_and_invalid_domain(monkeypatch):
         sbr._resolve_route("unknown:finance:finance_router_bot")
 
 
-def test_key_override_errors(monkeypatch):
-    sbr = _import_module(monkeypatch)
+def test_key_override_errors(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
     with pytest.raises(RuntimeError):
         sbr._resolve_route(
             "stripe:finance:finance_router_bot",
@@ -141,8 +157,8 @@ def test_key_override_errors(monkeypatch):
         )
 
 
-def test_register_rejects_api_keys(monkeypatch):
-    sbr = _import_module(monkeypatch)
+def test_register_rejects_api_keys(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
     with pytest.raises(ValueError):
         sbr.register_route(
             "stripe",
@@ -163,8 +179,8 @@ def test_register_rejects_api_keys(monkeypatch):
         )
 
 
-def test_concurrent_client_isolation(monkeypatch):
-    sbr = _import_module(monkeypatch)
+def test_concurrent_client_isolation(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
 
     calls: list[str] = []
 

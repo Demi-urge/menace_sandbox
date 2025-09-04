@@ -1,24 +1,25 @@
+import importlib.machinery
 import importlib.util
 import json
 import sys
 import types
-from pathlib import Path
+
+import yaml
+from dynamic_path_router import resolve_path
 
 # tests previously mocked a deprecated ``stripe_handler`` module; ensure the
 # modern ``stripe_billing_router`` is loaded and patched instead.
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _import_finance_router(monkeypatch):
+def _import_finance_router(monkeypatch, tmp_path):
     pkg = types.ModuleType("frbpkg")
-    pkg.__path__ = [str(ROOT)]
+    pkg.__path__ = [str(resolve_path("."))]
+    pkg.__spec__ = importlib.machinery.ModuleSpec("frbpkg", loader=None, is_package=True)
     sys.modules["frbpkg"] = pkg
 
     def _load(name: str):
         spec = importlib.util.spec_from_file_location(
-            f"frbpkg.{name}", ROOT / f"{name}.py"
+            f"frbpkg.{name}", resolve_path(f"{name}.py")
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[f"frbpkg.{name}"] = module
@@ -51,6 +52,22 @@ def _import_finance_router(monkeypatch):
             "stripe_public_key": "pk_live_dummy",
         }.get(name, ""),
     )
+    routes = {
+        "stripe": {
+            "default": {
+                "finance": {
+                    "finance_router_bot": {
+                        "product_id": "prod_finance_router",
+                        "price_id": "price_finance_standard",
+                        "customer_id": "cus_finance_default",
+                    }
+                }
+            }
+        }
+    }
+    cfg = tmp_path / "routes.yaml"
+    cfg.write_text(yaml.safe_dump(routes))
+    monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
     sbr = _load("stripe_billing_router")
     sys.modules["frbpkg.stripe_billing_router"] = sbr
     sys.modules["stripe_billing_router"] = sbr
@@ -59,7 +76,7 @@ def _import_finance_router(monkeypatch):
 
 
 def test_route_and_summary(tmp_path, monkeypatch):
-    frb = _import_finance_router(monkeypatch)
+    frb = _import_finance_router(monkeypatch, tmp_path)
     log = tmp_path / "payout.json"
     calls = {}
 
@@ -80,7 +97,7 @@ def test_route_and_summary(tmp_path, monkeypatch):
 
 
 def test_router_error_propagates(tmp_path, monkeypatch):
-    frb = _import_finance_router(monkeypatch)
+    frb = _import_finance_router(monkeypatch, tmp_path)
     log = tmp_path / "payout.json"
     calls = {}
 

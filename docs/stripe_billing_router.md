@@ -17,21 +17,23 @@ Bots import `stripe_billing_router` directly. Each bot supplies a
 billing information and attach the appropriate Stripe keys. The ``domain``
 component identifies the billing provider (currently only ``stripe``).
 
-Routing rules live in the `ROUTING_TABLE` inside `stripe_billing_router.py`.
-The mapping is keyed by `(domain, region, business_category, bot_name)` tuples:
+Routing rules are loaded from ``config/stripe_billing_router.yaml`` (override
+via the ``STRIPE_ROUTING_CONFIG`` environment variable) and stored in
+``ROUTING_TABLE``. The configuration is a nested mapping of
+``domain -> region -> business_category -> bot_name``.  A minimal example:
 
-```python
-ROUTING_TABLE = {
-    ("stripe", "default", "finance", "finance_router_bot"): {
-        "product_id": "prod_finance_router",
-        "price_id": "price_finance_standard",
-        "customer_id": "cus_finance_default",
-    }
-}
+```yaml
+stripe:
+  default:
+    finance:
+      finance_router_bot:
+        product_id: prod_finance_router
+        price_id: price_finance_standard
+        customer_id: cus_finance_default
 ```
 
-Modify this structure via `register_route` or by editing `ROUTING_TABLE` at
-start‑up. Use `register_override` for dynamic adjustments.
+Modify the configuration file or call `register_route` at start‑up to add or
+change routes. Use `register_override` for dynamic adjustments.
 
 ## Usage
 

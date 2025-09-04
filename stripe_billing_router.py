@@ -11,9 +11,13 @@ rule matches the supplied bot.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any, Mapping, Optional
+
+import yaml
+from dynamic_path_router import resolve_path
 
 from vault_secret_provider import VaultSecretProvider
 
@@ -56,17 +60,60 @@ def _load_key(name: str, prefix: str) -> str:
 STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
 STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
 
+_CONFIG_ENV = "STRIPE_ROUTING_CONFIG"
+_DEFAULT_CONFIG = resolve_path("config/stripe_billing_router.yaml").as_posix()
+
+
+def _load_routing_table(path: str) -> dict[tuple[str, str, str, str], dict[str, str]]:
+    """Return routing rules loaded from ``path``.
+
+    The configuration is expected to be a nested mapping in the form
+
+    ``domain -> region -> business_category -> bot_name -> route``.
+
+    The file may be JSON or YAML based on its extension. Missing files result in
+    an empty routing table with a warning.
+    """
+
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            if path.endswith(".json"):
+                data = json.load(fh)
+            else:
+                data = yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        logger.warning("Stripe routing config missing at %%s", path)
+        return {}
+
+    table: dict[tuple[str, str, str, str], dict[str, str]] = {}
+    for domain, regions in (data or {}).items():
+        if not isinstance(regions, Mapping):
+            continue
+        for region, categories in regions.items():
+            if not isinstance(categories, Mapping):
+                continue
+            for business_category, bots in categories.items():
+                if not isinstance(bots, Mapping):
+                    continue
+                for bot_name, route in bots.items():
+                    if not isinstance(route, Mapping):
+                        continue
+                    _validate_no_api_keys(route)
+                    table[(str(domain), str(region), str(business_category), str(bot_name))] = {
+                        str(k): str(v) for k, v in route.items()
+                    }
+    return table
+
+
+_ROUTING_CONFIG_PATH = os.getenv(_CONFIG_ENV, _DEFAULT_CONFIG)
+
 # Base routing rules keyed by (domain, region, business_category, bot_name).
 # Each value contains identifiers used for billing.  The default region provides
 # backwards compatible behaviour for callers that do not specify a region
 # override.
-ROUTING_TABLE: dict[tuple[str, str, str, str], dict[str, str]] = {
-    ("stripe", "default", "finance", "finance_router_bot"): {
-        "product_id": "prod_finance_router",
-        "price_id": "price_finance_standard",
-        "customer_id": "cus_finance_default",
-    }
-}
+ROUTING_TABLE: dict[tuple[str, str, str, str], dict[str, str]] = _load_routing_table(
+    _ROUTING_CONFIG_PATH
+)
 
 # Legacy alias maintained for backwards compatibility with existing imports.
 BILLING_RULES = ROUTING_TABLE
