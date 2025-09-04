@@ -189,6 +189,10 @@ class SnapshotTracker:
                     strategy = prompt
 
                 if strategy:
+                    try:
+                        prompt_memory.reset_penalty(str(strategy))
+                    except Exception:
+                        pass
                     conf_path = base / "strategy_confidence.json"
                     try:
                         conf = json.loads(conf_path.read_text(encoding="utf-8"))

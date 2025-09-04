@@ -161,7 +161,7 @@ from .orchestration import (
 )
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
-from .prompt_memory import log_prompt_attempt
+from .prompt_memory import log_prompt_attempt, load_prompt_penalties
 from .state_snapshot import capture_snapshot, delta as snapshot_delta
 from . import snapshot_tracker
 
@@ -6449,20 +6449,30 @@ class SelfImprovementEngine:
                     self.deprioritized_strategies.add(str(strategy))
 
     def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
-        """Return the first strategy not marked as deprioritized.
+        """Select a strategy taking failure penalties into account.
 
-        Strategies with downgrade counts above the failure threshold are skipped.
+        Strategies exceeding the failure threshold are down-weighted by
+        ``prompt_penalty_multiplier`` but still eligible when all options are
+        penalised.
         """
 
-        penalties = snapshot_tracker.downgrade_counts
-        threshold = SandboxSettings().prompt_failure_threshold
+        penalties = load_prompt_penalties()
+        settings = SandboxSettings()
+        best: str | None = None
+        best_weight = -1.0
         for strat in strategies:
             if strat in self.deprioritized_strategies:
                 continue
-            if penalties.get(str(strat), 0) >= threshold:
-                continue
-            return strat
-        return None
+            count = penalties.get(str(strat), 0)
+            weight = (
+                settings.prompt_penalty_multiplier
+                if count >= settings.prompt_failure_threshold
+                else 1.0
+            )
+            if weight > best_weight:
+                best_weight = weight
+                best = strat
+        return best
 
     @radar.track
     def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:

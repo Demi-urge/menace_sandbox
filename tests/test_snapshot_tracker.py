@@ -17,6 +17,7 @@ sys.modules["codebase_diff_checker"] = types.ModuleType("codebase_diff_checker")
 sys.modules["logging_utils"] = types.SimpleNamespace(log_record=lambda **k: {})
 stub_pm = types.ModuleType("prompt_memory")
 stub_pm.log_prompt_attempt = lambda *a, **k: None
+stub_pm.reset_penalty = lambda *a, **k: None
 sys.modules["menace_sandbox.self_improvement.prompt_memory"] = stub_pm
 sys.modules["menace_sandbox.self_improvement.metrics"] = types.ModuleType("metrics")
 sys.modules["menace_sandbox.self_improvement.module_graph_analyzer"] = types.ModuleType(
