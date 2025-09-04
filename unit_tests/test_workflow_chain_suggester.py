@@ -2,6 +2,7 @@ import sys
 import types
 import importlib.util
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 
 def _load_wcs(monkeypatch):
@@ -44,7 +45,7 @@ def _load_wcs(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "workflow_chain_suggester",
-        Path(__file__).resolve().parent.parent / "workflow_chain_suggester.py",
+        resolve_path("workflow_chain_suggester.py"),
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["workflow_chain_suggester"] = module
