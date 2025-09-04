@@ -13,7 +13,7 @@ import sandbox_runner.environment as env
 def test_hostile_input_scenario(monkeypatch, tmp_path, payload):
     _setup_mm_stubs(monkeypatch)
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
-    (tmp_path / "m.py").write_text("def f(x):\n    return x\n")
+    (tmp_path / "m.py").write_text("def f(x):\n    return x\n")  # path-ignore
 
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
@@ -37,7 +37,7 @@ def test_hostile_input_scenario(monkeypatch, tmp_path, payload):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},  # path-ignore
         raising=False,
     )
     monkeypatch.setattr(sandbox_runner, "simulate_execution_environment", lambda *a, **k: {"risk_flags_triggered": []})

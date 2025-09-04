@@ -5,6 +5,8 @@ import time
 import shutil
 import importlib.util
 
+from dynamic_path_router import resolve_path
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytest
@@ -47,9 +49,7 @@ def test_redis_rate_limiter(redis_url, monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "neurosales.security",
-        os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "neurosales", "security.py")
-        ),
+        str(resolve_path("neurosales/security.py")),
     )
     security = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(security)
@@ -74,7 +74,7 @@ def test_archetype_cache_uses_env(redis_url, monkeypatch):
     monkeypatch.setenv("NEURO_REDIS_URL", redis_url)
     spec = importlib.util.spec_from_file_location(
         "neurosales.api_gateway",
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "neurosales", "api_gateway.py")),
+        str(resolve_path("neurosales/api_gateway.py")),
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

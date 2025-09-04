@@ -19,7 +19,7 @@ def test_run_records_metrics(tmp_path, monkeypatch):
         result,
         {
             "roi": 1.0,
-            "coverage": {"file.py": ["func"]},
+            "coverage": {"file.py": ["func"]},  # path-ignore
             "entropy_delta": 0.1,
             "executed_functions": ["file.py:func"],
         },
