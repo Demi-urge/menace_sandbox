@@ -33,5 +33,12 @@ wrapped by `resolve_path` or `path_for_prompt` to remain portable across forks
 and clones. The `tools/check_static_paths.py` pre-commit hook scans for these
 violations.
 
+## Stripe integration
+
+To centralize billing logic and API configuration, the `stripe` Python package
+must only be imported by `stripe_billing_router.py`. Other modules should rely
+on the router's helpers rather than interacting with Stripe directly. The
+`check-stripe-imports` pre-commit hook enforces this restriction.
+
 Before submitting a pull request, run `pre-commit run --all-files` to execute
 this and other checks locally.

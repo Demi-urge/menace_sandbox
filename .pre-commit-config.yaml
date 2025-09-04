@@ -25,6 +25,12 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
+      - id: forbid-stripe-imports
+        name: Prevent direct Stripe imports
+        entry: python scripts/check_stripe_imports.py
+        language: system
+        pass_filenames: true
+        files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:
