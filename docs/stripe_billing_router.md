@@ -4,6 +4,17 @@
 API keys are pulled from a secure vault provider or fall back to baked‑in
 production values. A `RuntimeError` is raised if the keys are missing or empty.
 
+## Bot Invocation and Routing Rules
+
+Bots either import `stripe_billing_router` directly or use the compatibility
+wrapper `stripe_handler`. Each bot supplies a `"domain:name:category"` string
+which the router uses to look up billing information and attach the appropriate
+Stripe keys.
+
+Routing rules live in the global `BILLING_RULES` mapping inside
+`stripe_billing_router.py`. Edit this mapping at start‑up or use
+`register_override` for dynamic adjustments.
+
 ## Usage
 
 Bots are identified by a `"domain:name:category"` string. The router looks up

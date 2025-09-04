@@ -1,9 +1,9 @@
 # Menace Auto-Reinvestment Logic
 
-Menace periodically reinvests a portion of its Stripe balance into expanding its own capabilities. This process is fully automated and adjusts spending based on predicted ROI.
+Menace periodically reinvests a portion of its billing balance into expanding its own capabilities. This process is fully automated and adjusts spending based on predicted ROI.
 
-## 1. Stripe Account Integration
-- **Read Balance**: Menace reads the current available balance from Stripe.
+## 1. Billing Integration
+- **Read Balance**: Menace reads the current available balance via `stripe_billing_router`.
 - **Available for Reinvestment**: `reinvestable_amount = balance * cap_percentage`.
 - **Execute Spend**: Funds can be used to buy services (compute, data, proxies) or hire freelancers.
 
@@ -17,7 +17,9 @@ Menace periodically reinvests a portion of its Stripe balance into expanding its
 
 ## 4. Reinvestment Execution
 ```python
-balance = stripe.get_balance()
+from stripe_billing_router import get_balance
+
+balance = get_balance("finance:finance_router_bot:monetization")
 reinvestable = balance * cap_percentage
 predicted = predict_optimal_spend()
 amount_to_spend = min(predicted, reinvestable)
@@ -37,4 +39,4 @@ if amount_to_spend >= minimum_threshold:
 
 Example: With a $100,000 balance and a 50% cap, if predicted ROI plateaus after $14,000, only $14,000 is spent and $86,000 stays in reserve.
 
-Implementation lives in `investment_engine.AutoReinvestmentBot` which reads the Stripe balance, predicts optimal spend and logs each transaction via `InvestmentDB`.
+Implementation lives in `investment_engine.AutoReinvestmentBot` which reads the balance through `stripe_billing_router`, predicts optimal spend and logs each transaction via `InvestmentDB`.

@@ -634,7 +634,6 @@ class SandboxSettings(BaseSettings):
             "uvicorn",
             "fastapi",
             "sklearn",
-            "stripe",
             "httpx",
         ],
         env="SANDBOX_OPTIONAL_PYTHON_PKGS",

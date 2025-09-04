@@ -46,7 +46,7 @@ functionality but do not prevent basic operation.
 
 - **System tools**: `ffmpeg`, `tesseract`, `qemu-system-x86_64`
 - **Python packages**: `matplotlib`, `statsmodels`, `uvicorn`, `fastapi`,
-  `sklearn`, `stripe`, `httpx`
+  `sklearn`, `httpx`
 
 ## Directory layout
 
