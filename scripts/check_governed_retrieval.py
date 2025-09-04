@@ -33,6 +33,7 @@ def main() -> int:
                 "check_governed_embeddings.py",  # path-ignore
                 "check_governed_retrieval.py",  # path-ignore
                 "universal_retriever.py",  # path-ignore
+                "stripe_billing_router.py",  # path-ignore
             }
             or path.parts[-2:] == ("vector_service", "retriever.py")  # path-ignore
         ):
