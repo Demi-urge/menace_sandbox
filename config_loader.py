@@ -13,7 +13,7 @@ from dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "config", "security_ai_config.json")
+_DEFAULT_PATH = resolve_path("config/security_ai_config.json")
 
 # Keys required in the configuration
 _REQUIRED_KEYS = {
@@ -122,7 +122,7 @@ def _load_impact_severity_map(
     }
     cfg_path = path or os.getenv(
         "IMPACT_SEVERITY_CONFIG",
-        os.path.join(os.path.dirname(__file__), "config", "impact_severity.yaml"),
+        resolve_path("config/impact_severity.yaml"),
     )
     if _IMPACT_MAP is not None and cfg_path == _IMPACT_PATH:
         return _IMPACT_MAP
