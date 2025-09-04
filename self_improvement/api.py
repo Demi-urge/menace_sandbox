@@ -36,6 +36,13 @@ from .dashboards import (
 )
 from .registry import ImprovementEngineRegistry, auto_x
 from .orchestration_utils import benchmark_workflow_variants
+from .state_snapshot import (
+    Snapshot,
+    capture_snapshot,
+    delta,
+    save_snapshot,
+    load_snapshot,
+)
 
 __all__ = [
     "init_self_improvement",
@@ -67,4 +74,9 @@ __all__ = [
     "load_synergy_history",
     "synergy_stats",
     "synergy_ma",
+    "Snapshot",
+    "capture_snapshot",
+    "delta",
+    "save_snapshot",
+    "load_snapshot",
 ]
