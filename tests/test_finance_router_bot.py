@@ -22,6 +22,7 @@ def _import_finance_router(monkeypatch):
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[f"frbpkg.{name}"] = module
+        sys.modules[name] = module
         assert spec.loader is not None
         spec.loader.exec_module(module)
         return module
@@ -52,6 +53,7 @@ def _import_finance_router(monkeypatch):
     )
     sbr = _load("stripe_billing_router")
     sys.modules["frbpkg.stripe_billing_router"] = sbr
+    sys.modules["stripe_billing_router"] = sbr
 
     return _load("finance_router_bot")
 
