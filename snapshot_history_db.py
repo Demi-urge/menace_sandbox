@@ -8,7 +8,10 @@ import json
 import time
 
 from sandbox_settings import SandboxSettings
-from self_improvement import prompt_memory
+try:  # pragma: no cover - prefer namespaced package when available
+    from menace_sandbox.self_improvement import prompt_memory
+except Exception:  # pragma: no cover - fallback for flat layout
+    from self_improvement import prompt_memory  # type: ignore
 from db_router import DBRouter
 
 try:  # pragma: no cover - optional dependency location
@@ -193,4 +196,3 @@ __all__ = [
     "last_successful_cycle",
     "log_regression",
 ]
-
