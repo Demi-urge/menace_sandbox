@@ -115,29 +115,39 @@ def capture(
 
     settings = SandboxSettings()
 
-    try:
-        entropy, token_diversity = collect_snapshot_metrics(files, settings=settings)
-    except Exception:  # pragma: no cover - best effort
-        entropy, token_diversity = 0.0, 0.0
+    metrics = set(getattr(settings, "snapshot_metrics", []))
+
+    entropy = token_diversity = 0.0
+    if {"entropy", "token_diversity"} & metrics:
+        try:
+            entropy, token_diversity = collect_snapshot_metrics(files, settings=settings)
+        except Exception:  # pragma: no cover - best effort
+            entropy, token_diversity = 0.0, 0.0
+
+    call_complexity = 0.0
+    if "call_graph_complexity" in metrics:
+        try:
+            if relevancy_radar and hasattr(relevancy_radar, "call_graph_complexity"):
+                call_complexity = float(relevancy_radar.call_graph_complexity(files))
+            else:  # fallback
+                repo = Path(settings.sandbox_repo_path)
+                call_complexity = compute_call_graph_complexity(repo)
+        except Exception:  # pragma: no cover - best effort
+            call_complexity = 0.0
+
+    to_update: dict[str, float] = {
+        "roi": float(roi),
+        "sandbox_score": float(sandbox_score),
+    }
+    if "entropy" in metrics:
+        to_update["entropy"] = float(entropy)
+    if "call_graph_complexity" in metrics:
+        to_update["call_graph_complexity"] = float(call_complexity)
+    if "token_diversity" in metrics:
+        to_update["token_diversity"] = float(token_diversity)
 
     try:
-        if relevancy_radar and hasattr(relevancy_radar, "call_graph_complexity"):
-            call_complexity = float(relevancy_radar.call_graph_complexity(files))
-        else:  # fallback
-            repo = Path(settings.sandbox_repo_path)
-            call_complexity = compute_call_graph_complexity(repo)
-    except Exception:  # pragma: no cover - best effort
-        call_complexity = 0.0
-
-    try:
-        BASELINE_TRACKER.update(
-            roi=float(roi),
-            sandbox_score=float(sandbox_score),
-            entropy=float(entropy),
-            call_graph_complexity=call_complexity,
-            token_diversity=token_diversity,
-            record_momentum=stage.lower() == "post",
-        )
+        BASELINE_TRACKER.update(record_momentum=stage.lower() == "post", **to_update)
     except Exception:  # pragma: no cover - best effort
         pass
 
@@ -165,14 +175,12 @@ def capture(
 def compute_delta(prev: Snapshot, curr: Snapshot) -> Dict[str, float]:
     """Return per‑metric differences between two snapshots ``curr - prev``."""
 
-    return {
-        "roi": curr.roi - prev.roi,
-        "sandbox_score": curr.sandbox_score - prev.sandbox_score,
-        "entropy": curr.entropy - prev.entropy,
-        "call_graph_complexity": curr.call_graph_complexity - prev.call_graph_complexity,
-        "token_diversity": curr.token_diversity - prev.token_diversity,
-        "timestamp": curr.timestamp - prev.timestamp,
+    metrics = set(SandboxSettings().snapshot_metrics)
+    delta: Dict[str, float] = {
+        m: float(getattr(curr, m, 0.0)) - float(getattr(prev, m, 0.0)) for m in metrics
     }
+    delta["timestamp"] = curr.timestamp - prev.timestamp
+    return delta
 
 
 # ---------------------------------------------------------------------------
@@ -277,13 +285,11 @@ class SnapshotTracker:
             except Exception:  # pragma: no cover - best effort
                 pass
         else:
-            improved = (
-                delta.get("roi", 0.0) >= 0.0
-                and delta.get("sandbox_score", 0.0) >= 0.0
-                and delta.get("entropy", 0.0) <= 0.0
-                and delta.get("call_graph_complexity", 0.0) >= 0.0
-                and delta.get("token_diversity", 0.0) >= 0.0
-            )
+            metrics = set(SandboxSettings().snapshot_metrics)
+            positive = metrics - {"entropy"}
+            improved = all(delta.get(m, 0.0) >= 0.0 for m in positive)
+            if "entropy" in metrics:
+                improved = improved and delta.get("entropy", 0.0) <= 0.0
             if improved:
                 files = ctx.get("files") or []
                 prompt = ctx.get("prompt")
