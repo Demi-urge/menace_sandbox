@@ -19,6 +19,8 @@ import tempfile
 import torch
 from transformers import AutoModel, AutoTokenizer
 
+from dynamic_path_router import resolve_path
+
 from governed_embeddings import governed_embed
 from .registry import load_handlers
 from .vector_store import VectorStore, get_default_vector_store
@@ -29,9 +31,7 @@ except Exception:  # pragma: no cover - avoid hard dependency
     SentenceTransformer = None  # type: ignore
 
 
-_BUNDLED_MODEL = Path(__file__).with_name("minilm").joinpath(
-    "tiny-distilroberta-base.tar.xz"
-)
+_BUNDLED_MODEL = resolve_path("vector_service/minilm") / "tiny-distilroberta-base.tar.xz"
 _LOCAL_TOKENIZER: AutoTokenizer | None = None
 _LOCAL_MODEL: AutoModel | None = None
 

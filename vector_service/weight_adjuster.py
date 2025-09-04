@@ -3,13 +3,13 @@ from __future__ import annotations
 """Adaptive ranking weight adjustments based on patch outcomes."""
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
 import yaml
 
 from vector_metrics_db import VectorMetricsDB
 from .roi_tags import RoiTag
+from dynamic_path_router import resolve_path
 
 
 def _load_tag_sentiment() -> Dict[RoiTag, float]:
@@ -29,9 +29,7 @@ def _load_tag_sentiment() -> Dict[RoiTag, float]:
         RoiTag.BLOCKED: -1.0,
     }
 
-    cfg_path = (
-        Path(__file__).resolve().parent.parent / "config" / "roi_tag_sentiment.yaml"
-    )
+    cfg_path = resolve_path("config/roi_tag_sentiment.yaml")
     if cfg_path.exists():
         try:  # pragma: no cover - configuration loading is best effort
             data = yaml.safe_load(cfg_path.read_text()) or {}
