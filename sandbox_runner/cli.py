@@ -49,6 +49,10 @@ from logging_utils import get_logger, setup_logging, set_correlation_id
 
 from foresight_tracker import ForesightTracker
 from .environment import load_presets, simulate_full_environment
+try:  # optional dependency
+    from .meta_logger import _SandboxMetaLogger
+except Exception:  # pragma: no cover - best effort
+    _SandboxMetaLogger = None  # type: ignore
 
 try:  # optional import for tests
     from menace.environment_generator import generate_presets  # type: ignore
@@ -163,6 +167,30 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
 
     preset = presets[0]
     sandbox_main(preset, args)
+    if _SandboxMetaLogger is not None:
+        try:
+            data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            meta = _SandboxMetaLogger(data_dir / "sandbox_meta.log")
+            for cyc, roi, succ, fail, dur, cov in meta.rankings():
+                total = succ + fail
+                rate = (succ / total * 100.0) if total else 0.0
+                logger.info(
+                    "cycle %d: ROI %.3f success_rate %.1f%% runtime %.2fs coverage %.1f%%",
+                    cyc,
+                    roi,
+                    rate,
+                    dur,
+                    cov,
+                    extra={
+                        "cycle": cyc,
+                        "roi": roi,
+                        "success_rate": rate,
+                        "duration": dur,
+                        "coverage_percent": cov,
+                    },
+                )
+        except Exception:
+            logger.warning("failed to load sandbox meta log", exc_info=True)
     if getattr(args, "coverage_report", False):
         from .environment import coverage_summary
 
