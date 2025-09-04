@@ -8,6 +8,9 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
+from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+import stripe_billing_router  # noqa: F401
+from dynamic_path_router import resolve_path
 
 OPENAI_CHAT_URL = os.environ.get(
     "OPENAI_CHAT_URL", "https://api.openai.com/v1/chat/completions"
@@ -25,19 +28,13 @@ REDDIT_TIMEOUT = int(os.environ.get("REDDIT_TIMEOUT", "10"))
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must import and use stripe_billing_router. "
-    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
-    "Missing the import must raise a critical generation failure."
-)
-
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
-from . import database_manager, RAISE_ERRORS
-from .database_management_bot import DatabaseManagementBot
+from . import database_manager, RAISE_ERRORS  # noqa: E402
+from .database_management_bot import DatabaseManagementBot  # noqa: E402
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -81,7 +78,7 @@ if _LOCAL_KNOWLEDGE is None:
     _LOCAL_KNOWLEDGE = LocalKnowledgeModule(manager=GPT_MEMORY_MANAGER)
 LOCAL_KNOWLEDGE_MODULE = _LOCAL_KNOWLEDGE
 
-from governed_retrieval import govern_retrieval, redact
+from governed_retrieval import govern_retrieval, redact  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from gpt_memory_interface import GPTMemoryInterface
@@ -91,6 +88,7 @@ try:  # pragma: no cover - optional
     from vector_service import Retriever, FallbackResult
 except Exception:  # pragma: no cover - missing dependency
     Retriever = None  # type: ignore
+
     class FallbackResult(list):  # type: ignore
         pass
 
@@ -100,7 +98,7 @@ except Exception:  # pragma: no cover - fallback
     class ErrorResult(Exception):  # type: ignore
         pass
 DEFAULT_IDEA_DB = database_manager.DB_PATH
-IDEA_DB_PATH = Path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB)))
+IDEA_DB_PATH = Path(resolve_path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB))))
 
 
 @dataclass
@@ -110,7 +108,9 @@ class ChatGPTClient:
     api_key: str = field(default_factory=lambda: os.environ.get("OPENAI_API_KEY", ""))
     model: str = field(default_factory=lambda: os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"))
     session: requests.Session | None = None
-    offline_cache_path: str | None = field(default_factory=lambda: os.environ.get("CHATGPT_CACHE_FILE"))
+    offline_cache_path: str | None = field(
+        default_factory=lambda: os.environ.get("CHATGPT_CACHE_FILE")
+    )
     timeout: int = field(default_factory=lambda: int(os.getenv("OPENAI_TIMEOUT", "30")))
     max_retries: int = field(default_factory=lambda: int(os.getenv("OPENAI_RETRIES", "1")))
     gpt_memory: "GPTMemoryInterface | None" = field(
@@ -284,13 +284,14 @@ class ChatGPTClient:
                     if entries:
                         for e in entries:
                             text = (
-                                f"Prompt: {getattr(e, 'prompt', '')}\nResponse: {getattr(e, 'response', '')}"
+                                f"Prompt: {getattr(e, 'prompt', '')}\n"
+                                f"Response: {getattr(e, 'response', '')}"
                             )
                             if govern_retrieval(text) is None:
                                 continue
                             ctx_parts.append(redact(text))
-                if ctx_parts:
-                    context_text = "\n\n".join(ctx_parts)
+                    if ctx_parts:
+                        context_text = "\n\n".join(ctx_parts)
                     if len(context_text) > max_summary_length:
                         context_text = context_text[:max_summary_length]
                     messages_for_api[0]["content"] += "\n" + context_text
@@ -424,7 +425,8 @@ class ChatGPTClient:
                     entries = self.gpt_memory.search_context("", tags=tags)
                     if entries:
                         ctx = "\n".join(
-                            f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}" for e in entries
+                            f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}"
+                            for e in entries
                         )
                         messages = [{"role": "system", "content": ctx}] + messages
                 elif hasattr(self.gpt_memory, "fetch_context"):
@@ -464,8 +466,14 @@ class Idea:
 
 @dataclass
 class SocialValidator:
-    twitter_token: str | None = field(default_factory=lambda: os.environ.get("TWITTER_BEARER_TOKEN"))
-    reddit_user_agent: str = field(default_factory=lambda: os.environ.get("REDDIT_USER_AGENT", "menace-bot/0.1"))
+    twitter_token: str | None = field(
+        default_factory=lambda: os.environ.get("TWITTER_BEARER_TOKEN")
+    )
+    reddit_user_agent: str = field(
+        default_factory=lambda: os.environ.get(
+            "REDDIT_USER_AGENT", "menace-bot/0.1"
+        )
+    )
 
     def _twitter_search(self, query: str) -> bool:
         if not self.twitter_token:
@@ -546,7 +554,8 @@ def parse_ideas(data: Dict[str, object]) -> List[Idea]:
 def follow_up(client: ChatGPTClient, idea: Idea) -> str:
     """Request additional insight for a single idea."""
     prompt = (
-        f"Provide deeper insight or variations for this business model: {idea.name} - {idea.description}"
+        f"Provide deeper insight or variations for this business model: {idea.name} - "
+        f"{idea.description}"
     )
     try:
         data = ask_with_memory(

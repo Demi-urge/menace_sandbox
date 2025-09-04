@@ -39,6 +39,7 @@ from vector_service import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
+from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -162,11 +163,6 @@ INSTRUCTION_SECTIONS = [
 
 PREVIOUS_FAILURE_TEMPLATE = "Previous failure: {error}"
 
-PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must import and use stripe_billing_router. "
-    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
-    "Missing the import must raise a critical generation failure."
-)
 
 FALLBACK_SYSTEM_PROMPT = (
     "You are fallback mode. " + PAYMENT_ROUTER_NOTICE

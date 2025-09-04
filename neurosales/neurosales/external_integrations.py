@@ -22,13 +22,9 @@ try:  # optional dependency
 except Exception:  # pragma: no cover - optional dep
     GraphDatabase = None  # type: ignore
 
+from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+import stripe_billing_router  # noqa: F401
 logger = logging.getLogger(__name__)
-
-PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must import and use stripe_billing_router. "
-    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
-    "Missing the import must raise a critical generation failure."
-)
 
 
 class RedditHarvester:
