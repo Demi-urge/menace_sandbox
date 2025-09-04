@@ -43,6 +43,7 @@ import os
 import pathlib
 import shutil
 import tempfile
+import uuid
 import urllib.parse
 import subprocess
 import textwrap
@@ -329,7 +330,9 @@ class WorkflowSandboxRunner:
                     tmp_path = pathlib.Path(tmpdir)
                     payload = tmp_path / "payload.pkl"
                     result = tmp_path / "result.pkl"
-                    script = tmp_path / "worker.py"
+                    script = pathlib.Path(
+                        tmp_path, f"worker_{uuid.uuid4().hex}.py"
+                    )  # path-ignore
                     payload.write_bytes(pickle.dumps((funcs, params)))
                     script.write_text(
                         textwrap.dedent(
