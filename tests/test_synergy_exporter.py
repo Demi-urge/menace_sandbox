@@ -10,6 +10,7 @@ import sys
 import subprocess
 import signal
 import pytest
+from dynamic_path_router import resolve_path
 
 
 def _free_port() -> int:
@@ -200,7 +201,7 @@ def test_run_autonomous_starts_exporter(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(se_mod, "SynergyExporter", TestExporter)
 
-    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
+    path = resolve_path("run_autonomous.py")
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "run_autonomous", mod)
@@ -281,12 +282,13 @@ def test_cli_standalone(monkeypatch, tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
     env["PYTHONPATH"] = str(root.parent) + os.pathsep + env.get("PYTHONPATH", "")
+    synergy_exporter_path = str(resolve_path("synergy_exporter.py"))
     script = f"""
 import importlib.util, sys, types
 pkg = types.ModuleType('menace')
 pkg.__path__ = [r'{root}']
 sys.modules['menace'] = pkg
-spec = importlib.util.spec_from_file_location('menace.synergy_exporter', r'{root}/synergy_exporter.py')
+spec = importlib.util.spec_from_file_location('menace.synergy_exporter', r'{synergy_exporter_path}')
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 mod.main(['--history-file', r'{hist_file}', '--port', '{port}', '--interval', '0.05'])
 """
