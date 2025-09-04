@@ -49,6 +49,7 @@ class TestHarnessResult:
     path: str | None = None
     stub: dict | None = None
     preset: dict | None = None
+    coverage: dict | None = None
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial
         return self.success
@@ -197,17 +198,15 @@ def _run_once(
                     selected = " ".join(p.as_posix() for p in rel_paths)
 
             if capture_cov:
-                cov_file = tmpdir / ".coverage"
-                pytest_cmd = [
-                    str(python),
-                    "-m",
-                    "coverage",
-                    "run",
-                    f"--data-file={cov_file}",
-                    "-m",
-                    "pytest",
-                    *pytest_args,
-                ]
+                cov_json = tmpdir / "cov.json"
+                snippet = (
+                    "import sys,coverage,pytest;"
+                    "cov=coverage.Coverage();cov.start();"
+                    "rc=pytest.main(sys.argv[1:]);"
+                    "cov.stop();cov.json_report(outfile='cov.json');"
+                    "sys.exit(rc)"
+                )
+                pytest_cmd = [str(python), "-c", snippet, *pytest_args]
             else:
                 pytest_cmd = [str(python), "-m", "pytest", *pytest_args]
 
@@ -243,7 +242,18 @@ def _run_once(
             if req_file.exists():
                 inner_cmds.append("pip install -r requirements.txt")
             if capture_cov:
-                inner_cmds.append("coverage run --data-file=.coverage " + " ".join(pytest_args))
+                snippet = (
+                    "python - <<'PY'\n"
+                    "import sys,coverage,pytest\n"
+                    "cov=coverage.Coverage()\n"
+                    "cov.start()\n"
+                    "rc=pytest.main(sys.argv[1:])\n"
+                    "cov.stop()\n"
+                    "cov.json_report(outfile='cov.json')\n"
+                    "sys.exit(rc)\n"
+                    "PY " + " ".join(pytest_args)
+                )
+                inner_cmds.append(snippet)
             else:
                 inner_cmds.append("python " + " ".join(pytest_args))
             docker_cmd = [
@@ -277,29 +287,24 @@ def _run_once(
         stdout_parts.append(tests.stdout)
         failure = None
         coverage_pct = None
+        cov_data = None
         if capture_cov:
-            cov_file = tmpdir / ".coverage"
             cov_json = tmpdir / "cov.json"
-            cov_cmd = [
-                sys.executable,
-                "-m",
-                "coverage",
-                "json",
-                f"--data-file={cov_file}",
-                "-o",
-                str(cov_json),
-            ]
-            cov_proc = subprocess.run(
-                cov_cmd, cwd=tmpdir, capture_output=True, text=True
-            )
-            if cov_proc.returncode == 0 and cov_json.exists():
+            if cov_json.exists():
                 try:
                     cov_data = json.loads(cov_json.read_text())
                     coverage_pct = float(
                         cov_data.get("totals", {}).get("percent_covered", 0.0)
                     )
                 except Exception:
-                    coverage_pct = None
+                    cov_data = None
+            if cov_data is not None:
+                try:
+                    from .environment import load_coverage_report  # type: ignore
+
+                    load_coverage_report(cov_data)
+                except Exception:
+                    pass
         if tests.returncode != 0:
             failure = ErrorParser.parse(tests.stdout + tests.stderr)
             frames = _extract_frames(failure.get("trace", ""))
@@ -318,6 +323,7 @@ def _run_once(
             path=selected,
             stub=stub,
             preset=preset,
+            coverage=cov_data,
         )
         try:
             from .scoring import record_run as _score_record_run

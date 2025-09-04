@@ -8,7 +8,7 @@ will raise :class:`ImportError` if the telemetry dependency is unavailable.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence, TYPE_CHECKING, Mapping
+from typing import Sequence, TYPE_CHECKING, Mapping, Any
 import json
 import math
 
@@ -43,6 +43,7 @@ class _CycleMeta:
     reason: str
     warnings: dict | None = None
     coverage: dict[str, float] | None = None
+    coverage_summary: dict | None = None
     duration: float = 0.0
     errors: dict[str, str] | None = None
 
@@ -107,12 +108,14 @@ class _SandboxMetaLogger:
         exec_time: float = 0.0,
         module_metrics: Sequence["ModuleMetrics"] | None = None,
         coverage: Mapping[str, float] | None = None,
+        coverage_summary: Mapping[str, Any] | None = None,
         duration: float | None = None,
         errors: Mapping[str, str] | None = None,
     ) -> None:
         prev = self.records[-1].roi if self.records else 0.0
         delta = roi - prev
         cov: dict[str, float] | None = dict(coverage) if coverage else None
+        cov_sum: dict | None = dict(coverage_summary) if coverage_summary else None
         err: dict[str, str] | None = dict(errors) if errors else None
         dur = float(duration or 0.0)
         gid_map: dict[str, str] = {}
@@ -168,7 +171,18 @@ class _SandboxMetaLogger:
                 err = None
 
         self.records.append(
-            _CycleMeta(cycle, roi, delta, modules, reason, warnings, cov, dur, err)
+            _CycleMeta(
+                cycle,
+                roi,
+                delta,
+                modules,
+                reason,
+                warnings,
+                cov,
+                cov_sum,
+                dur,
+                err,
+            )
         )
         self._persist_history()
         try:
@@ -183,6 +197,8 @@ class _SandboxMetaLogger:
                 record["warnings"] = warnings
             if cov:
                 record["coverage"] = cov
+            if cov_sum:
+                record["coverage_summary"] = cov_sum
             if dur:
                 record["duration"] = dur
             if err:

@@ -438,6 +438,40 @@ def record_module_coverage(
         COVERAGE_FUNCTIONS.setdefault(module, set()).update(prefixed)
 
 
+def load_coverage_report(report: Mapping[str, Any] | str | Path) -> None:
+    """Load a coverage JSON ``report`` and aggregate by module."""
+
+    if isinstance(report, (str, Path)):
+        try:
+            data = json.loads(Path(report).read_text())
+        except Exception:
+            return
+    else:
+        data = report
+
+    files = data.get("files", {}) if isinstance(data, Mapping) else {}
+    root = repo_root()
+    for fpath, info in files.items():
+        try:
+            rel = Path(fpath).resolve().relative_to(root).as_posix()
+        except Exception:
+            rel = Path(fpath).as_posix()
+        module = rel[:-3].replace("/", ".")
+        executed = set(info.get("executed_lines", []))
+        funcs: list[str] = []
+        try:
+            source = (root / rel).read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    end = getattr(node, "end_lineno", node.lineno)
+                    if any(l in executed for l in range(node.lineno, end + 1)):
+                        funcs.append(f"{rel}:{node.name}")
+        except Exception:
+            pass
+        record_module_coverage(module, [rel], funcs)
+
+
 def _functions_for_module(
     cov_map: Mapping[str, List[str]], module: str
 ) -> List[str]:
