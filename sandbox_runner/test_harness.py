@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import json
+from typing import Any
 
 from ..error_parser import ErrorParser
 
@@ -46,6 +47,8 @@ class TestHarnessResult:
     duration: float
     failure: dict | None = None
     path: str | None = None
+    stub: dict | None = None
+    preset: dict | None = None
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial
         return self.success
@@ -79,11 +82,13 @@ def _extract_frames(trace: str) -> list[dict[str, str]]:
     return frames
 
 
-def run_tests(
+def _run_once(
     repo_path: Path,
     changed_path: Path | None = None,
     *,
     backend: str = "venv",
+    stub: dict | None = None,
+    preset: dict | None = None,
 ) -> TestHarnessResult:
     """Execute unit tests for ``repo_path`` inside an isolated environment.
 
@@ -147,7 +152,10 @@ def run_tests(
         capture_cov = os.getenv("SANDBOX_CAPTURE_COVERAGE")
         if backend == "venv":
             venv_dir = tmpdir / "venv"
-            subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(venv_dir)],
+                check=True,
+            )
             python = _python_bin(venv_dir)
 
             if req_file.exists():
@@ -246,11 +254,19 @@ def run_tests(
                 f"{tmpdir}:/repo",
                 "-w",
                 "/repo",
-                "python:3.11-slim",
-                "bash",
-                "-lc",
-                " && ".join(inner_cmds),
             ]
+            for key in ("SANDBOX_INPUT_STUBS", "SANDBOX_ENV_PRESETS"):
+                val = os.environ.get(key)
+                if val is not None:
+                    docker_cmd.extend(["-e", f"{key}={val}"])
+            docker_cmd.extend(
+                [
+                    "python:3.11-slim",
+                    "bash",
+                    "-lc",
+                    " && ".join(inner_cmds),
+                ]
+            )
             tests = subprocess.run(
                 docker_cmd,
                 capture_output=True,
@@ -300,13 +316,17 @@ def run_tests(
             duration=duration,
             failure=failure,
             path=selected,
+            stub=stub,
+            preset=preset,
         )
         try:
             from .scoring import record_run as _score_record_run
             _score_record_run(
                 res,
                 {
-                    "roi": coverage_pct if coverage_pct is not None else (1.0 if res.success else 0.0),
+                    "roi": (
+                        coverage_pct if coverage_pct is not None else (1.0 if res.success else 0.0)
+                    ),
                     "coverage": coverage_pct,
                     "entropy_delta": 0.0,
                 },
@@ -316,3 +336,64 @@ def run_tests(
         return res
     finally:
         tmpdir_obj.cleanup()
+
+
+def run_tests(
+    repo_path: Path,
+    changed_path: Path | None = None,
+    *,
+    backend: str = "venv",
+    input_stubs: list[dict[str, Any]] | None = None,
+    presets: list[dict[str, Any]] | None = None,
+) -> TestHarnessResult | list[TestHarnessResult]:
+    """Execute tests for ``repo_path`` across ``input_stubs`` and ``presets``.
+
+    When ``input_stubs`` is not supplied the harness generates hostile and
+    misuse payloads via :func:`sandbox_runner.environment.generate_input_stubs`.
+    Each stub/preset combination executes in a fresh repository clone with the
+    dictionaries serialised into ``SANDBOX_INPUT_STUBS`` and
+    ``SANDBOX_ENV_PRESETS`` environment variables.  Per-run results are recorded
+    via the unified scoring module.
+    """
+
+    if input_stubs is None:
+        try:
+            from .environment import generate_input_stubs
+
+            input_stubs = generate_input_stubs(1, strategy="hostile")
+            input_stubs += generate_input_stubs(1, strategy="misuse")
+        except Exception:
+            input_stubs = [{}]
+    if not input_stubs:
+        input_stubs = [{}]
+
+    if not presets:
+        presets = [{}]
+
+    results: list[TestHarnessResult] = []
+    for stub in input_stubs:
+        for preset in presets:
+            old_stub = os.environ.get("SANDBOX_INPUT_STUBS")
+            old_presets = os.environ.get("SANDBOX_ENV_PRESETS")
+            os.environ["SANDBOX_INPUT_STUBS"] = json.dumps([stub])
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
+            try:
+                res = _run_once(
+                    repo_path,
+                    changed_path,
+                    backend=backend,
+                    stub=stub,
+                    preset=preset,
+                )
+            finally:
+                if old_stub is None:
+                    os.environ.pop("SANDBOX_INPUT_STUBS", None)
+                else:
+                    os.environ["SANDBOX_INPUT_STUBS"] = old_stub
+                if old_presets is None:
+                    os.environ.pop("SANDBOX_ENV_PRESETS", None)
+                else:
+                    os.environ["SANDBOX_ENV_PRESETS"] = old_presets
+            results.append(res)
+
+    return results[0]
