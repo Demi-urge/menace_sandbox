@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
+import logging
+
+import codebase_diff_checker
+import logging_utils
+from . import prompt_memory
+try:  # pragma: no cover - optional dependency location
+    from ..dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover
+    from dynamic_path_router import resolve_path  # type: ignore
 from .baseline_tracker import BaselineTracker
 from ..sandbox_settings import SandboxSettings
 from .sandbox_score import get_latest_sandbox_score
@@ -76,14 +85,76 @@ def compare_snapshots(
 
 
 # ---------------------------------------------------------------------------
+
+
+class SnapshotTracker:
+    """Track state snapshots across self-improvement iterations."""
+
+    def __init__(self, repo_path: Path, tracker: BaselineTracker) -> None:
+        self.repo_path = Path(repo_path)
+        self.tracker = tracker
+        self.last_snapshot: StateSnapshot | None = None
+        self.logger = logging.getLogger(__name__)
+
+    def capture(self) -> StateSnapshot:
+        """Capture and store the current repository snapshot."""
+
+        snap = capture_state(self.repo_path, self.tracker)
+        self.last_snapshot = snap
+        return snap
+
+    def evaluate_change(
+        self, after: StateSnapshot, prompt: Any, diff_path: str | Path
+    ) -> Dict[str, float]:
+        """Evaluate ``after`` against the previous snapshot.
+
+        If ROI decreased or entropy increased a warning is logged, the prompt
+        attempt recorded and a diff snapshot stored under
+        ``sandbox_data/diffs/``.
+        """
+
+        before = self.last_snapshot
+        self.last_snapshot = after
+        if before is None:
+            return {}
+
+        delta = compare_snapshots(before, after)
+
+        if delta.get("roi", 0) < 0 or delta.get("entropy", 0) > 0:
+            try:  # pragma: no cover - best effort logging
+                prompt_memory.log_prompt_attempt(
+                    prompt, success=False, exec_result=None, roi_meta=delta
+                )
+            except Exception:
+                pass
+
+            try:  # pragma: no cover - diff storage best effort
+                settings = SandboxSettings()
+                diff_dir = Path(resolve_path(settings.sandbox_data_dir)) / "diffs"
+                diff_dir.mkdir(parents=True, exist_ok=True)
+                output = diff_dir / Path(diff_path)
+                codebase_diff_checker.compare_snapshots(before, after, output)
+            except Exception:
+                pass
+
+            self.logger.warning(
+                "negative roi or increased entropy",
+                extra=logging_utils.log_record(delta=delta),
+            )
+
+        return delta
+
+
+# ---------------------------------------------------------------------------
 # Backwards compatibility aliases
 
 Snapshot = StateSnapshot
 
+
 def capture_snapshot(tracker: BaselineTracker, settings: SandboxSettings) -> StateSnapshot:
     """Compatibility wrapper forwarding to :func:`capture_state`."""
 
-    return capture_state(Path(settings.sandbox_repo_path), tracker)
+    return capture_state(Path(resolve_path(settings.sandbox_repo_path)), tracker)
 
 
 def delta(a: StateSnapshot, b: StateSnapshot) -> Dict[str, float]:
@@ -96,6 +167,7 @@ __all__ = [
     "StateSnapshot",
     "capture_state",
     "compare_snapshots",
+    "SnapshotTracker",
     "Snapshot",
     "capture_snapshot",
     "delta",
