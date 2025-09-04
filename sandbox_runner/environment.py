@@ -492,8 +492,11 @@ def record_module_coverage(
         COVERAGE_FUNCTIONS.setdefault(module, set()).update(prefixed)
 
 
-def load_coverage_report(report: Mapping[str, Any] | str | Path) -> None:
-    """Load a coverage JSON ``report`` and aggregate by module."""
+def load_coverage_report(report: Mapping[str, Any] | str | Path) -> list[str]:
+    """Load a coverage JSON ``report`` and aggregate by module.
+
+    Returns a flat list of executed ``"path:function"`` entries for the run.
+    """
 
     if isinstance(report, (str, Path)):
         try:
@@ -505,25 +508,30 @@ def load_coverage_report(report: Mapping[str, Any] | str | Path) -> None:
 
     files = data.get("files", {}) if isinstance(data, Mapping) else {}
     root = repo_root()
+    executed_functions: list[str] = []
     for fpath, info in files.items():
+        path_obj = Path(fpath)
         try:
-            rel = Path(fpath).resolve().relative_to(root).as_posix()
+            rel = path_obj.resolve().relative_to(root).as_posix()
         except Exception:
-            rel = Path(fpath).as_posix()
+            rel = path_obj.as_posix()
         module = rel[:-3].replace("/", ".")
         executed = set(info.get("executed_lines", []))
         funcs: list[str] = []
         try:
-            source = (root / rel).read_text(encoding="utf-8")
+            source = path_obj.read_text(encoding="utf-8")
             tree = ast.parse(source)
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
                     end = getattr(node, "end_lineno", node.lineno)
                     if any(l in executed for l in range(node.lineno, end + 1)):
-                        funcs.append(f"{rel}:{node.name}")
+                        func_id = f"{rel}:{node.name}"
+                        funcs.append(func_id)
+                        executed_functions.append(func_id)
         except Exception:
             pass
         record_module_coverage(module, [rel], funcs)
+    return executed_functions
 
 
 def _functions_for_module(
@@ -4818,7 +4826,7 @@ async def _section_worker(
     def _run_snippet() -> Dict[str, Any]:
         _reset_runtime_state()
         with tempfile.TemporaryDirectory(prefix="run_") as td:
-            path = Path(td) / "snippet.py"
+            path = Path(td) / path_for_prompt("snippet.py")
             modes = _parse_failure_modes(env_input.get("FAILURE_MODES"))
             snip = _inject_failure_modes(snippet, modes)
             path.write_text(snip, encoding="utf-8")
