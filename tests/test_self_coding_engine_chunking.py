@@ -365,7 +365,7 @@ def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
 
     target = tmp_path / "mod.py"
     target.write_text("a=1\nb=2\nc=3\n")
-    region = sce.TargetRegion(start_line=2, end_line=2, func_name="f")
+    region = sce.TargetRegion(start_line=2, end_line=2, function="f")
 
     engine.generate_helper("do something", path=target, target_region=region)
 
@@ -446,7 +446,7 @@ def test_patch_file_rejects_scope_violation(tmp_path):
 
     target = tmp_path / "mod.py"
     target.write_text("print('a')\nprint('b')\nprint('c')\n")
-    region = sce.TargetRegion(start_line=2, end_line=2, func_name="f")
+    region = sce.TargetRegion(start_line=2, end_line=2, function="f")
 
     with pytest.raises(ValueError):
         engine.patch_file(target, "desc", target_region=region)
@@ -485,7 +485,7 @@ def test_build_file_context_stitches_target_region(tmp_path, monkeypatch):
         )
     )
 
-    region = sce.TargetRegion(start_line=4, end_line=8, func_name="bc")
+    region = sce.TargetRegion(start_line=4, end_line=8, function="bc")
     snippet, summaries = engine._build_file_context(path, target_region=region)
     assert "def b():" in snippet and "def c():" in snippet
     assert summaries == ["Chunk 0: def a():"]

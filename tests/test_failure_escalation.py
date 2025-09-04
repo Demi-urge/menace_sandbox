@@ -35,7 +35,7 @@ def make_sandbox():
 
 def test_escalation_and_reset():
     sandbox, engine, err_logger = make_sandbox()
-    region = TargetRegion(path="mod.py", start_line=1, end_line=2, func_name="f")
+    region = TargetRegion(start_line=1, end_line=2, function="f", filename="mod.py")
 
     sandbox._record_region_failure(region)  # count 1
     assert err_logger.events == []
@@ -51,7 +51,7 @@ def test_escalation_and_reset():
     assert err_logger.events[-1].root_cause == "escalation_level_2"
 
     sandbox._reset_failure_counter(region)
-    key = (region.path, region.func_name, region.start_line)
+    key = (region.filename, region.function, region.start_line)
     assert key not in sandbox._failure_counts
 
 
@@ -83,7 +83,7 @@ def test_engine_respects_target_region(tmp_path):
     engine = RecordingEngine()
     sandbox = SelfDebuggerSandbox(None, engine)
     sandbox.error_logger = DummyLogger()
-    region = TargetRegion(path=str(path), start_line=2, end_line=3, func_name="f")
+    region = TargetRegion(start_line=2, end_line=3, function="f", filename=str(path))
 
     sandbox._record_region_failure(region)
     sandbox._record_region_failure(region)  # triggers function rewrite

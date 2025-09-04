@@ -137,21 +137,9 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from prompt_optimizer import PromptOptimizer  # type: ignore
 from .error_parser import ErrorParser, ErrorReport, parse_failure, FailureCache
 try:
-    from .self_improvement.target_region import TargetRegion
+    from .target_region import TargetRegion
 except Exception:  # pragma: no cover - fallback for direct execution
-    import importlib.util
-    import sys
-
-    target_region_path = resolve_path("self_improvement/target_region.py")
-    spec = importlib.util.spec_from_file_location(
-        "_target_region_fallback",
-        target_region_path,
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["_target_region_fallback"] = module
-    assert spec.loader is not None
-    spec.loader.exec_module(module)  # type: ignore[attr-defined]
-    TargetRegion = module.TargetRegion  # type: ignore
+    from target_region import TargetRegion  # type: ignore
 try:
     from .self_improvement.prompt_memory import log_prompt_attempt
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -804,13 +792,13 @@ class SelfCodingEngine:
             start = target_region.start_line
             end = target_region.end_line
             lines = code.splitlines()
-            if not getattr(target_region, "path", None):
-                target_region.path = str(path)
+            if not target_region.filename:
+                target_region.filename = str(path)
             target_region.original_lines = lines[start - 1:end]
             func_sig = ""
-            if getattr(target_region, "func_name", None):
+            if target_region.function:
                 pat = re.compile(
-                    rf"^\s*def\s+{re.escape(target_region.func_name)}\s*\("
+                    rf"^\s*def\s+{re.escape(target_region.function)}\s*\("
                 )
                 for ln in lines:
                     if pat.match(ln):
@@ -819,7 +807,7 @@ class SelfCodingEngine:
             target_region.func_signature = func_sig or None
             threshold = self.chunk_token_threshold or 0
             header = (
-                f"# Region {target_region.func_name or ''} lines"
+                f"# Region {target_region.function or ''} lines"
                 f" {start}-{end}"
             ).strip()
             region_body = "\n".join(target_region.original_lines)
@@ -1495,8 +1483,8 @@ class SelfCodingEngine:
                 return None, False, 0.0
             if _verify(generated):
                 if not self._apply_region_patch(path, original_lines, target_region, generated):
-                    if target_region.func_name:
-                        func_region = self._find_function_region(original_lines, target_region.func_name)
+                    if target_region.function:
+                        func_region = self._find_function_region(original_lines, target_region.function)
                     else:
                         func_region = None
                     if func_region is None:
@@ -1513,9 +1501,9 @@ class SelfCodingEngine:
                         return None, False, 0.0
                     target_region = func_region
             else:
-                if not target_region.func_name:
+                if not target_region.function:
                     return None, False, 0.0
-                func_region = self._find_function_region(original_lines, target_region.func_name)
+                func_region = self._find_function_region(original_lines, target_region.function)
                 if func_region is None:
                     return None, False, 0.0
                 generated = self.generate_helper(
@@ -2561,13 +2549,13 @@ class SelfCodingEngine:
             for node in ast.walk(tree):
                 if (
                     isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and node.name == region.func_name
+                    and node.name == region.function
                 ):
                     end = getattr(node, "end_lineno", node.lineno)
                     return TargetRegion(
                         start_line=node.lineno,
                         end_line=end,
-                        func_name=region.func_name,
+                        function=region.function,
                     )
         except Exception:
             pass

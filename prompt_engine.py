@@ -25,7 +25,7 @@ from dynamic_path_router import resolve_path
 from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
-from failure_localization import TargetRegion
+from target_region import TargetRegion
 
 try:  # pragma: no cover - optional settings dependency
     from sandbox_settings import SandboxSettings  # type: ignore
@@ -807,26 +807,22 @@ class PromptEngine:
 
         snippet_lines = self.build_snippets(ranked)
 
-        path_hint = None
+        filename = None
         original_lines: List[str] = []
         if target_region is not None:
-            path_hint = (
-                getattr(target_region, "path", None)
-                or getattr(target_region, "file", None)
-                or getattr(target_region, "filename", None)
-            )
-            func = getattr(target_region, "func_name", None)
+            filename = target_region.filename or None
+            func = target_region.function or None
             instr = f"Modify only lines {target_region.start_line}-{target_region.end_line}"
             if func:
                 instr += f" within function {func}"
-            if path_hint:
-                instr += f" in {path_hint}"
+            if filename:
+                instr += f" in {filename}"
             instr += " unless surrounding logic is causally required."
 
             original_lines = list(getattr(target_region, "original_lines", []) or [])
-            if not original_lines and path_hint and Path(path_hint).exists():
+            if not original_lines and filename and Path(filename).exists():
                 try:
-                    file_lines = Path(path_hint).read_text(encoding="utf-8").splitlines()
+                    file_lines = Path(filename).read_text(encoding="utf-8").splitlines()
                     start = max(target_region.start_line - 1, 0)
                     end = target_region.end_line
                     original_lines = file_lines[start:end]
@@ -877,10 +873,10 @@ class PromptEngine:
         meta: Dict[str, Any] = {"vector_confidences": scores}
         if target_region is not None:
             region_meta = {
-                "path": path_hint or "",
+                "filename": filename or "",
                 "start_line": target_region.start_line,
                 "end_line": target_region.end_line,
-                "func_name": getattr(target_region, "func_name", ""),
+                "function": target_region.function,
                 "signature": getattr(
                     target_region, "func_signature", getattr(target_region, "signature", "")
                 ),
