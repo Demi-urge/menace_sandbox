@@ -140,7 +140,7 @@ class AdaptiveROIPredictor:
 
     def __init__(
         self,
-        model_path: str | Path = "sandbox_data/adaptive_roi.pkl",
+        model_path: Path | str = resolve_path("sandbox_data/adaptive_roi.pkl"),
         cv: int = 3,
         param_grid: Dict[str, Dict[str, Any]] | None = None,
         slope_threshold: float | None = None,
@@ -939,7 +939,7 @@ def load_training_data(
     tracker: ROITracker,
     evolution_path: str | Path = "evolution_history.db",
     roi_events_path: str | Path = "roi_events.db",
-    output_path: str | Path = "sandbox_data/adaptive_roi.csv",
+    output_path: Path | str = resolve_path("sandbox_data/adaptive_roi.csv"),
     *,
     router: DBRouter | None = None,
 ) -> "pd.DataFrame":
