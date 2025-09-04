@@ -1,5 +1,25 @@
 #!/usr/bin/env python3
-"""Detect direct Stripe SDK imports or live keys in the repository."""
+"""Detect direct Stripe SDK imports or Stripe live keys.
+
+This script guards against direct usage of the Stripe SDK and accidental
+exposure of live Stripe credentials. Run it in two modes:
+
+* Default mode checks Python files for ``stripe`` imports and common payment
+  keywords without ``stripe_billing_router``.
+* ``--keys`` scans any files for strings such as ``sk_live``, ``pk_live``,
+  ``STRIPE_SECRET_KEY`` or ``STRIPE_PUBLIC_KEY`` outside
+  ``stripe_billing_router.py``.
+
+Examples
+--------
+Check imports and keywords::
+
+    python scripts/check_stripe_imports.py path/to/file.py
+
+Scan for potential live keys::
+
+    python scripts/check_stripe_imports.py --keys path/to/file.py
+"""
 from __future__ import annotations
 
 import argparse
@@ -33,7 +53,7 @@ KEYWORDS = {
     "charge",
 }
 KEY_PATTERN = re.compile(
-    r"sk_live_[0-9A-Za-z]{8,}|pk_live_[0-9A-Za-z]{8,}|https://api\.stripe\.com"
+    r"sk_live|pk_live|STRIPE_SECRET_KEY|STRIPE_PUBLIC_KEY"
 )
 
 
@@ -99,6 +119,8 @@ def _check_keywords(paths: list[Path]) -> list[str]:
 def _check_keys(paths: list[Path]) -> list[str]:
     offenders: list[str] = []
     for path in paths:
+        if path in ALLOWED:
+            continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
@@ -111,13 +133,19 @@ def _check_keys(paths: list[Path]) -> list[str]:
                     rel = path
                 offenders.append(f"{rel}:{lineno}:{line.strip()}")
     if offenders:
-        print("Stripe live keys or endpoints detected:")
+        print(
+            "Potential Stripe live keys or environment variables detected (use stripe_billing_router):"
+        )
     return offenders
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--keys", action="store_true", help="scan for Stripe keys")
+    parser.add_argument(
+        "--keys",
+        action="store_true",
+        help="scan for live Stripe keys and environment variables",
+    )
     args, files = parser.parse_known_args(argv)
 
     paths: list[Path] = []
