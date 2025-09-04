@@ -48,7 +48,7 @@ def test_run_records_metrics(tmp_path, monkeypatch):
             "roi": 1.0,
             "coverage": {"file.py": ["func"]},  # path-ignore
             "entropy_delta": 0.1,
-            "executed_functions": ["file.py:func"],
+            "executed_functions": ["file.py:func"],  # path-ignore
         },
     )
 
@@ -89,10 +89,10 @@ def test_run_tests_persists_metrics(tmp_path, monkeypatch):
         path=None,
         stub={},
         preset={},
-        coverage={"file.py": ["func"], "executed_functions": ["file.py:func"]},
+        coverage={"file.py": ["func"], "executed_functions": ["file.py:func"]},  # path-ignore
         edge_cases=None,
         entropy_delta=0.5,
-        executed_functions=["file.py:func"],
+        executed_functions=["file.py:func"],  # path-ignore
     )
     monkeypatch.setattr(th, "_run_once", lambda *a, **k: dummy)
 
