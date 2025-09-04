@@ -4,7 +4,7 @@ import types
 from pathlib import Path
 
 sys.modules.pop("dynamic_path_router", None)
-from dynamic_path_router import clear_cache, resolve_path
+from dynamic_path_router import clear_cache
 from sandbox_runner.edge_case_generator import generate_edge_cases
 from sandbox_runner.metrics_plugins import discover_metrics_plugins
 from sandbox_runner.input_history_db import InputHistoryDB
@@ -28,7 +28,7 @@ def test_metrics_plugins_config_resolves_after_repo_move(tmp_path, monkeypatch):
     repo.mkdir()
     plugin_dir = repo / "plugins"
     plugin_dir.mkdir()
-    (plugin_dir / "p.py").write_text(
+    (plugin_dir / "p.py").write_text(  # path-ignore
         "def collect_metrics(prev, cur, res):\n    return {'x': 1}\n",
         encoding="utf-8",
     )
