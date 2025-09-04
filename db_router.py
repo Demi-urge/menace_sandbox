@@ -252,7 +252,7 @@ def _load_table_overrides() -> None:
     deny_env = os.getenv("DB_ROUTER_DENY_TABLES", "")
     config_path = os.getenv("DB_ROUTER_CONFIG")
     if not config_path:
-        default_cfg = Path(__file__).resolve().parent / "config" / "db_router_tables.json"
+        default_cfg = resolve_path("config/db_router_tables.json")
         if default_cfg.exists():
             config_path = str(default_cfg)
 
