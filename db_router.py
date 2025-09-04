@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Set, Iterable, Mapping, Any
 
 from audit import log_db_access
+from dynamic_path_router import resolve_path
 
 
 __all__ = [
@@ -808,15 +809,24 @@ def init_db_router(
 
     Entry points must invoke this before performing any database operations so
     that :data:`GLOBAL_ROUTER` is available to imported modules. ``local_db_path``
-    defaults to ``./menace_<id>_local.db`` and ``shared_db_path`` defaults to
-    ``./shared/global.db`` when not provided. The created router is stored in
+    defaults to ``menace_<id>_local.db`` and ``shared_db_path`` defaults to
+    ``shared/global.db`` when not provided; both are resolved relative to the
+    repository root via :func:`resolve_path`. The created router is stored in
     :data:`GLOBAL_ROUTER` and returned.
     """
 
     global GLOBAL_ROUTER
 
-    local_path = local_db_path or f"./menace_{menace_id}_local.db"
-    shared_path = shared_db_path or "./shared/global.db"
+    local_path = (
+        local_db_path
+        if local_db_path is not None
+        else str(resolve_path(f"menace_{menace_id}_local.db"))
+    )
+    shared_path = (
+        shared_db_path
+        if shared_db_path is not None
+        else str(resolve_path("shared/global.db"))
+    )
 
     GLOBAL_ROUTER = DBRouter(menace_id, local_path, shared_path)
     return GLOBAL_ROUTER
