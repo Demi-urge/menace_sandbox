@@ -64,15 +64,7 @@ def test_capture_snapshot(monkeypatch, tmp_path):
         return ({}, 0, 0.0, 0, 0.0, 0.6)
 
     monkeypatch.setattr(system_snapshot._si_metrics, "_collect_metrics", fake_collect)
-
-    class FakeGraph:
-        def number_of_edges(self):
-            return 4
-
-        def number_of_nodes(self):
-            return 2
-
-    monkeypatch.setattr(system_snapshot, "build_import_graph", lambda path: FakeGraph())
+    monkeypatch.setattr(system_snapshot, "compute_call_graph_complexity", lambda repo: 2.0)
 
     snap = system_snapshot.capture_snapshot(engine)
     assert snap.roi == 1.5

@@ -42,6 +42,7 @@ metrics_mod = _load(f"{PKG}.self_improvement.metrics", ROOT / "self_improvement"
 SandboxSettings = sandbox_mod.SandboxSettings
 collect_snapshot_metrics = metrics_mod.collect_snapshot_metrics
 _collect_metrics = metrics_mod._collect_metrics
+compute_call_graph_complexity = metrics_mod.compute_call_graph_complexity
 
 
 def test_collect_snapshot_metrics_matches_internal(tmp_path):
@@ -55,3 +56,15 @@ def test_collect_snapshot_metrics_matches_internal(tmp_path):
     entropy, diversity = collect_snapshot_metrics(files, settings=settings)
     assert entropy == pytest.approx(exp_entropy)
     assert diversity == pytest.approx(exp_div)
+
+
+def test_compute_call_graph_complexity(monkeypatch):
+    import networkx as nx
+
+    g = nx.DiGraph()
+    g.add_edge("a", "b")
+    g.add_edge("b", "c")
+    g.add_edge("c", "a")
+
+    monkeypatch.setattr(metrics_mod, "build_import_graph", lambda root: g)
+    assert compute_call_graph_complexity(Path(".")) == pytest.approx(1.0)
