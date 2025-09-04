@@ -10,8 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _import_module(monkeypatch):
-    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
-    monkeypatch.setenv("STRIPE_PUBLIC_KEY", "pk_test")
     pkg = types.ModuleType("sbrpkg")
     pkg.__path__ = [str(ROOT)]
     sys.modules["sbrpkg"] = pkg
@@ -25,6 +23,13 @@ def _import_module(monkeypatch):
         assert spec.loader is not None
         spec.loader.exec_module(module)
         return module
+
+    vsp = _load("vault_secret_provider")
+    monkeypatch.setattr(
+        vsp.VaultSecretProvider,
+        "get",
+        lambda self, name: {"stripe_secret_key": "sk_test", "stripe_public_key": "pk_test"}.get(name, ""),
+    )
 
     _load("stripe_handler")
     return _load("stripe_billing_router")
@@ -47,19 +52,11 @@ def test_unmatched_route_raises(monkeypatch):
 
 
 def test_missing_keys_raise(monkeypatch):
-    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
-    monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
-    pkg = types.ModuleType("sbrpkg")
-    pkg.__path__ = [str(ROOT)]
-    sys.modules["sbrpkg"] = pkg
-    spec = importlib.util.spec_from_file_location(
-        "sbrpkg.stripe_billing_router", ROOT / "stripe_billing_router.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["sbrpkg.stripe_billing_router"] = module
-    assert spec.loader is not None
+    sbr = _import_module(monkeypatch)
+    monkeypatch.setattr(sbr, "STRIPE_SECRET_KEY", "")
+    monkeypatch.setattr(sbr, "STRIPE_PUBLIC_KEY", "")
     with pytest.raises(RuntimeError):
-        spec.loader.exec_module(module)
+        sbr._resolve_route("finance:finance_router_bot:monetization")
 
 
 def test_override_updates_route(monkeypatch):

@@ -1712,9 +1712,9 @@ start unattended.  At minimum the following variables must be defined:
   Required when running with Celery in production.
 - ``OPENAI_API_KEY`` – API key enabling language model features used by
   ``BotDevelopmentBot`` and other helpers.
-- Stripe billing is configured via ``stripe_billing_router``, which reads
-  ``STRIPE_SECRET_KEY`` and ``STRIPE_PUBLIC_KEY`` from the environment. Avoid
-  storing these keys in the repository or configuration files.
+- Stripe billing is configured via ``stripe_billing_router``, which retrieves
+  the required keys from a secure vault provider or uses baked‑in production
+  values. Avoid storing these keys in the repository or configuration files.
 - ``VISUAL_AGENT_TOKEN`` – shared secret used by ``menace_visual_agent_2.py`` for authentication.
 - ``SANDBOX_REPO_PATH`` – path to the local sandbox repository clone processed during self-improvement cycles.
 - ``SANDBOX_DATA_DIR`` – directory storing ROI history, presets and patch metrics.
