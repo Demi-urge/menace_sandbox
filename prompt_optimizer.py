@@ -22,6 +22,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from dynamic_path_router import resolve_path
+
 try:  # pragma: no cover - optional dependency
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 except Exception:  # pragma: no cover - allow running without dependency
@@ -147,18 +149,25 @@ class PromptOptimizer:
         failure_fingerprints_path: str | Path | None = None,
         fingerprint_threshold: int = 3,
     ) -> None:
-        self.log_paths = [Path(success_log), Path(failure_log)]
+        root = resolve_path(".")
+
+        def _resolve(p: str | Path) -> Path:
+            try:
+                return Path(resolve_path(p))
+            except FileNotFoundError:
+                return Path(root) / Path(p)
+
+        self.log_paths = [_resolve(success_log), _resolve(failure_log)]
         if failure_fingerprints_path:
-            self.log_paths.append(Path(failure_fingerprints_path))
-        self.stats_path = Path(stats_path)
+            ff_path = _resolve(failure_fingerprints_path)
+            self.log_paths.append(ff_path)
+            self.failure_fingerprints_path = ff_path
+        else:
+            self.failure_fingerprints_path = None
+        self.stats_path = _resolve(stats_path)
         self.weight_by = weight_by
         self.roi_weight = roi_weight
         self.failure_store = failure_store
-        self.failure_fingerprints_path = (
-            Path(failure_fingerprints_path)
-            if failure_fingerprints_path
-            else None
-        )
         self.fingerprint_threshold = fingerprint_threshold
         self._sentiment = (
             SentimentIntensityAnalyzer() if SentimentIntensityAnalyzer else None
