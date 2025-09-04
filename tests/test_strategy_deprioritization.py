@@ -29,37 +29,24 @@ class MiniEngine:
     def __init__(self):
         self.deprioritized_strategies = set()
         self.logger = logging.getLogger("test")
+        self.strategy_manager = snapshot_tracker.StrategyManager()
 
     def _record_snapshot_delta(self, prompt, delta):
         success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
-        if not success:
-            strategy = None
-            metadata = getattr(prompt, "metadata", {})
-            if isinstance(metadata, dict):
-                strategy = metadata.get("strategy") or metadata.get("prompt_id")
-            if strategy:
+        metadata = getattr(prompt, "metadata", {})
+        strategy = None
+        if isinstance(metadata, dict):
+            strategy = metadata.get("strategy") or metadata.get("prompt_id")
+        if strategy:
+            if not success:
                 count = snapshot_tracker.record_downgrade(str(strategy))
                 if count >= SandboxSettings().prompt_failure_threshold:
                     self.deprioritized_strategies.add(str(strategy))
+            self.strategy_manager.update(str(strategy), delta.get("roi", 0.0), success)
 
-    def _select_prompt_strategy(self, strategies):
-        penalties = prompt_memory.load_prompt_penalties()
-        settings = SandboxSettings()
-        best = None
-        best_weight = -1.0
-        for strat in strategies:
-            if strat in self.deprioritized_strategies:
-                continue
-            count = penalties.get(str(strat), 0)
-            weight = (
-                settings.prompt_penalty_multiplier
-                if count >= settings.prompt_failure_threshold
-                else 1.0
-            )
-            if weight > best_weight:
-                best_weight = weight
-                best = strat
-        return best
+    def next_prompt_strategy(self, strategies):
+        candidates = [s for s in strategies if s not in self.deprioritized_strategies]
+        return self.strategy_manager.best_strategy(candidates)
 
 
 def test_deprioritized_strategy_skipped(tmp_path, monkeypatch):
@@ -77,7 +64,7 @@ def test_deprioritized_strategy_skipped(tmp_path, monkeypatch):
     monkeypatch.setattr(prompt_memory, "load_prompt_penalties", lambda: {"s1": thr})
 
     assert "s1" in eng.deprioritized_strategies
-    choice = eng._select_prompt_strategy(["s1", "s2"])
+    choice = eng.next_prompt_strategy(["s1", "s2"])
     assert choice == "s2"
 
 
@@ -99,5 +86,5 @@ def test_log_regression_penalises_prompt(tmp_path, monkeypatch):
     thr = SandboxSettings().prompt_failure_threshold
     for _ in range(thr):
         snapshot_history_db.log_regression("s1", None, {"roi": -1})
-    choice = eng._select_prompt_strategy(["s1", "s2"])
+    choice = eng.next_prompt_strategy(["s1", "s2"])
     assert choice == "s2"

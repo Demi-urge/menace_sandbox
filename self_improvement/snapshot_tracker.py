@@ -197,6 +197,69 @@ def compute_delta(prev: Snapshot, curr: Snapshot) -> Dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
+class StrategyManager:
+    """Persisted strategy performance metrics."""
+
+    def __init__(self) -> None:
+        settings = SandboxSettings()
+        base = Path(resolve_path(settings.sandbox_data_dir))
+        self._path = base / "strategy_confidence.json"
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            self.metrics: Dict[str, Dict[str, float]] = {}
+            for k, v in raw.items():
+                if isinstance(v, dict):
+                    self.metrics[str(k)] = {
+                        "attempts": int(v.get("attempts", 0)),
+                        "successes": int(v.get("successes", 0)),
+                        "roi": float(v.get("roi", 0.0)),
+                    }
+                else:
+                    iv = int(v)
+                    self.metrics[str(k)] = {
+                        "attempts": iv,
+                        "successes": iv,
+                        "roi": 0.0,
+                    }
+        except Exception:
+            self.metrics = {}
+
+    def _save(self) -> None:
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(json.dumps(self.metrics), encoding="utf-8")
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+    def update(self, strategy: str, roi: float, success: bool) -> None:
+        rec = self.metrics.setdefault(
+            str(strategy), {"attempts": 0, "successes": 0, "roi": 0.0}
+        )
+        rec["attempts"] += 1
+        if success:
+            rec["successes"] += 1
+        rec["roi"] += float(roi)
+        self._save()
+
+    def best_strategy(self, strategies: Sequence[str]) -> str | None:
+        penalties = prompt_memory.load_prompt_penalties()
+        settings = SandboxSettings()
+        threshold = settings.prompt_failure_threshold
+        eligible: list[tuple[str, float]] = []
+        penalised: list[tuple[str, float]] = []
+        for strat in strategies:
+            count = penalties.get(str(strat), 0)
+            rec = self.metrics.get(str(strat), {})
+            attempts = rec.get("attempts", 0)
+            avg_roi = rec.get("roi", 0.0) / attempts if attempts else 0.0
+            target = penalised if threshold and count >= threshold else eligible
+            target.append((strat, avg_roi))
+        pool = eligible or penalised
+        if not pool:
+            return None
+        return max(pool, key=lambda x: x[1])[0]
+
+
 class SnapshotTracker:
     """Maintain before/after snapshots and expose metric deltas."""
 
@@ -205,14 +268,6 @@ class SnapshotTracker:
         self._context: dict[str, Mapping[str, Any]] = {}
         settings = SandboxSettings()
         base = Path(resolve_path(settings.sandbox_data_dir))
-        self._conf_path = base / "strategy_confidence.json"
-        try:
-            data = json.loads(self._conf_path.read_text(encoding="utf-8"))
-            self.strategy_confidence: Dict[str, int] = {
-                str(k): int(v) for k, v in data.items() if isinstance(k, str)
-            }
-        except Exception:
-            self.strategy_confidence = {}
         self._module_map_path = base / "module_checkpoints.json"
         try:
             mapping = json.loads(self._module_map_path.read_text(encoding="utf-8"))
@@ -223,15 +278,6 @@ class SnapshotTracker:
             }
         except Exception:
             self._module_map = {}
-
-    def _save_conf(self) -> None:
-        try:
-            self._conf_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conf_path.write_text(
-                json.dumps(self.strategy_confidence), encoding="utf-8"
-            )
-        except Exception:  # pragma: no cover - best effort
-            pass
 
     def _save_module_map(self) -> None:
         try:
@@ -349,10 +395,6 @@ class SnapshotTracker:
                         pass
                 if strategy:
                     prompt_memory.reset_penalty(str(strategy))
-                    self.strategy_confidence[str(strategy)] = int(
-                        self.strategy_confidence.get(str(strategy), 0)
-                    ) + 1
-                    self._save_conf()
                     self._save_module_map()
         return delta
 
@@ -398,7 +440,16 @@ def get_best_checkpoint(module: Path | str) -> Path | None:
     strategies = mapping.get(key, {})
     if not strategies:
         return None
-    best = max(strategies, key=lambda s: conf.get(s, 0))
+
+    def _success(v: Any) -> int:
+        if isinstance(v, dict):
+            return int(v.get("successes", 0))
+        try:
+            return int(v)
+        except Exception:
+            return 0
+
+    best = max(strategies, key=lambda s: _success(conf.get(s)))
     rel = Path(strategies[best])
     return base / rel
 
@@ -406,6 +457,7 @@ def get_best_checkpoint(module: Path | str) -> Path | None:
 __all__ = [
     "Snapshot",
     "SnapshotTracker",
+    "StrategyManager",
     "capture",
     "compute_delta",
     "save_checkpoint",

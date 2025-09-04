@@ -69,6 +69,7 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "SandboxSettings", lambda: Settings())
 
     tracker = st.SnapshotTracker()
+    manager = st.StrategyManager()
     module = tmp_path / "mod.py"
     module.write_text("a = 1\n", encoding="utf-8")
 
@@ -80,6 +81,7 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
 
     delta = tracker.delta()
     assert delta["regression"] is False
+    manager.update("alpha", delta.get("roi", 0.0), True)
 
     ckpt_base = tmp_path / "checkpoints"
     dirs = list(ckpt_base.iterdir())
@@ -88,7 +90,10 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     assert ckpt_file.exists()
 
     conf = json.loads((tmp_path / "strategy_confidence.json").read_text())
-    assert conf["alpha"] == 1
+    rec = conf["alpha"]
+    assert rec["attempts"] == 1
+    assert rec["successes"] == 1
+    assert rec["roi"] == delta.get("roi", 0.0)
 
     assert st.get_best_checkpoint(module) == ckpt_file
 
