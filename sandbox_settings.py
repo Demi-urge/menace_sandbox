@@ -466,7 +466,8 @@ class SandboxSettings(BaseSettings):
         default_factory=lambda: [
             "OPENAI_API_KEY",
             "DATABASE_URL",
-            "STRIPE_API_KEY",
+            "STRIPE_SECRET_KEY",
+            "STRIPE_PUBLIC_KEY",
             "MODELS",
         ],
         env="SANDBOX_REQUIRED_ENV_VARS",

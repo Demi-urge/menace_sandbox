@@ -85,7 +85,7 @@ class ConfigDiscovery:
         if shutil.which("nvidia-smi"):
             try:
                 out = subprocess.check_output(["nvidia-smi", "-L"], text=True)
-                gpus = len([l for l in out.splitlines() if l.strip()])
+                gpus = len([line for line in out.splitlines() if line.strip()])
             except Exception:
                 gpus = 0
         else:
@@ -149,8 +149,10 @@ class ConfigDiscovery:
         self._thread.start()
         return self._thread
 
+
 _DEFAULT_VARS = [
-    "STRIPE_API_KEY",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_PUBLIC_KEY",
     "DATABASE_URL",
     "OPENAI_API_KEY",
 ]

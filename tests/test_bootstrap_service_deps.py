@@ -84,7 +84,8 @@ class SandboxSettings:
         self.required_env_vars = [
             "OPENAI_API_KEY",
             "DATABASE_URL",
-            "STRIPE_API_KEY",
+            "STRIPE_SECRET_KEY",
+            "STRIPE_PUBLIC_KEY",
             "MODELS",
         ]
 
@@ -125,7 +126,8 @@ def _settings(tmp_path):
 def test_missing_service_warns(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     monkeypatch.setenv("DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("STRIPE_API_KEY", "x")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
+    monkeypatch.setenv("STRIPE_PUBLIC_KEY", "pk_test")
     monkeypatch.setenv("MODELS", str(tmp_path))
     _stub_services(monkeypatch, {"quick_fix_engine": "1.0.0"}, missing={"relevancy_radar"})
     caplog.set_level("WARNING")
@@ -137,7 +139,8 @@ def test_missing_service_warns(monkeypatch, tmp_path, caplog):
 def test_missing_quick_fix_engine_warns(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     monkeypatch.setenv("DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("STRIPE_API_KEY", "x")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
+    monkeypatch.setenv("STRIPE_PUBLIC_KEY", "pk_test")
     monkeypatch.setenv("MODELS", str(tmp_path))
     _stub_services(monkeypatch, {"relevancy_radar": "1.0.0"}, missing={"quick_fix_engine"})
     caplog.set_level("WARNING")
@@ -149,7 +152,8 @@ def test_missing_quick_fix_engine_warns(monkeypatch, tmp_path, caplog):
 def test_version_too_old_warns(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     monkeypatch.setenv("DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("STRIPE_API_KEY", "x")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
+    monkeypatch.setenv("STRIPE_PUBLIC_KEY", "pk_test")
     monkeypatch.setenv("MODELS", str(tmp_path))
     _stub_services(monkeypatch, {"quick_fix_engine": "1.0.0", "relevancy_radar": "0.0.1"})
     caplog.set_level("WARNING")
@@ -161,7 +165,8 @@ def test_version_too_old_warns(monkeypatch, tmp_path, caplog):
 def test_unwritable_data_dir(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     monkeypatch.setenv("DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("STRIPE_API_KEY", "x")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
+    monkeypatch.setenv("STRIPE_PUBLIC_KEY", "pk_test")
     monkeypatch.setenv("MODELS", str(tmp_path))
     _stub_services(monkeypatch, {"quick_fix_engine": "1.0.0", "relevancy_radar": "1.0.0"})
     data_dir = tmp_path / "data"
