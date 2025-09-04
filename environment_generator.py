@@ -1925,7 +1925,11 @@ def generate_presets_from_history(
     data_dir: str = "sandbox_data", count: int | None = None
 ) -> List[Dict[str, Any]]:
     """Return presets adapted using ROI/security history from ``data_dir``."""
-    history_path = Path(data_dir) / "roi_history.json"
+    try:
+        data_dir = resolve_path(data_dir)
+    except FileNotFoundError:
+        data_dir = Path(data_dir)
+    history_path = data_dir / "roi_history.json"
     try:
         history = str(resolve_path(history_path))
     except FileNotFoundError:
