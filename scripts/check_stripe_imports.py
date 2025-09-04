@@ -117,6 +117,14 @@ class StripeAnalyzer(ast.NodeVisitor):
                     self.keyword_lines.add(node.lineno)
         self.generic_visit(node)
 
+    def visit_Attribute(self, node: ast.Attribute) -> None:  # pragma: no cover - simple
+        if isinstance(node.ctx, ast.Store):
+            name = node.attr
+            if not name.isupper() and name != "stripe_billing_router":
+                if contains_payment_keyword(name):
+                    self.keyword_lines.add(node.lineno)
+        self.generic_visit(node)
+
 
 def _root_name(node: ast.AST) -> str | None:
     while isinstance(node, ast.Attribute):

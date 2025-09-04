@@ -174,6 +174,14 @@ def validate_stripe_usage(code: str) -> None:
                         self.has_payment_keyword = True
             self.generic_visit(node)
 
+        def visit_Attribute(self, node: ast.Attribute) -> None:  # pragma: no cover - simple
+            if isinstance(node.ctx, ast.Store):
+                name = node.attr
+                if not name.isupper() and name != "stripe_billing_router":
+                    if contains_payment_keyword(name):
+                        self.has_payment_keyword = True
+            self.generic_visit(node)
+
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # pragma: no cover - simple
             if contains_payment_keyword(node.name):
                 self.has_payment_keyword = True
