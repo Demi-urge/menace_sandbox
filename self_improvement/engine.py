@@ -1667,7 +1667,7 @@ class SelfImprovementEngine:
                 exec_res["failures"] = fails
             failure_reason = None
             if roi_meta.get("tests_passed") is False:
-                failure_reason = "test_failed"
+                failure_reason = "tests_failed"
             elif roi_meta.get("roi_delta", 0.0) < 0:
                 failure_reason = "roi_drop"
         try:
@@ -6534,12 +6534,12 @@ class SelfImprovementEngine:
         except Exception:
             pass
 
-        success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) > 0)
+        success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
         failure_reason = None
         if not success:
             if delta.get("roi", 0.0) < 0:
                 failure_reason = "roi_drop"
-            elif delta.get("entropy", 0.0) > 0:
+            elif delta.get("entropy", 0.0) < 0:
                 failure_reason = "entropy_regression"
         self._update_strategy_stats(prompt, success, delta)
         log_prompt_attempt(

@@ -110,7 +110,7 @@ def log_prompt_attempt(
         Optional ROI metrics or other contextual information.
     failure_reason:
         Optional string describing why the attempt failed. Only stored for
-        unsuccessful attempts.
+        unsuccessful attempts and omitted from success logs.
     """
 
     metadata = getattr(prompt, "metadata", {}) if prompt is not None else {}
@@ -139,7 +139,7 @@ def log_prompt_attempt(
 
     if roi_meta is not None:
         entry["roi_meta"] = roi_meta
-    if failure_reason is not None:
+    if not success and failure_reason is not None:
         entry["failure_reason"] = failure_reason
 
     path = _log_path(success)
