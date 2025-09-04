@@ -19,6 +19,8 @@ from .chatgpt_enhancement_bot import (
 )
 from .micro_models.diff_summarizer import summarize_diff
 from .micro_models.prefix_injector import inject_prefix
+from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+import stripe_billing_router  # noqa: F401
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -28,12 +30,6 @@ try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
-
-PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must import and use stripe_billing_router. "
-    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
-    "Missing the import must raise a critical generation failure."
-)
 
 
 @dataclass

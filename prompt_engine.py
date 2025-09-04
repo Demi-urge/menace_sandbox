@@ -26,6 +26,8 @@ from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
 from target_region import TargetRegion, extract_target_region
+from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+import stripe_billing_router  # noqa: F401
 
 try:  # pragma: no cover - optional settings dependency
     from sandbox_settings import SandboxSettings  # type: ignore
@@ -71,12 +73,6 @@ except Exception:  # pragma: no cover - dependency missing or failed
 
 
 DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh implementation."
-
-PAYMENT_ROUTER_NOTICE = (
-    "All payment logic must import and use stripe_billing_router. "
-    "Direct Stripe SDK calls or raw Stripe keys are forbidden. "
-    "Missing the import must raise a critical generation failure."
-)
 
 
 try:  # pragma: no cover - optional heavy imports for type checking

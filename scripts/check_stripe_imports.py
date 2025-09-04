@@ -29,16 +29,21 @@ import sys
 import tokenize
 from pathlib import Path
 
+
+def resolve_path(path: str) -> str:
+    return path
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALLOWED = {
-    (REPO_ROOT / "stripe_billing_router.py").resolve(),
-    (REPO_ROOT / "scripts/check_stripe_imports.py").resolve(),
-    (REPO_ROOT / "startup_checks.py").resolve(),
-    (REPO_ROOT / "bot_development_bot.py").resolve(),
-    (REPO_ROOT / "config_loader.py").resolve(),
-    (REPO_ROOT / "codex_output_analyzer.py").resolve(),
-}  # path-ignore
-IMPORT_PATTERN = re.compile(r"^\s*(?:import stripe|from stripe\b)")
+    (REPO_ROOT / "stripe_billing_router.py").resolve(),  # path-ignore
+    (REPO_ROOT / "scripts/check_stripe_imports.py").resolve(),  # path-ignore
+    (REPO_ROOT / "startup_checks.py").resolve(),  # path-ignore
+    (REPO_ROOT / "bot_development_bot.py").resolve(),  # path-ignore
+    (REPO_ROOT / "config_loader.py").resolve(),  # path-ignore
+    (REPO_ROOT / "codex_output_analyzer.py").resolve(),  # path-ignore
+}
+IMPORT_PATTERN = re.compile(r"^\s*(?:import stripe(?!_billing_router)|from stripe\b)")
 ROUTER_IMPORT = re.compile(
     r"^\s*(?:from\s+[\.\w]+\s+import\s+stripe_billing_router\b|import\s+stripe_billing_router\b)",
     re.MULTILINE,
@@ -134,7 +139,8 @@ def _check_keys(paths: list[Path]) -> list[str]:
                 offenders.append(f"{rel}:{lineno}:{line.strip()}")
     if offenders:
         print(
-            "Potential Stripe live keys or environment variables detected (use stripe_billing_router):"
+            "Potential Stripe live keys or environment variables detected "
+            "(use stripe_billing_router):",
         )
     return offenders
 
@@ -150,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
 
     paths: list[Path] = []
     for filename in files:
-        p = Path(filename)
+        p = Path(resolve_path(filename))
         paths.append(p if p.is_absolute() else (REPO_ROOT / p).resolve())
 
     if args.keys:
