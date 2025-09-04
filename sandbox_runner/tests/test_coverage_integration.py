@@ -54,7 +54,7 @@ def test_harness_logs_function_coverage(tmp_path, monkeypatch):
 
     res = _run_once(repo)
     assert res.coverage is not None
-    assert isinstance(res.executed_functions, list)
+    assert isinstance(res.coverage.get("executed_functions"), list)
     data = json.loads(scoring._RUN_LOG.read_text().splitlines()[-1])
     assert data["functions_hit"] is not None
     assert isinstance(data["executed_functions"], list)

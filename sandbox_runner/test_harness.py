@@ -398,6 +398,7 @@ def _run_once(
                 except Exception:
                     executed_functions = []
                     coverage_map = {}
+                cov_data["executed_functions"] = executed_functions
         entropy_delta = None
         if cov_data is not None:
             try:
