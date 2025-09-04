@@ -1,16 +1,17 @@
 ## Stripe billing router
 
-`stripe_billing_router` centralises all interactions with Stripe.  Modules
-resolve the correct product, price and customer identifiers for a bot via
-`_resolve_route` and initiate payments through `initiate_charge`.  The router
-loads API keys from `VaultSecretProvider`, applies region or tier overrides and
-exposes hooks for custom `RouteStrategy` implementations.
+`stripe_billing_router` centralises **all** Stripe usage and is the sole payment
+interface for bots.  The module owns the API keys, resolves the correct product,
+price and customer identifiers for a bot via `_resolve_route` and exposes
+helpers such as `charge` and `create_customer`.  Keys must not be duplicated or
+reimplemented in other modules.
 
 ```python
-from stripe_billing_router import initiate_charge
+from stripe_billing_router import charge, create_customer
 
-# All callers must supply a ``bot_id`` in "domain:name:category" format.
-initiate_charge("finance:finance_router_bot:monetization", 12.5)
+# ``bot_id`` must be in "business_category:bot_name" format.
+charge("finance:finance_router_bot", 12.5)
+create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
 ```
 
 ### Extending routing
@@ -32,7 +33,8 @@ register_route(
 
 ### Avoid direct Stripe usage
 
-The Stripe SDK should **never** be accessed directly.  Bypassing the router
-skips key management and audit checks and risks charging the wrong customer.
-Always call the router helpers and let them obtain a configured Stripe client.
+The Stripe SDK should **never** be accessed directly and Stripe keys must not be
+stored outside this module.  Bypassing the router skips key management and audit
+checks and risks charging the wrong customer.  Always call the router helpers
+and let them obtain a configured Stripe client.
 
