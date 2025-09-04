@@ -95,6 +95,11 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
+try:  # pragma: no cover - coverage is optional
+    import coverage  # type: ignore
+except Exception:  # pragma: no cover - coverage unavailable
+    coverage = None  # type: ignore
+
 
 def generate_edge_cases() -> dict[str, Any]:
     """Expose edge case payloads for test injection."""
@@ -414,6 +419,7 @@ ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 COVERAGE_TRACKER: Dict[str, Dict[str, int]] = {}
 COVERAGE_FILES: Dict[str, set[str]] = {}
 COVERAGE_FUNCTIONS: Dict[str, set[str]] = {}
+FUNCTION_COVERAGE_TRACKER: Dict[str, Dict[str, Dict[str, int]]] = {}
 
 
 def record_module_coverage(
@@ -424,7 +430,25 @@ def record_module_coverage(
     if files:
         COVERAGE_FILES.setdefault(module, set()).update(files)
     if functions:
-        COVERAGE_FUNCTIONS.setdefault(module, set()).update(functions)
+        prefixed = []
+        for fn in functions:
+            name = fn.split(":", 1)[-1]
+            prefixed.append(f"{module}:{name}")
+        COVERAGE_FUNCTIONS.setdefault(module, set()).update(prefixed)
+
+
+def _functions_for_module(
+    cov_map: Mapping[str, List[str]], module: str
+) -> List[str]:
+    """Return executed function names for ``module`` from ``cov_map``."""
+    try:
+        mod_obj = importlib.import_module(module)
+        file = inspect.getsourcefile(mod_obj) or inspect.getfile(mod_obj)  # type: ignore[arg-type]
+        root = repo_root()
+        rel = Path(file).resolve().relative_to(root).as_posix()
+    except Exception:
+        return []
+    return cov_map.get(rel, [])
 
 
 @contextmanager
@@ -579,8 +603,10 @@ def create_ephemeral_env(
         yield repo_path, _run
 
 
-def _update_coverage(module: str, scenario: str) -> None:
-    """Increment coverage counter for ``module`` under ``scenario``.
+def _update_coverage(
+    module: str, scenario: str, functions: Iterable[str] | None = None
+) -> None:
+    """Increment coverage counter for ``module`` and ``functions`` under ``scenario``.
 
     Scenario names are normalised to their canonical form using the alias map
     from :mod:`environment_generator` so that coverage for e.g. ``schema_mismatch``
@@ -599,6 +625,16 @@ def _update_coverage(module: str, scenario: str) -> None:
     mod_map = COVERAGE_TRACKER.setdefault(module, {})
     mod_map[canonical] = mod_map.get(canonical, 0) + 1
 
+    if functions:
+        COVERAGE_FUNCTIONS.setdefault(module, set()).update(
+            f"{module}:{fn.split(':',1)[-1]}" for fn in functions
+        )
+        func_map = FUNCTION_COVERAGE_TRACKER.setdefault(module, {})
+        for fn in functions:
+            name = fn.split(":", 1)[-1]
+            scen_map = func_map.setdefault(name, {})
+            scen_map[canonical] = scen_map.get(canonical, 0) + 1
+
 
 def coverage_summary() -> Dict[str, Dict[str, Any]]:
     """Return coverage counts and executed files/functions per module."""
@@ -610,7 +646,12 @@ def coverage_summary() -> Dict[str, Dict[str, Any]]:
     else:
         profiles = list(CANONICAL_PROFILES)
     summary: Dict[str, Dict[str, Any]] = {}
-    modules = set(COVERAGE_TRACKER) | set(COVERAGE_FILES) | set(COVERAGE_FUNCTIONS)
+    modules = (
+        set(COVERAGE_TRACKER)
+        | set(COVERAGE_FILES)
+        | set(COVERAGE_FUNCTIONS)
+        | set(FUNCTION_COVERAGE_TRACKER)
+    )
     for mod in modules:
         scen_map = COVERAGE_TRACKER.get(mod, {})
         missing = [p for p in profiles if p not in scen_map]
@@ -621,6 +662,11 @@ def coverage_summary() -> Dict[str, Dict[str, Any]]:
         funcs = COVERAGE_FUNCTIONS.get(mod)
         if funcs:
             info["functions"] = sorted(funcs)
+        f_counts = FUNCTION_COVERAGE_TRACKER.get(mod)
+        if f_counts:
+            info["function_counts"] = {
+                f"{mod}:{fn}": dict(counts) for fn, counts in f_counts.items()
+            }
         summary[mod] = info
     return summary
 
@@ -672,6 +718,20 @@ def verify_scenario_coverage(
                 logger.error(msg)
             else:
                 logger.warning(msg)
+        func_counts = info.get("function_counts", {})
+        for fn, fc in func_counts.items():
+            fcounts = dict(fc)
+            for alias, canonical in _PROFILE_ALIASES.items():
+                if alias in fcounts:
+                    fcounts[canonical] = fcounts.get(canonical, 0) + fcounts.pop(alias)
+            fabsent = [p for p in profiles if p not in fcounts]
+            if fabsent:
+                missing[fn] = fabsent
+                msg = f"function {fn} missing scenarios: {', '.join(fabsent)}"
+                if raise_on_missing:
+                    logger.error(msg)
+                else:
+                    logger.warning(msg)
     if raise_on_missing and missing:
         raise RuntimeError("scenario coverage incomplete")
     return missing
@@ -683,8 +743,12 @@ def save_coverage_data() -> None:
     path = _env_path("SANDBOX_COVERAGE_FILE", "sandbox_data/coverage.json")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "modules": COVERAGE_TRACKER,
+            "functions": FUNCTION_COVERAGE_TRACKER,
+        }
         with path.open("w", encoding="utf-8") as fh:
-            json.dump(COVERAGE_TRACKER, fh, indent=2, sort_keys=True)
+            json.dump(data, fh, indent=2, sort_keys=True)
     except OSError as exc:  # pragma: no cover - best effort only
         logger.exception(
             "failed to save coverage data",
@@ -4644,7 +4708,11 @@ async def _section_worker(
     env_input: Dict[str, Any],
     threshold: float,
     runner_config: Dict[str, Any] | None = None,
-) -> tuple[Dict[str, Any], list[tuple[float, float, Dict[str, float]]]]:
+) -> tuple[
+    Dict[str, Any],
+    list[tuple[float, float, Dict[str, float]]],
+    Dict[str, List[str]],
+]:
     """Execute ``snippet`` with resource limits and return results."""
 
     if env_input:
@@ -4652,6 +4720,11 @@ async def _section_worker(
             _get_history_db().add(env_input)
         except Exception:
             logger.exception("failed to record input history")
+
+    cov_map: Dict[str, List[str]] = {}
+    cov = coverage.Coverage(data_file=None) if coverage else None
+    if cov:
+        cov.start()
 
     def _run_snippet() -> Dict[str, Any]:
         _reset_runtime_state()
@@ -5017,6 +5090,7 @@ async def _section_worker(
     attempt = 0
     delay = 0.5
     retried = False
+    final_result: Dict[str, Any] = {}
     while True:
         try:
             start = time.perf_counter()
@@ -5089,7 +5163,8 @@ async def _section_worker(
         if result.get("exit_code", 0) < 0:
             _log_diagnostic(str(result.get("stderr", "error")), False)
             if attempt >= 2:
-                return result, updates
+                final_result = result
+                break
             attempt += 1
             retried = True
             await asyncio.sleep(delay)
@@ -5101,8 +5176,43 @@ async def _section_worker(
         if abs(actual - prev) <= threshold:
             if retried:
                 _log_diagnostic("section_worker_retry", True)
-            return result, updates
+            final_result = result
+            break
         prev = actual
+    if cov:
+        try:
+            cov.stop()
+            data = cov.get_data()
+            root = repo_root()
+            for f in data.measured_files():
+                try:
+                    rel = Path(f).resolve().relative_to(root).as_posix()
+                except Exception:
+                    continue
+                lines = data.lines(f) or []
+                try:
+                    source = Path(f).read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                try:
+                    tree = ast.parse(source)
+                except Exception:
+                    continue
+                funcs: List[str] = []
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.FunctionDef):
+                        end = getattr(node, "end_lineno", node.lineno)
+                        if any(l in lines for l in range(node.lineno, end + 1)):
+                            funcs.append(node.name)
+                if funcs:
+                    cov_map[rel] = funcs
+        except Exception:
+            logger.exception("coverage collection failed")
+        try:
+            cov.save()
+        except Exception:
+            pass
+    return final_result, updates, cov_map
 
 
 # ----------------------------------------------------------------------
@@ -6224,13 +6334,13 @@ def run_scenarios(
             env_input = dict(preset)
             scenario = env_input.get("SCENARIO_NAME", "")
 
-            _, updates_on = await _section_worker(
+            _, updates_on, _ = await _section_worker(
                 snippet_on, env_input, tracker.diminishing(), runner_config
             )
             roi_on = updates_on[-1][1] if updates_on else 0.0
             metrics_on = updates_on[-1][2] if updates_on else {}
 
-            _, updates_off = await _section_worker(
+            _, updates_off, _ = await _section_worker(
                 snippet_off, env_input, tracker.diminishing(), runner_config
             )
             roi_off = updates_off[-1][1] if updates_off else 0.0
@@ -6468,7 +6578,7 @@ def simulate_temporal_trajectory(
             simulate_execution_environment(snippet, env_input)
         except Exception:
             logger.exception("temporal preset %s pre-check failed", name)
-        _, updates = asyncio.run(
+        _, updates, _ = asyncio.run(
             _section_worker(snippet, env_input, tracker.diminishing(), runner_config)
         )
         roi = float(updates[-1][1]) if updates else 0.0
@@ -6792,6 +6902,7 @@ def run_repo_section_simulations(
                                 async def _task() -> tuple[
                                     Dict[str, Any],
                                     list[tuple[float, float, Dict[str, float]]],
+                                    Dict[str, List[str]],
                                 ]:
                                     try:
                                         return await _section_worker(
@@ -6802,7 +6913,7 @@ def run_repo_section_simulations(
                                         )
                                     except Exception as exc:
                                         record_error(exc)
-                                        return {}, []
+                                        return {}, [], {}
                                     finally:
                                         sem.release()
 
@@ -6824,9 +6935,18 @@ def run_repo_section_simulations(
 
             sorted_tasks = sorted(tasks, key=lambda x: x[0])
             results = await asyncio.gather(*(t[1] for t in sorted_tasks))
-            for (_, _fut, module, sec_name, scenario, preset, stub), (
+            for (
+                _,
+                _fut,
+                module,
+                sec_name,
+                scenario,
+                preset,
+                stub,
+            ), (
                 res,
                 updates,
+                cov_map,
             ) in zip(sorted_tasks, results):
                 logger.info(
                     "result %s:%s scenario %s exit=%s",
@@ -6855,7 +6975,8 @@ def run_repo_section_simulations(
                         metrics={**metrics, **scenario_metrics, **flags},
                     )
                 if updates:
-                    _update_coverage(module, scenario)
+                    funcs = _functions_for_module(cov_map, module)
+                    _update_coverage(module, scenario, funcs)
                     final_roi = updates[-1][1]
                     final_metrics = updates[-1][2]
                     synergy_data[scenario]["roi"].append(final_roi)
@@ -6903,7 +7024,7 @@ def run_repo_section_simulations(
                     logger.info("combined run for scenario %s", scenario)
                     for m in all_modules:
                         _radar_track_module_usage(m)
-                    res, updates = await _section_worker(
+                    res, updates, _ = await _section_worker(
                         "\n".join(combined),
                         env_input,
                         tracker.diminishing(),
@@ -7925,11 +8046,12 @@ def run_workflow_simulations(
                     index += 1
 
         for _, fut, wid, scenario, preset, module, mod_name in sorted(tasks, key=lambda x: x[0]):
-            res, updates = await fut
+            res, updates, cov_map = await fut
             if updates:
                 if mod_name in coverage_summary and scenario in coverage_summary[mod_name]:
                     coverage_summary[mod_name][scenario] = True
-                _update_coverage(mod_name, scenario)
+                funcs = _functions_for_module(cov_map, mod_name)
+                _update_coverage(mod_name, scenario, funcs)
             for prev, actual, metrics in updates:
                 specific = _scenario_specific_metrics(scenario, metrics)
                 if specific:
@@ -7995,7 +8117,7 @@ def run_workflow_simulations(
             env_input = dict(preset)
             for m in workflow_modules:
                 _radar_track_module_usage(m)
-            res, updates = await _section_worker(
+            res, updates, _ = await _section_worker(
                 combined_snippet,
                 env_input,
                 tracker.diminishing(),
