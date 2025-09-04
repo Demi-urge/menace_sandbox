@@ -108,7 +108,7 @@ class RelevancyRadarService:
             module_names.update(usage_stats.keys())
 
             try:
-                data_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
+                data_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
                 db = RelevancyMetricsDB(data_dir / "relevancy_metrics.db")
                 roi_deltas = db.get_roi_deltas(module_names)
             except Exception:

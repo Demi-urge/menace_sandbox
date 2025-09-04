@@ -302,7 +302,7 @@ def _cleanup_stale_files() -> None:
 # Queue management
 
 # Database paths
-DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
+DATA_DIR = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
 QUEUE_FILE = DATA_DIR / "visual_agent_queue.jsonl"  # legacy path
 QUEUE_DB = DATA_DIR / "visual_agent_queue.db"
 RECOVERY_METRICS_FILE = DATA_DIR / "visual_agent_recovery.json"

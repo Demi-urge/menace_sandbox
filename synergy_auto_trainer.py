@@ -104,7 +104,7 @@ class SynergyAutoTrainer:
         self.interval = float(interval)
         self.progress_file = Path(progress_file)
         self._last_id = 0
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
+        data_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
 
         if not self.history_file.exists():
             new_path = data_dir / self.history_file.name

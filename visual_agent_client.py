@@ -133,7 +133,7 @@ class VisualAgentClient:
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
         self._stop_event = threading.Event()
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR") or resolve_path("sandbox_data"))
+        data_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
         self._local_queue = _LocalQueue(data_dir / "visual_agent_client_queue.jsonl")
         if self.queue_warning_threshold is not None and self.urls and requests:
             self._metrics_thread = threading.Thread(
