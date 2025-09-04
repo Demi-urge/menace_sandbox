@@ -1759,6 +1759,21 @@ class SandboxSettings(BaseSettings):
     roi_stagnation_cycles: int = Field(3, env="ROI_STAGNATION_CYCLES")
     roi_deviation_tolerance: float = Field(0.05, env="ROI_DEVIATION_TOLERANCE")
     roi_stagnation_threshold: float = Field(0.01, env="ROI_STAGNATION_THRESHOLD")
+    enable_snapshot_tracker: bool = Field(
+        True,
+        env="ENABLE_SNAPSHOT_TRACKER",
+        description="Enable tracking of self-improvement snapshots and deltas.",
+    )
+    roi_drop_threshold: float = Field(
+        0.0,
+        env="ROI_DROP_THRESHOLD",
+        description="ROI delta at or below this value flags a regression.",
+    )
+    entropy_regression_threshold: float = Field(
+        0.0,
+        env="ENTROPY_REGRESSION_THRESHOLD",
+        description="Entropy delta at or below this value flags a regression.",
+    )
     sandbox_score_db: str = Field(
         (resolve_path(".") / "score_history.db").as_posix(),
         env="SANDBOX_SCORE_DB",
