@@ -545,8 +545,20 @@ class IntentClusterer:
                 self.router = _ur_router
             except Exception:  # pragma: no cover - fallback
                 mid = menace_id or "intent"
-                local = str(local_db_path or f"./{mid}.db")
-                shared = str(shared_db_path or local)
+                if local_db_path is None:
+                    local = str(resolve_path(f"{mid}.db"))
+                else:
+                    try:
+                        local = str(resolve_path(local_db_path))
+                    except FileNotFoundError:
+                        local = str(local_db_path)
+                if shared_db_path is None:
+                    shared = local
+                else:
+                    try:
+                        shared = str(resolve_path(shared_db_path))
+                    except FileNotFoundError:
+                        shared = str(shared_db_path)
                 self.router = init_db_router(mid, local, shared)
         self.conn = self.router.get_connection("intent_embeddings")
         self._ensure_table()
