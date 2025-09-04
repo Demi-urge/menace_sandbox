@@ -24,7 +24,11 @@ from typing import Any
 
 from ..error_parser import ErrorParser
 from sandbox_settings import SandboxSettings
-from .environment import get_edge_case_stubs
+from .environment import (
+    get_edge_case_stubs,
+    preserve_sandbox_env,
+    cleanup_artifacts,
+)
 from .scoring import record_run
 
 
@@ -151,322 +155,324 @@ def _run_once(
         stdout_parts = []
 
     try:
-        if backend not in {"venv", "docker"}:
-            raise ValueError(f"unknown backend: {backend}")
+        with preserve_sandbox_env():
+            if backend not in {"venv", "docker"}:
+                raise ValueError(f"unknown backend: {backend}")
 
-        edge_data = edge_cases
-        old_edge_env = os.environ.get("SANDBOX_EDGE_CASES")
-        if write_edge_cases:
-            if edge_data is None:
-                raw = os.getenv("SANDBOX_EDGE_CASES")
-                if raw:
-                    try:
-                        parsed = json.loads(raw)
-                        if isinstance(parsed, dict):
-                            edge_data = parsed
-                    except Exception:
-                        edge_data = None
-            if edge_data:
-                for name, payload in edge_data.items():
-                    try:
-                        scheme = urllib.parse.urlparse(name).scheme
-                        if scheme in {"http", "https"}:
-                            continue
-                        dest = tmpdir / name
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        content = (
-                            payload if isinstance(payload, str) else json.dumps(payload)
-                        )
-                        dest.write_text(content, encoding="utf-8")
-                    except Exception:
-                        pass
+            edge_data = edge_cases
+            if write_edge_cases:
+                if edge_data is None:
+                    raw = os.getenv("SANDBOX_EDGE_CASES")
+                    if raw:
+                        try:
+                            parsed = json.loads(raw)
+                            if isinstance(parsed, dict):
+                                edge_data = parsed
+                        except Exception:
+                            edge_data = None
+                if edge_data:
+                    for name, payload in edge_data.items():
+                        try:
+                            scheme = urllib.parse.urlparse(name).scheme
+                            if scheme in {"http", "https"}:
+                                continue
+                            dest = tmpdir / name
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            content = (
+                                payload if isinstance(payload, str) else json.dumps(payload)
+                            )
+                            dest.write_text(content, encoding="utf-8")
+                        except Exception:
+                            pass
 
-        if edge_data is not None:
-            os.environ["SANDBOX_EDGE_CASES"] = json.dumps(edge_data)
-        else:
-            os.environ.pop("SANDBOX_EDGE_CASES", None)
+            if edge_data is not None:
+                os.environ["SANDBOX_EDGE_CASES"] = json.dumps(edge_data)
+            else:
+                os.environ.pop("SANDBOX_EDGE_CASES", None)
 
-        req_file = tmpdir / "requirements.txt"
-        rel_paths: list[Path] = []
-        if changed_path:
-            # ``changed_path`` may be either a single file or a file containing
-            # a newline separated list of changed files.  The latter is used
-            # when multiple files are touched by a patch.
-            try:
-                if changed_path.is_file() and changed_path.suffix == ".txt":
-                    lines = [
-                        Path(line.strip())
-                        for line in changed_path.read_text(encoding="utf-8").splitlines()
-                        if line.strip()
-                    ]
-                    rel_paths.extend(lines)
-                else:
+            req_file = tmpdir / "requirements.txt"
+            rel_paths: list[Path] = []
+            if changed_path:
+                # ``changed_path`` may be either a single file or a file containing
+                # a newline separated list of changed files.  The latter is used
+                # when multiple files are touched by a patch.
+                try:
+                    if changed_path.is_file() and changed_path.suffix == ".txt":
+                        lines = [
+                            Path(line.strip())
+                            for line in changed_path.read_text(encoding="utf-8").splitlines()
+                            if line.strip()
+                        ]
+                        rel_paths.extend(lines)
+                    else:
+                        rel_paths.append(changed_path)
+                except Exception:
                     rel_paths.append(changed_path)
-            except Exception:
-                rel_paths.append(changed_path)
 
-        selected: str | None = None
-        cov_env = os.getenv("SANDBOX_CAPTURE_COVERAGE")
-        capture_cov = True
-        if cov_env is not None and cov_env.lower() in {"0", "false", "no"}:
-            capture_cov = False
-        if backend == "venv":
-            venv_dir = tmpdir / "venv"
-            subprocess.run(
-                [sys.executable, "-m", "venv", str(venv_dir)],
-                check=True,
-            )
-            python = _python_bin(venv_dir)
-
-            if req_file.exists():
-                install = subprocess.run(
-                    [str(python), "-m", "pip", "install", "-r", "requirements.txt"],
-                    cwd=tmpdir,
-                    capture_output=True,
-                    text=True,
+            selected: str | None = None
+            cov_env = os.getenv("SANDBOX_CAPTURE_COVERAGE")
+            capture_cov = True
+            if cov_env is not None and cov_env.lower() in {"0", "false", "no"}:
+                capture_cov = False
+            if backend == "venv":
+                venv_dir = tmpdir / "venv"
+                subprocess.run(
+                    [sys.executable, "-m", "venv", str(venv_dir)],
+                    check=True,
                 )
-                stdout_parts.append(install.stdout)
-                stdout_parts.append(install.stderr)
-                if install.returncode != 0:
-                    msg = (
-                        "dependency installation failed with code "
-                        f"{install.returncode}: {install.stderr}"
-                    )
-                    logger.error(msg.strip())
-                    raise RuntimeError(msg)
+                python = _python_bin(venv_dir)
 
-            if capture_cov:
-                check_cov = subprocess.run(
-                    [str(python), "-c", "import coverage"],
-                    capture_output=True,
-                    text=True,
-                )
-                if check_cov.returncode != 0:
-                    cov_install = subprocess.run(
-                        [str(python), "-m", "pip", "install", "coverage"],
+                if req_file.exists():
+                    install = subprocess.run(
+                        [str(python), "-m", "pip", "install", "-r", "requirements.txt"],
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
                     )
-                    stdout_parts.append(cov_install.stdout)
-                    stdout_parts.append(cov_install.stderr)
-                    if cov_install.returncode != 0:
-                        capture_cov = False
+                    stdout_parts.append(install.stdout)
+                    stdout_parts.append(install.stderr)
+                    if install.returncode != 0:
+                        msg = (
+                            "dependency installation failed with code "
+                            f"{install.returncode}: {install.stderr}"
+                        )
+                        logger.error(msg.strip())
+                        raise RuntimeError(msg)
 
-            pytest_args = ["-q", "--tb=short", "-p", "sandbox_runner.edge_case_plugin"]
-            if rel_paths:
-                try:
-                    rel_paths = [p.relative_to(repo_path) for p in rel_paths]
-                except Exception as exc:
-                    logger.warning("Failed to resolve relative paths %s: %s", rel_paths, exc)
-                if len(rel_paths) == 1:
-                    rel = rel_paths[0]
-                    selected = rel.as_posix()
-                    if (
-                        "tests" in rel.parts
-                        or rel.name.startswith("test_")
-                    ) and rel.suffix == ".py":
-                        pytest_args.insert(0, selected)
+                if capture_cov:
+                    check_cov = subprocess.run(
+                        [str(python), "-c", "import coverage"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if check_cov.returncode != 0:
+                        cov_install = subprocess.run(
+                            [str(python), "-m", "pip", "install", "coverage"],
+                            cwd=tmpdir,
+                            capture_output=True,
+                            text=True,
+                        )
+                        stdout_parts.append(cov_install.stdout)
+                        stdout_parts.append(cov_install.stderr)
+                        if cov_install.returncode != 0:
+                            capture_cov = False
+
+                pytest_args = ["-q", "--tb=short", "-p", "sandbox_runner.edge_case_plugin"]
+                if rel_paths:
+                    try:
+                        rel_paths = [p.relative_to(repo_path) for p in rel_paths]
+                    except Exception as exc:
+                        logger.warning("Failed to resolve relative paths %s: %s", rel_paths, exc)
+                    if len(rel_paths) == 1:
+                        rel = rel_paths[0]
+                        selected = rel.as_posix()
+                        if (
+                            "tests" in rel.parts
+                            or rel.name.startswith("test_")
+                        ) and rel.suffix == ".py":
+                            pytest_args.insert(0, selected)
+                        else:
+                            pytest_args.extend(["-k", rel.stem])
                     else:
-                        pytest_args.extend(["-k", rel.stem])
+                        expr = " or ".join(p.stem for p in rel_paths)
+                        pytest_args.extend(["-k", expr])
+                        selected = " ".join(p.as_posix() for p in rel_paths)
+
+                if capture_cov:
+                    cov_json = tmpdir / "cov.json"
+                    snippet = (
+                        "import sys,coverage,pytest;"
+                        "cov=coverage.Coverage();cov.start();"
+                        "rc=pytest.main(sys.argv[1:]);"
+                        "cov.stop();cov.json_report(outfile='cov.json');"
+                        "sys.exit(rc)"
+                    )
+                    pytest_cmd = [str(python), "-c", snippet, *pytest_args]
                 else:
-                    expr = " or ".join(p.stem for p in rel_paths)
-                    pytest_args.extend(["-k", expr])
-                    selected = " ".join(p.as_posix() for p in rel_paths)
+                    pytest_cmd = [str(python), "-m", "pytest", *pytest_args]
 
-            if capture_cov:
-                cov_json = tmpdir / "cov.json"
-                snippet = (
-                    "import sys,coverage,pytest;"
-                    "cov=coverage.Coverage();cov.start();"
-                    "rc=pytest.main(sys.argv[1:]);"
-                    "cov.stop();cov.json_report(outfile='cov.json');"
-                    "sys.exit(rc)"
+                tests = subprocess.run(
+                    pytest_cmd,
+                    cwd=tmpdir,
+                    capture_output=True,
+                    text=True,
                 )
-                pytest_cmd = [str(python), "-c", snippet, *pytest_args]
-            else:
-                pytest_cmd = [str(python), "-m", "pytest", *pytest_args]
-
-            tests = subprocess.run(
-                pytest_cmd,
-                cwd=tmpdir,
-                capture_output=True,
-                text=True,
-            )
-        else:  # backend == "docker"
-            pytest_args = [
-                "-m",
-                "pytest",
-                "-q",
-                "--tb=short",
-                "-p",
-                "sandbox_runner.edge_case_plugin",
-            ]
-            if rel_paths:
-                try:
-                    rel_paths = [p.relative_to(repo_path) for p in rel_paths]
-                except Exception as exc:
-                    logger.warning("Failed to resolve relative paths %s: %s", rel_paths, exc)
-                if len(rel_paths) == 1:
-                    rel = rel_paths[0]
-                    selected = rel.as_posix()
-                    if (
-                        "tests" in rel.parts
-                        or rel.name.startswith("test_")
-                    ) and rel.suffix == ".py":
-                        pytest_args.insert(1, selected)
-                    else:
-                        pytest_args.extend(["-k", rel.stem])
-                else:
-                    expr = " or ".join(p.stem for p in rel_paths)
-                    pytest_args.extend(["-k", expr])
-                    selected = " ".join(p.as_posix() for p in rel_paths)
-
-            inner_cmds: list[str] = []
-            if req_file.exists():
-                inner_cmds.append("pip install -r requirements.txt")
-            if capture_cov:
-                inner_cmds.append("pip install coverage")
-                snippet = (
-                    "python - <<'PY'\n"
-                    "import sys,coverage,pytest\n"
-                    "cov=coverage.Coverage()\n"
-                    "cov.start()\n"
-                    "rc=pytest.main(sys.argv[1:])\n"
-                    "cov.stop()\n"
-                    "cov.json_report(outfile='cov.json')\n"
-                    "sys.exit(rc)\n"
-                    "PY " + " ".join(pytest_args)
-                )
-                inner_cmds.append(snippet)
-            else:
-                inner_cmds.append("python " + " ".join(pytest_args))
-            docker_cmd = [
-                "docker",
-                "run",
-                "--rm",
-                "-v",
-                f"{tmpdir}:/repo",
-                "-w",
-                "/repo",
-            ]
-            for key in (
-                "SANDBOX_INPUT_STUBS",
-                "SANDBOX_ENV_PRESETS",
-                "SANDBOX_EDGE_CASES",
-            ):
-                val = os.environ.get(key)
-                if val is not None:
-                    docker_cmd.extend(["-e", f"{key}={val}"])
-            docker_cmd.extend(
-                [
-                    "python:3.11-slim",
-                    "bash",
-                    "-lc",
-                    " && ".join(inner_cmds),
+            else:  # backend == "docker"
+                pytest_args = [
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "--tb=short",
+                    "-p",
+                    "sandbox_runner.edge_case_plugin",
                 ]
-            )
-            tests = subprocess.run(
-                docker_cmd,
-                capture_output=True,
-                text=True,
-            )
+                if rel_paths:
+                    try:
+                        rel_paths = [p.relative_to(repo_path) for p in rel_paths]
+                    except Exception as exc:
+                        logger.warning("Failed to resolve relative paths %s: %s", rel_paths, exc)
+                    if len(rel_paths) == 1:
+                        rel = rel_paths[0]
+                        selected = rel.as_posix()
+                        if (
+                            "tests" in rel.parts
+                            or rel.name.startswith("test_")
+                        ) and rel.suffix == ".py":
+                            pytest_args.insert(1, selected)
+                        else:
+                            pytest_args.extend(["-k", rel.stem])
+                    else:
+                        expr = " or ".join(p.stem for p in rel_paths)
+                        pytest_args.extend(["-k", expr])
+                        selected = " ".join(p.as_posix() for p in rel_paths)
 
-        duration = time.time() - start
-        stdout_parts.append(tests.stdout)
-        failure = None
-        cov_json = tmpdir / "cov.json"
-        coverage_pct = None
-        cov_data = None
-        executed_functions: list[str] | None = None
-        coverage_map: dict[str, list[str]] | None = None
-        if cov_json.exists():
-            try:
-                cov_data = json.loads(cov_json.read_text())
-                coverage_pct = float(
-                    cov_data.get("totals", {}).get("percent_covered", 0.0)
+                inner_cmds: list[str] = []
+                if req_file.exists():
+                    inner_cmds.append("pip install -r requirements.txt")
+                if capture_cov:
+                    inner_cmds.append("pip install coverage")
+                    snippet = (
+                        "python - <<'PY'\n"
+                        "import sys,coverage,pytest\n"
+                        "cov=coverage.Coverage()\n"
+                        "cov.start()\n"
+                        "rc=pytest.main(sys.argv[1:])\n"
+                        "cov.stop()\n"
+                        "cov.json_report(outfile='cov.json')\n"
+                        "sys.exit(rc)\n"
+                        "PY " + " ".join(pytest_args)
+                    )
+                    inner_cmds.append(snippet)
+                else:
+                    inner_cmds.append("python " + " ".join(pytest_args))
+                docker_cmd = [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-v",
+                    f"{tmpdir}:/repo",
+                    "-w",
+                    "/repo",
+                ]
+                for key in (
+                    "SANDBOX_INPUT_STUBS",
+                    "SANDBOX_ENV_PRESETS",
+                    "SANDBOX_EDGE_CASES",
+                ):
+                    val = os.environ.get(key)
+                    if val is not None:
+                        docker_cmd.extend(["-e", f"{key}={val}"])
+                docker_cmd.extend(
+                    [
+                        "python:3.11-slim",
+                        "bash",
+                        "-lc",
+                        " && ".join(inner_cmds),
+                    ]
                 )
-            except Exception:
-                cov_data = None
+                tests = subprocess.run(
+                    docker_cmd,
+                    capture_output=True,
+                    text=True,
+                )
+
+            duration = time.time() - start
+            stdout_parts.append(tests.stdout)
+            failure = None
+            cov_json = tmpdir / "cov.json"
+            coverage_pct = None
+            cov_data = None
+            executed_functions: list[str] | None = None
+            coverage_map: dict[str, list[str]] | None = None
+            if cov_json.exists():
+                try:
+                    cov_data = json.loads(cov_json.read_text())
+                    coverage_pct = float(
+                        cov_data.get("totals", {}).get("percent_covered", 0.0)
+                    )
+                except Exception:
+                    cov_data = None
+                if cov_data is not None:
+                    try:
+                        from .environment import load_coverage_report  # type: ignore
+
+                        executed_functions = load_coverage_report(cov_data)
+                        coverage_map = {}
+                        for func in executed_functions:
+                            try:
+                                path, fn = func.split(":", 1)
+                            except ValueError:
+                                continue
+                            coverage_map.setdefault(path, []).append(fn)
+                    except Exception:
+                        executed_functions = []
+                        coverage_map = {}
+                    cov_data["executed_functions"] = executed_functions
+            entropy_delta = None
             if cov_data is not None:
                 try:
-                    from .environment import load_coverage_report  # type: ignore
-
-                    executed_functions = load_coverage_report(cov_data)
-                    coverage_map = {}
-                    for func in executed_functions:
-                        try:
-                            path, fn = func.split(":", 1)
-                        except ValueError:
-                            continue
-                        coverage_map.setdefault(path, []).append(fn)
-                except Exception:
-                    executed_functions = []
-                    coverage_map = {}
-                cov_data["executed_functions"] = executed_functions
-        entropy_delta = None
-        if cov_data is not None:
-            try:
-                from self_improvement.metrics import (
-                    compute_entropy_metrics,
-                    compute_entropy_delta,
-                )
-
-                files: list[Path] = []
-                for f in cov_data.get("files", {}):
-                    try:
-                        rel = Path(f).relative_to(tmpdir)
-                        files.append(repo_path / rel)
-                    except Exception:
-                        continue
-                if files:
-                    code_diversity, token_complexity = compute_entropy_metrics(files)
-                    entropy_delta, _ = compute_entropy_delta(
-                        code_diversity, token_complexity
+                    from self_improvement.metrics import (
+                        compute_entropy_metrics,
+                        compute_entropy_delta,
                     )
-            except Exception:
-                pass
-        if tests.returncode != 0:
-            failure = ErrorParser.parse(tests.stdout + tests.stderr)
-            frames = _extract_frames(failure.get("trace", ""))
-            if frames:
-                failure["frames"] = frames
-                last = frames[-1]
-                failure["file"] = last["file"]
-                failure["line"] = last["line"]
-                failure["function"] = last["function"]
-        res = TestHarnessResult(
-            success=tests.returncode == 0,
-            stdout="".join(stdout_parts),
-            stderr=tests.stderr,
-            duration=duration,
-            failure=failure,
-            path=selected,
-            stub=stub,
-            preset=preset,
-            coverage=cov_data,
-            edge_cases=edge_data,
-            entropy_delta=entropy_delta,
-            executed_functions=executed_functions,
-        )
-        record_run(
-            result=res,
-            metrics={
-                "runtime": duration,
-                "entropy_delta": entropy_delta,
-                "coverage": coverage_map,
-                "executed_functions": executed_functions,
-                "failure": failure,
-            },
-        )
-        return res
+
+                    files: list[Path] = []
+                    for f in cov_data.get("files", {}):
+                        try:
+                            rel = Path(f).relative_to(tmpdir)
+                            files.append(repo_path / rel)
+                        except Exception:
+                            continue
+                    if files:
+                        code_diversity, token_complexity = compute_entropy_metrics(files)
+                        entropy_delta, _ = compute_entropy_delta(
+                            code_diversity, token_complexity
+                        )
+                except Exception:
+                    pass
+            if tests.returncode != 0:
+                failure = ErrorParser.parse(tests.stdout + tests.stderr)
+                frames = _extract_frames(failure.get("trace", ""))
+                if frames:
+                    failure["frames"] = frames
+                    last = frames[-1]
+                    failure["file"] = last["file"]
+                    failure["line"] = last["line"]
+                    failure["function"] = last["function"]
+            res = TestHarnessResult(
+                success=tests.returncode == 0,
+                stdout="".join(stdout_parts),
+                stderr=tests.stderr,
+                duration=duration,
+                failure=failure,
+                path=selected,
+                stub=stub,
+                preset=preset,
+                coverage=cov_data,
+                edge_cases=edge_data,
+                entropy_delta=entropy_delta,
+                executed_functions=executed_functions,
+            )
+            record_run(
+                result=res,
+                metrics={
+                    "runtime": duration,
+                    "entropy_delta": entropy_delta,
+                    "coverage": coverage_map,
+                    "executed_functions": executed_functions,
+                    "failure": failure,
+                },
+            )
+            return res
     finally:
-        if old_edge_env is None:
-            os.environ.pop("SANDBOX_EDGE_CASES", None)
-        else:
-            os.environ["SANDBOX_EDGE_CASES"] = old_edge_env
         if tmpdir_obj is not None:
-            tmpdir_obj.cleanup()
+            try:
+                tmpdir_obj.cleanup()
+            except Exception:
+                logger.warning("tempdir cleanup failed", exc_info=True)
+            cleanup_artifacts([tmpdir])
+        else:
+            cleanup_artifacts()
 
 
 def run_tests(
@@ -551,11 +557,9 @@ def run_tests(
                     except Exception:
                         tmp_changed = changed_path
 
-                old_stub = os.environ.get("SANDBOX_INPUT_STUBS")
-                old_presets = os.environ.get("SANDBOX_ENV_PRESETS")
-                os.environ["SANDBOX_INPUT_STUBS"] = json.dumps([stub])
-                os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
-                try:
+                with preserve_sandbox_env():
+                    os.environ["SANDBOX_INPUT_STUBS"] = json.dumps([stub])
+                    os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
                     res = _run_once(
                         repo_tmp,
                         tmp_changed,
@@ -566,15 +570,6 @@ def run_tests(
                         clone_repo=False,
                         write_edge_cases=False,
                     )
-                finally:
-                    if old_stub is None:
-                        os.environ.pop("SANDBOX_INPUT_STUBS", None)
-                    else:
-                        os.environ["SANDBOX_INPUT_STUBS"] = old_stub
-                    if old_presets is None:
-                        os.environ.pop("SANDBOX_ENV_PRESETS", None)
-                    else:
-                        os.environ["SANDBOX_ENV_PRESETS"] = old_presets
                 record_run(
                     result=res,
                     metrics={
@@ -586,7 +581,7 @@ def run_tests(
                     },
                 )
                 results.append(res)
-
+            cleanup_artifacts([repo_tmp])
     if len(results) == 1:
         return results[0]
     return results

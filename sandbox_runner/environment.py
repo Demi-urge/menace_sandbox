@@ -61,6 +61,7 @@ from typing import (
     Iterable,
     Sequence,
     Mapping,
+    Iterator,
     get_origin,
     get_args,
     TYPE_CHECKING,
@@ -356,6 +357,23 @@ logger = get_logger(__name__)
 _BASE_ENV = os.environ.copy()
 
 
+@contextmanager
+def preserve_sandbox_env() -> Iterator[None]:
+    """Restore ``SANDBOX_*`` variables to previous values after the block."""
+    snapshot = {k: os.environ.get(k) for k in os.environ if k.startswith("SANDBOX_")}
+    try:
+        yield
+    finally:
+        current = {k for k in os.environ if k.startswith("SANDBOX_")}
+        for k in current - snapshot.keys():
+            os.environ.pop(k, None)
+        for k, v in snapshot.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def _reset_runtime_state() -> None:
     """Restore environment variables and clear temporary state."""
     os.environ.clear()
@@ -377,6 +395,77 @@ def _reset_runtime_state() -> None:
     # Reset tempfile module cache and import caches
     tempfile.tempdir = None
     importlib.invalidate_caches()
+    cleanup_artifacts()
+
+
+def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
+    """Remove temporary files, coverage data and Docker artefacts.
+
+    Parameters
+    ----------
+    extra_paths:
+        Additional paths to purge.  Missing paths are ignored.
+    """
+
+    leftovers: list[str] = []
+    for path in extra_paths or []:
+        try:
+            if path.exists():
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)  # type: ignore[arg-type]
+        except Exception:
+            leftovers.append(str(path))
+            logger.debug("artifact cleanup failed for %s", path, exc_info=True)
+
+    cov_files = [
+        _env_path("SANDBOX_COVERAGE_FILE", "sandbox_data/coverage.json"),
+        _env_path("SANDBOX_COVERAGE_SUMMARY", "sandbox_data/coverage_summary.json"),
+        Path(".coverage"),
+        Path("cov.json"),
+    ]
+    for path in cov_files:
+        try:
+            path.unlink(missing_ok=True)  # type: ignore[arg-type]
+        except Exception:
+            leftovers.append(str(path))
+            logger.debug("coverage cleanup failed for %s", path, exc_info=True)
+
+    if shutil.which("docker"):
+        try:
+            subprocess.run(
+                ["docker", "container", "prune", "-f"],
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["docker", "volume", "prune", "-f"],
+                capture_output=True,
+                text=True,
+            )
+            containers = (
+                subprocess.run(
+                    ["docker", "ps", "-aq"], capture_output=True, text=True
+                ).stdout.strip().splitlines()
+            )
+            volumes = (
+                subprocess.run(
+                    ["docker", "volume", "ls", "-q"],
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip().splitlines()
+            )
+            leftovers.extend(f"container:{c}" for c in containers)
+            leftovers.extend(f"volume:{v}" for v in volumes)
+        except Exception:
+            leftovers.append("docker")
+            logger.debug("docker cleanup failed", exc_info=True)
+
+    if leftovers:
+        logger.warning("residual artifacts after cleanup: %s", leftovers)
+    else:
+        logger.info("runtime cleanup completed successfully")
 
 
 def _fallback_logger() -> logging.Logger:
