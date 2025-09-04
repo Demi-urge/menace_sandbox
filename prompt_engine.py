@@ -25,7 +25,7 @@ from dynamic_path_router import resolve_path
 from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
-from target_region import TargetRegion
+from target_region import TargetRegion, extract_target_region
 
 try:  # pragma: no cover - optional settings dependency
     from sandbox_settings import SandboxSettings  # type: ignore
@@ -721,6 +721,8 @@ class PromptEngine:
         if tone is not None:
             self.tone = tone
         retriever = self.patch_retriever or self.retriever
+        if retry_trace and target_region is None:
+            target_region = extract_target_region(retry_trace)
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
             self._optimizer_applied = False
