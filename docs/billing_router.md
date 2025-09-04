@@ -1,17 +1,19 @@
 ## Stripe billing router
 
 `stripe_billing_router` centralises **all** Stripe usage and is the sole payment
-interface for bots.  The module owns the API keys, resolves the correct product,
-price and customer identifiers for a bot via `_resolve_route` and exposes
-helpers such as `charge` and `create_customer`.  Keys must not be duplicated or
+interface for bots.  The module owns the Stripe API keys, resolves the correct
+product, price and customer identifiers for a bot via `_resolve_route` and
+exposes helpers such as `charge` and `create_customer`.  Routes may **not**
+include `secret_key` or `public_key` fields—the router injects centrally
+managed keys and prevents per‑route overrides.  Keys must not be duplicated or
 reimplemented in other modules.
 
 ```python
 from stripe_billing_router import charge, create_customer
 
-# ``bot_id`` must be in "business_category:bot_name" format.
-charge("finance:finance_router_bot", 12.5)
-create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
+# ``bot_id`` must be in "domain:business_category:bot_name" format.
+charge("stripe:finance:finance_router_bot", 12.5)
+create_customer("stripe:finance:finance_router_bot", {"email": "bot@example.com"})
 ```
 
 ### Extending routing
@@ -24,9 +26,9 @@ adjustments via `register_override`.  More complex policies can subclass
 from stripe_billing_router import register_route
 
 register_route(
+    "stripe",
     "finance",
     "finance_router_bot",
-    "monetization",
     {"product_id": "prod_finance_router", "price_id": "price_finance_standard"},
 )
 ```
