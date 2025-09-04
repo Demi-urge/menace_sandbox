@@ -151,6 +151,38 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
                 }
                 return {"status": "ok"}
 
+        class InvoiceItem:
+            last_params = None
+
+            @staticmethod
+            def create(*, api_key=None, **params):
+                StripeStub.InvoiceItem.last_params = {
+                    "api_key": api_key,
+                    **params,
+                }
+                return {"id": "ii_123"}
+
+        class Invoice:
+            last_params_create = None
+            last_params_pay = None
+
+            @staticmethod
+            def create(*, api_key=None, **params):
+                StripeStub.Invoice.last_params_create = {
+                    "api_key": api_key,
+                    **params,
+                }
+                return {"id": "in_123"}
+
+            @staticmethod
+            def pay(invoice_id, *, api_key=None, idempotency_key=None):
+                StripeStub.Invoice.last_params_pay = {
+                    "invoice_id": invoice_id,
+                    "api_key": api_key,
+                    "idempotency_key": idempotency_key,
+                }
+                return {"status": "paid"}
+
         class Balance:
             @staticmethod
             def retrieve(*, api_key=None):
@@ -189,17 +221,21 @@ def test_stripe_router_charge_and_balance(monkeypatch, tmp_path):
         "stripe": {
             "default": {
                 "finance": {
-                    "finance_router_bot": {"product_id": "prod_finance_router"}
+                    "finance_router_bot": {
+                        "product_id": "prod_finance_router",
+                        "price_id": "price_finance_standard",
+                        "customer_id": "cus_finance_default",
+                    }
                 }
             }
         }
     }
     sbr, stripe_stub = _load_stripe_router(monkeypatch, tmp_path, routes)
     sbr.charge("stripe:finance:finance_router_bot", amount=2.5)
-    params = stripe_stub.PaymentIntent.last_params
+    params = stripe_stub.InvoiceItem.last_params
     assert params["api_key"] == "sk_live_dummy"
-    assert params["amount"] == 250
-    assert params["description"] == "prod_finance_router"
+    assert params["price"] == "price_finance_standard"
+    assert params["customer"] == "cus_finance_default"
     assert sbr.get_balance("stripe:finance:finance_router_bot") == 50.0
 
 
@@ -215,6 +251,12 @@ def test_stripe_router_missing_and_misconfigured(monkeypatch, tmp_path):
             }
         }
     }
-    sbr, _ = _load_stripe_router(monkeypatch, tmp_path, routes)
     with pytest.raises(RuntimeError):
-        sbr.charge("stripe:finance:bad_bot")
+        _load_stripe_router(monkeypatch, tmp_path, routes)
+
+
+def test_sanitize_partially_masked_keys(monkeypatch, tmp_path) -> None:
+    frb = _import_finance_router(monkeypatch, tmp_path)
+    text = "foo sk_live_1234****5678 bar pk_test_abcd****xyz"
+    sanitized = frb._sanitize_stripe_keys(text)
+    assert sanitized == "foo [REDACTED] bar [REDACTED]"
