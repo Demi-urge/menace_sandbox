@@ -12,6 +12,7 @@ the service.
 import random
 import os
 import ast
+from pathlib import Path
 from typing import Any, Dict, List, Sequence, Union, TYPE_CHECKING
 import json
 import logging
@@ -358,12 +359,12 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
     path = module_name
     if not os.path.isfile(path):
         mod_path = module_name.replace(".", "/")
-        if os.path.isdir(mod_path):
-            mod_path = os.path.join(mod_path, "__init__.py")
-        else:
-            mod_path = f"{mod_path}.py"
         try:
-            path = str(resolve_path(mod_path))
+            if os.path.isdir(mod_path):
+                mod_path = resolve_path(os.path.join(mod_path, "__init__.py"))
+            else:
+                mod_path = resolve_path(f"{mod_path}.py")
+            path = str(mod_path)
         except FileNotFoundError:
             path = ""
     else:
@@ -1076,7 +1077,7 @@ def adapt_presets(
     agent = None
     rl_path = os.getenv("SANDBOX_PRESET_RL_PATH")
     if not rl_path:
-        rl_path = os.path.join("sandbox_data", "preset_policy.json")
+        rl_path = resolve_path("sandbox_data/preset_policy.json")
     rl_strategy = os.getenv("SANDBOX_PRESET_RL_STRATEGY")
     if rl_path:
         os.makedirs(os.path.dirname(rl_path), exist_ok=True)
@@ -1923,15 +1924,14 @@ def generate_presets_from_history(
     data_dir: str = "sandbox_data", count: int | None = None
 ) -> List[Dict[str, Any]]:
     """Return presets adapted using ROI/security history from ``data_dir``."""
-
-    history = os.path.join(data_dir, "roi_history.json")
+    history = Path(resolve_path(data_dir)) / "roi_history.json"
     tracker = None
-    if os.path.exists(history):
+    if history.exists():
         try:
             from .roi_tracker import ROITracker
 
             tracker = ROITracker()
-            tracker.load_history(history)
+            tracker.load_history(str(history))
         except Exception:
             tracker = None
     presets = generate_presets(count)
