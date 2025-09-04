@@ -29,6 +29,7 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Any, Callable
 
+from ..dynamic_path_router import resolve_dir, get_project_root
 from ..metrics_exporter import self_improvement_failure_total
 from ..sandbox_settings import SandboxSettings
 
@@ -96,7 +97,7 @@ def clear_import_cache() -> None:
 def remove_import_cache_files(base: str | Path | None = None) -> None:
     """Delete ``__pycache__`` directories to free disk space."""
 
-    root = Path(base) if base is not None else Path(__file__).resolve().parent
+    root = resolve_dir(base) if base else get_project_root()
     for pycache in root.rglob("__pycache__"):
         try:
             shutil.rmtree(pycache)
