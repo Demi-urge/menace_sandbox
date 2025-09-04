@@ -258,7 +258,11 @@ class SnapshotTracker:
         delta = compute_delta(before, after)
         roi_delta = float(delta.get("roi", 0.0))
         entropy_delta = float(delta.get("entropy", 0.0))
-        regression = roi_delta < 0 or entropy_delta > 0
+        settings = SandboxSettings()
+        regression = (
+            roi_delta < settings.roi_drop_threshold
+            or entropy_delta > settings.entropy_regression_threshold
+        )
         delta["regression"] = regression
         if before.id is not None and after.id is not None:
             try:
