@@ -21,6 +21,18 @@ on:
         default: 'false'
 
 jobs:
+  static-paths:
+    runs-on: ubuntu-latest
+    env:
+      MENACE_SAFE: "1"
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Check for static path references
+        run: "python tools/check_static_paths.py $(git ls-files '*.py')"
+
   tests:
     runs-on: ubuntu-latest
     env:
