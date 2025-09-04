@@ -12,7 +12,7 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     )
     sys.modules["menace_sandbox.self_improvement.metrics"] = stub
     sys.modules["dynamic_path_router"] = types.SimpleNamespace(
-        resolve_path=lambda p: p,
+        resolve_path=lambda p: Path(p),
         resolve_dir=lambda p: Path(p),
         repo_root=lambda: Path("."),
     )
@@ -27,11 +27,30 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     sys.modules["menace_sandbox.audit_logger"] = types.SimpleNamespace(log_event=lambda *a, **k: None)
     db_router.init_db_router = lambda *a, **k: None
 
+    init_stub = types.ModuleType("init")
+    init_stub._repo_path = lambda: tmp_path
+    init_stub.init_self_improvement = lambda *a, **k: None
+    init_stub.settings = types.SimpleNamespace()
+    init_stub._data_dir = lambda: tmp_path
+    init_stub._atomic_write = lambda *a, **k: None
+    init_stub.get_default_synergy_weights = lambda *a, **k: None
+    sys.modules["menace_sandbox.self_improvement.init"] = init_stub
+    sys.modules["self_improvement.init"] = init_stub
+
+    root_pkg = types.ModuleType("menace_sandbox")
+    root_pkg.__path__ = [str(Path("."))]
+    sys.modules["menace_sandbox"] = root_pkg
+    si_pkg = types.ModuleType("menace_sandbox.self_improvement")
+    si_pkg.__path__ = [str(Path("self_improvement"))]
+    sys.modules["menace_sandbox.self_improvement"] = si_pkg
+    sys.modules["self_improvement"] = si_pkg
+
     class Settings:
         sandbox_data_dir = str(tmp_path)
         snapshot_metrics = {"roi"}
         roi_drop_threshold = -1.0
         entropy_regression_threshold = 1e9
+        prompt_penalty_path = "penalties.json"
 
     sys.modules["sandbox_settings"] = types.SimpleNamespace(
         SandboxSettings=Settings,
@@ -41,6 +60,12 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
 
     st = importlib.import_module("menace_sandbox.self_improvement.snapshot_tracker")
     monkeypatch.setattr(st, "resolve_path", lambda p: p)
+
+    st.prompt_memory._penalty_path = tmp_path / "penalties.json"
+    st.prompt_memory._penalty_lock = st.prompt_memory.FileLock(str(st.prompt_memory._penalty_path) + ".lock")
+    st.prompt_memory.record_regression("alpha")
+    assert st.prompt_memory.load_prompt_penalties().get("alpha") == 1
+
     monkeypatch.setattr(st, "SandboxSettings", lambda: Settings())
 
     tracker = st.SnapshotTracker()
@@ -67,6 +92,9 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
 
     assert st.get_best_checkpoint(module) == ckpt_file
 
+    penalties = st.prompt_memory.load_prompt_penalties()
+    assert penalties.get("alpha") == 0
+
 
 def test_tracker_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
     sys.modules["audit_logger"] = types.SimpleNamespace(log_event=lambda *a, **k: None)
@@ -82,9 +110,26 @@ def test_tracker_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
     sys.modules["relevancy_radar"] = types.SimpleNamespace(call_graph_complexity=lambda files: 0)
     sys.modules["menace_sandbox.relevancy_radar"] = sys.modules["relevancy_radar"]
     sys.modules["dynamic_path_router"] = types.SimpleNamespace(
-        resolve_path=lambda p: p,
+        resolve_path=lambda p: Path(p),
         repo_root=lambda: Path("."),
     )
+    init_stub = types.ModuleType("init")
+    init_stub._repo_path = lambda: tmp_path
+    init_stub.init_self_improvement = lambda *a, **k: None
+    init_stub.settings = types.SimpleNamespace()
+    init_stub._data_dir = lambda: tmp_path
+    init_stub._atomic_write = lambda *a, **k: None
+    init_stub.get_default_synergy_weights = lambda *a, **k: None
+    sys.modules["menace_sandbox.self_improvement.init"] = init_stub
+    sys.modules["self_improvement.init"] = init_stub
+
+    root_pkg = types.ModuleType("menace_sandbox")
+    root_pkg.__path__ = [str(Path("."))]
+    sys.modules["menace_sandbox"] = root_pkg
+    si_pkg = types.ModuleType("menace_sandbox.self_improvement")
+    si_pkg.__path__ = [str(Path("self_improvement"))]
+    sys.modules["menace_sandbox.self_improvement"] = si_pkg
+    sys.modules["self_improvement"] = si_pkg
 
     captured: dict[str, list[Path]] = {}
 
@@ -115,6 +160,7 @@ def test_tracker_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
         snapshot_metrics = {"entropy", "token_diversity"}
         roi_drop_threshold = -1.0
         entropy_regression_threshold = 1e9
+        prompt_penalty_path = "penalties.json"
 
     monkeypatch.setattr(st, "SandboxSettings", lambda: Settings())
 
