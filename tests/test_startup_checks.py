@@ -181,6 +181,12 @@ def test_verify_stripe_router_checks(monkeypatch):
         ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
     )
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
+    monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
+
+    def _run_ok(cmd, **k):
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sc.subprocess, "run", _run_ok)
     sc.verify_stripe_router()
 
     bad = types.SimpleNamespace(BILLING_RULES={}, STRIPE_SECRET_KEY="", STRIPE_PUBLIC_KEY="")
@@ -209,6 +215,12 @@ def test_verify_stripe_router_missing_route(monkeypatch):
         ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
     )
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
+    monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
+
+    def _run_ok(cmd, **k):
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sc.subprocess, "run", _run_ok)
     with pytest.raises(RuntimeError):
         sc.verify_stripe_router()
 
@@ -240,6 +252,12 @@ def test_verify_stripe_router_required_bots(monkeypatch):
         _resolve_route=fake_resolve,
     )
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
+    monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
+
+    def _run_ok(cmd, **k):
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sc.subprocess, "run", _run_ok)
 
     sc.verify_stripe_router(["finance:finance_router_bot"])
     assert called == ["finance:finance_router_bot"]
@@ -250,6 +268,68 @@ def test_verify_stripe_router_required_bots(monkeypatch):
             "finance:missing_bot",
         ])
     assert called == ["finance:finance_router_bot", "finance:missing_bot"]
+
+
+def test_verify_stripe_router_import_scan(monkeypatch):
+    class FakeRegistry:
+        def __init__(self, *a, **k):
+            self.graph = types.SimpleNamespace(nodes=["finance_router_bot"])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "scpkg.bot_registry",
+        types.SimpleNamespace(BotRegistry=FakeRegistry),
+    )
+
+    mod = types.SimpleNamespace(
+        BILLING_RULES={("stripe", "default", "finance", "finance_router_bot"): {}},
+        STRIPE_SECRET_KEY="sk",
+        STRIPE_PUBLIC_KEY="pk",
+        ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
+    )
+    monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
+
+    monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
+
+    def _run(cmd, **k):
+        if "check_stripe_imports.py" in cmd[1]:
+            return types.SimpleNamespace(returncode=1, stdout="bad", stderr="")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sc.subprocess, "run", _run)
+    with pytest.raises(RuntimeError):
+        sc.verify_stripe_router()
+
+
+def test_verify_stripe_router_raw_usage_scan(monkeypatch):
+    class FakeRegistry:
+        def __init__(self, *a, **k):
+            self.graph = types.SimpleNamespace(nodes=["finance_router_bot"])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "scpkg.bot_registry",
+        types.SimpleNamespace(BotRegistry=FakeRegistry),
+    )
+
+    mod = types.SimpleNamespace(
+        BILLING_RULES={("stripe", "default", "finance", "finance_router_bot"): {}},
+        STRIPE_SECRET_KEY="sk",
+        STRIPE_PUBLIC_KEY="pk",
+        ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
+    )
+    monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
+
+    monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
+
+    def _run(cmd, **k):
+        if "check_raw_stripe_usage.py" in cmd[1]:
+            return types.SimpleNamespace(returncode=1, stdout="bad", stderr="")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(sc.subprocess, "run", _run)
+    with pytest.raises(RuntimeError):
+        sc.verify_stripe_router()
 
 
 def test_verify_optional_dependencies_reports_missing(monkeypatch):
