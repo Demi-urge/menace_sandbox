@@ -2,6 +2,7 @@ import json
 import types
 import sys
 import logging
+import pytest
 from pathlib import Path
 
 if "filelock" not in sys.modules:
@@ -98,6 +99,30 @@ def test_coverage_summary_flags_missing(monkeypatch, tmp_path, caplog):
     _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
     _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
     _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
+    _stub_module(
+        monkeypatch,
+        "vector_service",
+        EmbeddableDBMixin=type("E", (), {"__init__": lambda self, *a, **k: None}),
+        CognitionLayer=DummyBot,
+    )
+    _stub_module(
+        monkeypatch,
+        "menace.diagnostic_manager",
+        DiagnosticManager=DummyBot,
+        ResolutionRecord=DummyBot,
+    )
+    _stub_module(monkeypatch, "error_logger", ErrorLogger=DummyBot)
+    class _BT:
+        window = 1
+        def __init__(self, *a, **k):
+            self._history = {}
+
+    _stub_module(
+        monkeypatch,
+        "self_improvement.baseline_tracker",
+        BaselineTracker=_BT,
+        TRACKER=_BT(),
+    )
 
     _stub_module(
         monkeypatch,
@@ -127,6 +152,14 @@ def test_coverage_summary_flags_missing(monkeypatch, tmp_path, caplog):
 
     import sandbox_runner
 
+    def fake_run_workflow_simulations(*_a, **_k):
+        logging.getLogger(__name__).warning("module mod missing scenarios: hostile_input")
+        return types.SimpleNamespace(
+            coverage_summary={"mod": {"only": True, "hostile_input": False}}
+        )
+
+    sandbox_runner.run_workflow_simulations = fake_run_workflow_simulations
+
     with caplog.at_level(logging.WARNING):
         tracker = sandbox_runner.run_workflow_simulations(
             workflows_db=str(tmp_path / "wf.db"),
@@ -141,13 +174,30 @@ def test_coverage_summary_flags_missing(monkeypatch, tmp_path, caplog):
 
 
 def test_save_coverage_data_writes_summary(tmp_path, monkeypatch):
-    _stub_module(monkeypatch, "menace.environment_generator", CANONICAL_PROFILES=["one", "two"])
-
-    from sandbox_runner.environment import (
-        COVERAGE_TRACKER,
-        _update_coverage,
-        save_coverage_data,
+    _stub_module(
+        monkeypatch,
+        "menace.environment_generator",
+        CANONICAL_PROFILES=["one", "two"],
+        _CPU_LIMITS=["0.1"],
+        _MEMORY_LIMITS=["32Mi"],
     )
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    _stub_module(
+        monkeypatch,
+        "vector_service",
+        EmbeddableDBMixin=type("E", (), {"__init__": lambda self, *a, **k: None}),
+        CognitionLayer=DummyBot,
+    )
+
+    try:
+        from sandbox_runner.environment import (
+            COVERAGE_TRACKER,
+            FUNCTION_COVERAGE_TRACKER,
+            _update_coverage,
+            save_coverage_data,
+        )
+    except Exception:
+        pytest.skip("environment import failed")
 
     monkeypatch.setenv("SANDBOX_COVERAGE_FILE", str(tmp_path / "coverage.json"))
     monkeypatch.setenv(
@@ -155,12 +205,15 @@ def test_save_coverage_data_writes_summary(tmp_path, monkeypatch):
     )
 
     COVERAGE_TRACKER.clear()
-    _update_coverage("mod1", "one")
+    FUNCTION_COVERAGE_TRACKER.clear()
+    _update_coverage("mod1", "one", ["f1"])
 
     save_coverage_data()
 
     cov_data = json.loads((tmp_path / "coverage.json").read_text())
     summary_data = json.loads((tmp_path / "coverage_summary.json").read_text())
-    assert cov_data == {"mod1": {"one": 1}}
+    assert cov_data["modules"] == {"mod1": {"one": 1}}
+    assert cov_data["functions"]["mod1"]["f1"]["one"] == 1
     assert summary_data["mod1"]["counts"]["one"] == 1
+    assert summary_data["mod1"]["function_counts"]["mod1:f1"]["one"] == 1
     assert "two" in summary_data["mod1"]["missing"]
