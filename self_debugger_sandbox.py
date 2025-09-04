@@ -1446,6 +1446,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
                     repo_src = resolve_path(self._settings.sandbox_repo_path or ".")
                     with create_ephemeral_env(repo_src) as (repo, run):
+                        repo = resolve_path(repo)
                         test_path = repo / "test_auto.py"
                         test_path.write_text(code)
                         test_path = resolve_path(test_path)
@@ -1564,8 +1565,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 except Exception:
                                     self.logger.exception("record failed strategy failed")
                             return None
+                        finally:
+                            test_path.unlink(missing_ok=True)
 
-                    root_test = resolve_path(".") / f"test_auto_{idx}.py"
+                    root_dir = resolve_path(self._settings.sandbox_repo_path or ".")
+                    root_test = root_dir / f"test_auto_{idx}.py"
                     root_test.write_text(code)
                     root_test = resolve_path(root_test)
                     result = "failed"
@@ -1768,7 +1772,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     break
 
                 code = best["code"]
-                root_test = resolve_path(".") / "test_auto.py"
+                root_dir = resolve_path(self._settings.sandbox_repo_path or ".")
+                root_test = root_dir / "test_auto.py"
                 root_test.write_text(code)
                 root_test = resolve_path(root_test)
                 code_hash: str | None = None
