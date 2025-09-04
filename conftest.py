@@ -29,7 +29,8 @@ sys.modules.setdefault(
 
 # Provide a lightweight dynamic_path_router to satisfy imports during tests
 sys.modules.setdefault(
-    "dynamic_path_router", types.SimpleNamespace(resolve_path=lambda p: p)
+    "dynamic_path_router",
+    types.SimpleNamespace(resolve_path=lambda p: Path(p), resolve_dir=lambda p: Path(p)),
 )
 
 os.environ.setdefault("VISUAL_AGENT_URLS", "http://127.0.0.1:8001")

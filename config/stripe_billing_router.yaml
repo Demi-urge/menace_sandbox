@@ -1,0 +1,7 @@
+stripe:
+  default:
+    finance:
+      finance_router_bot:
+        product_id: prod_finance_router
+        price_id: price_finance_standard
+        customer_id: cus_finance_default
