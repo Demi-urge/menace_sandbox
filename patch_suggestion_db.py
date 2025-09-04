@@ -10,6 +10,7 @@ import threading
 from filelock import FileLock
 
 from db_router import init_db_router
+from dynamic_path_router import resolve_path
 
 from analysis.semantic_diff_filter import find_semantic_risks
 from patch_safety import PatchSafety
@@ -89,7 +90,7 @@ class PatchSuggestionDB(EmbeddableDBMixin):
 
     def __init__(
         self,
-        path: Path | str = "suggestions.db",
+        path: Path | str | None = None,
         *,
         semantic_threshold: float = 0.5,
         safety: PatchSafety | None = None,
@@ -97,7 +98,13 @@ class PatchSuggestionDB(EmbeddableDBMixin):
         embedding_version: int = 1,
         vector_backend: str = "annoy",
     ) -> None:
-        self.path = Path(path)
+        if path is None:
+            self.path = resolve_path("sandbox_data") / "suggestions.db"
+        else:
+            try:
+                self.path = resolve_path(str(path))
+            except FileNotFoundError:
+                self.path = Path(path).expanduser().resolve()
         self._lock = threading.Lock()
         self._file_lock = FileLock(str(self.path) + ".lock")
         self._semantic_threshold = semantic_threshold
@@ -234,9 +241,15 @@ class PatchSuggestionDB(EmbeddableDBMixin):
             )
             self.conn.commit()
 
+        resolved_index_path: Path | None = None
+        if vector_index_path is not None:
+            try:
+                resolved_index_path = resolve_path(str(vector_index_path))
+            except FileNotFoundError:
+                resolved_index_path = Path(vector_index_path).expanduser().resolve()
         index_path = (
-            Path(vector_index_path)
-            if vector_index_path is not None
+            resolved_index_path
+            if resolved_index_path is not None
             else self.path.with_suffix(".index")
         )
         meta_path = Path(index_path).with_suffix(".json")
