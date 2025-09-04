@@ -35,6 +35,10 @@ from .models_repo import (
     ensure_models_repo,
 )
 from vector_service import ContextBuilder, FallbackResult, ErrorResult
+from .codex_output_analyzer import (
+    validate_stripe_usage,
+    CriticalGenerationFailure,
+)
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -774,6 +778,8 @@ class BotDevelopmentBot:
         repo_dir = Path(resolve_path(repo_dir))
         try:
             module_path = Path(resolve_path(repo_dir / f"{spec.name}.py"))
+            with module_path.open("r", encoding="utf-8") as fh:
+                validate_stripe_usage(fh.read())
             spec_obj = importlib.util.spec_from_file_location(spec.name, module_path)
             if not spec_obj or not spec_obj.loader:
                 raise ImportError("cannot load module")
