@@ -1,3 +1,4 @@
+# flake8: noqa
 from __future__ import annotations
 
 import json
@@ -9,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Iterable, Dict, Any, Optional
+from dynamic_path_router import resolve_path
 
 from .research_aggregator_bot import ResearchAggregatorBot, InfoDB, ResearchItem
 from .chatgpt_enhancement_bot import EnhancementDB
@@ -22,8 +24,8 @@ from .contrarian_db import ContrarianDB, ContrarianRecord
 from .capital_management_bot import CapitalManagementBot
 from .unified_event_bus import UnifiedEventBus
 
-WORKFLOW_DB = Path(__file__).parent / "workflows_db.json"
-INNOVATIONS_DB = Path(__file__).parent / "innovations_db.json"
+WORKFLOW_DB = resolve_path("contrarian_model_bot/workflows_db.json")
+INNOVATIONS_DB = resolve_path("contrarian_model_bot/innovations_db.json")
 
 @dataclass
 class WorkflowStep:
