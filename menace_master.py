@@ -33,14 +33,11 @@ from dynamic_path_router import resolve_path
 # Logger for this module
 logger = logging.getLogger(__name__)
 
-# When running directly from the repository without installation the parent
-# directory of the project is not on ``sys.path`` which prevents importing the
-# ``menace`` package.  Insert it here so the script works both installed and
-# run directly.
-ROOT = Path(__file__).resolve().parent
-PARENT = ROOT.parent
-if str(PARENT) not in sys.path:
-    sys.path.insert(0, str(PARENT))
+# Ensure the repository root is available on ``sys.path`` when executing
+# directly from a working tree.
+ROOT = resolve_path(".")
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from menace.db_router import init_db_router  # noqa: E402
 
