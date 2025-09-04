@@ -54,11 +54,16 @@ class PatchAttemptTracker:
 
     # ------------------------------------------------------------------
     def level_for(self, region: TargetRegion, func_region: TargetRegion) -> tuple[str, TargetRegion | None]:
-        """Return the patch level and region to operate on."""
+        """Return the patch level and region to operate on.
+
+        After two failures at the function level the caller should rebuild the
+        entire module.  A tuple of ("module", ``None``) is therefore returned
+        to signal a full-module rewrite.
+        """
         k = _Keys(region.filename, region.start_line, region.end_line, region.function)
         if self._function_failures.get(k.function_key, 0) >= 2:
             return "module", None
-        if self._region_failures.get(k.region, 0) >= 2:
+        elif self._region_failures.get(k.region, 0) >= 2:
             return "function", func_region
         return "region", region
 

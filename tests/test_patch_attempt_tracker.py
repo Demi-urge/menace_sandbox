@@ -117,3 +117,22 @@ def test_reset_clears_escalation(tmp_path):
     level, _ = tracker.level_for(region, func_region)
     assert level == "region"  # escalation count reset
     assert len(logger.events) == 1  # no new escalation logged
+
+
+def test_module_level_after_two_function_failures(tmp_path):
+    path = tmp_path / "mod.py"
+    path.write_text("def f():\n    a=1\n    b=2\n    return a+b\n")
+
+    region = TargetRegion(filename=str(path), start_line=2, end_line=2, function="f")
+    func_region = TargetRegion(filename=str(path), start_line=1, end_line=4, function="f")
+
+    tracker = PatchAttemptTracker(logger=DummyLogger())
+
+    tracker.record_failure("region", region, func_region)
+    tracker.record_failure("region", region, func_region)
+    assert tracker.level_for(region, func_region)[0] == "function"
+
+    tracker.record_failure("function", region, func_region)
+    tracker.record_failure("function", region, func_region)
+    level, target = tracker.level_for(region, func_region)
+    assert level == "module" and target is None
