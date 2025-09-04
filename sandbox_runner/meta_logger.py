@@ -46,6 +46,9 @@ class _CycleMeta:
     coverage_summary: dict | None = None
     duration: float = 0.0
     errors: dict[str, str] | None = None
+    successes: int = 0
+    failures: int = 0
+    coverage_percent: float = 0.0
 
 
 class _SandboxMetaLogger:
@@ -111,6 +114,9 @@ class _SandboxMetaLogger:
         coverage_summary: Mapping[str, Any] | None = None,
         duration: float | None = None,
         errors: Mapping[str, str] | None = None,
+        successes: int | None = None,
+        failures: int | None = None,
+        coverage_percent: float | None = None,
     ) -> None:
         prev = self.records[-1].roi if self.records else 0.0
         delta = roi - prev
@@ -118,6 +124,9 @@ class _SandboxMetaLogger:
         cov_sum: dict | None = dict(coverage_summary) if coverage_summary else None
         err: dict[str, str] | None = dict(errors) if errors else None
         dur = float(duration or 0.0)
+        succ = int(successes or 0)
+        fail = int(failures or 0)
+        cov_pct = float(coverage_percent or 0.0)
         gid_map: dict[str, str] = {}
         per_module_delta = delta / len(modules) if modules else 0.0
         for m in modules:
@@ -153,6 +162,7 @@ class _SandboxMetaLogger:
         if module_metrics:
             cov = cov or {}
             err = err or {}
+            covered = 0
             for m in module_metrics:
                 gid = gid_map.get(m.name, m.name)
                 if getattr(m, "entropy_delta", None) is not None:
@@ -162,9 +172,15 @@ class _SandboxMetaLogger:
                 if m.coverage_functions or m.coverage_files:
                     total = len(m.coverage_functions or []) + len(m.coverage_files or [])
                     cov[m.name] = float(total)
+                    covered += 1
                 if not m.success and m.exception:
                     err[m.name] = m.exception
+                else:
+                    succ += int(m.success)
+                fail += int(not m.success)
                 dur += m.duration
+            if module_metrics and not cov_pct and len(module_metrics) > 0:
+                cov_pct = (covered / len(module_metrics)) * 100.0
             if not cov:
                 cov = None
             if not err:
@@ -182,6 +198,9 @@ class _SandboxMetaLogger:
                 cov_sum,
                 dur,
                 err,
+                succ,
+                fail,
+                cov_pct,
             )
         )
         self._persist_history()
@@ -203,6 +222,11 @@ class _SandboxMetaLogger:
                 record["duration"] = dur
             if err:
                 record["errors"] = err
+            if succ or fail:
+                record["successes"] = succ
+                record["failures"] = fail
+            if cov_pct:
+                record["coverage_percent"] = cov_pct
             self.audit.record(record)
         except Exception as exc:
             logger.exception("meta log record failed", exc_info=exc)
@@ -210,10 +234,21 @@ class _SandboxMetaLogger:
             "cycle %d logged roi=%s delta=%s modules=%s", cycle, roi, delta, modules
         )
 
-    def rankings(self) -> list[tuple[str, float]]:
-        totals = {m: sum(v) for m, v in self.module_deltas.items()}
-        logger.debug("rankings computed: %s", totals)
-        return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+    def rankings(self) -> list[tuple[int, float, int, int, float, float]]:
+        rows: list[tuple[int, float, int, int, float, float]] = []
+        for rec in self.records:
+            rows.append(
+                (
+                    rec.cycle,
+                    rec.roi,
+                    rec.successes,
+                    rec.failures,
+                    rec.duration,
+                    rec.coverage_percent,
+                )
+            )
+        logger.debug("rankings computed: %s", rows)
+        return sorted(rows, key=lambda x: x[1], reverse=True)
 
     def entropy_delta(self, module: str, window: int = 5) -> float:
         vals = self.module_deltas.get(module)

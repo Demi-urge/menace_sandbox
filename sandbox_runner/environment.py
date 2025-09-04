@@ -91,6 +91,11 @@ except ImportError as exc:  # pragma: no cover - optional dependency
     DiagnosticManager = None  # type: ignore
     ResolutionRecord = None  # type: ignore
 
+try:  # optional dependency
+    from .meta_logger import _SandboxMetaLogger
+except Exception:  # pragma: no cover - best effort
+    _SandboxMetaLogger = None  # type: ignore
+
 try:
     import psutil  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
@@ -4837,7 +4842,26 @@ async def _section_worker(
                     existing.extend(profiles)
                     rc["edge_case_profiles"] = existing
                 runner = WorkflowSandboxRunner()
-                runner.run(lambda: exec(snip, {}), **rc)
+                metrics = runner.run(lambda: exec(snip, {}), **rc)
+                if _SandboxMetaLogger:
+                    try:
+                        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                        meta = _SandboxMetaLogger(data_dir / "sandbox_meta.log")
+                        succ = sum(1 for m in metrics.modules if m.success)
+                        fail = sum(1 for m in metrics.modules if not m.success)
+                        dur = sum(m.duration for m in metrics.modules)
+                        meta.log_cycle(
+                            cycle=len(meta.records),
+                            roi=0.0,
+                            modules=[m.name for m in metrics.modules],
+                            reason="environment_run",
+                            module_metrics=metrics.modules,
+                            successes=succ,
+                            failures=fail,
+                            duration=dur,
+                        )
+                    except Exception:
+                        logger.warning("failed to log sandbox metadata", exc_info=True)
             except Exception:
                 logger.exception('unexpected error')
             conc_path = Path(td) / "concurrency.json"
