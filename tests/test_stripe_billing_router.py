@@ -347,6 +347,47 @@ def test_register_rejects_api_keys(monkeypatch, tmp_path):
         )
 
 
+def test_load_routing_table_missing_required_keys(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
+    bad = {
+        "stripe": {
+            "default": {
+                "finance": {
+                    "finance_router_bot": {
+                        "price_id": "price_finance_standard",
+                        "customer_id": "cus_finance_default",
+                    }
+                }
+            }
+        }
+    }
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.safe_dump(bad))
+    with pytest.raises(RuntimeError, match="product_id"):
+        sbr._load_routing_table(str(path))
+
+
+def test_load_routing_table_empty_values(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
+    bad = {
+        "stripe": {
+            "default": {
+                "finance": {
+                    "finance_router_bot": {
+                        "product_id": "",
+                        "price_id": "price_finance_standard",
+                        "customer_id": "cus_finance_default",
+                    }
+                }
+            }
+        }
+    }
+    path = tmp_path / "empty.yaml"
+    path.write_text(yaml.safe_dump(bad))
+    with pytest.raises(RuntimeError, match="non-empty"):
+        sbr._load_routing_table(str(path))
+
+
 def test_concurrent_client_isolation(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
 
