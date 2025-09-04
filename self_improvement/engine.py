@@ -163,6 +163,7 @@ from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt, load_prompt_penalties
 from .prompt_strategy_manager import PromptStrategyManager
+from . import strategy_rotator
 from .snapshot_tracker import (
     capture as capture_snapshot,
     compute_delta as snapshot_delta,
@@ -899,6 +900,7 @@ class SelfImprovementEngine:
         self.warning_summary: list[dict[str, Any]] = []
         self.strategy_confidence: Dict[str, int] = {}
         self.deprioritized_strategies: set[str] = set()
+        self.pending_strategy: str | None = None
         self.prompt_strategy_manager = PromptStrategyManager(
             state_path=_data_dir() / "prompt_strategy_state.json"
         )
@@ -6580,6 +6582,12 @@ class SelfImprovementEngine:
                     strategy = metadata.get("strategy") or metadata.get("prompt_id")
             if strategy:
                 try:
+                    self.pending_strategy = strategy_rotator.next_strategy(
+                        str(strategy), failure_reason or "regression"
+                    )
+                except Exception:
+                    self.logger.exception("strategy rotator failed")
+                try:
                     count = snapshot_tracker.record_downgrade(str(strategy))
                     threshold = SandboxSettings().prompt_failure_threshold
                 except Exception:
@@ -6601,6 +6609,11 @@ class SelfImprovementEngine:
         ``prompt_penalty_multiplier`` but still eligible when all options are
         penalised.
         """
+
+        pending = getattr(self, "pending_strategy", None)
+        if pending and pending in strategies:
+            self.pending_strategy = None
+            return pending
 
         penalties = load_prompt_penalties()
         settings = SandboxSettings()
