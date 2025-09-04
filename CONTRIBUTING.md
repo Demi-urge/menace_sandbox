@@ -15,3 +15,11 @@ To avoid accidental direct connections, CI runs
 fail the build if an unapproved `sqlite3.connect` call is detected. Legitimate
 new uses must be added to `tests/approved_sqlite3_usage.txt` together with an
 explanation for the exemption.
+
+## Dynamic path resolution
+
+Hard coding repository-relative paths (e.g., strings containing `sandbox_data`
+or path fragments like `foo/bar.py`) can break when the project moves. Use
+`resolve_path` to build such paths dynamically. The pre-commit hook
+`tools/check_dynamic_paths.py` enforces this rule by failing if a file contains
+these patterns without a corresponding `resolve_path` call.
