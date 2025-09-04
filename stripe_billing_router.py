@@ -35,21 +35,33 @@ if STRIPE_SECRET_KEY.startswith("sk_test") or STRIPE_PUBLIC_KEY.startswith("pk_t
     logger.error("Test mode Stripe API keys are not permitted")
     raise RuntimeError("Test mode Stripe API keys are not permitted")
 
-# Base routing rules: (domain, name, category) -> identifiers
-BILLING_RULES: dict[tuple[str, str, str], dict[str, str]] = {
-    (
-        "finance",
-        "finance_router_bot",
-        "monetization",
-    ): {
-        "product_id": "prod_finance_router",
-        "price_id": "price_finance_standard",
-        "customer_id": "cus_finance_default",
+# Base routing rules organised by region -> domain -> bot -> category
+# Each leaf mapping contains identifiers used for billing.  The default region
+# provides backwards compatible behaviour for callers that do not specify a
+# region override.
+ROUTING_MAP: dict[
+    str, dict[str, dict[str, dict[str, dict[str, str]]]]
+] = {
+    "default": {
+        "finance": {
+            "finance_router_bot": {
+                "monetization": {
+                    "product_id": "prod_finance_router",
+                    "price_id": "price_finance_standard",
+                    "customer_id": "cus_finance_default",
+                }
+            }
+        }
     }
 }
 
-# Overrides: (domain, name, category, key, value) -> route updates
-OVERRIDES: dict[tuple[str, str, str, str, str], dict[str, str]] = {}
+# Legacy alias to maintain compatibility with existing imports and startup
+# checks.  ``BILLING_RULES`` references the default region map so updates are
+# reflected automatically.
+BILLING_RULES = ROUTING_MAP.setdefault("default", {})
+
+# Overrides: (region, domain, name, category, key, value) -> route updates
+OVERRIDES: dict[tuple[str, str, str, str, str, str], dict[str, str]] = {}
 
 
 class RouteStrategy:
@@ -74,6 +86,24 @@ def register_strategy(strategy: RouteStrategy) -> None:
     _STRATEGIES.append(strategy)
 
 
+def register_route(
+    domain: str,
+    name: str,
+    category: str,
+    route: Mapping[str, str],
+    *,
+    region: str = "default",
+) -> None:
+    """Register or update a base routing rule.
+
+    The rule is stored within :data:`ROUTING_MAP` under the specified region.
+    """
+
+    ROUTING_MAP.setdefault(region, {}).setdefault(domain, {}).setdefault(name, {})[
+        category
+    ] = dict(route)
+
+
 def register_override(
     domain: str,
     name: str,
@@ -82,9 +112,10 @@ def register_override(
     key: str,
     value: str,
     route: Mapping[str, str],
+    region: str = "default",
 ) -> None:
     """Register a routing override for a specific bot and qualifier."""
-    OVERRIDES[(domain, name, category, key, value)] = dict(route)
+    OVERRIDES[(region, domain, name, category, key, value)] = dict(route)
 
 
 def _client(api_key: str):
@@ -111,23 +142,30 @@ def _resolve_route(
     bot_id: str, overrides: Optional[Mapping[str, str]] = None
 ) -> dict[str, str]:
     domain, name, category = _parse_bot_id(bot_id)
+    region = "default"
+    if overrides and "region" in overrides:
+        region = overrides["region"]
 
-    supported_domains = {d for d, _n, _c in BILLING_RULES.keys()} | {
-        d for d, *_ in OVERRIDES.keys()
-    }
+    # Collect supported domains from all regions and overrides
+    supported_domains: set[str] = set()
+    for reg_map in ROUTING_MAP.values():
+        supported_domains.update(reg_map.keys())
+    supported_domains.update(d for _, d, *_ in OVERRIDES.keys())
     if domain not in supported_domains:
         logger.error("Unsupported billing domain '%s'", domain)
         raise RuntimeError(f"Unsupported billing domain '{domain}'")
 
-    route = BILLING_RULES.get((domain, name, category))
+    region_map = ROUTING_MAP.get(region) or ROUTING_MAP.get("default", {})
+    route = region_map.get(domain, {}).get(name, {}).get(category)
     if overrides:
         for key, value in overrides.items():
-            update = OVERRIDES.get((domain, name, category, key, value))
+            if key == "region":
+                continue
+            update = OVERRIDES.get((region, domain, name, category, key, value))
+            if update is None:
+                update = OVERRIDES.get(("default", domain, name, category, key, value))
             if update:
-                if route:
-                    route = {**route, **update}
-                else:
-                    route = dict(update)
+                route = {**route, **update} if route else dict(update)
     if not route:
         logger.error("No billing route configured for bot '%s'", bot_id)
         raise RuntimeError(f"No billing route configured for bot '{bot_id}'")
@@ -199,7 +237,10 @@ __all__ = [
     "charge",
     "get_balance",
     "create_customer",
+    "register_route",
     "register_override",
     "register_strategy",
     "RouteStrategy",
+    "ROUTING_MAP",
+    "BILLING_RULES",
 ]

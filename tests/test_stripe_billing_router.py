@@ -73,14 +73,15 @@ def test_override_updates_route(monkeypatch):
         "finance",
         "finance_router_bot",
         "monetization",
-        key="region",
-        value="eu",
-        route={"price_id": "price_finance_eu"},
+        key="business",
+        value="enterprise",
+        route={"price_id": "price_finance_enterprise"},
     )
     route = sbr._resolve_route(
-        "finance:finance_router_bot:monetization", overrides={"region": "eu"}
+        "finance:finance_router_bot:monetization",
+        overrides={"business": "enterprise"},
     )
-    assert route["price_id"] == "price_finance_eu"
+    assert route["price_id"] == "price_finance_enterprise"
 
 
 def test_charge_and_customer_creation(monkeypatch):
