@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from dynamic_path_router import resolve_path
 
 from . import stripe_billing_router
 import logging
@@ -34,7 +35,7 @@ class InvestmentDB:
 
     def __init__(
         self,
-        path: Path | str = "investment_log.db",
+        path: Path | str = resolve_path("investment_log.db"),
         router: DBRouter | None = None,
     ) -> None:
         # Allow the database connection to be used across threads. The
@@ -175,7 +176,11 @@ class AutoReinvestmentBot:
 
     # core ----------------------------------------------------------------
     def reinvest(self, target: str = "infrastructure") -> float:
-        balance = self._current_balance()
+        try:
+            balance = self._current_balance()
+        except RuntimeError as exc:
+            logger.exception("Stripe balance retrieval failed: %s", exc)
+            raise
         if balance <= 0:
             logger.info("Stripe ROI check skipped: No funds available")
             return 0.0
