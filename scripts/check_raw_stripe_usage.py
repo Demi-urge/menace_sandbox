@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dynamic_path_router import resolve_path  # noqa: E402
+from stripe_detection import PAYMENT_KEYWORDS  # noqa: E402
 
 REPO_ROOT = resolve_path(".")
 # Exclude specific paths (resolved absolute)
@@ -21,23 +22,15 @@ EXCLUDED = {
 EXCLUDED_DIRS = {"tests", "unit_tests", "fixtures", "finance_logs"}
 
 PATTERN = re.compile(r"api\.stripe\.com|['\"](?:sk_|pk_)[^'\"]*['\"]")
+KEYWORD_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in PAYMENT_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
 
 
 def _tracked_files() -> list[Path]:
     result = subprocess.run(
-        [
-            "git",
-            "ls-files",
-            "*.py",
-            "*.js",
-            "*.ts",
-            "*.md",
-            "*.yaml",
-            "*.html",
-            "*.json",
-            "*.jsx",
-            "*.tsx",
-        ],
+        ["git", "ls-files"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -50,29 +43,53 @@ def _tracked_files() -> list[Path]:
             continue
         if any(part in EXCLUDED_DIRS for part in p.parts):
             continue
-        if p.is_file():
-            paths.append(p)
+        if not p.is_file():
+            continue
+        try:
+            with p.open("rb") as fh:
+                sample = fh.read(1024)
+                if b"\0" in sample:
+                    continue
+        except OSError:
+            continue
+        paths.append(p)
     return paths
 
 
 def main() -> int:
-    offenders: list[str] = []
+    raw_offenders: list[str] = []
+    keyword_offenders: list[str] = []
     for path in _tracked_files():
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
+        kw_lines: list[tuple[int, str]] = []
         for lineno, line in enumerate(text.splitlines(), start=1):
             if PATTERN.search(line):
                 try:
                     rel = path.relative_to(REPO_ROOT)
                 except ValueError:
                     rel = path
-                offenders.append(f"{rel}:{lineno}:{line.strip()}")
-    if offenders:
+                raw_offenders.append(f"{rel}:{lineno}:{line.strip()}")
+            if KEYWORD_PATTERN.search(line):
+                kw_lines.append((lineno, line.strip()))
+        if kw_lines and "stripe_billing_router" not in text:
+            try:
+                rel = path.relative_to(REPO_ROOT)
+            except ValueError:
+                rel = path
+            for lineno, line in kw_lines:
+                keyword_offenders.append(f"{rel}:{lineno}:{line}")
+    if raw_offenders:
         print("Raw Stripe keys or endpoints detected:")
-        for off in offenders:
+        for off in raw_offenders:
             print(off)
+    if keyword_offenders:
+        print("Payment keywords without stripe_billing_router detected:")
+        for off in keyword_offenders:
+            print(off)
+    if raw_offenders or keyword_offenders:
         return 1
     return 0
 
