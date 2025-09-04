@@ -33,12 +33,12 @@ def apply_patch(
     retries: int = _settings.patch_retries,
     delay: float = _settings.patch_retry_delay,
     sign: bool = False,
-) -> str:
+) -> tuple[str, str]:
     """Fetch and apply patch ``patch_id`` to ``repo_path``.
 
-    Returns the commit hash created from the patch.  Raises ``RuntimeError`` if
-    fetching or applying the patch fails or if the repository worktree is
-    dirty.
+    Returns a tuple of the commit hash created from the patch and the textual
+    diff that was applied.  Raises ``RuntimeError`` if fetching or applying the
+    patch fails or if the repository worktree is dirty.
     """
 
     logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ def apply_patch(
             raise RuntimeError(
                 f"failed to update worktree: {reset_proc.stderr.strip() or reset_proc.stdout.strip()}"
             )
-        return commit_hash
+        return commit_hash, patch_data
     finally:
         subprocess.run(
             ["git", "worktree", "remove", str(tmpdir), "--force"],

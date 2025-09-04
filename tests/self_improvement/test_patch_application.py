@@ -82,10 +82,11 @@ def test_apply_patch_success(tmp_path, monkeypatch):
     mod.fetch_patch = lambda patch_id: SUCCESS_PATCH
     monkeypatch.setitem(sys.modules, "quick_fix_engine", mod)
     patch_module = _load_patch_module()
-    commit = patch_module.apply_patch(1, repo)
+    commit, diff = patch_module.apply_patch(1, repo)
     assert len(commit) == 40
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
     assert head == commit
+    assert diff == SUCCESS_PATCH
     assert (repo / "file.txt").read_text() == "world\n"
 
 def test_apply_patch_failure(tmp_path, monkeypatch):
