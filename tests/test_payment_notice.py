@@ -9,6 +9,8 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
 from prompt_engine import PromptEngine
 
+from billing.openai_wrapper import chat_completion_create
+
 # Stub heavy dependencies so chatgpt_idea_bot can be imported without side effects
 package = types.ModuleType("menace_sandbox")
 package.RAISE_ERRORS = False
@@ -165,4 +167,44 @@ def test_bot_development_bot_injects_notice(monkeypatch):
     )
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     BotDevelopmentBot._call_codex_api(object(), "m", [{"role": "user", "content": "hi"}])
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
+
+
+def test_openai_wrapper_injects_notice():
+    captured = {}
+
+    def fake_create(*args, **kwargs):
+        captured["messages"] = kwargs.get("messages")
+        return {}
+
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(create=fake_create)
+    )
+    chat_completion_create(
+        [{"role": "user", "content": "hi"}],
+        model="gpt-3.5-turbo",
+        openai_client=fake_openai,
+    )
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
+
+
+def test_gpt4client_injects_notice(monkeypatch):
+    captured = {}
+
+    def fake_create(*args, **kwargs):
+        captured["messages"] = kwargs.get("messages")
+        return iter([{ "choices": [{"delta": {"content": ""}}] }])
+
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(create=fake_create)
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setitem(sys.modules, "stripe_billing_router", types.ModuleType("sbr"))
+    monkeypatch.syspath_prepend(
+        str(Path(__file__).resolve().parents[1] / "neurosales")
+    )
+    from neurosales.external_integrations import GPT4Client
+
+    client = GPT4Client(api_key="k")
+    list(client.stream_chat("arch", [0.1], "obj", "hi"))
     assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)

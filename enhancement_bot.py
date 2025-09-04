@@ -19,7 +19,7 @@ from .chatgpt_enhancement_bot import (
 )
 from .micro_models.diff_summarizer import summarize_diff
 from .micro_models.prefix_injector import inject_prefix
-from billing.prompt_notice import prepend_payment_notice
+from billing.openai_wrapper import chat_completion_create
 import stripe_billing_router  # noqa: F401
 
 try:  # pragma: no cover - optional dependency
@@ -141,12 +141,12 @@ class EnhancementBot:
                 confidence,
                 role="system",
             )
-        messages = prepend_payment_notice(messages)
         try:
-            resp = openai.ChatCompletion.create(
+            resp = chat_completion_create(
+                messages,
                 model="gpt-3.5-turbo",
-                messages=messages,
                 temperature=0.2,
+                openai_client=openai,
             )
             return resp["choices"][0]["message"]["content"].strip()
         except Exception:

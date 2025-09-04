@@ -44,6 +44,7 @@ ALLOWED = {
     resolve_path("config_loader.py").resolve(),
     resolve_path("codex_output_analyzer.py").resolve(),
     resolve_path("stripe_detection.py").resolve(),
+    resolve_path("billing/openai_wrapper.py").resolve(),
 }
 # Detect exposures of Stripe keys, including partially redacted ones with ``*``.
 KEY_PATTERN = re.compile(
@@ -61,6 +62,7 @@ class StripeAnalyzer(ast.NodeVisitor):
         self.keyword_lines: set[int] = set()
         self.has_router_import = False
         self.http_names: dict[str, str] = {}
+        self.openai_lines: list[int] = []
 
     def visit_Import(self, node: ast.Import) -> None:  # pragma: no cover - simple
         for alias in node.names:
@@ -97,6 +99,15 @@ class StripeAnalyzer(ast.NodeVisitor):
                 for arg in node.args
             ):
                 self.raw_api_lines.append(node.lineno)
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Attribute)
+            and isinstance(node.func.value.value, ast.Name)
+            and node.func.value.value.id == "openai"
+            and node.func.value.attr == "ChatCompletion"
+            and node.func.attr == "create"
+        ):
+            self.openai_lines.append(node.lineno)
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # pragma: no cover - simple
@@ -138,6 +149,7 @@ def _check_ast(paths: list[Path]) -> list[str]:
     imports: list[str] = []
     raw: list[str] = []
     keywords: list[str] = []
+    openai_calls: list[str] = []
     for path in paths:
         if path.suffix != ".py" or path in ALLOWED:
             continue
@@ -158,6 +170,10 @@ def _check_ast(paths: list[Path]) -> list[str]:
             imports.append(f"{rel}:{lineno}:import stripe")
         for lineno in analyzer.raw_api_lines:
             raw.append(f"{rel}:{lineno}:raw api.stripe.com call")
+        for lineno in analyzer.openai_lines:
+            openai_calls.append(
+                f"{rel}:{lineno}:openai.ChatCompletion.create usage"
+            )
         if analyzer.keyword_lines and not analyzer.has_router_import:
             lineno = min(analyzer.keyword_lines)
             keywords.append(f"{rel}:{lineno}:missing stripe_billing_router import")
@@ -165,9 +181,14 @@ def _check_ast(paths: list[Path]) -> list[str]:
         print("Direct Stripe imports detected (use stripe_billing_router):")
     if raw:
         print("Raw Stripe API usage detected (use stripe_billing_router):")
+    if openai_calls:
+        print(
+            "Direct openai.ChatCompletion.create usage detected "
+            "(use billing.openai_wrapper):"
+        )
     if keywords:
         print("Payment/Stripe keywords without stripe_billing_router import detected:")
-    return imports + raw + keywords
+    return imports + raw + openai_calls + keywords
 
 
 def _check_keys(paths: list[Path]) -> list[str]:
