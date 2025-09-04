@@ -117,6 +117,11 @@ def capture(
 
     metrics = set(getattr(settings, "snapshot_metrics", []))
 
+    files = list(files)
+    if not files:
+        repo_root = Path(settings.sandbox_repo_path)
+        files = list(repo_root.rglob("*.py"))
+
     entropy = token_diversity = 0.0
     if {"entropy", "token_diversity"} & metrics:
         try:
