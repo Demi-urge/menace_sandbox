@@ -283,7 +283,7 @@ class SelfCodingEngine:
         )
         self.baseline_tracker = delta_tracker or METRIC_BASELINES
         data_dir = getattr(_settings, "sandbox_data_dir", ".")
-        state_candidate = Path(data_dir) / "self_coding_engine_state.json"
+        state_candidate = resolve_path(data_dir) / "self_coding_engine_state.json"
         try:
             self._state_path = resolve_path(state_candidate)
         except FileNotFoundError:
@@ -1238,7 +1238,7 @@ class SelfCodingEngine:
         context are presented to the model and the generated code is spliced back
         into the original file at the specified range.
         """
-        path = Path(resolve_path(path))
+        path = resolve_path(path)
         try:
             code = self.generate_helper(
                 description,
@@ -1261,7 +1261,7 @@ class SelfCodingEngine:
         if self.formal_verifier:
             with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
                 fh.write(code)
-                tmp_path = Path(fh.name)
+                tmp_path = resolve_path(fh.name)
             try:
                 verified = self.formal_verifier.verify(tmp_path)
             finally:
@@ -1363,7 +1363,7 @@ class SelfCodingEngine:
 
         def workflow() -> bool:
             ok = True
-            target = Path(file_name) if file_name else resolve_path(".")
+            target = resolve_path(file_name) if file_name else resolve_path(".")
             if self.formal_verifier and path is not None:
                 try:
                     if not self.formal_verifier.verify(target):
@@ -1462,7 +1462,7 @@ class SelfCodingEngine:
             if self.formal_verifier:
                 with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
                     fh.write(snippet)
-                    tmp_path = Path(fh.name)
+                    tmp_path = resolve_path(fh.name)
                 try:
                     return self.formal_verifier.verify(tmp_path)
                 finally:
@@ -1858,7 +1858,7 @@ class SelfCodingEngine:
             if target_region is not None:
                 with tempfile.NamedTemporaryFile("w", suffix=path.suffix, delete=False) as fh:
                     fh.write(generated_code)
-                    tmp_path = Path(fh.name)
+                    tmp_path = resolve_path(fh.name)
                 try:
                     verified = self.formal_verifier.verify(tmp_path)
                 finally:
@@ -2372,7 +2372,9 @@ class SelfCodingEngine:
         ):
             try:
                 self.patch_suggestion_db.add(
-                    SuggestionRecord(module=Path(path).name, description=description)
+                    SuggestionRecord(
+                        module=resolve_path(path).name, description=description
+                    )
                 )
             except Exception:
                 self.logger.exception("failed storing suggestion")

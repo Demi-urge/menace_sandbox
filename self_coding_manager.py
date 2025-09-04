@@ -3,6 +3,10 @@ from __future__ import annotations
 """Manage self-coding patches and deployment cycles."""
 
 from pathlib import Path
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
 import logging
 import subprocess
 import tempfile
@@ -220,7 +224,7 @@ class SelfCodingManager:
         roi_delta = 0.0
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(["git", "clone", str(repo_root), tmp], check=True)
-            clone_root = Path(tmp)
+            clone_root = resolve_path(tmp)
             cloned_path = clone_root / path.resolve().relative_to(repo_root)
             attempt = 0
             patch_id: int | None = None
@@ -746,7 +750,7 @@ class SelfCodingManager:
             self.logger.exception("failed to fetch suggestions")
             return
         for sid, module, description in rows:
-            path = Path(module)
+            path = resolve_path(module)
             try:
                 if getattr(self.engine, "audit_trail", None):
                     try:
