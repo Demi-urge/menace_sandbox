@@ -2,7 +2,9 @@
 
 `stripe_billing_router` maps bots to Stripe products, prices and customers.
 API keys are pulled from a secure vault provider or fall back to baked‑in
-production values. A `RuntimeError` is raised if the keys are missing or empty.
+production values. A `RuntimeError` is raised if the keys are missing, empty or
+test mode keys. Routing attempts for unsupported domains or missing rules also
+raise `RuntimeError`.
 
 ## Bot Invocation and Routing Rules
 

@@ -43,8 +43,8 @@ def _import_finance_router(monkeypatch):
         vsp.VaultSecretProvider,
         "get",
         lambda self, name: {
-            "stripe_secret_key": "sk_test",
-            "stripe_public_key": "pk_test",
+            "stripe_secret_key": "sk_live_dummy",
+            "stripe_public_key": "pk_live_dummy",
         }.get(name, ""),
     )
     sbr = _load("stripe_billing_router")

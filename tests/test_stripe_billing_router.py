@@ -29,8 +29,8 @@ def _import_module(monkeypatch):
         vsp.VaultSecretProvider,
         "get",
         lambda self, name: {
-            "stripe_secret_key": "sk_test",
-            "stripe_public_key": "pk_test",
+            "stripe_secret_key": "sk_live_dummy",
+            "stripe_public_key": "pk_live_dummy",
         }.get(name, ""),
     )
 
@@ -43,14 +43,20 @@ def test_routing_matches_bot_metadata(monkeypatch):
     assert route["product_id"] == "prod_finance_router"
     assert route["price_id"] == "price_finance_standard"
     assert route["customer_id"] == "cus_finance_default"
-    assert route["secret_key"] == "sk_test"
-    assert route["public_key"] == "pk_test"
+    assert route["secret_key"] == "sk_live_dummy"
+    assert route["public_key"] == "pk_live_dummy"
+
+
+def test_unsupported_domain_raises(monkeypatch):
+    sbr = _import_module(monkeypatch)
+    with pytest.raises(RuntimeError, match="Unsupported billing domain"):
+        sbr._resolve_route("unknown:bot:category")
 
 
 def test_unmatched_route_raises(monkeypatch):
     sbr = _import_module(monkeypatch)
-    with pytest.raises(RuntimeError):
-        sbr._resolve_route("unknown:bot:category")
+    with pytest.raises(RuntimeError, match="No billing route"):
+        sbr._resolve_route("finance:unknown_bot:monetization")
 
 
 def test_missing_keys_raise(monkeypatch):

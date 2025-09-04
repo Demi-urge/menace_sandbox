@@ -28,7 +28,12 @@ OFFICIAL_PUBLIC_KEY = "pk_live_official_placeholder"
 STRIPE_SECRET_KEY = _vault.get("stripe_secret_key") or OFFICIAL_SECRET_KEY
 STRIPE_PUBLIC_KEY = _vault.get("stripe_public_key") or OFFICIAL_PUBLIC_KEY
 if not STRIPE_SECRET_KEY or not STRIPE_PUBLIC_KEY:
+    logger.error("Stripe API keys must be configured and non-empty")
     raise RuntimeError("Stripe API keys must be configured and non-empty")
+
+if STRIPE_SECRET_KEY.startswith("sk_test") or STRIPE_PUBLIC_KEY.startswith("pk_test"):
+    logger.error("Test mode Stripe API keys are not permitted")
+    raise RuntimeError("Test mode Stripe API keys are not permitted")
 
 # Base routing rules: (domain, name, category) -> identifiers
 BILLING_RULES: dict[tuple[str, str, str], dict[str, str]] = {
@@ -84,8 +89,10 @@ def register_override(
 
 def _client(api_key: str):
     if not api_key:
+        logger.error("Attempted to initialise Stripe client without API key")
         raise RuntimeError("Stripe API key must be configured and non-empty")
     if stripe is None:
+        logger.error("Stripe library unavailable")
         raise RuntimeError("stripe library unavailable")
     stripe.api_key = api_key
     return stripe
@@ -95,6 +102,7 @@ def _parse_bot_id(bot_id: str) -> tuple[str, str, str]:
     try:
         domain, name, category = bot_id.split(":", 2)
     except ValueError as exc:  # pragma: no cover - input validation
+        logger.error("Invalid bot_id '%s'", bot_id)
         raise ValueError("bot_id must be in 'domain:name:category' format") from exc
     return domain, name, category
 
@@ -103,6 +111,14 @@ def _resolve_route(
     bot_id: str, overrides: Optional[Mapping[str, str]] = None
 ) -> dict[str, str]:
     domain, name, category = _parse_bot_id(bot_id)
+
+    supported_domains = {d for d, _n, _c in BILLING_RULES.keys()} | {
+        d for d, *_ in OVERRIDES.keys()
+    }
+    if domain not in supported_domains:
+        logger.error("Unsupported billing domain '%s'", domain)
+        raise RuntimeError(f"Unsupported billing domain '{domain}'")
+
     route = BILLING_RULES.get((domain, name, category))
     if overrides:
         for key, value in overrides.items():
@@ -113,12 +129,14 @@ def _resolve_route(
                 else:
                     route = dict(update)
     if not route:
-        raise RuntimeError(f"No billing route for bot '{bot_id}'")
+        logger.error("No billing route configured for bot '%s'", bot_id)
+        raise RuntimeError(f"No billing route configured for bot '{bot_id}'")
     route.setdefault("secret_key", STRIPE_SECRET_KEY)
     route.setdefault("public_key", STRIPE_PUBLIC_KEY)
     for strategy in _STRATEGIES:
         route = strategy.apply(bot_id, dict(route))
     if not route.get("secret_key") or not route.get("public_key"):
+        logger.error("Resolved route missing Stripe keys for bot '%s'", bot_id)
         raise RuntimeError("Stripe keys are not configured for the resolved route")
     return route
 
