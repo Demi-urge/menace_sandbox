@@ -50,6 +50,8 @@ jobs:
         run: pre-commit run check-governed-embeddings --all-files
       - name: Check for direct sqlite3 connections
         run: pre-commit run forbid-sqlite3-connect --all-files
+      - name: Prevent direct Stripe imports
+        run: pre-commit run forbid-stripe-imports --all-files
       - name: Run flake8
         run: pre-commit run flake8 --all-files
       - name: Enforce DB router usage
