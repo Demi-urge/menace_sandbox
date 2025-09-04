@@ -172,7 +172,10 @@ def _run_once(
                 rel_paths.append(changed_path)
 
         selected: str | None = None
-        capture_cov = os.getenv("SANDBOX_CAPTURE_COVERAGE")
+        cov_env = os.getenv("SANDBOX_CAPTURE_COVERAGE")
+        capture_cov = True
+        if cov_env is not None and cov_env.lower() in {"0", "false", "no"}:
+            capture_cov = False
         if backend == "venv":
             venv_dir = tmpdir / "venv"
             subprocess.run(
@@ -197,6 +200,24 @@ def _run_once(
                     )
                     logger.error(msg.strip())
                     raise RuntimeError(msg)
+
+            if capture_cov:
+                check_cov = subprocess.run(
+                    [str(python), "-c", "import coverage"],
+                    capture_output=True,
+                    text=True,
+                )
+                if check_cov.returncode != 0:
+                    cov_install = subprocess.run(
+                        [str(python), "-m", "pip", "install", "coverage"],
+                        cwd=tmpdir,
+                        capture_output=True,
+                        text=True,
+                    )
+                    stdout_parts.append(cov_install.stdout)
+                    stdout_parts.append(cov_install.stderr)
+                    if cov_install.returncode != 0:
+                        capture_cov = False
 
             pytest_args = ["-q", "--tb=short"]
             if rel_paths:
@@ -264,6 +285,7 @@ def _run_once(
             if req_file.exists():
                 inner_cmds.append("pip install -r requirements.txt")
             if capture_cov:
+                inner_cmds.append("pip install coverage")
                 snippet = (
                     "python - <<'PY'\n"
                     "import sys,coverage,pytest\n"
@@ -314,6 +336,7 @@ def _run_once(
         failure = None
         coverage_pct = None
         cov_data = None
+        executed_functions: list[str] | None = None
         if capture_cov:
             cov_json = tmpdir / "cov.json"
             if cov_json.exists():
@@ -330,9 +353,9 @@ def _run_once(
                 try:
                     from .environment import load_coverage_report  # type: ignore
 
-                    load_coverage_report(cov_data)
+                    executed_functions = load_coverage_report(cov_data)
                 except Exception:
-                    pass
+                    executed_functions = None
                 # Derive function coverage and entropy delta
                 try:
                     from self_improvement.metrics import (
@@ -392,6 +415,7 @@ def _run_once(
                     ),
                     "coverage": coverage_pct,
                     "entropy_delta": entropy_delta,
+                    "executed_functions": executed_functions or [],
                 },
             )
         except Exception:  # pragma: no cover - best effort

@@ -57,6 +57,8 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
     entropy_delta = metrics.get("entropy_delta")
     roi = metrics.get("roi")
     coverage = metrics.get("coverage")
+    executed_functions = metrics.get("executed_functions")
+    functions_hit = len(executed_functions) if executed_functions is not None else None
 
     failure = getattr(result, "failure", None)
     error_trace: str | None = None
@@ -77,6 +79,10 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
         "entropy_delta": entropy_delta,
         "roi": roi,
         "coverage": _serialise(coverage) if coverage is not None else None,
+        "functions_hit": functions_hit,
+        "executed_functions": _serialise(executed_functions)
+        if executed_functions is not None
+        else None,
         "error": error_trace,
     }
     logger.info("run", extra=log_record(**record))
@@ -98,6 +104,10 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
             summary["runtime_total"] = summary.get("runtime_total", 0.0) + runtime
             if entropy_delta is not None:
                 summary["entropy_total"] = summary.get("entropy_total", 0.0) + float(entropy_delta)
+            if functions_hit is not None:
+                summary["functions_hit_total"] = summary.get(
+                    "functions_hit_total", 0
+                ) + int(functions_hit)
             _SUMMARY_FILE.write_text(json.dumps(summary))
         except Exception:  # pragma: no cover - logging is best effort
             logger.exception("failed to persist run metrics")
