@@ -28,6 +28,7 @@ import re
 from dynamic_path_router import resolve_path, repo_root, path_for_prompt
 
 from .orphan_integration import integrate_and_graph_orphans
+from .scoring import record_run as _score_record_run, load_summary as _load_run_summary
 
 try:
     import resource
@@ -5091,6 +5092,8 @@ async def _section_worker(
     delay = 0.5
     retried = False
     final_result: Dict[str, Any] = {}
+    metrics: Dict[str, float] = {}
+    duration = 0.0
     while True:
         try:
             start = time.perf_counter()
@@ -5116,7 +5119,7 @@ async def _section_worker(
 
         stdout_combined = ""
         stderr_combined = ""
-        metrics: Dict[str, float] = {}
+        metrics = {}
         error_count = 0
         neg = False
         for res in results:
@@ -5212,6 +5215,18 @@ async def _section_worker(
             cov.save()
         except Exception:
             pass
+    try:
+        _score_record_run(
+            final_result,
+            {
+                "roi": updates[-1][1] if updates else 0.0,
+                "coverage": cov_map,
+                "entropy_delta": metrics.get("entropy_delta", 0.0),
+                "runtime": duration,
+            },
+        )
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to record run score")
     return final_result, updates, cov_map
 
 
@@ -6448,6 +6463,7 @@ def run_scenarios(
         "scorecards": {scen: asdict(card) for scen, card in scorecards.items()},
         "status": tracker.workflow_label,
     }
+    summary["run_summary"] = _load_run_summary()
     if synergy_suggestions:
         summary["synergy_suggestions"] = synergy_suggestions
     try:
@@ -6481,6 +6497,7 @@ def generate_scorecard(
 
     wf_id = str(getattr(workflow, "wid", getattr(workflow, "id", "0")))
     card: Dict[str, Any] = {"workflow_id": wf_id, "scenarios": {}}
+    card["run_summary"] = _load_run_summary()
 
     # Import lazily to avoid expensive module import when not needed.
     try:  # pragma: no cover - import error shouldn't crash

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import json
 
 from ..error_parser import ErrorParser
 
@@ -259,6 +260,30 @@ def run_tests(
         duration = time.time() - start
         stdout_parts.append(tests.stdout)
         failure = None
+        coverage_pct = None
+        if capture_cov:
+            cov_file = tmpdir / ".coverage"
+            cov_json = tmpdir / "cov.json"
+            cov_cmd = [
+                sys.executable,
+                "-m",
+                "coverage",
+                "json",
+                f"--data-file={cov_file}",
+                "-o",
+                str(cov_json),
+            ]
+            cov_proc = subprocess.run(
+                cov_cmd, cwd=tmpdir, capture_output=True, text=True
+            )
+            if cov_proc.returncode == 0 and cov_json.exists():
+                try:
+                    cov_data = json.loads(cov_json.read_text())
+                    coverage_pct = float(
+                        cov_data.get("totals", {}).get("percent_covered", 0.0)
+                    )
+                except Exception:
+                    coverage_pct = None
         if tests.returncode != 0:
             failure = ErrorParser.parse(tests.stdout + tests.stderr)
             frames = _extract_frames(failure.get("trace", ""))
@@ -268,7 +293,7 @@ def run_tests(
                 failure["file"] = last["file"]
                 failure["line"] = last["line"]
                 failure["function"] = last["function"]
-        return TestHarnessResult(
+        res = TestHarnessResult(
             success=tests.returncode == 0,
             stdout="".join(stdout_parts),
             stderr=tests.stderr,
@@ -276,5 +301,18 @@ def run_tests(
             failure=failure,
             path=selected,
         )
+        try:
+            from .scoring import record_run as _score_record_run
+            _score_record_run(
+                res,
+                {
+                    "roi": coverage_pct if coverage_pct is not None else (1.0 if res.success else 0.0),
+                    "coverage": coverage_pct,
+                    "entropy_delta": 0.0,
+                },
+            )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to record test run")
+        return res
     finally:
         tmpdir_obj.cleanup()
