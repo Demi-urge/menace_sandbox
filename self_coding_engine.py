@@ -2746,6 +2746,8 @@ class SelfCodingEngine:
                             False,
                             {"error": str(exc), "trace": trace},
                             {"roi": roi_val, "roi_delta": 0.0},
+                            failure_reason=str(exc),
+                            sandbox_metrics={"roi": roi_val},
                         )
                     except Exception:
                         self.logger.exception("log_prompt_attempt failed")
@@ -2788,6 +2790,8 @@ class SelfCodingEngine:
                             not reverted,
                             exec_res,
                             roi_meta,
+                            failure_reason="reverted" if reverted else None,
+                            sandbox_metrics=roi_meta if reverted else None,
                         )
                     except Exception:
                         self.logger.exception("log_prompt_attempt failed")
@@ -2876,6 +2880,8 @@ class SelfCodingEngine:
                     False,
                     exec_res,
                     {"roi": roi_val, "roi_delta": 0.0},
+                    failure_reason=None,
+                    sandbox_metrics={"roi": roi_val},
                 )
             except Exception:
                 self.logger.exception("log_prompt_attempt failed")

@@ -1579,6 +1579,7 @@ class SelfImprovementEngine:
                                 False,
                                 {"delta": delta_vals, "patch_diff": patch_diff},
                                 failure_reason=reason,
+                                sandbox_metrics=delta_vals,
                             )
                         except Exception:
                             self.logger.exception("log_prompt_attempt failed")
@@ -1676,6 +1677,7 @@ class SelfImprovementEngine:
                 exec_res,
                 roi_meta,
                 failure_reason=failure_reason if not success else None,
+                sandbox_metrics=roi_meta if not success else None,
             )
         except Exception:
             self.logger.exception("log_prompt_attempt failed")
@@ -6506,6 +6508,7 @@ class SelfImprovementEngine:
             exec_result={"diff": diff},
             roi_meta=delta,
             failure_reason=failure_reason,
+            sandbox_metrics=delta if not success else None,
         )
         if success:
             for f in files or []:

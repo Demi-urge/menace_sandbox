@@ -68,11 +68,13 @@ def test_failure_reason_logged(tmp_path, monkeypatch, dummy_prompt):
         success=False,
         exec_result={"error": "boom"},
         failure_reason="api_error",
+        sandbox_metrics={"s": 2},
     )
 
     log_path = tmp_path / "fail.json"
     entry = json.loads(log_path.read_text().splitlines()[0])
     assert entry["failure_reason"] == "api_error"
+    assert entry["sandbox_metrics"] == {"s": 2}
     assert entry["prompt_id"] == dummy_prompt.metadata["prompt_id"]
 
 
