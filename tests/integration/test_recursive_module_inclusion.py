@@ -36,7 +36,7 @@ REGISTRY._names_to_collectors.clear()
 
 # load SelfTestService from source
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("menace", types.ModuleType("menace"))
@@ -50,9 +50,9 @@ def test_recursive_module_inclusion(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
     # create simple orphan chain: a -> b -> c
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n")
-    (tmp_path / "c.py").write_text("VALUE = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n")  # path-ignore
+    (tmp_path / "c.py").write_text("VALUE = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -118,11 +118,11 @@ def test_recursive_module_inclusion(tmp_path, monkeypatch):
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
 
-    assert generated and generated[0] == ["a.py", "b.py", "c.py"]
-    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]
-    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]
+    assert generated and generated[0] == ["a.py", "b.py", "c.py"]  # path-ignore
+    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]  # path-ignore
+    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]  # path-ignore
     data = json.loads(map_path.read_text())
-    assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])
+    assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])  # path-ignore
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
     assert orphan_list == []
 
@@ -131,9 +131,9 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
     # create chain with deprecated module: a -> b(deprecated) -> c
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n# deprecated\n")
-    (tmp_path / "c.py").write_text("VALUE = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n# deprecated\n")  # path-ignore
+    (tmp_path / "c.py").write_text("VALUE = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -203,13 +203,13 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
 
-    assert generated and generated[0] == ["a.py", "c.py"]
-    assert integrated == ["a.py", "c.py"]
+    assert generated and generated[0] == ["a.py", "c.py"]  # path-ignore
+    assert integrated == ["a.py", "c.py"]  # path-ignore
     data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {"a.py", "c.py"}
-    assert svc.orphan_traces["b.py"]["redundant"] is True
-    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]
-    assert svc.results.get("orphan_redundant") == ["b.py"]
+    assert set(data["modules"]) == {"a.py", "c.py"}  # path-ignore
+    assert svc.orphan_traces["b.py"]["redundant"] is True  # path-ignore
+    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]  # path-ignore
+    assert svc.results.get("orphan_redundant") == ["b.py"]  # path-ignore
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
     assert orphan_list == []
 
@@ -217,9 +217,9 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
 def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n# deprecated\n")
-    (tmp_path / "c.py").write_text("VALUE = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n# deprecated\n")  # path-ignore
+    (tmp_path / "c.py").write_text("VALUE = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -256,7 +256,7 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
             if s.endswith(".py"):
                 mod_path = s
         if path:
-            if mod_path.endswith("b.py"):
+            if mod_path.endswith("b.py"):  # path-ignore
                 summary = {"summary": {"passed": 0, "failed": 1}}
             else:
                 summary = {"summary": {"passed": 1, "failed": 0}}
@@ -264,7 +264,7 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
 
         class P:
             returncode = 0
-            if mod_path.endswith("b.py"):
+            if mod_path.endswith("b.py"):  # path-ignore
                 returncode = 1
 
             async def communicate(self):
@@ -297,13 +297,13 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
 
-    assert generated and generated[0] == ["a.py", "c.py"]
-    assert integrated == ["a.py", "c.py"]
+    assert generated and generated[0] == ["a.py", "c.py"]  # path-ignore
+    assert integrated == ["a.py", "c.py"]  # path-ignore
     data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {"a.py", "c.py"}
-    assert svc.orphan_traces["b.py"]["redundant"] is True
-    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]
-    assert svc.results.get("orphan_passed") == ["a.py", "c.py"]
-    assert svc.results.get("orphan_redundant") == ["b.py"]
+    assert set(data["modules"]) == {"a.py", "c.py"}  # path-ignore
+    assert svc.orphan_traces["b.py"]["redundant"] is True  # path-ignore
+    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]  # path-ignore
+    assert svc.results.get("orphan_passed") == ["a.py", "c.py"]  # path-ignore
+    assert svc.results.get("orphan_redundant") == ["b.py"]  # path-ignore
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
     assert orphan_list == []

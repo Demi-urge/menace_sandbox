@@ -207,7 +207,7 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(metrics_exporter, "start_metrics_server", lambda *a, **k: None)
 
-    path = Path(__file__).resolve().parents[2] / "run_autonomous.py"
+    path = Path(__file__).resolve().parents[2] / "run_autonomous.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = mod

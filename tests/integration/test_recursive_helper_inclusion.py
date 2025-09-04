@@ -10,11 +10,11 @@ import pytest
 def _setup(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "main.py").write_text("import helper\nimport redundant\n")
-    (repo / "helper.py").write_text(
+    (repo / "main.py").write_text("import helper\nimport redundant\n")  # path-ignore
+    (repo / "helper.py").write_text(  # path-ignore
         "from pathlib import Path\nPath('helper_ran').write_text('x')\n"
     )
-    (repo / "redundant.py").write_text(
+    (repo / "redundant.py").write_text(  # path-ignore
         "from pathlib import Path\nPath('redundant_ran').write_text('x')\n"
     )
 
@@ -45,7 +45,7 @@ def _setup(monkeypatch, tmp_path):
     def discover(path, *, recursive=True):
         assert Path(path) == repo
         assert recursive is True
-        return ["main.py", "helper.py", "redundant.py"]
+        return ["main.py", "helper.py", "redundant.py"]  # path-ignore
     mod.discover_isolated_modules = discover
     pkg = types.ModuleType("scripts")
     pkg.discover_isolated_modules = mod
@@ -56,7 +56,7 @@ def _setup(monkeypatch, tmp_path):
     classified: dict[str, str] = {}
     def fake_classify(p):
         name = Path(p).name
-        res = "redundant" if name == "redundant.py" else "candidate"
+        res = "redundant" if name == "redundant.py" else "candidate"  # path-ignore
         classified[name] = res
         return res
     monkeypatch.setattr(orphan_analyzer, "classify_module", fake_classify)
@@ -88,12 +88,12 @@ def _setup(monkeypatch, tmp_path):
 
 def test_recursive_helper_execution(_setup):
     env, repo, data_dir, classified = _setup
-    env.auto_include_modules(["main.py"], recursive=True, validate=True)
+    env.auto_include_modules(["main.py"], recursive=True, validate=True)  # path-ignore
 
     assert (repo / "helper_ran").exists()
     data = json.loads((data_dir / "module_map.json").read_text())
-    assert "helper.py" in data["modules"] and "redundant.py" not in data["modules"]
+    assert "helper.py" in data["modules"] and "redundant.py" not in data["modules"]  # path-ignore
     orphans = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert "redundant.py" in orphans and orphans["redundant.py"]["redundant"]
-    assert classified["redundant.py"] == "redundant"
-    assert classified["main.py"] == "candidate"
+    assert "redundant.py" in orphans and orphans["redundant.py"]["redundant"]  # path-ignore
+    assert classified["redundant.py"] == "redundant"  # path-ignore
+    assert classified["main.py"] == "candidate"  # path-ignore

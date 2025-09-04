@@ -12,9 +12,9 @@ def _setup_env(monkeypatch, tmp_path, redundant=None):
     monkeypatch.chdir(tmp_path)
 
     # create orphan chain a -> b -> c
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n")
-    (tmp_path / "c.py").write_text("VALUE = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n")  # path-ignore
+    (tmp_path / "c.py").write_text("VALUE = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -48,7 +48,7 @@ def _setup_env(monkeypatch, tmp_path, redundant=None):
     monkeypatch.setattr(
         orphan_analyzer,
         "analyze_redundancy",
-        lambda p: p.name == "b.py" if redundant else False,
+        lambda p: p.name == "b.py" if redundant else False,  # path-ignore
     )
 
     return env_mod, generated, integrated, map_path
@@ -64,14 +64,14 @@ def test_auto_include_recursive_chain(tmp_path, monkeypatch):
     assert mapping["c"]["parents"] == ["b"]
 
     ctx = types.SimpleNamespace(orphan_traces={})
-    auto_include_modules(["a.py"], recursive=True)
+    auto_include_modules(["a.py"], recursive=True)  # path-ignore
 
-    assert generated and generated[0] == ["a.py", "b.py", "c.py"]
-    assert integrated == ["a.py", "b.py", "c.py"]
+    assert generated and generated[0] == ["a.py", "b.py", "c.py"]  # path-ignore
+    assert integrated == ["a.py", "b.py", "c.py"]  # path-ignore
     data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {"a.py", "b.py", "c.py"}
-    assert ctx.orphan_traces["b.py"]["parents"] == ["a.py"]
-    assert ctx.orphan_traces["c.py"]["parents"] == ["b.py", "a.py"]
+    assert set(data["modules"]) == {"a.py", "b.py", "c.py"}  # path-ignore
+    assert ctx.orphan_traces["b.py"]["parents"] == ["a.py"]  # path-ignore
+    assert ctx.orphan_traces["c.py"]["parents"] == ["b.py", "a.py"]  # path-ignore
     assert (tmp_path / "workflows.db").exists()
 
 
@@ -85,7 +85,7 @@ def test_auto_include_recursive_skips_redundant(tmp_path, monkeypatch):
     assert mapping["c"]["parents"] == ["b"]
 
     ctx = types.SimpleNamespace(orphan_traces={})
-    auto_include_modules(["a.py"], recursive=True)
+    auto_include_modules(["a.py"], recursive=True)  # path-ignore
 
-    assert ctx.orphan_traces["b.py"]["parents"] == ["a.py"]
-    assert ctx.orphan_traces["c.py"]["parents"] == ["b.py", "a.py"]
+    assert ctx.orphan_traces["b.py"]["parents"] == ["a.py"]  # path-ignore
+    assert ctx.orphan_traces["c.py"]["parents"] == ["b.py", "a.py"]  # path-ignore

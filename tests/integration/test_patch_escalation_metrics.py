@@ -70,7 +70,7 @@ def test_escalation_metrics(monkeypatch, tmp_path):
 
     engine.apply_patch = types.MethodType(fake_apply, engine)
 
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text("def f():\n    a=1\n    b=2\n    return a+b\n")
     region = TargetRegion(start_line=2, end_line=2, function="f")
 

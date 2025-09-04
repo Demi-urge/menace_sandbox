@@ -23,7 +23,7 @@ sys.modules["menace.knowledge_graph"] = kg
 # Load QuickFixEngine
 spec = importlib.util.spec_from_file_location(
     "menace.quick_fix_engine",
-    Path(__file__).resolve().parents[2] / "quick_fix_engine.py",
+    Path(__file__).resolve().parents[2] / "quick_fix_engine.py",  # path-ignore
 )
 quick_fix = importlib.util.module_from_spec(spec)
 sys.modules["menace.quick_fix_engine"] = quick_fix
@@ -47,7 +47,7 @@ def test_quick_fix_records_license_and_alerts(tmp_path, monkeypatch):
     from vector_service.patch_logger import PatchLogger
 
     db = PatchHistoryDB()
-    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))
+    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))  # path-ignore
 
     class Manager:
         def run_patch(self, path, desc, context_meta=None):
@@ -73,7 +73,7 @@ def test_quick_fix_records_license_and_alerts(tmp_path, monkeypatch):
         retriever=Retriever(),
         patch_logger=PatchLogger(patch_db=db),
     )
-    (tmp_path / "mod.py").write_text("x=1\n")
+    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
     monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)

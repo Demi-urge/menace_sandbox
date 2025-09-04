@@ -76,14 +76,14 @@ menace_pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
 menace_pkg.__path__ = [str(ROOT)]
 
 spec_sts = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec_sts)
 sys.modules["menace.self_test_service"] = sts
 spec_sts.loader.exec_module(sts)
 
 spec_sie = importlib.util.spec_from_file_location(
-    "menace.self_improvement", ROOT / "self_improvement.py"
+    "menace.self_improvement", ROOT / "self_improvement.py"  # path-ignore
 )
 sie = importlib.util.module_from_spec(spec_sie)
 sys.modules["menace.self_improvement"] = sie
@@ -92,12 +92,12 @@ spec_sie.loader.exec_module(sie)
 # ---------------------------------------------------------------------------
 
 def _build_repo(tmp_path: Path):
-    (tmp_path / "a.py").write_text("import b\nimport fail\n")
-    (tmp_path / "b.py").write_text("import c\nimport helper\n")
-    (tmp_path / "c.py").write_text("import red\n")
-    (tmp_path / "helper.py").write_text("VALUE = 1\n")
-    (tmp_path / "red.py").write_text("# deprecated\nVALUE = 2\n")
-    (tmp_path / "fail.py").write_text("VALUE = 3\n")
+    (tmp_path / "a.py").write_text("import b\nimport fail\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\nimport helper\n")  # path-ignore
+    (tmp_path / "c.py").write_text("import red\n")  # path-ignore
+    (tmp_path / "helper.py").write_text("VALUE = 1\n")  # path-ignore
+    (tmp_path / "red.py").write_text("# deprecated\nVALUE = 2\n")  # path-ignore
+    (tmp_path / "fail.py").write_text("VALUE = 3\n")  # path-ignore
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     map_path = data_dir / "module_map.json"
@@ -144,10 +144,10 @@ def test_orphan_pipelines_prune_and_record_metrics(tmp_path, monkeypatch):
             self._mods = pytest_args.split()
             self.results: dict[str, object] = {}
         async def _run_once(self) -> None:
-            passed = [m for m in self._mods if "fail.py" not in m and "red.py" not in m]
+            passed = [m for m in self._mods if "fail.py" not in m and "red.py" not in m]  # path-ignore
             self.results = {
                 "orphan_passed": passed,
-                "orphan_redundant": [m for m in self._mods if "red.py" in m],
+                "orphan_redundant": [m for m in self._mods if "red.py" in m],  # path-ignore
                 "failed": 0,
             }
 
@@ -189,14 +189,14 @@ def test_orphan_pipelines_prune_and_record_metrics(tmp_path, monkeypatch):
         tracker=DummyTracker(),
     )
 
-    mods = [str(tmp_path / m) for m in ["a.py", "b.py", "c.py", "helper.py", "red.py", "fail.py"]]
+    mods = [str(tmp_path / m) for m in ["a.py", "b.py", "c.py", "helper.py", "red.py", "fail.py"]]  # path-ignore
     passing = sie.SelfImprovementEngine._test_orphan_modules(engine, mods)
     integrated = sie.SelfImprovementEngine._integrate_orphans(engine, passing)
 
-    assert passing == {"a.py", "b.py", "c.py", "helper.py"}
+    assert passing == {"a.py", "b.py", "c.py", "helper.py"}  # path-ignore
     assert passing <= integrated
-    assert calls["include"] and set(["a.py", "b.py", "c.py", "helper.py"]).issubset(set(calls["include"][-1]))
-    assert calls["workflows"] and set(["a.py", "b.py", "c.py", "helper.py"]).issubset(set(calls["workflows"][0]))
+    assert calls["include"] and set(["a.py", "b.py", "c.py", "helper.py"]).issubset(set(calls["include"][-1]))  # path-ignore
+    assert calls["workflows"] and set(["a.py", "b.py", "c.py", "helper.py"]).issubset(set(calls["workflows"][0]))  # path-ignore
     assert metrics_exporter.orphan_modules_tested_total._value.get() == 6
     assert metrics_exporter.orphan_modules_reintroduced_total._value.get() >= 8
     assert metrics_exporter.orphan_modules_failed_total._value.get() == 1
@@ -214,7 +214,7 @@ def test_side_effect_metric_increments(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path / "sandbox_data"))
     (tmp_path / "sandbox_data").mkdir()
-    mod = tmp_path / "skip.py"
+    mod = tmp_path / "skip.py"  # path-ignore
     mod.write_text("VALUE = 1\n")
 
     stub_mod = types.ModuleType("module_index_db")
@@ -233,7 +233,7 @@ def test_side_effect_metric_increments(monkeypatch, tmp_path):
     env = importlib.import_module("sandbox_runner.environment")
 
     res = env.try_integrate_into_workflows(
-        [str(mod)], side_effects={"skip.py": 11}
+        [str(mod)], side_effects={"skip.py": 11}  # path-ignore
     )
 
     assert res == []

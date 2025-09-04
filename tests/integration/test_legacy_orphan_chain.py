@@ -47,9 +47,9 @@ REGISTRY._names_to_collectors.clear()
 # ---------------------------------------------------------------------------
 
 def test_cycle_caches_legacy_modules(monkeypatch, tmp_path):
-    (tmp_path / "a.py").write_text("import b\nimport old\n")
-    (tmp_path / "b.py").write_text("VALUE = 1\n")
-    (tmp_path / "old.py").write_text("# legacy\nVALUE = 2\n")
+    (tmp_path / "a.py").write_text("import b\nimport old\n")  # path-ignore
+    (tmp_path / "b.py").write_text("VALUE = 1\n")  # path-ignore
+    (tmp_path / "old.py").write_text("# legacy\nVALUE = 2\n")  # path-ignore
 
     def fake_discover(repo_path: str):
         return {
@@ -105,14 +105,14 @@ def test_cycle_caches_legacy_modules(monkeypatch, tmp_path):
 
     cycle_mod.include_orphan_modules(ctx)
 
-    assert sorted(calls["mods"]) == ["a.py", "b.py"]
+    assert sorted(calls["mods"]) == ["a.py", "b.py"]  # path-ignore
     assert calls["recursive"] and calls["validate"]
-    assert ctx.module_map == {"a.py", "b.py"}
-    assert "old.py" not in calls["mods"]
-    assert "old.py" in cache["traces"]
-    assert cache["traces"]["old.py"]["classification"] == "legacy"
-    assert ctx.orphan_traces["old.py"]["classification"] == "legacy"
-    assert ctx.orphan_traces["old.py"]["redundant"] is True
+    assert ctx.module_map == {"a.py", "b.py"}  # path-ignore
+    assert "old.py" not in calls["mods"]  # path-ignore
+    assert "old.py" in cache["traces"]  # path-ignore
+    assert cache["traces"]["old.py"]["classification"] == "legacy"  # path-ignore
+    assert ctx.orphan_traces["old.py"]["classification"] == "legacy"  # path-ignore
+    assert ctx.orphan_traces["old.py"]["redundant"] is True  # path-ignore
 
 
 # ---------------------------------------------------------------------------
@@ -120,15 +120,15 @@ def test_cycle_caches_legacy_modules(monkeypatch, tmp_path):
 def test_update_orphan_modules_records_metrics(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "a.py").write_text("import b\nimport old\n")
-    (repo / "b.py").write_text("VALUE = 1\n")
-    (repo / "old.py").write_text("# legacy\nVALUE = 2\n")
+    (repo / "a.py").write_text("import b\nimport old\n")  # path-ignore
+    (repo / "b.py").write_text("VALUE = 1\n")  # path-ignore
+    (repo / "old.py").write_text("# legacy\nVALUE = 2\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     (data_dir / "module_map.json").write_text(json.dumps({"modules": {}, "groups": {}}))
     (data_dir / "orphan_classifications.json").write_text(
-        json.dumps({"old.py": {"classification": "legacy"}})
+        json.dumps({"old.py": {"classification": "legacy"}})  # path-ignore
     )
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
@@ -137,7 +137,7 @@ def test_update_orphan_modules_records_metrics(monkeypatch, tmp_path):
     monkeypatch.chdir(repo)
 
     mod = types.ModuleType("scripts.discover_isolated_modules")
-    mod.discover_isolated_modules = lambda root, *, recursive=True: ["a.py", "b.py", "old.py"]
+    mod.discover_isolated_modules = lambda root, *, recursive=True: ["a.py", "b.py", "old.py"]  # path-ignore
     pkg = types.ModuleType("scripts")
     pkg.discover_isolated_modules = mod
     monkeypatch.setitem(sys.modules, "scripts", pkg)
@@ -229,14 +229,14 @@ def test_update_orphan_modules_records_metrics(monkeypatch, tmp_path):
 
     _update_orphans(engine)
 
-    assert calls["tested"] and sorted(m[0] for m in calls["tested"]) == ["a.py", "b.py"]
-    assert calls["workflows"] and calls["workflows"][0] == ["a.py", "b.py"]
+    assert calls["tested"] and sorted(m[0] for m in calls["tested"]) == ["a.py", "b.py"]  # path-ignore
+    assert calls["workflows"] and calls["workflows"][0] == ["a.py", "b.py"]  # path-ignore
     data = json.loads((data_dir / "module_map.json").read_text())
-    assert set(data.get("modules", {})) == {"a.py", "b.py"}
-    assert "old.py" not in data.get("modules", {})
+    assert set(data.get("modules", {})) == {"a.py", "b.py"}  # path-ignore
+    assert "old.py" not in data.get("modules", {})  # path-ignore
     assert (data_dir / "orphan_modules.json").read_text() == "[]"
     classifications = json.loads((data_dir / "orphan_classifications.json").read_text())
-    assert classifications["old.py"]["classification"] == "legacy"
+    assert classifications["old.py"]["classification"] == "legacy"  # path-ignore
 
     assert metrics_exporter.orphan_modules_tested_total._value.get() == 2
     assert metrics_exporter.orphan_modules_reintroduced_total._value.get() == 4

@@ -36,7 +36,7 @@ REGISTRY._names_to_collectors.clear()
 
 # load SelfTestService from source
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("menace", types.ModuleType("menace"))
@@ -52,12 +52,12 @@ def test_recursive_paths(tmp_path, monkeypatch):
     # create two orphan chains in separate directories
     (tmp_path / "one").mkdir()
     (tmp_path / "one" / "__init__.py").write_text("\n")
-    (tmp_path / "one" / "a.py").write_text("import one.b\nVALUE = 1\n")
-    (tmp_path / "one" / "b.py").write_text("VALUE = 2\n")
+    (tmp_path / "one" / "a.py").write_text("import one.b\nVALUE = 1\n")  # path-ignore
+    (tmp_path / "one" / "b.py").write_text("VALUE = 2\n")  # path-ignore
     (tmp_path / "two").mkdir()
     (tmp_path / "two" / "__init__.py").write_text("\n")
-    (tmp_path / "two" / "a.py").write_text("import two.b\nVALUE = 3\n")
-    (tmp_path / "two" / "b.py").write_text("VALUE = 4\n")
+    (tmp_path / "two" / "a.py").write_text("import two.b\nVALUE = 3\n")  # path-ignore
+    (tmp_path / "two" / "b.py").write_text("VALUE = 4\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -99,13 +99,13 @@ def test_recursive_paths(tmp_path, monkeypatch):
     svc.integration_callback(mods)
 
     assert calls and calls[0] == [
-        "one/a.py",
-        "one/b.py",
-        "two/a.py",
-        "two/b.py",
+        "one/a.py",  # path-ignore
+        "one/b.py",  # path-ignore
+        "two/a.py",  # path-ignore
+        "two/b.py",  # path-ignore
     ]
     data = json.loads(map_path.read_text())
-    assert set(data["modules"].keys()) == {"one/a.py", "one/b.py", "two/a.py", "two/b.py"}
+    assert set(data["modules"].keys()) == {"one/a.py", "one/b.py", "two/a.py", "two/b.py"}  # path-ignore
 
     # ------------------------------------------------------------------
     # SelfImprovementEngine should also integrate using full paths
@@ -171,7 +171,7 @@ def test_recursive_paths(tmp_path, monkeypatch):
         orphan_traces={},
     )
 
-    mods = ["one/a.py", "one/b.py", "two/a.py", "two/b.py"]
+    mods = ["one/a.py", "one/b.py", "two/a.py", "two/b.py"]  # path-ignore
     result = sie.SelfImprovementEngine._test_orphan_modules(engine, mods)
     assert result == set(mods)
     assert sie_calls and sie_calls[0] == sorted(mods)

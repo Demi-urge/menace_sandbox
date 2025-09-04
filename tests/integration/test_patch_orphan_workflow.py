@@ -11,19 +11,19 @@ import pytest
 
 def test_patch_introduces_new_module_included(tmp_path):
     """A repository patch adding a module is discovered next phase."""
-    (tmp_path / "existing.py").write_text("VALUE = 1\n")
+    (tmp_path / "existing.py").write_text("VALUE = 1\n")  # path-ignore
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     map_path = data_dir / "module_map.json"
-    map_path.write_text(json.dumps({"modules": {"existing.py": 1}, "groups": {}}))
+    map_path.write_text(json.dumps({"modules": {"existing.py": 1}, "groups": {}}))  # path-ignore
 
     # Patch introduces a new module depending on existing one
-    (tmp_path / "new_mod.py").write_text("import existing\n")
+    (tmp_path / "new_mod.py").write_text("import existing\n")  # path-ignore
 
     ROOT = Path(__file__).resolve().parents[2]
     os.environ["SANDBOX_DISCOVERY_WORKERS"] = "1"
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.orphan_discovery", ROOT / "sandbox_runner" / "orphan_discovery.py"
+        "sandbox_runner.orphan_discovery", ROOT / "sandbox_runner" / "orphan_discovery.py"  # path-ignore
     )
     od = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(od)
@@ -42,8 +42,8 @@ def test_update_orphan_modules_captures_import(tmp_path, monkeypatch):
         DummyLogger,
     )
 
-    (tmp_path / "wf.py").write_text("import orphan\n")
-    (tmp_path / "orphan.py").write_text("VALUE = 1\n")
+    (tmp_path / "wf.py").write_text("import orphan\n")  # path-ignore
+    (tmp_path / "orphan.py").write_text("VALUE = 1\n")  # path-ignore
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
@@ -54,7 +54,7 @@ def test_update_orphan_modules_captures_import(tmp_path, monkeypatch):
     sr_mod = sys.modules["sandbox_runner"]
     sr_mod.__path__ = [str(ROOT / "sandbox_runner")]
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.dependency_utils", ROOT / "sandbox_runner" / "dependency_utils.py"
+        "sandbox_runner.dependency_utils", ROOT / "sandbox_runner" / "dependency_utils.py"  # path-ignore
     )
     dep_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(dep_mod)
@@ -91,7 +91,7 @@ def test_update_orphan_modules_captures_import(tmp_path, monkeypatch):
     env = types.SimpleNamespace(auto_include_modules=fake_auto)
     _update_orphan_modules.__globals__["environment"] = env
 
-    _update_orphan_modules(eng, [str(tmp_path / "wf.py")])
+    _update_orphan_modules(eng, [str(tmp_path / "wf.py")])  # path-ignore
 
-    assert "orphan.py" in integrated
-    assert calls["auto"] and "wf.py" in calls["auto"] and "orphan.py" in calls["auto"]
+    assert "orphan.py" in integrated  # path-ignore
+    assert calls["auto"] and "wf.py" in calls["auto"] and "orphan.py" in calls["auto"]  # path-ignore

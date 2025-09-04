@@ -438,7 +438,7 @@ def test_target_region_escalation(monkeypatch, tmp_path, caplog):
     pipeline = DummyPipeline()
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
 
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def foo():\n    return 1\n")
 
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)

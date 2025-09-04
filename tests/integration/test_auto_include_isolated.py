@@ -108,7 +108,7 @@ def _load_run_autonomous(monkeypatch, data_dir, log):
         def run_once(self):
             data_dir.mkdir(parents=True, exist_ok=True)
             orphan_file = data_dir / "orphan_modules.json"
-            mods = ["iso.py"]
+            mods = ["iso.py"]  # path-ignore
             orphan_file.write_text(json.dumps(mods))
             if self.integration_callback:
                 self.integration_callback(mods)
@@ -172,7 +172,7 @@ def _load_run_autonomous(monkeypatch, data_dir, log):
         ps.SettingsConfigDict = dict
         monkeypatch.setitem(sys.modules, "pydantic_settings", ps)
 
-    path = ROOT / "run_autonomous.py"
+    path = ROOT / "run_autonomous.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "run_autonomous", mod)
@@ -211,8 +211,8 @@ def _load_run_autonomous(monkeypatch, data_dir, log):
 def test_auto_include_isolated(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "dep.py").write_text("def x():\n    pass\n")
-    (repo / "iso.py").write_text("import dep\n")
+    (repo / "dep.py").write_text("def x():\n    pass\n")  # path-ignore
+    (repo / "iso.py").write_text("import dep\n")  # path-ignore
     data_dir = tmp_path / "data"
     log: dict = {}
     mod = _load_run_autonomous(monkeypatch, data_dir, log)
@@ -235,9 +235,9 @@ def test_auto_include_isolated(monkeypatch, tmp_path):
     ])
 
     orphans = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert "iso.py" in orphans
+    assert "iso.py" in orphans  # path-ignore
 
     map_data = json.loads((data_dir / "module_map.json").read_text())
-    assert "iso.py" in map_data["modules"]
+    assert "iso.py" in map_data["modules"]  # path-ignore
 
-    assert log.get("workflows") == ["iso.py"]
+    assert log.get("workflows") == ["iso.py"]  # path-ignore
