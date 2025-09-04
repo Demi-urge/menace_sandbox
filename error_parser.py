@@ -15,18 +15,22 @@ from datetime import datetime
 from typing import Optional
 
 try:
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
+
+try:
     from .self_improvement.target_region import (
         TargetRegion,
         extract_target_region as _extract_target_region,
     )
 except Exception:  # pragma: no cover - fallback for direct execution
     import importlib.util
-    import pathlib
     import sys
 
     spec = importlib.util.spec_from_file_location(
         "_target_region_fallback",
-        pathlib.Path(__file__).resolve().parent / "self_improvement" / "target_region.py",
+        resolve_path("self_improvement/target_region.py"),
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["_target_region_fallback"] = module
