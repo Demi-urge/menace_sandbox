@@ -61,6 +61,8 @@ def test_successful_route_and_charge(monkeypatch, tmp_path):
     invoice_create: dict[str, object] = {}
     invoice_pay: dict[str, object] = {}
 
+    monkeypatch.setattr(sbr.time, "time", lambda: 1700000000.0)
+
     def fake_invoice_item_create(*, api_key: str, **params):
         item.update(params)
         item["api_key"] = api_key
@@ -74,6 +76,7 @@ def test_successful_route_and_charge(monkeypatch, tmp_path):
     def fake_invoice_pay(invoice_id, *, api_key: str, **params):
         invoice_pay["invoice_id"] = invoice_id
         invoice_pay["api_key"] = api_key
+        invoice_pay.update(params)
         return {"id": invoice_id, "status": "paid"}
 
     fake_stripe = types.SimpleNamespace(
@@ -87,6 +90,7 @@ def test_successful_route_and_charge(monkeypatch, tmp_path):
     assert route["product_id"] == "prod_finance_router"
 
     res = sbr.charge("finance:finance_router_bot", 12.5, "desc")
+    expected_key = "finance:finance_router_bot-12.5-1700000000000"
     assert res["status"] == "paid"
     assert item["price"] == "price_finance_standard"
     assert item["customer"] == "cus_finance_default"
@@ -95,6 +99,9 @@ def test_successful_route_and_charge(monkeypatch, tmp_path):
     assert invoice_create["api_key"] == "sk_live_dummy"
     assert invoice_pay["invoice_id"] == "in_test"
     assert invoice_pay["api_key"] == "sk_live_dummy"
+    assert item["idempotency_key"] == expected_key
+    assert invoice_create["idempotency_key"] == expected_key
+    assert invoice_pay["idempotency_key"] == expected_key
     assert fake_stripe.api_key == "original"
 
 
@@ -105,6 +112,7 @@ def test_charge_uses_payment_intent_when_no_price(monkeypatch, tmp_path):
         "product_id": "prod_finance_router",
         "customer_id": "cus_finance_default",
     }
+    monkeypatch.setattr(sbr.time, "time", lambda: 1700000000.0)
 
     recorded: dict[str, object] = {}
 
@@ -120,11 +128,42 @@ def test_charge_uses_payment_intent_when_no_price(monkeypatch, tmp_path):
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
 
     res = sbr.charge("finance:finance_router_bot", 12.5, "desc")
+    expected_key = "finance:finance_router_bot-12.5-1700000000000"
     assert res["id"] == "pi_test"
     assert recorded["amount"] == 1250
     assert recorded["customer"] == "cus_finance_default"
     assert recorded["api_key"] == "sk_live_dummy"
+    assert recorded["idempotency_key"] == expected_key
     assert fake_stripe.api_key == "orig"
+
+
+def test_charge_amount_validation(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
+    sbr.ROUTING_TABLE[("stripe", "default", "finance", "finance_router_bot")] = {
+        "product_id": "prod_finance_router",
+        "customer_id": "cus_finance_default",
+    }
+
+    calls: list[object] = []
+
+    def fake_pi_create(*, api_key: str, **params):
+        calls.append(params)
+        return {"id": "pi_test"}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        PaymentIntent=types.SimpleNamespace(create=fake_pi_create),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+
+    with pytest.raises(ValueError):
+        sbr.charge("finance:finance_router_bot", 0)
+    with pytest.raises(ValueError):
+        sbr.charge("finance:finance_router_bot", -1)
+    with pytest.raises(ValueError):
+        sbr.charge("finance:finance_router_bot", "bad")  # type: ignore[arg-type]
+
+    assert calls == []
 
 
 def test_missing_keys_or_rule(monkeypatch, tmp_path):
