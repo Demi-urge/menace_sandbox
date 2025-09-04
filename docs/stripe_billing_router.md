@@ -4,21 +4,25 @@
 acts as the **sole payment interface**.  API keys are pulled from a secure vault
 provider or fall back to baked‑in production values.  A `RuntimeError` is raised
 if the keys are missing, empty or test mode keys.  Routing attempts for
-unsupported business categories or missing rules also raise `RuntimeError`.
-Stripe keys and billing logic must not be duplicated outside this module.
+unsupported domains, business categories or missing rules also raise
+`RuntimeError`.  Routes must never supply `secret_key` or `public_key`
+values—the router injects centrally managed keys and prevents per‑route
+overrides.  Stripe keys and billing logic must not be duplicated outside this
+module.
 
 ## Bot Invocation and Routing Rules
 
 Bots import `stripe_billing_router` directly. Each bot supplies a
-`"business_category:bot_name"` string which the router uses to look up billing
-information and attach the appropriate Stripe keys.
+`"domain:business_category:bot_name"` string which the router uses to look up
+billing information and attach the appropriate Stripe keys. The ``domain``
+component identifies the billing provider (currently only ``stripe``).
 
 Routing rules live in the `ROUTING_TABLE` inside `stripe_billing_router.py`.
-The mapping is keyed by `(region, business_category, bot_name)` tuples:
+The mapping is keyed by `(domain, region, business_category, bot_name)` tuples:
 
 ```python
 ROUTING_TABLE = {
-    ("default", "finance", "finance_router_bot"): {
+    ("stripe", "default", "finance", "finance_router_bot"): {
         "product_id": "prod_finance_router",
         "price_id": "price_finance_standard",
         "customer_id": "cus_finance_default",
@@ -31,16 +35,16 @@ start‑up. Use `register_override` for dynamic adjustments.
 
 ## Usage
 
-Bots are identified by a `"business_category:bot_name"` string.  The router
-looks up routing details for that bot and adds the Stripe keys.  Bots request
-charges or create customers by calling router helpers:
+Bots are identified by a `"domain:business_category:bot_name"` string.  The
+router looks up routing details for that bot and adds the Stripe keys.  Bots
+request charges or create customers by calling router helpers:
 
 ```python
 from stripe_billing_router import charge, create_customer, get_balance
 
-charge("finance:finance_router_bot", amount=10.0)
-create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
-bal = get_balance("finance:finance_router_bot")
+charge("stripe:finance:finance_router_bot", amount=10.0)
+create_customer("stripe:finance:finance_router_bot", {"email": "bot@example.com"})
+bal = get_balance("stripe:finance:finance_router_bot")
 ```
 
 ## Extending to New Bots
@@ -51,6 +55,7 @@ New bots can be supported by registering a route:
 from stripe_billing_router import register_route
 
 register_route(
+    "stripe",
     "analytics",
     "new_bot",
     {
@@ -69,6 +74,7 @@ selecting it at call time:
 from stripe_billing_router import charge, register_route
 
 register_route(
+    "stripe",
     "finance",
     "finance_router_bot",
     {
@@ -80,7 +86,7 @@ register_route(
 )
 
 charge(
-    "finance:finance_router_bot",
+    "stripe:finance:finance_router_bot",
     amount=10.0,
     overrides={"region": "eu"},
 )
@@ -94,6 +100,7 @@ qualifier:
 ```python
 register_override(
     {
+        "domain": "stripe",
         "business_category": "finance",
         "bot_name": "finance_router_bot",
         "key": "business",
@@ -103,7 +110,7 @@ register_override(
 )
 
 charge(
-    "finance:finance_router_bot",
+    "stripe:finance:finance_router_bot",
     amount=10.0,
     overrides={"business": "enterprise"},
 )
