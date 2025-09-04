@@ -27,6 +27,25 @@ stub.repo_root = lambda: ROOT
 sys.modules.setdefault("dynamic_path_router", stub)
 sys.modules.setdefault(f"{PKG}.dynamic_path_router", stub)
 
+from dynamic_path_router import resolve_path
+
+# Stub out sandbox_settings and pydantic to avoid heavy dependencies
+sandbox_stub = types.ModuleType("sandbox_settings")
+
+
+class SandboxSettings:  # minimal stub
+    def __init__(self, sandbox_repo_path: str = ""):
+        self.sandbox_repo_path = sandbox_repo_path
+        self.metrics_skip_dirs = []
+
+
+sandbox_stub.SandboxSettings = SandboxSettings
+sys.modules.setdefault("sandbox_settings", sandbox_stub)
+sys.modules.setdefault(f"{PKG}.sandbox_settings", sandbox_stub)
+
+# Resolve the real sandbox_settings path for completeness
+_ = resolve_path("sandbox_settings.py")
+
 
 def _load(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -36,19 +55,21 @@ def _load(name: str, path: Path):
     sys.modules[name] = mod
     return mod
 
-sandbox_mod = _load(f"{PKG}.sandbox_settings", ROOT / "sandbox_settings.py")
-metrics_mod = _load(f"{PKG}.self_improvement.metrics", ROOT / "self_improvement" / "metrics.py")
+metrics_mod = _load(
+    f"{PKG}.self_improvement.metrics",
+    resolve_path("self_improvement/metrics.py"),
+)
 
-SandboxSettings = sandbox_mod.SandboxSettings
+SandboxSettings = sandbox_stub.SandboxSettings
 collect_snapshot_metrics = metrics_mod.collect_snapshot_metrics
 _collect_metrics = metrics_mod._collect_metrics
 compute_call_graph_complexity = metrics_mod.compute_call_graph_complexity
 
 
 def test_collect_snapshot_metrics_matches_internal(tmp_path):
-    file1 = tmp_path / "a.py"
+    file1 = tmp_path / "a.py"  # path-ignore
     file1.write_text("a=1\n")
-    file2 = tmp_path / "b.py"
+    file2 = tmp_path / "b.py"  # path-ignore
     file2.write_text("b=2\n")
     settings = SandboxSettings(sandbox_repo_path=str(tmp_path))
     files = [file1, file2]
