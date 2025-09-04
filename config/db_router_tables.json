@@ -31,6 +31,7 @@
     "roi_events",
     "action_roi",
     "ledger",
+    "stripe_ledger",
     "profit_history",
     "capital_summary",
     "bot_performance",
