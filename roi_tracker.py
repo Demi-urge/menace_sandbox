@@ -293,7 +293,9 @@ class ROITracker:
         self.confidence_threshold = float(confidence_threshold)
         self.raroi_borderline_threshold = float(raroi_borderline_threshold)
         self.borderline_bucket = borderline_bucket or BorderlineBucket()
-        self.telemetry = telemetry_backend or TelemetryBackend("./telemetry.db")
+        self.telemetry = telemetry_backend or TelemetryBackend(
+            str(resolve_path("telemetry.db"))
+        )
         self.results_db = results_db
         self.current_workflow_id: str | None = None
         self.current_run_id: str | None = None
