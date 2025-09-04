@@ -143,9 +143,10 @@ except Exception:  # pragma: no cover - fallback for direct execution
     import importlib.util
     import sys
 
+    target_region_path = resolve_path("self_improvement/target_region.py")
     spec = importlib.util.spec_from_file_location(
         "_target_region_fallback",
-        resolve_path("self_improvement/target_region.py"),
+        target_region_path,
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["_target_region_fallback"] = module
