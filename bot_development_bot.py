@@ -156,7 +156,14 @@ INSTRUCTION_SECTIONS = [
 
 PREVIOUS_FAILURE_TEMPLATE = "Previous failure: {error}"
 
-FALLBACK_SYSTEM_PROMPT = "You are fallback mode."
+PAYMENT_ROUTER_NOTICE = (
+    "All payment logic must defer to stripe_billing_router; "
+    "no raw Stripe keys or direct Stripe API calls elsewhere."
+)
+
+FALLBACK_SYSTEM_PROMPT = (
+    "You are fallback mode. " + PAYMENT_ROUTER_NOTICE
+)
 
 RESPONSE_FORMAT_HINT = (
     "Return JSON like {'status': 'completed', 'message': <optional string>}"

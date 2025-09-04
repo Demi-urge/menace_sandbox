@@ -25,6 +25,11 @@ REDDIT_TIMEOUT = int(os.environ.get("REDDIT_TIMEOUT", "10"))
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
+PAYMENT_ROUTER_NOTICE = (
+    "All payment logic must defer to stripe_billing_router; "
+    "no raw Stripe keys or direct Stripe API calls elsewhere."
+)
+
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -177,7 +182,16 @@ class ChatGPTClient:
                 logger.exception("failed to log interaction")
 
         user_prompt = messages[-1].get("content", "") if messages else ""
-        messages_for_api = messages
+        messages_for_api = list(messages)
+        if messages_for_api and messages_for_api[0].get("role") == "system":
+            messages_for_api[0]["content"] = (
+                PAYMENT_ROUTER_NOTICE + "\n" + messages_for_api[0].get("content", "")
+            )
+        else:
+            messages_for_api = (
+                [{"role": "system", "content": PAYMENT_ROUTER_NOTICE}]
+                + messages_for_api
+            )
         if use_mem:
             try:
                 ctx_parts: List[str] = []
@@ -278,7 +292,7 @@ class ChatGPTClient:
                     context_text = "\n\n".join(ctx_parts)
                     if len(context_text) > max_summary_length:
                         context_text = context_text[:max_summary_length]
-                    messages_for_api = [{"role": "system", "content": context_text}] + messages
+                    messages_for_api[0]["content"] += "\n" + context_text
             except Exception:
                 logger.exception("context retrieval failed")
 
