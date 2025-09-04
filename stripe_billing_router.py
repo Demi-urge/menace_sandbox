@@ -9,10 +9,7 @@ missing or no routing rule matches the supplied bot.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Mapping, Optional
-
-from .stripe_handler import is_enabled
 from .vault_secret_provider import VaultSecretProvider
 
 try:  # optional dependency
@@ -85,45 +82,11 @@ def register_override(
     OVERRIDES[(domain, name, category, key, value)] = dict(route)
 
 
-def _use_mock() -> bool:
-    return os.getenv("MENACE_MODE", "test").lower() != "production"
-
-
-class _MockCharge:
-    @staticmethod
-    def create(**kwargs: Any) -> dict[str, Any]:
-        logger.info("Mock Stripe charge: %s", kwargs)
-        return {"id": "mock_charge", "status": "succeeded"}
-
-
-class _MockCustomer:
-    @staticmethod
-    def create(**kwargs: Any) -> dict[str, Any]:
-        logger.info("Mock Stripe customer: %s", kwargs)
-        return {"id": "mock_customer"}
-
-
-class _MockStripe:
-    api_key: str = ""
-    Charge = _MockCharge
-    Customer = _MockCustomer
-
-
-class _MockBalance:
-    @staticmethod
-    def retrieve() -> dict[str, Any]:
-        logger.info("Mock Stripe balance retrieval")
-        return {"available": [{"amount": 0}]}
-
-
-_MockStripe.Balance = _MockBalance
-
-
 def _client(api_key: str):
-    if not is_enabled() or not api_key:
-        return None
-    if stripe is None or _use_mock():
-        return _MockStripe()
+    if not api_key:
+        raise RuntimeError("Stripe API key must be configured and non-empty")
+    if stripe is None:
+        raise RuntimeError("stripe library unavailable")
     stripe.api_key = api_key
     return stripe
 
@@ -170,8 +133,6 @@ def init_charge(
     """Charge a customer for the given bot."""
     route = _resolve_route(bot_id, overrides)
     client = _client(route["secret_key"])
-    if client is None:
-        raise RuntimeError("Stripe client unavailable or disabled")
     params = {
         "amount": int(amount * 100),
         "currency": "usd",
@@ -179,8 +140,6 @@ def init_charge(
     }
     if customer := route.get("customer_id"):
         params["customer"] = customer
-    if _use_mock():
-        params["source"] = "tok_visa"
     return client.Charge.create(**params)
 
 
@@ -194,9 +153,6 @@ def get_balance(
     """Return available balance for the given bot."""
     route = _resolve_route(bot_id, overrides)
     client = _client(route["secret_key"])
-    if client is None:
-        logger.info("Stripe balance retrieval skipped: client unavailable")
-        return 0.0
     try:
         bal = client.Balance.retrieve()
         amount = bal.get("available", [{"amount": 0}])[0]["amount"] / 100.0
@@ -215,8 +171,6 @@ def create_customer(
     """Create a new Stripe customer for the given bot."""
     route = _resolve_route(bot_id, overrides)
     client = _client(route["secret_key"])
-    if client is None:
-        raise RuntimeError("Stripe client unavailable or disabled")
     return client.Customer.create(**customer_info)
 
 
