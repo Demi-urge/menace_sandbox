@@ -1439,6 +1439,8 @@ class SelfImprovementEngine:
     ) -> int | None:
         start = time.perf_counter()
         error_trace: str | None = None
+        failure_reason: str | None = None
+        sandbox_metrics: dict[str, float] | None = None
         history = self._memory_summaries(module)
         if history:
             self.logger.info(
@@ -1527,16 +1529,15 @@ class SelfImprovementEngine:
                         ),
                     )
                     delta_vals = snapshot_delta(pre_snap, post_snap)
-                    improved = all(
-                        delta_vals.get(k, 0.0) > 0
-                        for k in (
-                            "roi",
-                            "sandbox_score",
-                            "entropy",
-                            "call_graph_complexity",
-                            "token_diversity",
-                        )
+                    metrics = (
+                        "roi",
+                        "sandbox_score",
+                        "entropy",
+                        "call_graph_complexity",
+                        "token_diversity",
                     )
+                    sandbox_metrics = {k: delta_vals.get(k, 0.0) for k in metrics}
+                    improved = all(sandbox_metrics.get(k, 0.0) > 0 for k in metrics)
                     if improved:
                         try:
                             module_path = Path(
@@ -1561,16 +1562,16 @@ class SelfImprovementEngine:
                             ),
                         )
                         self._save_state()
-                    if (
-                        delta_vals.get("roi", 0.0) < 0
-                        or delta_vals.get("entropy", 0.0) < 0
-                    ):
+                    regressed_metric = next(
+                        (k for k, v in sandbox_metrics.items() if v < 0), None
+                    )
+                    if regressed_metric:
+                        failure_reason = (
+                            "roi_drop"
+                            if regressed_metric == "roi"
+                            else f"{regressed_metric}_regression"
+                        )
                         try:
-                            reason = (
-                                "roi_drop"
-                                if delta_vals.get("roi", 0.0) < 0
-                                else "entropy_regression"
-                            )
                             prompt_obj = getattr(
                                 self.self_coding_engine, "_last_prompt", None
                             )
@@ -1578,8 +1579,8 @@ class SelfImprovementEngine:
                                 prompt_obj,
                                 False,
                                 {"delta": delta_vals, "patch_diff": patch_diff},
-                                failure_reason=reason,
-                                sandbox_metrics=delta_vals,
+                                failure_reason=failure_reason,
+                                sandbox_metrics=sandbox_metrics,
                             )
                         except Exception:
                             self.logger.exception("log_prompt_attempt failed")
@@ -1661,23 +1662,23 @@ class SelfImprovementEngine:
                 fails.append(trace)
             if fails:
                 exec_res["failures"] = fails
-            failure_reason = None
             if roi_meta.get("tests_passed") is False:
                 failure_reason = "tests_failed"
-            elif roi_meta.get("roi_delta", 0.0) < 0:
+            elif failure_reason is None and roi_meta.get("roi_delta", 0.0) < 0:
                 failure_reason = "roi_drop"
         try:
             prompt_obj = getattr(self.self_coding_engine, "_last_prompt", None)
             meta = dict(roi_meta)
             if "roi" not in meta and "roi_delta" in meta:
                 meta["roi"] = meta.get("roi_delta", 0.0)
+            log_success = success and failure_reason is None
             log_prompt_attempt(
                 prompt_obj,
-                success,
+                log_success,
                 exec_res,
                 roi_meta,
-                failure_reason=failure_reason if not success else None,
-                sandbox_metrics=roi_meta if not success else None,
+                failure_reason=None if log_success else failure_reason,
+                sandbox_metrics=None if log_success else sandbox_metrics,
             )
         except Exception:
             self.logger.exception("log_prompt_attempt failed")
