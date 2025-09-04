@@ -11,7 +11,7 @@ from datetime import datetime
 import yaml
 
 from logging_utils import get_logger
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, resolve_module_path
 
 if TYPE_CHECKING:  # pragma: no cover - heavy import for type checking only
     from roi_tracker import ROITracker
@@ -60,12 +60,9 @@ def integrate_and_graph_orphans(
             return None, {}, [], False, False
         if not mapping:
             return None, {}, [], False, False
-        paths = [
-            Path(name.replace(".", "/")).with_suffix(".py").as_posix()
-            for name in mapping
-        ]
+        paths = [resolve_module_path(name).as_posix() for name in mapping]
     else:
-        paths = list(modules)
+        paths = [resolve_path(m).as_posix() for m in modules]
         if not paths:
             return None, {}, [], False, False
 
@@ -102,7 +99,10 @@ def integrate_and_graph_orphans(
                 except Exception:
                     grapher.graph = None
             if getattr(grapher, "graph", None) is not None:
-                names = [Path(m).with_suffix("").as_posix() for m in added]
+                names = [
+                    Path(m).with_suffix("").relative_to(repo).as_posix()
+                    for m in added
+                ]
                 grapher.update_graph(names)
                 synergy_ok = True
         except Exception:  # pragma: no cover - best effort
