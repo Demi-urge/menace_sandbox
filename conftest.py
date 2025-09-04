@@ -27,5 +27,10 @@ sys.modules.setdefault(
     types.SimpleNamespace(SandboxSettings=lambda: types.SimpleNamespace()),
 )
 
+# Provide a lightweight dynamic_path_router to satisfy imports during tests
+sys.modules.setdefault(
+    "dynamic_path_router", types.SimpleNamespace(resolve_path=lambda p: p)
+)
+
 os.environ.setdefault("VISUAL_AGENT_URLS", "http://127.0.0.1:8001")
 os.environ.setdefault("VISUAL_AGENT_TOKEN", "test-token")

@@ -40,7 +40,7 @@ def _import_module(monkeypatch, secrets=None):
 
 def test_routing_matches_bot_metadata(monkeypatch):
     sbr = _import_module(monkeypatch)
-    route = sbr._resolve_route("finance:finance_router_bot:monetization")
+    route = sbr._resolve_route("finance:finance_router_bot")
     assert route["product_id"] == "prod_finance_router"
     assert route["price_id"] == "price_finance_standard"
     assert route["customer_id"] == "cus_finance_default"
@@ -53,7 +53,6 @@ def test_region_specific_routing(monkeypatch):
     sbr.register_route(
         "finance",
         "finance_router_bot",
-        "monetization",
         {
             "product_id": "prod_finance_eu",
             "price_id": "price_finance_eu",
@@ -62,7 +61,7 @@ def test_region_specific_routing(monkeypatch):
         region="eu",
     )
     route = sbr._resolve_route(
-        "finance:finance_router_bot:monetization",
+        "finance:finance_router_bot",
         overrides={"region": "eu"},
     )
     assert route["product_id"] == "prod_finance_eu"
@@ -72,20 +71,20 @@ def test_region_specific_routing(monkeypatch):
 
 def test_unsupported_domain_raises(monkeypatch):
     sbr = _import_module(monkeypatch)
-    with pytest.raises(RuntimeError, match="Unsupported billing domain"):
-        sbr._resolve_route("unknown:bot:category")
+    with pytest.raises(RuntimeError, match="Unsupported billing category"):
+        sbr._resolve_route("unknown:bot")
 
 
 def test_unmatched_route_raises(monkeypatch):
     sbr = _import_module(monkeypatch)
     with pytest.raises(RuntimeError, match="No billing route"):
-        sbr._resolve_route("finance:unknown_bot:monetization")
+        sbr._resolve_route("finance:unknown_bot")
 
 
-def test_unknown_category_raises(monkeypatch):
+def test_invalid_bot_id_format_raises(monkeypatch):
     sbr = _import_module(monkeypatch)
-    with pytest.raises(RuntimeError, match="No billing route"):
-        sbr._resolve_route("finance:finance_router_bot:unknown")
+    with pytest.raises(ValueError):
+        sbr._resolve_route("finance:finance_router_bot:extra")
 
 
 def test_missing_keys_raise(monkeypatch):
@@ -93,7 +92,7 @@ def test_missing_keys_raise(monkeypatch):
     monkeypatch.setattr(sbr, "STRIPE_SECRET_KEY", "")
     monkeypatch.setattr(sbr, "STRIPE_PUBLIC_KEY", "")
     with pytest.raises(RuntimeError):
-        sbr._resolve_route("finance:finance_router_bot:monetization")
+        sbr._resolve_route("finance:finance_router_bot")
 
 
 def test_import_fails_with_missing_keys(monkeypatch):
@@ -112,16 +111,17 @@ def test_import_fails_with_test_keys(monkeypatch):
 def test_override_missing_keys_fatal(monkeypatch):
     sbr = _import_module(monkeypatch)
     sbr.register_override(
-        "finance",
-        "finance_router_bot",
-        "monetization",
-        key="tier",
-        value="broken",
-        route={"secret_key": "", "public_key": ""},
+        {
+            "business_category": "finance",
+            "bot_name": "finance_router_bot",
+            "key": "tier",
+            "value": "broken",
+            "route": {"secret_key": "", "public_key": ""},
+        }
     )
     with pytest.raises(RuntimeError, match="Stripe keys are not configured"):
         sbr._resolve_route(
-            "finance:finance_router_bot:monetization",
+            "finance:finance_router_bot",
             overrides={"tier": "broken"},
         )
 
@@ -129,16 +129,20 @@ def test_override_missing_keys_fatal(monkeypatch):
 def test_override_test_keys_fatal(monkeypatch):
     sbr = _import_module(monkeypatch)
     sbr.register_override(
-        "finance",
-        "finance_router_bot",
-        "monetization",
-        key="tier",
-        value="sandbox",
-        route={"secret_key": "sk_test_bad", "public_key": "pk_live_dummy"},
+        {
+            "business_category": "finance",
+            "bot_name": "finance_router_bot",
+            "key": "tier",
+            "value": "sandbox",
+            "route": {
+                "secret_key": "sk_test_bad",
+                "public_key": "pk_live_dummy",
+            },
+        }
     )
     with pytest.raises(RuntimeError, match="Test mode Stripe API keys are not permitted"):
         sbr._resolve_route(
-            "finance:finance_router_bot:monetization",
+            "finance:finance_router_bot",
             overrides={"tier": "sandbox"},
         )
 
@@ -146,15 +150,16 @@ def test_override_test_keys_fatal(monkeypatch):
 def test_override_updates_route(monkeypatch):
     sbr = _import_module(monkeypatch)
     sbr.register_override(
-        "finance",
-        "finance_router_bot",
-        "monetization",
-        key="business",
-        value="enterprise",
-        route={"price_id": "price_finance_enterprise"},
+        {
+            "business_category": "finance",
+            "bot_name": "finance_router_bot",
+            "key": "business",
+            "value": "enterprise",
+            "route": {"price_id": "price_finance_enterprise"},
+        }
     )
     route = sbr._resolve_route(
-        "finance:finance_router_bot:monetization",
+        "finance:finance_router_bot",
         overrides={"business": "enterprise"},
     )
     assert route["price_id"] == "price_finance_enterprise"
@@ -182,14 +187,14 @@ def test_charge_and_customer_creation(monkeypatch):
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
 
     charge = sbr.init_charge(
-        "finance:finance_router_bot:monetization", 12.5, "desc"
+        "finance:finance_router_bot", 12.5, "desc"
     )
     assert charge["status"] == "succeeded"
     assert charge_params["amount"] == 1250
     assert charge_params["customer"] == "cus_finance_default"
 
     cust = sbr.create_customer(
-        "finance:finance_router_bot:monetization", {"email": "a@b"}
+        "finance:finance_router_bot", {"email": "a@b"}
     )
     assert cust["id"] == "cus_test"
     assert customer_params == {"email": "a@b"}
