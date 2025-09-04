@@ -58,10 +58,10 @@ def _load(name, filename):
     spec.loader.exec_module(module)
     return module
 
-error_cluster_predictor = _load("menace.error_cluster_predictor", "error_cluster_predictor.py")
+error_cluster_predictor = _load("menace.error_cluster_predictor", "error_cluster_predictor.py")  # path-ignore
 ErrorClusterPredictor = error_cluster_predictor.ErrorClusterPredictor
 
-quick_fix = _load("menace.quick_fix_engine", "quick_fix_engine.py")
+quick_fix = _load("menace.quick_fix_engine", "quick_fix_engine.py")  # path-ignore
 QuickFixEngine = quick_fix.QuickFixEngine
 
 import sandbox_runner.cycle as cycle

@@ -7,9 +7,9 @@ def test_dynamic_import_discovery(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
     # create dynamic import chain a -> b -> c
-    (tmp_path / "a.py").write_text("import importlib as il\nil.import_module('b')\n")
-    (tmp_path / "b.py").write_text("__import__('c')\n")
-    (tmp_path / "c.py").write_text("VALUE = 1\n")
+    (tmp_path / "a.py").write_text("import importlib as il\nil.import_module('b')\n")  # path-ignore
+    (tmp_path / "b.py").write_text("__import__('c')\n")  # path-ignore
+    (tmp_path / "c.py").write_text("VALUE = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()

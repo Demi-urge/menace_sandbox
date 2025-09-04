@@ -67,14 +67,14 @@ cycle = importlib.import_module("sandbox_runner.cycle")
 
 def test_helper_module_included_and_recorded(tmp_path, monkeypatch):
     repo = tmp_path
-    (repo / "main.py").write_text("import helper\n")
-    (repo / "helper.py").write_text("VALUE = 1\n")
+    (repo / "main.py").write_text("import helper\n")  # path-ignore
+    (repo / "helper.py").write_text("VALUE = 1\n")  # path-ignore
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
 
     ctx = types.SimpleNamespace(
         repo=repo,
-        module_map={"main.py"},
+        module_map={"main.py"},  # path-ignore
         orphan_traces={},
         settings=types.SimpleNamespace(
             auto_include_isolated=True,
@@ -145,7 +145,7 @@ def test_helper_module_included_and_recorded(tmp_path, monkeypatch):
     cycle.include_orphan_modules(ctx)
 
     assert discover_called.get("called"), "discover_recursive_orphans not called"
-    assert auto_calls.get("mods") == ["helper.py"]
+    assert auto_calls.get("mods") == ["helper.py"]  # path-ignore
     assert auto_calls.get("recursive") is True
 
     graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
@@ -153,4 +153,4 @@ def test_helper_module_included_and_recorded(tmp_path, monkeypatch):
     assert "helper" in data.get("nodes", [])
 
     db_data = json.loads((repo / "sandbox_data" / "intent.db").read_text())
-    assert any(Path(p).name == "helper.py" for p in db_data)
+    assert any(Path(p).name == "helper.py" for p in db_data)  # path-ignore

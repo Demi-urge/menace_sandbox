@@ -30,8 +30,8 @@ def patch_embed(monkeypatch):
 
 
 def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
-    (tmp_path / "a.py").write_text('"""alpha"""')
-    (tmp_path / "b.py").write_text('"""beta"""')
+    (tmp_path / "a.py").write_text('"""alpha"""')  # path-ignore
+    (tmp_path / "b.py").write_text('"""beta"""')  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -63,7 +63,7 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
 
     res = clusterer.find_clusters_related_to("alpha beta", top_k=5)
     assert res and res[0].origin == "cluster"
-    members = {str(tmp_path / "a.py"), str(tmp_path / "b.py")}
+    members = {str(tmp_path / "a.py"), str(tmp_path / "b.py")}  # path-ignore
     assert set(res[0].members or []) == members
     assert res[0].intent_text
     row = clusterer.conn.execute(
@@ -76,8 +76,8 @@ def test_synergy_cluster_embeddings_and_query(tmp_path: Path, monkeypatch):
 
 
 def test_query_falls_back_to_cluster_vectors(tmp_path: Path):
-    (tmp_path / "a.py").write_text('"""alpha"""')
-    (tmp_path / "b.py").write_text('"""beta"""')
+    (tmp_path / "a.py").write_text('"""alpha"""')  # path-ignore
+    (tmp_path / "b.py").write_text('"""beta"""')  # path-ignore
 
     LOCAL_TABLES.add("intent")
     router = init_db_router("intent", str(tmp_path / "intent.db"), str(tmp_path / "intent.db"))
@@ -109,7 +109,7 @@ def test_query_falls_back_to_cluster_vectors(tmp_path: Path):
             return self.items[:1]
 
     clusterer = ic.IntentClusterer(intent_db=db, retriever=DummyRetriever())
-    clusterer.index_modules([tmp_path / "a.py", tmp_path / "b.py"])
+    clusterer.index_modules([tmp_path / "a.py", tmp_path / "b.py"])  # path-ignore
     clusterer.cluster_intents(1)
 
     matches = clusterer.query("beta", threshold=0.6)

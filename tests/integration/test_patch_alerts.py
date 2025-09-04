@@ -12,7 +12,7 @@ from vector_service.patch_logger import PatchLogger
 def test_store_and_retrieve_alerts(tmp_path):
     os.environ["PATCH_HISTORY_DB_PATH"] = str(tmp_path / "patch_history.db")
     db = PatchHistoryDB()
-    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))
+    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))  # path-ignore
     logger = PatchLogger(patch_db=db)
     vec_id = "db1:vec1"
     meta = {vec_id: {"license": "mit", "semantic_alerts": ["unsafe"]}}

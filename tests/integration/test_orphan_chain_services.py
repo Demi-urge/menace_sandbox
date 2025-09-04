@@ -35,7 +35,7 @@ REGISTRY._names_to_collectors.clear()
 
 # load core menace modules from source
 spec_sts = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec_sts)
 menace_pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
@@ -102,7 +102,7 @@ sys.modules["sandbox_runner.environment"] = types.ModuleType(
 )
 
 spec_sie = importlib.util.spec_from_file_location(
-    "menace.self_improvement", ROOT / "self_improvement.py"
+    "menace.self_improvement", ROOT / "self_improvement.py"  # path-ignore
 )
 sie = importlib.util.module_from_spec(spec_sie)
 sys.modules["menace.self_improvement"] = sie
@@ -111,12 +111,12 @@ spec_sie.loader.exec_module(sie)
 # ---------------------------------------------------------------------------
 
 def _build_repo(tmp_path: Path):
-    (tmp_path / "a.py").write_text("import b\nimport fail\n")
-    (tmp_path / "b.py").write_text("import c\nimport helper\n")
-    (tmp_path / "c.py").write_text("import red\n")
-    (tmp_path / "helper.py").write_text("VALUE = 1\n")
-    (tmp_path / "red.py").write_text("# deprecated\nVALUE = 2\n")
-    (tmp_path / "fail.py").write_text("VALUE = 3\n")
+    (tmp_path / "a.py").write_text("import b\nimport fail\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\nimport helper\n")  # path-ignore
+    (tmp_path / "c.py").write_text("import red\n")  # path-ignore
+    (tmp_path / "helper.py").write_text("VALUE = 1\n")  # path-ignore
+    (tmp_path / "red.py").write_text("# deprecated\nVALUE = 2\n")  # path-ignore
+    (tmp_path / "fail.py").write_text("VALUE = 3\n")  # path-ignore
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     map_path = data_dir / "module_map.json"
@@ -167,7 +167,7 @@ def test_self_test_service_executes_and_cleans(tmp_path, monkeypatch):
                 path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
                 break
         if path:
-            failed = "fail.py" in mod
+            failed = "fail.py" in mod  # path-ignore
             Path(path).write_text(
                 json.dumps({"summary": {"passed": 0 if failed else 1, "failed": 1 if failed else 0}})
             )
@@ -183,7 +183,7 @@ def test_self_test_service_executes_and_cleans(tmp_path, monkeypatch):
     monkeypatch.setenv("SANDBOX_CLEAN_ORPHANS", "1")
 
     def integrate(mods: list[str]) -> None:
-        mods[:] = [m for m in mods if Path(m).name != "fail.py"]
+        mods[:] = [m for m in mods if Path(m).name != "fail.py"]  # path-ignore
         data = json.loads(map_path.read_text())
         for m in mods:
             name = Path(m).name
@@ -199,11 +199,11 @@ def test_self_test_service_executes_and_cleans(tmp_path, monkeypatch):
     )
     svc.run_once()
 
-    assert [sorted(g) for g in generated] == [["a.py"], ["b.py"], ["c.py"], ["helper.py"]]
+    assert [sorted(g) for g in generated] == [["a.py"], ["b.py"], ["c.py"], ["helper.py"]]  # path-ignore
     data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {"a.py", "b.py", "c.py", "helper.py"}
+    assert set(data["modules"]) == {"a.py", "b.py", "c.py", "helper.py"}  # path-ignore
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert orphan_list == ["red.py"]
+    assert orphan_list == ["red.py"]  # path-ignore
 
 
 def test_self_improvement_integration(tmp_path, monkeypatch):
@@ -233,10 +233,10 @@ def test_self_improvement_integration(tmp_path, monkeypatch):
             self.results: dict[str, object] = {}
 
         async def _run_once(self) -> None:
-            passed = [m for m in self._mods if "fail.py" not in m and "red.py" not in m]
+            passed = [m for m in self._mods if "fail.py" not in m and "red.py" not in m]  # path-ignore
             self.results = {
                 "orphan_passed": passed,
-                "orphan_redundant": [m for m in self._mods if "red.py" in m],
+                "orphan_redundant": [m for m in self._mods if "red.py" in m],  # path-ignore
                 "failed": 0,
             }
 
@@ -275,13 +275,13 @@ def test_self_improvement_integration(tmp_path, monkeypatch):
         _update_orphan_modules=lambda: None,
     )
 
-    mods = ["a.py", "b.py", "c.py", "helper.py", "red.py", "fail.py"]
+    mods = ["a.py", "b.py", "c.py", "helper.py", "red.py", "fail.py"]  # path-ignore
     passing = sie.SelfImprovementEngine._test_orphan_modules(engine, mods)
-    assert passing == {"a.py", "b.py", "c.py", "helper.py"}
+    assert passing == {"a.py", "b.py", "c.py", "helper.py"}  # path-ignore
 
     integrated = sie.SelfImprovementEngine._integrate_orphans(engine, passing)
-    assert integrated == {"a.py", "b.py", "c.py", "helper.py"}
-    assert calls and calls[0] == sorted(["a.py", "b.py", "c.py", "helper.py"])
-    assert set(engine.module_clusters) == {"a.py", "b.py", "c.py", "helper.py"}
+    assert integrated == {"a.py", "b.py", "c.py", "helper.py"}  # path-ignore
+    assert calls and calls[0] == sorted(["a.py", "b.py", "c.py", "helper.py"])  # path-ignore
+    assert set(engine.module_clusters) == {"a.py", "b.py", "c.py", "helper.py"}  # path-ignore
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert orphan_list == ["fail.py"]
+    assert orphan_list == ["fail.py"]  # path-ignore

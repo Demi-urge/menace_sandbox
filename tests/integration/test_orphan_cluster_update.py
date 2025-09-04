@@ -68,14 +68,14 @@ cycle = importlib.import_module("sandbox_runner.cycle")
 def test_orphan_cluster_update(tmp_path, monkeypatch):
     repo = tmp_path
     # Dummy workflow importing a helper module
-    (repo / "workflow_wf.py").write_text("import helper_mod\n")
-    (repo / "helper_mod.py").write_text("VALUE = 1\n")
+    (repo / "workflow_wf.py").write_text("import helper_mod\n")  # path-ignore
+    (repo / "helper_mod.py").write_text("VALUE = 1\n")  # path-ignore
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
 
     ctx = types.SimpleNamespace(
         repo=repo,
-        module_map={"workflow_wf.py"},
+        module_map={"workflow_wf.py"},  # path-ignore
         orphan_traces={},
         settings=types.SimpleNamespace(
             auto_include_isolated=True,
@@ -150,7 +150,7 @@ def test_orphan_cluster_update(tmp_path, monkeypatch):
     cycle.include_orphan_modules(ctx)
 
     assert discover_called.get("called"), "discover_recursive_orphans not called"
-    assert auto_calls.get("mods") == ["helper_mod.py"]
+    assert auto_calls.get("mods") == ["helper_mod.py"]  # path-ignore
     assert auto_calls.get("recursive") is True
 
     graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
@@ -158,4 +158,4 @@ def test_orphan_cluster_update(tmp_path, monkeypatch):
     assert "helper_mod" in data.get("nodes", [])
 
     db_data = json.loads((repo / "sandbox_data" / "intent.db").read_text())
-    assert any(Path(p).name == "helper_mod.py" for p in db_data)
+    assert any(Path(p).name == "helper_mod.py" for p in db_data)  # path-ignore

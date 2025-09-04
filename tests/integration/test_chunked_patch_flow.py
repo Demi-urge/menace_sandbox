@@ -171,7 +171,7 @@ def _setup_engine(tmp_path, monkeypatch):
 
 def test_multi_chunk_patch_success(tmp_path, monkeypatch):
     engine = _setup_engine(tmp_path, monkeypatch)
-    path = tmp_path / "big.py"
+    path = tmp_path / "big.py"  # path-ignore
     path.write_text("def a():\n    pass\n\ndef b():\n    pass\n")
 
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
@@ -210,7 +210,7 @@ def test_multi_chunk_patch_success(tmp_path, monkeypatch):
 
 def test_multi_chunk_patch_with_rollback(tmp_path, monkeypatch):
     engine = _setup_engine(tmp_path, monkeypatch)
-    path = tmp_path / "big.py"
+    path = tmp_path / "big.py"  # path-ignore
     path.write_text("def a():\n    pass\n\ndef b():\n    pass\n")
 
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
@@ -255,7 +255,7 @@ def test_multi_chunk_patch_with_rollback(tmp_path, monkeypatch):
 
 def test_region_patch_indentation_and_ast(tmp_path, monkeypatch):
     engine = _setup_engine(tmp_path, monkeypatch)
-    path = tmp_path / "f.py"
+    path = tmp_path / "f.py"  # path-ignore
     path.write_text("def a():\n    x = 1\n    y = 2\n    return x + y\n")
 
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
@@ -280,7 +280,7 @@ def test_region_patch_indentation_and_ast(tmp_path, monkeypatch):
 
 def test_region_patch_fallback_on_parse_error(tmp_path, monkeypatch):
     engine = _setup_engine(tmp_path, monkeypatch)
-    path = tmp_path / "f.py"
+    path = tmp_path / "f.py"  # path-ignore
     path.write_text("def a():\n    x = 1\n    return x\n")
 
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)

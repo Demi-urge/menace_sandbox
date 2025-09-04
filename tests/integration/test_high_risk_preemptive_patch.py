@@ -122,7 +122,7 @@ def test_high_risk_prediction_triggers_patch(monkeypatch, tmp_path):
             self.graph = DummyGraph()
 
         def predict_high_risk_modules(self):
-            return ["mod1.py"]
+            return ["mod1.py"]  # path-ignore
 
     sie.ErrorBot = lambda *a, **k: DummyErrorBot()
 
@@ -145,7 +145,7 @@ def test_high_risk_prediction_triggers_patch(monkeypatch, tmp_path):
     eng._apply_high_risk_patches()
 
     assert eng.auto_patch_high_risk is True
-    assert calls == ["mod1.py"]
-    assert eng.error_bot.db.telemetry and eng.error_bot.db.telemetry[0].module == "mod1.py"
+    assert calls == ["mod1.py"]  # path-ignore
+    assert eng.error_bot.db.telemetry and eng.error_bot.db.telemetry[0].module == "mod1.py"  # path-ignore
     assert eng.error_predictor.graph.updated
-    assert any(evt[1] == "preemptive_patch" and evt[2] == "mod1.py" for evt in eng.error_predictor.graph.events)
+    assert any(evt[1] == "preemptive_patch" and evt[2] == "mod1.py" for evt in eng.error_predictor.graph.events)  # path-ignore

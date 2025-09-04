@@ -15,12 +15,12 @@ def _setup_db(tmp_path):
     os.environ["PATCH_HISTORY_DB_PATH"] = str(tmp_path / "patch_history.db")
     db = PatchHistoryDB()
     p1 = db.add(
-        PatchRecord(filename="a.py", description="first patch", roi_before=0, roi_after=1),
+        PatchRecord(filename="a.py", description="first patch", roi_before=0, roi_after=1),  # path-ignore
         [("origin:vec1", 0.9)],
     )
     db.log_ancestry(p1, [("origin", "vec1", 0.9)])
     p2 = db.add(
-        PatchRecord(filename="b.py", description="second patch", roi_before=1, roi_after=2),
+        PatchRecord(filename="b.py", description="second patch", roi_before=1, roi_after=2),  # path-ignore
         [("vec2", 0.5)],
     )
     db.log_ancestry(p2, [("", "vec2", 0.5)])
@@ -29,7 +29,7 @@ def _setup_db(tmp_path):
 
 def _run_cli(args, cwd):
     proc = subprocess.run(
-        [sys.executable, str(Path(cwd) / "patch_provenance_cli.py"), *args],
+        [sys.executable, str(Path(cwd) / "patch_provenance_cli.py"), *args],  # path-ignore
         check=True,
         capture_output=True,
         text=True,

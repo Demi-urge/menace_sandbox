@@ -15,8 +15,8 @@ def _imports(path: str) -> set[str]:
 
 
 def test_no_direct_imports_between_cycle_and_bot_creation():
-    cycle_imports = _imports("sandbox_runner/cycle.py")
-    bot_imports = _imports("bot_creation_bot.py")
+    cycle_imports = _imports("sandbox_runner/cycle.py")  # path-ignore
+    bot_imports = _imports("bot_creation_bot.py")  # path-ignore
     assert "bot_creation_bot" not in cycle_imports
     assert all(not name.startswith("bot_creation_bot") for name in cycle_imports)
     assert "sandbox_runner" not in bot_imports

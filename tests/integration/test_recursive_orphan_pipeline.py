@@ -60,14 +60,14 @@ env = sys.modules["sandbox_runner.environment"]
 
 def test_recursive_orphan_pipeline(tmp_path, monkeypatch):
     repo = tmp_path
-    (repo / "main.py").write_text("import helper\n")
-    (repo / "helper.py").write_text("VALUE = 1\n")
+    (repo / "main.py").write_text("import helper\n")  # path-ignore
+    (repo / "helper.py").write_text("VALUE = 1\n")  # path-ignore
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
 
     ctx = types.SimpleNamespace(
         repo=repo,
-        module_map={"main.py"},
+        module_map={"main.py"},  # path-ignore
         orphan_traces={},
         settings=types.SimpleNamespace(
             auto_include_isolated=True,
@@ -145,9 +145,9 @@ def test_recursive_orphan_pipeline(tmp_path, monkeypatch):
     cycle.include_orphan_modules(ctx)
 
     assert discover_called.get("called")
-    assert auto_calls == [["helper.py"]]
-    assert grapher_calls == [["helper.py"]]
-    assert str(repo / "helper.py") in cluster_calls
-    assert scheduled == [["helper.py"]]
-    assert integrated == ["helper.py"]
-    assert ctx.module_map == {"main.py", "helper.py"}
+    assert auto_calls == [["helper.py"]]  # path-ignore
+    assert grapher_calls == [["helper.py"]]  # path-ignore
+    assert str(repo / "helper.py") in cluster_calls  # path-ignore
+    assert scheduled == [["helper.py"]]  # path-ignore
+    assert integrated == ["helper.py"]  # path-ignore
+    assert ctx.module_map == {"main.py", "helper.py"}  # path-ignore

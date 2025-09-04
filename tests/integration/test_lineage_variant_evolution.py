@@ -73,13 +73,13 @@ def test_lineage_variant_and_orchestrator_logging(monkeypatch, tmp_path):
     e_db = EvolutionHistoryDB(tmp_path / "e.db")
     p_db = PatchHistoryDB(tmp_path / "p.db")
 
-    root_patch = PatchRecord(filename="wf.py", description="root", roi_before=0, roi_after=1)
+    root_patch = PatchRecord(filename="wf.py", description="root", roi_before=0, roi_after=1)  # path-ignore
     root_id = p_db.add(root_patch)
     root_event = EvolutionEvent("root", 0, 1, 1.0, patch_id=root_id, workflow_id=1)
     root_event_id = e_db.add(root_event)
 
     bad_patch = PatchRecord(
-        filename="wf.py",
+        filename="wf.py",  # path-ignore
         description="bad",
         roi_before=1,
         roi_after=0.5,

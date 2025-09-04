@@ -37,14 +37,14 @@ sys.modules["patch_provenance"] = pp
 
 spec = importlib.util.spec_from_file_location(
     "menace_sandbox.quick_fix_engine",
-    ROOT / "quick_fix_engine.py",
+    ROOT / "quick_fix_engine.py",  # path-ignore
 )
 quick_fix = importlib.util.module_from_spec(spec)
 sys.modules["menace_sandbox.quick_fix_engine"] = quick_fix
 spec.loader.exec_module(quick_fix)
 
 def test_chunked_patch_generation(tmp_path, monkeypatch):
-    path = tmp_path / "big.py"
+    path = tmp_path / "big.py"  # path-ignore
     lines = ["def big():"] + ["    pass" for _ in range(4000)]
     path.write_text("\n".join(lines) + "\n")
     monkeypatch.chdir(tmp_path)

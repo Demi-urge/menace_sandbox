@@ -36,7 +36,7 @@ REGISTRY._names_to_collectors.clear()
 
 # load SelfTestService from source
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("menace", types.ModuleType("menace"))
@@ -50,9 +50,9 @@ def test_orphan_chain_auto_integration(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
     # create simple orphan chain: a -> b -> c
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n")
-    (tmp_path / "c.py").write_text("VALUE = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n")  # path-ignore
+    (tmp_path / "c.py").write_text("VALUE = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -119,10 +119,10 @@ def test_orphan_chain_auto_integration(tmp_path, monkeypatch):
     svc.run_once()
 
     # generate_workflows_for_modules called for each module individually
-    assert [sorted(g) for g in generated] == [["a.py"], ["b.py"], ["c.py"]]
+    assert [sorted(g) for g in generated] == [["a.py"], ["b.py"], ["c.py"]]  # path-ignore
 
     data = json.loads(map_path.read_text())
-    assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])
+    assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])  # path-ignore
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
     assert orphan_list == []
 
@@ -131,9 +131,9 @@ def test_orphan_chain_skips_deprecated(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
     # create orphan chain with deprecated leaf: a -> b -> c(deprecated)
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n")
-    (tmp_path / "c.py").write_text("# deprecated\nVALUE = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n")  # path-ignore
+    (tmp_path / "c.py").write_text("# deprecated\nVALUE = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -200,9 +200,9 @@ def test_orphan_chain_skips_deprecated(tmp_path, monkeypatch):
     )
     svc.run_once()
 
-    assert [sorted(g) for g in generated] == [["a.py"], ["b.py"]]
+    assert [sorted(g) for g in generated] == [["a.py"], ["b.py"]]  # path-ignore
 
     data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {"a.py", "b.py"}
+    assert set(data["modules"]) == {"a.py", "b.py"}  # path-ignore
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
     assert orphan_list == []
