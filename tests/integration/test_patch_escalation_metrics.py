@@ -62,7 +62,7 @@ def test_escalation_metrics(monkeypatch, tmp_path):
         calls.append(target_region)
         self._last_retry_trace = (
             f'Traceback (most recent call last):\n'
-            f'  File "{path}", line 1, in {target_region.func_name if target_region else "<module>"}\n'
+            f'  File "{path}", line 1, in {target_region.function if target_region else "<module>"}\n'
             '    1/0\n'
             'ZeroDivisionError: division by zero'
         )
@@ -72,7 +72,7 @@ def test_escalation_metrics(monkeypatch, tmp_path):
 
     path = tmp_path / "mod.py"
     path.write_text("def f():\n    a=1\n    b=2\n    return a+b\n")
-    region = TargetRegion(start_line=2, end_line=2, func_name="f")
+    region = TargetRegion(start_line=2, end_line=2, function="f")
 
     engine.apply_patch_with_retry(path, "desc", max_attempts=5, target_region=region)
 

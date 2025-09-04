@@ -62,8 +62,8 @@ def test_extract_target_region_and_patch(monkeypatch, tmp_path):
     monkeypatch.setattr(targeting, "__file__", str(repo / "__init__.py"))
     region = targeting.extract_target_region(trace)
     assert region is not None
-    assert Path(region.file) == repo / "buggy.py"
-    assert region.func_name == "divide"
+    assert Path(region.filename) == repo / "buggy.py"
+    assert region.function == "divide"
     assert region.start_line == 1
     assert region.end_line == 3
 

@@ -436,7 +436,7 @@ def test_prompt_engine_includes_target_region_metadata(tmp_path):
     context = "\n".join(lines)
     mod_path = tmp_path / "mod.py"
     mod_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    region = TargetRegion(path=str(mod_path), start_line=3, end_line=5, func_name="func")
+    region = TargetRegion(start_line=3, end_line=5, function="func", filename=str(mod_path))
     region.func_signature = "def func(a, b):"
     prompt = engine.build_prompt("desc", context=context, target_region=region)
     text = str(prompt)
@@ -444,7 +444,7 @@ def test_prompt_engine_includes_target_region_metadata(tmp_path):
         "Modify only lines 3-5 within function func"
     )
     assert "# start" in text and "# end" in text
-    assert prompt.metadata["target_region"]["func_name"] == "func"
+    assert prompt.metadata["target_region"]["function"] == "func"
     assert prompt.metadata["target_region"]["signature"] == "def func(a, b):"
     assert prompt.metadata["target_region"]["original_lines"] == [
         "# start",
@@ -461,7 +461,7 @@ def test_diff_within_target_region_out_of_bounds(tmp_path):
     lines = ["one", "two", "three", "four"]
     path = tmp_path / "mod.py"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    region = TargetRegion(path=str(path), start_line=2, end_line=3, func_name="f")
+    region = TargetRegion(start_line=2, end_line=3, function="f", filename=str(path))
     modified = lines[:]
     modified[0] = "ONE"  # change outside region
     assert not diff_within_target_region(lines, modified, region)
@@ -471,7 +471,7 @@ def test_diff_within_target_region_within_bounds(tmp_path):
     lines = ["one", "two", "three", "four"]
     path = tmp_path / "mod.py"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    region = TargetRegion(path=str(path), start_line=2, end_line=3, func_name="f")
+    region = TargetRegion(start_line=2, end_line=3, function="f", filename=str(path))
     modified = lines[:]
     modified[1] = "TWO"  # change within region
     assert diff_within_target_region(lines, modified, region)

@@ -25,7 +25,7 @@ from typing import Callable, Mapping
 from collections import deque, defaultdict
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
-from .failure_localization import TargetRegion, extract_target_region
+from .target_region import TargetRegion, extract_target_region
 from .knowledge_graph import KnowledgeGraph
 from .quick_fix_engine import generate_patch
 from .human_alignment_agent import HumanAlignmentAgent
@@ -379,7 +379,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     def attempt_count(self, region: TargetRegion) -> int:
         """Return number of attempts made for ``region``."""
-        key = (region.path, region.func_name, region.start_line)
+        key = (region.filename, region.function, region.start_line)
         return self._attempt_counts.get(key, 0)
 
     # ------------------------------------------------------------------
@@ -389,7 +389,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self.error_logger.log(
                 TelemetryEvent(
                     root_cause=f"escalation_level_{level}",
-                    module=region.path,
+                    module=region.filename,
                 )
             )
         except Exception:
@@ -398,20 +398,20 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     def _record_region_failure(self, region: TargetRegion) -> None:
         """Increment failure counter for ``region`` and escalate if needed."""
-        key = (region.path, region.func_name, region.start_line)
+        key = (region.filename, region.function, region.start_line)
         self._last_region = region
         self._failure_counts[key] += 1
         count = self._failure_counts[key]
         if count == 2:
             self._log_escalation(region, 1)
             try:
-                self.engine.apply_patch(Path(region.path), "auto_debug", target_region=region)
+                self.engine.apply_patch(Path(region.filename), "auto_debug", target_region=region)
             except Exception:
                 self.logger.exception("function rewrite escalation failed")
         elif count == 4:
             self._log_escalation(region, 2)
             try:
-                self.engine.apply_patch(Path(region.path), "auto_debug")
+                self.engine.apply_patch(Path(region.filename), "auto_debug")
             except Exception:
                 self.logger.exception("module rewrite escalation failed")
 
@@ -420,11 +420,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         """Clear failure counter for ``region`` after a successful fix."""
         if region is None:
             return
-        key = (region.path, region.func_name, region.start_line)
+        key = (region.filename, region.function, region.start_line)
         self._failure_counts.pop(key, None)
         if self._last_region and key == (
-            self._last_region.path,
-            self._last_region.func_name,
+            self._last_region.filename,
+            self._last_region.function,
             self._last_region.start_line,
         ):
             self._last_region = None
@@ -655,7 +655,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             region = extract_target_region(failure.trace)
             if region:
                 failure.target_region = region
-                key = (region.path, region.func_name, region.start_line)
+                key = (region.filename, region.function, region.start_line)
                 self._attempt_counts[key] += 1
                 failure.attempts = self._attempt_counts[key]
                 self._record_region_failure(region)
@@ -680,7 +680,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             region = extract_target_region(failure.trace)
             if region:
                 failure.target_region = region
-                key = (region.path, region.func_name, region.start_line)
+                key = (region.filename, region.function, region.start_line)
                 self._attempt_counts[key] += 1
                 failure.attempts = self._attempt_counts[key]
                 self._record_region_failure(region)
@@ -1505,7 +1505,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             region = extract_target_region(failure.trace)
                             if region:
                                 failure.target_region = region
-                                key = (region.path, region.func_name, region.start_line)
+                                key = (region.filename, region.function, region.start_line)
                                 self._attempt_counts[key] += 1
                                 failure.attempts = self._attempt_counts[key]
                                 self._record_region_failure(region)
@@ -1536,7 +1536,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             region = extract_target_region(failure.trace)
                             if region:
                                 failure.target_region = region
-                                key = (region.path, region.func_name, region.start_line)
+                                key = (region.filename, region.function, region.start_line)
                                 self._attempt_counts[key] += 1
                                 failure.attempts = self._attempt_counts[key]
                                 self._record_region_failure(region)
@@ -1880,7 +1880,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     region = extract_target_region(failure.trace)
                     if region:
                         failure.target_region = region
-                        key = (region.path, region.func_name, region.start_line)
+                        key = (region.filename, region.function, region.start_line)
                         self._attempt_counts[key] += 1
                         failure.attempts = self._attempt_counts[key]
                         self._record_region_failure(region)
@@ -1902,7 +1902,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     region = extract_target_region(failure.trace)
                     if region:
                         failure.target_region = region
-                        key = (region.path, region.func_name, region.start_line)
+                        key = (region.filename, region.function, region.start_line)
                         self._attempt_counts[key] += 1
                         failure.attempts = self._attempt_counts[key]
                         self._record_region_failure(region)

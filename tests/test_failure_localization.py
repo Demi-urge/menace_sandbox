@@ -22,8 +22,8 @@ def test_extract_target_region_from_string(tmp_path):
 
     region = extract_target_region(trace)
     assert region is not None
-    assert region.path == str(path)
-    assert region.func_name == "inner"
+    assert region.filename == str(path)
+    assert region.function == "inner"
     assert region.start_line == 1
     assert region.end_line == 3
 
@@ -49,7 +49,7 @@ def test_extract_target_region(tmp_path):
         trace = traceback.format_exc()
     region = extract_target_region(trace)
     assert region is not None
-    assert region.path == str(path)
-    assert region.func_name == "inner"
+    assert region.filename == str(path)
+    assert region.function == "inner"
     assert region.start_line == 1
     assert region.end_line == 2
