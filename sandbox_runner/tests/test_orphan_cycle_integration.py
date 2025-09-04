@@ -3,18 +3,20 @@ import sys
 import types
 
 import yaml
+from dynamic_path_router import resolve_path
 
 
 # ---------------------------------------------------------------------------
 
 def test_orphan_cycle_integration(tmp_path, monkeypatch):
+    resolve_path("sandbox_runner.py")
     repo = tmp_path
-    (repo / "existing.py").write_text("X = 1\n")
-    (repo / "new_mod.py").write_text("Y = 2\n")
+    (repo / "existing.py").write_text("X = 1\n")  # path-ignore
+    (repo / "new_mod.py").write_text("Y = 2\n")  # path-ignore
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
     (data_dir / "module_map.json").write_text(
-        json.dumps({"modules": {"existing": "existing.py"}, "groups": {}})
+        json.dumps({"modules": {"existing": "existing.py"}, "groups": {}})  # path-ignore
     )
 
     calls: dict[str, object] = {}
@@ -72,11 +74,11 @@ def test_orphan_cycle_integration(tmp_path, monkeypatch):
 
     assert calls["discover"] is True
     assert calls["tests"] is True
-    assert calls["auto_include"] == ["new_mod.py"]
-    assert calls["workflows"] == ["new_mod.py"]
+    assert calls["auto_include"] == ["new_mod.py"]  # path-ignore
+    assert calls["workflows"] == ["new_mod.py"]  # path-ignore
     assert calls["synergy"] == ["new_mod"]
-    assert calls["cluster"] == [str(repo / "new_mod.py")]
-    assert added == ["new_mod.py"]
+    assert calls["cluster"] == [str(repo / "new_mod.py")]  # path-ignore
+    assert added == ["new_mod.py"]  # path-ignore
     assert syn_ok and cl_ok
 
     metrics = yaml.safe_load((repo / "sandbox_metrics.yaml").read_text())
@@ -84,4 +86,4 @@ def test_orphan_cycle_integration(tmp_path, monkeypatch):
 
     log_path = repo / "sandbox_data" / "orphan_integration.log"
     log_entry = json.loads(log_path.read_text().splitlines()[-1])
-    assert log_entry["modules"] == ["new_mod.py"]
+    assert log_entry["modules"] == ["new_mod.py"]  # path-ignore
