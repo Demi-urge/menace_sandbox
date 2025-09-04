@@ -1,4 +1,3 @@
-import os
 import sys
 import threading
 import types
@@ -45,7 +44,8 @@ def test_start_autonomous_sandbox_noninteractive(tmp_path, monkeypatch):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data))
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("STRIPE_API_KEY", "test")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
+    monkeypatch.setenv("STRIPE_PUBLIC_KEY", "pk_test")
     monkeypatch.setenv("MODELS", str(repo))
     monkeypatch.setattr("builtins.input", lambda *a, **k: pytest.fail("prompted"))
 
@@ -113,7 +113,8 @@ def test_start_autonomous_sandbox_health_check(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data))
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("STRIPE_API_KEY", "test")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
+    monkeypatch.setenv("STRIPE_PUBLIC_KEY", "pk_test")
     monkeypatch.setenv("MODELS", str(repo))
     monkeypatch.setattr("builtins.input", lambda *a, **k: pytest.fail("prompted"))
 

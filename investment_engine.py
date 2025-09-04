@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import os
-import sqlite3
 import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
 from dotenv import load_dotenv
 
-from . import stripe_handler
+from . import stripe_billing_router
 import logging
 
 logger = logging.getLogger(__name__)
@@ -69,7 +67,10 @@ class InvestmentDB:
     def add(self, rec: InvestmentRecord) -> int:
         with self.lock:
             cur = self.conn.execute(
-                "INSERT INTO investments(amount, predicted_roi, target, cap_used, ts) VALUES(?,?,?,?,?)",
+                (
+                    "INSERT INTO investments(" "amount, predicted_roi, target, cap_used, ts"
+                    ") VALUES(?,?,?,?,?)"
+                ),
                 (rec.amount, rec.predicted_roi, rec.target, rec.cap_used, rec.ts),
             )
             self.conn.commit()
@@ -78,7 +79,10 @@ class InvestmentDB:
     def fetch(self, limit: int = 50) -> List[Tuple[float, float, str, float, str]]:
         with self.lock:
             cur = self.conn.execute(
-                "SELECT amount, predicted_roi, target, cap_used, ts FROM investments ORDER BY id DESC LIMIT ?",
+                (
+                    "SELECT amount, predicted_roi, target, cap_used, ts "
+                    "FROM investments ORDER BY id DESC LIMIT ?"
+                ),
                 (limit,),
             )
             rows = cur.fetchall()
@@ -139,35 +143,36 @@ class AutoReinvestmentBot:
 
     def __init__(
         self,
-        stripe_api_key: Optional[str] = None,
         cap_percentage: float = 0.5,
         safety_reserve: float = 0.0,
         minimum_threshold: float = 10.0,
         predictor: PredictiveSpendEngine | None = None,
         db: InvestmentDB | None = None,
-        test_mode: bool = True,
+        bot_id: str = "finance:finance_router_bot:monetization",
     ) -> None:
         load_dotenv()
-        self.stripe_api_key = stripe_api_key or os.getenv("STRIPE_API_KEY", "")
         self.cap_percentage = cap_percentage
         self.safety_reserve = safety_reserve
         self.minimum_threshold = minimum_threshold
         self.predictor = predictor or PredictiveSpendEngine()
         self.db = db or InvestmentDB()
-        self.test_mode = test_mode
-        logger.debug("AutoReinvestmentBot initialized test_mode=%s", self.test_mode)
+        self.bot_id = bot_id
+        logger.debug("AutoReinvestmentBot initialized")
 
     # balance helpers -----------------------------------------------------
     def _current_balance(self) -> float:
-        return stripe_handler.get_balance(self.stripe_api_key, test_mode=self.test_mode)
+        return stripe_billing_router.get_balance(self.bot_id)
 
     def _execute_spending(self, amount: float) -> str:
-        return stripe_handler.charge(
-            amount,
-            self.stripe_api_key,
-            description="reinvestment",
-            test_mode=self.test_mode,
-        )
+        try:
+            resp = stripe_billing_router.charge(
+                self.bot_id, amount, description="reinvestment"
+            )
+            status = resp.get("status")
+            return "success" if status == "succeeded" else f"error:{status}"
+        except Exception as exc:  # pragma: no cover - network/API issues
+            logger.exception("Stripe charge failed: %s", exc)
+            return f"error:{exc}"
 
     # core ----------------------------------------------------------------
     def reinvest(self, target: str = "infrastructure") -> float:

@@ -81,6 +81,16 @@ class _MockStripe:
     Customer = _MockCustomer
 
 
+class _MockBalance:
+    @staticmethod
+    def retrieve() -> dict[str, Any]:
+        logger.info("Mock Stripe balance retrieval")
+        return {"available": [{"amount": 0}]}
+
+
+_MockStripe.Balance = _MockBalance
+
+
 def _client(api_key: str):
     if not is_enabled() or not api_key:
         return None
@@ -144,6 +154,24 @@ def charge(
     return client.Charge.create(**params)
 
 
+def get_balance(
+    bot_id: str, *, overrides: Optional[Mapping[str, str]] = None
+) -> float:
+    """Return available balance for the given bot."""
+    route = _resolve_route(bot_id, overrides)
+    client = _client(route["secret_key"])
+    if client is None:
+        logger.info("Stripe balance retrieval skipped: client unavailable")
+        return 0.0
+    try:
+        bal = client.Balance.retrieve()
+        amount = bal.get("available", [{"amount": 0}])[0]["amount"] / 100.0
+        return float(amount)
+    except Exception as exc:  # pragma: no cover - network/API issues
+        logger.exception("Stripe balance retrieval failed: %s", exc)
+        return 0.0
+
+
 def create_customer(
     bot_id: str,
     customer_info: Mapping[str, Any],
@@ -158,4 +186,4 @@ def create_customer(
     return client.Customer.create(**customer_info)
 
 
-__all__ = ["charge", "create_customer", "register_override"]
+__all__ = ["charge", "get_balance", "create_customer", "register_override"]

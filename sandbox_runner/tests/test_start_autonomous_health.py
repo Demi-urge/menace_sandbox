@@ -5,8 +5,6 @@ import threading
 import types
 from pathlib import Path
 
-import pytest
-
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 
@@ -39,7 +37,8 @@ def _setup_base_packages():
 
     os.environ.setdefault("OPENAI_API_KEY", "test")
     os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-    os.environ.setdefault("STRIPE_API_KEY", "test")
+    os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test")
+    os.environ.setdefault("STRIPE_PUBLIC_KEY", "pk_test")
     os.environ.setdefault("MODELS", str(Path.cwd()))
 
 

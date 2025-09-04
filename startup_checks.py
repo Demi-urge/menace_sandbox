@@ -37,7 +37,8 @@ CRITICAL_LIBS: Dict[str, str] = {
 PYPROJECT_PATH = Path(__file__).resolve().with_name("pyproject.toml")
 
 REQUIRED_VARS = [
-    "STRIPE_API_KEY",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_PUBLIC_KEY",
     "DATABASE_URL",
     "OPENAI_API_KEY",
     "MENACE_EMAIL",
@@ -189,6 +190,7 @@ def run_startup_checks(pyproject_path: Path | None = None) -> None:
         trail = AuditTrail(audit_path)
         if not trail.verify(pubkey):
             raise RuntimeError("Audit log verification failed")
+
 
 __all__ = [
     "run_startup_checks",

@@ -49,7 +49,7 @@ configuration. The generated file includes stub values for critical settings:
 
 - `DATABASE_URL` defaults to `sqlite:///menace.db`
 - `MODELS` resolves to the bundled `micro_models` directory when set to `demo`
-- `OPENAI_API_KEY` and `STRIPE_API_KEY` placeholders
+- `OPENAI_API_KEY`, `STRIPE_SECRET_KEY` and `STRIPE_PUBLIC_KEY` placeholders
 - `SANDBOX_DATA_DIR` defaults to `sandbox_data` (use `resolve_path` when
   referencing files under this directory)
 - `SANDBOX_LOG_LEVEL` defaults to `INFO` (use `--log-level` to override)
@@ -1034,7 +1034,7 @@ creates a ``.env`` file on first run so Menace can start without manual
 configuration. The file contains keys defined in ``env_config.py`` such as
 ``DATABASE_URL`` and various API credentials like ``OPENAI_API_KEY`` or
 ``SERP_API_KEY``. Additional service specific keys (for example
-``STRIPE_API_KEY`` or ``REDDIT_CLIENT_SECRET``) can be added to the same file.
+``STRIPE_SECRET_KEY``/``STRIPE_PUBLIC_KEY`` or ``REDDIT_CLIENT_SECRET``) can be added to the same file.
 Set ``MENACE_ENV_FILE`` to load variables from a different path or call
 ``auto_env_setup.ensure_env("custom.env")`` to generate it elsewhere.
 
@@ -1698,7 +1698,7 @@ start unattended.  At minimum the following variables must be defined:
   Required when running with Celery in production.
 - ``OPENAI_API_KEY`` – API key enabling language model features used by
   ``BotDevelopmentBot`` and other helpers.
-- ``STRIPE_API_KEY`` – required for revenue tracking and monetisation helpers.
+- ``STRIPE_SECRET_KEY``/``STRIPE_PUBLIC_KEY`` – required for revenue tracking and monetisation helpers.
 - ``VISUAL_AGENT_TOKEN`` – shared secret used by ``menace_visual_agent_2.py`` for authentication.
 - ``SANDBOX_REPO_PATH`` – path to the local sandbox repository clone processed during self-improvement cycles.
 - ``SANDBOX_DATA_DIR`` – directory storing ROI history, presets and patch metrics.

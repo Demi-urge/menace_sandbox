@@ -1,10 +1,14 @@
 import pytest
 pytest.importorskip("jinja2")
 pytest.importorskip("git")
+import os  # noqa: E402
 
-import menace.data_bot as db
-from menace.unified_event_bus import UnifiedEventBus
-from menace.menace_memory_manager import MenaceMemoryManager, MemoryEntry
+os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test")
+os.environ.setdefault("STRIPE_PUBLIC_KEY", "pk_test")
+
+import menace.data_bot as db  # noqa: E402
+from menace.unified_event_bus import UnifiedEventBus  # noqa: E402
+from menace.menace_memory_manager import MenaceMemoryManager, MemoryEntry  # noqa: E402
 
 
 def test_error_bot_event_subscription(tmp_path):
@@ -87,7 +91,9 @@ def test_optimizer_memory_subscription(tmp_path):
         import menace.resource_allocation_optimizer as rao
     except Exception:
         pytest.skip("optimizer unavailable")
-    opt = rao.ResourceAllocationOptimizer(rao.ROIDB(tmp_path / "r.db"), event_bus=bus, memory_mgr=mm)
+    opt = rao.ResourceAllocationOptimizer(
+        rao.ROIDB(tmp_path / "r.db"), event_bus=bus, memory_mgr=mm
+    )
     bus.publish("errors:new", {"message": "e"})
     assert opt.last_error_event
     mm.log(MemoryEntry("r", "d", 1, "roi"))

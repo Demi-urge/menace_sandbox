@@ -4,6 +4,8 @@ import sys
 import types
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test")
+os.environ.setdefault("STRIPE_PUBLIC_KEY", "pk_test")
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *a, **k: None))
 jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None
@@ -12,7 +14,7 @@ sys.modules.setdefault("yaml", types.ModuleType("yaml"))
 capital_stub = types.ModuleType("menace.capital_management_bot")
 capital_stub.CapitalManagementBot = object
 sys.modules.setdefault("menace.capital_management_bot", capital_stub)
-import menace.finance_router_bot as frb
+import menace.finance_router_bot as frb  # noqa: E402
 
 
 def test_finance_router_memory_subscription_error(tmp_path, caplog):

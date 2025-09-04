@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from dynamic_path_router import resolve_path
 
-from . import stripe_handler
+from . import stripe_billing_router
 
 from .capital_management_bot import CapitalManagementBot
 from .unified_event_bus import UnifiedEventBus
@@ -39,18 +39,14 @@ class FinanceRouterBot:
 
     def __init__(
         self,
-        stripe_api_key: Optional[str] = None,
         payout_log_path: Path | str | None = None,
         capital_manager: Optional[CapitalManagementBot] = None,
-        test_mode: bool = True,
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
     ) -> None:
         load_dotenv()
-        self.stripe_api_key = stripe_api_key or os.getenv("STRIPE_API_KEY", "")
         self.capital_manager = capital_manager
-        self.test_mode = test_mode
         raw_log_path = str(
             payout_log_path
             or os.getenv("PAYOUT_LOG_PATH", "finance_logs/payout_log.json")
@@ -70,7 +66,7 @@ class FinanceRouterBot:
         self.payout_log_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.payout_log_path.exists():
             self.payout_log_path.write_text("[]")
-        logger.debug("FinanceRouterBot initialized test_mode=%s", self.test_mode)
+        logger.debug("FinanceRouterBot initialized")
         self.event_bus = event_bus
         self.memory_mgr = memory_mgr
         self.last_transaction_event: object | None = None
@@ -121,12 +117,17 @@ class FinanceRouterBot:
 
     def route_payment(self, amount: float, model_id: str) -> str:
         """Charge via Stripe and log the result."""
-        result = stripe_handler.charge(
-            amount,
-            self.stripe_api_key,
-            description=model_id,
-            test_mode=self.test_mode,
-        )
+        try:
+            resp = stripe_billing_router.charge(
+                "finance:finance_router_bot:monetization",
+                amount,
+                description=model_id,
+            )
+            status = resp.get("status")
+            result = "success" if status == "succeeded" else f"error:{status}"
+        except Exception as exc:  # pragma: no cover - network/API issues
+            logger.exception("Stripe charge failed: %s", exc)
+            result = f"error:{exc}"
         self.log_transaction(model_id, amount, result)
         if self.capital_manager and result == "success":
             self.capital_manager.log_inflow(amount, model_id)
