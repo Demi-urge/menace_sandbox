@@ -11,6 +11,8 @@ import os
 import logging
 import time
 
+from dynamic_path_router import resolve_path
+
 from .resilience import (
     CircuitBreaker,
     CircuitOpenError,
@@ -40,7 +42,7 @@ from .prediction_manager_bot import PredictionManager
 
 from . import database_manager
 
-KEYWORD_DB = Path(__file__).parent / "keyword_bank.json"
+KEYWORD_DB = resolve_path("keyword_bank.json")
 
 
 @dataclass
