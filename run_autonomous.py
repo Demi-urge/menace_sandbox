@@ -305,7 +305,7 @@ class VisualAgentMonitor:
     def _loop(self) -> None:
         base = self.urls.split(";")[0]
         queue_path = (
-            Path(settings.sandbox_data_dir)
+            Path(resolve_path(settings.sandbox_data_dir))
             / "visual_agent_queue.db"
         )
         while not self._stop.is_set():
@@ -639,8 +639,12 @@ def prepare_presets(
             if gen_func is generate_presets:
                 presets = validate_presets(generate_presets(args.preset_count))
             else:
-                data_dir = args.sandbox_data_dir or settings.sandbox_data_dir
-                presets = validate_presets(gen_func(str(data_dir), args.preset_count))
+                data_dir = resolve_path(
+                    args.sandbox_data_dir or settings.sandbox_data_dir
+                )
+                presets = validate_presets(
+                    gen_func(str(data_dir), args.preset_count)
+                )
                 preset_source = "history adaptation"
                 if getattr(
                     getattr(environment_generator, "adapt_presets", object),
@@ -702,7 +706,9 @@ def execute_iteration(
         if hasattr(args, "foresight_tracker"):
             delattr(args, "foresight_tracker")
 
-    data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+    data_dir = Path(
+        resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
+    )
     hist_file = data_dir / "roi_history.json"
     tracker = ROITracker()
     try:
@@ -1266,11 +1272,12 @@ def main(argv: List[str] | None = None) -> None:
         log_path = args.debug_log_file
         if not log_path:
             data_dir = Path(
-            args.sandbox_data_dir or settings.sandbox_data_dir
+                resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
             )
             data_dir.mkdir(parents=True, exist_ok=True)
             log_path = data_dir / "preset_debug.log"
         else:
+            log_path = resolve_path(log_path)
             Path(log_path).parent.mkdir(parents=True, exist_ok=True)
         fh = logging.FileHandler(log_path)
         fh.setLevel(logging.DEBUG)
@@ -1356,12 +1363,14 @@ def main(argv: List[str] | None = None) -> None:
 
     logger.info(
         "run_autonomous starting with data_dir=%s runs=%s metrics_port=%s",
-        args.sandbox_data_dir or settings.sandbox_data_dir,
+        resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir),
         args.runs,
         port,
     )
 
-    data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+    data_dir = Path(
+        resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
+    )
     legacy_json = data_dir / "synergy_history.json"
     db_file = data_dir / "synergy_history.db"
     if not db_file.exists() and legacy_json.exists():
@@ -1391,7 +1400,9 @@ def main(argv: List[str] | None = None) -> None:
         args.synergy_cycles = max(3, len(synergy_history))
 
     if args.preset_files is None:
-        data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+        data_dir = Path(
+            resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
+        )
         preset_file = data_dir / "presets.json"
         created_preset = False
         env_val = settings.sandbox_env_presets
@@ -1511,24 +1522,31 @@ def main(argv: List[str] | None = None) -> None:
         cleanup_funcs.append(getattr(GPT_KNOWLEDGE_SERVICE, "stop", lambda: None))
 
     meta_log_path = (
-        Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
+        Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
+        / "sandbox_meta.log"
     )
     exporter_log = AuditTrail(str(meta_log_path))
     threshold_log_path = (
-        Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "threshold_log.jsonl"
+        Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
+        / "threshold_log.jsonl"
     )
     threshold_log = ThresholdLogger(str(threshold_log_path))
     cleanup_funcs.append(threshold_log.close)
     preset_log_path = (
-        Path(args.preset_log_file)
+        Path(resolve_path(args.preset_log_file))
         if args.preset_log_file
-        else Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "preset_log.jsonl"
+        else Path(
+            resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
+        )
+        / "preset_log.jsonl"
     )
     preset_log = PresetLogger(str(preset_log_path))
     cleanup_funcs.append(preset_log.close)
     forecast_log = None
     if args.forecast_log:
-        forecast_log = ForecastLogger(str(args.forecast_log))
+        forecast_log = ForecastLogger(
+            str(Path(resolve_path(args.forecast_log)))
+        )
         cleanup_funcs.append(forecast_log.close)
 
     synergy_exporter: SynergyExporter | None = None
@@ -1541,7 +1559,7 @@ def main(argv: List[str] | None = None) -> None:
             port = _free_port()
             logger.info("using port %d for synergy exporter", port)
         history_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
             / "synergy_history.db"
         )
         synergy_exporter = SynergyExporter(
@@ -1582,11 +1600,11 @@ def main(argv: List[str] | None = None) -> None:
 
         interval = settings.auto_train_interval
         history_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
             / "synergy_history.db"
         )
         weights_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
             / "synergy_weights.json"
         )
         auto_trainer = SynergyAutoTrainer(
@@ -1624,7 +1642,7 @@ def main(argv: List[str] | None = None) -> None:
         from menace.metrics_dashboard import MetricsDashboard
 
         history_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
             / "roi_history.json"
         )
         dash = MetricsDashboard(str(history_file))
@@ -1653,7 +1671,7 @@ def main(argv: List[str] | None = None) -> None:
             logger.warning("SynergyDashboard unavailable: %s", exc)
         else:
             synergy_file = (
-                Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+                Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
                 / "synergy_history.db"
             )
             s_dash = SynergyDashboard(str(synergy_file))
@@ -2050,7 +2068,9 @@ def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
 
     bootstrap_environment(settings, _verify_required_dependencies)
     os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
-    os.environ.setdefault("SANDBOX_DATA_DIR", settings.sandbox_data_dir)
+    os.environ.setdefault(
+        "SANDBOX_DATA_DIR", resolve_path(settings.sandbox_data_dir)
+    )
 
     init_self_improvement(settings)
 
