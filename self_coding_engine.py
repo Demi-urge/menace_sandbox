@@ -2590,17 +2590,22 @@ class SelfCodingEngine:
         region: TargetRegion | None = kwargs.pop("target_region", None)
         tracker = self._patch_tracker if region is not None else None
         func_region: TargetRegion | None = None
+        orig_region = region
         if region is not None:
             region.filename = region.filename or str(path)
             func_region = self._expand_region_to_function(path, region)
             func_region.filename = func_region.filename or str(path)
             assert tracker is not None
             scope_level, active_region = tracker.level_for(region, func_region)
-            region_scope = {
-                "region": "line",
-                "function": "function",
-                "module": "module",
-            }[scope_level]
+            if scope_level == "module":
+                region = None
+                active_region = None
+                region_scope = "module"
+            else:
+                region_scope = {
+                    "region": "line",
+                    "function": "function",
+                }[scope_level]
         else:
             active_region = None
             scope_level = "module"
@@ -2760,8 +2765,8 @@ class SelfCodingEngine:
                         "reverted": reverted,
                     },
                 )
-                if tracker and region is not None:
-                    tracker.reset(region)
+                if tracker and orig_region is not None:
+                    tracker.reset(orig_region)
                 return pid, reverted, delta
             trace = self._last_retry_trace or ""
             if self._failure_cache.seen(trace):
@@ -2811,14 +2816,18 @@ class SelfCodingEngine:
             )
             record_failure(fp, log_fingerprint)
             last_fp = fp
-            if tracker and region is not None and func_region is not None:
-                tracker.record_failure(scope_level, region, func_region)
-                scope_level, active_region = tracker.level_for(region, func_region)
-                region_scope = {
-                    "region": "line",
-                    "function": "function",
-                    "module": "module",
-                }[scope_level]
+            if tracker and orig_region is not None and func_region is not None:
+                tracker.record_failure(scope_level, orig_region, func_region)
+                scope_level, active_region = tracker.level_for(orig_region, func_region)
+                if scope_level == "module":
+                    region = None
+                    active_region = None
+                    region_scope = "module"
+                else:
+                    region_scope = {
+                        "region": "line",
+                        "function": "function",
+                    }[scope_level]
         roi_val = 0.0
         if self.data_bot:
             try:
