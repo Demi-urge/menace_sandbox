@@ -211,7 +211,7 @@ class PromptEngine:
     template_path: Path = Path(
         os.getenv(
             "PROMPT_TEMPLATES_PATH",
-            str(ROOT_DIR / "config" / "prompt_templates.v1.json"),
+            str(resolve_path("config/prompt_templates.v1.json")),
         )
     )
     template_sections: List[str] = field(
@@ -223,7 +223,7 @@ class PromptEngine:
     weights_path: Path = Path(
         os.getenv(
             "PROMPT_STYLE_WEIGHTS_PATH",
-            str(ROOT_DIR / "prompt_style_weights.json"),
+            str(resolve_path("prompt_style_weights.json")),
         )
     )
     trainer: PromptMemoryTrainer | None = None
@@ -824,14 +824,19 @@ class PromptEngine:
             instr += " unless surrounding logic is causally required."
 
             original_lines = list(getattr(target_region, "original_lines", []) or [])
-            if not original_lines and raw_filename and Path(raw_filename).exists():
+            if not original_lines and raw_filename:
                 try:
-                    file_lines = Path(raw_filename).read_text(encoding="utf-8").splitlines()
-                    start = max(target_region.start_line - 1, 0)
-                    end = target_region.end_line
-                    original_lines = file_lines[start:end]
+                    resolved = Path(resolve_path(raw_filename))
                 except Exception:
-                    original_lines = []
+                    resolved = None
+                if resolved and resolved.exists():
+                    try:
+                        file_lines = resolved.read_text(encoding="utf-8").splitlines()
+                        start = max(target_region.start_line - 1, 0)
+                        end = target_region.end_line
+                        original_lines = file_lines[start:end]
+                    except Exception:
+                        original_lines = []
         else:
             instr = (
                 "Modify only the provided lines unless surrounding logic is causally required."

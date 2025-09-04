@@ -1238,6 +1238,7 @@ class SelfCodingEngine:
         context are presented to the model and the generated code is spliced back
         into the original file at the specified range.
         """
+        path = Path(resolve_path(path))
         try:
             code = self.generate_helper(
                 description,
