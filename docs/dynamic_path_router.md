@@ -41,3 +41,10 @@ cache mapping for debugging purposes.
   `resolve_path` and clear the cache in tests if paths change.
 - External tools can override the repository root by setting `MENACE_ROOT` or
   `SANDBOX_REPO_PATH`.
+
+## Static path enforcement
+
+A `pre-commit` hook named `check-static-paths` scans modified Python files for
+string literals that end with `.py`. These paths **must** be wrapped with
+`resolve_path` or `path_for_prompt` to remain portable across forks and
+clones. The hook fails if an unwrapped `.py` path is found.

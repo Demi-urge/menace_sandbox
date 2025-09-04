@@ -13,6 +13,12 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
+      - id: check-static-paths
+        name: Prevent static .py path references
+        entry: python tools/check_static_paths.py
+        language: system
+        pass_filenames: true
+        files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:
