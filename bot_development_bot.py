@@ -647,18 +647,13 @@ class BotDevelopmentBot:
         if path.suffix != ".py":
             return
 
-        stripe_check = Path(resolve_path("scripts/check_stripe_imports.py"))
         tools = [
             ("black", ["black", "--check", str(path)]),
             ("flake8", ["flake8", str(path)]),
             ("mypy", ["mypy", str(path)]),
-            (
-                "stripe-usage",
-                [sys.executable, str(stripe_check), str(path)],
-            ),
         ]
         for name, cmd in tools:
-            if name != "stripe-usage" and shutil.which(cmd[0]) is None:
+            if shutil.which(cmd[0]) is None:
                 self.logger.warning("%s not installed", name)
                 continue
             proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -668,10 +663,24 @@ class BotDevelopmentBot:
                     "%s failed for %s: %s", name, path, msg
                 )
                 self._escalate(f"{name} failed for {path}: {msg}")
-                if name == "stripe-usage":
-                    raise RuntimeError(
-                        f"stripe usage issues detected in {path}"
-                    )
+
+        stripe_check = Path(resolve_path("scripts/check_stripe_imports.py"))
+        proc = subprocess.run(
+            [sys.executable, str(stripe_check), str(path)],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            msg = (proc.stdout + proc.stderr).strip()
+            self.logger.warning(
+                "stripe import check failed for %s: %s", path, msg
+            )
+            self._escalate(
+                f"stripe import check failed for {path}: {msg}"
+            )
+            raise RuntimeError(
+                f"stripe import check failed for {path}: {msg}"
+            )
 
     def version_control(
         self, repo_dir: Path, paths: List[Path], message: str = "Auto-generated bot"
