@@ -19,7 +19,7 @@ from .chatgpt_enhancement_bot import (
 )
 from .micro_models.diff_summarizer import summarize_diff
 from .micro_models.prefix_injector import inject_prefix
-from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+from stripe_policy import PAYMENT_ROUTER_NOTICE
 import stripe_billing_router  # noqa: F401
 
 try:  # pragma: no cover - optional dependency

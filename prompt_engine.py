@@ -26,7 +26,7 @@ from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
 from target_region import TargetRegion, extract_target_region
-from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+from stripe_policy import PAYMENT_ROUTER_NOTICE
 import stripe_billing_router  # noqa: F401
 
 try:  # pragma: no cover - optional settings dependency

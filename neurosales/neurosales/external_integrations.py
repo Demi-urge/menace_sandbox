@@ -22,7 +22,7 @@ try:  # optional dependency
 except Exception:  # pragma: no cover - optional dep
     GraphDatabase = None  # type: ignore
 
-from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+from stripe_policy import PAYMENT_ROUTER_NOTICE
 import stripe_billing_router  # noqa: F401
 logger = logging.getLogger(__name__)
 

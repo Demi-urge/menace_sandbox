@@ -39,7 +39,7 @@ from vector_service import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+from stripe_policy import PAYMENT_ROUTER_NOTICE
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
