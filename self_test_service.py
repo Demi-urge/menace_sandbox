@@ -119,7 +119,7 @@ try:
     )
 except Exception:  # pragma: no cover - fallback when metrics unavailable
     def compute_entropy_metrics(files):  # type: ignore
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
 
     def compute_entropy_delta(code_diversity, token_complexity):  # type: ignore
         return 0.0, 0.0
@@ -860,7 +860,7 @@ class SelfTestService:
             try:
                 test_paths = [a for a in self.pytest_args if not a.startswith("-")]
                 test_path = test_paths[0] if test_paths else "."
-                code_div, complexity = compute_entropy_metrics([test_path])
+                code_div, complexity, _ = compute_entropy_metrics([test_path])
                 entropy_delta, _ = compute_entropy_delta(code_div, complexity)
             except Exception:
                 self.logger.exception("failed to compute entropy metrics")

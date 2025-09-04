@@ -81,7 +81,7 @@ try:
     )
 except Exception:  # pragma: no cover - test fallback
     def compute_entropy_metrics(files):
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
 
     def compute_entropy_delta(code_diversity, token_complexity):
         return 0.0, 0.0
@@ -731,7 +731,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 percent = 0.0
                 entropy_delta = 0.0
                 try:
-                    code_div, complexity = compute_entropy_metrics([path])
+                    code_div, complexity, _ = compute_entropy_metrics([path])
                     entropy_delta, _ = compute_entropy_delta(code_div, complexity)
                 except Exception:
                     self.logger.exception("failed to compute entropy metrics")
@@ -779,7 +779,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 self.logger.exception("coverage generation failed")
                 entropy_delta = 0.0
                 try:
-                    code_div, complexity = compute_entropy_metrics([path])
+                    code_div, complexity, _ = compute_entropy_metrics([path])
                     entropy_delta, _ = compute_entropy_delta(code_div, complexity)
                 except Exception:
                     self.logger.exception("failed to compute entropy metrics")
@@ -1733,7 +1733,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         flakiness = await asyncio.to_thread(
                             self._test_flakiness, root_test, runs=self.flakiness_runs
                         )
-                        code_div, complexity = compute_entropy_metrics([root_test])
+                        code_div, complexity, _ = compute_entropy_metrics([root_test])
                         entropy_delta, _ = compute_entropy_delta(code_div, complexity)
                         runtime_delta = after_runtime - before_runtime
                         roi_after = roi_before + roi_delta
@@ -1959,7 +1959,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     error_delta = before_err - after_err
                     flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
                     runtime_delta = after_runtime - before_runtime
-                    code_div, complexity = compute_entropy_metrics([root_test])
+                    code_div, complexity, _ = compute_entropy_metrics([root_test])
                     entropy_delta, _ = compute_entropy_delta(code_div, complexity)
                     syn_roi, syn_eff, *_ = self._recent_synergy_metrics(tracker)
                     patch_score, moving_avg, _ = self._composite_score(

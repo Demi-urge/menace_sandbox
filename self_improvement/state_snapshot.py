@@ -17,12 +17,7 @@ try:  # pragma: no cover - optional dependency location
 except Exception:  # pragma: no cover
     from dynamic_path_router import resolve_path  # type: ignore
 
-try:  # pragma: no cover - allow external stubs in tests
-    from module_graph_analyzer import build_import_graph
-except Exception:  # pragma: no cover
-    from ..module_graph_analyzer import build_import_graph  # type: ignore
-
-from .metrics import _collect_metrics
+from .metrics import compute_call_graph_complexity, compute_entropy_metrics
 
 
 @dataclass
@@ -68,10 +63,9 @@ def _latest_sandbox_score(path: str | Path) -> float:
 
 def _token_diversity(repo: Path, settings: SandboxSettings) -> float:
     """Return average token diversity for *repo* using metrics helper."""
-
-    files = repo.rglob("*.py")
+    files = list(repo.rglob("*.py"))
     try:
-        _, _, _, _, _, avg_div = _collect_metrics(files, repo, settings=settings)
+        _, _, avg_div = compute_entropy_metrics(files, settings=settings)
     except Exception:  # pragma: no cover - best effort
         avg_div = 0.0
     return float(avg_div)
@@ -88,12 +82,20 @@ def capture_snapshot(tracker: BaselineTracker, settings: SandboxSettings) -> Sna
     sandbox_score = _latest_sandbox_score(settings.sandbox_score_db)
 
     try:
-        graph = build_import_graph(repo)
-        call_complexity = float(graph.number_of_edges())
+        call_complexity = compute_call_graph_complexity(repo)
     except Exception:  # pragma: no cover - fall back if analysis fails
         call_complexity = 0.0
 
     diversity = _token_diversity(repo, settings)
+
+    try:
+        tracker.update(
+            call_graph_complexity=call_complexity,
+            token_diversity=diversity,
+            record_momentum=False,
+        )
+    except Exception:  # pragma: no cover - best effort
+        pass
 
     return Snapshot(
         roi=roi,
