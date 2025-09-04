@@ -17,12 +17,23 @@ from typing import Iterable
 TRIGGER_SUBSTRINGS = ["sandbox_data"]
 SCRIPT_NAME = Path(__file__).name
 
+# File extensions that should be treated as potential path references. ``.py``
+# continues to require a ``/`` in the string to avoid false positives on module
+# names, while the other extensions are flagged regardless of the presence of a
+# path separator so that bare filenames like ``sandbox_settings.yaml`` are
+# caught.
+_EXTENSIONS_NEED_SLASH = (".py",)
+_EXTENSIONS_ALWAYS = (".yaml", ".yml", ".json", ".db")
+
 
 def _triggers(value: str) -> bool:
-    return (
-        any(sub in value for sub in TRIGGER_SUBSTRINGS)
-        or ("/" in value and value.endswith(".py"))
-    )
+    if any(sub in value for sub in TRIGGER_SUBSTRINGS):
+        return True
+    if any(value.endswith(ext) for ext in _EXTENSIONS_ALWAYS):
+        return True
+    if "/" in value and any(value.endswith(ext) for ext in _EXTENSIONS_NEED_SLASH):
+        return True
+    return False
 
 
 class _Visitor(ast.NodeVisitor):
