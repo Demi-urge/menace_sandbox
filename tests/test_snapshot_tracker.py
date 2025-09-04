@@ -14,7 +14,25 @@ package.__path__ = [str(pkg_path)]
 sys.modules["menace_sandbox.self_improvement"] = package
 
 sys.modules["codebase_diff_checker"] = types.ModuleType("codebase_diff_checker")
-sys.modules["logging_utils"] = types.SimpleNamespace(log_record=lambda **k: {})
+
+
+class _Logger:
+    def warning(self, *a, **k):
+        pass
+
+    def info(self, *a, **k):
+        pass
+
+    def debug(self, *a, **k):
+        pass
+
+
+sys.modules["logging_utils"] = types.SimpleNamespace(
+    log_record=lambda **k: {},
+    get_logger=lambda *a, **k: _Logger(),
+    set_correlation_id=lambda *a, **k: None,
+    setup_logging=lambda *a, **k: None,
+)
 stub_pm = types.ModuleType("prompt_memory")
 stub_pm.log_prompt_attempt = lambda *a, **k: None
 stub_pm.reset_penalty = lambda *a, **k: None

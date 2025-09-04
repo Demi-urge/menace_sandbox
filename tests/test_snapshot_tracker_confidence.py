@@ -3,6 +3,7 @@ import json
 import sys
 import types
 from pathlib import Path
+import db_router
 
 def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     stub = types.SimpleNamespace(
@@ -13,13 +14,30 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     sys.modules["dynamic_path_router"] = types.SimpleNamespace(
         resolve_path=lambda p: p,
         resolve_dir=lambda p: Path(p),
+        repo_root=lambda: Path("."),
     )
-    st = importlib.import_module("menace_sandbox.self_improvement.snapshot_tracker")
-    monkeypatch.setattr(st, "resolve_path", lambda p: p)
+    sys.modules["config_discovery"] = types.ModuleType("config_discovery")
+    menace_pkg = types.ModuleType("menace")
+    menace_pkg.RAISE_ERRORS = False
+    menace_pkg.auto_env_setup = types.SimpleNamespace(ensure_env=lambda *a, **k: None)
+    menace_pkg.default_config_manager = types.SimpleNamespace(DefaultConfigManager=object)
+    sys.modules["menace"] = menace_pkg
+    sys.modules["menace.auto_env_setup"] = menace_pkg.auto_env_setup
+    sys.modules["menace.default_config_manager"] = menace_pkg.default_config_manager
+    sys.modules["menace_sandbox.audit_logger"] = types.SimpleNamespace(log_event=lambda *a, **k: None)
+    db_router.init_db_router = lambda *a, **k: None
 
     class Settings:
         sandbox_data_dir = str(tmp_path)
 
+    sys.modules["sandbox_settings"] = types.SimpleNamespace(
+        SandboxSettings=Settings,
+        load_sandbox_settings=lambda: Settings(),
+    )
+    sys.modules["menace_sandbox.sandbox_settings"] = sys.modules["sandbox_settings"]
+
+    st = importlib.import_module("menace_sandbox.self_improvement.snapshot_tracker")
+    monkeypatch.setattr(st, "resolve_path", lambda p: p)
     monkeypatch.setattr(st, "SandboxSettings", lambda: Settings())
 
     tracker = st.SnapshotTracker()
