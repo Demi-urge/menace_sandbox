@@ -161,17 +161,13 @@ from .orchestration import (
 )
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
-from .prompt_memory import (
-    log_prompt_attempt,
-    load_prompt_penalties,
-    load_strategy_roi_stats,
-)
-from .prompt_strategy_manager import PromptStrategyManager
+from .prompt_memory import log_prompt_attempt
 from . import strategy_rotator
 from .snapshot_tracker import (
     capture as capture_snapshot,
     compute_delta as snapshot_delta,
     SnapshotTracker,
+    StrategyManager,
 )
 from . import snapshot_tracker
 from .sandbox_score import get_latest_sandbox_score
@@ -905,9 +901,7 @@ class SelfImprovementEngine:
         self.strategy_confidence: Dict[str, int] = {}
         self.deprioritized_strategies: set[str] = set()
         self.pending_strategy: str | None = None
-        self.prompt_strategy_manager = PromptStrategyManager(
-            state_path=_data_dir() / "prompt_strategy_state.json"
-        )
+        self.strategy_manager = StrategyManager()
         self._snapshot_tracker = SnapshotTracker()
         self._last_delta: dict[str, float] | None = None
         self.logger = get_logger("SelfImprovementEngine")
@@ -6499,6 +6493,12 @@ class SelfImprovementEngine:
         elif delta.get("entropy", 0.0) > 0:
             failure_reason = "entropy_regression"
 
+        strategy = None
+        if prompt is not None:
+            metadata = getattr(prompt, "metadata", {})
+            if isinstance(metadata, dict):
+                strategy = metadata.get("strategy") or metadata.get("prompt_id")
+
         success = failure_reason is None
         log_prompt_attempt(
             prompt,
@@ -6527,15 +6527,6 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("confidence update failed")
         else:
-            try:
-                self.prompt_strategy_manager.record_failure()
-            except Exception:
-                self.logger.exception("strategy rotation failed")
-            strategy = None
-            if prompt is not None:
-                metadata = getattr(prompt, "metadata", {})
-                if isinstance(metadata, dict):
-                    strategy = metadata.get("strategy") or metadata.get("prompt_id")
             if strategy:
                 try:
                     self.pending_strategy = strategy_rotator.next_strategy(
@@ -6552,56 +6543,24 @@ class SelfImprovementEngine:
                 if threshold and count >= threshold:
                     self.deprioritized_strategies.add(str(strategy))
 
+        if strategy and hasattr(self, "strategy_manager"):
+            try:
+                self.strategy_manager.update(
+                    str(strategy), float(delta.get("roi", 0.0)), success
+                )
+            except Exception:
+                self.logger.exception("strategy metrics update failed")
+
     def next_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
-        """Return the next prompt strategy using the strategy manager."""
-
-        self.prompt_strategy_manager.set_strategies(strategies)
-        return self.prompt_strategy_manager.select(self._select_prompt_strategy)
-
-    def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
-        """Select a strategy taking failure penalties into account.
-
-        Strategies exceeding the failure threshold are down-weighted by
-        ``prompt_penalty_multiplier`` but still eligible when all options are
-        penalised.
-        """
+        """Return the next prompt strategy based on historical performance."""
 
         pending = getattr(self, "pending_strategy", None)
-        if pending and pending in strategies:
+        if pending and pending in strategies and pending not in self.deprioritized_strategies:
             self.pending_strategy = None
             return pending
 
-        penalties = load_prompt_penalties()
-        roi_stats = load_strategy_roi_stats()
-        settings = SandboxSettings()
-        threshold = settings.prompt_failure_threshold
-        eligible: list[tuple[str, float]] = []
-        penalised: list[tuple[str, float]] = []
-        for strat in strategies:
-            if strat in self.deprioritized_strategies:
-                continue
-            count = penalties.get(str(strat), 0)
-            weight = (
-                settings.prompt_penalty_multiplier
-                if threshold and count >= threshold
-                else 1.0
-            )
-            stats = roi_stats.get(str(strat))
-            if stats:
-                roi_factor = stats.get("avg_roi", 0.0)
-                roi_factor = roi_factor if roi_factor > 0 else 0.1
-                weight *= roi_factor
-            target = penalised if threshold and count >= threshold else eligible
-            target.append((strat, weight))
-
-        pool = eligible or penalised
-        best: str | None = None
-        best_weight = -1.0
-        for strat, weight in pool:
-            if weight > best_weight:
-                best_weight = weight
-                best = strat
-        return best
+        candidates = [s for s in strategies if s not in self.deprioritized_strategies]
+        return self.strategy_manager.best_strategy(candidates)
 
     @radar.track
     def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:
