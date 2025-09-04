@@ -17,6 +17,7 @@ import re
 import warnings
 import uuid
 from pathlib import Path
+from dynamic_path_router import resolve_path
 from collections import Counter, OrderedDict, defaultdict
 import atexit
 import importlib
@@ -47,7 +48,6 @@ from sandbox_settings import SandboxSettings
 from model_registry import get_client
 from llm_interface import Prompt
 
-ROOT = Path(__file__).resolve().parents[1]
 
 
 # Optional dependencies loaded lazily
@@ -180,7 +180,10 @@ def _load_config(settings: SandboxSettings) -> StubProviderConfig:
             return default
 
     cache_path = Path(
-        os.getenv("SANDBOX_STUB_CACHE", str(ROOT / "sandbox_data" / "stub_cache.json"))
+        os.getenv(
+            "SANDBOX_STUB_CACHE",
+            str(resolve_path("sandbox_data/stub_cache.json")),
+        )
     )
     cfg = StubProviderConfig(
         timeout=_float_env("SANDBOX_STUB_TIMEOUT", settings.stub_timeout),
@@ -763,7 +766,8 @@ def _load_generator(config: StubProviderConfig | None = None):
 
 def _get_history_db() -> InputHistoryDB:
     path = os.getenv(
-        "SANDBOX_INPUT_HISTORY", str(ROOT / "sandbox_data" / "input_history.db")
+        "SANDBOX_INPUT_HISTORY",
+        str(resolve_path("sandbox_data/input_history.db")),
     )
     return InputHistoryDB(path)
 
