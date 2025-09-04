@@ -4,6 +4,7 @@ import json
 import sys
 import types
 
+import pytest
 import yaml
 from dynamic_path_router import resolve_path
 
@@ -112,3 +113,85 @@ def test_router_error_propagates(tmp_path, monkeypatch):
     assert calls["bot_id"] == frb.FinanceRouterBot.BOT_ID
     data = json.loads(log.read_text())
     assert data and data[0]["result"].startswith("error:")
+
+
+def _load_stripe_router(monkeypatch, tmp_path, routes):
+    class StripeStub:
+        class PaymentIntent:
+            last_params = None
+
+            @staticmethod
+            def create(*, api_key=None, **params):
+                StripeStub.PaymentIntent.last_params = {
+                    "api_key": api_key,
+                    **params,
+                }
+                return {"status": "ok"}
+
+        class Balance:
+            @staticmethod
+            def retrieve(*, api_key=None):
+                return {"available": [{"amount": 5000}]}
+
+    monkeypatch.setitem(sys.modules, "stripe", StripeStub)
+    vsp = types.SimpleNamespace(
+        VaultSecretProvider=type(
+            "VSP",
+            (),
+            {
+                "get": lambda self, name: {
+                    "stripe_secret_key": "sk_live_dummy",
+                    "stripe_public_key": "pk_live_dummy",
+                }.get(name, ""),
+            },
+        )
+    )
+    monkeypatch.setitem(sys.modules, "vault_secret_provider", vsp)
+    cfg = tmp_path / "routes.yaml"
+    cfg.write_text(yaml.safe_dump(routes))
+    monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
+    sys.modules.pop("stripe_billing_router", None)
+    spec = importlib.util.spec_from_file_location(
+        "stripe_billing_router", resolve_path("stripe_billing_router.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["stripe_billing_router"] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module, StripeStub
+
+
+def test_stripe_router_charge_and_balance(monkeypatch, tmp_path):
+    routes = {
+        "stripe": {
+            "default": {
+                "finance": {
+                    "finance_router_bot": {"product_id": "prod_finance_router"}
+                }
+            }
+        }
+    }
+    sbr, stripe_stub = _load_stripe_router(monkeypatch, tmp_path, routes)
+    sbr.charge("stripe:finance:finance_router_bot", amount=2.5)
+    params = stripe_stub.PaymentIntent.last_params
+    assert params["api_key"] == "sk_live_dummy"
+    assert params["amount"] == 250
+    assert params["description"] == "prod_finance_router"
+    assert sbr.get_balance("stripe:finance:finance_router_bot") == 50.0
+
+
+def test_stripe_router_missing_and_misconfigured(monkeypatch, tmp_path):
+    sbr, _ = _load_stripe_router(monkeypatch, tmp_path, {})
+    with pytest.raises(RuntimeError):
+        sbr.charge("stripe:finance:unknown", amount=1.0)
+
+    routes = {
+        "stripe": {
+            "default": {
+                "finance": {"bad_bot": {"price_id": "price_only"}}
+            }
+        }
+    }
+    sbr, _ = _load_stripe_router(monkeypatch, tmp_path, routes)
+    with pytest.raises(RuntimeError):
+        sbr.charge("stripe:finance:bad_bot")
