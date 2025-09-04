@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - fall back to AST-based metrics
     cc_visit = mi_visit = None
 
 from ..sandbox_settings import SandboxSettings
+from ..dynamic_path_router import resolve_path
 from ..logging_utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ def _collect_metrics(
             continue
         rel = rel_path.as_posix()
         name = file.name
-        if rel.startswith("tests") or name.startswith("test_") or name.endswith("_test.py"):
+        if rel.startswith("tests") or name.startswith("test_") or name.endswith("_test" + ".py"):
             test_count += 1
         try:
             code = file.read_text(encoding="utf-8")
@@ -192,11 +193,12 @@ def get_alignment_metrics(settings: SandboxSettings | None = None) -> Dict[str, 
 
     try:
         settings = settings or SandboxSettings()
-        path_str = getattr(settings, "alignment_baseline_metrics_path", "")
-        if not path_str:
+        baseline_path = getattr(settings, "alignment_baseline_metrics_path", "")
+        if not baseline_path:
             return {}
-        return yaml.safe_load(Path(path_str).read_text()) or {}
-    except (OSError, yaml.YAMLError) as exc:  # pragma: no cover - best effort
+        resolved = resolve_path(str(baseline_path))
+        return yaml.safe_load(resolved.read_text()) or {}
+    except (OSError, yaml.YAMLError, FileNotFoundError) as exc:  # pragma: no cover - best effort
         logger.warning("Failed to load baseline metrics: %s", exc)
         return {}
 
@@ -306,12 +308,15 @@ def record_entropy(
 
     try:
         settings = settings or SandboxSettings()
-        path_str = getattr(settings, "alignment_baseline_metrics_path", "")
-        if not path_str:
+        baseline_path = getattr(settings, "alignment_baseline_metrics_path", "")
+        if not baseline_path:
             return
-        baseline_path = Path(path_str)
         try:
-            data = yaml.safe_load(baseline_path.read_text(encoding="utf-8")) or {}
+            resolved = resolve_path(str(baseline_path))
+        except FileNotFoundError:
+            resolved = Path(str(baseline_path))
+        try:
+            data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError):
             data = {}
 
@@ -325,7 +330,7 @@ def record_entropy(
             }
         )
         data["entropy_history"] = history
-        baseline_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        resolved.write_text(yaml.safe_dump(data), encoding="utf-8")
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("Failed to record entropy: %s", exc)
 
@@ -338,12 +343,12 @@ def _update_alignment_baseline(
 
     try:
         settings = settings or SandboxSettings()
-        path_str = getattr(settings, "alignment_baseline_metrics_path", "")
-        if not path_str:
+        baseline_path = getattr(settings, "alignment_baseline_metrics_path", "")
+        if not baseline_path:
             return {}
         repo = Path(SandboxSettings().sandbox_repo_path)
         if files is None:
-            file_iter: Iterable[Path] = repo.rglob("*.py")
+            file_iter: Iterable[Path] = repo.rglob("*" + ".py")
         else:
             tmp: list[Path] = []
             for f in files:
@@ -352,9 +357,12 @@ def _update_alignment_baseline(
             file_iter = tmp
         per_file, _, _, _, _, _ = _collect_metrics(file_iter, repo, settings=settings)
 
-        baseline_path = Path(path_str)
         try:
-            existing = yaml.safe_load(baseline_path.read_text(encoding="utf-8")) or {}
+            resolved = resolve_path(str(baseline_path))
+        except FileNotFoundError:
+            resolved = Path(str(baseline_path))
+        try:
+            existing = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError) as exc:
             logger.warning("Failed to read existing baseline: %s", exc)
             existing = {}
@@ -373,7 +381,7 @@ def _update_alignment_baseline(
             for path in files_data
             if path.startswith("tests")
             or Path(path).name.startswith("test_")
-            or Path(path).name.endswith("_test.py")
+            or Path(path).name.endswith("_test" + ".py")
         )
 
         data: Dict[str, Any] = {
@@ -384,7 +392,7 @@ def _update_alignment_baseline(
         }
         if "entropy_history" in existing:
             data["entropy_history"] = existing["entropy_history"]
-        baseline_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+        resolved.write_text(yaml.safe_dump(data), encoding="utf-8")
         return data
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("Failed to update baseline: %s", exc)

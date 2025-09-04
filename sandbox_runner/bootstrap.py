@@ -271,10 +271,15 @@ def _initialize_autonomous_sandbox(
 
     # Ensure baseline metrics file exists; fall back to minimal snapshot when
     # metrics collection fails.
-    baseline_path = Path(getattr(settings, "alignment_baseline_metrics_path", ""))
-    if baseline_path:
-        if not baseline_path.is_absolute():
-            baseline_path = repo_root() / baseline_path
+    baseline_str = getattr(settings, "alignment_baseline_metrics_path", "")
+    baseline_path = Path()
+    if baseline_str:
+        try:
+            baseline_path = resolve_path(str(baseline_str))
+        except FileNotFoundError:
+            baseline_path = Path(str(baseline_str))
+            if not baseline_path.is_absolute():
+                baseline_path = repo_root() / baseline_path
         if not baseline_path.exists():
             baseline_path.parent.mkdir(parents=True, exist_ok=True)
             try:  # compute baseline if possible

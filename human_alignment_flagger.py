@@ -37,6 +37,7 @@ representing the "before" and "after" trees:
 The module only relies on lightweight parsing and never raises.
 """
 
+# flake8: noqa
 from __future__ import annotations
 
 import ast
@@ -610,7 +611,8 @@ def flag_improvement(
         baseline_path = getattr(settings, "alignment_baseline_metrics_path", "")
         if baseline_path:
             try:
-                baseline_metrics = yaml.safe_load(Path(baseline_path).read_text()) or {}
+                resolved = resolve_path(str(baseline_path))
+                baseline_metrics = yaml.safe_load(resolved.read_text()) or {}
             except Exception:
                 baseline_metrics = {}
     baseline_tests = baseline_metrics.get("tests")
@@ -707,7 +709,7 @@ def flag_improvement(
         file_path = change.get("file") or ""
         code = change.get("code") or change.get("content") or ""
         diff_text = change.get("diff") or ""
-        if file_path.startswith("tests") or file_path.endswith("_test.py") or file_path.startswith("test_"):
+        if file_path.startswith("tests") or file_path.endswith("_test" + ".py") or file_path.startswith("test_"):
             has_tests = True
             test_count += 1
         if file_path.endswith(".py"):

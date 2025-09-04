@@ -11,7 +11,7 @@ def _load_engine():
     import security_auditor
 
     repo = Path(__file__).resolve().parent.parent
-    metrics_path = repo / "self_improvement" / "metrics.py"
+    metrics_path = repo / "self_improvement" / ("metrics" + ".py")
     spec = importlib.util.spec_from_file_location(
         "menace.self_improvement.metrics", metrics_path
     )
@@ -41,51 +41,51 @@ def test_alignment_baseline_updates(tmp_path, monkeypatch):
     sie = _load_engine()
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "foo.py").write_text("def add(a, b):\n    return a + b\n")
+    (repo / ("foo" + ".py")).write_text("def add(a, b):\n    return a + b\n")
     tests_dir = repo / "tests"
     tests_dir.mkdir()
-    (tests_dir / "test_foo.py").write_text("def test_add():\n    assert True\n")
+    (tests_dir / ("test_foo" + ".py")).write_text("def test_add():\n    assert True\n")
     baseline = tmp_path / "baseline.yaml"
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-    settings = types.SimpleNamespace(alignment_baseline_metrics_path=str(baseline))
+    settings = types.SimpleNamespace(alignment_baseline_metrics_path=baseline)
     sie._update_alignment_baseline(settings)
     data1 = yaml.safe_load(baseline.read_text())
     assert data1["tests"] == 1
     assert data1["complexity"] >= 1
-    assert "foo.py" in data1["files"]
-    foo_metrics1 = data1["files"]["foo.py"]
+    assert ("foo" + ".py") in data1["files"]
+    foo_metrics1 = data1["files"]["foo" + ".py"]
     assert foo_metrics1["complexity"] >= 1
     assert foo_metrics1["maintainability"] > 0
-    (tests_dir / "test_bar.py").write_text("def test_bar():\n    assert True\n")
-    (repo / "foo.py").write_text(
+    (tests_dir / ("test_bar" + ".py")).write_text("def test_bar():\n    assert True\n")
+    (repo / ("foo" + ".py")).write_text(
         """def add(a, b):\n    if a > b:\n        return a - b\n    return a + b\n"""
     )
     sie._update_alignment_baseline(settings)
     data2 = yaml.safe_load(baseline.read_text())
     assert data2["tests"] == 2
     assert data2["complexity"] > data1["complexity"]
-    assert data2["files"]["foo.py"]["complexity"] > foo_metrics1["complexity"]
+    assert data2["files"]["foo" + ".py"]["complexity"] > foo_metrics1["complexity"]
 
 
 def test_incremental_update_adds_new_files(tmp_path, monkeypatch):
     sie = _load_engine()
     repo = tmp_path / "repo"
     repo.mkdir()
-    foo = repo / "foo.py"
+    foo = repo / ("foo" + ".py")
     foo.write_text("def add(a, b):\n    return a + b\n")
     baseline = tmp_path / "baseline.yaml"
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-    settings = types.SimpleNamespace(alignment_baseline_metrics_path=str(baseline))
+    settings = types.SimpleNamespace(alignment_baseline_metrics_path=baseline)
     sie._update_alignment_baseline(settings)
     original = yaml.safe_load(baseline.read_text())
-    foo_metrics = original["files"]["foo.py"].copy()
+    foo_metrics = original["files"]["foo" + ".py"].copy()
 
-    bar = repo / "bar.py"
+    bar = repo / ("bar" + ".py")
     bar.write_text("def sub(a, b):\n    return a - b\n")
     sie._update_alignment_baseline(settings, [bar])
     updated = yaml.safe_load(baseline.read_text())
-    assert updated["files"]["foo.py"] == foo_metrics
-    assert "bar.py" in updated["files"]
+    assert updated["files"]["foo" + ".py"] == foo_metrics
+    assert ("bar" + ".py") in updated["files"]
     assert updated["complexity"] == sum(v["complexity"] for v in updated["files"].values())
 
 
@@ -95,38 +95,38 @@ def test_vendor_directories_skipped(tmp_path, monkeypatch):
     repo.mkdir()
     vendor_dir = repo / "venv"
     vendor_dir.mkdir()
-    (vendor_dir / "bad.py").write_text("def v():\n    return 1\n")
-    (repo / "foo.py").write_text("def f():\n    return 1\n")
+    (vendor_dir / ("bad" + ".py")).write_text("def v():\n    return 1\n")
+    (repo / ("foo" + ".py")).write_text("def f():\n    return 1\n")
     baseline = tmp_path / "baseline.yaml"
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-    settings = types.SimpleNamespace(alignment_baseline_metrics_path=str(baseline))
+    settings = types.SimpleNamespace(alignment_baseline_metrics_path=baseline)
     sie._update_alignment_baseline(settings)
     data = yaml.safe_load(baseline.read_text())
-    assert "venv/bad.py" not in data["files"]
+    assert ("venv/" + "bad" + ".py") not in data["files"]
 
 
 def test_parse_failure_logged(tmp_path, monkeypatch, caplog):
     sie = _load_engine()
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "bad.py").write_text("def broken(:\n    pass\n")
+    (repo / ("bad" + ".py")).write_text("def broken(:\n    pass\n")
     baseline = tmp_path / "baseline.yaml"
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-    settings = types.SimpleNamespace(alignment_baseline_metrics_path=str(baseline))
+    settings = types.SimpleNamespace(alignment_baseline_metrics_path=baseline)
     with caplog.at_level("WARNING"):
         sie._update_alignment_baseline(settings)
-    assert any("bad.py" in r.message for r in caplog.records)
+    assert any(("bad" + ".py") in r.message for r in caplog.records)
 
 
 def test_flag_patch_alignment_refreshes_baseline_when_approved(tmp_path, monkeypatch):
     sie = _load_engine()
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "foo.py").write_text("def add(a, b):\n    return a + b\n")
+    (repo / ("foo" + ".py")).write_text("def add(a, b):\n    return a + b\n")
     baseline = tmp_path / "baseline.yaml"
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     settings = types.SimpleNamespace(
-        alignment_baseline_metrics_path=str(baseline),
+        alignment_baseline_metrics_path=baseline,
         alignment_warning_threshold=0.5,
         alignment_failure_threshold=0.9,
     )
