@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Pre-commit check for hard coded `.py` paths.
 
-The hook scans Python source files for string literals ending with `.py`. Any
-such literal must be wrapped by :func:`resolve_path` or
+The hook scans Python source files for string literals ending with ``.py``.
+Any such literal must be wrapped by :func:`resolve_path` or
 :func:`path_for_prompt` to ensure paths remain portable across forks and
-clones.
+clones.  Strings starting with ``*`` (e.g. ``"*.py"``) or equal to
+``"__init__.py"`` or ``"snippet.py"`` are ignored as they are typically
+wildcards or module names.  A line can be explicitly skipped by adding the
+inline comment ``# path-ignore``.
 """
 
 from __future__ import annotations
@@ -18,11 +21,22 @@ PY_EXT = ".py"
 
 
 def _is_py_string(node: ast.Constant) -> bool:
-    return (
+    if not (
         isinstance(node.value, str)
         and node.value.endswith(PY_EXT)
         and len(node.value) > len(PY_EXT)
-    )
+    ):
+        return False
+
+    val = node.value
+
+    if val.startswith("*"):
+        return False
+
+    if val in {"__init__.py", "snippet.py"} and "/" not in val and "\\" not in val:
+        return False
+
+    return True
 
 
 class _Collector(ast.NodeVisitor):
@@ -50,12 +64,19 @@ class _Collector(ast.NodeVisitor):
 def check_file(path: str) -> List[ast.Constant]:
     with open(path, "r", encoding="utf-8") as handle:
         try:
-            tree = ast.parse(handle.read(), filename=path)
+            content = handle.read()
+            tree = ast.parse(content, filename=path)
         except SyntaxError:
             return []
+    lines = content.splitlines()
     collector = _Collector()
     collector.visit(tree)
-    return [n for n in collector.all_nodes if n not in collector.allowed_nodes]
+    return [
+        n
+        for n in collector.all_nodes
+        if n not in collector.allowed_nodes
+        and "# path-ignore" not in lines[n.lineno - 1]
+    ]
 
 
 def main(argv: Iterable[str]) -> int:
