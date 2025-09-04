@@ -37,8 +37,6 @@ CRITICAL_LIBS: Dict[str, str] = {
 PYPROJECT_PATH = Path(__file__).resolve().with_name("pyproject.toml")
 
 REQUIRED_VARS = [
-    "STRIPE_SECRET_KEY",
-    "STRIPE_PUBLIC_KEY",
     "DATABASE_URL",
     "OPENAI_API_KEY",
     "MENACE_EMAIL",
@@ -46,6 +44,7 @@ REQUIRED_VARS = [
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
 ]
+# Stripe keys are handled by stripe_billing_router and intentionally omitted.
 
 
 def validate_dependencies(modules: Iterable[str] = OPTIONAL_LIBS) -> list[str]:

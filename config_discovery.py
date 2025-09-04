@@ -151,8 +151,8 @@ class ConfigDiscovery:
 
 
 _DEFAULT_VARS = [
-    "STRIPE_SECRET_KEY",
-    "STRIPE_PUBLIC_KEY",
+    # Stripe keys are intentionally excluded; stripe_billing_router loads them
+    # directly from the environment to avoid storing secrets in config files.
     "DATABASE_URL",
     "OPENAI_API_KEY",
 ]

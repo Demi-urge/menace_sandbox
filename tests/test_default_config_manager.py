@@ -19,7 +19,7 @@ def test_apply_defaults(tmp_path, monkeypatch):
 
 def test_preserve_existing(tmp_path, monkeypatch):
     env = tmp_path / ".env"
-    env.write_text("STRIPE_SECRET_KEY=abc\n")
+    env.write_text("OPENAI_API_KEY=abc\n")
     monkeypatch.chdir(tmp_path)
     for var in cd._DEFAULT_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -27,5 +27,5 @@ def test_preserve_existing(tmp_path, monkeypatch):
     mgr.apply_defaults()
 
     data = env.read_text()
-    assert "STRIPE_SECRET_KEY=abc" in data
-    assert os.environ.get("STRIPE_SECRET_KEY") == "abc"
+    assert "OPENAI_API_KEY=abc" in data
+    assert os.environ.get("OPENAI_API_KEY") == "abc"

@@ -466,10 +466,8 @@ class SandboxSettings(BaseSettings):
         default_factory=lambda: [
             "OPENAI_API_KEY",
             "DATABASE_URL",
-            "STRIPE_SECRET_KEY",
-            "STRIPE_PUBLIC_KEY",
             "MODELS",
-        ],
+        ],  # Stripe keys are handled via stripe_billing_router
         env="SANDBOX_REQUIRED_ENV_VARS",
         description="Environment variables required for sandbox initialisation.",
     )
