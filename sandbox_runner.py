@@ -341,10 +341,11 @@ def simulate_meta_workflow(meta_spec, workflows=None, runner=None):
 
 # ----------------------------------------------------------------------
 def load_modified_code(code_path: str) -> str:
-    logger.debug("loading code from %s", code_path)
-    with open(code_path, "r", encoding="utf-8") as fh:
+    path = resolve_path(code_path)
+    logger.debug("loading code from %s", path)
+    with path.open("r", encoding="utf-8") as fh:
         content = fh.read()
-    logger.debug("loaded %d bytes from %s", len(content), code_path)
+    logger.debug("loaded %d bytes from %s", len(content), path)
     return content
 
 
@@ -359,35 +360,35 @@ def scan_repo_sections(
     """
     from menace.codebase_diff_checker import _extract_sections
 
+    repo_path = resolve_path(repo_path)
     sections: Dict[str, Dict[str, List[str]]] = {}
     targets: List[str] = []
 
     if modules:
         for mod in modules:
-            root = os.path.join(repo_path, mod)
-            if os.path.isdir(root):
+            root = repo_path / mod
+            if root.is_dir():
                 for base, _, files in os.walk(root):
                     for name in files:
                         if name.endswith(".py"):
-                            rel = os.path.relpath(os.path.join(base, name), repo_path)
+                            rel = os.path.relpath(Path(base) / name, repo_path)
                             targets.append(rel)
-            else:
-                if root.endswith(".py") and os.path.isfile(root):
-                    targets.append(os.path.relpath(root, repo_path))
+            elif root.suffix == ".py" and root.is_file():
+                targets.append(os.path.relpath(root, repo_path))
     else:
         for base, _, files in os.walk(repo_path):
             for name in files:
                 if name.endswith(".py"):
-                    rel = os.path.relpath(os.path.join(base, name), repo_path)
+                    rel = os.path.relpath(Path(base) / name, repo_path)
                     targets.append(rel)
 
     for rel in targets:
-        path = os.path.join(repo_path, rel)
+        path = repo_path / rel
         try:
             sections[rel] = _extract_sections(path)
         except Exception:
             try:
-                with open(path, "r", encoding="utf-8") as fh:
+                with path.open("r", encoding="utf-8") as fh:
                     sections[rel] = {"__file__": fh.read().splitlines()}
             except Exception:
                 sections[rel] = {}
@@ -409,7 +410,7 @@ def run_relevancy_radar_scan(
         logger.info("relevancy radar disabled")
         return {}
 
-    db_path = Path(settings.sandbox_data_dir) / "relevancy_metrics.db"
+    db_path = resolve_path(settings.sandbox_data_dir) / "relevancy_metrics.db"
     flags = relevancy_radar_scan(
         db_path=db_path,
         min_calls=settings.relevancy_radar_min_calls,
