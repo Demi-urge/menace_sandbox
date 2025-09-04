@@ -64,6 +64,10 @@ def test_run_tests_supports_backends(monkeypatch, tmp_path):
 
     res_venv = th.run_tests(repo, backend="venv")
     res_docker = th.run_tests(repo, backend="docker")
+    if isinstance(res_venv, list):
+        res_venv = res_venv[0]
+    if isinstance(res_docker, list):
+        res_docker = res_docker[0]
 
     assert res_venv.success and res_docker.success
     assert res_venv.success == res_docker.success

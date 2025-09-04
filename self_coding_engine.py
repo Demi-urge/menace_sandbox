@@ -1385,15 +1385,17 @@ class SelfCodingEngine:
         lint_ok = bool(metrics.modules and metrics.modules[0].result)
 
         harness_result = run_tests(Path.cwd(), path)
-        success = lint_ok and harness_result.success
+        results = harness_result if isinstance(harness_result, list) else [harness_result]
+        success = lint_ok and all(r.success for r in results)
+        failure_res = next((r for r in results if not r.success), results[0])
         if success:
             self.logger.info("CI checks succeeded")
         else:
             if not lint_ok:
                 self.logger.error("lint failed")
-            if not harness_result.success:
+            if not failure_res.success:
                 self.logger.error("tests failed")
-                self._last_retry_trace = harness_result.stderr or harness_result.stdout
+                self._last_retry_trace = failure_res.stderr or failure_res.stdout
             trace = self._last_retry_trace or ""
             try:
                 failure = ErrorParser.parse_failure(trace)
@@ -1404,11 +1406,11 @@ class SelfCodingEngine:
                 self.logger.exception("failed to store strategy tag")
         return TestHarnessResult(
             success,
-            harness_result.stdout,
-            harness_result.stderr,
-            harness_result.duration,
-            harness_result.failure,
-            harness_result.path,
+            "\n".join(r.stdout for r in results),
+            "\n".join(r.stderr for r in results),
+            sum(r.duration for r in results) / len(results),
+            failure_res.failure,
+            failure_res.path,
         )
 
     def _current_errors(self) -> int:
