@@ -274,8 +274,10 @@ def _resolve_route(
     _validate_no_api_keys(route)
     route.setdefault("secret_key", STRIPE_SECRET_KEY)
     route.setdefault("public_key", STRIPE_PUBLIC_KEY)
+    route.setdefault("currency", "usd")
     for strategy in _STRATEGIES:
         route = strategy.apply(bot_id, dict(route))
+    route.setdefault("currency", "usd")
     secret = route.get("secret_key", "")
     public = route.get("public_key", "")
     if not secret or not public:
@@ -313,6 +315,7 @@ def charge(
     price = price_id or route.get("price_id")
     customer = route.get("customer_id")
     description = description or route.get("product_id", "")
+    currency = route.get("currency", "usd")
 
     amt: float | None = None
     if amount is not None:
@@ -365,7 +368,7 @@ def charge(
     idempotency_key = f"{bot_id}-{amt}-{timestamp_ms}"
     params = {
         "amount": int(amt * 100),
-        "currency": "usd",
+        "currency": currency,
         "description": description,
         "idempotency_key": idempotency_key,
     }
