@@ -12,9 +12,10 @@ except Exception:  # pragma: no cover - fallback for direct execution
     import sys
     from dynamic_path_router import resolve_path
 
+    path = resolve_path("target_region.py")
     spec = importlib.util.spec_from_file_location(
         "_target_region_fallback",
-        resolve_path("target_region.py"),
+        path,
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["_target_region_fallback"] = module
