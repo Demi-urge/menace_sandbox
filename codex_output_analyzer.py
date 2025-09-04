@@ -18,7 +18,11 @@ import sys
 import tokenize
 import io
 from pathlib import Path
-from stripe_detection import HTTP_LIBRARIES, contains_payment_keyword
+from stripe_detection import (
+    PAYMENT_KEYWORDS,
+    HTTP_LIBRARIES,
+    contains_payment_keyword,
+)
 
 from dynamic_path_router import resolve_path
 
@@ -67,12 +71,18 @@ _RAW_STRIPE_PATTERN = re.compile(
 
 
 def validate_stripe_usage_generic(text: str) -> None:
-    """Raise if *text* contains raw Stripe endpoints or keys without router."""
+    """Raise if *text* contains Stripe endpoints, keys or keywords without router."""
 
+    lowered = text.lower()
     if _RAW_STRIPE_PATTERN.search(text):
-        if "stripe_billing_router" not in text:
+        if "stripe_billing_router" not in lowered:
             raise CriticalGenerationFailure(
-                "critical generation failure: raw Stripe usage detected"
+                "critical generation failure: raw Stripe usage detected",
+            )
+    if any(keyword in lowered for keyword in PAYMENT_KEYWORDS):
+        if "stripe_billing_router" not in lowered:
+            raise CriticalGenerationFailure(
+                "critical generation failure: payment keywords without stripe_billing_router",
             )
 
 
