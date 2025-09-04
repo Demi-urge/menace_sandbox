@@ -8,6 +8,7 @@ import logging
 import logging.config
 import os
 import argparse
+import re
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
@@ -53,6 +54,45 @@ DEFAULT_SUSPICIOUS_WORDS: Set[str] = {
     "noqa",
     "insecure",
 }
+
+
+class CriticalGenerationFailure(RuntimeError):
+    """Raised when forbidden payment integrations are detected."""
+
+
+def validate_stripe_usage(code: str) -> None:
+    """Scan *code* for disallowed Stripe usage.
+
+    Parameters
+    ----------
+    code:
+        Source code to inspect.
+
+    Raises
+    ------
+    CriticalGenerationFailure
+        If Stripe is used directly or payment keywords appear without
+        importing ``stripe_billing_router``.
+    """
+
+    if re.search(r"^\s*import\s+stripe\b", code, re.MULTILINE):
+        raise CriticalGenerationFailure(
+            "critical generation failure: direct Stripe import detected"
+        )
+    if re.search(r"api\.stripe\.com", code):
+        raise CriticalGenerationFailure(
+            "critical generation failure: direct Stripe API call detected"
+        )
+    keywords = ("payment", "checkout", "billing", "stripe")
+    lowered = code.lower()
+    if any(kw in lowered for kw in keywords):
+        if not re.search(
+            r"^\s*import\s+stripe_billing_router\b", code, re.MULTILINE
+        ):
+            raise CriticalGenerationFailure(
+                "critical generation failure: payment keywords without"
+                " stripe_billing_router import"
+            )
 
 
 def configure_logging(
