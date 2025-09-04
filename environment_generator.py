@@ -236,7 +236,8 @@ def _load_keyword_overrides() -> Dict[str, List[str]]:
 
     path = os.getenv("SANDBOX_SETTINGS_YAML", "sandbox_settings.yaml")
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        resolved = resolve_path(path)
+        with resolved.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
     except FileNotFoundError:
         return {}
