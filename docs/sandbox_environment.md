@@ -14,19 +14,18 @@ The sandbox expects a few variables to be set before launch:
 Run `auto_env_setup.ensure_env()` to generate a `.env` file with these variables when
 missing. Values may also be supplied via the shell environment.
 
+## Dynamic path routing
+
 Use `dynamic_path_router.resolve_path` for all repository file lookups so paths
-remain portable. Combine it with `SANDBOX_DATA_DIR` when accessing runtime
-artifacts:
+remain portable. The resolver infers the project root from Git metadata and can
+be overridden by setting `MENACE_ROOT` or `SANDBOX_REPO_PATH`. Combine it with
+`SANDBOX_DATA_DIR` when accessing runtime artifacts:
 
 ```python
 import os
 from dynamic_path_router import resolve_path
 data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 ```
-
-Setting `MENACE_ROOT` or `SANDBOX_REPO_PATH` changes the repository root used by
-`resolve_path`, allowing alternate checkouts to be targeted without modifying
-code.
 
 ## Prompt logging variables
 
@@ -69,11 +68,13 @@ version control:
 ```python
 from secrets_manager import SecretsManager
 from sandbox_settings import SandboxSettings
+from dynamic_path_router import resolve_path
+import os
 
 secrets = SecretsManager()
 settings = SandboxSettings(
-    sandbox_repo_path="/path/to/menace_sandbox",
-    sandbox_data_dir="/path/to/data",
+    sandbox_repo_path=resolve_path("."),
+    sandbox_data_dir=resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")),
     visual_agent_token=secrets.get("visual_agent_token"),
 )
 ```

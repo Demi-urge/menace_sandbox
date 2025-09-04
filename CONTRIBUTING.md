@@ -20,6 +20,8 @@ explanation for the exemption.
 
 Hard coding repository-relative paths (e.g., strings containing `sandbox_data`
 or path fragments like `foo/bar.py`) can break when the project moves. Use
-`resolve_path` to build such paths dynamically. The pre-commit hook
+`dynamic_path_router.resolve_path` to build such paths dynamically. The resolver
+respects environment overrides like `MENACE_ROOT` or `SANDBOX_REPO_PATH`,
+keeping scripts portable. The pre-commit hook
 `tools/check_dynamic_paths.py` enforces this rule by failing if a file contains
 these patterns without a corresponding `resolve_path` call.

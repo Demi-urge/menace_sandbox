@@ -1,6 +1,6 @@
 See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required environment variables, optional dependencies and directory layout.
 
-## Dynamic Path Router
+## Dynamic path routing
 
 Scripts and data files are located with `dynamic_path_router.resolve_path` so
 shell commands remain portable across forked layouts or nested repositories.
@@ -289,7 +289,13 @@ environment variables and recovery steps.
 A background daemon flushes the queue into the shared database:
 
 ```bash
-python sync_shared_db.py --db-url sqlite:///menace.db --queue-dir sandbox_data/queues
+python sync_shared_db.py --db-url sqlite:///menace.db \
+  --queue-dir "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+import os
+print(resolve_path(f"{os.getenv('SANDBOX_DATA_DIR', 'sandbox_data')}/queues"))
+PY
+)"
 ```
 
 Successful rows are committed and removed, retries happen up to three times and
@@ -454,7 +460,12 @@ bucket is configured or run as a limited pilot.
       --auto-include-isolated --clean-orphans
 
   # 3. Inspect the generated module map and workflows
-  cat sandbox_data/module_map.json
+  python - <<'PY'
+  from dynamic_path_router import resolve_path
+  import os
+  path = resolve_path(f"{os.getenv('SANDBOX_DATA_DIR', 'sandbox_data')}/module_map.json")
+  print(open(path).read())
+  PY
   ```
 
   `sandbox_runner.discover_recursive_orphans` traces the `candidate -> util`
