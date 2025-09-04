@@ -1336,8 +1336,11 @@ class ErrorBot(AdminBotBase):
                 module = mnode.split(":", 1)[1]
                 self.flag_module(module)
                 if self.self_coding_engine:
-                    path = Path(resolve_path(f"{module}.py"))
-                    if path.exists():
+                    try:
+                        path = resolve_path(f"{module}.py")
+                    except FileNotFoundError:
+                        path = None
+                    if path:
                         try:
                             self.self_coding_engine.apply_patch(
                                 path,
@@ -1393,18 +1396,21 @@ class ErrorBot(AdminBotBase):
                     preds.append(f"high_error_risk_{b}")
                     if self.self_coding_engine:
                         try:
-                            path = Path(resolve_path(f"{b}.py"))
-                            if path.exists():
+                            path = resolve_path(f"{b}.py")
+                        except FileNotFoundError:
+                            path = None
+                        if path:
+                            try:
                                 self.self_coding_engine.apply_patch(
                                     path,
                                     "error mitigation",
                                     reason="error mitigation",
                                     trigger="error_bot",
                                 )
-                        except Exception as exc:
-                            self.logger.exception("auto patch failed: %s", exc)
-                            if error_bot_exceptions:
-                                error_bot_exceptions.inc()
+                            except Exception as exc:
+                                self.logger.exception("auto patch failed: %s", exc)
+                                if error_bot_exceptions:
+                                    error_bot_exceptions.inc()
                     modules_for_fix: list[str] = []
                     if self.forecaster and self.graph:
                         try:
@@ -1487,20 +1493,22 @@ class ErrorBot(AdminBotBase):
                 bot = self.data_bot.worst_bot("errors")
                 if not bot:
                     continue
-                path = Path(resolve_path(f"{bot}.py"))
-                if path.exists():
-                    desc = f"fix recurring {item.get('error_type', 'error')}"
-                    try:
-                        self.self_coding_engine.apply_patch(
-                            path,
-                            desc,
-                            reason=desc,
-                            trigger="error_bot",
-                        )
-                    except Exception as exc:
-                        self.logger.exception("auto patch failed: %s", exc)
-                        if error_bot_exceptions:
-                            error_bot_exceptions.inc()
+                try:
+                    path = resolve_path(f"{bot}.py")
+                except FileNotFoundError:
+                    continue
+                desc = f"fix recurring {item.get('error_type', 'error')}"
+                try:
+                    self.self_coding_engine.apply_patch(
+                        path,
+                        desc,
+                        reason=desc,
+                        trigger="error_bot",
+                    )
+                except Exception as exc:
+                    self.logger.exception("auto patch failed: %s", exc)
+                    if error_bot_exceptions:
+                        error_bot_exceptions.inc()
 
     def scan_roi_discrepancies(self, threshold: float = 10.0) -> None:
         """Log ROI mismatches and register them in the Menace database."""
