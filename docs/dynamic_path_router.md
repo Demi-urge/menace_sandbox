@@ -48,3 +48,6 @@ A `pre-commit` hook named `check-static-paths` scans modified Python files for
 string literals that end with `.py`. These paths **must** be wrapped with
 `resolve_path` or `path_for_prompt` to remain portable across forks and
 clones. The hook fails if an unwrapped `.py` path is found.
+
+Run `pre-commit run check-static-paths --files <changed files>` locally before
+committing to catch violations early.
