@@ -163,6 +163,7 @@ from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt
 from .state_snapshot import capture_snapshot, delta as snapshot_delta, save_checkpoint
+from . import snapshot_tracker
 
 
 from ..self_test_service import SelfTestService
@@ -6399,6 +6400,24 @@ class SelfImprovementEngine:
 
         return results
 
+    def _record_snapshot_delta(self, prompt: object, diff: str, delta: dict[str, float]) -> None:
+        """Persist *delta* and log the outcome, updating confidence on success."""
+
+        path = _data_dir() / "snapshots" / "deltas.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(delta) + "\n")
+
+        success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
+        log_prompt_attempt(prompt, success=success, exec_result={"diff": diff}, roi_meta=delta)
+        if success:
+            updater = getattr(self, "confidence_updater", None)
+            if updater:
+                try:
+                    updater.update(delta)
+                except Exception:
+                    self.logger.exception("confidence update failed")
+
     @radar.track
     def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:
         """Execute a self-improvement cycle.
@@ -6412,6 +6431,16 @@ class SelfImprovementEngine:
         set_correlation_id(cid)
         self._cycle_target_region = target_region
         try:
+            changed_files: list[Path] = []
+            pre_snapshot = snapshot_tracker.capture(
+                stage="before",
+                files=changed_files,
+                roi=self.baseline_tracker.current("roi"),
+                sandbox_score=self.baseline_tracker.current("score"),
+            )
+            snapshot_prompt: object | None = None
+            snapshot_diff = ""
+
             momentum = self.baseline_tracker.momentum
             if self.policy:
                 try:
@@ -6854,20 +6883,25 @@ class SelfImprovementEngine:
                     )
                     before_metric = 0.0
                     after_metric = delta
+                    patch_diff = ""
                     if self.self_coding_engine.patch_db and patch_id is not None:
                         try:
                             with self.self_coding_engine.patch_db._connect() as conn:
                                 row = conn.execute(
-                                    "SELECT roi_before, roi_after FROM patch_history WHERE id=?",
+                                    "SELECT roi_before, roi_after, diff FROM patch_history WHERE id=?",
                                     (patch_id,),
                                 ).fetchone()
                             if row:
                                 before_metric = float(row[0])
                                 after_metric = float(row[1])
+                                patch_diff = row[2] or ""
                         except Exception:
                             after_metric = before_metric + delta
                     else:
                         after_metric = before_metric + delta
+                    snapshot_prompt = getattr(self.self_coding_engine, "_last_prompt", None)
+                    snapshot_diff = patch_diff
+                    changed_files.append(mod_path)
                     with MutationLogger.log_context(
                         change=f"helper_patch_{patch_id}",
                         reason="self-improvement helper patch",
@@ -7775,6 +7809,16 @@ class SelfImprovementEngine:
             self.baseline_tracker.update(
                 roi=current_roi, pass_rate=pass_rate, entropy=entropy
             )
+            after_snapshot = snapshot_tracker.capture(
+                stage="after",
+                files=changed_files,
+                roi=self.baseline_tracker.current("roi"),
+                sandbox_score=self.baseline_tracker.current("score"),
+                prompt=str(snapshot_prompt) if snapshot_prompt is not None else None,
+                diff=snapshot_diff,
+            )
+            delta = snapshot_tracker.compute_delta(pre_snapshot, after_snapshot)
+            self._record_snapshot_delta(snapshot_prompt, snapshot_diff, delta)
             self._check_momentum()
             self._check_delta_score()
             self._check_roi_stagnation()
