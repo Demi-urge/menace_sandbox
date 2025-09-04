@@ -18,6 +18,33 @@ from .init import _repo_path
 
 _settings = SandboxSettings()
 
+_penalty_path = _repo_path() / _settings.prompt_penalty_path
+_penalty_lock = FileLock(str(_penalty_path) + ".lock")
+
+
+def load_prompt_penalties() -> Dict[str, int]:
+    """Return mapping of prompt identifiers to regression counts."""
+
+    with _penalty_lock:
+        try:
+            data = json.loads(_penalty_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): int(v) for k, v in data.items()}
+        except Exception:
+            pass
+        return {}
+
+
+def record_regression(prompt_id: str) -> int:
+    """Increment regression count for ``prompt_id`` and persist to disk."""
+
+    with _penalty_lock:
+        penalties = load_prompt_penalties()
+        penalties[prompt_id] = penalties.get(prompt_id, 0) + 1
+        _penalty_path.parent.mkdir(parents=True, exist_ok=True)
+        _penalty_path.write_text(json.dumps(penalties), encoding="utf-8")
+        return penalties[prompt_id]
+
 
 def _log_path(success: bool) -> Path:
     """Return the log file path based on *success* state."""
@@ -31,7 +58,11 @@ def _log_path(success: bool) -> Path:
 
 
 def log_prompt_attempt(
-    prompt: Any, success: bool, exec_result: Any, roi_meta: Dict[str, Any] | None = None
+    prompt: Any,
+    success: bool,
+    exec_result: Any,
+    roi_meta: Dict[str, Any] | None = None,
+    prompt_id: str | None = None,
 ) -> None:
     """Record a prompt attempt outcome.
 
@@ -58,6 +89,8 @@ def log_prompt_attempt(
     if isinstance(metadata, dict):
         target_module = metadata.get("target_module") or metadata.get("module")
         patch_id = metadata.get("patch_id")
+        if prompt_id is None:
+            prompt_id = metadata.get("prompt_id") or metadata.get("strategy")
 
     entry = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -69,6 +102,11 @@ def log_prompt_attempt(
         "metadata": metadata,
         "exec_result": exec_result,
     }
+    if prompt_id:
+        entry["prompt_id"] = prompt_id
+        if not success:
+            record_regression(prompt_id)
+
     if roi_meta is not None:
         entry["roi_meta"] = roi_meta
 
