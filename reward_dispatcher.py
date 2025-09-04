@@ -15,11 +15,13 @@ import time
 import hmac
 import hashlib
 
+from dynamic_path_router import resolve_path
+
 from .kpi_reward_core import compute_reward
 
 REWARD_DIR = "/mnt/shared/security_ai"
 REWARD_FILE = os.path.join(REWARD_DIR, "reward.json")
-SECRET_KEY_PATH = os.path.join(os.path.dirname(__file__), "secret.key")
+SECRET_KEY_PATH = resolve_path("secret.key")
 
 
 def _load_secret_key() -> bytes:

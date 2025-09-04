@@ -10,6 +10,8 @@ from datetime import datetime
 from threading import Thread, Lock
 from typing import Any, List, Dict, Optional
 
+from dynamic_path_router import resolve_dir, resolve_path
+
 from .retry_utils import publish_with_retry
 from db_router import GLOBAL_ROUTER
 import sqlite3
@@ -25,9 +27,9 @@ except Exception:  # pragma: no cover - bus optional
     UnifiedEventBus = None  # type: ignore
 
 # Directory and file path for violation logs
-LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
-LOG_PATH = os.path.join(LOG_DIR, "violation_log.jsonl")
-ALIGNMENT_DB_PATH = os.path.join(LOG_DIR, "alignment_warnings.db")
+LOG_DIR = resolve_dir("logs")
+LOG_PATH = resolve_path("logs/violation_log.jsonl")
+ALIGNMENT_DB_PATH = resolve_path("logs/alignment_warnings.db")
 
 logger = logging.getLogger(__name__)
 _logger_lock = Lock()
