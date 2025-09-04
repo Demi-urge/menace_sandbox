@@ -677,7 +677,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 env_local["SANDBOX_EDGE_CASES"] = "{}"
 
             proc = run(
-                ["python", "-c", "import sys; print(sys.executable)"] ,
+                ["python", "-c", "import sys; print(sys.executable)"],
                 capture_output=True,
                 text=True,
             )
@@ -729,9 +729,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     self.logger.exception("failed to log parsed failure")
                 self._record_exception(exc)
                 percent = 0.0
+                entropy_delta = 0.0
+                try:
+                    code_div, complexity = compute_entropy_metrics([path])
+                    entropy_delta, _ = compute_entropy_delta(code_div, complexity)
+                except Exception:
+                    self.logger.exception("failed to compute entropy metrics")
                 metrics = {
                     "success": False,
-                    "entropy_delta": 0.0,
+                    "entropy_delta": entropy_delta,
                     "runtime": runtime,
                     "error": failure.trace if failure else output,
                     "coverage": {},
@@ -771,9 +777,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 percent = 0.0
                 self._record_exception(exc)
                 self.logger.exception("coverage generation failed")
+                entropy_delta = 0.0
+                try:
+                    code_div, complexity = compute_entropy_metrics([path])
+                    entropy_delta, _ = compute_entropy_delta(code_div, complexity)
+                except Exception:
+                    self.logger.exception("failed to compute entropy metrics")
                 metrics = {
                     "success": False,
-                    "entropy_delta": 0.0,
+                    "entropy_delta": entropy_delta,
                     "runtime": runtime,
                     "error": failure.trace if failure else output,
                     "coverage": {},
