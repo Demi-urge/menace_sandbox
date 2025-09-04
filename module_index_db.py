@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Dict, Iterable
 
 try:  # pragma: no cover - prefer package import
-    from .dynamic_path_router import resolve_path  # type: ignore
+    from .dynamic_path_router import resolve_path, get_project_root  # type: ignore
 except Exception:  # pragma: no cover - allow running as script
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, get_project_root  # type: ignore
 
 try:  # optional dependency only needed when auto mapping
     from scripts.generate_module_map import generate_module_map
@@ -53,7 +53,7 @@ class ModuleIndexDB:
                 if sem_env is None:
                     sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")  # legacy
                 use_semantic = sem_env == "1"
-                repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                repo_path = get_project_root()
                 exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
                 exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
                 mapping = generate_module_map(
@@ -127,7 +127,7 @@ class ModuleIndexDB:
     # --------------------------------------------------------------
     def _norm(self, name: str) -> str:
         """Return repository-relative POSIX path for ``name``."""
-        repo_path = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
+        repo_path = get_project_root()
         p = Path(name)
         try:
             p = p.resolve()
@@ -227,7 +227,7 @@ class ModuleIndexDB:
             if sem_env is None:
                 sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")
             use_semantic = sem_env == "1"
-            repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            repo_path = get_project_root()
             exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
             exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
             mapping = generate_module_map(
