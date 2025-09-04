@@ -37,6 +37,10 @@ from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
 from .roi_tracker import ROITracker
 try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import path_for_prompt
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import path_for_prompt  # type: ignore
+try:  # pragma: no cover - allow flat imports
     from .intent_clusterer import IntentClusterer
     from .universal_retriever import UniversalRetriever
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -435,8 +439,9 @@ class BotCreationBot(AdminBotBase):
             raise
         if self.self_coding_engine:
             try:
+                prompt_module = path_for_prompt(str(file_path))
                 _ctx, session_id = self.cognition_layer.query(
-                    f"self coding patch for {file_path}"
+                    f"self coding patch for {prompt_module}"
                 )
                 self.self_coding_engine.patch_file(file_path, "helper")
                 self.cognition_layer.record_patch_outcome(session_id, True, contribution=1.0)
