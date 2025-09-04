@@ -95,6 +95,13 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
+
+def generate_edge_cases() -> dict[str, Any]:
+    """Expose edge case payloads for test injection."""
+    from .edge_case_generator import generate_edge_cases as _gen
+
+    return _gen()
+
 _USE_MODULE_SYNERGY = os.getenv("SANDBOX_USE_MODULE_SYNERGY") == "1"
 try:  # pragma: no cover - optional dependency
     from module_synergy_grapher import get_synergy_cluster
