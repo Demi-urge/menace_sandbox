@@ -10,11 +10,12 @@ from pathlib import Path
 from threading import Lock
 
 from fcntl_compat import LOCK_EX, LOCK_UN, flock
+from dynamic_path_router import resolve_dir
 import hashlib
 
 
 # Default log file within the repository
-DEFAULT_LOG_PATH = Path(__file__).resolve().parent / "logs" / "shared_db_access.log"
+DEFAULT_LOG_PATH = resolve_dir("logs") / "shared_db_access.log"
 DEFAULT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 

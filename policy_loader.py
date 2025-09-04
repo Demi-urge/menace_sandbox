@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, Mapping
-import os
+from pathlib import Path
 
 import yaml
+from dynamic_path_router import resolve_dir
 
 
 @dataclass
@@ -40,13 +41,13 @@ def _compile(expr: str) -> Callable[[Mapping[str, Any]], bool]:
     return lambda metrics: bool(eval(code, {"__builtins__": {}}, metrics))
 
 
-def _iter_policy_files(config_dir: str) -> Iterable[str]:
-    for name in os.listdir(config_dir):
-        if name.endswith(("_policy.yaml", "_policy.yml", "_policy.json")):
-            yield os.path.join(config_dir, name)
+def _iter_policy_files(config_dir: Path) -> Iterable[Path]:
+    for path in config_dir.iterdir():
+        if path.name.endswith(("_policy.yaml", "_policy.yml", "_policy.json")):
+            yield path
 
 
-def load_policies(config_dir: str | None = None) -> Dict[str, list[PolicyRule]]:
+def load_policies(config_dir: str | Path | None = None) -> Dict[str, list[PolicyRule]]:
     """Load all policy files from *config_dir*.
 
     Parameters
@@ -56,14 +57,14 @@ def load_policies(config_dir: str | None = None) -> Dict[str, list[PolicyRule]]:
         to this module.
     """
 
-    config_dir = config_dir or os.path.join(os.path.dirname(__file__), "config")
+    config_dir = Path(config_dir) if config_dir else resolve_dir("config")
     policies: Dict[str, list[PolicyRule]] = {}
-    if not os.path.isdir(config_dir):
+    if not config_dir.is_dir():
         return policies
     for path in _iter_policy_files(config_dir):
-        name = os.path.splitext(os.path.basename(path))[0]
+        name = path.stem
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            with path.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
         except Exception:
             continue

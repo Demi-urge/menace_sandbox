@@ -15,10 +15,11 @@ from typing import Any, Dict, Iterable, List, Mapping
 import ast
 import json
 import logging
-import os
+from pathlib import Path
 
 import yaml
 from jsonschema import ValidationError, validate
+from dynamic_path_router import resolve_path
 
 if __package__:  # pragma: no cover - allow both package and direct execution
     from .override_validator import validate_override_file
@@ -161,28 +162,26 @@ def _load_rules(path: str | None = None) -> List[Rule]:
     if _RULES_CACHE is not None:
         return _RULES_CACHE
 
-    candidates: List[str] = []
+    candidates: List[Path] = []
     if path:
-        candidates.append(path)
+        candidates.append(Path(path))
     else:
-        base = os.path.join(os.path.dirname(__file__), "config")
-        candidates.append(os.path.join(base, "deployment_governance.yaml"))
-        candidates.append(os.path.join(base, "deployment_governance.json"))
+        base = resolve_path("config")
+        candidates.append(base / "deployment_governance.yaml")
+        candidates.append(base / "deployment_governance.json")
 
     loaded: List[Rule] = []
-    schema_path = os.path.join(
-        os.path.dirname(__file__), "config", "deployment_governance.schema.json"
-    )
+    schema_path = resolve_path("config/deployment_governance.schema.json")
     for candidate in candidates:
-        if os.path.exists(candidate):
+        if candidate.exists():
             try:
-                with open(candidate, "r", encoding="utf-8") as fh:
+                with candidate.open("r", encoding="utf-8") as fh:
                     data = (
                         json.load(fh)
-                        if candidate.endswith(".json")
+                        if candidate.suffix == ".json"
                         else yaml.safe_load(fh)
                     )
-                with open(schema_path, "r", encoding="utf-8") as sfh:
+                with schema_path.open("r", encoding="utf-8") as sfh:
                     schema = json.load(sfh)
                 validate(data, schema)
             except (
@@ -207,7 +206,7 @@ def _load_rules(path: str | None = None) -> List[Rule]:
                     )
                 )
             _RULES_CACHE = loaded + list(_DEFAULT_RULES)
-            _RULES_PATH = candidate
+            _RULES_PATH = str(candidate)
             break
     else:
         _RULES_CACHE = list(_DEFAULT_RULES)
@@ -230,28 +229,26 @@ def _load_policy(path: str | None = None) -> Mapping[str, Any]:
     if _POLICY_CACHE is not None:
         return _POLICY_CACHE
 
-    candidates: List[str] = []
+    candidates: List[Path] = []
     if path:
-        candidates.append(path)
+        candidates.append(Path(path))
     else:
-        base = os.path.join(os.path.dirname(__file__), "config")
-        candidates.append(os.path.join(base, "deployment_policy.yaml"))
-        candidates.append(os.path.join(base, "deployment_policy.json"))
+        base = resolve_path("config")
+        candidates.append(base / "deployment_policy.yaml")
+        candidates.append(base / "deployment_policy.json")
 
     policy: Mapping[str, Any] | None = None
-    schema_path = os.path.join(
-        os.path.dirname(__file__), "config", "deployment_policy.schema.json"
-    )
+    schema_path = resolve_path("config/deployment_policy.schema.json")
     for candidate in candidates:
-        if os.path.exists(candidate):
+        if candidate.exists():
             try:
-                with open(candidate, "r", encoding="utf-8") as fh:
+                with candidate.open("r", encoding="utf-8") as fh:
                     data = (
                         json.load(fh)
-                        if candidate.endswith(".json")
+                        if candidate.suffix == ".json"
                         else yaml.safe_load(fh)
                     )
-                with open(schema_path, "r", encoding="utf-8") as sfh:
+                with schema_path.open("r", encoding="utf-8") as sfh:
                     schema = json.load(sfh)
                 validate(data, schema)
             except (

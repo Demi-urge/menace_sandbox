@@ -4,23 +4,24 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 import random
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
 
+from dynamic_path_router import resolve_dir
 from db_router import GLOBAL_ROUTER, init_db_router
 
 # Directory and default log paths
-LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
-JSONL_PATH = os.path.join(LOG_DIR, "audit_log.jsonl")
-SQLITE_PATH = os.path.join(LOG_DIR, "audit_log.db")
+LOG_DIR = resolve_dir("logs")
+JSONL_PATH = LOG_DIR / "audit_log.jsonl"
+SQLITE_PATH = LOG_DIR / "audit_log.db"
 
 
 def _ensure_log_dir() -> None:
     """Create the log directory if missing."""
-    os.makedirs(LOG_DIR, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def generate_event_id(event_type: str) -> str:
@@ -30,7 +31,7 @@ def generate_event_id(event_type: str) -> str:
     return f"{event_type}-{ts}-{suffix}"
 
 
-def log_event(event_type: str, data: Dict[str, Any], jsonl_path: str = JSONL_PATH) -> str:
+def log_event(event_type: str, data: Dict[str, Any], jsonl_path: Path = JSONL_PATH) -> str:
     """Append an event record to the JSONL audit log."""
     _ensure_log_dir()
     event_id = generate_event_id(event_type)
@@ -40,17 +41,17 @@ def log_event(event_type: str, data: Dict[str, Any], jsonl_path: str = JSONL_PAT
         "event_id": event_id,
         "data": data,
     }
-    with open(jsonl_path, "a", encoding="utf-8") as fh:
+    with jsonl_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")
     return event_id
 
 
-def export_to_csv(jsonl_path: str, csv_path: str) -> None:
+def export_to_csv(jsonl_path: Path, csv_path: Path) -> None:
     """Convert a JSONL audit log to a flat CSV file."""
-    if not os.path.exists(jsonl_path):
+    if not jsonl_path.exists():
         return
     rows: List[Dict[str, Any]] = []
-    with open(jsonl_path, "r", encoding="utf-8") as fh:
+    with jsonl_path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -69,7 +70,7 @@ def export_to_csv(jsonl_path: str, csv_path: str) -> None:
     if not rows:
         return
     headers = sorted({key for row in rows for key in row.keys()})
-    with open(csv_path, "w", newline="", encoding="utf-8") as csvfile:
+    with csv_path.open("w", newline="", encoding="utf-8") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=headers)
         writer.writeheader()
         for row in rows:
@@ -145,10 +146,10 @@ def get_recent_events(limit: int = 100, jsonl_path: str = JSONL_PATH, db_path: s
         events.append({"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data})
     if events:
         return list(reversed(events))
-    if not os.path.exists(jsonl_path):
+    if not Path(jsonl_path).exists():
         return []
-    with open(jsonl_path, "r", encoding="utf-8") as fh:
-        lines = [json.loads(l) for l in fh if l.strip()]  # type: ignore[arg-type]
+    with Path(jsonl_path).open("r", encoding="utf-8") as fh:
+        lines = [json.loads(l) for l in fh if l.strip()]
     lines.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return lines[:limit][::-1]
 
