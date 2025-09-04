@@ -13,8 +13,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dynamic_path_router import get_project_root, resolve_path
+
 DEFAULT_REPO_URL = "https://github.com/Demi-urge/menace_sandbox"
-DEFAULT_REPO_PATH = Path(__file__).resolve().parents[1]
+DEFAULT_REPO_PATH = get_project_root()
 
 
 def get_sandbox_repo_url(settings: Any | None = None) -> str:
@@ -47,8 +49,8 @@ def get_sandbox_repo_path(settings: Any | None = None) -> Path:
     """
 
     if settings and getattr(settings, "sandbox_repo_path", None):
-        return Path(getattr(settings, "sandbox_repo_path")).resolve()
-    return Path(os.getenv("SANDBOX_REPO_PATH", DEFAULT_REPO_PATH)).resolve()
+        return resolve_path(str(getattr(settings, "sandbox_repo_path")))
+    return resolve_path(os.getenv("SANDBOX_REPO_PATH", str(DEFAULT_REPO_PATH)))
 
 
 # Backwards compatible constants evaluated at import time
@@ -64,5 +66,3 @@ __all__ = [
     "SANDBOX_REPO_URL",
     "SANDBOX_REPO_PATH",
 ]
-
-
