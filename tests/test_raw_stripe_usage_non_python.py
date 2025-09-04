@@ -10,6 +10,10 @@ import pytest
         (".ts", "const key = 'sk_test_123';"),
         (".md", "See https://api.stripe.com/v1/customers"),
         (".yaml", "stripe_key: \"sk_test_123\""),
+        (".html", '<a href="https://api.stripe.com/v1/payments">'),
+        (".json", '{"key": "sk_live_123"}'),
+        (".jsx", 'const k = "pk_live_123";'),
+        (".tsx", "fetch('https://api.stripe.com/v1/refunds')"),
     ],
 )
 
