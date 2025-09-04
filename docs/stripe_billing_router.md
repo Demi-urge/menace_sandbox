@@ -1,10 +1,11 @@
 # Stripe Billing Router
 
-`stripe_billing_router` maps bots to Stripe products, prices and customers.
-API keys are pulled from a secure vault provider or fall back to baked‑in
-production values. A `RuntimeError` is raised if the keys are missing, empty or
-test mode keys. Routing attempts for unsupported business categories or missing
-rules also raise `RuntimeError`.
+`stripe_billing_router` maps bots to Stripe products, prices and customers and
+acts as the **sole payment interface**.  API keys are pulled from a secure vault
+provider or fall back to baked‑in production values.  A `RuntimeError` is raised
+if the keys are missing, empty or test mode keys.  Routing attempts for
+unsupported business categories or missing rules also raise `RuntimeError`.
+Stripe keys and billing logic must not be duplicated outside this module.
 
 ## Bot Invocation and Routing Rules
 
@@ -30,13 +31,15 @@ start‑up. Use `register_override` for dynamic adjustments.
 
 ## Usage
 
-Bots are identified by a `"business_category:bot_name"` string. The router
-looks up routing details for that bot and adds the Stripe keys. For example:
+Bots are identified by a `"business_category:bot_name"` string.  The router
+looks up routing details for that bot and adds the Stripe keys.  Bots request
+charges or create customers by calling router helpers:
 
 ```python
-from stripe_billing_router import init_charge, get_balance
+from stripe_billing_router import charge, create_customer, get_balance
 
-init_charge("finance:finance_router_bot", amount=10.0)
+charge("finance:finance_router_bot", amount=10.0)
+create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
 bal = get_balance("finance:finance_router_bot")
 ```
 
@@ -63,7 +66,7 @@ Region‑specific pricing is handled by registering a route for that region and
 selecting it at call time:
 
 ```python
-from stripe_billing_router import init_charge, register_route
+from stripe_billing_router import charge, register_route
 
 register_route(
     "finance",
@@ -76,7 +79,7 @@ register_route(
     region="eu",
 )
 
-init_charge(
+charge(
     "finance:finance_router_bot",
     amount=10.0,
     overrides={"region": "eu"},
@@ -99,7 +102,7 @@ register_override(
     }
 )
 
-init_charge(
+charge(
     "finance:finance_router_bot",
     amount=10.0,
     overrides={"business": "enterprise"},

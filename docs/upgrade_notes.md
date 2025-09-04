@@ -3,11 +3,12 @@
 ## Stripe per-bot keys removed
 
 Legacy per-bot Stripe secret and public keys have been retired. Bots now route
-charges and balance lookups through `stripe_billing_router`, which loads a
-single set of API keys and maps bots to products and prices via the
-hierarchical `ROUTING_MAP`. Remove any `STRIPE_*` entries from existing `.env`
-files or vault records and configure routes in `stripe_billing_router.py`
-instead.
+charges, customer creation and balance lookups exclusively through
+`stripe_billing_router`, which loads a single set of API keys and maps bots to
+products and prices via the hierarchical `ROUTING_MAP`. Remove any `STRIPE_*`
+entries from existing `.env` files or vault records and configure routes in
+`stripe_billing_router.py` instead.  Stripe keys or billing logic outside the
+router are no longer supported.
 
 ## vector_service API
 

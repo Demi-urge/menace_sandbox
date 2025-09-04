@@ -60,11 +60,22 @@ configuration. The generated file includes stub values for critical settings:
 
 ### Billing router
 
-Billing and monetisation features interact with Stripe exclusively through
-`stripe_billing_router`.  The router resolves API keys and per‑bot identifiers,
-supports region overrides and strategy hooks, and aborts if keys or routing
-rules are missing.  Never call the Stripe SDK directly; use
-`stripe_billing_router.initiate_charge` or related helpers.  See
+`stripe_billing_router` is the **sole payment interface** for all billing and
+monetisation features.  The router owns the Stripe API keys, resolves per‑bot
+identifiers, supports region overrides and strategy hooks, and aborts if keys or
+routing rules are missing.  Bots must request charges or create customers via
+the router helpers—duplicating Stripe keys or re‑implementing logic elsewhere is
+prohibited.
+
+```python
+from stripe_billing_router import charge, create_customer
+
+charge("finance:finance_router_bot", 12.5)
+create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
+```
+
+Never call the Stripe SDK directly; use `stripe_billing_router.charge`,
+`stripe_billing_router.create_customer` or related helpers.  See
 [docs/billing_router.md](docs/billing_router.md) for extension points.
 
 ### Chunking pipeline
