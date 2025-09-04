@@ -105,3 +105,40 @@ def test_checkpoint_and_confidence(tmp_path, monkeypatch):
 
     conf = json.loads((data_dir / ss.resolve_path("strategy_confidence.json")).read_text())
     assert conf["alpha"] == 1
+
+
+def test_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(ss, "resolve_path", lambda p: p)
+
+    repo = tmp_path / ss.resolve_path("repo")
+    repo.mkdir()
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sub = repo / "sub"
+    sub.mkdir()
+    (sub / "b.py").write_text("b = 2\n", encoding="utf-8")
+
+    data_dir = tmp_path / ss.resolve_path("data")
+
+    class SettingsStub:
+        sandbox_data_dir = str(data_dir)
+        sandbox_repo_path = str(repo)
+        snapshot_metrics = {"entropy", "token_diversity"}
+        roi_drop_threshold = -1.0
+        entropy_regression_threshold = 1e9
+
+    monkeypatch.setattr(ss, "SandboxSettings", lambda: SettingsStub())
+
+    captured: dict[str, list[Path]] = {}
+
+    def fake_collect(files, settings=None):
+        flist = [Path(f) for f in files]
+        captured["files"] = flist
+        return float(len(flist)), float(len(flist))
+
+    monkeypatch.setattr(ss, "collect_snapshot_metrics", fake_collect)
+
+    snap = ss.capture("pre", [], roi=0.0, sandbox_score=0.0)
+
+    assert snap.entropy == 2.0
+    assert snap.token_diversity == 2.0
+    assert set(captured["files"]) == {repo / "a.py", sub / "b.py"}
