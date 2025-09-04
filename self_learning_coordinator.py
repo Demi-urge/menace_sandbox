@@ -30,6 +30,7 @@ from .evaluation_manager import EvaluationManager
 from .error_bot import ErrorBot
 from .curriculum_builder import CurriculumBuilder
 from .self_improvement.baseline_tracker import BaselineTracker
+from .dynamic_path_router import resolve_path
 
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ class SelfLearningCoordinator:
         self._train_count = 0
         self._last_eval_ts: str | None = None
         data_dir = getattr(settings, "sandbox_data_dir", ".") if settings else "."
+        data_dir = resolve_path(data_dir)
         self._state_path = Path(data_dir) / "self_learning_state.json"
         self._load_state()
         self.evaluation_manager = EvaluationManager(
