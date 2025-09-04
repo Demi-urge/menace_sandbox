@@ -44,6 +44,8 @@ import pathlib
 import shutil
 import tempfile
 import urllib.parse
+import subprocess
+import textwrap
 import signal
 import threading
 import _thread
@@ -194,6 +196,8 @@ class WorkflowSandboxRunner:
         memory_limit: int | None = None,
         cpu_limit: int | None = None,
         use_subprocess: bool = True,
+        container_image: str | None = None,
+        container_runtime: str | None = None,
         audit_hook: Callable[[str, Mapping[str, Any]], None] | None = None,
         inject_edge_cases: bool = False,
         edge_case_profiles: Iterable[Mapping[str, str | bytes | None]] | None = None,
@@ -237,10 +241,12 @@ class WorkflowSandboxRunner:
         ``use_subprocess`` controls whether the workflow runs in a separate
         process, defaulting to ``True`` for OS-level isolation.  Container
         engines may be selected by supplying container parameters such as
-        ``container_image`` or ``container_runtime``.  When provided, the
-        workflow executes inside the chosen container instead of a plain
-        subprocess.  Setting ``use_subprocess`` to ``False`` executes the
-        workflow in the current process.
+        ``container_image`` or ``container_runtime``.  ``container_runtime``
+        specifies the command used to launch the container (e.g. ``docker``)
+        while ``container_image`` selects the container image to run.  When
+        provided, the workflow executes inside the chosen container instead of
+        a plain subprocess.  Setting ``use_subprocess`` to ``False`` executes
+        the workflow in the current process.
 
         ``audit_hook`` if provided is invoked for every file and network access
         attempt.  The first argument is a string describing the event and the
@@ -302,7 +308,6 @@ class WorkflowSandboxRunner:
                         f"{exc}"
                     )
                     raise ValueError(msg) from exc
-            parent_conn, child_conn = multiprocessing.Pipe()
             params = {
                 "safe_mode": safe_mode,
                 "test_data": test_data,
@@ -317,6 +322,84 @@ class WorkflowSandboxRunner:
                 "edge_case_profiles": edge_case_profiles,
                 "use_subprocess": False,
             }
+            if container_image and container_runtime:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_path = pathlib.Path(tmpdir)
+                    payload = tmp_path / "payload.pkl"
+                    result = tmp_path / "result.pkl"
+                    script = tmp_path / "worker.py"
+                    payload.write_bytes(pickle.dumps((funcs, params)))
+                    script.write_text(
+                        textwrap.dedent(
+                            """
+                            import pathlib, pickle, sys
+                            from sandbox_runner.workflow_sandbox_runner import _subprocess_worker
+
+                            class _FileConn:
+                                def __init__(self, path):
+                                    self.path = pathlib.Path(path)
+
+                                def send(self, obj):
+                                    with open(self.path, 'wb') as fh:
+                                        pickle.dump(obj, fh)
+
+                                def close(self):
+                                    pass
+
+                            payload = pathlib.Path(sys.argv[1])
+                            output = pathlib.Path(sys.argv[2])
+                            with open(payload, 'rb') as fh:
+                                workflow, params = pickle.load(fh)
+                            conn = _FileConn(output)
+                            _subprocess_worker(conn, workflow, params)
+                            """
+                        )
+                    )
+                    env_file = tmp_path / "env.list"
+                    env_map = dict(os.environ)
+                    cov_file: pathlib.Path | None = None
+                    if capture_cov:
+                        cov_file = tmp_path / "cov.json"
+                        env_map["SANDBOX_COVERAGE_FILE"] = str(cov_file)
+                    with env_file.open("w", encoding="utf-8") as fh:
+                        for k, v in env_map.items():
+                            fh.write(f"{k}={v}\n")
+                    cmd = [
+                        container_runtime,
+                        "run",
+                        "--rm",
+                        "-v",
+                        f"{tmp_path}:{tmp_path}",
+                        "--env-file",
+                        str(env_file),
+                        container_image,
+                        "python",
+                        str(script),
+                        str(payload),
+                        str(result),
+                    ]
+                    proc = subprocess.run(cmd, capture_output=True, text=True)
+                    stdout, stderr = proc.stdout, proc.stderr
+                    try:
+                        metrics, telemetry = pickle.loads(result.read_bytes())
+                    except Exception as exc:
+                        logger.exception("container execution failed")
+                        metrics = RunMetrics()
+                        telemetry = {"error": str(exc)}
+                    if cov_file is not None and cov_file.exists():
+                        try:
+                            data = json.loads(cov_file.read_text())
+                            from .environment import load_coverage_report  # type: ignore
+
+                            load_coverage_report(data)
+                        except Exception:
+                            pass
+                    telemetry.setdefault("stdout", stdout)
+                    telemetry.setdefault("stderr", stderr)
+                    self.metrics = metrics
+                    self.telemetry = telemetry
+                    return metrics
+            parent_conn, child_conn = multiprocessing.Pipe()
             cov_file: pathlib.Path | None = None
             if capture_cov:
                 tmp = tempfile.NamedTemporaryFile(prefix="cov_", suffix=".json", delete=False)
