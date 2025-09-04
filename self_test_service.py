@@ -733,7 +733,9 @@ class SelfTestService:
                 rel = p
             paths.append(rel.as_posix())
         paths = sorted(set(paths))
-        data_dir = Path(settings.sandbox_data_dir)
+        data_dir = Path(
+            resolve_path(getattr(settings, "sandbox_data_dir", None) or "sandbox_data")
+        )
         map_file = data_dir / "module_map.json"
 
         # Ensure the module map knows about the modules before integration.
@@ -1066,7 +1068,15 @@ class SelfTestService:
 
         trace = _discover(
             str(Path.cwd()),
-            module_map=str(Path(settings.sandbox_data_dir) / "module_map.json"),
+            module_map=str(
+                Path(
+                    resolve_path(
+                        getattr(settings, "sandbox_data_dir", None)
+                        or "sandbox_data"
+                    )
+                )
+                / "module_map.json"
+            ),
         )
         self.orphan_traces = {}
         for k, v in trace.items():
@@ -1362,7 +1372,9 @@ class SelfTestService:
         """
 
         repo = Path(resolve_path(settings.sandbox_repo_path))
-        stub_root = Path(settings.sandbox_data_dir)
+        stub_root = Path(
+            resolve_path(getattr(settings, "sandbox_data_dir", None) or "sandbox_data")
+        )
         if not stub_root.is_absolute():
             stub_root = repo / stub_root
         stub_root = stub_root / "selftest_stubs"
@@ -1735,7 +1747,15 @@ class SelfTestService:
             self.module_metrics = {}
     
             cache_repo = Path.cwd()
-            path = cache_repo / Path(settings.sandbox_data_dir) / "orphan_modules.json"
+            path = (
+                cache_repo
+                / Path(
+                    resolve_path(
+                        getattr(settings, "sandbox_data_dir", None) or "sandbox_data"
+                    )
+                )
+                / "orphan_modules.json"
+            )
             existing_map = {} if refresh_orphans else load_orphan_cache(cache_repo)
             existing = list(existing_map.keys())
     
@@ -2534,7 +2554,9 @@ class SelfTestService:
             return
 
         repo = Path(resolve_path(settings.sandbox_repo_path))
-        data_dir = Path(settings.sandbox_data_dir)
+        data_dir = Path(
+            resolve_path(getattr(settings, "sandbox_data_dir", None) or "sandbox_data")
+        )
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
         result_path = data_dir / "orphan_results.json"
@@ -2589,7 +2611,9 @@ class SelfTestService:
         """Return stored orphan testing metrics."""
 
         repo = Path(resolve_path(settings.sandbox_repo_path))
-        data_dir = Path(settings.sandbox_data_dir)
+        data_dir = Path(
+            resolve_path(getattr(settings, "sandbox_data_dir", None) or "sandbox_data")
+        )
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
         target = Path(path) if path else data_dir / "orphan_results.json"
@@ -2799,7 +2823,7 @@ def cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             f"Also test modules listed in "
-            f"{Path(settings.sandbox_data_dir) / 'orphan_modules.json'}"
+            f"{Path(resolve_path(getattr(settings, 'sandbox_data_dir', None) or 'sandbox_data')) / 'orphan_modules.json'}"
         ),
     )
     run.add_argument(
@@ -2931,7 +2955,7 @@ def cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             f"Also test modules listed in "
-            f"{Path(settings.sandbox_data_dir) / 'orphan_modules.json'}"
+            f"{Path(resolve_path(getattr(settings, 'sandbox_data_dir', None) or 'sandbox_data')) / 'orphan_modules.json'}"
         ),
     )
     sched.add_argument(
