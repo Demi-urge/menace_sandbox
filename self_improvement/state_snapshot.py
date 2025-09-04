@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict
 import sqlite3
 import time
+import shutil
 
 from .baseline_tracker import BaselineTracker
 from ..sandbox_settings import SandboxSettings
@@ -153,11 +154,34 @@ def load_snapshot(settings: SandboxSettings, timestamp: float | None = None) -> 
     return Snapshot(**data)
 
 
+def save_checkpoint(module_path: Path, commit_hash: str) -> Path:
+    """Copy *module_path* to a timestamped checkpoint directory.
+
+    The file is stored under ``sandbox_data/checkpoints/<timestamp>/`` with the
+    commit hash embedded in the filename.  Returns the destination path.
+    """
+
+    settings = SandboxSettings()
+    timestamp = int(time.time())
+    base = Path(resolve_path(settings.sandbox_data_dir)) / "checkpoints" / str(timestamp)
+    repo_root = Path(settings.sandbox_repo_path)
+    try:
+        rel = module_path.relative_to(repo_root)
+    except Exception:
+        rel = module_path
+    dest_dir = base / rel.parent
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{rel.stem}-{commit_hash[:8]}{rel.suffix}"
+    shutil.copy2(module_path, dest)
+    return dest
+
+
 __all__ = [
     "Snapshot",
     "capture_snapshot",
     "delta",
     "save_snapshot",
     "load_snapshot",
+    "save_checkpoint",
 ]
 

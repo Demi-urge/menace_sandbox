@@ -162,7 +162,7 @@ from .orchestration import (
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt
-from .state_snapshot import capture_snapshot, delta as snapshot_delta
+from .state_snapshot import capture_snapshot, delta as snapshot_delta, save_checkpoint
 
 
 from ..self_test_service import SelfTestService
@@ -889,6 +889,7 @@ class SelfImprovementEngine:
         self.alignment_flagger = HumanAlignmentFlagger()
         self.cycle_logs: list[dict[str, Any]] = []
         self.warning_summary: list[dict[str, Any]] = []
+        self.strategy_confidence: Dict[str, int] = {}
         self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
         self._load_synergy_weights()
@@ -1486,8 +1487,9 @@ class SelfImprovementEngine:
         else:
             if patch_id is not None:
                 pre_snap = capture_snapshot(self.baseline_tracker, SandboxSettings())
+                commit_hash = ""
                 try:
-                    _, patch_diff = apply_patch(patch_id, _repo_path())
+                    commit_hash, patch_diff = apply_patch(patch_id, _repo_path())
                 except RuntimeError:
                     error_trace = traceback.format_exc()
                     self.logger.exception(
@@ -1497,6 +1499,40 @@ class SelfImprovementEngine:
                 else:
                     post_snap = capture_snapshot(self.baseline_tracker, SandboxSettings())
                     delta_vals = snapshot_delta(pre_snap, post_snap)
+                    improved = all(
+                        delta_vals.get(k, 0.0) > 0
+                        for k in (
+                            "roi",
+                            "sandbox_score",
+                            "entropy",
+                            "call_graph_complexity",
+                            "token_diversity",
+                        )
+                    )
+                    if improved:
+                        try:
+                            module_path = Path(
+                                resolve_path(
+                                    f"{module}.py" if Path(module).suffix == "" else module
+                                )
+                            )
+                            save_checkpoint(module_path, commit_hash)
+                        except Exception:
+                            self.logger.exception(
+                                "checkpoint save failed", extra=log_record(module=module)
+                            )
+                        self.strategy_confidence[action] = (
+                            self.strategy_confidence.get(action, 0) + 1
+                        )
+                        self.logger.info(
+                            "strategy_confidence_increase",
+                            extra=log_record(
+                                strategy=action,
+                                confidence=self.strategy_confidence[action],
+                                module=module,
+                            ),
+                        )
+                        self._save_state()
                     if (
                         delta_vals.get("roi", 0.0) < 0
                         or delta_vals.get("entropy", 0.0) < 0
@@ -1651,6 +1687,9 @@ class SelfImprovementEngine:
             self.momentum_weight = float(
                 data.get("momentum_weight", self.momentum_weight)
             )
+            self.strategy_confidence = {
+                str(k): int(v) for k, v in data.get("strategy_confidence", {}).items()
+            }
             self.baseline_tracker = GLOBAL_BASELINE_TRACKER
             self.baseline_tracker.window = self.baseline_window
             bt_state = data.get("baseline_tracker")
@@ -1691,6 +1730,7 @@ class SelfImprovementEngine:
                         "pass_rate_weight": self.pass_rate_weight,
                         "entropy_weight": self.entropy_weight,
                         "momentum_weight": self.momentum_weight,
+                        "strategy_confidence": self.strategy_confidence,
                         "baseline_tracker": self.baseline_tracker.to_state(),
                         "roi_baseline": self.roi_baseline.to_list(),
                     },
