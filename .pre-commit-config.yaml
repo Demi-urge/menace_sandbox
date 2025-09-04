@@ -19,6 +19,12 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
+      - id: check-dynamic-paths
+        name: Ensure dynamic paths use resolve_path
+        entry: python tools/check_dynamic_paths.py
+        language: system
+        pass_filenames: true
+        files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:
