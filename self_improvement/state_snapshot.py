@@ -8,6 +8,8 @@ from typing import Any, Dict
 
 import json
 import logging
+import shutil
+import time
 
 import codebase_diff_checker
 import logging_utils
@@ -134,6 +136,10 @@ class SnapshotTracker:
         If ROI decreased or entropy increased a warning is logged, the prompt
         attempt recorded and a diff snapshot stored under
         ``sandbox_data/diffs/``.
+
+        When all metric deltas are positive the changed modules referenced by
+        ``diff_path`` are copied to ``sandbox_data/checkpoints/<ts>/`` and the
+        confidence score for the associated strategy is incremented.
         """
 
         before = self.last_snapshot
@@ -143,7 +149,60 @@ class SnapshotTracker:
 
         delta = compare_snapshots(before, after)
 
-        if delta.get("roi", 0) < 0 or delta.get("entropy", 0) > 0:
+        if all(v > 0 for v in delta.values()):
+            try:
+                settings = SandboxSettings()
+                base = Path(resolve_path(settings.sandbox_data_dir))
+                ckpt_dir = base / "checkpoints" / str(int(time.time()))
+
+                files: list[Path] = []
+                try:
+                    diff_text = Path(diff_path).read_text(encoding="utf-8")
+                    for line in diff_text.splitlines():
+                        if line.startswith("+++ b/"):
+                            name = line[6:]
+                            if name != "/dev/null":
+                                files.append(Path(name))
+                except Exception:
+                    files = []
+
+                for rel in files:
+                    src = self.repo_path / rel
+                    dest = ckpt_dir / rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        shutil.copy2(src, dest)
+                    except Exception:
+                        try:
+                            dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                        except Exception:
+                            pass
+
+                strategy: str | None = None
+                if isinstance(prompt, dict):
+                    strategy = (
+                        prompt.get("strategy") or prompt.get("strategy_name")
+                    )
+                elif hasattr(prompt, "strategy"):
+                    strategy = getattr(prompt, "strategy")
+                elif isinstance(prompt, str):
+                    strategy = prompt
+
+                if strategy:
+                    conf_path = base / "strategy_confidence.json"
+                    try:
+                        conf = json.loads(conf_path.read_text(encoding="utf-8"))
+                        if not isinstance(conf, dict):
+                            conf = {}
+                    except Exception:
+                        conf = {}
+                    conf[str(strategy)] = int(conf.get(str(strategy), 0)) + 1
+                    conf_path.parent.mkdir(parents=True, exist_ok=True)
+                    conf_path.write_text(json.dumps(conf), encoding="utf-8")
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+        elif delta.get("roi", 0) < 0 or delta.get("entropy", 0) > 0:
             try:  # pragma: no cover - best effort logging
                 prompt_memory.log_prompt_attempt(
                     prompt, success=False, exec_result=None, roi_meta=delta
