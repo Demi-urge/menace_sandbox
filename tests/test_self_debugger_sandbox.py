@@ -316,7 +316,7 @@ def test_sandbox_failing_patch(monkeypatch, tmp_path):
     )
 
     async def fake_cov(p, env=None):
-        return 50.0
+        return 50.0, {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
     monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
@@ -403,7 +403,7 @@ def test_sandbox_success(monkeypatch, tmp_path):
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
     async def fake_cov_ok(p, env=None):
-        return 80.0
+        return 80.0, {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov_ok)
     dbg.analyse_and_fix()
@@ -426,7 +426,7 @@ def test_sandbox_failed_audit(monkeypatch, tmp_path):
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
 
     async def fake_cov_ok(p, env=None):
-        return 80.0
+        return 80.0, {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov_ok)
     monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
@@ -551,7 +551,7 @@ def test_select_best_patch(monkeypatch, tmp_path):
     cov_vals = [50.0, 60.0, 50.0, 70.0, 50.0, 80.0]
 
     async def fake_cov(p, env=None):
-        return cov_vals.pop(0)
+        return cov_vals.pop(0), {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
 
@@ -572,7 +572,7 @@ def test_run_tests_includes_telemetry(monkeypatch, tmp_path):
 
     async def fake_cov(paths, env=None):
         called["paths"] = [Path(p) for p in paths]
-        return 100.0
+        return 100.0, {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
     monkeypatch.setattr(dbg, "_recent_logs", lambda limit=5: ["dummy"])
@@ -623,8 +623,8 @@ def test_coverage_xml_report_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(sds, "Coverage", Cov)
 
-    cov = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
-    assert cov == 0.0
+    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+    assert percent == 0.0
     assert "coverage generation failed" in caplog.text
     assert "boom" in caplog.text
 
@@ -655,9 +655,47 @@ def test_coverage_report_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(sds, "Coverage", Cov)
 
-    cov = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
-    assert cov == 0.0
+    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+    assert percent == 0.0
     assert "coverage generation failed" in caplog.text
+
+
+def test_coverage_records_executed_functions(monkeypatch, tmp_path):
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+
+    async def fake_exec(*a, **k):
+        return _stub_proc()
+
+    monkeypatch.setattr(sds.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    class Cov:
+        def __init__(self, *a, **k):
+            pass
+
+        def combine(self, files):
+            pass
+
+        def xml_report(self, outfile=None, include=None):
+            Path(outfile).write_text(
+                """<coverage><packages><package><classes><class filename='foo.py'>"
+                "<methods>"
+                "<method name='run'><lines><line number='1' hits='1'/></lines></method>"
+                "<method name='skip'><lines><line number='2' hits='0'/></lines></method>"
+                "</methods></class></classes></package></packages></coverage>"""
+            )
+
+        def report(self, include=None, file=None):
+            return 100.0
+
+    monkeypatch.setattr(sds, "Coverage", Cov)
+    captured = {}
+    monkeypatch.setattr(sds, "record_run", lambda m: captured.update(m))
+
+    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+    assert percent == 100.0
+    assert captured.get("executed_functions") == ["foo.py:run"]
 
 
 def test_coverage_subprocess_failure(monkeypatch):
@@ -717,7 +755,7 @@ def test_run_tests_retries_on_subprocess_failure(monkeypatch):
         calls["n"] += 1
         if calls["n"] == 1:
             raise sds.CoverageSubprocessError("boom")
-        return 80.0
+        return 80.0, {}
 
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: [])
     monkeypatch.setattr(dbg, "_recent_logs", lambda limit=5: [])
@@ -1213,7 +1251,7 @@ def test_coverage_revert_records_history(monkeypatch, tmp_path):
     cov_vals = [80.0, 50.0]
 
     async def fake_cov(p, env=None):
-        return cov_vals.pop(0)
+        return cov_vals.pop(0), {}
 
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
 

@@ -549,6 +549,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             xml_tmp.close()
             percent = 0.0
             func_cov: dict[str, dict[str, float]] = {}
+            executed_funcs: list[str] = []
             try:
                 cov.xml_report(
                     outfile=xml_tmp.name,
@@ -574,10 +575,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             )
                             if name and total:
                                 methods[name] = covered / total
+                                if covered > 0 and fname:
+                                    executed_funcs.append(f"{fname}:{name}")
                         if fname and methods:
                             func_cov[fname] = methods
                 except Exception:
                     func_cov = {}
+                    executed_funcs = []
                 self.logger.debug(
                     "coverage report", extra=log_record(output=buf.getvalue())
                 )
@@ -599,6 +603,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "runtime": runtime,
                     "error": None,
                     "coverage": func_cov,
+                    "executed_functions": executed_funcs,
                 }
             )
             return float(percent or 0.0), func_cov
@@ -677,6 +682,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "runtime": runtime,
                     "error": failure.trace if failure else output,
                     "coverage": {},
+                    "executed_functions": [],
                 }
             )
         except Exception as exc:
@@ -712,6 +718,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "runtime": runtime,
                     "error": failure.trace if failure else output,
                     "coverage": {},
+                    "executed_functions": [],
                 }
             )
         else:
