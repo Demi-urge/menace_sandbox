@@ -4,6 +4,8 @@ from pathlib import Path
 import sys
 import types
 
+from dynamic_path_router import resolve_path
+
 import menace_sandbox.dynamic_path_router as dpr
 import menace_sandbox.environment_generator as eg
 
@@ -25,7 +27,7 @@ def test_policy_persists(monkeypatch, tmp_path):
 
     tracker = _tracker()
     eg.adapt_presets(tracker, [{"CPU_LIMIT": "1"}])
-    policy_file = Path("sandbox_data") / "preset_policy.json"
+    policy_file = resolve_path("sandbox_data") / "preset_policy.json"
     assert policy_file.exists()
 
     with open(policy_file, "wb") as fh:

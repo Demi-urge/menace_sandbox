@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from dynamic_path_router import resolve_path
+
 import networkx as nx
 import pytest
 
@@ -185,7 +187,7 @@ def test_generate_workflows_persist_and_rank(tmp_path, monkeypatch):
     # The second best workflow follows the next step in the synergy chain
     assert [step.module for step in workflows[1]] == ["mod_a", "mod_b", "mod_c"]
 
-    out_dir = Path("sandbox_data/generated_workflows")
+    out_dir = resolve_path("sandbox_data") / "generated_workflows"
     saved = sorted(out_dir.glob("*.workflow.json"))
     assert len(saved) >= 2 and saved[0].name.startswith("mod_a_0")
 
@@ -217,7 +219,9 @@ def test_generate_workflows_auto_evaluate(tmp_path, monkeypatch):
     assert synth.workflow_score_details[0]["success"] is True
     assert synth.workflow_score_details[1]["success"] is False
 
-    saved = sorted(Path("sandbox_data/generated_workflows").glob("*.workflow.json"))
+    saved = sorted(
+        (resolve_path("sandbox_data") / "generated_workflows").glob("*.workflow.json")
+    )
     data = json.loads(saved[0].read_text())
     assert data.get("success") is True
 

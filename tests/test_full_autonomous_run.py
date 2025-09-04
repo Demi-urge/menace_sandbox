@@ -4,6 +4,8 @@ import sys
 import types
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 os.environ["MENACE_LIGHT_IMPORTS"] = "1"
 
 scipy_stub = types.ModuleType("scipy")
@@ -68,7 +70,7 @@ def test_full_autonomous_run_with_recovery(monkeypatch, tmp_path):
 
     monkeypatch.chdir(tmp_path)
     args = argparse.Namespace(
-        sandbox_data_dir=str(Path("sandbox_data")),
+        sandbox_data_dir=str(resolve_path("sandbox_data")),
         preset_count=1,
         max_iterations=1,
         dashboard_port=None,
@@ -78,6 +80,6 @@ def test_full_autonomous_run_with_recovery(monkeypatch, tmp_path):
 
     cli.full_autonomous_run(args)
 
-    roi_file = Path("sandbox_data") / "roi_history.json"
+    roi_file = resolve_path("sandbox_data") / "roi_history.json"
     assert roi_file.exists()
     assert calls == ["call", "call"]
