@@ -13,13 +13,18 @@ import re
 from pathlib import Path
 from typing import Tuple
 
+from dynamic_path_router import resolve_path
+
 try:  # pragma: no cover - optional heavy dependency
     from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
 except Exception:  # pragma: no cover - fall back to heuristics
     AutoModelForCausalLM = AutoTokenizer = None  # type: ignore
 
 _MODEL_CACHE: tuple | None = None
-DEFAULT_PATH = Path(__file__).with_name("error_classifier_model")
+try:
+    DEFAULT_PATH = resolve_path("micro_models/error_classifier_model")
+except FileNotFoundError:  # pragma: no cover - model may be missing in tests
+    DEFAULT_PATH = Path("micro_models/error_classifier_model")
 
 
 def _load_model(path: Path) -> tuple | None:
