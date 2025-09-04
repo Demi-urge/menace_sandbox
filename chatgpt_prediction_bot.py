@@ -86,6 +86,29 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     FileLock = None  # type: ignore
 
+from dynamic_path_router import resolve_path
+
+
+def _resolve_model_path(path_str: str) -> Path:
+    """Resolve *path_str* using :func:`resolve_path` with graceful fallback."""
+
+    try:
+        return resolve_path(path_str)
+    except FileNotFoundError:
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = Path(__file__).parent / path
+        return path
+
+
+def _env_model_path() -> Path:
+    return _resolve_model_path(
+        os.environ.get(
+            "CHATGPT_PREDICTION_MODEL_PATH",
+            "chatgpt_prediction_bot/prediction_model.joblib",
+        )
+    )
+
 
 @dataclass
 class PredictionBotConfig:
@@ -110,12 +133,7 @@ class PredictionBotConfig:
         os.environ.get("CHATGPT_PREDICTION_FORCE_FALLBACK", "0") == "1"
     )
     auto_save: bool = os.environ.get("CHATGPT_PREDICTION_AUTO_SAVE", "1") == "1"
-    model_path: Path = Path(
-        os.environ.get(
-            "CHATGPT_PREDICTION_MODEL_PATH",
-            str(Path(__file__).parent / "prediction_model.joblib"),
-        )
-    )
+    model_path: Path = field(default_factory=_env_model_path)
     threshold: float = float(os.environ.get("CHATGPT_PREDICTION_THRESHOLD", "0.5"))
     fallback_data: str | None = os.environ.get("CHATGPT_FALLBACK_DATA")
 
@@ -580,9 +598,9 @@ try:
     _SKLEARN_AVAILABLE = True
 except Exception:  # pragma: no cover - optional dependency
     _SKLEARN_AVAILABLE = False
-    _define_fallback()
+_define_fallback()
 
-DEFAULT_MODEL_PATH = Path(__file__).parent / "prediction_model.joblib"
+DEFAULT_MODEL_PATH = _resolve_model_path("chatgpt_prediction_bot/prediction_model.joblib")
 MODEL_PATH = CFG.model_path
 DEFAULT_THRESHOLD = CFG.threshold
 
