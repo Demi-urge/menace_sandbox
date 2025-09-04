@@ -24,6 +24,8 @@ from compliance.license_fingerprint import (
     fingerprint as license_fingerprint,
 )
 
+from dynamic_path_router import resolve_path
+
 def _log_violation(path: str, lic: str, hash_: str) -> None:
     try:  # pragma: no cover - best effort
         CodeDB = importlib.import_module("code_database").CodeDB
@@ -65,7 +67,8 @@ except Exception:  # pragma: no cover
 # Registry describing databases capable of embedding backfills. The file
 # ``embedding_registry.json`` lives alongside this module and maps a short name
 # to a ``module`` and ``class`` implementing :class:`EmbeddableDBMixin`.
-_REGISTRY_FILE = Path(__file__).with_name("embedding_registry.json")
+DEFAULT_REGISTRY = resolve_path("vector_service/embedding_registry.json")
+_REGISTRY_FILE = DEFAULT_REGISTRY
 
 # Minimum set of database kinds expected to support embeddings. These are
 # used by :func:`_verify_registry` and other modules to recognise valid
@@ -171,7 +174,7 @@ class EmbeddingBackfill:
 
         registry = _load_registry()
         problems: list[str] = []
-        pkg_root_path = Path(__file__).resolve().parents[1]
+        pkg_root_path = resolve_path("vector_service")
         pkg_root = pkg_root_path.name
         parent = pkg_root_path.parent
         if str(parent) not in sys.path:
@@ -180,7 +183,7 @@ class EmbeddingBackfill:
         for name in to_check:
             mod_cls = registry.get(name)
             if not mod_cls:
-                if names is None and _REGISTRY_FILE == Path(__file__).with_name("embedding_registry.json"):
+                if names is None and _REGISTRY_FILE == DEFAULT_REGISTRY:
                     problems.append(f"{name}: not registered")
                 continue
             mod_name, cls_name = mod_cls
@@ -210,7 +213,7 @@ class EmbeddingBackfill:
             missing = [m for m in ("iter_records", "vector") if not callable(getattr(cls, m, None))]
             if missing:
                 problems.append(f"{name}: missing {', '.join(missing)}")
-        if names is None and _REGISTRY_FILE == Path(__file__).with_name("embedding_registry.json"):
+        if names is None and _REGISTRY_FILE == DEFAULT_REGISTRY:
             for name in sorted(KNOWN_DB_KINDS - registry.keys()):
                 problems.append(f"{name}: not registered")
         if problems:

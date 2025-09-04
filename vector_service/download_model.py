@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 
 from huggingface_hub import snapshot_download
+from dynamic_path_router import resolve_path
 
 MODEL_ID = "sshleifer/tiny-distilroberta-base"
 FILES = [
@@ -27,6 +28,8 @@ FILES = [
     "merges.txt",
     "vocab.json",
 ]
+
+MODEL_ARCHIVE = resolve_path("vector_service/minilm") / "tiny-distilroberta-base.tar.xz"
 
 
 def bundle(dest: Path) -> None:
@@ -51,7 +54,7 @@ def ensure_model(dest: Path | None = None) -> Path:
     it manually.
     """
 
-    dest = dest or Path(__file__).with_name("minilm") / "tiny-distilroberta-base.tar.xz"
+    dest = dest or MODEL_ARCHIVE
     if not dest.exists():
         raise FileNotFoundError(
             f"{dest} is missing. Run `python -m vector_service.download_model` "
@@ -61,7 +64,7 @@ def ensure_model(dest: Path | None = None) -> Path:
 
 
 def main() -> None:  # pragma: no cover - helper script
-    dest = Path(__file__).with_name("minilm") / "tiny-distilroberta-base.tar.xz"
+    dest = MODEL_ARCHIVE
     bundle(dest)
 
 

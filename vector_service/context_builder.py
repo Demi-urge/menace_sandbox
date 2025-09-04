@@ -14,7 +14,8 @@ import asyncio
 import uuid
 import time
 import threading
-from pathlib import Path
+
+from dynamic_path_router import resolve_path
 
 from filelock import FileLock
 
@@ -56,7 +57,7 @@ logger = logging.getLogger(__name__)
 # Failed tag tracking
 # ---------------------------------------------------------------------------
 _FAILED_TAG_CACHE: set[str] = set()
-_FAILED_TAG_FILE = Path(__file__).with_name("failed_tags.json")
+_FAILED_TAG_FILE = resolve_path("vector_service") / "failed_tags.json"
 _FAILED_TAG_LOCK = threading.Lock()
 _FAILED_TAG_FILE_LOCK = FileLock(str(_FAILED_TAG_FILE) + ".lock")
 
