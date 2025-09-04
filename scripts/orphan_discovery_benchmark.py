@@ -21,17 +21,18 @@ from pathlib import Path
 import importlib.util
 import types
 
+from dynamic_path_router import resolve_path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
+
+REPO_ROOT = resolve_path(".")
 
 pkg = types.ModuleType("sandbox_runner")
-pkg.__path__ = [str(REPO_ROOT / "sandbox_runner")]
+pkg.__path__ = [str(resolve_path("sandbox_runner"))]
 sys.modules["sandbox_runner"] = pkg
 
 mod_spec = importlib.util.spec_from_file_location(
     "sandbox_runner.orphan_discovery",
-    REPO_ROOT / "sandbox_runner" / "orphan_discovery.py",
+    resolve_path("sandbox_runner/orphan_discovery.py"),
 )
 orphan_discovery = importlib.util.module_from_spec(mod_spec)
 assert mod_spec.loader
