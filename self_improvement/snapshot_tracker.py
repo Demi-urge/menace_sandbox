@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-"""Capture and persist self‑improvement cycle snapshots."""
+"""Capture and persist self‑improvement cycle snapshots.
+
+This module supersedes :mod:`state_snapshot` and is the canonical API for
+snapshot management going forward.
+"""
 
 from dataclasses import dataclass, asdict
 import json
@@ -338,7 +342,9 @@ class SnapshotTracker:
                                 pass
                         if strategy:
                             rel = Path("checkpoints") / timestamp / src.name
-                            self._module_map.setdefault(src.name, {})[str(strategy)] = rel.as_posix()
+                            self._module_map.setdefault(src.name, {})[
+                                str(strategy)
+                            ] = rel.as_posix()
                     except Exception:  # pragma: no cover - best effort
                         pass
                 if strategy:
@@ -349,6 +355,7 @@ class SnapshotTracker:
                     self._save_conf()
                     self._save_module_map()
         return delta
+
 
 def save_checkpoint(module_path: Path | str, cycle_id: str) -> Path:
     """Copy *module_path* to a checkpoint named after ``cycle_id``.
