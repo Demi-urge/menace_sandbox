@@ -3914,7 +3914,7 @@ class SelfImprovementEngine:
 
             with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
                 repo = _repo_path().resolve()
-                src = Path(__file__).resolve()
+                src = resolve_path("self_improvement/engine.py")
                 try:
                     module_rel = src.relative_to(repo).as_posix()
                 except Exception:
@@ -3925,7 +3925,7 @@ class SelfImprovementEngine:
                 shutil.copy2(src, before_target)
                 start_time = time.perf_counter()
                 patch_id, reverted, delta = self.self_coding_engine.apply_patch(
-                    Path(__file__),
+                    resolve_path("self_improvement/engine.py"),
                     "self_improvement",
                     parent_patch_id=self._last_patch_id,
                     reason="self_improvement",
