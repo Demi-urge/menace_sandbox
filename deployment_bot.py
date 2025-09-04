@@ -442,7 +442,7 @@ class DeploymentBot:
         existing = self.code_db.fetch_all(scope="all")
 
         for bot_name, bot_id in bot_map.items():
-            path = Path(resolve_path(f"{bot_name}.py"))
+            path = resolve_path(f"{bot_name}.py")
             if not path.exists():
                 continue
             text = path.read_text()
