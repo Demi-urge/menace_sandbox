@@ -29,6 +29,8 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     secrets = secrets or {
         "stripe_secret_key": "sk_live_dummy",
         "stripe_public_key": "pk_live_dummy",
+        "stripe_master_account_id": "acct_master",
+        "stripe_allowed_secret_keys": "sk_live_dummy",
     }
     routes = {
         "stripe": {
@@ -47,13 +49,21 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     cfg.write_text(yaml.safe_dump(routes))
     monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
     vsp = _load("vault_secret_provider")
+    rb = types.SimpleNamespace(
+        RollbackManager=type("RollbackManager", (), {"auto_rollback": lambda self, tag, nodes: None})
+    )
+    sys.modules["rollback_manager"] = rb
+    sys.modules["sbrpkg.rollback_manager"] = rb
     monkeypatch.setattr(
         vsp.VaultSecretProvider, "get", lambda self, n: secrets.get(n, "")
     )
     monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
     monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_MASTER_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
     sbr = _load("stripe_billing_router")
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: None)
+    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_master")
     return sbr
 
 
@@ -413,6 +423,7 @@ def test_concurrent_client_isolation(monkeypatch, tmp_path):
         }
 
     monkeypatch.setattr(sbr, "_resolve_route", fake_resolve)
+    sbr.ALLOWED_SECRET_KEYS.update({"sk_live_bot1", "sk_live_bot2"})
 
     def worker(bot_id: str) -> None:
         sbr.charge(bot_id, 1.0)

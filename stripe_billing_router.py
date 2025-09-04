@@ -22,6 +22,8 @@ from dynamic_path_router import resolve_path
 
 from billing import billing_logger
 from vault_secret_provider import VaultSecretProvider
+import alert_dispatcher
+import rollback_manager
 
 try:  # optional dependency
     import stripe  # type: ignore
@@ -61,6 +63,35 @@ def _load_key(name: str, prefix: str) -> str:
 
 STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
 STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
+
+
+def _load_master_account_id() -> str:
+    """Return the configured Stripe master account identifier."""
+
+    provider = VaultSecretProvider()
+    acc = os.getenv("STRIPE_MASTER_ACCOUNT_ID") or provider.get(
+        "stripe_master_account_id"
+    )
+    if not acc:
+        logger.error("Stripe master account ID must be configured and non-empty")
+        raise RuntimeError("Stripe master account ID must be configured and non-empty")
+    return str(acc)
+
+
+def _load_allowed_keys() -> set[str]:
+    """Return the set of allowed Stripe secret keys."""
+
+    provider = VaultSecretProvider()
+    raw = os.getenv("STRIPE_ALLOWED_SECRET_KEYS") or provider.get(
+        "stripe_allowed_secret_keys"
+    )
+    if raw:
+        return {k.strip() for k in str(raw).split(",") if k.strip()}
+    return {STRIPE_SECRET_KEY}
+
+
+MASTER_ACCOUNT_ID = _load_master_account_id()
+ALLOWED_SECRET_KEYS = _load_allowed_keys()
 
 _CONFIG_ENV = "STRIPE_ROUTING_CONFIG"
 _DEFAULT_CONFIG = resolve_path("config/stripe_billing_router.yaml").as_posix()
@@ -216,6 +247,25 @@ def register_override(rule: Mapping[str, Any]) -> None:
     OVERRIDES[(domain, region, business_category, bot_name, key, value)] = dict(route)
 
 
+def _get_account_id(api_key: str) -> str | None:
+    """Return the Stripe account ID associated with ``api_key``."""
+
+    try:
+        client = _client(api_key)
+    except Exception:
+        return None
+    try:
+        if client:
+            acct = client.Account.retrieve()
+        else:
+            acct = stripe.Account.retrieve(api_key=api_key)
+        if isinstance(acct, Mapping):
+            return str(acct.get("id"))
+    except Exception as exc:  # pragma: no cover - network/API issues
+        logger.exception("Stripe account retrieval failed: %s", exc)
+    return None
+
+
 def _client(api_key: str):
     """Return a per-request Stripe client without mutating global state."""
 
@@ -231,6 +281,76 @@ def _client(api_key: str):
     if hasattr(stripe, "StripeClient"):
         return stripe.StripeClient(api_key)
     return None
+
+
+def _critical_discrepancy(
+    bot_id: str,
+    route: Mapping[str, str],
+    message: str,
+    *,
+    destination: str | None = None,
+) -> None:
+    """Handle critical billing discrepancies with alerting and rollback."""
+
+    timestamp_ms = int(time.time() * 1000)
+    billing_logger.log_event(
+        id=None,
+        action_type="discrepancy",
+        amount=None,
+        currency=route.get("currency"),
+        timestamp_ms=timestamp_ms,
+        user_email=route.get("user_email"),
+        bot_id=bot_id,
+        destination_account=destination or route.get("secret_key"),
+        raw_event_json=None,
+        error=True,
+    )
+    try:  # pragma: no cover - alerting/rollback side effects
+        alert_dispatcher.dispatch_alert(
+            "critical_discrepancy", severity=5, message=message
+        )
+    except Exception:
+        logger.exception("alert dispatch failed for bot '%s'", bot_id)
+    try:
+        rollback_manager.RollbackManager().auto_rollback(bot_id, [bot_id])
+    except Exception:
+        logger.exception("rollback failed for bot '%s'", bot_id)
+    raise RuntimeError("critical_discrepancy")
+
+
+def _verify_secret_key(bot_id: str, route: Mapping[str, str]) -> None:
+    key = route.get("secret_key")
+    if not key or key not in ALLOWED_SECRET_KEYS:
+        _critical_discrepancy(
+            bot_id,
+            route,
+            f"Secret key '{key}' not in allowed list",
+            destination=key,
+        )
+
+
+def _verify_master_account(
+    bot_id: str,
+    route: Mapping[str, str],
+    event: Mapping[str, Any] | None,
+    api_key: str,
+) -> None:
+    destination = None
+    if isinstance(event, Mapping):
+        destination = (
+            event.get("on_behalf_of")
+            or event.get("account")
+            or (event.get("transfer_data") or {}).get("destination")
+        )
+    if destination is None:
+        destination = _get_account_id(api_key)
+    if destination != MASTER_ACCOUNT_ID:
+        _critical_discrepancy(
+            bot_id,
+            route,
+            f"Destination account '{destination}' does not match master account",
+            destination=destination,
+        )
 
 
 def _parse_bot_id(bot_id: str) -> tuple[str, str, str]:
@@ -341,6 +461,7 @@ def charge(
     """
 
     route = _resolve_route(bot_id, overrides)
+    _verify_secret_key(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
 
@@ -402,6 +523,7 @@ def charge(
                 event = stripe.Invoice.pay(
                     invoice["id"], api_key=api_key, idempotency_key=idempotency_key
                 )
+            _verify_master_account(bot_id, route, event, api_key)
             return event
 
         if amt is None:
@@ -423,6 +545,7 @@ def charge(
             event = client.PaymentIntent.create(**params)
         else:
             event = stripe.PaymentIntent.create(api_key=api_key, **params)
+        _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         destination = None
@@ -461,6 +584,7 @@ def charge(
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
+            error=False,
         )
 
 
@@ -474,6 +598,7 @@ def get_balance(
 ) -> float:
     """Return available balance for the given bot."""
     route = _resolve_route(bot_id, overrides)
+    _verify_secret_key(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     try:
@@ -481,6 +606,7 @@ def get_balance(
             bal = client.Balance.retrieve()
         else:
             bal = stripe.Balance.retrieve(api_key=api_key)
+        _verify_master_account(bot_id, route, bal, api_key)
         amount = bal.get("available", [{"amount": 0}])[0]["amount"] / 100.0
         return float(amount)
     except Exception as exc:  # pragma: no cover - network/API issues
@@ -496,11 +622,15 @@ def create_customer(
 ) -> dict[str, Any]:
     """Create a new Stripe customer for the given bot."""
     route = _resolve_route(bot_id, overrides)
+    _verify_secret_key(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     if client:
-        return client.Customer.create(**customer_info)
-    return stripe.Customer.create(api_key=api_key, **customer_info)
+        event = client.Customer.create(**customer_info)
+    else:
+        event = stripe.Customer.create(api_key=api_key, **customer_info)
+    _verify_master_account(bot_id, route, event, api_key)
+    return event
 
 
 def create_subscription(
@@ -519,6 +649,7 @@ def create_subscription(
     """
 
     route = _resolve_route(bot_id, overrides)
+    _verify_secret_key(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     price = price_id or route.get("price_id")
@@ -537,6 +668,7 @@ def create_subscription(
             event = client.Subscription.create(**sub_params)
         else:
             event = stripe.Subscription.create(api_key=api_key, **sub_params)
+        _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         currency = route.get("currency")
@@ -566,6 +698,7 @@ def create_subscription(
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
+            error=False,
         )
 
 
@@ -580,6 +713,7 @@ def refund(
     """Refund a payment for the given bot."""
 
     route = _resolve_route(bot_id, overrides)
+    _verify_secret_key(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     refund_params: dict[str, Any] = {"payment_intent": payment_intent_id, **params}
@@ -603,6 +737,7 @@ def refund(
             event = client.Refund.create(**refund_params)
         else:
             event = stripe.Refund.create(api_key=api_key, **refund_params)
+        _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         currency = route.get("currency")
@@ -639,6 +774,7 @@ def refund(
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
+            error=False,
         )
 
 
@@ -651,6 +787,7 @@ def create_checkout_session(
     """Create a Stripe Checkout session for the given bot."""
 
     route = _resolve_route(bot_id, overrides)
+    _verify_secret_key(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     params = dict(session_params)
@@ -665,6 +802,7 @@ def create_checkout_session(
             event = client.checkout.Session.create(**params)
         else:
             event = stripe.checkout.Session.create(api_key=api_key, **params)
+        _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         currency = route.get("currency")
@@ -705,6 +843,7 @@ def create_checkout_session(
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
+            error=False,
         )
 
 
