@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Mapping, Optional
 
 import yaml
@@ -313,27 +314,60 @@ def charge(
     customer = route.get("customer_id")
     description = description or route.get("product_id", "")
 
+    amt: float | None = None
+    if amount is not None:
+        try:
+            amt = float(amount)
+        except (TypeError, ValueError):
+            logger.error(
+                "amount must be a positive, non-zero float for bot '%s'", bot_id
+            )
+            raise ValueError("amount must be a positive, non-zero float")
+        if amt <= 0:
+            logger.error(
+                "amount must be a positive, non-zero float for bot '%s'", bot_id
+            )
+            raise ValueError("amount must be a positive, non-zero float")
+
+    timestamp_ms = int(time.time() * 1000)
+
     if price:
         if not customer:
-            logger.error("customer_id required for price based billing for bot '%s'", bot_id)
+            logger.error(
+                "customer_id required for price based billing for bot '%s'", bot_id
+            )
             raise RuntimeError("customer_id required for price based billing")
-        item_params = {"customer": customer, "price": price}
+        idempotency_key = f"{bot_id}-{amt if amt is not None else price}-{timestamp_ms}"
+        item_params = {"customer": customer, "price": price, "idempotency_key": idempotency_key}
         if client:
             client.InvoiceItem.create(**item_params)
-            invoice = client.Invoice.create(customer=customer, description=description)
-            return client.Invoice.pay(invoice["id"])
+            invoice = client.Invoice.create(
+                customer=customer, description=description, idempotency_key=idempotency_key
+            )
+            return client.Invoice.pay(invoice["id"], idempotency_key=idempotency_key)
         stripe.InvoiceItem.create(api_key=api_key, **item_params)
-        invoice = stripe.Invoice.create(api_key=api_key, customer=customer, description=description)
-        return stripe.Invoice.pay(invoice["id"], api_key=api_key)
+        invoice = stripe.Invoice.create(
+            api_key=api_key,
+            customer=customer,
+            description=description,
+            idempotency_key=idempotency_key,
+        )
+        return stripe.Invoice.pay(
+            invoice["id"], api_key=api_key, idempotency_key=idempotency_key
+        )
 
-    if amount is None:
-        logger.error("amount must be provided when price_id is not supplied for bot '%s'", bot_id)
+    if amt is None:
+        logger.error(
+            "amount must be provided when price_id is not supplied for bot '%s'", bot_id
+        )
         raise ValueError("amount required when price_id is not provided")
 
+    idempotency_key = f"{bot_id}-{amt}-{timestamp_ms}"
     params = {
-        "amount": int(amount * 100),
+        "amount": int(amt * 100),
         "currency": "usd",
         "description": description,
+        "idempotency_key": idempotency_key,
     }
     if customer:
         params["customer"] = customer
