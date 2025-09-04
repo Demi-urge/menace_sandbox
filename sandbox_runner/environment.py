@@ -4637,6 +4637,8 @@ async def _section_worker(
                 rc = dict(runner_config or {})
                 rc.setdefault("safe_mode", True)
                 rc.setdefault("use_subprocess", True)
+                if env_input.get("INJECT_EDGE_CASES"):
+                    rc["inject_edge_cases"] = True
                 runner = WorkflowSandboxRunner()
                 runner.run(lambda: exec(snip, {}), **rc)
             except Exception:
@@ -5930,6 +5932,7 @@ def _preset_hostile_input() -> Dict[str, Any]:
         "FAILURE_MODES": "hostile_input",
         "SANDBOX_STUB_STRATEGY": settings.preset_hostile_stub_strategy,
         "HOSTILE_INPUT": settings.preset_hostile_input,
+        "INJECT_EDGE_CASES": True,
     }
 
 
@@ -5988,6 +5991,7 @@ def _preset_chaotic_failure() -> Dict[str, Any]:
         "SCENARIO_NAME": "chaotic_failure",
         "BROKEN_AUTH": True,
         "CORRUPT_PAYLOAD": True,
+        "INJECT_EDGE_CASES": True,
     }
 
 
