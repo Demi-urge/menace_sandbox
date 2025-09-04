@@ -65,8 +65,8 @@ def main() -> None:
     interactive_setup()
 
     logger.info("ensuring resources")
-    ensure_proxies("proxies.json")
-    ensure_accounts("accounts.json")
+    ensure_proxies(resolve_path("proxies.json"))
+    ensure_accounts(resolve_path("accounts.json"))
 
     logger.info("installing dependencies")
     check_and_install(SandboxSettings())
@@ -87,7 +87,11 @@ def main() -> None:
 
     logger.info("discovering hardware")
     hw = discover_hardware()
-    Path("hardware.json").write_text(json.dumps(hw, indent=2))
+    try:
+        hw_path = resolve_path("hardware.json")
+    except FileNotFoundError:
+        hw_path = resolve_path("") / "hardware.json"
+    hw_path.write_text(json.dumps(hw, indent=2))
 
     logger.info("setup complete")
 
