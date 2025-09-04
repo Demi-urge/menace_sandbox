@@ -84,10 +84,13 @@ except Exception:  # pragma: no cover - test fallback
     def compute_entropy_delta(code_diversity, token_complexity):
         return 0.0, 0.0
 try:
-    from sandbox_runner.environment import create_ephemeral_env
+    from sandbox_runner.environment import create_ephemeral_env, generate_edge_cases
 except Exception:  # pragma: no cover - test fallback
     def create_ephemeral_env(*a, **k):
         raise RuntimeError("sandbox_runner unavailable")
+
+    def generate_edge_cases() -> dict[str, object]:  # type: ignore
+        return {}
 try:
     from .sandbox_settings import SandboxSettings
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1406,6 +1409,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         env = os.environ.copy()
                         env["PYTHONPATH"] = str(repo)
                         try:
+                            env["SANDBOX_EDGE_CASES"] = json.dumps(generate_edge_cases())
+                        except Exception:
+                            env["SANDBOX_EDGE_CASES"] = "{}"
+                        try:
                             self.engine.patch_file(test_path, "auto_debug")
 
                             code_hash: str | None = None
@@ -1445,7 +1452,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                         return None
 
                             run(
-                                ["pytest", "-q"],
+                                [
+                                    "pytest",
+                                    "-q",
+                                    "-p",
+                                    "sandbox_runner.edge_case_plugin",
+                                ],
                                 env=env,
                                 check=True,
                                 timeout=self._test_timeout,
