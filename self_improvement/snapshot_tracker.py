@@ -12,6 +12,11 @@ from typing import Any, Dict, Mapping, Sequence
 from .baseline_tracker import TRACKER as BASELINE_TRACKER
 from .metrics import collect_snapshot_metrics, compute_call_graph_complexity
 from ..sandbox_settings import SandboxSettings
+from ..audit_logger import log_event as audit_log_event
+try:  # pragma: no cover - optional dependency location
+    from ..snapshot_history_db import log_regression
+except Exception:  # pragma: no cover
+    from snapshot_history_db import log_regression  # type: ignore
 
 try:  # pragma: no cover - optional dependency location
     from ..dynamic_path_router import resolve_path
@@ -184,9 +189,34 @@ class SnapshotTracker:
     def delta(self) -> Dict[str, float]:
         before = self._snaps.get("before") or self._snaps.get("pre")
         after = self._snaps.get("after") or self._snaps.get("post")
-        if before and after:
-            return compute_delta(before, after)
-        return {}
+        if not (before and after):
+            return {}
+
+        delta = compute_delta(before, after)
+        roi_delta = float(delta.get("roi", 0.0))
+        entropy_delta = float(delta.get("entropy", 0.0))
+        regression = roi_delta < 0 or entropy_delta > 0
+        delta["regression"] = regression
+        if regression:
+            ctx = self._context.get("after") or self._context.get("post") or {}
+            prompt = ctx.get("prompt")
+            diff = ctx.get("diff") or ctx.get("diff_path")
+            try:
+                log_regression(prompt if isinstance(prompt, str) else None, diff, delta)
+            except Exception:  # pragma: no cover - best effort
+                pass
+            try:
+                audit_log_event(
+                    "snapshot_regression",
+                    {
+                        "prompt": prompt,
+                        "diff": diff,
+                        "delta": {k: v for k, v in delta.items() if k != "regression"},
+                    },
+                )
+            except Exception:  # pragma: no cover - best effort
+                pass
+        return delta
 
 def save_checkpoint(module_path: Path | str, cycle_id: str) -> Path:
     """Copy *module_path* to a checkpoint named after ``cycle_id``.
