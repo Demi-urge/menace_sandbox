@@ -58,6 +58,15 @@ configuration. The generated file includes stub values for critical settings:
   chunking token limits and caching for large file summaries (see
   [prompt chunking docs](docs/prompt_chunking.md))
 
+### Billing router
+
+Billing and monetisation features interact with Stripe exclusively through
+`stripe_billing_router`.  The router resolves API keys and per‑bot identifiers,
+supports region overrides and strategy hooks, and aborts if keys or routing
+rules are missing.  Never call the Stripe SDK directly; use
+`stripe_billing_router.initiate_charge` or related helpers.  See
+[docs/billing_router.md](docs/billing_router.md) for extension points.
+
 ### Chunking pipeline
 
 Large modules are split and summarised before prompting so the LLM never sees

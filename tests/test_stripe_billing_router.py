@@ -47,6 +47,28 @@ def test_routing_matches_bot_metadata(monkeypatch):
     assert route["public_key"] == "pk_live_dummy"
 
 
+def test_region_specific_routing(monkeypatch):
+    sbr = _import_module(monkeypatch)
+    sbr.register_route(
+        "finance",
+        "finance_router_bot",
+        "monetization",
+        {
+            "product_id": "prod_finance_eu",
+            "price_id": "price_finance_eu",
+            "customer_id": "cus_finance_eu",
+        },
+        region="eu",
+    )
+    route = sbr._resolve_route(
+        "finance:finance_router_bot:monetization",
+        overrides={"region": "eu"},
+    )
+    assert route["product_id"] == "prod_finance_eu"
+    assert route["price_id"] == "price_finance_eu"
+    assert route["customer_id"] == "cus_finance_eu"
+
+
 def test_unsupported_domain_raises(monkeypatch):
     sbr = _import_module(monkeypatch)
     with pytest.raises(RuntimeError, match="Unsupported billing domain"):
@@ -59,12 +81,35 @@ def test_unmatched_route_raises(monkeypatch):
         sbr._resolve_route("finance:unknown_bot:monetization")
 
 
+def test_unknown_category_raises(monkeypatch):
+    sbr = _import_module(monkeypatch)
+    with pytest.raises(RuntimeError, match="No billing route"):
+        sbr._resolve_route("finance:finance_router_bot:unknown")
+
+
 def test_missing_keys_raise(monkeypatch):
     sbr = _import_module(monkeypatch)
     monkeypatch.setattr(sbr, "STRIPE_SECRET_KEY", "")
     monkeypatch.setattr(sbr, "STRIPE_PUBLIC_KEY", "")
     with pytest.raises(RuntimeError):
         sbr._resolve_route("finance:finance_router_bot:monetization")
+
+
+def test_override_missing_keys_fatal(monkeypatch):
+    sbr = _import_module(monkeypatch)
+    sbr.register_override(
+        "finance",
+        "finance_router_bot",
+        "monetization",
+        key="tier",
+        value="broken",
+        route={"secret_key": "", "public_key": ""},
+    )
+    with pytest.raises(RuntimeError, match="Stripe keys are not configured"):
+        sbr._resolve_route(
+            "finance:finance_router_bot:monetization",
+            overrides={"tier": "broken"},
+        )
 
 
 def test_override_updates_route(monkeypatch):

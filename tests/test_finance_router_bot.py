@@ -4,6 +4,9 @@ import sys
 import types
 from pathlib import Path
 
+# tests previously mocked a deprecated ``stripe_handler`` module; ensure the
+# modern ``stripe_billing_router`` is loaded and patched instead.
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
