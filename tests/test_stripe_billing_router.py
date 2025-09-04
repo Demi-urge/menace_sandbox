@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -43,12 +44,13 @@ def test_successful_route_and_charge(monkeypatch):
 
     recorded: dict[str, object] = {}
 
-    def fake_charge_create(**params):
+    def fake_charge_create(*, api_key: str, **params):
         recorded.update(params)
+        recorded["api_key"] = api_key
         return {"id": "ch_test", **params}
 
     fake_stripe = types.SimpleNamespace(
-        api_key="",
+        api_key="original",
         Charge=types.SimpleNamespace(create=fake_charge_create),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
@@ -60,6 +62,8 @@ def test_successful_route_and_charge(monkeypatch):
     assert res["id"] == "ch_test"
     assert recorded["amount"] == 1250
     assert recorded["customer"] == "cus_finance_default"
+    assert recorded["api_key"] == "sk_live_dummy"
+    assert fake_stripe.api_key == "original"
 
 
 def test_missing_keys_or_rule(monkeypatch):
@@ -157,3 +161,41 @@ def test_register_rejects_api_keys(monkeypatch):
                 "route": {"public_key": "pk_live_other"},
             }
         )
+
+
+def test_concurrent_client_isolation(monkeypatch):
+    sbr = _import_module(monkeypatch)
+
+    calls: list[str] = []
+
+    def fake_charge_create(*, api_key: str, **params):
+        calls.append(api_key)
+        return {"id": "ch", **params}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="unchanged",
+        Charge=types.SimpleNamespace(create=fake_charge_create),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+
+    def fake_resolve(bot_id: str, overrides=None):  # type: ignore[override]
+        return {
+            "secret_key": f"sk_live_{bot_id}",
+            "public_key": "pk_live_dummy",
+            "product_id": "prod",
+        }
+
+    monkeypatch.setattr(sbr, "_resolve_route", fake_resolve)
+
+    def worker(bot_id: str) -> None:
+        sbr.charge(bot_id, 1.0)
+
+    t1 = threading.Thread(target=worker, args=("bot1",))
+    t2 = threading.Thread(target=worker, args=("bot2",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert set(calls) == {"sk_live_bot1", "sk_live_bot2"}
+    assert fake_stripe.api_key == "unchanged"
