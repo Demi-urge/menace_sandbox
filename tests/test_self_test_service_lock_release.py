@@ -1,5 +1,6 @@
 import os, sys, types
 from pathlib import Path
+from dynamic_path_router import resolve_path
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 sys.modules.setdefault("jinja2", types.ModuleType("jinja2"))
 sys.modules["jinja2"].Template = lambda *a, **k: None
@@ -45,7 +46,10 @@ def load_self_test_service():
     pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
     pkg.__spec__ = importlib.machinery.ModuleSpec('menace', loader=None, is_package=True)
     sys.modules['menace'] = pkg
-    spec = importlib.util.spec_from_file_location('menace.self_test_service', pkg.__path__[0] + '/self_test_service.py')
+    path = resolve_path('self_test_service.py')
+    spec = importlib.util.spec_from_file_location(
+        'menace.self_test_service', str(path)
+    )
     mod = importlib.util.module_from_spec(spec)
     sys.modules['menace.self_test_service'] = mod
     spec.loader.exec_module(mod)
