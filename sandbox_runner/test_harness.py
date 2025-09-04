@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import logging
 import re
+import os
 import subprocess
 import sys
 import tempfile
@@ -142,6 +143,7 @@ def run_tests(
                 rel_paths.append(changed_path)
 
         selected: str | None = None
+        capture_cov = os.getenv("SANDBOX_CAPTURE_COVERAGE")
         if backend == "venv":
             venv_dir = tmpdir / "venv"
             subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
@@ -164,7 +166,7 @@ def run_tests(
                     logger.error(msg.strip())
                     raise RuntimeError(msg)
 
-            pytest_cmd = [str(python), "-m", "pytest", "-q", "--tb=short"]
+            pytest_args = ["-q", "--tb=short"]
             if rel_paths:
                 try:
                     rel_paths = [p.relative_to(repo_path) for p in rel_paths]
@@ -177,13 +179,28 @@ def run_tests(
                         "tests" in rel.parts
                         or rel.name.startswith("test_")
                     ) and rel.suffix == ".py":
-                        pytest_cmd.insert(3, selected)
+                        pytest_args.insert(0, selected)
                     else:
-                        pytest_cmd.extend(["-k", rel.stem])
+                        pytest_args.extend(["-k", rel.stem])
                 else:
                     expr = " or ".join(p.stem for p in rel_paths)
-                    pytest_cmd.extend(["-k", expr])
+                    pytest_args.extend(["-k", expr])
                     selected = " ".join(p.as_posix() for p in rel_paths)
+
+            if capture_cov:
+                cov_file = tmpdir / ".coverage"
+                pytest_cmd = [
+                    str(python),
+                    "-m",
+                    "coverage",
+                    "run",
+                    f"--data-file={cov_file}",
+                    "-m",
+                    "pytest",
+                    *pytest_args,
+                ]
+            else:
+                pytest_cmd = [str(python), "-m", "pytest", *pytest_args]
 
             tests = subprocess.run(
                 pytest_cmd,
@@ -192,7 +209,7 @@ def run_tests(
                 text=True,
             )
         else:  # backend == "docker"
-            pytest_cmd = ["python", "-m", "pytest", "-q", "--tb=short"]
+            pytest_args = ["-m", "pytest", "-q", "--tb=short"]
             if rel_paths:
                 try:
                     rel_paths = [p.relative_to(repo_path) for p in rel_paths]
@@ -205,18 +222,21 @@ def run_tests(
                         "tests" in rel.parts
                         or rel.name.startswith("test_")
                     ) and rel.suffix == ".py":
-                        pytest_cmd.insert(3, selected)
+                        pytest_args.insert(1, selected)
                     else:
-                        pytest_cmd.extend(["-k", rel.stem])
+                        pytest_args.extend(["-k", rel.stem])
                 else:
                     expr = " or ".join(p.stem for p in rel_paths)
-                    pytest_cmd.extend(["-k", expr])
+                    pytest_args.extend(["-k", expr])
                     selected = " ".join(p.as_posix() for p in rel_paths)
 
             inner_cmds: list[str] = []
             if req_file.exists():
                 inner_cmds.append("pip install -r requirements.txt")
-            inner_cmds.append(" ".join(pytest_cmd))
+            if capture_cov:
+                inner_cmds.append("coverage run --data-file=.coverage " + " ".join(pytest_args))
+            else:
+                inner_cmds.append("python " + " ".join(pytest_args))
             docker_cmd = [
                 "docker",
                 "run",
