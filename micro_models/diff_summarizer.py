@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Tuple
 
-_MODEL_PATH = Path(__file__).with_suffix("").parent / "diff_summarizer_model"
+from dynamic_path_router import resolve_path
+
+try:
+    _MODEL_PATH = resolve_path("micro_models/diff_summarizer_model")
+except FileNotFoundError:  # pragma: no cover - model may be absent in tests
+    _MODEL_PATH = Path("micro_models/diff_summarizer_model")
 _tokenizer = None
 _model = None
 

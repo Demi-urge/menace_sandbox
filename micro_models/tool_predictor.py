@@ -10,12 +10,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple
 
+from dynamic_path_router import resolve_path
+
 try:  # pragma: no cover - optional heavy dependency
     from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
 except Exception:  # pragma: no cover - allow heuristic fallback
     AutoModelForCausalLM = AutoTokenizer = None  # type: ignore
 
-DEFAULT_PATH = Path(__file__).with_name("tool_predictor_model")
+# ``resolve_path`` ensures model files are located relative to the project root
+# while falling back to a simple Path when the model directory is absent.
+try:
+    DEFAULT_PATH = resolve_path("micro_models/tool_predictor_model")
+except FileNotFoundError:  # pragma: no cover - model may be missing in tests
+    DEFAULT_PATH = Path("micro_models/tool_predictor_model")
 _MODEL_CACHE: tuple | None = None
 
 
