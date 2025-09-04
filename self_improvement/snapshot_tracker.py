@@ -41,6 +41,8 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     ModuleIndexDB = None  # type: ignore
 
+from . import prompt_memory
+
 
 @dataclass
 class Snapshot:
@@ -340,6 +342,7 @@ class SnapshotTracker:
                     except Exception:  # pragma: no cover - best effort
                         pass
                 if strategy:
+                    prompt_memory.reset_penalty(str(strategy))
                     self.strategy_confidence[str(strategy)] = int(
                         self.strategy_confidence.get(str(strategy), 0)
                     ) + 1
