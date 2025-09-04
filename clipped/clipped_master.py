@@ -1,4 +1,7 @@
-"""Stub coordinator used for tests."""
+"""Stub coordinator used for tests.
+
+Paths are resolved relative to the repository root.
+"""
 
 from __future__ import annotations
 
@@ -62,7 +65,15 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     """Entry point executing one or more scripts."""
 
     parser = argparse.ArgumentParser(description="Run Menace scripts")
-    parser.add_argument("scripts", nargs="*", default=["menace_master.py"])
+    parser.add_argument(
+        "scripts",
+        nargs="*",
+        default=[str(resolve_path("menace_master.py"))],
+        help=(
+            "Python scripts to run. Paths are resolved relative to the "
+            "repository root (default: menace_master.py)."
+        ),
+    )
     parser.add_argument("--env", action="append", default=[], help="KEY=VALUE")
     parser.add_argument("--parallel", action="store_true", help="Run scripts in parallel")
     args = parser.parse_args(list(argv) if argv is not None else None)
