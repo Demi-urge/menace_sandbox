@@ -11,6 +11,7 @@ from codex_output_analyzer import (  # noqa: E402
     validate_stripe_usage,
     validate_stripe_usage_generic,
 )
+from stripe_detection import contains_payment_keyword  # noqa: E402
 
 
 def test_router_import_without_usage_raises() -> None:
@@ -64,6 +65,29 @@ def test_js_snippet_keyword_without_router_raises() -> None:
     js = "function sendInvoice() { return true; }"
     with pytest.raises(CriticalGenerationFailure):
         validate_stripe_usage_generic(js)
+
+
+def test_camel_case_identifier_without_router_raises() -> None:
+    code = """
+def processPayment():
+    return True
+"""
+    with pytest.raises(CriticalGenerationFailure):
+        validate_stripe_usage(code)
+
+
+def test_hyphenated_identifier_without_router_raises() -> None:
+    js = "function send-Invoice() { return true; }"
+    with pytest.raises(CriticalGenerationFailure):
+        validate_stripe_usage_generic(js)
+
+
+def test_contains_payment_keyword_camel_case() -> None:
+    assert contains_payment_keyword("processPayment")
+
+
+def test_contains_payment_keyword_hyphen() -> None:
+    assert contains_payment_keyword("send-Invoice")
 
 
 def test_generic_text_with_router_passes() -> None:
