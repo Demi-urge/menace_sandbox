@@ -9,7 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _import_module(monkeypatch):
+def _import_module(monkeypatch, secrets=None):
     pkg = types.ModuleType("sbrpkg")
     pkg.__path__ = [str(ROOT)]
     sys.modules["sbrpkg"] = pkg
@@ -20,19 +20,20 @@ def _import_module(monkeypatch):
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[f"sbrpkg.{name}"] = module
+        sys.modules[name] = module
         assert spec.loader is not None
         spec.loader.exec_module(module)
         return module
 
+    secrets = secrets or {
+        "stripe_secret_key": "sk_live_dummy",
+        "stripe_public_key": "pk_live_dummy",
+    }
     vsp = _load("vault_secret_provider")
-    monkeypatch.setattr(
-        vsp.VaultSecretProvider,
-        "get",
-        lambda self, name: {
-            "stripe_secret_key": "sk_live_dummy",
-            "stripe_public_key": "pk_live_dummy",
-        }.get(name, ""),
-    )
+    monkeypatch.setattr(vsp.VaultSecretProvider, "get", lambda self, name: secrets.get(name, ""))
+
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
 
     return _load("stripe_billing_router")
 
@@ -95,6 +96,19 @@ def test_missing_keys_raise(monkeypatch):
         sbr._resolve_route("finance:finance_router_bot:monetization")
 
 
+def test_import_fails_with_missing_keys(monkeypatch):
+    with pytest.raises(RuntimeError):
+        _import_module(monkeypatch, {"stripe_secret_key": "", "stripe_public_key": ""})
+
+
+def test_import_fails_with_test_keys(monkeypatch):
+    with pytest.raises(RuntimeError):
+        _import_module(
+            monkeypatch,
+            {"stripe_secret_key": "sk_test_bad", "stripe_public_key": "pk_test_bad"},
+        )
+
+
 def test_override_missing_keys_fatal(monkeypatch):
     sbr = _import_module(monkeypatch)
     sbr.register_override(
@@ -109,6 +123,23 @@ def test_override_missing_keys_fatal(monkeypatch):
         sbr._resolve_route(
             "finance:finance_router_bot:monetization",
             overrides={"tier": "broken"},
+        )
+
+
+def test_override_test_keys_fatal(monkeypatch):
+    sbr = _import_module(monkeypatch)
+    sbr.register_override(
+        "finance",
+        "finance_router_bot",
+        "monetization",
+        key="tier",
+        value="sandbox",
+        route={"secret_key": "sk_test_bad", "public_key": "pk_live_dummy"},
+    )
+    with pytest.raises(RuntimeError, match="Test mode Stripe API keys are not permitted"):
+        sbr._resolve_route(
+            "finance:finance_router_bot:monetization",
+            overrides={"tier": "sandbox"},
         )
 
 
