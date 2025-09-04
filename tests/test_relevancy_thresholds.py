@@ -3,10 +3,12 @@ import types
 import importlib.util
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 
 def _load_baseline_tracker():
     spec = importlib.util.spec_from_file_location(
-        "baseline", Path("self_improvement") / "baseline_tracker.py"
+        "baseline", resolve_path("self_improvement/baseline_tracker.py")
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -14,7 +16,7 @@ def _load_baseline_tracker():
 
 
 def _load_eval_method():
-    src = Path("self_improvement/engine.py").read_text()
+    src = resolve_path("self_improvement/engine.py").read_text()
     tree = ast.parse(src)
     func = None
     for node in tree.body:

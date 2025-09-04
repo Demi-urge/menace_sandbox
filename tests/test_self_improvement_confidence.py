@@ -4,9 +4,10 @@ from pathlib import Path
 from typing import Iterable
 
 import pytest
+from dynamic_path_router import resolve_path
 
 
-source = Path("self_improvement.py").read_text()
+source = resolve_path("self_improvement/engine.py").read_text()
 module_ast = ast.parse(source)
 cls = next(
     n for n in module_ast.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"

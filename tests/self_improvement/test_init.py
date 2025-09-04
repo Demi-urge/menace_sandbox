@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from sandbox_settings import SandboxSettings
+from dynamic_path_router import resolve_path
 
 
 def _load_module(name: str, path: Path):
@@ -37,7 +38,7 @@ def test_get_default_synergy_weights_reflects_settings(monkeypatch):
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
 
     monkeypatch.setenv(
@@ -54,7 +55,9 @@ def test_get_default_synergy_weights_reflects_settings(monkeypatch):
             }
         ),
     )
-    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+    init_module = _load_module(
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+    )
     first = init_module.get_default_synergy_weights()
 
     monkeypatch.setenv(
@@ -82,7 +85,7 @@ def test_init_creates_synergy_weights(tmp_path, monkeypatch):
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
 
     bootstrap = types.ModuleType("sandbox_runner.bootstrap")
@@ -98,7 +101,9 @@ def test_init_creates_synergy_weights(tmp_path, monkeypatch):
     meta_stub.reload_settings = lambda cfg: None
     sys.modules["menace.self_improvement.meta_planning"] = meta_stub
 
-    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+    init_module = _load_module(
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+    )
 
     monkeypatch.setattr(
         importlib.metadata,
@@ -136,7 +141,7 @@ def test_init_meta_planning_failure(tmp_path, monkeypatch, caplog):
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
 
     bootstrap = types.ModuleType("sandbox_runner.bootstrap")
@@ -151,7 +156,9 @@ def test_init_meta_planning_failure(tmp_path, monkeypatch, caplog):
     meta_stub.reload_settings = fail
     sys.modules["menace.self_improvement.meta_planning"] = meta_stub
 
-    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+    init_module = _load_module(
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+    )
 
     monkeypatch.setattr(
         importlib.metadata,
@@ -184,14 +191,16 @@ def test_init_enables_auto_install_when_unattended(tmp_path, monkeypatch):
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
 
     meta_stub = types.ModuleType("menace.self_improvement.meta_planning")
     meta_stub.reload_settings = lambda cfg: None
     sys.modules["menace.self_improvement.meta_planning"] = meta_stub
 
-    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+    init_module = _load_module(
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+    )
 
     settings = SandboxSettings()
     settings.sandbox_data_dir = str(tmp_path)

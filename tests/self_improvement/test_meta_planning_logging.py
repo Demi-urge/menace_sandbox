@@ -6,13 +6,15 @@ from pathlib import Path
 import importlib.util
 import types
 
+from dynamic_path_router import resolve_path
+
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 menace_pkg = types.ModuleType("menace")
 menace_pkg.__path__ = []
 sys.modules["menace"] = menace_pkg
 si_pkg = types.ModuleType("menace.self_improvement")
-si_pkg.__path__ = [str(Path("self_improvement"))]
+si_pkg.__path__ = [str(resolve_path("self_improvement"))]
 sys.modules["menace.self_improvement"] = si_pkg
 # Stub out dependencies required by meta_planning during import
 logging_utils = types.ModuleType("menace.logging_utils")
@@ -99,7 +101,8 @@ init_mod = types.ModuleType("menace.self_improvement.init")
 init_mod.settings = _SandboxSettings()
 sys.modules["menace.self_improvement.init"] = init_mod
 spec = importlib.util.spec_from_file_location(
-    "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
+    "menace.self_improvement.meta_planning",
+    resolve_path("self_improvement/meta_planning.py"),
 )
 mp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mp)
