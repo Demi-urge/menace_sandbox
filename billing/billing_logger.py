@@ -29,6 +29,7 @@ _COLUMNS = [
     "bot_id",
     "destination_account",
     "raw_event_json",
+    "error",
 ]
 
 
@@ -49,7 +50,8 @@ def _get_connection():
                 user_email TEXT,
                 bot_id TEXT,
                 destination_account TEXT,
-                raw_event_json TEXT
+                raw_event_json TEXT,
+                error INTEGER
             )
             """
         )
