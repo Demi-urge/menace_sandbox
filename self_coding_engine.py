@@ -1283,40 +1283,8 @@ class SelfCodingEngine:
             return "", False
         if target_region is not None:
             original_lines = path.read_text(encoding="utf-8").splitlines()
-            start = max(target_region.start_line - 1, 0)
-            end = min(target_region.end_line, len(original_lines))
-            patch_lines = code.rstrip().splitlines()
-            new_lines = original_lines[:start] + patch_lines + original_lines[end:]
-            changed = [
-                idx + 1
-                for idx, (a, b) in enumerate(zip_longest(original_lines, new_lines))
-                if (a or "") != (b or "")
-            ]
-            out_of_range = [
-                i
-                for i in changed
-                if i < target_region.start_line or i > target_region.end_line
-            ]
-            if out_of_range:
-                if self.event_bus:
-                    try:
-                        self.event_bus.publish(
-                            "patch:scope_violation",
-                            {
-                                "path": str(path),
-                                "allowed": [
-                                    target_region.start_line,
-                                    target_region.end_line,
-                                ],
-                                "modified": out_of_range,
-                            },
-                        )
-                    except Exception:
-                        self.logger.exception("event bus publish failed")
-                raise ValueError(
-                    "patch modified lines outside the permitted range"
-                )
-            path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            if not self._apply_region_patch(path, original_lines, target_region, code):
+                return "", False
         else:
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write("\n" + code)
@@ -1331,6 +1299,63 @@ class SelfCodingEngine:
             },
         )
         return code, True
+
+    def _apply_region_patch(
+        self,
+        path: Path,
+        original_lines: List[str],
+        target_region: TargetRegion,
+        patch_text: str,
+    ) -> bool:
+        """Replace ``target_region`` lines with ``patch_text`` ensuring AST validity."""
+
+        start = max(target_region.start_line - 1, 0)
+        end = min(target_region.end_line, len(original_lines))
+
+        indent = ""
+        for i in range(start, end):
+            if i < len(original_lines):
+                m = re.match(r"\s*", original_lines[i])
+                indent = m.group(0) if m else ""
+                if original_lines[i].strip():
+                    break
+
+        patch_lines = patch_text.rstrip().splitlines()
+        if indent:
+            patch_lines = [
+                indent + line if line.strip() else line for line in patch_lines
+            ]
+
+        new_lines = original_lines[:start] + patch_lines + original_lines[end:]
+        changed = [
+            idx + 1
+            for idx, (a, b) in enumerate(zip_longest(original_lines, new_lines))
+            if (a or "") != (b or "")
+        ]
+        if any(i < target_region.start_line or i > target_region.end_line for i in changed):
+            return False
+        text = "\n".join(new_lines) + "\n"
+        try:
+            ast.parse(text)
+        except SyntaxError:
+            return False
+        path.write_text(text, encoding="utf-8")
+        return True
+
+    def _find_function_region(
+        self, lines: List[str], func_name: str
+    ) -> TargetRegion | None:
+        """Locate ``func_name`` in ``lines`` returning its :class:`TargetRegion`."""
+
+        try:
+            tree = ast.parse("\n".join(lines))
+        except SyntaxError:
+            return None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == func_name:
+                end = getattr(node, "end_lineno", node.lineno)
+                return TargetRegion(node.lineno, end, func_name)
+        return None
 
     def _run_ci(self, path: Path | None = None) -> TestHarnessResult:
         """Run linting and unit tests inside isolated environments."""
@@ -1458,16 +1483,46 @@ class SelfCodingEngine:
                 metadata=context_meta,
                 target_region=target_region,
             )
-            if not generated.strip() or not _verify(generated):
+            if not generated.strip():
                 return None, False, 0.0
+            if _verify(generated):
+                if not self._apply_region_patch(path, original_lines, target_region, generated):
+                    if target_region.func_name:
+                        func_region = self._find_function_region(original_lines, target_region.func_name)
+                    else:
+                        func_region = None
+                    if func_region is None:
+                        return None, False, 0.0
+                    generated = self.generate_helper(
+                        description,
+                        path=path,
+                        metadata=context_meta,
+                        target_region=func_region,
+                    )
+                    if not generated.strip() or not _verify(generated):
+                        return None, False, 0.0
+                    if not self._apply_region_patch(path, original_lines, func_region, generated):
+                        return None, False, 0.0
+                    target_region = func_region
+            else:
+                if not target_region.func_name:
+                    return None, False, 0.0
+                func_region = self._find_function_region(original_lines, target_region.func_name)
+                if func_region is None:
+                    return None, False, 0.0
+                generated = self.generate_helper(
+                    description,
+                    path=path,
+                    metadata=context_meta,
+                    target_region=func_region,
+                )
+                if not generated.strip() or not _verify(generated):
+                    return None, False, 0.0
+                if not self._apply_region_patch(path, original_lines, func_region, generated):
+                    return None, False, 0.0
+                target_region = func_region
             start = max(target_region.start_line - 1, 0)
             end = min(target_region.end_line, len(original_lines))
-            new_lines = (
-                original_lines[:start]
-                + generated.rstrip().splitlines()
-                + original_lines[end:]
-            )
-            path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
             patch_key = f"{path}:{description}:{start}-{end}"
             if self.rollback_mgr:
                 try:

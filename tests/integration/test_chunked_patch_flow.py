@@ -26,6 +26,7 @@ class _VSError(Exception):
 vec_mod.CognitionLayer = object
 vec_mod.PatchLogger = object
 vec_mod.VectorServiceError = _VSError
+vec_mod.SharedVectorService = object
 _setmod("vector_service", vec_mod)
 _setmod("vector_service.retriever", types.ModuleType("vector_service.retriever"))
 _setmod("vector_service.decorators", types.ModuleType("vector_service.decorators"))
@@ -98,15 +99,41 @@ _setmod(
             audit_privkey=None,
             prompt_success_log_path="s.log",
             prompt_failure_log_path="f.log",
-        )
+        ),
+        load_sandbox_settings=lambda: None,
     ),
 )
 roi_mod = types.ModuleType("roi_tracker")
 roi_mod.ROITracker = lambda: object()
 _setmod("roi_tracker", roi_mod)
+class _BT:
+    def __init__(self, *a, **k):
+        pass
+
+    def update(self, *a, **k):
+        pass
+
+baseline_mod = types.SimpleNamespace(BaselineTracker=_BT, TRACKER=_BT())
+class _FL:
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+init_mod = types.SimpleNamespace(FileLock=_FL, _atomic_write=lambda *a, **k: None)
+_setmod("self_improvement.baseline_tracker", baseline_mod)
+_setmod("self_improvement.init", init_mod)
+si_pkg = types.ModuleType("self_improvement")
+si_pkg.__path__ = []
+_setmod("self_improvement", si_pkg)
 
 import menace_sandbox.self_coding_engine as sce  # noqa: E402
 from chunking import CodeChunk  # noqa: E402
+import ast
 
 
 class DummyLLM:
@@ -224,3 +251,52 @@ def test_multi_chunk_patch_with_rollback(tmp_path, monkeypatch):
     assert "# patch 2" not in lines
     assert len(calls) == 2
     assert len(engine.roi_tracker.calls) == 1
+
+
+def test_region_patch_indentation_and_ast(tmp_path, monkeypatch):
+    engine = _setup_engine(tmp_path, monkeypatch)
+    path = tmp_path / "f.py"
+    path.write_text("def a():\n    x = 1\n    y = 2\n    return x + y\n")
+
+    monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
+    monkeypatch.setattr(engine, "_run_ci", lambda p: types.SimpleNamespace(success=True))
+
+    calls = []
+
+    def fake_generate(desc, *a, **k):
+        calls.append(k.get("target_region"))
+        return "x=10\ny=20"
+
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+
+    region = sce.TargetRegion(2, 3, "a")
+    engine.apply_patch(path, "edit", target_region=region)
+
+    src = path.read_text()
+    assert "x=10" in src and "y=20" in src
+    ast.parse(src)
+    assert len(calls) == 1
+
+
+def test_region_patch_fallback_on_parse_error(tmp_path, monkeypatch):
+    engine = _setup_engine(tmp_path, monkeypatch)
+    path = tmp_path / "f.py"
+    path.write_text("def a():\n    x = 1\n    return x\n")
+
+    monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
+    monkeypatch.setattr(engine, "_run_ci", lambda p: types.SimpleNamespace(success=True))
+
+    outputs = ["x =", "def a():\n    return 5"]
+    calls = []
+
+    def fake_generate(desc, *a, **k):
+        calls.append(k.get("target_region"))
+        return outputs[len(calls) - 1]
+
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+
+    region = sce.TargetRegion(2, 2, "a")
+    engine.apply_patch(path, "edit", target_region=region)
+
+    assert path.read_text() == "def a():\n    return 5\n"
+    assert len(calls) == 2
