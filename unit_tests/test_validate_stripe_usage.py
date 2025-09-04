@@ -30,3 +30,14 @@ def process_payment():
     return stripe_billing_router.process_payment()
 """
     validate_stripe_usage(code)
+
+
+def test_js_snippet_without_router_raises() -> None:
+    code = "fetch('https://api.stripe.com/v1/charges')"
+    with pytest.raises(CriticalGenerationFailure):
+        validate_stripe_usage(code)
+
+
+def test_js_snippet_with_router_import_passes() -> None:
+    code = "import stripe_billing_router\nfetch('https://api.stripe.com/v1/charges')"
+    validate_stripe_usage(code)
