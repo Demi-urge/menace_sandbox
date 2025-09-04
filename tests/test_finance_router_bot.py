@@ -66,11 +66,11 @@ def test_route_and_summary(tmp_path, monkeypatch):
         calls["amount"] = amount
         return {"status": "succeeded"}
 
-    monkeypatch.setattr(frb.stripe_billing_router, "init_charge", fake_charge)
+    monkeypatch.setattr(frb.stripe_billing_router, "charge", fake_charge)
     bot = frb.FinanceRouterBot(payout_log_path=log)
     res = bot.route_payment(10.0, "model1")
     assert res
-    assert calls == {"bot_id": "model1", "amount": 10.0}
+    assert calls == {"bot_id": frb.FinanceRouterBot.BOT_ID, "amount": 10.0}
     data = json.loads(log.read_text())
     assert data and data[0]["model_id"] == "model1"
     summary = bot.report_earnings_summary()
@@ -86,10 +86,10 @@ def test_router_error_propagates(tmp_path, monkeypatch):
         calls["bot_id"] = bot_id
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(frb.stripe_billing_router, "init_charge", bad_charge)
+    monkeypatch.setattr(frb.stripe_billing_router, "charge", bad_charge)
     bot = frb.FinanceRouterBot(payout_log_path=log)
     res = bot.route_payment(5.0, "model2")
     assert res.startswith("error:")
-    assert calls["bot_id"] == "model2"
+    assert calls["bot_id"] == frb.FinanceRouterBot.BOT_ID
     data = json.loads(log.read_text())
     assert data and data[0]["result"].startswith("error:")
