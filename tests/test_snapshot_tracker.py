@@ -1,68 +1,54 @@
-import json
-import importlib
-import sys
 import types
+import importlib
+import json
+import sys
 from pathlib import Path
 
+# Prepare minimal package structure and stubs
 root_path = Path(__file__).resolve().parents[1]
 pkg_path = root_path / "self_improvement"
 root_pkg = types.ModuleType("menace_sandbox")
 root_pkg.__path__ = [str(root_path)]
-sys.modules["menace_sandbox"] = root_pkg
+sys.modules.setdefault("menace_sandbox", root_pkg)
 package = types.ModuleType("menace_sandbox.self_improvement")
 package.__path__ = [str(pkg_path)]
-sys.modules["menace_sandbox.self_improvement"] = package
+sys.modules.setdefault("menace_sandbox.self_improvement", package)
 
-sys.modules["codebase_diff_checker"] = types.ModuleType("codebase_diff_checker")
-
-
-class _Logger:
-    def warning(self, *a, **k):
-        pass
-
-    def info(self, *a, **k):
-        pass
-
-    def debug(self, *a, **k):
-        pass
-
-
-sys.modules["logging_utils"] = types.SimpleNamespace(
-    log_record=lambda **k: {},
-    get_logger=lambda *a, **k: _Logger(),
-    set_correlation_id=lambda *a, **k: None,
-    setup_logging=lambda *a, **k: None,
+# Stub dependencies required by snapshot_tracker
+sys.modules.setdefault("audit_logger", types.SimpleNamespace(log_event=lambda *a, **k: None))
+sys.modules.setdefault("menace_sandbox.audit_logger", sys.modules["audit_logger"])
+sys.modules.setdefault(
+    "snapshot_history_db",
+    types.SimpleNamespace(
+        log_regression=lambda *a, **k: None,
+        record_snapshot=lambda *a, **k: 1,
+        record_delta=lambda *a, **k: None,
+    ),
 )
-stub_pm = types.ModuleType("prompt_memory")
-stub_pm.log_prompt_attempt = lambda *a, **k: None
-stub_pm.reset_penalty = lambda *a, **k: None
-sys.modules["menace_sandbox.self_improvement.prompt_memory"] = stub_pm
-sys.modules["menace_sandbox.self_improvement.metrics"] = types.ModuleType("metrics")
-sys.modules["menace_sandbox.self_improvement.module_graph_analyzer"] = types.ModuleType(
-    "module_graph_analyzer"
+sys.modules.setdefault(
+    "menace_sandbox.snapshot_history_db", sys.modules["snapshot_history_db"]
 )
-dyn = types.ModuleType("dynamic_path_router")
-dyn.resolve_path = lambda p: p
-sys.modules["dynamic_path_router"] = dyn
-ss_mod = types.ModuleType("sandbox_settings")
+sys.modules.setdefault("module_index_db", types.SimpleNamespace(ModuleIndexDB=None))
+sys.modules.setdefault(
+    "menace_sandbox.module_index_db", sys.modules["module_index_db"]
+)
+sys.modules.setdefault(
+    "relevancy_radar", types.SimpleNamespace(call_graph_complexity=lambda files: 0)
+)
+sys.modules.setdefault(
+    "menace_sandbox.relevancy_radar", sys.modules["relevancy_radar"]
+)
+sys.modules.setdefault(
+    "dynamic_path_router",
+    types.SimpleNamespace(resolve_path=lambda p: p, repo_root=lambda: Path(".")),
+)
 
-
-class _SandboxSettings:
-    sandbox_data_dir = "."
-    sandbox_score_db = ""
-
-
-ss_mod.SandboxSettings = _SandboxSettings
-sys.modules["sandbox_settings"] = ss_mod
-sys.modules["menace_sandbox.sandbox_settings"] = ss_mod
-BaselineTracker = importlib.import_module(
-    "menace_sandbox.self_improvement.baseline_tracker"
-).BaselineTracker
-ss = importlib.import_module("menace_sandbox.self_improvement.state_snapshot")
+ss = importlib.import_module("menace_sandbox.self_improvement.snapshot_tracker")
 
 
 def test_checkpoint_and_confidence(tmp_path, monkeypatch):
     monkeypatch.setattr(ss, "resolve_path", lambda p: p)
+
     repo = tmp_path / ss.resolve_path("repo")
     repo.mkdir()
     module = repo / ss.resolve_path("module.py")
@@ -72,13 +58,19 @@ def test_checkpoint_and_confidence(tmp_path, monkeypatch):
 
     class SettingsStub:
         sandbox_data_dir = str(data_dir)
+        sandbox_repo_path = str(repo)
+        snapshot_metrics = {"roi", "sandbox_score"}
+        roi_drop_threshold = -1.0
+        entropy_regression_threshold = 1e9
 
     monkeypatch.setattr(ss, "SandboxSettings", lambda: SettingsStub())
 
-    tracker = ss.SnapshotTracker(repo, BaselineTracker())
-    tracker.last_snapshot = ss.StateSnapshot(1, 1, 1, 1, 1)
-
-    after = ss.StateSnapshot(2, 2, 2, 2, 2)
+    tracker = ss.SnapshotTracker()
+    tracker.capture(
+        "before",
+        {"files": [module], "roi": 1.0, "sandbox_score": 1.0},
+        repo_path=repo,
+    )
 
     diff = repo / ss.resolve_path("change.diff")
     diff.write_text(
@@ -92,10 +84,19 @@ def test_checkpoint_and_confidence(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    # simulate modified file
     module.write_text("a = 2\n", encoding="utf-8")
-
-    tracker.evaluate_change(after, {"strategy": "alpha"}, diff)
+    tracker.capture(
+        "after",
+        {
+            "files": [module],
+            "roi": 2.0,
+            "sandbox_score": 2.0,
+            "prompt": {"strategy": "alpha"},
+            "diff": str(diff),
+        },
+        repo_path=repo,
+    )
+    tracker.delta()
 
     ckpt_base = data_dir / ss.resolve_path("checkpoints")
     dirs = list(ckpt_base.iterdir())

@@ -26,11 +26,8 @@ from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 from ..error_logger import TelemetryEvent
 from .metrics import compute_call_graph_complexity, compute_entropy_metrics
-from .state_snapshot import (
-    SnapshotTracker,
-    capture_state,
-    compare_snapshots,
-)
+from .snapshot_tracker import SnapshotTracker
+from .sandbox_score import get_latest_sandbox_score
 
 
 _cycle_thread: Any | None = None
@@ -947,7 +944,7 @@ async def self_improvement_cycle(
     stability_db = get_stable_workflows()
     setattr(planner, "entropy_threshold", _get_entropy_threshold(cfg, BASELINE_TRACKER))
     repo_path = Path(_init._repo_path())
-    snapshot_tracker = SnapshotTracker(repo_path, BASELINE_TRACKER)
+    snapshot_tracker = SnapshotTracker()
 
     async def _log(record: Mapping[str, Any]) -> None:
         chain = record.get("chain", [])
@@ -1103,8 +1100,17 @@ async def self_improvement_cycle(
                     _debug_cycle("skipped", reason=info.get("reason"))
                     continue
 
-            before = capture_state(repo_path, BASELINE_TRACKER)
-            snapshot_tracker.store(before)
+            snapshot_tracker.capture(
+                "before",
+                {
+                    "files": list(repo_path.rglob("*.py")),
+                    "roi": BASELINE_TRACKER.current("roi"),
+                    "sandbox_score": get_latest_sandbox_score(
+                        SandboxSettings().sandbox_score_db
+                    ),
+                },
+                repo_path=repo_path,
+            )
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
             outcome_logged = False
@@ -1197,10 +1203,23 @@ async def self_improvement_cycle(
             for chain in list(active):
                 planner.cluster_map.pop(tuple(chain), None)
 
-            after = capture_state(repo_path, BASELINE_TRACKER)
-            delta = compare_snapshots(before, after)
-            snapshot_tracker.evaluate_change(after, None, Path("meta_cycle.diff"))
-            _debug_cycle("snapshot", roi_delta=delta.get("roi", 0.0), entropy_delta=delta.get("entropy", 0.0))
+            snapshot_tracker.capture(
+                "after",
+                {
+                    "files": list(repo_path.rglob("*.py")),
+                    "roi": BASELINE_TRACKER.current("roi"),
+                    "sandbox_score": get_latest_sandbox_score(
+                        SandboxSettings().sandbox_score_db
+                    ),
+                },
+                repo_path=repo_path,
+            )
+            delta = snapshot_tracker.delta()
+            _debug_cycle(
+                "snapshot",
+                roi_delta=delta.get("roi", 0.0),
+                entropy_delta=delta.get("entropy", 0.0),
+            )
 
         except Exception as exc:  # pragma: no cover - planner is best effort
             _debug_cycle("error", reason=str(exc))
