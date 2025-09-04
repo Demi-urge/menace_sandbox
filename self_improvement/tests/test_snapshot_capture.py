@@ -70,3 +70,43 @@ def test_snapshot_capture(monkeypatch, tmp_path):
     assert tracker.current("entropy") == 0.5
     assert tracker.current("token_diversity") == 0.0
     assert called["cg"] is False
+
+
+def test_capture_with_repo_path(monkeypatch, tmp_path):
+    settings = SandboxSettings(
+        sandbox_repo_path=str(tmp_path),
+        sandbox_data_dir=str(tmp_path / "data"),
+        snapshot_metrics=["entropy", "token_diversity"],
+    )
+    monkeypatch.setattr(tracker_mod, "SandboxSettings", lambda: settings)
+    tracker = baseline_mod.BaselineTracker(window=3)
+    monkeypatch.setattr(tracker_mod, "BASELINE_TRACKER", tracker)
+
+    def fake_collect(files, settings=None):
+        count = sum(1 for _ in files)
+        return float(count), float(count)
+
+    monkeypatch.setattr(tracker_mod, "collect_snapshot_metrics", fake_collect)
+
+    tracker_instance = tracker_mod.SnapshotTracker()
+
+    (tmp_path / "a.py").write_text("a=1")
+    (tmp_path / "b.py").write_text("b=2")
+
+    snap1 = tracker_instance.capture(
+        "before", {"roi": 0.0, "sandbox_score": 0.0}, repo_path=tmp_path
+    )
+    assert snap1.entropy == 2.0
+    assert snap1.token_diversity == 2.0
+
+    (tmp_path / "c.py").write_text("c=3")
+
+    snap2 = tracker_instance.capture(
+        "after", {"roi": 0.0, "sandbox_score": 0.0}, repo_path=tmp_path
+    )
+    assert snap2.entropy == 3.0
+    assert snap2.token_diversity == 3.0
+
+    delta = tracker_instance.delta()
+    assert delta["entropy"] == 1.0
+    assert delta["token_diversity"] == 1.0

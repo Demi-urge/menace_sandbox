@@ -6522,18 +6522,20 @@ class SelfImprovementEngine:
         set_correlation_id(cid)
         self._cycle_target_region = target_region
         try:
+            repo_path = Path(_repo_path())
             changed_files: list[Path] = []
             snapshot_prompt: object | None = None
             snapshot_diff = ""
             if self._snapshot_tracker:
+                all_files = list(repo_path.rglob("*.py"))
                 ctx = {
-                    "files": changed_files,
+                    "files": all_files,
                     "roi": self.baseline_tracker.current("roi"),
                     "sandbox_score": self.baseline_tracker.current("score"),
                     "prompt": None,
                     "diff": "",
                 }
-                self._snapshot_tracker.capture("before", ctx)
+                self._snapshot_tracker.capture("before", ctx, repo_path=repo_path)
 
             momentum = self.baseline_tracker.momentum
             if self.policy:
@@ -7893,8 +7895,8 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("workflow scoring failed")
             pass_rate = getattr(getattr(result, "roi", None), "success_rate", 0.0)
-            files = list(_repo_path.rglob("*.py"))
-            entropy = _si_metrics.compute_code_entropy(files)
+            repo_files = list(repo_path.rglob("*.py"))
+            entropy = _si_metrics.compute_code_entropy(repo_files)
             current_roi = roi_realish
             pass_rate_avg = self.baseline_tracker.get("pass_rate")
             roi_avg = self.roi_baseline.average()
@@ -7906,13 +7908,13 @@ class SelfImprovementEngine:
             delta: dict[str, float] = {}
             if self._snapshot_tracker:
                 ctx = {
-                    "files": changed_files,
+                    "files": repo_files,
                     "roi": self.baseline_tracker.current("roi"),
                     "sandbox_score": self.baseline_tracker.current("score"),
                     "prompt": str(snapshot_prompt) if snapshot_prompt is not None else None,
                     "diff": snapshot_diff,
                 }
-                self._snapshot_tracker.capture("after", ctx)
+                self._snapshot_tracker.capture("after", ctx, repo_path=repo_path)
                 delta = self._snapshot_tracker.delta()
                 self._last_delta = delta
                 self._record_snapshot_delta(

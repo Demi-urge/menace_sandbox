@@ -231,8 +231,16 @@ class SnapshotTracker:
         except Exception:  # pragma: no cover - best effort
             pass
 
-    def capture(self, stage: str, context: Mapping[str, Any]) -> Snapshot:
-        files = context.get("files", [])
+    def capture(
+        self,
+        stage: str,
+        context: Mapping[str, Any],
+        repo_path: str | Path | None = None,
+    ) -> Snapshot:
+        files = context.get("files")
+        if not files:
+            base = Path(repo_path) if repo_path else Path(SandboxSettings().sandbox_repo_path)
+            files = base.rglob("*.py")
         roi = float(context.get("roi", 0.0))
         score = float(context.get("sandbox_score", 0.0))
         prompt = context.get("prompt")
