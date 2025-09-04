@@ -146,15 +146,23 @@ def get_edge_case_profiles() -> list[dict[str, Any]]:
     none_val, empty_val = _ec_null_or_empty()
     profiles: list[dict[str, Any]] = []
     if _edge_case_enabled("malformed_json"):
-        profiles.append({"malformed.json": _ec_malformed_json()})
+        val = _ec_malformed_json()
+        profiles.append({"malformed.json": val})
+        profiles.append({"http://edge-case.test/malformed": val})
     if _edge_case_enabled("timeouts"):
-        profiles.append({"timeout": _ec_timeout()})
+        val = _ec_timeout()
+        profiles.append({"timeout": val})
+        profiles.append({"http://edge-case.test/timeout": val})
     if _edge_case_enabled("nulls"):
         profiles.append({"null.txt": none_val})
+        profiles.append({"http://edge-case.test/null": none_val})
     if _edge_case_enabled("empty_strings"):
         profiles.append({"empty.txt": empty_val})
+        profiles.append({"http://edge-case.test/empty": empty_val})
     if _edge_case_enabled("invalid_formats"):
-        profiles.append({"invalid.bin": _ec_invalid_format()})
+        val = _ec_invalid_format()
+        profiles.append({"invalid.bin": val})
+        profiles.append({"http://edge-case.test/invalid": val})
     return profiles
 
 

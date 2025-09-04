@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import json
+import urllib.parse
 from typing import Any
 
 
@@ -168,6 +169,9 @@ def _run_once(
             if edge_data:
                 for name, payload in edge_data.items():
                     try:
+                        scheme = urllib.parse.urlparse(name).scheme
+                        if scheme in {"http", "https"}:
+                            continue
                         dest = tmpdir / name
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         content = (
@@ -522,6 +526,9 @@ def run_tests(
                 if edge_cases:
                     for name, payload in edge_cases.items():
                         try:
+                            scheme = urllib.parse.urlparse(name).scheme
+                            if scheme in {"http", "https"}:
+                                continue
                             dest = repo_tmp / name
                             dest.parent.mkdir(parents=True, exist_ok=True)
                             content = (
