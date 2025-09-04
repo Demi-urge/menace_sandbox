@@ -23,7 +23,7 @@ _penalty_lock = FileLock(str(_penalty_path) + ".lock")
 
 
 def load_prompt_penalties() -> Dict[str, int]:
-    """Return mapping of prompt identifiers to regression counts."""
+    """Return mapping of prompt identifiers to downgrade counts."""
 
     with _penalty_lock:
         try:
@@ -36,7 +36,7 @@ def load_prompt_penalties() -> Dict[str, int]:
 
 
 def record_regression(prompt_id: str) -> int:
-    """Increment regression count for ``prompt_id`` and persist to disk."""
+    """Increment downgrade count for ``prompt_id`` and persist to disk."""
 
     with _penalty_lock:
         penalties = load_prompt_penalties()
@@ -44,6 +44,20 @@ def record_regression(prompt_id: str) -> int:
         _penalty_path.parent.mkdir(parents=True, exist_ok=True)
         _penalty_path.write_text(json.dumps(penalties), encoding="utf-8")
         return penalties[prompt_id]
+
+
+# Backwards compatible aliases for clarity ---------------------------------
+
+def load_prompt_downgrades() -> Dict[str, int]:
+    """Alias for :func:`load_prompt_penalties`."""
+
+    return load_prompt_penalties()
+
+
+def record_downgrade(prompt_id: str) -> int:
+    """Alias for :func:`record_regression`."""
+
+    return record_regression(prompt_id)
 
 
 def reset_penalty(prompt_id: str) -> None:
