@@ -42,6 +42,7 @@ from .state_snapshot import (
     delta,
     save_snapshot,
     load_snapshot,
+    save_checkpoint,
 )
 
 __all__ = [
@@ -79,4 +80,5 @@ __all__ = [
     "delta",
     "save_snapshot",
     "load_snapshot",
+    "save_checkpoint",
 ]
