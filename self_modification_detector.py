@@ -11,6 +11,7 @@ from typing import Dict, List
 
 import requests
 
+from .dynamic_path_router import resolve_path
 from .sandbox_settings import SandboxSettings
 
 
@@ -21,7 +22,7 @@ class SelfModificationDetector:
     """Monitor the codebase for unexpected modifications."""
 
     def __init__(self, settings: SandboxSettings, base_dir: str | Path | None = None) -> None:
-        self.base_dir = Path(base_dir or Path(__file__).resolve().parent)
+        self.base_dir = Path(base_dir) if base_dir is not None else resolve_path(".")
         self.interval_seconds = settings.self_mod_interval_seconds
         self.reference_path = self.base_dir / settings.self_mod_reference_path
         self.reference_url = settings.self_mod_reference_url
