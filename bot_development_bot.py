@@ -136,7 +136,7 @@ class RetryStrategy:
         raise RuntimeError("retry strategy exhausted")
 
 
-DEFAULT_TEMPLATE = Path(__file__).resolve().parent / "config" / "prompt_templates.v1.json"
+DEFAULT_TEMPLATE = Path(__file__).resolve().parent / "config" / "prompt_templates.v2.json"
 PROMPT_TEMPLATES_PATH = Path(os.getenv("PROMPT_TEMPLATES_PATH", DEFAULT_TEMPLATE))
 
 TEMPLATE_SECTION_KEY = "templates"

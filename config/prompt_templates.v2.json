@@ -1,10 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "templates": {
     "coding_standards": [
       "- Follow PEP8 style guidelines with 4 space indents and lines under 79 characters.",
       "- Provide Google style docstrings for modules, classes and functions.",
-      "- Include inline comments explaining complex logic."
+      "- Include inline comments explaining complex logic.",
+      "- All payment logic must import and use stripe_billing_router; failing to do so is a critical generation error. Raw Stripe keys, API calls, or checkout flows outside this router are forbidden."
     ],
     "repository_layout": [
       "- Place source code in {name}.py at the repository root.",
@@ -23,8 +24,7 @@
       "- Include at least one test per function and output coverage with 'pytest --cov'."
     ],
     "billing": [
-      "- All payment logic must import and use stripe_billing_router.",
-      "- Direct Stripe SDK calls or raw Stripe keys are forbidden."
+      "- All payment logic must import and use stripe_billing_router; failing to do so is a critical generation error. Raw Stripe keys, API calls, or checkout flows outside this router are forbidden."
     ]
   }
 }
