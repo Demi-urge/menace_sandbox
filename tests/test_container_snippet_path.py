@@ -7,9 +7,10 @@ import importlib.util
 import atexit
 
 
-sys.modules.setdefault(
-    "dynamic_path_router",
-    types.SimpleNamespace(resolve_path=lambda p: p, repo_root=lambda: "."),
+sys.modules["dynamic_path_router"] = types.SimpleNamespace(
+    resolve_path=lambda p: p,
+    repo_root=lambda: ".",
+    path_for_prompt=lambda name: name,
 )
 sys.modules.setdefault(
     "metrics_exporter",
