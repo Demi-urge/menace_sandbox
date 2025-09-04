@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from filelock import FileLock
+from dynamic_path_router import resolve_path
 
 try:  # pragma: no cover - optional dependency
     from llm_interface import Prompt  # type: ignore
@@ -22,7 +23,7 @@ except Exception:  # pragma: no cover - llm_interface unavailable
         ) from exc
 
 
-_ROOT = Path(__file__).resolve().parent
+_ROOT = resolve_path(".")
 
 
 @dataclass
