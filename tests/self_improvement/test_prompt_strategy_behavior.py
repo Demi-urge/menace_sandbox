@@ -22,6 +22,7 @@ sys.modules.setdefault("sandbox_runner.bootstrap", boot)
 prompt_memory = importlib.import_module(
     "menace_sandbox.self_improvement.prompt_memory"
 )
+import menace_sandbox.prompt_optimizer as prompt_optimizer  # noqa: E402
 PromptStrategyManager = importlib.import_module(
     "menace_sandbox.self_improvement.prompt_strategy_manager"
 ).PromptStrategyManager
@@ -36,9 +37,9 @@ def strategy_templates():
 @pytest.fixture
 def mock_roi_stats(strategy_templates):
     return {
-        "alpha": {"avg_roi": 1.0, "trials": 1},
-        "beta": {"avg_roi": 5.0, "trials": 1},
-        "gamma": {"avg_roi": 2.0, "trials": 1},
+        "alpha": {"score": 1.0},
+        "beta": {"score": 5.0},
+        "gamma": {"score": 2.0},
     }
 
 
@@ -97,7 +98,7 @@ def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats, mon
         def select(self, strategies, threshold=3, multiplier=0.5):
             eligible = []
             penalised = []
-            stats = prompt_memory.load_strategy_roi_stats()
+            stats = prompt_optimizer.load_strategy_stats()
             for strat in strategies:
                 if strat in self.deprioritized_strategies:
                     continue
@@ -105,9 +106,9 @@ def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats, mon
                 weight = multiplier if threshold and count >= threshold else 1.0
                 rs = stats.get(str(strat))
                 if rs:
-                    roi_factor = rs.get("avg_roi", 0.0)
-                    roi_factor = roi_factor if roi_factor > 0 else 0.1
-                    weight *= roi_factor
+                    score = rs.get("score", 0.0)
+                    score = score if score > 0 else 0.1
+                    weight *= score
                 target = penalised if threshold and count >= threshold else eligible
                 target.append((strat, weight))
             pool = eligible or penalised
@@ -120,7 +121,7 @@ def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats, mon
             return best
 
     monkeypatch.setattr(
-        prompt_memory, "load_strategy_roi_stats", lambda: mock_roi_stats
+        prompt_optimizer, "load_strategy_stats", lambda: mock_roi_stats
     )
     eng = MiniEngine()
     selected = eng.select(strategy_templates)

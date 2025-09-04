@@ -1,6 +1,7 @@
 import types
 import sys
 from pathlib import Path
+import json
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -19,8 +20,7 @@ pkg.__path__ = [str(ROOT / "self_improvement")]
 sys.modules["menace_sandbox.self_improvement"] = pkg
 
 from menace_sandbox.sandbox_settings import SandboxSettings  # noqa: E402
-from menace_sandbox.self_improvement import prompt_memory  # noqa: E402
-from filelock import FileLock  # noqa: E402
+import menace_sandbox.prompt_optimizer as prompt_optimizer  # noqa: E402
 from dynamic_path_router import resolve_path  # noqa: E402
 
 
@@ -34,7 +34,7 @@ class MiniEngine:
         threshold = settings.prompt_failure_threshold
         eligible = []
         penalised = []
-        stats = prompt_memory.load_strategy_roi_stats()
+        stats = prompt_optimizer.load_strategy_stats()
         for strat in strategies:
             if strat in self.deprioritized_strategies:
                 continue
@@ -46,9 +46,9 @@ class MiniEngine:
             )
             rs = stats.get(str(strat))
             if rs:
-                roi_factor = rs.get("avg_roi", 0.0)
-                roi_factor = roi_factor if roi_factor > 0 else 0.1
-                weight *= roi_factor
+                score = rs.get("score", 0.0)
+                score = score if score > 0 else 0.1
+                weight *= score
             target = penalised if threshold and count >= threshold else eligible
             target.append((strat, weight))
         pool = eligible or penalised
@@ -63,14 +63,29 @@ class MiniEngine:
 
 def test_roi_weighted_selection(tmp_path, monkeypatch):
     path = Path(resolve_path(str(tmp_path / "stats.json")))
-    monkeypatch.setattr(prompt_memory, "_strategy_stats_path", path)
+    data = {
+        "s1": {
+            "success": 1,
+            "total": 1,
+            "roi_sum": 2.0,
+            "weighted_roi_sum": 2.0,
+            "weight_sum": 1.0,
+        },
+        "s2": {
+            "success": 1,
+            "total": 1,
+            "roi_sum": 0.5,
+            "weighted_roi_sum": 0.5,
+            "weight_sum": 1.0,
+        },
+    }
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr(prompt_optimizer, "DEFAULT_STRATEGY_PATH", path)
+    stats = prompt_optimizer.load_strategy_stats()
+    assert stats["s1"]["weighted_roi"] > 1.9
     monkeypatch.setattr(
-        prompt_memory, "_strategy_lock", FileLock(str(path) + ".lock")
+        prompt_optimizer, "load_strategy_stats", lambda p=None: stats
     )
-    prompt_memory.update_strategy_roi("s1", 2.0)
-    prompt_memory.update_strategy_roi("s2", 0.5)
-    stats = prompt_memory.load_strategy_roi_stats()
-    assert stats["s1"]["avg_roi"] > 1.9
     eng = MiniEngine()
     assert eng._select_prompt_strategy(["s1", "s2"]) == "s1"
     eng2 = MiniEngine()

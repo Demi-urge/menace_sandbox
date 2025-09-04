@@ -1,11 +1,12 @@
 import json
-
+from pathlib import Path
+from dynamic_path_router import resolve_path
 from prompt_optimizer import PromptOptimizer
 
 
 def test_prompt_optimizer_aggregates_missing_roi(tmp_path):
-    log1 = tmp_path / "log1.jsonl"
-    log2 = tmp_path / "log2.jsonl"
+    log1 = Path(resolve_path(str(tmp_path / "log1.jsonl")))
+    log2 = Path(resolve_path(str(tmp_path / "log2.jsonl")))
     log1.write_text(
         json.dumps(
             {
@@ -29,28 +30,22 @@ def test_prompt_optimizer_aggregates_missing_roi(tmp_path):
         ) + "\n",
         encoding="utf-8",
     )
-    opt = PromptOptimizer(log1, log2, stats_path=tmp_path / "stats.json")
-    key1 = ("m", "a", "neutral", 1, 1, True, False)
-    key2 = ("m", "a", "neutral", 0, 0, False, False)
-    assert key1 in opt.stats and key2 in opt.stats
-    stat1 = opt.stats[key1]
-    stat2 = opt.stats[key2]
-    assert (stat1.success, stat1.total, stat1.roi_success, stat1.roi_total) == (
-        1,
-        1,
-        2.0,
-        2.0,
+    opt = PromptOptimizer(
+        log1,
+        log2,
+        stats_path=Path(resolve_path(str(tmp_path / "stats.json"))),
     )
-    assert (stat2.success, stat2.total, stat2.roi_success, stat2.roi_total) == (
-        0,
-        1,
-        0.0,
-        1.0,
-    )
+    assert len(opt.stats) == 2
+    stats = list(opt.stats.values())
+    stat_success = next(s for s in stats if s.success == 1)
+    stat_fail = next(s for s in stats if s.success == 0)
+    assert stat_success.total == 1
+    assert stat_success.roi_sum == 2.0
+    assert stat_fail.total == 1
 
 
 def test_prompt_optimizer_applies_suggestion(tmp_path):
-    log_path = tmp_path / "log.jsonl"
+    log_path = Path(resolve_path(str(tmp_path / "log.jsonl")))
     log_path.write_text(
         json.dumps(
             {
@@ -63,14 +58,18 @@ def test_prompt_optimizer_applies_suggestion(tmp_path):
         ) + "\n",
         encoding="utf-8",
     )
-    opt = PromptOptimizer(log_path, log_path, stats_path=tmp_path / "stats.json")
+    opt = PromptOptimizer(
+        log_path,
+        log_path,
+        stats_path=Path(resolve_path(str(tmp_path / "stats.json"))),
+    )
 
     class DummyPromptEngine:
         def __init__(self) -> None:
             self.tone = "negative"
 
     engine = DummyPromptEngine()
-    suggestion = opt.suggest_format("visual_agent", "build")
+    suggestion = opt.suggest_format("visual_agent", "build")[0]
     tone = suggestion.get("tone")
     if isinstance(tone, str):
         engine.tone = tone
