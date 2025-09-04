@@ -165,7 +165,7 @@ class AutoReinvestmentBot:
 
     def _execute_spending(self, amount: float) -> str:
         try:
-            resp = stripe_billing_router.charge(
+            resp = stripe_billing_router.init_charge(
                 self.bot_id, amount, description="reinvestment"
             )
             status = resp.get("status")
