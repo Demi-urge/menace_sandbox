@@ -104,8 +104,14 @@ def verify_project_dependencies(path: Path = PYPROJECT_PATH) -> list[str]:
     return verify_modules(modules)
 
 
-def verify_stripe_router() -> None:
-    """Import ``stripe_billing_router`` and ensure keys and routes exist."""
+def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None:
+    """Import ``stripe_billing_router`` and ensure keys and routes exist.
+
+    ``mandatory_bot_ids`` allows callers to require that specific bots have
+    valid billing routes.  Each identifier in the iterable is passed to
+    ``stripe_billing_router._resolve_route`` and a ``RuntimeError`` is raised if
+    any lookup fails.
+    """
     import importlib
     import sys
 
@@ -160,6 +166,23 @@ def verify_stripe_router() -> None:
         raise RuntimeError(
             f"Missing billing routes for bots: {', '.join(sorted(missing))}"
         )
+
+    required = list(mandatory_bot_ids or [])
+    if required:
+        resolver = getattr(sbr, "_resolve_route", None)
+        if resolver is None:
+            raise RuntimeError("stripe_billing_router is missing _resolve_route")
+        failures: list[str] = []
+        for bot_id in required:
+            try:
+                resolver(bot_id)
+            except Exception:
+                failures.append(bot_id)
+        if failures:
+            raise RuntimeError(
+                "Missing billing routes for required bots: "
+                + ", ".join(sorted(failures))
+            )
 
 
 def validate_config(vars: Iterable[str] = REQUIRED_VARS) -> list[str]:
