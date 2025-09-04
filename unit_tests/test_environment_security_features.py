@@ -5,10 +5,11 @@ import socket
 import sys
 
 import pytest
+from dynamic_path_router import resolve_path
 
 spec = importlib.util.spec_from_file_location(
     "sandbox_runner.environment",
-    pathlib.Path(__file__).resolve().parents[1] / "sandbox_runner" / "environment.py",
+    resolve_path("sandbox_runner/environment.py"),
 )
 env = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -17,7 +18,7 @@ spec.loader.exec_module(env)
 
 
 def test_patched_import_records_relative_path(tmp_path, monkeypatch):
-    module_path = tmp_path / "foo.py"
+    module_path = tmp_path / "foo.py"  # path-ignore
     module_path.write_text("x = 1\n")
     recorded: list[str] = []
     monkeypatch.setattr(env, "record_module_usage", recorded.append, raising=False)
@@ -26,7 +27,7 @@ def test_patched_import_records_relative_path(tmp_path, monkeypatch):
     try:
         with env._patched_imports():
             importlib.import_module("foo")
-        assert recorded == ["foo.py"]
+        assert recorded == ["foo.py"]  # path-ignore
     finally:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("foo", None)

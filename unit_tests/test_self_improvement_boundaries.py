@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from dynamic_path_router import path_for_prompt
 
 PKG_DIR = Path(__file__).resolve().parents[1] / "self_improvement"
 
@@ -45,7 +46,7 @@ def test_update_alignment_baseline_delegates():
     metrics_stub._update_alignment_baseline = fake_update
     module = load_module(
         "self_improvement.roi_tracking",
-        "roi_tracking.py",
+        path_for_prompt("self_improvement/roi_tracking.py"),
         {"self_improvement.metrics": metrics_stub},
     )
     assert module.update_alignment_baseline('cfg') == 'ok'
@@ -75,7 +76,7 @@ def test_generate_patch_delegates():
 
     module = load_module(
         "menace_sandbox.self_improvement.patch_application",
-        "patch_application.py",
+        path_for_prompt("self_improvement/patch_application.py"),
         {
             "menace_sandbox.self_improvement.patch_generation": patch_stub,
             "menace_sandbox.self_improvement.utils": utils_stub,
@@ -106,7 +107,7 @@ def test_orphan_handlers_delegate():
 
     module = load_module(
         "self_improvement.orphan_handling",
-        "orphan_handling.py",
+        path_for_prompt("self_improvement/orphan_handling.py"),
         {
             "self_improvement.utils": utils_stub,
             "sandbox_settings": ss_stub,

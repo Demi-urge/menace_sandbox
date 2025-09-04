@@ -16,7 +16,7 @@ def test_token_counting_respects_limit(tmp_path):
         '    y = 2\n'
         '    return y\n'
     )
-    path = tmp_path / 'sample.py'
+    path = tmp_path / 'sample.py'  # path-ignore
     path.write_text(code)
     enc = tiktoken.get_encoding('cl100k_base')
     limit = 20
@@ -35,7 +35,7 @@ def test_ast_boundary_accuracy(tmp_path):
         '    y = 2\n'
         '    return y\n'
     )
-    path = tmp_path / 'code.py'
+    path = tmp_path / 'code.py'  # path-ignore
     path.write_text(code)
     chunks = chunk_file(path, 20)
     assert (chunks[0].start_line, chunks[0].end_line) == (1, 3)
