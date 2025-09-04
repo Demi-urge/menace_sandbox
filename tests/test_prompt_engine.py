@@ -10,12 +10,30 @@ import tempfile
 # Stub heavy dependencies before importing the trainer
 sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=object))
 sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=object))
+sys.modules.setdefault("menace_sandbox", types.SimpleNamespace())
+sys.modules.setdefault("prompt_memory_trainer", types.SimpleNamespace(PromptMemoryTrainer=object))
 
-from prompt_engine import PromptEngine, DEFAULT_TEMPLATE  # noqa: E402
-from prompt_memory_trainer import PromptMemoryTrainer  # noqa: E402
-from vector_service.retriever import FallbackResult  # noqa: E402
-from vector_service.roi_tags import RoiTag  # noqa: E402
-from failure_localization import TargetRegion  # noqa: E402
+from prompt_engine import (
+    PromptEngine,
+    DEFAULT_TEMPLATE,
+    diff_within_target_region,
+)  # noqa: E402
+from self_improvement.target_region import TargetRegion  # noqa: E402
+
+
+class FallbackResult:
+    def __init__(self, reason: str, patches: List[Dict[str, Any]], confidence: float = 0.0):
+        self.reason = reason
+        self.confidence = confidence
+
+    def __iter__(self):
+        return iter([])
+
+
+class RoiTag:
+    HIGH_ROI = types.SimpleNamespace(value="high-ROI")
+    BUG_INTRODUCED = types.SimpleNamespace(value="bug-introduced")
+    SUCCESS = types.SimpleNamespace(value="success")
 
 
 class DummyRetriever:
@@ -401,25 +419,25 @@ def test_build_prompt_trims_final_text():
     assert str(prompt).endswith("...")
 
 
-def test_prompt_engine_includes_target_region_metadata():
+def test_prompt_engine_includes_target_region_metadata(tmp_path):
     records = [_record(0.9, summary="ok", tests_passed=True)]
     engine = PromptEngine(
         retriever=DummyRetriever(records),
         patch_retriever=DummyRetriever(records),
         confidence_threshold=-1.0,
     )
-    context = "\n".join(
-        [
-            "# Region func lines 3-5",
-            "def func(a, b):",
-            "# start",
-            "    pass",
-            "# end",
-        ]
-    )
-    region = TargetRegion(path="mod.py", start_line=3, end_line=5, func_name="func")
+    lines = [
+        "# Region func lines 3-5",
+        "def func(a, b):",
+        "# start",
+        "    pass",
+        "# end",
+    ]
+    context = "\n".join(lines)
+    mod_path = tmp_path / "mod.py"
+    mod_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    region = TargetRegion(path=str(mod_path), start_line=3, end_line=5, func_name="func")
     region.func_signature = "def func(a, b):"
-    region.original_lines = ["    pass"]
     prompt = engine.build_prompt("desc", context=context, target_region=region)
     text = str(prompt)
     assert text.splitlines()[0].startswith(
@@ -428,4 +446,32 @@ def test_prompt_engine_includes_target_region_metadata():
     assert "# start" in text and "# end" in text
     assert prompt.metadata["target_region"]["func_name"] == "func"
     assert prompt.metadata["target_region"]["signature"] == "def func(a, b):"
-    assert prompt.metadata["target_region"]["original_lines"] == ["    pass"]
+    assert prompt.metadata["target_region"]["original_lines"] == [
+        "# start",
+        "    pass",
+        "# end",
+    ]
+    assert (
+        prompt.metadata["target_region"]["original_snippet"]
+        == "# start\n    pass\n# end"
+    )
+
+
+def test_diff_within_target_region_out_of_bounds(tmp_path):
+    lines = ["one", "two", "three", "four"]
+    path = tmp_path / "mod.py"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    region = TargetRegion(path=str(path), start_line=2, end_line=3, func_name="f")
+    modified = lines[:]
+    modified[0] = "ONE"  # change outside region
+    assert not diff_within_target_region(lines, modified, region)
+
+
+def test_diff_within_target_region_within_bounds(tmp_path):
+    lines = ["one", "two", "three", "four"]
+    path = tmp_path / "mod.py"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    region = TargetRegion(path=str(path), start_line=2, end_line=3, func_name="f")
+    modified = lines[:]
+    modified[1] = "TWO"  # change within region
+    assert diff_within_target_region(lines, modified, region)

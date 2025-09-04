@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 import json
 import logging
 import os
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -104,6 +105,24 @@ except Exception:  # pragma: no cover - allow running tests without service laye
         @classmethod
         def validate(cls, value: Any) -> "RoiTag":
             return cls.SUCCESS
+
+
+def diff_within_target_region(
+    original: List[str], modified: List[str], region: TargetRegion
+) -> bool:
+    """Return ``True`` if changes between ``original`` and ``modified`` stay inside ``region``.
+
+    ``original`` and ``modified`` are lists of file lines.  The check iterates
+    over both sequences in lock step and ensures that any changed line falls
+    within the ``TargetRegion`` boundaries.
+    """
+
+    for idx, (a, b) in enumerate(zip_longest(original, modified)):
+        if (a or "") != (b or ""):
+            line_no = idx + 1
+            if line_no < region.start_line or line_no > region.end_line:
+                return False
+    return True
 
 
 @dataclass
@@ -789,6 +808,7 @@ class PromptEngine:
         snippet_lines = self.build_snippets(ranked)
 
         path_hint = None
+        original_lines: List[str] = []
         if target_region is not None:
             path_hint = (
                 getattr(target_region, "path", None)
@@ -802,6 +822,16 @@ class PromptEngine:
             if path_hint:
                 instr += f" in {path_hint}"
             instr += " unless surrounding logic is causally required."
+
+            original_lines = list(getattr(target_region, "original_lines", []) or [])
+            if not original_lines and path_hint and Path(path_hint).exists():
+                try:
+                    file_lines = Path(path_hint).read_text(encoding="utf-8").splitlines()
+                    start = max(target_region.start_line - 1, 0)
+                    end = target_region.end_line
+                    original_lines = file_lines[start:end]
+                except Exception:
+                    original_lines = []
         else:
             instr = (
                 "Modify only the provided lines unless surrounding logic is causally required."
@@ -854,7 +884,8 @@ class PromptEngine:
                 "signature": getattr(
                     target_region, "func_signature", getattr(target_region, "signature", "")
                 ),
-                "original_lines": getattr(target_region, "original_lines", []),
+                "original_lines": original_lines,
+                "original_snippet": "\n".join(original_lines),
             }
             meta["target_region"] = region_meta
             try:
@@ -1223,4 +1254,9 @@ def build_prompt(
     )
 
 
-__all__ = ["PromptEngine", "build_prompt", "DEFAULT_TEMPLATE"]
+__all__ = [
+    "PromptEngine",
+    "build_prompt",
+    "DEFAULT_TEMPLATE",
+    "diff_within_target_region",
+]
