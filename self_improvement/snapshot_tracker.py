@@ -7,7 +7,7 @@ import json
 import time
 import shutil
 from pathlib import Path
-from typing import Dict, Sequence
+from typing import Any, Dict, Mapping, Sequence
 
 from .baseline_tracker import TRACKER as BASELINE_TRACKER
 from .metrics import collect_snapshot_metrics, compute_call_graph_complexity
@@ -155,6 +155,39 @@ def compute_delta(prev: Snapshot, curr: Snapshot) -> Dict[str, float]:
 
 # ---------------------------------------------------------------------------
 
+
+class SnapshotTracker:
+    """Maintain before/after snapshots and expose metric deltas."""
+
+    def __init__(self) -> None:
+        self._snaps: dict[str, Snapshot] = {}
+        self._context: dict[str, Mapping[str, Any]] = {}
+
+    def capture(self, stage: str, context: Mapping[str, Any]) -> Snapshot:
+        files = context.get("files", [])
+        roi = float(context.get("roi", 0.0))
+        score = float(context.get("sandbox_score", 0.0))
+        prompt = context.get("prompt")
+        diff = context.get("diff")
+        snap = capture(
+            stage=stage,
+            files=files,
+            roi=roi,
+            sandbox_score=score,
+            prompt=prompt if isinstance(prompt, str) else None,
+            diff=diff if isinstance(diff, str) else None,
+        )
+        self._snaps[stage] = snap
+        self._context[stage] = dict(context)
+        return snap
+
+    def delta(self) -> Dict[str, float]:
+        before = self._snaps.get("before") or self._snaps.get("pre")
+        after = self._snaps.get("after") or self._snaps.get("post")
+        if before and after:
+            return compute_delta(before, after)
+        return {}
+
 def save_checkpoint(module_path: Path | str, cycle_id: str) -> Path:
     """Copy *module_path* to a checkpoint named after ``cycle_id``.
 
@@ -175,6 +208,7 @@ def save_checkpoint(module_path: Path | str, cycle_id: str) -> Path:
 
 __all__ = [
     "Snapshot",
+    "SnapshotTracker",
     "capture",
     "compute_delta",
     "save_checkpoint",

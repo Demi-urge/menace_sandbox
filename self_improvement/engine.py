@@ -163,6 +163,7 @@ from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt, load_prompt_penalties
 from .state_snapshot import capture_snapshot, delta as snapshot_delta
+from .snapshot_tracker import SnapshotTracker
 from . import snapshot_tracker
 
 
@@ -892,6 +893,8 @@ class SelfImprovementEngine:
         self.warning_summary: list[dict[str, Any]] = []
         self.strategy_confidence: Dict[str, int] = {}
         self.deprioritized_strategies: set[str] = set()
+        self._snapshot_tracker = SnapshotTracker()
+        self._last_delta: dict[str, float] | None = None
         self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
         self._load_synergy_weights()
@@ -6406,8 +6409,8 @@ class SelfImprovementEngine:
         prompt: object,
         diff: str,
         delta: dict[str, float],
-        files: Sequence[Path],
-        cycle_id: str,
+        files: Sequence[Path] | None = None,
+        cycle_id: str = "",
     ) -> None:
         """Persist *delta* and log the outcome, updating confidence on success."""
 
@@ -6416,10 +6419,27 @@ class SelfImprovementEngine:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(delta) + "\n")
 
+        try:
+            import sqlite3, time
+
+            db_path = _data_dir() / "snapshots" / "deltas.db"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS deltas (ts REAL, data TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO deltas (ts, data) VALUES (?, ?)",
+                (time.time(), json.dumps(delta)),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
         success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
         log_prompt_attempt(prompt, success=success, exec_result={"diff": diff}, roi_meta=delta)
         if success:
-            for f in files:
+            for f in files or []:
                 try:
                     snapshot_tracker.save_checkpoint(f, cycle_id)
                 except Exception:
@@ -6444,8 +6464,13 @@ class SelfImprovementEngine:
                 if isinstance(metadata, dict):
                     strategy = metadata.get("strategy") or metadata.get("prompt_id")
             if strategy:
-                count = snapshot_tracker.record_downgrade(str(strategy))
-                if count >= SandboxSettings().prompt_failure_threshold:
+                try:
+                    count = snapshot_tracker.record_downgrade(str(strategy))
+                    threshold = SandboxSettings().prompt_failure_threshold
+                except Exception:
+                    count = 0
+                    threshold = 0
+                if threshold and count >= threshold:
                     self.deprioritized_strategies.add(str(strategy))
 
     def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
@@ -6488,14 +6513,17 @@ class SelfImprovementEngine:
         self._cycle_target_region = target_region
         try:
             changed_files: list[Path] = []
-            pre_snapshot = snapshot_tracker.capture(
-                stage="before",
-                files=changed_files,
-                roi=self.baseline_tracker.current("roi"),
-                sandbox_score=self.baseline_tracker.current("score"),
-            )
             snapshot_prompt: object | None = None
             snapshot_diff = ""
+            if self._snapshot_tracker:
+                ctx = {
+                    "files": changed_files,
+                    "roi": self.baseline_tracker.current("roi"),
+                    "sandbox_score": self.baseline_tracker.current("score"),
+                    "prompt": None,
+                    "diff": "",
+                }
+                self._snapshot_tracker.capture("before", ctx)
 
             momentum = self.baseline_tracker.momentum
             if self.policy:
@@ -7865,16 +7893,21 @@ class SelfImprovementEngine:
             self.baseline_tracker.update(
                 roi=current_roi, pass_rate=pass_rate, entropy=entropy
             )
-            after_snapshot = snapshot_tracker.capture(
-                stage="after",
-                files=changed_files,
-                roi=self.baseline_tracker.current("roi"),
-                sandbox_score=self.baseline_tracker.current("score"),
-                prompt=str(snapshot_prompt) if snapshot_prompt is not None else None,
-                diff=snapshot_diff,
-            )
-            delta = snapshot_tracker.compute_delta(pre_snapshot, after_snapshot)
-            self._record_snapshot_delta(snapshot_prompt, snapshot_diff, delta, changed_files, cid)
+            delta: dict[str, float] = {}
+            if self._snapshot_tracker:
+                ctx = {
+                    "files": changed_files,
+                    "roi": self.baseline_tracker.current("roi"),
+                    "sandbox_score": self.baseline_tracker.current("score"),
+                    "prompt": str(snapshot_prompt) if snapshot_prompt is not None else None,
+                    "diff": snapshot_diff,
+                }
+                self._snapshot_tracker.capture("after", ctx)
+                delta = self._snapshot_tracker.delta()
+                self._last_delta = delta
+                self._record_snapshot_delta(
+                    snapshot_prompt, snapshot_diff, delta, changed_files, cid
+                )
             self._check_momentum()
             self._check_delta_score()
             self._check_roi_stagnation()
