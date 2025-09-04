@@ -519,7 +519,10 @@ class MenaceOrchestrator:
                                     shared_db_path=data_dir / "intent.db",
                                 )
                                 self.intent_clusterer = clusterer
-                            paths = {repo / f"{m}.py" for m in added_modules}
+                            paths = {
+                                Path(resolve_path(repo / f"{m}.py"))
+                                for m in added_modules
+                            }
                             clusterer.index_modules(paths)
                         except Exception:
                             self.logger.exception("failed to index intent modules")

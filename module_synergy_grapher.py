@@ -461,7 +461,7 @@ class ModuleSynergyGrapher:
         updated = False
 
         def _worker(mod: str) -> tuple[str, dict[str, object] | None, dict[str, object] | None, bool]:
-            file = root / f"{mod}.py"
+            file = Path(resolve_path(root / f"{mod}.py"))
             if not file.exists():
                 return mod, None, None, False
             mtime = file.stat().st_mtime

@@ -326,7 +326,7 @@ class ModuleIOAnalyzer:
 def inspect_module(module_name: str) -> "ModuleSignature":
     """Return :class:`ModuleSignature` information for ``module_name``."""
 
-    path = Path(module_name.replace(".", "/")).with_suffix(".py")
+    path = resolve_path(Path(module_name.replace(".", "/")).with_suffix(".py"))
     if ModuleSignature is None or get_io_signature is None:
         return ModuleSignature(name=path.stem)
     analyzer = ModuleIOAnalyzer()
@@ -586,7 +586,7 @@ class WorkflowSynthesizer:
         for mod in modules:
             req: Set[str] = set()
             opt: Set[str] = set()
-            path = Path(mod.name.replace(".", "/")).with_suffix(".py")
+            path = resolve_path(Path(mod.name.replace(".", "/")).with_suffix(".py"))
             try:
                 source = path.read_text(encoding="utf-8")
                 tree = ast.parse(source, filename=str(path))
@@ -861,7 +861,7 @@ class WorkflowSynthesizer:
         analyzer = ModuleIOAnalyzer()
         signatures: List[ModuleSignature] = []
         for mod in sorted(modules):
-            path = Path(mod.replace(".", "/")).with_suffix(".py")
+            path = resolve_path(Path(mod.replace(".", "/")).with_suffix(".py"))
             sig = analyzer.analyze(path)
             sig.name = mod
             if overrides and mod in overrides:
@@ -902,7 +902,7 @@ class WorkflowSynthesizer:
             start_module = start.get("module") or start.get("start")
             problem = start.get("problem")
         else:
-            module_path = Path(start.replace(".", "/")).with_suffix(".py")
+            module_path = resolve_path(Path(start.replace(".", "/")).with_suffix(".py"))
             if module_path.exists():
                 start_module, problem = start, None
             else:
@@ -974,7 +974,7 @@ class WorkflowSynthesizer:
         analyzer = ModuleIOAnalyzer()
         signatures: List[ModuleSignature] = []
         for mod in sorted(modules):
-            path = Path(mod.replace(".", "/")).with_suffix(".py")
+            path = resolve_path(Path(mod.replace(".", "/")).with_suffix(".py"))
             sig = analyzer.analyze(path)
             sig.name = mod
             signatures.append(sig)

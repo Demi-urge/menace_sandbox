@@ -7,6 +7,11 @@ import os
 import subprocess
 from typing import Iterable, List, Optional, Sequence
 
+try:  # pragma: no cover - support package and flat layouts
+    from ..dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 
 def run_script(
     script: str, env: Optional[dict] = None, args: Optional[List[str]] = None
@@ -61,12 +66,13 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     parser.add_argument("--env", action="append", default=[], help="KEY=VALUE")
     parser.add_argument("--parallel", action="store_true", help="Run scripts in parallel")
     args = parser.parse_args(list(argv) if argv is not None else None)
+    scripts = [str(resolve_path(s)) for s in args.scripts]
 
     env = dict(item.split("=", 1) for item in args.env)
     if args.parallel:
-        run_scripts(args.scripts, env=env, parallel=True)
+        run_scripts(scripts, env=env, parallel=True)
     else:
-        run_scripts(args.scripts, env=env)
+        run_scripts(scripts, env=env)
 
 
 __all__ = ["run_script", "run_scripts", "main"]
