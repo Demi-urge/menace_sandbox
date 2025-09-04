@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import logging
+import re
 import subprocess
 import sys
 import tempfile
@@ -54,6 +55,26 @@ def _python_bin(venv: Path) -> Path:
     if sys.platform == "win32":  # pragma: no cover - Windows not used in tests
         return venv / "Scripts" / "python.exe"
     return venv / "bin" / "python"
+
+
+_FRAME_RE = re.compile(r'File "([^"]+)", line (\d+), in (.+)')
+_FRAME_RE_ALT = re.compile(r'([^:\s]+\.py):(\d+): in (.+)')
+
+
+def _extract_frames(trace: str) -> list[dict[str, str]]:
+    """Parse ``trace`` and return structured frame information."""
+
+    frames: list[dict[str, str]] = []
+    for line in trace.splitlines():
+        line = line.strip()
+        m = _FRAME_RE.match(line)
+        if m:
+            frames.append({"file": m.group(1), "line": m.group(2), "function": m.group(3)})
+            continue
+        m = _FRAME_RE_ALT.match(line)
+        if m:
+            frames.append({"file": m.group(1), "line": m.group(2), "function": m.group(3)})
+    return frames
 
 
 def run_tests(
@@ -143,7 +164,7 @@ def run_tests(
                     logger.error(msg.strip())
                     raise RuntimeError(msg)
 
-            pytest_cmd = [str(python), "-m", "pytest", "-q"]
+            pytest_cmd = [str(python), "-m", "pytest", "-q", "--tb=short"]
             if rel_paths:
                 try:
                     rel_paths = [p.relative_to(repo_path) for p in rel_paths]
@@ -171,7 +192,7 @@ def run_tests(
                 text=True,
             )
         else:  # backend == "docker"
-            pytest_cmd = ["python", "-m", "pytest", "-q"]
+            pytest_cmd = ["python", "-m", "pytest", "-q", "--tb=short"]
             if rel_paths:
                 try:
                     rel_paths = [p.relative_to(repo_path) for p in rel_paths]
@@ -220,6 +241,13 @@ def run_tests(
         failure = None
         if tests.returncode != 0:
             failure = ErrorParser.parse(tests.stdout + tests.stderr)
+            frames = _extract_frames(failure.get("trace", ""))
+            if frames:
+                failure["frames"] = frames
+                last = frames[-1]
+                failure["file"] = last["file"]
+                failure["line"] = last["line"]
+                failure["function"] = last["function"]
         return TestHarnessResult(
             success=tests.returncode == 0,
             stdout="".join(stdout_parts),

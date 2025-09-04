@@ -5,6 +5,8 @@ import asyncio
 import json
 import yaml
 import logging
+import subprocess
+import textwrap
 from pathlib import Path
 import pytest
 
@@ -26,6 +28,7 @@ if "pyroute2" not in sys.modules:
     sys.modules["pyroute2"] = pr2
 sys.modules.pop("sandbox_runner", None)
 import sandbox_runner.environment as env  # noqa: E402
+from menace.sandbox_runner import test_harness as th  # noqa: E402
 
 
 def test_parse_failure_modes():
@@ -534,3 +537,36 @@ def test_execute_in_container_logs_created(monkeypatch):
     env._cleanup_pools()
     assert not os.path.exists(res["stdout_log"])
     assert not os.path.exists(res["stderr_log"])
+
+
+def test_harness_failure_frames(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("")
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    tests_dir.joinpath("test_mod.py").write_text(
+        textwrap.dedent(
+            """
+            def helper():
+                assert False
+
+            def test_fail():
+                helper()
+            """
+        )
+    )
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+
+    monkeypatch.setattr(th, "_python_bin", lambda v: Path(sys.executable))
+    result = th.run_tests(repo)
+    assert not result.success
+    assert result.failure is not None
+    assert result.failure["function"] == "helper"
+    assert result.failure["line"] == "3"
+    assert result.failure["file"].endswith("test_mod.py")
+    frames = result.failure["frames"]
+    assert frames[-1]["function"] == "helper"
+    assert frames[-2]["function"] == "test_fail"
