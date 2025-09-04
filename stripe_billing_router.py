@@ -20,6 +20,7 @@ from typing import Any, Mapping, Optional
 import yaml
 from dynamic_path_router import resolve_path
 
+from billing import billing_logger
 from vault_secret_provider import VaultSecretProvider
 
 try:  # optional dependency
@@ -347,67 +348,120 @@ def charge(
     customer = route.get("customer_id")
     description = description or route.get("product_id", "")
     currency = route.get("currency", "usd")
-
-    amt: float | None = None
-    if amount is not None:
-        try:
-            amt = float(amount)
-        except (TypeError, ValueError):
-            logger.error(
-                "amount must be a positive, non-zero float for bot '%s'", bot_id
-            )
-            raise ValueError("amount must be a positive, non-zero float")
-        if amt <= 0:
-            logger.error(
-                "amount must be a positive, non-zero float for bot '%s'", bot_id
-            )
-            raise ValueError("amount must be a positive, non-zero float")
+    user_email = route.get("user_email")
 
     timestamp_ms = int(time.time() * 1000)
+    event: dict[str, Any] | None = None
+    amt: float | None = None
 
-    if price:
-        if not customer:
+    try:
+        if amount is not None:
+            try:
+                amt = float(amount)
+            except (TypeError, ValueError):
+                logger.error(
+                    "amount must be a positive, non-zero float for bot '%s'", bot_id
+                )
+                raise ValueError("amount must be a positive, non-zero float")
+            if amt <= 0:
+                logger.error(
+                    "amount must be a positive, non-zero float for bot '%s'", bot_id
+                )
+                raise ValueError("amount must be a positive, non-zero float")
+
+        if price:
+            if not customer:
+                logger.error(
+                    "customer_id required for price based billing for bot '%s'", bot_id
+                )
+                raise RuntimeError("customer_id required for price based billing")
+            idempotency_key = f"{bot_id}-{amt if amt is not None else price}-{timestamp_ms}"
+            item_params = {
+                "customer": customer,
+                "price": price,
+                "idempotency_key": idempotency_key,
+            }
+            if client:
+                client.InvoiceItem.create(**item_params)
+                invoice = client.Invoice.create(
+                    customer=customer,
+                    description=description,
+                    idempotency_key=idempotency_key,
+                )
+                event = client.Invoice.pay(
+                    invoice["id"], idempotency_key=idempotency_key
+                )
+            else:
+                stripe.InvoiceItem.create(api_key=api_key, **item_params)
+                invoice = stripe.Invoice.create(
+                    api_key=api_key,
+                    customer=customer,
+                    description=description,
+                    idempotency_key=idempotency_key,
+                )
+                event = stripe.Invoice.pay(
+                    invoice["id"], api_key=api_key, idempotency_key=idempotency_key
+                )
+            return event
+
+        if amt is None:
             logger.error(
-                "customer_id required for price based billing for bot '%s'", bot_id
+                "amount must be provided when price_id is not supplied for bot '%s'", bot_id
             )
-            raise RuntimeError("customer_id required for price based billing")
-        idempotency_key = f"{bot_id}-{amt if amt is not None else price}-{timestamp_ms}"
-        item_params = {"customer": customer, "price": price, "idempotency_key": idempotency_key}
+            raise ValueError("amount required when price_id is not provided")
+
+        idempotency_key = f"{bot_id}-{amt}-{timestamp_ms}"
+        params = {
+            "amount": int(amt * 100),
+            "currency": currency,
+            "description": description,
+            "idempotency_key": idempotency_key,
+        }
+        if customer:
+            params["customer"] = customer
         if client:
-            client.InvoiceItem.create(**item_params)
-            invoice = client.Invoice.create(
-                customer=customer, description=description, idempotency_key=idempotency_key
+            event = client.PaymentIntent.create(**params)
+        else:
+            event = stripe.PaymentIntent.create(api_key=api_key, **params)
+        return event
+    finally:
+        destination = None
+        if isinstance(event, Mapping):
+            destination = (
+                event.get("on_behalf_of")
+                or event.get("account")
+                or (event.get("transfer_data") or {}).get("destination")
             )
-            return client.Invoice.pay(invoice["id"], idempotency_key=idempotency_key)
-        stripe.InvoiceItem.create(api_key=api_key, **item_params)
-        invoice = stripe.Invoice.create(
-            api_key=api_key,
-            customer=customer,
-            description=description,
-            idempotency_key=idempotency_key,
-        )
-        return stripe.Invoice.pay(
-            invoice["id"], api_key=api_key, idempotency_key=idempotency_key
-        )
+        if destination is None:
+            destination = route.get("secret_key")
 
-    if amt is None:
-        logger.error(
-            "amount must be provided when price_id is not supplied for bot '%s'", bot_id
-        )
-        raise ValueError("amount required when price_id is not provided")
+        logged_amount = amt
+        if logged_amount is None and isinstance(event, Mapping):
+            possible = event.get("amount") or event.get("amount_paid")
+            if possible is not None:
+                try:
+                    logged_amount = float(possible) / 100.0
+                except (TypeError, ValueError):
+                    logged_amount = None
 
-    idempotency_key = f"{bot_id}-{amt}-{timestamp_ms}"
-    params = {
-        "amount": int(amt * 100),
-        "currency": currency,
-        "description": description,
-        "idempotency_key": idempotency_key,
-    }
-    if customer:
-        params["customer"] = customer
-    if client:
-        return client.PaymentIntent.create(**params)
-    return stripe.PaymentIntent.create(api_key=api_key, **params)
+        raw_json = None
+        if isinstance(event, Mapping):
+            try:
+                raw_json = json.dumps(event)
+            except Exception:  # pragma: no cover - serialization issues
+                raw_json = None
+
+        billing_logger.log_event(
+            id=event.get("id") if isinstance(event, Mapping) else None,
+            action_type="charge",
+            amount=logged_amount,
+            currency=currency,
+            timestamp_ms=timestamp_ms,
+            user_email=user_email,
+            bot_id=bot_id,
+            destination_account=destination,
+            raw_event_json=raw_json,
+        )
 
 
 # Backward compatibility
