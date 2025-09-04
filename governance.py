@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping
 
 import json
 
+from dynamic_path_router import resolve_path
 from .roi_tracker import ROITracker
 
 try:  # pragma: no cover - optional dependency in minimal envs
@@ -53,7 +54,7 @@ def load_rules(config_dir: str | Path | None = None) -> list[Rule]:
     """
 
     if config_dir is None:
-        config_dir = Path(__file__).resolve().parent / "config"
+        config_dir = resolve_path("config")
     cfg = Path(config_dir)
     paths = [cfg / "governance_rules.yaml", cfg / "governance_rules.json"]
     for path in paths:
