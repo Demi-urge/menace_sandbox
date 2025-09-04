@@ -902,6 +902,8 @@ class SelfImprovementEngine:
         self.prompt_strategy_manager = PromptStrategyManager(
             state_path=_data_dir() / "prompt_strategy_state.json"
         )
+        self.strategy_stats_path = _data_dir() / "prompt_strategy_stats.json"
+        self.strategy_stats: Dict[str, Dict[str, float]] = self._load_strategy_stats()
         self._snapshot_tracker = SnapshotTracker()
         self._last_delta: dict[str, float] | None = None
         self.logger = get_logger("SelfImprovementEngine")
@@ -1571,8 +1573,14 @@ class SelfImprovementEngine:
                                 if delta_vals.get("roi", 0.0) < 0
                                 else "entropy_regression"
                             )
+                            prompt_obj = getattr(
+                                self.self_coding_engine, "_last_prompt", None
+                            )
+                            self._update_strategy_stats(
+                                prompt_obj, False, delta_vals
+                            )
                             log_prompt_attempt(
-                                getattr(self.self_coding_engine, "_last_prompt", None),
+                                prompt_obj,
                                 False,
                                 {"delta": delta_vals, "patch_diff": patch_diff},
                                 failure_reason=reason,
@@ -1663,8 +1671,13 @@ class SelfImprovementEngine:
             elif roi_meta.get("roi_delta", 0.0) < 0:
                 failure_reason = "roi_drop"
         try:
+            prompt_obj = getattr(self.self_coding_engine, "_last_prompt", None)
+            meta = dict(roi_meta)
+            if "roi" not in meta and "roi_delta" in meta:
+                meta["roi"] = meta.get("roi_delta", 0.0)
+            self._update_strategy_stats(prompt_obj, success, meta)
             log_prompt_attempt(
-                getattr(self.self_coding_engine, "_last_prompt", None),
+                prompt_obj,
                 success,
                 exec_res,
                 roi_meta,
@@ -1780,6 +1793,55 @@ class SelfImprovementEngine:
             os.replace(tmp, self.state_path)
         except Exception as exc:
             self.logger.exception("failed to save state: %s", exc)
+
+    # ------------------------------------------------------------------
+    def _load_strategy_stats(self) -> Dict[str, Dict[str, float]]:
+        path = self.strategy_stats_path
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            stats: Dict[str, Dict[str, float]] = {}
+            for k, v in data.items():
+                stats[str(k)] = {
+                    "success": int(v.get("success", 0)),
+                    "avg_roi": float(v.get("avg_roi", 0.0)),
+                    "trials": int(v.get("trials", 0)),
+                }
+            return stats
+        except Exception:
+            self.logger.exception("failed to load strategy stats")
+            return {}
+
+    def _save_strategy_stats(self) -> None:
+        try:
+            self.strategy_stats_path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(
+                self.strategy_stats_path, json.dumps(self.strategy_stats)
+            )
+        except Exception:
+            self.logger.exception("failed to save strategy stats")
+
+    def _update_strategy_stats(
+        self, prompt: object, success: bool, delta: Mapping[str, float]
+    ) -> None:
+        metadata = getattr(prompt, "metadata", {}) if prompt is not None else {}
+        strategy: str | None = None
+        if isinstance(metadata, dict):
+            strategy = metadata.get("strategy") or metadata.get("prompt_id")
+        if not strategy:
+            return
+        stats = self.strategy_stats.setdefault(
+            str(strategy), {"success": 0, "avg_roi": 0.0, "trials": 0}
+        )
+        roi = float(delta.get("roi", 0.0))
+        stats["trials"] += 1
+        stats["avg_roi"] = (
+            (stats["avg_roi"] * (stats["trials"] - 1)) + roi
+        ) / stats["trials"]
+        if success:
+            stats["success"] += 1
+        self._save_strategy_stats()
 
     # ------------------------------------------------------------------
     def _load_synergy_weights(self) -> None:
@@ -6479,6 +6541,7 @@ class SelfImprovementEngine:
                 failure_reason = "roi_drop"
             elif delta.get("entropy", 0.0) > 0:
                 failure_reason = "entropy_regression"
+        self._update_strategy_stats(prompt, success, delta)
         log_prompt_attempt(
             prompt,
             success=success,
@@ -6553,6 +6616,11 @@ class SelfImprovementEngine:
                 if threshold and count >= threshold
                 else 1.0
             )
+            stats = self.strategy_stats.get(str(strat))
+            if stats:
+                roi_factor = stats.get("avg_roi", 0.0)
+                roi_factor = roi_factor if roi_factor > 0 else 0.1
+                weight *= roi_factor * max(stats.get("success", 0), 1)
             target = penalised if threshold and count >= threshold else eligible
             target.append((strat, weight))
 
