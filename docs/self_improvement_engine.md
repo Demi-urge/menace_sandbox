@@ -23,6 +23,22 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
+## Snapshot Tracking
+
+`SnapshotTracker` records key metrics before and after each cycle so
+regressions can be detected and improvements checkpointed.  Set
+`ENABLE_SNAPSHOT_TRACKER=0` to disable the feature or adjust the
+locations and thresholds via `SandboxSettings`:
+
+* `SNAPSHOT_DIR` and `SNAPSHOT_DIFF_DIR` – where snapshots and diff
+  artefacts are written (default `sandbox_data/snapshots` and
+  `sandbox_data/diffs`).
+* `CHECKPOINT_DIR` – base directory for saved checkpoints.
+* `CHECKPOINT_RETENTION` – number of checkpoint directories to keep.
+* `ROI_PENALTY_THRESHOLD` / `ENTROPY_PENALTY_THRESHOLD` – ROI drops or
+  entropy gains beyond these values penalise the responsible prompt until
+  a positive cycle resets the count.
+
 ## Optional Dependencies
 
 Some features of the engine depend on optional packages. Missing modules now
