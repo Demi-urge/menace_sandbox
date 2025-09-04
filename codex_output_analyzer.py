@@ -83,7 +83,16 @@ def validate_stripe_usage(code: str) -> None:
         raise CriticalGenerationFailure(
             "critical generation failure: direct Stripe API call detected"
         )
-    keywords = ("payment", "checkout", "billing", "stripe")
+    keywords = (
+        "payment",
+        "checkout",
+        "billing",
+        "stripe",
+        "invoice",
+        "subscription",
+        "payout",
+        "charge",
+    )
     lowered = code.lower()
     if any(kw in lowered for kw in keywords):
         if not re.search(
@@ -92,6 +101,44 @@ def validate_stripe_usage(code: str) -> None:
             raise CriticalGenerationFailure(
                 "critical generation failure: payment keywords without"
                 " stripe_billing_router import"
+            )
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as exc:  # pragma: no cover - invalid code
+            raise CriticalGenerationFailure(
+                "critical generation failure: could not parse code to verify"
+                " stripe_billing_router usage"
+            ) from exc
+
+        class _StripeRouterUsageVisitor(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self.used = False
+
+            def visit_Call(self, node: ast.Call) -> None:  # pragma: no cover - simple
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "stripe_billing_router":
+                    self.used = True
+                elif (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "stripe_billing_router"
+                ):
+                    self.used = True
+                self.generic_visit(node)
+
+            def visit_Attribute(self, node: ast.Attribute) -> None:  # pragma: no cover - simple
+                if (
+                    isinstance(node.value, ast.Name)
+                    and node.value.id == "stripe_billing_router"
+                ):
+                    self.used = True
+                self.generic_visit(node)
+
+        visitor = _StripeRouterUsageVisitor()
+        visitor.visit(tree)
+        if not visitor.used:
+            raise CriticalGenerationFailure(
+                "critical generation failure: stripe_billing_router imported but unused"
             )
 
 
