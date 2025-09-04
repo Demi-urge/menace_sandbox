@@ -509,7 +509,10 @@ def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
     return validated
 
 
-_SETUP_MARKER = Path(".autonomous_setup_complete")
+# Resolve the setup marker path via the dynamic router to avoid
+# reliance on relative paths when the module is imported from different
+# working directories.
+_SETUP_MARKER = resolve_path(".autonomous_setup_complete")
 
 
 def _check_dependencies(settings: SandboxSettings) -> bool:
