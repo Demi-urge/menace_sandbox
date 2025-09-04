@@ -26,9 +26,10 @@ ENCODE_CALL = re.compile(r"\b(?!tokenizer\.)[A-Za-z_][A-Za-z0-9_]*\.encode\(")
 
 
 def main() -> int:
-    from dynamic_path_router import get_project_root
+    from dynamic_path_router import get_project_root, resolve_path
 
     root = get_project_root()
+    wrapper = resolve_path("governed_embeddings.py").name
     offenders: list[str] = []
     this_file = Path(__file__).resolve()
     for path in root.rglob("*.py"):
@@ -37,7 +38,7 @@ def main() -> int:
         # itself.
         if (
             "tests" in path.parts
-            or path.name == "governed_embeddings.py"  # path-ignore
+            or path.name == wrapper
             or path.resolve() == this_file
         ):
             continue
