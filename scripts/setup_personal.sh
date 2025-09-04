@@ -2,7 +2,12 @@
 set -euo pipefail
 
 # Run base Python environment setup
-"$(dirname "$0")/../setup_env.sh"
+setup_env=$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('setup_env.sh'))
+PY
+)
+"$setup_env"
 
 # Install and verify project dependencies
 python setup_dependencies.py
