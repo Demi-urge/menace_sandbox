@@ -10,13 +10,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from dynamic_path_router import get_project_root, resolve_path
+
 PATTERN = "sqlite3.connect("
-
-# Ensure dynamic_path_router is importable regardless of the CWD.
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
-
-from dynamic_path_router import get_project_root, resolve_path  # noqa: E402
 
 # Resolve repository root so the check works regardless of the current working
 # directory. Paths in ``ALLOWLIST`` are defined relative to this directory.

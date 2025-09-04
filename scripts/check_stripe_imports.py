@@ -27,12 +27,8 @@ import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT))
-
-from dynamic_path_router import resolve_path, get_project_root  # noqa: E402
-from stripe_detection import HTTP_LIBRARIES  # noqa: E402
-from stripe_detection import contains_payment_keyword  # noqa: E402
+from dynamic_path_router import get_project_root, resolve_path
+from stripe_detection import HTTP_LIBRARIES, contains_payment_keyword
 
 REPO_ROOT = get_project_root()
 

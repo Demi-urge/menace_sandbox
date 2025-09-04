@@ -7,11 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from dynamic_path_router import resolve_path  # noqa: E402
-from stripe_detection import PAYMENT_KEYWORDS  # noqa: E402
+from dynamic_path_router import get_project_root, resolve_path
+from stripe_detection import PAYMENT_KEYWORDS
 
-REPO_ROOT = resolve_path(".")
+REPO_ROOT = get_project_root()
 # Exclude specific paths (resolved absolute)
 EXCLUDED = {
     resolve_path("stripe_billing_router.py").resolve(),
