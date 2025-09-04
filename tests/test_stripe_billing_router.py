@@ -55,6 +55,46 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     return _load("stripe_billing_router")
 
 
+@pytest.fixture
+def sbr_module(monkeypatch, tmp_path):
+    """Return a fresh ``stripe_billing_router`` module for each test."""
+    return _import_module(monkeypatch, tmp_path)
+
+
+@pytest.fixture
+def mock_customer_api(monkeypatch, sbr_module):
+    """Patch ``stripe.Customer.create`` and record parameters."""
+    recorded: dict[str, object] = {}
+
+    def fake_create(*, api_key: str, **params):
+        recorded.update(params)
+        recorded["api_key"] = api_key
+        return {"id": "cus_test"}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig", Customer=types.SimpleNamespace(create=fake_create)
+    )
+    monkeypatch.setattr(sbr_module, "stripe", fake_stripe)
+    return recorded, fake_stripe
+
+
+@pytest.fixture
+def mock_subscription_api(monkeypatch, sbr_module):
+    """Patch ``stripe.Subscription.create`` and record parameters."""
+    recorded: dict[str, object] = {}
+
+    def fake_create(*, api_key: str, **params):
+        recorded.update(params)
+        recorded["api_key"] = api_key
+        return {"id": "sub_test"}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig", Subscription=types.SimpleNamespace(create=fake_create)
+    )
+    monkeypatch.setattr(sbr_module, "stripe", fake_stripe)
+    return recorded, fake_stripe
+
+
 def test_successful_route_and_charge(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
     item: dict[str, object] = {}
@@ -345,27 +385,16 @@ def test_concurrent_client_isolation(monkeypatch, tmp_path):
     assert fake_stripe.api_key == "unchanged"
 
 
-def test_create_subscription(monkeypatch, tmp_path):
-    sbr = _import_module(monkeypatch, tmp_path)
-
-    recorded: dict[str, object] = {}
-
-    def fake_sub_create(*, api_key: str, **params):
-        recorded.update(params)
-        recorded["api_key"] = api_key
-        return {"id": "sub_test"}
-
-    fake_stripe = types.SimpleNamespace(
-        api_key="orig",
-        Subscription=types.SimpleNamespace(create=fake_sub_create),
+def test_create_subscription_success(sbr_module, mock_subscription_api):
+    recorded, fake_stripe = mock_subscription_api
+    res = sbr_module.create_subscription(
+        "finance:finance_router_bot", idempotency_key="sub-key"
     )
-    monkeypatch.setattr(sbr, "stripe", fake_stripe)
-
-    res = sbr.create_subscription("finance:finance_router_bot")
     assert res["id"] == "sub_test"
     assert recorded["customer"] == "cus_finance_default"
     assert recorded["items"][0]["price"] == "price_finance_standard"
     assert recorded["api_key"] == "sk_live_dummy"
+    assert recorded["idempotency_key"] == "sub-key"
     assert fake_stripe.api_key == "orig"
 
 
@@ -493,3 +522,36 @@ def test_get_balance_client_error(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError):
         sbr.get_balance("finance:finance_router_bot")
+
+
+def test_create_customer_success(sbr_module, mock_customer_api):
+    recorded, fake_stripe = mock_customer_api
+    info = {"email": "bot@example.com", "idempotency_key": "cust-key"}
+    res = sbr_module.create_customer("finance:finance_router_bot", info)
+    assert res["id"] == "cus_test"
+    assert recorded["email"] == "bot@example.com"
+    assert recorded["api_key"] == "sk_live_dummy"
+    assert recorded["idempotency_key"] == "cust-key"
+    assert fake_stripe.api_key == "orig"
+
+
+def test_create_customer_missing_required_field(monkeypatch, sbr_module):
+    def bad_create(*, api_key: str, **params):
+        if "email" not in params:
+            raise ValueError("email required")
+        return {"id": "cus_test"}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig", Customer=types.SimpleNamespace(create=bad_create)
+    )
+    monkeypatch.setattr(sbr_module, "stripe", fake_stripe)
+    with pytest.raises(ValueError, match="email required"):
+        sbr_module.create_customer("finance:finance_router_bot", {})
+
+
+def test_create_subscription_missing_fields(monkeypatch, sbr_module):
+    key = ("stripe", "default", "finance", "finance_router_bot")
+    sbr_module.ROUTING_TABLE[key] = {"product_id": "prod_finance_router"}
+    monkeypatch.setattr(sbr_module, "stripe", types.SimpleNamespace())
+    with pytest.raises(RuntimeError, match="price_id and customer_id are required"):
+        sbr_module.create_subscription("finance:finance_router_bot")
