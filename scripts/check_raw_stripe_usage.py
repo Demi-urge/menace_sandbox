@@ -23,9 +23,9 @@ EXCLUDED_DIRS = {"tests", "unit_tests", "fixtures", "finance_logs"}
 PATTERN = re.compile(r"api\.stripe\.com|['\"](?:sk_|pk_)[^'\"]*['\"]")
 
 
-def _tracked_python_files() -> list[Path]:
+def _tracked_files() -> list[Path]:
     result = subprocess.run(
-        ["git", "ls-files", "*.py"],
+        ["git", "ls-files", "*.py", "*.js", "*.ts", "*.md", "*.yaml"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -45,7 +45,7 @@ def _tracked_python_files() -> list[Path]:
 
 def main() -> int:
     offenders: list[str] = []
-    for path in _tracked_python_files():
+    for path in _tracked_files():
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:

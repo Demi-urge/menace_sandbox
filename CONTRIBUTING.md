@@ -44,7 +44,7 @@ on the router's helpers rather than interacting with Stripe directly. The
 also guards against accidental exposure of live credentials. The
 `forbid-stripe-keys` hook scans all text files for strings resembling live
 Stripe keys (e.g., `sk_live_` or `pk_live_`) or hard-coded Stripe API endpoints
-such as `api.stripe.com`.
+such as `api.stripe[dot]com`.
 
 Before submitting a pull request, run `pre-commit run --all-files` to execute
 this and other checks locally.
