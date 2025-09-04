@@ -35,7 +35,7 @@ def discover_module_groups(
             try:
                 path = Path(resolve_path(root / mod / "__init__.py"))
             except FileNotFoundError:
-                path = root / f"{mod}.py"
+                path = Path(resolve_path(root / f"{mod}.py"))
         if "/" in mod:
             groups.setdefault(cid, []).append(mod)
             continue
@@ -79,7 +79,7 @@ def build_module_map(
                 try:
                     path = Path(resolve_path(root / mod / "__init__.py"))
                 except FileNotFoundError:
-                    path = root / f"{mod}.py"
+                    path = Path(resolve_path(root / f"{mod}.py"))
             if "/" in mod:
                 filtered[mod] = grp
                 continue

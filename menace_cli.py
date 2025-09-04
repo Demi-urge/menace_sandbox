@@ -415,17 +415,26 @@ def main(argv: list[str] | None = None) -> int:
         return _run(["pytest"] + (args.pytest_args or []))
 
     if args.cmd == "improve":
-        return _run(["python", "run_autonomous.py", "--runs", "1"] + (args.extra_args or []))
+        return _run(
+            ["python", str(resolve_path("run_autonomous.py")), "--runs", "1"]
+            + (args.extra_args or [])
+        )
 
     if args.cmd == "benchmark":
-        return _run(["python", "workflow_benchmark.py"])
+        return _run(["python", str(resolve_path("workflow_benchmark.py"))])
 
     if args.cmd == "deploy":
-        return _run(["python", "service_installer.py"] + (args.extra_args or []))
+        return _run(
+            ["python", str(resolve_path("service_installer.py"))]
+            + (args.extra_args or [])
+        )
 
     if args.cmd == "sandbox":
         if args.sandbox_cmd == "run":
-            return _run(["python", "run_autonomous.py"] + (args.extra_args or []))
+            return _run(
+                ["python", str(resolve_path("run_autonomous.py"))]
+                + (args.extra_args or [])
+            )
 
     if args.cmd == "patches":
         db = PatchHistoryDB()

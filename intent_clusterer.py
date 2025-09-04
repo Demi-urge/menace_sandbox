@@ -563,7 +563,7 @@ class IntentClusterer:
             try:
                 mapping = json.loads(map_file.read_text())
                 for mod, gid in mapping.items():
-                    path = root / f"{mod}.py"
+                    path = Path(resolve_path(root / f"{mod}.py"))
                     groups.setdefault(str(gid), []).append(str(path))
                 return groups
             except Exception as exc:

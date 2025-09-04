@@ -11,6 +11,11 @@ from typing import List, Tuple
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
+try:  # pragma: no cover - support package and flat layouts
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 try:
     import pandas as pd  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -108,7 +113,11 @@ class DiagnosticManager:
         try:
             import subprocess
             subprocess.run(["pkill", "-f", bot], check=False)
-            subprocess.Popen(["python", f"{bot}.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(
+                ["python", str(resolve_path(f"{bot}.py"))],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             return True
         except Exception as exc:  # pragma: no cover - runtime restart errors
             self.logger.error("Bot restart failed: %s", exc)

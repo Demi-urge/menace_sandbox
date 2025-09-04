@@ -18,6 +18,11 @@ import logging
 from logging_utils import log_record
 import yaml
 
+try:  # pragma: no cover - support package and flat layouts
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback when executed directly
+    from dynamic_path_router import resolve_path  # type: ignore
+
 logger = logging.getLogger(__name__)
 debug = os.getenv("PRESET_DEBUG") == "1"
 
@@ -357,10 +362,12 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
             mod_path = os.path.join(mod_path, "__init__.py")
         else:
             mod_path = f"{mod_path}.py"
-        if os.path.isfile(mod_path):
-            path = mod_path
-        else:
+        try:
+            path = str(resolve_path(mod_path))
+        except FileNotFoundError:
             path = ""
+    else:
+        path = str(resolve_path(path))
 
     if path:
         profiles.extend(infer_profiles_from_ast(path))
