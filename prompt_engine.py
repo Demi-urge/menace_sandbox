@@ -27,10 +27,7 @@ from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
 from target_region import TargetRegion, extract_target_region
 from billing.prompt_notice import prepend_payment_notice
-try:  # pragma: no cover - optional billing dependency
-    import stripe_billing_router  # noqa: F401
-except Exception:  # pragma: no cover - best effort
-    stripe_billing_router = None  # type: ignore
+import stripe_billing_router  # noqa: F401
 
 
 SYSTEM_NOTICE = prepend_payment_notice([])[0]["content"]
