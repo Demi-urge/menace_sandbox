@@ -32,6 +32,8 @@ Avoid hard coding string literals that end with `.py`. Such paths must be
 wrapped by `resolve_path` or `path_for_prompt` to remain portable across forks
 and clones. The `tools/check_static_paths.py` pre-commit hook scans for these
 violations.
+CI enforces this rule by running `python tools/check_static_paths.py $(git ls-files '*.py')`,
+and the workflow fails if any static path is detected.
 
 ## Stripe integration
 
