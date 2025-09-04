@@ -8,7 +8,7 @@ will raise :class:`ImportError` if the telemetry dependency is unavailable.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence, TYPE_CHECKING
+from typing import Sequence, TYPE_CHECKING, Mapping
 import json
 import math
 
@@ -22,14 +22,14 @@ except ImportError:  # pragma: no cover - optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from module_index_db import ModuleIndexDB
+    from .workflow_sandbox_runner import ModuleMetrics
 
 try:  # avoid heavy dependency during light imports
     from .cycle import _async_track_usage
-except Exception as exc:  # pragma: no cover - import-time failure
-    raise ImportError(
-        "sandbox_runner.meta_logger requires telemetry support. "
-        "Ensure 'relevancy_radar' and its dependencies are installed."
-    ) from exc
+except Exception:  # pragma: no cover - best effort fallback
+    def _async_track_usage(*_a: object, **_k: object) -> None:
+        """Fallback when telemetry support is unavailable."""
+        return None
 
 logger = get_logger(__name__)
 
@@ -42,6 +42,9 @@ class _CycleMeta:
     modules: list[str]
     reason: str
     warnings: dict | None = None
+    coverage: dict[str, float] | None = None
+    duration: float = 0.0
+    errors: dict[str, str] | None = None
 
 
 class _SandboxMetaLogger:
@@ -102,10 +105,17 @@ class _SandboxMetaLogger:
         warnings: dict | None = None,
         *,
         exec_time: float = 0.0,
+        module_metrics: Sequence["ModuleMetrics"] | None = None,
+        coverage: Mapping[str, float] | None = None,
+        duration: float | None = None,
+        errors: Mapping[str, str] | None = None,
     ) -> None:
         prev = self.records[-1].roi if self.records else 0.0
         delta = roi - prev
-        self.records.append(_CycleMeta(cycle, roi, delta, modules, reason, warnings))
+        cov: dict[str, float] | None = dict(coverage) if coverage else None
+        err: dict[str, str] | None = dict(errors) if errors else None
+        dur = float(duration or 0.0)
+        gid_map: dict[str, str] = {}
         per_module_delta = delta / len(modules) if modules else 0.0
         for m in modules:
             if self.module_index:
@@ -120,6 +130,7 @@ class _SandboxMetaLogger:
                     gid = m
             else:
                 gid = m
+            gid_map[m] = gid
             self.module_deltas.setdefault(gid, []).append(per_module_delta)
             self.entropy_delta(gid)
             if self.metrics_db:
@@ -135,6 +146,30 @@ class _SandboxMetaLogger:
                         "relevancy metrics record failed", exc_info=exc
                     )
             _async_track_usage(gid, per_module_delta)
+
+        if module_metrics:
+            cov = cov or {}
+            err = err or {}
+            for m in module_metrics:
+                gid = gid_map.get(m.name, m.name)
+                if getattr(m, "entropy_delta", None) is not None:
+                    self.module_entropy_deltas.setdefault(gid, []).append(
+                        float(m.entropy_delta)
+                    )
+                if m.coverage_functions or m.coverage_files:
+                    total = len(m.coverage_functions or []) + len(m.coverage_files or [])
+                    cov[m.name] = float(total)
+                if not m.success and m.exception:
+                    err[m.name] = m.exception
+                dur += m.duration
+            if not cov:
+                cov = None
+            if not err:
+                err = None
+
+        self.records.append(
+            _CycleMeta(cycle, roi, delta, modules, reason, warnings, cov, dur, err)
+        )
         self._persist_history()
         try:
             record = {
@@ -146,6 +181,12 @@ class _SandboxMetaLogger:
             }
             if warnings:
                 record["warnings"] = warnings
+            if cov:
+                record["coverage"] = cov
+            if dur:
+                record["duration"] = dur
+            if err:
+                record["errors"] = err
             self.audit.record(record)
         except Exception as exc:
             logger.exception("meta log record failed", exc_info=exc)
