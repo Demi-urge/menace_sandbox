@@ -12,15 +12,16 @@ import argparse
 import glob
 import json
 import os
+from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
 from dynamic_path_router import resolve_path
 
 
-DEFAULT_PATH = str(resolve_path("sandbox_data/workflow_graph.json"))
+DEFAULT_PATH = resolve_path("sandbox_data/workflow_graph.json")
 
 
-def _load_graph(path: str) -> Dict[str, List[str]]:
+def _load_graph(path: str | Path) -> Dict[str, List[str]]:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -44,7 +45,7 @@ def _load_graph(path: str) -> Dict[str, List[str]]:
     return graph
 
 
-def _load_sets(path: str) -> Tuple[Set[str], Set[Tuple[str, str]]]:
+def _load_sets(path: str | Path) -> Tuple[Set[str], Set[Tuple[str, str]]]:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -84,21 +85,21 @@ def _dependency_chains(graph: Dict[str, List[str]], start: str) -> List[List[str
     return chains
 
 
-def _latest_snapshots(base_path: str) -> List[str]:
-    base, _ = os.path.splitext(base_path)
+def _latest_snapshots(base_path: str | Path) -> List[str]:
+    base, _ = os.path.splitext(str(base_path))
     pattern = f"{base}.*.json"
     return sorted(glob.glob(pattern))
 
 
 def cmd_chain(args: argparse.Namespace) -> None:
-    path = str(resolve_path(args.path))
+    path = resolve_path(args.path)
     graph = _load_graph(path)
     chains = _dependency_chains(graph, str(args.workflow_id))
     print(json.dumps(chains))
 
 
 def cmd_diff(args: argparse.Namespace) -> None:
-    path = str(resolve_path(args.path))
+    path = resolve_path(args.path)
     snaps = _latest_snapshots(path)
     if len(snaps) < 2:
         print(json.dumps({"error": "not enough snapshots"}))
