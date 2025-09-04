@@ -8,9 +8,9 @@ import importlib
 import importlib.util
 import sys
 import types
-from pathlib import Path
 
 import pytest
+from dynamic_path_router import resolve_path
 
 
 def _stub_modules(exclude: set[str] | None = None) -> None:
@@ -55,7 +55,7 @@ def _stub_modules(exclude: set[str] | None = None) -> None:
 
 def _load_init():
     spec = importlib.util.spec_from_file_location(
-        "self_improvement.init", Path("self_improvement/init.py")
+        "self_improvement.init", resolve_path("self_improvement/init.py")
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

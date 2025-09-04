@@ -11,6 +11,7 @@ from typing import Any, Callable, Mapping, Sequence
 import pytest
 from sandbox_settings import SandboxSettings
 import self_improvement.baseline_tracker as baseline_tracker
+from dynamic_path_router import resolve_path
 
 
 def _load_module(name: str, path: Path):
@@ -45,7 +46,7 @@ def test_self_improvement_cycle_runs(tmp_path, monkeypatch, in_memory_dbs):
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
 
     bootstrap = types.ModuleType("sandbox_runner.bootstrap")
@@ -107,9 +108,12 @@ def test_self_improvement_cycle_runs(tmp_path, monkeypatch, in_memory_dbs):
 
     sys.modules["menace.sandbox_settings"] = sandbox_settings_module
 
-    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+    init_module = _load_module(
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+    )
     meta_planning = _load_module(
-        "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
+        "menace.self_improvement.meta_planning",
+        resolve_path("self_improvement/meta_planning.py"),
     )
 
     monkeypatch.setattr(baseline_tracker.TRACKER, "get", track)
@@ -163,7 +167,7 @@ def test_self_improvement_cycle_handles_db_errors(tmp_path, monkeypatch, in_memo
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
 
     bootstrap = types.ModuleType("sandbox_runner.bootstrap")
@@ -215,9 +219,12 @@ def test_self_improvement_cycle_handles_db_errors(tmp_path, monkeypatch, in_memo
 
     sys.modules["menace.sandbox_settings"] = sandbox_settings_module
 
-    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+    init_module = _load_module(
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+    )
     meta_planning = _load_module(
-        "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
+        "menace.self_improvement.meta_planning",
+        resolve_path("self_improvement/meta_planning.py"),
     )
 
     monkeypatch.setattr(init_module, "verify_dependencies", lambda auto_install=False: None)
@@ -262,7 +269,7 @@ def test_start_self_improvement_cycle_dependency_failure(tmp_path, monkeypatch, 
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
 
     logger = types.SimpleNamespace(
@@ -301,9 +308,12 @@ def test_start_self_improvement_cycle_dependency_failure(tmp_path, monkeypatch, 
     import sandbox_settings as sandbox_settings_module
     sys.modules["menace.sandbox_settings"] = sandbox_settings_module
 
-    init_module = _load_module("menace.self_improvement.init", Path("self_improvement/init.py"))
+    init_module = _load_module(
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+    )
     meta_planning = _load_module(
-        "menace.self_improvement.meta_planning", Path("self_improvement/meta_planning.py")
+        "menace.self_improvement.meta_planning",
+        resolve_path("self_improvement/meta_planning.py"),
     )
     monkeypatch.setattr(init_module, "load_sandbox_settings", lambda: SandboxSettings())
     monkeypatch.setattr(init_module, "verify_dependencies", lambda auto_install=False: None)
@@ -320,7 +330,7 @@ def test_start_self_improvement_cycle_dependency_failure(tmp_path, monkeypatch, 
 
 
 def _load_cycle_funcs():
-    src = Path("self_improvement/meta_planning.py").read_text()
+    src = resolve_path("self_improvement/meta_planning.py").read_text()
     tree = ast.parse(src)
     wanted = {
         "self_improvement_cycle",

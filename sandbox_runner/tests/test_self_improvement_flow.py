@@ -24,7 +24,7 @@ def _setup_base_packages():
     menace_pkg.__path__ = []
     sys.modules["menace"] = menace_pkg
     si_pkg = types.ModuleType("menace.self_improvement")
-    si_pkg.__path__ = [str(Path("self_improvement"))]
+    si_pkg.__path__ = [str(resolve_path("self_improvement"))]
     sys.modules["menace.self_improvement"] = si_pkg
     # minimal logging utils
     logger = types.SimpleNamespace(
