@@ -445,6 +445,16 @@ def _run_once(
             entropy_delta=entropy_delta,
             executed_functions=executed_functions,
         )
+        record_run(
+            result=res,
+            metrics={
+                "runtime": duration,
+                "entropy_delta": entropy_delta,
+                "coverage": coverage_map,
+                "executed_functions": executed_functions,
+                "failure": failure,
+            },
+        )
         return res
     finally:
         if old_edge_env is None:
@@ -565,6 +575,7 @@ def run_tests(
                         "executed_functions": res.executed_functions,
                         "entropy_delta": res.entropy_delta,
                         "runtime": res.duration,
+                        "failure": res.failure,
                     },
                 )
                 results.append(res)
