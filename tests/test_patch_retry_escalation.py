@@ -23,18 +23,25 @@ class DummyFP:
 
 
 def test_region_escalation(monkeypatch, tmp_path):
-    gauge_calls = {}
+    gauge_calls: dict[tuple[tuple[str, str], ...], int] = {}
 
     class DummyGauge:
+        def __init__(self) -> None:
+            self.events: list[tuple[tuple[str, str], ...]] = []
+
         def labels(self, **labels):
             key = tuple(sorted(labels.items()))
-            class Child:
-                def inc(self, amount=1.0):
-                    gauge_calls[key] = gauge_calls.get(key, 0) + amount
-            return Child()
 
-    monkeypatch.setattr(sce, "_PATCH_ATTEMPTS", DummyGauge())
-    monkeypatch.setattr(sce, "_PATCH_ESCALATIONS", DummyGauge())
+            def inc(amount: float = 1.0) -> None:
+                gauge_calls[key] = gauge_calls.get(key, 0) + amount
+                self.events.append(key)
+
+            return types.SimpleNamespace(inc=inc)
+
+    patch_attempts = DummyGauge()
+    patch_escalations = DummyGauge()
+    monkeypatch.setattr(sce, "_PATCH_ATTEMPTS", patch_attempts)
+    monkeypatch.setattr(sce, "_PATCH_ESCALATIONS", patch_escalations)
 
     engine = SelfCodingEngine(code_db=object(), memory_mgr=object())
     engine.audit_trail = types.SimpleNamespace(record=lambda payload: None)
@@ -77,5 +84,12 @@ def test_region_escalation(monkeypatch, tmp_path):
     assert calls[3].start_line == 1 and calls[3].end_line == 4
     assert calls[4] is None
 
+    assert gauge_calls[(('scope', 'line'),)] == 2
+    assert gauge_calls[(('scope', 'function'),)] == 2
+    assert gauge_calls[(('scope', 'module'),)] == 1
     assert gauge_calls[(('level', 'function'),)] == 1
     assert gauge_calls[(('level', 'module'),)] == 1
+    assert patch_escalations.events == [
+        (('level', 'function'),),
+        (('level', 'module'),),
+    ]

@@ -346,7 +346,9 @@ class SelfCodingEngine:
             priv = None
         self.audit_trail = AuditTrail(path, priv)
         self.logger = logging.getLogger("SelfCodingEngine")
-        self._patch_tracker = PatchAttemptTracker(logger=self.logger)
+        self._patch_tracker = PatchAttemptTracker(
+            logger=self.logger, escalation_counter=_PATCH_ESCALATIONS
+        )
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
         self.enhancement_classifier = enhancement_classifier
@@ -2594,8 +2596,11 @@ class SelfCodingEngine:
             func_region.filename = func_region.filename or str(path)
             assert tracker is not None
             scope_level, active_region = tracker.level_for(region, func_region)
-            region_scope_map = {"region": "line", "function": "function", "module": "module"}
-            region_scope = region_scope_map[scope_level]
+            region_scope = {
+                "region": "line",
+                "function": "function",
+                "module": "module",
+            }[scope_level]
         else:
             active_region = None
             scope_level = "module"
@@ -2808,15 +2813,12 @@ class SelfCodingEngine:
             last_fp = fp
             if tracker and region is not None and func_region is not None:
                 tracker.record_failure(scope_level, region, func_region)
-                prev_level = scope_level
                 scope_level, active_region = tracker.level_for(region, func_region)
-                new_scope = {"region": "line", "function": "function", "module": "module"}[scope_level]
-                if scope_level != prev_level:
-                    if scope_level == "function":
-                        _PATCH_ESCALATIONS.labels(level="function").inc()
-                    elif scope_level == "module":
-                        _PATCH_ESCALATIONS.labels(level="module").inc()
-                region_scope = new_scope
+                region_scope = {
+                    "region": "line",
+                    "function": "function",
+                    "module": "module",
+                }[scope_level]
         roi_val = 0.0
         if self.data_bot:
             try:
