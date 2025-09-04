@@ -1091,7 +1091,7 @@ The deployment helpers use the following variables:
 - `AUTOSCALER_PROVIDER` – scaling backend: `local`, `kubernetes` or `swarm`.
 - `K8S_DEPLOYMENT` – target deployment when using the Kubernetes provider.
 - `SWARM_SERVICE` – target service when using the Docker Swarm provider.
-- `PROMPT_TEMPLATES_PATH` – path to `prompt_templates.v1.json` when running
+- `PROMPT_TEMPLATES_PATH` – path to `prompt_templates.v2.json` when running
 
   outside the repository.
 - `METRICS_PORT` – start the internal metrics exporter on this port (same as `--metrics-port`).

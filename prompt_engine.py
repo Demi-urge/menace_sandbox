@@ -216,7 +216,7 @@ class PromptEngine:
     template_path: Path = Path(
         os.getenv(
             "PROMPT_TEMPLATES_PATH",
-            str(resolve_path("config/prompt_templates.v1.json")),
+            str(resolve_path("config/prompt_templates.v2.json")),
         )
     )
     template_sections: List[str] = field(
