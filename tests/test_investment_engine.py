@@ -1,9 +1,10 @@
 import importlib.util
-import importlib.util
 import sys
 import types
 from pathlib import Path
 
+# Tests previously mocked a deprecated ``stripe_handler``.  These tests ensure
+# ``stripe_billing_router`` is patched instead.
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,6 +20,7 @@ def _import_investment_engine(monkeypatch):
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[f"iepkg.{name}"] = module
+        sys.modules[name] = module
         assert spec.loader is not None
         spec.loader.exec_module(module)
         return module
@@ -34,6 +36,7 @@ def _import_investment_engine(monkeypatch):
     )
     sbr = _load("stripe_billing_router")
     sys.modules["iepkg.stripe_billing_router"] = sbr
+    sys.modules["stripe_billing_router"] = sbr
     dbm = _load("db_router")
     dbm.GLOBAL_ROUTER = None
     sys.modules["db_router"] = dbm
