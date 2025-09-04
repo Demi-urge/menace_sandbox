@@ -4,7 +4,10 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-from .self_improvement.target_region import TargetRegion
+try:
+    from .self_improvement.target_region import TargetRegion
+except Exception:  # pragma: no cover - fallback when executed directly
+    from self_improvement.target_region import TargetRegion  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
@@ -53,7 +56,9 @@ class PatchAttemptTracker:
         self._escalation_counter = escalation_counter
 
     # ------------------------------------------------------------------
-    def level_for(self, region: TargetRegion, func_region: TargetRegion) -> tuple[str, TargetRegion | None]:
+    def level_for(
+        self, region: TargetRegion, func_region: TargetRegion
+    ) -> tuple[str, TargetRegion | None]:
         """Return the patch level and region to operate on.
 
         After two failures at the function level the caller should rebuild the
@@ -79,7 +84,11 @@ class PatchAttemptTracker:
                     self._escalation_counter.labels(level="function").inc()
                 self.logger.info(
                     "escalating patch region",
-                    extra={"level": "function", "path": region.filename, "function": region.function},
+                    extra={
+                        "level": "function",
+                        "path": region.filename,
+                        "function": region.function,
+                    },
                 )
         elif level == "function":
             count = self._function_failures.get(k.function_key, 0) + 1
@@ -91,6 +100,15 @@ class PatchAttemptTracker:
                     "escalating patch region",
                     extra={"level": "module", "path": func_region.filename},
                 )
+
+    # ------------------------------------------------------------------
+    def attempts_for(self, region: TargetRegion) -> int:
+        """Return total attempts for ``region`` across all escalation levels."""
+        k = _Keys(region.filename, region.start_line, region.end_line, region.function)
+        return (
+            self._region_failures.get(k.region, 0)
+            + self._function_failures.get(k.function_key, 0)
+        )
 
     # ------------------------------------------------------------------
     def reset(self, region: TargetRegion) -> None:
