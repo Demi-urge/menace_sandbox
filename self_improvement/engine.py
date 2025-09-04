@@ -162,7 +162,7 @@ from .orchestration import (
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt
-from .state_snapshot import capture_snapshot, delta as snapshot_delta, save_checkpoint
+from .state_snapshot import capture_snapshot, delta as snapshot_delta
 from . import snapshot_tracker
 
 
@@ -891,6 +891,7 @@ class SelfImprovementEngine:
         self.cycle_logs: list[dict[str, Any]] = []
         self.warning_summary: list[dict[str, Any]] = []
         self.strategy_confidence: Dict[str, int] = {}
+        self.deprioritized_strategies: set[str] = set()
         self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
         self._load_synergy_weights()
@@ -1517,7 +1518,7 @@ class SelfImprovementEngine:
                                     f"{module}.py" if Path(module).suffix == "" else module
                                 )
                             )
-                            save_checkpoint(module_path, commit_hash)
+                            snapshot_tracker.save_checkpoint(module_path, commit_hash)
                         except Exception:
                             self.logger.exception(
                                 "checkpoint save failed", extra=log_record(module=module)
@@ -6400,7 +6401,14 @@ class SelfImprovementEngine:
 
         return results
 
-    def _record_snapshot_delta(self, prompt: object, diff: str, delta: dict[str, float]) -> None:
+    def _record_snapshot_delta(
+        self,
+        prompt: object,
+        diff: str,
+        delta: dict[str, float],
+        files: Sequence[Path],
+        cycle_id: str,
+    ) -> None:
         """Persist *delta* and log the outcome, updating confidence on success."""
 
         path = _data_dir() / "snapshots" / "deltas.jsonl"
@@ -6411,12 +6419,50 @@ class SelfImprovementEngine:
         success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
         log_prompt_attempt(prompt, success=success, exec_result={"diff": diff}, roi_meta=delta)
         if success:
+            for f in files:
+                try:
+                    snapshot_tracker.save_checkpoint(f, cycle_id)
+                except Exception:
+                    self.logger.exception(
+                        "checkpoint save failed", extra=log_record(module=str(f))
+                    )
+            try:
+                current_conf = self.baseline_tracker.get("confidence")
+                self.baseline_tracker.update(confidence=current_conf + 1)
+            except Exception:
+                pass
             updater = getattr(self, "confidence_updater", None)
             if updater:
                 try:
                     updater.update(delta)
                 except Exception:
                     self.logger.exception("confidence update failed")
+        else:
+            strategy = None
+            if prompt is not None:
+                metadata = getattr(prompt, "metadata", {})
+                if isinstance(metadata, dict):
+                    strategy = metadata.get("strategy") or metadata.get("prompt_id")
+            if strategy:
+                count = snapshot_tracker.record_downgrade(str(strategy))
+                if count >= SandboxSettings().prompt_failure_threshold:
+                    self.deprioritized_strategies.add(str(strategy))
+
+    def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
+        """Return the first strategy not marked as deprioritized.
+
+        Strategies with downgrade counts above the failure threshold are skipped.
+        """
+
+        penalties = snapshot_tracker.downgrade_counts
+        threshold = SandboxSettings().prompt_failure_threshold
+        for strat in strategies:
+            if strat in self.deprioritized_strategies:
+                continue
+            if penalties.get(str(strat), 0) >= threshold:
+                continue
+            return strat
+        return None
 
     @radar.track
     def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:
@@ -7818,7 +7864,7 @@ class SelfImprovementEngine:
                 diff=snapshot_diff,
             )
             delta = snapshot_tracker.compute_delta(pre_snapshot, after_snapshot)
-            self._record_snapshot_delta(snapshot_prompt, snapshot_diff, delta)
+            self._record_snapshot_delta(snapshot_prompt, snapshot_diff, delta, changed_files, cid)
             self._check_momentum()
             self._check_delta_score()
             self._check_roi_stagnation()
