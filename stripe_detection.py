@@ -14,7 +14,10 @@ PAYMENT_KEYWORDS = {
     "charge",
 }
 
-HTTP_LIBRARIES = {"requests", "httpx"}
+# Common HTTP client libraries that can issue requests to Stripe's API.
+# Detected usages of these libraries contacting the Stripe service must go
+# through ``stripe_billing_router``.
+HTTP_LIBRARIES = {"requests", "httpx", "aiohttp", "urllib", "urllib3"}
 
 
 def contains_payment_keyword(name: str, keywords: Iterable[str] = PAYMENT_KEYWORDS) -> bool:

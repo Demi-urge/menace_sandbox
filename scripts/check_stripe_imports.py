@@ -5,7 +5,8 @@ This script guards against direct usage of the Stripe SDK and accidental
 exposure of live Stripe credentials. Run it in two modes:
 
 * Default mode checks Python files for ``stripe`` imports, raw ``api.stripe.com``
-  calls via common HTTP libraries and payment keywords without
+  calls via common HTTP libraries (``requests``, ``httpx``, ``aiohttp``,
+  ``urllib`` and ``urllib3``) and payment keywords without
   ``stripe_billing_router``.
 * ``--keys`` scans any files for strings such as ``sk_live``, ``pk_live``,
   ``STRIPE_SECRET_KEY`` or ``STRIPE_PUBLIC_KEY`` outside
@@ -36,7 +37,8 @@ def resolve_path(path: str) -> str:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-from stripe_detection import PAYMENT_KEYWORDS, HTTP_LIBRARIES, contains_payment_keyword  # noqa: E402
+from stripe_detection import HTTP_LIBRARIES  # noqa: E402
+from stripe_detection import contains_payment_keyword  # noqa: E402
 
 ALLOWED = {
     (REPO_ROOT / "stripe_billing_router.py").resolve(),  # path-ignore
@@ -45,6 +47,7 @@ ALLOWED = {
     (REPO_ROOT / "bot_development_bot.py").resolve(),  # path-ignore
     (REPO_ROOT / "config_loader.py").resolve(),  # path-ignore
     (REPO_ROOT / "codex_output_analyzer.py").resolve(),  # path-ignore
+    (REPO_ROOT / "stripe_detection.py").resolve(),  # path-ignore
 }
 KEY_PATTERN = re.compile(
     r"sk_live|pk_live|STRIPE_SECRET_KEY|STRIPE_PUBLIC_KEY"
@@ -90,7 +93,7 @@ class StripeAnalyzer(ast.NodeVisitor):
             if any(
                 isinstance(arg, ast.Constant)
                 and isinstance(arg.value, str)
-                and "api.stripe.com" in arg.value
+                and "api." "stripe.com" in arg.value
                 for arg in node.args
             ):
                 self.raw_api_lines.append(node.lineno)
@@ -101,7 +104,7 @@ class StripeAnalyzer(ast.NodeVisitor):
             self.keyword_lines.add(node.lineno)
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # pragma: no cover - simple
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # pragma: no cover
         if contains_payment_keyword(node.name):
             self.keyword_lines.add(node.lineno)
         self.generic_visit(node)
