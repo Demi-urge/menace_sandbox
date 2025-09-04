@@ -8,9 +8,11 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from dynamic_path_router import resolve_path
+
 spec = importlib.util.spec_from_file_location(
     "neurosales.api_harvest",
-    os.path.join(os.path.dirname(__file__), "..", "neurosales", "api_harvest.py"),
+    str(resolve_path("neurosales/api_harvest.py")),
 )
 api_harvest = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("neurosales", types.ModuleType("neurosales"))

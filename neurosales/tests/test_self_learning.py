@@ -5,6 +5,8 @@ import pytest
 from unittest.mock import patch
 import time
 
+from dynamic_path_router import resolve_path
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import importlib.util
@@ -53,7 +55,7 @@ stub_sql.SelfLearningState = type("SelfLearningState", (), {"id": 0, "data": {}}
 stub_sql.log_rl_feedback = lambda *a, **kw: None
 
 spec = importlib.util.spec_from_file_location(
-    "neurosales.self_learning", os.path.join(os.path.dirname(__file__), "..", "neurosales", "self_learning.py")
+    "neurosales.self_learning", str(resolve_path("neurosales/self_learning.py"))
 )
 self_learning = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("neurosales", types.ModuleType("neurosales"))

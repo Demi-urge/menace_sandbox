@@ -18,6 +18,7 @@ import os
 import uuid
 
 from db_router import init_db_router
+from dynamic_path_router import resolve_path
 
 MENACE_ID = uuid.uuid4().hex
 LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
@@ -212,7 +213,7 @@ def create_scaffold(
 
 
 def _register_in_router(module_name: str, class_name: str, record_class: str) -> None:
-    path = Path('db_router.py')
+    path = resolve_path('db_router.py')
     if not path.exists():
         return
     text = path.read_text()

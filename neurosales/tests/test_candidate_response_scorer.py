@@ -6,6 +6,8 @@ import pytest
 from unittest.mock import MagicMock
 import types
 
+from dynamic_path_router import resolve_path
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import importlib.util
@@ -18,7 +20,7 @@ stub_user_prefs.PreferenceProfile = type("PP", (), {"embedding": []})
 
 spec = importlib.util.spec_from_file_location(
     "neurosales.scoring",
-    os.path.join(os.path.dirname(__file__), "..", "neurosales", "scoring.py"),
+    str(resolve_path("neurosales/scoring.py")),
 )
 scoring = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("neurosales", types.ModuleType("neurosales"))
@@ -39,7 +41,7 @@ def test_engagement_prediction_changes_after_training(tmp_path):
     features = [30, 2, 1]
     baseline = scorer._predict_engagement(features)
 
-    script = os.path.join(os.path.dirname(__file__), "..", "scripts", "train_engagement.py")
+    script = str(resolve_path("neurosales/scripts/train_engagement.py"))
     subprocess.check_call([sys.executable, script])
 
     trained = CandidateResponseScorer()

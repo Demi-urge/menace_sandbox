@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 from dotenv import load_dotenv
 
 
@@ -13,7 +15,7 @@ def main() -> None:
     print(f"Installing packages from {reqs}...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(reqs)])
 
-    heavy = root / "scripts" / "setup_heavy_deps.py"
+    heavy = resolve_path("neurosales/scripts/setup_heavy_deps.py")
     print("Running heavy dependency setup...")
     subprocess.check_call([sys.executable, str(heavy)])
 

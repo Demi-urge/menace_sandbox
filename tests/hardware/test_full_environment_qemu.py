@@ -26,7 +26,7 @@ def test_full_environment_qemu(monkeypatch, tmp_path, os_type, image_key):
     def fake_copytree(src, dst, dirs_exist_ok=True):
         Path(dst).mkdir(parents=True, exist_ok=True)
         (Path(dst) / "data").mkdir(exist_ok=True)
-        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")
+        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")  # path-ignore
     monkeypatch.setattr(env.shutil, "copytree", fake_copytree)
     monkeypatch.setattr(env.shutil, "rmtree", lambda *a, **k: None)
     monkeypatch.setattr(env.shutil, "which", lambda name: "/usr/bin/qemu-system-x86_64")

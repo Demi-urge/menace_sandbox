@@ -7,10 +7,12 @@ from unittest.mock import patch, MagicMock
 import importlib.util
 import types
 
+from dynamic_path_router import resolve_path
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 spec = importlib.util.spec_from_file_location(
-    "neurosales.http_retry", os.path.join(os.path.dirname(__file__), "..", "neurosales", "http_retry.py")
+    "neurosales.http_retry", str(resolve_path("neurosales/http_retry.py"))
 )
 http_retry = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("neurosales", types.ModuleType("neurosales"))

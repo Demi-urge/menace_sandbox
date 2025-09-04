@@ -29,12 +29,12 @@ def main() -> int:
             "tests" in path.parts
             or "docs" in path.parts
             or path.name in {
-                "governed_retrieval.py",
-                "check_governed_embeddings.py",
-                "check_governed_retrieval.py",
-                "universal_retriever.py",
+                "governed_retrieval.py",  # path-ignore
+                "check_governed_embeddings.py",  # path-ignore
+                "check_governed_retrieval.py",  # path-ignore
+                "universal_retriever.py",  # path-ignore
             }
-            or path.parts[-2:] == ("vector_service", "retriever.py")
+            or path.parts[-2:] == ("vector_service", "retriever.py")  # path-ignore
         ):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")

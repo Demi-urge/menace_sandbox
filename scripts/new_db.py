@@ -9,6 +9,7 @@ import os
 import uuid
 
 from db_router import init_db_router
+from dynamic_path_router import resolve_path
 
 MENACE_ID = uuid.uuid4().hex
 LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH", f"./menace_{MENACE_ID}_local.db")
@@ -147,7 +148,7 @@ def create_db_scaffold(name: str, root: Path = Path('.')) -> None:
         )
     )
 
-    emb_file = root / 'vector_service' / 'embedding_backfill.py'
+    emb_file = root / 'vector_service' / resolve_path('vector_service/embedding_backfill.py').name
     if emb_file.exists():
         text = emb_file.read_text()
         if module_name not in text:

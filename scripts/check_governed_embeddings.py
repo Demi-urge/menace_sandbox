@@ -37,7 +37,7 @@ def main() -> int:
         # itself.
         if (
             "tests" in path.parts
-            or path.name == "governed_embeddings.py"
+            or path.name == "governed_embeddings.py"  # path-ignore
             or path.resolve() == this_file
         ):
             continue
