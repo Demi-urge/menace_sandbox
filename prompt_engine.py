@@ -60,7 +60,6 @@ except Exception:  # pragma: no cover - logging only when available
 
 
 logger = logging.getLogger(__name__)
-ROOT_DIR = resolve_path(".")
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -199,7 +198,7 @@ class PromptEngine:
     chunk_summary_cache_dir: Path = field(
         default_factory=lambda: resolve_path(_SETTINGS.chunk_summary_cache_dir)
         if _SETTINGS
-        else ROOT_DIR / "chunk_summary_cache"
+        else resolve_path("chunk_summary_cache")
     )
     llm: LLMClient | None = None
     roi_weight: float = 1.0
