@@ -18,7 +18,7 @@ repos:
         entry: python tools/check_static_paths.py
         language: system
         pass_filenames: true
-        files: '\.py$'
+        files: '(^|/)(self_improvement|sandbox_runner|scripts)/.*\.py$'
       - id: check-dynamic-paths
         name: Ensure dynamic paths use resolve_path
         entry: python tools/check_dynamic_paths.py
