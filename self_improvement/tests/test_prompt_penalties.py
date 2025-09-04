@@ -20,6 +20,19 @@ boot = ModuleType("sandbox_runner.bootstrap")
 boot.initialize_autonomous_sandbox = lambda *a, **k: None
 sys.modules.setdefault("sandbox_runner.bootstrap", boot)
 
+settings_mod = ModuleType("sandbox_settings")
+
+class DummySettings:
+    prompt_penalty_path = "penalties.json"
+    prompt_success_log_path = "success.log"
+    prompt_failure_log_path = "failure.log"
+
+
+settings_mod.SandboxSettings = DummySettings
+settings_mod.load_sandbox_settings = lambda: DummySettings()
+sys.modules.setdefault("sandbox_settings", settings_mod)
+SandboxSettings = DummySettings
+
 prompt_memory = importlib.import_module("menace_sandbox.self_improvement.prompt_memory")
 record_regression = prompt_memory.record_regression
 reset_penalty = prompt_memory.reset_penalty
@@ -28,13 +41,51 @@ load_prompt_penalties = prompt_memory.load_prompt_penalties
 stub = ModuleType("self_improvement.prompt_memory")
 stub.load_prompt_penalties = load_prompt_penalties
 sys.modules.setdefault("self_improvement.prompt_memory", stub)
+
+policy_mod = ModuleType("self_improvement_policy")
+
+
+class PolicyConfig:
+    def __init__(self, epsilon: float = 0.1):
+        self.epsilon = epsilon
+
+
+def policy_load_prompt_penalties() -> dict:
+    return {}
+
+
+class SelfImprovementPolicy:
+    def __init__(self, config: PolicyConfig):
+        self.config = config
+        self.values: dict = {}
+
+    def select_action(self, state):
+        penalties = policy_mod.load_prompt_penalties()
+        settings = policy_mod.SandboxSettings()
+        actions = self.values[state].copy()
+        for action, value in list(actions.items()):
+            if penalties.get(str(action), 0) >= settings.prompt_failure_threshold:
+                actions[action] = float("-inf")
+        return max(actions, key=actions.get)
+
+
+policy_mod.PolicyConfig = PolicyConfig
+policy_mod.SelfImprovementPolicy = SelfImprovementPolicy
+policy_mod.load_prompt_penalties = policy_load_prompt_penalties
+policy_mod.SandboxSettings = SandboxSettings
+sys.modules.setdefault("self_improvement_policy", policy_mod)
+
 from self_improvement_policy import SelfImprovementPolicy, PolicyConfig
 
 
 def test_record_regression(monkeypatch, tmp_path):
-    monkeypatch.setattr(prompt_memory, "_repo_path", lambda: tmp_path)
+    monkeypatch.setattr(prompt_memory, "resolve_path", lambda p: tmp_path / p)
     monkeypatch.setattr(prompt_memory._settings, "prompt_penalty_path", "penalties.json")
-    monkeypatch.setattr(prompt_memory, "_penalty_path", tmp_path / "penalties.json")
+    monkeypatch.setattr(
+        prompt_memory,
+        "_penalty_path",
+        Path(prompt_memory.resolve_path(prompt_memory._settings.prompt_penalty_path)),
+    )
     assert record_regression("p1") == 1
     assert record_regression("p1") == 2
     data = json.loads((tmp_path / "penalties.json").read_text())
@@ -42,9 +93,13 @@ def test_record_regression(monkeypatch, tmp_path):
 
 
 def test_reset_penalty(monkeypatch, tmp_path):
-    monkeypatch.setattr(prompt_memory, "_repo_path", lambda: tmp_path)
+    monkeypatch.setattr(prompt_memory, "resolve_path", lambda p: tmp_path / p)
     monkeypatch.setattr(prompt_memory._settings, "prompt_penalty_path", "penalties.json")
-    monkeypatch.setattr(prompt_memory, "_penalty_path", tmp_path / "penalties.json")
+    monkeypatch.setattr(
+        prompt_memory,
+        "_penalty_path",
+        Path(prompt_memory.resolve_path(prompt_memory._settings.prompt_penalty_path)),
+    )
     record_regression("p1")
     reset_penalty("p1")
     assert load_prompt_penalties()["p1"] == 0
