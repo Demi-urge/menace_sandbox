@@ -15,6 +15,7 @@ import keyword
 import logging
 import subprocess
 import shutil
+import sys
 from dynamic_path_router import resolve_path
 
 try:
@@ -646,21 +647,29 @@ class BotDevelopmentBot:
         if path.suffix != ".py":
             return
 
+        stripe_check = Path(resolve_path("scripts/check_stripe_imports.py"))
         tools = [
             ("black", ["black", "--check", str(path)]),
             ("flake8", ["flake8", str(path)]),
             ("mypy", ["mypy", str(path)]),
+            (
+                "stripe-imports",
+                [sys.executable, str(stripe_check), str(path)],
+            ),
         ]
         for name, cmd in tools:
-            if shutil.which(cmd[0]) is None:
+            if name != "stripe-imports" and shutil.which(cmd[0]) is None:
                 self.logger.warning("%s not installed", name)
                 continue
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode != 0:
+                msg = (proc.stdout + proc.stderr).strip()
                 self.logger.warning(
-                    "%s failed for %s: %s", name, path, proc.stderr.strip()
+                    "%s failed for %s: %s", name, path, msg
                 )
-                self._escalate(f"{name} failed for {path}: {proc.stderr.strip()}")
+                self._escalate(f"{name} failed for {path}: {msg}")
+                if name == "stripe-imports":
+                    raise RuntimeError(f"stripe imports detected in {path}")
 
     def version_control(
         self, repo_dir: Path, paths: List[Path], message: str = "Auto-generated bot"
