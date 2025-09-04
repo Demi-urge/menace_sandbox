@@ -22,7 +22,7 @@ import threading
 import importlib
 from contextlib import contextmanager
 from typing import Callable, Mapping
-from collections import deque, defaultdict
+from collections import deque
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
 from target_region import TargetRegion, extract_target_region
@@ -35,6 +35,7 @@ from db_router import GLOBAL_ROUTER, init_db_router
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
 from .audit_trail import AuditTrail
+from patch_attempt_tracker import PatchAttemptTracker
 try:
     from .code_database import PatchHistoryDB, _hash_code
 except Exception:  # pragma: no cover - test fallback
@@ -314,8 +315,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._last_test_log: Path | None = None
         self.graph = KnowledgeGraph()
         self.error_logger = ErrorLogger(knowledge_graph=self.graph)
-        self._attempt_counts: dict[tuple[str, str, int], int] = defaultdict(int)
-        self._failure_counts: dict[tuple[str, str, int], int] = defaultdict(int)
+        self._attempt_tracker = PatchAttemptTracker(self.logger)
         self._last_region: TargetRegion | None = None
 
     # ------------------------------------------------------------------
@@ -379,57 +379,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     def attempt_count(self, region: TargetRegion) -> int:
         """Return number of attempts made for ``region``."""
-        key = (region.filename, region.function, region.start_line)
-        return self._attempt_counts.get(key, 0)
+        return self._attempt_tracker.attempts_for(region)
 
-    # ------------------------------------------------------------------
-    def _log_escalation(self, region: TargetRegion, level: int) -> None:
-        """Log escalation ``level`` for ``region`` via the telemetry bus."""
-        try:
-            self.error_logger.log(
-                TelemetryEvent(
-                    root_cause=f"escalation_level_{level}",
-                    module=region.filename,
-                )
-            )
-        except Exception:
-            self.logger.exception("failed to log escalation")
-
-    # ------------------------------------------------------------------
-    def _record_region_failure(self, region: TargetRegion) -> None:
-        """Increment failure counter for ``region`` and escalate if needed."""
-        key = (region.filename, region.function, region.start_line)
-        self._last_region = region
-        self._failure_counts[key] += 1
-        count = self._failure_counts[key]
-        if count == 2:
-            self._log_escalation(region, 1)
-            try:
-                self.engine.apply_patch(Path(region.filename), "auto_debug", target_region=region)
-            except Exception:
-                self.logger.exception("function rewrite escalation failed")
-        elif count == 4:
-            self._log_escalation(region, 2)
-            try:
-                self.engine.apply_patch(Path(region.filename), "auto_debug")
-            except Exception:
-                self.logger.exception("module rewrite escalation failed")
-
-    # ------------------------------------------------------------------
-    def _reset_failure_counter(self, region: TargetRegion | None) -> None:
-        """Clear failure counter for ``region`` after a successful fix."""
-        if region is None:
-            return
-        key = (region.filename, region.function, region.start_line)
-        self._failure_counts.pop(key, None)
-        if self._last_region and key == (
-            self._last_region.filename,
-            self._last_region.function,
-            self._last_region.start_line,
-        ):
-            self._last_region = None
-
-    # ------------------------------------------------------------------
     def _update_success_metrics(self, result: str) -> None:
         """Update success rate statistics and momentum from ``result``."""
         success = 1 if result == "success" else 0
@@ -657,10 +608,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             region = extract_target_region(failure.trace)
             if region:
                 failure.target_region = region
-                key = (region.filename, region.function, region.start_line)
-                self._attempt_counts[key] += 1
-                failure.attempts = self._attempt_counts[key]
-                self._record_region_failure(region)
+                level, _ = self._attempt_tracker.level_for(region, region)
+                self._attempt_tracker.record_failure(level, region, region)
+                failure.attempts = self._attempt_tracker.attempts_for(region)
+                self._last_region = region
             if not self._failure_cache.seen(failure):
                 self._failure_cache.add(failure)
             self._record_failed_strategy(failure)
@@ -682,10 +633,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             region = extract_target_region(failure.trace)
             if region:
                 failure.target_region = region
-                key = (region.filename, region.function, region.start_line)
-                self._attempt_counts[key] += 1
-                failure.attempts = self._attempt_counts[key]
-                self._record_region_failure(region)
+                level, _ = self._attempt_tracker.level_for(region, region)
+                self._attempt_tracker.record_failure(level, region, region)
+                failure.attempts = self._attempt_tracker.attempts_for(region)
+                self._last_region = region
             if not self._failure_cache.seen(failure):
                 self._failure_cache.add(failure)
             self._record_failed_strategy(failure)
@@ -1507,10 +1458,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             region = extract_target_region(failure.trace)
                             if region:
                                 failure.target_region = region
-                                key = (region.filename, region.function, region.start_line)
-                                self._attempt_counts[key] += 1
-                                failure.attempts = self._attempt_counts[key]
-                                self._record_region_failure(region)
+                                level, _ = self._attempt_tracker.level_for(region, region)
+                                self._attempt_tracker.record_failure(level, region, region)
+                                failure.attempts = self._attempt_tracker.attempts_for(region)
+                                self._last_region = region
                             self._record_failed_strategy(failure)
                             try:
                                 self.error_logger.log(
@@ -1538,10 +1489,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             region = extract_target_region(failure.trace)
                             if region:
                                 failure.target_region = region
-                                key = (region.filename, region.function, region.start_line)
-                                self._attempt_counts[key] += 1
-                                failure.attempts = self._attempt_counts[key]
-                                self._record_region_failure(region)
+                                level, _ = self._attempt_tracker.level_for(region, region)
+                                self._attempt_tracker.record_failure(level, region, region)
+                                failure.attempts = self._attempt_tracker.attempts_for(region)
+                                self._last_region = region
                             self._record_failed_strategy(failure)
                             try:
                                 self.error_logger.log(
@@ -1882,10 +1833,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     region = extract_target_region(failure.trace)
                     if region:
                         failure.target_region = region
-                        key = (region.filename, region.function, region.start_line)
-                        self._attempt_counts[key] += 1
-                        failure.attempts = self._attempt_counts[key]
-                        self._record_region_failure(region)
+                        level, _ = self._attempt_tracker.level_for(region, region)
+                        self._attempt_tracker.record_failure(level, region, region)
+                        failure.attempts = self._attempt_tracker.attempts_for(region)
+                        self._last_region = region
                     self._record_failed_strategy(failure)
                     self._record_exception(exc)
                     try:
@@ -1904,10 +1855,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     region = extract_target_region(failure.trace)
                     if region:
                         failure.target_region = region
-                        key = (region.filename, region.function, region.start_line)
-                        self._attempt_counts[key] += 1
-                        failure.attempts = self._attempt_counts[key]
-                        self._record_region_failure(region)
+                        level, _ = self._attempt_tracker.level_for(region, region)
+                        self._attempt_tracker.record_failure(level, region, region)
+                        failure.attempts = self._attempt_tracker.attempts_for(region)
+                        self._last_region = region
                     self._record_failed_strategy(failure)
                     self._record_exception(exc)
                     try:
@@ -1964,7 +1915,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         tests.extend(self._context_feedback(failure))
                     attempt += 1
                 else:
-                    self._reset_failure_counter(self._last_region)
+                    if self._last_region is not None:
+                        self._attempt_tracker.reset(self._last_region)
+                        self._last_region = None
                     break
             if patched:
                 break
