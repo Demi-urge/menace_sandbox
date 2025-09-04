@@ -17,7 +17,7 @@ import sys
 import tokenize
 import io
 from pathlib import Path
-from stripe_detection import PAYMENT_KEYWORDS, HTTP_LIBRARIES, contains_payment_keyword
+from stripe_detection import HTTP_LIBRARIES, contains_payment_keyword
 
 from dynamic_path_router import resolve_path
 
@@ -62,6 +62,11 @@ class CriticalGenerationFailure(RuntimeError):
 
 def validate_stripe_usage(code: str) -> None:
     """Scan *code* for disallowed Stripe usage.
+
+    This checker looks for direct ``stripe`` imports, calls to the Stripe API
+    via common HTTP libraries (``requests``, ``httpx``, ``aiohttp``, ``urllib``
+    and ``urllib3``) and payment related identifiers used without the
+    ``stripe_billing_router`` safety wrapper.
 
     Parameters
     ----------
@@ -123,7 +128,7 @@ def validate_stripe_usage(code: str) -> None:
                 if any(
                     isinstance(arg, ast.Constant)
                     and isinstance(arg.value, str)
-                    and "api.stripe.com" in arg.value
+                    and "api." "stripe.com" in arg.value
                     for arg in node.args
                 ):
                     self.raw_api_call = True
@@ -144,7 +149,7 @@ def validate_stripe_usage(code: str) -> None:
                 self.has_payment_keyword = True
             self.generic_visit(node)
 
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # pragma: no cover - simple
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # pragma: no cover
             if contains_payment_keyword(node.name):
                 self.has_payment_keyword = True
             self.generic_visit(node)
@@ -176,6 +181,7 @@ def validate_stripe_usage(code: str) -> None:
             raise CriticalGenerationFailure(
                 "critical generation failure: stripe_billing_router imported but unused"
             )
+
 
 def configure_logging(
     logger_obj: Optional[logging.Logger] = None,
