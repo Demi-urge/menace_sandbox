@@ -336,7 +336,7 @@ class Watchdog:
                     host = self.failover_hosts.pop(0)
                     try:
                         subprocess.Popen(
-                            ["ssh", host, "python", f"{bot}.py"],
+                            ["ssh", host, "python", resolve_path(f"{bot}.py")],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                         )
