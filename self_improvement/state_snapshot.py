@@ -2,10 +2,11 @@ from __future__ import annotations
 
 """Capture and compare self-improvement state metrics."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict
 
+import json
 import logging
 
 import codebase_diff_checker
@@ -93,14 +94,36 @@ class SnapshotTracker:
     def __init__(self, repo_path: Path, tracker: BaselineTracker) -> None:
         self.repo_path = Path(repo_path)
         self.tracker = tracker
-        self.last_snapshot: StateSnapshot | None = None
         self.logger = logging.getLogger(__name__)
+        base = Path(resolve_path(SandboxSettings().sandbox_data_dir)) / "snapshots"
+        self._persist_path = base / "last_snapshot.json"
+        try:
+            data = json.loads(self._persist_path.read_text(encoding="utf-8"))
+            self.last_snapshot = StateSnapshot(**data)
+        except Exception:
+            self.last_snapshot = None
+
+    # --------------------------------------------------------------
+    def _persist_last_snapshot(self) -> None:
+        if self.last_snapshot is None:
+            return
+        try:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            self._persist_path.write_text(
+                json.dumps(asdict(self.last_snapshot)), encoding="utf-8"
+            )
+        except Exception:  # pragma: no cover - best effort
+            self.logger.debug("failed to persist snapshot", exc_info=True)
+
+    def store(self, snap: StateSnapshot) -> None:
+        self.last_snapshot = snap
+        self._persist_last_snapshot()
 
     def capture(self) -> StateSnapshot:
         """Capture and store the current repository snapshot."""
 
         snap = capture_state(self.repo_path, self.tracker)
-        self.last_snapshot = snap
+        self.store(snap)
         return snap
 
     def evaluate_change(
@@ -114,7 +137,7 @@ class SnapshotTracker:
         """
 
         before = self.last_snapshot
-        self.last_snapshot = after
+        self.store(after)
         if before is None:
             return {}
 
