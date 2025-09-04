@@ -1,0 +1,69 @@
+import importlib.util
+import shutil
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+
+def _load_router(path: Path):
+    spec = importlib.util.spec_from_file_location("dpr_temp", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_resolve_path_in_nested_clone(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+    with TemporaryDirectory() as td:
+        repo = Path(td) / "clone" / "menace"
+        (repo / "patches").mkdir(parents=True)
+        (repo / "prompts").mkdir()
+        (repo / "nested" / "deep").mkdir(parents=True)
+
+        shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")
+        shutil.copy(project_root / "sandbox_runner.py", repo / "sandbox_runner.py")
+        shutil.copy(project_root / "patch_provenance.py", repo / "patches" / "patch_provenance.py")
+        shutil.copy(project_root / "prompt_engine.py", repo / "prompts" / "prompt_engine.py")
+
+        dpr = _load_router(repo / "dynamic_path_router.py")
+
+        monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+        dpr.clear_cache()
+
+        monkeypatch.chdir(repo / "nested" / "deep")
+
+        assert dpr.resolve_path("sandbox_runner.py") == (repo / "sandbox_runner.py").resolve()
+        assert dpr.resolve_path("patch_provenance.py") == (
+            repo / "patches" / "patch_provenance.py"
+        ).resolve()
+        assert dpr.resolve_path("prompt_engine.py") == (
+            repo / "prompts" / "prompt_engine.py"
+        ).resolve()
+
+
+def test_resolve_path_with_relocated_root(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+    with TemporaryDirectory() as td:
+        repo = Path(td) / "relocated"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "patches").mkdir()
+        (repo / "prompts").mkdir()
+
+        shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")
+        shutil.copy(project_root / "sandbox_runner.py", repo / "sandbox_runner.py")
+        shutil.copy(project_root / "patch_provenance.py", repo / "patches" / "patch_provenance.py")
+        shutil.copy(project_root / "prompt_engine.py", repo / "prompts" / "prompt_engine.py")
+
+        dpr = _load_router(repo / "dynamic_path_router.py")
+        monkeypatch.setenv("MENACE_ROOT", str(repo))
+        dpr.clear_cache()
+
+        monkeypatch.chdir(Path(td))
+
+        assert dpr.resolve_path("sandbox_runner.py") == (repo / "sandbox_runner.py").resolve()
+        assert dpr.resolve_path("patch_provenance.py") == (
+            repo / "patches" / "patch_provenance.py"
+        ).resolve()
+        assert dpr.resolve_path("prompt_engine.py") == (
+            repo / "prompts" / "prompt_engine.py"
+        ).resolve()
