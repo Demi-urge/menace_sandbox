@@ -22,6 +22,40 @@ _settings = SandboxSettings()
 _penalty_path = Path(resolve_path(_settings.prompt_penalty_path))
 _penalty_lock = FileLock(str(_penalty_path) + ".lock")
 
+_strategy_stats_path = _repo_path() / "_strategy_stats.json"
+_strategy_lock = FileLock(str(_strategy_stats_path) + ".lock")
+
+
+def load_strategy_roi_stats() -> Dict[str, Dict[str, float]]:
+    """Return mapping of strategy identifiers to ROI statistics."""
+
+    with _strategy_lock:
+        try:
+            data = json.loads(_strategy_stats_path.read_text(encoding="utf-8"))
+            stats: Dict[str, Dict[str, float]] = {}
+            for k, v in data.items():
+                stats[str(k)] = {
+                    "avg_roi": float(v.get("avg_roi", 0.0)),
+                    "trials": int(v.get("trials", 0)),
+                }
+            return stats
+        except Exception:
+            return {}
+
+
+def update_strategy_roi(strategy: str, roi_delta: float) -> None:
+    """Update ROI statistics for ``strategy`` with ``roi_delta``."""
+
+    with _strategy_lock:
+        stats = load_strategy_roi_stats()
+        rec = stats.setdefault(str(strategy), {"avg_roi": 0.0, "trials": 0})
+        rec["trials"] += 1
+        rec["avg_roi"] = (
+            (rec["avg_roi"] * (rec["trials"] - 1)) + float(roi_delta)
+        ) / rec["trials"]
+        _strategy_stats_path.parent.mkdir(parents=True, exist_ok=True)
+        _strategy_stats_path.write_text(json.dumps(stats), encoding="utf-8")
+
 
 def load_prompt_penalties() -> Dict[str, int]:
     """Return mapping of prompt identifiers to downgrade counts."""
@@ -132,6 +166,7 @@ def log_prompt_attempt(
         "metadata": metadata,
         "exec_result": exec_result,
     }
+    roi_delta: float | None = None
     if prompt_id:
         entry["prompt_id"] = prompt_id
         if not success:
@@ -139,8 +174,18 @@ def log_prompt_attempt(
 
     if roi_meta is not None:
         entry["roi_meta"] = roi_meta
+        if roi_delta is None:
+            roi_delta = roi_meta.get("roi_delta") if isinstance(roi_meta, dict) else None
+        if roi_delta is None and isinstance(roi_meta, dict):
+            roi_delta = roi_meta.get("roi")
     if not success and failure_reason is not None:
         entry["failure_reason"] = failure_reason
+
+    if prompt_id and roi_delta is not None:
+        try:
+            update_strategy_roi(prompt_id, float(roi_delta))
+        except Exception:
+            pass
 
     path = _log_path(success)
     lock = FileLock(str(path) + ".lock")
