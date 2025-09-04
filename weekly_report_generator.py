@@ -10,6 +10,8 @@ from collections import Counter, defaultdict
 import statistics
 from typing import Any, Dict, List
 
+from dynamic_path_router import resolve_path
+
 try:
     import requests
 except Exception:  # pragma: no cover - optional dependency
@@ -17,12 +19,12 @@ except Exception:  # pragma: no cover - optional dependency
 
 # ---------------------------------------------------------------------------
 # File paths for log inputs and report outputs
-LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
-AUDIT_LOG = os.path.join(LOG_DIR, "audit_log.jsonl")
-VIOLATION_LOG = os.path.join(LOG_DIR, "violation_log.jsonl")
-LOCK_HISTORY_LOG = os.path.join(LOG_DIR, "lock_history.jsonl")
+LOG_DIR = resolve_path("logs")
+AUDIT_LOG = LOG_DIR / "audit_log.jsonl"
+VIOLATION_LOG = LOG_DIR / "violation_log.jsonl"
+LOCK_HISTORY_LOG = LOG_DIR / "lock_history.jsonl"
 
-REPORT_DIR = os.path.join(os.path.dirname(__file__), "reports")
+REPORT_DIR = resolve_path("reports")
 
 logger = logging.getLogger(__name__)
 
