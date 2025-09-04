@@ -1,8 +1,19 @@
 import importlib
 import sqlite3
+import sys
+import types
 from pathlib import Path
 
 def test_delta_logs_regression(tmp_path, monkeypatch):
+    stub = types.SimpleNamespace(
+        collect_snapshot_metrics=lambda *a, **k: (0.0, 0.0),
+        compute_call_graph_complexity=lambda *a, **k: 0.0,
+    )
+    sys.modules["menace_sandbox.self_improvement.metrics"] = stub
+    sys.modules["dynamic_path_router"] = types.SimpleNamespace(
+        resolve_path=lambda p: p,
+        resolve_dir=lambda p: Path(p),
+    )
     st = importlib.import_module("menace_sandbox.self_improvement.snapshot_tracker")
     sh = importlib.import_module("menace_sandbox.snapshot_history_db")
     monkeypatch.setattr(st, "resolve_path", lambda p: p)
