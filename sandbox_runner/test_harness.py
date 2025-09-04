@@ -50,6 +50,7 @@ class TestHarnessResult:
     stub: dict | None = None
     preset: dict | None = None
     coverage: dict | None = None
+    edge_cases: dict | None = None
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial
         return self.success
@@ -90,6 +91,7 @@ def _run_once(
     backend: str = "venv",
     stub: dict | None = None,
     preset: dict | None = None,
+    edge_cases: dict | None = None,
 ) -> TestHarnessResult:
     """Execute unit tests for ``repo_path`` inside an isolated environment.
 
@@ -129,6 +131,26 @@ def _run_once(
 
         if backend not in {"venv", "docker"}:
             raise ValueError(f"unknown backend: {backend}")
+
+        edge_data = edge_cases
+        if edge_data is None:
+            raw = os.getenv("SANDBOX_EDGE_CASE_STUBS")
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict):
+                        edge_data = parsed
+                except Exception:
+                    edge_data = None
+        if edge_data:
+            for name, payload in edge_data.items():
+                try:
+                    dest = tmpdir / name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    content = payload if isinstance(payload, str) else json.dumps(payload)
+                    dest.write_text(content, encoding="utf-8")
+                except Exception:
+                    pass
 
         req_file = tmpdir / "requirements.txt"
         rel_paths: list[Path] = []
@@ -265,7 +287,11 @@ def _run_once(
                 "-w",
                 "/repo",
             ]
-            for key in ("SANDBOX_INPUT_STUBS", "SANDBOX_ENV_PRESETS"):
+            for key in (
+                "SANDBOX_INPUT_STUBS",
+                "SANDBOX_ENV_PRESETS",
+                "SANDBOX_EDGE_CASE_STUBS",
+            ):
                 val = os.environ.get(key)
                 if val is not None:
                     docker_cmd.extend(["-e", f"{key}={val}"])
@@ -324,6 +350,7 @@ def _run_once(
             stub=stub,
             preset=preset,
             coverage=cov_data,
+            edge_cases=edge_data,
         )
         try:
             from .scoring import record_run as _score_record_run
@@ -376,13 +403,23 @@ def run_tests(
     if not presets:
         presets = [{}]
 
+    try:
+        from .environment import get_edge_case_stubs
+
+        edge_cases = get_edge_case_stubs()
+    except Exception:
+        edge_cases = {}
+    edge_json = json.dumps(edge_cases)
+
     results: list[TestHarnessResult] = []
     for stub in input_stubs:
         for preset in presets:
             old_stub = os.environ.get("SANDBOX_INPUT_STUBS")
             old_presets = os.environ.get("SANDBOX_ENV_PRESETS")
+            old_edges = os.environ.get("SANDBOX_EDGE_CASE_STUBS")
             os.environ["SANDBOX_INPUT_STUBS"] = json.dumps([stub])
             os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
+            os.environ["SANDBOX_EDGE_CASE_STUBS"] = edge_json
             try:
                 res = _run_once(
                     repo_path,
@@ -390,6 +427,7 @@ def run_tests(
                     backend=backend,
                     stub=stub,
                     preset=preset,
+                    edge_cases=edge_cases,
                 )
             finally:
                 if old_stub is None:
@@ -400,6 +438,10 @@ def run_tests(
                     os.environ.pop("SANDBOX_ENV_PRESETS", None)
                 else:
                     os.environ["SANDBOX_ENV_PRESETS"] = old_presets
+                if old_edges is None:
+                    os.environ.pop("SANDBOX_EDGE_CASE_STUBS", None)
+                else:
+                    os.environ["SANDBOX_EDGE_CASE_STUBS"] = old_edges
             results.append(res)
 
     return results[0]
