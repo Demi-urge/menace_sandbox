@@ -1,12 +1,15 @@
 import pickle
 import json
 from pathlib import Path
+import sys
+import types
 
+import menace_sandbox.dynamic_path_router as dpr
 import menace_sandbox.environment_generator as eg
-import menace_sandbox.roi_tracker as rt
 
 
 def _tracker():
+    import menace_sandbox.roi_tracker as rt
     t = rt.ROITracker()
     vals = [(0.0, 0.1, 0.02), (0.1, 0.4, 0.03), (0.4, 0.5, -0.01)]
     for before, after, syn in vals:
@@ -48,6 +51,7 @@ class _FailAgent:
 
 
 def _long_tracker():
+    import menace_sandbox.roi_tracker as rt
     t = rt.ROITracker()
     vals = [
         (0.0, 0.05, 0.01),
@@ -83,6 +87,7 @@ def test_adaptive_agent_exception_logged(monkeypatch, caplog):
     tracker = _long_tracker()
     eg.adapt_presets(tracker, [{"CPU_LIMIT": "1"}])
     assert "preset adaptation failed" in caplog.text
+
 
 class _NoopAgent:
     def __init__(self, path=None, *, strategy=None):
@@ -186,6 +191,7 @@ def test_synergy_resilience_bandwidth_down(monkeypatch):
     assert new[0]["MAX_BANDWIDTH"] == "5Mbps"
     assert new[0]["MIN_BANDWIDTH"] == "1Mbps"
 
+
 def test_generate_presets_from_history_calls_adapt(monkeypatch, tmp_path):
     history = tmp_path / "roi_history.json"
     data = {
@@ -226,4 +232,41 @@ def test_generate_presets_from_history_missing(monkeypatch, tmp_path):
 
     out = eg.generate_presets_from_history(str(tmp_path), 1)
     assert not calls
+    assert out == [{"CPU_LIMIT": "1"}]
+
+
+def test_generate_presets_from_history_resolves_data_dir(monkeypatch, tmp_path):
+    dpr.resolve_path("environment_generator.py")
+    alt_root = tmp_path / "relocated"
+    data_dir = alt_root / "nested" / "sandbox_data"
+    data_dir.mkdir(parents=True)
+    history = data_dir / "roi_history.json"
+    history.write_text(
+        json.dumps({"roi_history": [0.0], "metrics_history": {"security_score": [85]}})
+    )
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(alt_root))
+    dpr.clear_cache()
+
+    class DummyTracker:
+        metrics_history = {"security_score": [85]}
+        roi_history = [0.0]
+
+        def load_history(self, path):
+            self.loaded = Path(path)
+
+    module = types.SimpleNamespace(ROITracker=DummyTracker)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.roi_tracker", module)
+
+    monkeypatch.setattr(eg, "generate_presets", lambda n=None: [{"CPU_LIMIT": "1"}])
+    called = {}
+
+    def fake_adapt(tracker, presets):
+        called["tracker"] = tracker
+        return presets
+
+    monkeypatch.setattr(eg, "adapt_presets", fake_adapt)
+
+    out = eg.generate_presets_from_history(Path("nested") / "sandbox_data", 1)
+    assert called["tracker"].loaded == history
     assert out == [{"CPU_LIMIT": "1"}]
