@@ -274,6 +274,32 @@ def _patched_imports() -> Iterable[None]:
 
 logger = get_logger(__name__)
 
+# Snapshot initial environment for restoration between runs
+_BASE_ENV = os.environ.copy()
+
+
+def _reset_runtime_state() -> None:
+    """Restore environment variables and clear temporary state."""
+    os.environ.clear()
+    os.environ.update(_BASE_ENV)
+
+    # Clear temporary directory contents
+    tmp_root = Path(tempfile.gettempdir())
+    for child in tmp_root.iterdir():
+        if not child.name.startswith(("tmp", "sandbox")):
+            continue
+        try:
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:  # pragma: no cover - best effort cleanup
+            logger.debug("temp cleanup failed for %s", child, exc_info=True)
+
+    # Reset tempfile module cache and import caches
+    tempfile.tempdir = None
+    importlib.invalidate_caches()
+
 
 def _fallback_logger() -> logging.Logger:
     """Return a minimal logger when the main logger is unavailable."""
@@ -4599,6 +4625,7 @@ async def _section_worker(
             logger.exception("failed to record input history")
 
     def _run_snippet() -> Dict[str, Any]:
+        _reset_runtime_state()
         with tempfile.TemporaryDirectory(prefix="run_") as td:
             path = Path(td) / "snippet.py"
             modes = _parse_failure_modes(env_input.get("FAILURE_MODES"))
@@ -4609,6 +4636,7 @@ async def _section_worker(
             try:
                 rc = dict(runner_config or {})
                 rc.setdefault("safe_mode", True)
+                rc.setdefault("use_subprocess", True)
                 runner = WorkflowSandboxRunner()
                 runner.run(lambda: exec(snip, {}), **rc)
             except Exception:
