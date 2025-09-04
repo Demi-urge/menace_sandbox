@@ -31,7 +31,7 @@ import threading
 import inspect
 import subprocess
 import ast
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, contextmanager
 
 from db_router import init_db_router
 from dynamic_path_router import resolve_path
@@ -419,6 +419,13 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
         return seen
 
 try:
+    from sandbox_runner.environment import create_ephemeral_env
+except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
+    @contextmanager
+    def create_ephemeral_env(workdir: Path):  # type: ignore[misc]
+        yield Path(workdir), lambda cmd, **kw: subprocess.run(cmd, **kw)
+
+try:
     from sandbox_runner.orphan_discovery import (
         append_orphan_cache,
         append_orphan_classifications,
@@ -476,6 +483,7 @@ class SelfTestService:
         report_dir: str | Path = Path(test_config.report_dir),
         stub_scenarios: Mapping[str, Any] | None = None,
         fixture_hook: str | None = None,
+        ephemeral: bool = True,
     ) -> None:
         """Create a new service instance.
 
@@ -522,6 +530,10 @@ class SelfTestService:
             Optional dotted path to a function ``(inspect.Parameter) -> Any``
             used by generated stubs to supply domain-specific argument values.
             Overrides the ``SELF_TEST_FIXTURE_HOOK`` environment variable.
+        ephemeral:
+            When ``True`` each test batch executes in an isolated ephemeral
+            environment created via
+            :func:`sandbox_runner.environment.create_ephemeral_env`.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -596,6 +608,7 @@ class SelfTestService:
             self.workers = int(env_workers) if env_workers is not None else 1
         except ValueError:
             self.workers = 1
+        self.ephemeral = ephemeral
 
         # Optional mapping defining scenario templates for generated stubs.
         self.stub_scenarios = dict(stub_scenarios or {})
@@ -1927,7 +1940,7 @@ class SelfTestService:
 
         try:
             async with AsyncExitStack() as stack:
-                if self.use_container:
+                if not self.ephemeral and self.use_container:
                     try:
                         stack.enter_context(_file_lock)
                         await stack.enter_async_context(self._container_lock)
@@ -1939,7 +1952,11 @@ class SelfTestService:
                 else:
                     use_container = False
 
-                use_pipe = self.result_callback is not None or use_container
+                use_pipe = (
+                    self.result_callback is not None
+                    or use_container
+                    or self.ephemeral
+                )
                 workers_list = [self.workers for _ in paths]
                 if use_container and self.workers > 1 and len(paths) > 1:
                     base = self.workers // len(paths)
@@ -1974,7 +1991,7 @@ class SelfTestService:
                 for idx, p in enumerate(paths):
                     tmp_name: str | None = None
                     cmd = [
-                        sys.executable,
+                        "python" if self.ephemeral else sys.executable,
                         "-m",
                         self.test_runner,
                         "-q",
@@ -1994,7 +2011,9 @@ class SelfTestService:
                     if p:
                         cmd.append(p)
 
-                    if use_container:
+                    if self.ephemeral:
+                        proc_info.append((cmd, None, False, None, p))
+                    elif use_container:
                         docker_cmd = [self.container_runtime]
                         if self.docker_host:
                             docker_cmd.extend(
@@ -2038,6 +2057,63 @@ class SelfTestService:
                 async def _process(
                     cmd: list[str], tmp: str | None, is_container: bool, name: str | None
                 ) -> tuple[int, int, float, float, bool, str, str, str, list[dict[str, Any]]]:
+                    if self.ephemeral:
+                        report: dict[str, Any] = {}
+                        out = ""
+                        err = ""
+                        timeout_flag = False
+                        rc = 0
+                        try:
+                            async with AsyncExitStack() as env_stack:
+                                _repo, runner = env_stack.enter_context(
+                                    create_ephemeral_env(Path.cwd())
+                                )
+                                try:
+                                    proc = await asyncio.to_thread(
+                                        runner,
+                                        cmd,
+                                        capture_output=True,
+                                        text=True,
+                                        env=os.environ,
+                                        timeout=self.container_timeout,
+                                    )
+                                    out = proc.stdout or ""
+                                    err = proc.stderr or ""
+                                    rc = proc.returncode
+                                except subprocess.TimeoutExpired as exc:
+                                    timeout_flag = True
+                                    out = exc.stdout or ""
+                                    err = exc.stderr or ""
+                                    rc = -1
+                        except Exception:
+                            rc = -1
+
+                        data = (out or "") + (err or "")
+                        try:
+                            report = json.loads(data) if data else {}
+                        except Exception as exc:
+                            self.logger.exception(
+                                "failed to parse json report",
+                                extra=log_record(error=exc),
+                            )
+                        summary = report.get("summary", {})
+                        pcount = int(summary.get("passed", 0))
+                        fcount = int(summary.get("failed", 0))
+                        cov = float(summary.get("coverage", 0.0))
+                        runtime = float(summary.get("duration", 0.0))
+                        failed_flag = timeout_flag or rc != 0 or report.get("exitcode", 0) != 0
+                        return (
+                            pcount,
+                            fcount,
+                            cov,
+                            runtime,
+                            failed_flag,
+                            out[:1000],
+                            err[:1000],
+                            "",
+                            [],
+                        )
+
                     report: dict[str, Any] = {}
                     out: bytes = b""
                     err: bytes = b""
@@ -2070,7 +2146,7 @@ class SelfTestService:
                                     self_test_container_timeouts_total.inc()
                                 except Exception:
                                     self.logger.exception(
-                                        "failed to update container timeout metric"
+                                        "failed to update container timeout metric",
                                     )
                                 rec = log_record(
                                     attempt=attempt + 1,
@@ -2150,12 +2226,10 @@ class SelfTestService:
                     if failed_flag and name and is_container:
                         log_cmd = [self.container_runtime]
                         if self.docker_host:
-                            log_cmd.extend(
-                                [
-                                    "-H" if self.container_runtime == "docker" else "--url",
-                                    self.docker_host,
-                                ]
-                            )
+                            log_cmd.extend([
+                                "-H" if self.container_runtime == "docker" else "--url",
+                                self.docker_host,
+                            ])
                         log_cmd.extend(["logs", name])
                         try:
                             lp = await asyncio.create_subprocess_exec(
@@ -2187,8 +2261,7 @@ class SelfTestService:
                         log_snip,
                         records,
                     )
-
-            tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name, _ in proc_info]
+tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name, _ in proc_info]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             first_exc: Exception | None = None
@@ -2895,6 +2968,13 @@ def cli(argv: list[str] | None = None) -> int:
             "(sets SELF_TEST_INCLUDE_REDUNDANT=1 and SANDBOX_TEST_REDUNDANT=1)"
         ),
     )
+    run.add_argument(
+        "--ephemeral",
+        dest="ephemeral",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run tests inside a fresh ephemeral environment",
+    )
 
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
@@ -3019,6 +3099,13 @@ def cli(argv: list[str] | None = None) -> int:
         ),
     )
     sched.add_argument(
+        "--ephemeral",
+        dest="ephemeral",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run tests inside a fresh ephemeral environment",
+    )
+    sched.add_argument(
         "--no-container",
         dest="use_container",
         action="store_false",
@@ -3112,6 +3199,7 @@ def cli(argv: list[str] | None = None) -> int:
             clean_orphans=args.clean_orphans,
             include_redundant=args.include_redundant,
             report_dir=args.report_dir,
+            ephemeral=args.ephemeral,
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -3156,6 +3244,7 @@ def cli(argv: list[str] | None = None) -> int:
             clean_orphans=args.clean_orphans,
             include_redundant=args.include_redundant,
             report_dir=args.report_dir,
+            ephemeral=args.ephemeral,
         )
         try:
             service.run_scheduled(
