@@ -115,6 +115,29 @@ def test_router_error_propagates(tmp_path, monkeypatch):
     assert data and data[0]["result"].startswith("error:")
 
 
+def test_router_sanitizes_stripe_keys(tmp_path, monkeypatch, caplog):
+    frb = _import_finance_router(monkeypatch, tmp_path)
+    log = tmp_path / "payout.json"
+
+    def bad_charge(bot_id, amount, description=None, *, overrides=None):
+        raise RuntimeError("invalid sk_test_123 pk_live_456")
+
+    monkeypatch.setattr(frb.stripe_billing_router, "charge", bad_charge)
+    bot = frb.FinanceRouterBot(payout_log_path=log)
+    with caplog.at_level("ERROR"):
+        res = bot.route_payment(5.0, "model2")
+    assert "sk_test_123" not in res and "pk_live_456" not in res
+    assert "[REDACTED]" in res
+    data = json.loads(log.read_text())
+    assert "sk_test_123" not in data[0]["result"]
+    assert "pk_live_456" not in data[0]["result"]
+    assert "[REDACTED]" in data[0]["result"]
+    joined = " ".join(r.message for r in caplog.records)
+    assert "sk_test_123" not in joined
+    assert "pk_live_456" not in joined
+    assert "[REDACTED]" in joined
+
+
 def _load_stripe_router(monkeypatch, tmp_path, routes):
     class StripeStub:
         class PaymentIntent:

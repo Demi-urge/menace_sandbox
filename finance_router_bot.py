@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import asyncio
 import logging
+import re
 
 from dynamic_path_router import resolve_path
 
@@ -20,6 +21,13 @@ from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
 
 logger = logging.getLogger(__name__)
+
+_STRIPE_KEY_RE = re.compile(r"(?:sk|pk)_(?:live|test)?_[A-Za-z0-9]+")
+
+
+def _sanitize_stripe_keys(text: str) -> str:
+    """Mask Stripe API keys in ``text``."""
+    return _STRIPE_KEY_RE.sub("[REDACTED]", text)
 
 
 @dataclass
@@ -125,8 +133,13 @@ class FinanceRouterBot:
             status = resp.get("status")
             result = "success" if status == "succeeded" else f"error:{status}"
         except Exception as exc:  # pragma: no cover - network/API issues
-            logger.exception("Stripe charge failed: %s", exc)
-            result = f"error:{exc}"
+            sanitized = _sanitize_stripe_keys(str(exc))
+            try:
+                exc.args = (sanitized,)
+            except Exception:  # pragma: no cover - if args assignment fails
+                pass
+            logger.exception("Stripe charge failed: %s", sanitized)
+            result = f"error:{sanitized}"
         self.log_transaction(model_id, amount, result)
         if self.capital_manager and result == "success":
             self.capital_manager.log_inflow(amount, model_id)
