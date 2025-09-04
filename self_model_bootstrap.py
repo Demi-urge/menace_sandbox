@@ -10,6 +10,7 @@ logged via :class:`ErrorBot` and linked to the created model.
 """
 
 from pathlib import Path
+from dynamic_path_router import resolve_dir
 
 from menace.deployment_bot import DeploymentBot
 from menace.error_bot import ErrorBot
@@ -31,7 +32,7 @@ def bootstrap() -> int:
     data_bot = DataBot(MetricsDB(), capital_bot=capital_bot)
     err_bot = ErrorBot(data_bot=data_bot)
 
-    bot_files = sorted(Path(__file__).parent.glob("*_bot.py"))
+    bot_files = sorted(resolve_dir(".").glob("*_bot.py"))
     bot_names = [p.stem for p in bot_files]
 
     # Record a basic workflow covering all bots.
