@@ -1,8 +1,9 @@
 import importlib.machinery
-import importlib.util
+import importlib
 import sys
 import types
 
+import pytest
 import yaml
 from dynamic_path_router import resolve_path
 
@@ -116,3 +117,17 @@ def test_reinvest_error_propagates(monkeypatch, tmp_path):
     assert spent == 0.0
     assert calls == {"bal": bot.bot_id, "charge": bot.bot_id}
     assert db.fetch() == []
+
+
+def test_reinvest_balance_error(monkeypatch, tmp_path):
+    ie = _import_investment_engine(monkeypatch, tmp_path)
+    db = ie.InvestmentDB(tmp_path / "i.db")
+    engine = ie.PredictiveSpendEngine(db)
+    bot = ie.AutoReinvestmentBot(predictor=engine, db=db)
+
+    def bad_balance(bot_id, *a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ie.stripe_billing_router, "get_balance", bad_balance)
+    with pytest.raises(RuntimeError):
+        bot.reinvest()

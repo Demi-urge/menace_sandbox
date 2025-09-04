@@ -199,6 +199,19 @@ def test_charge_amount_validation(monkeypatch, tmp_path):
     assert calls == []
 
 
+def test_get_balance_error(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
+    monkeypatch.setattr(sbr, "_client", lambda api_key: None)
+
+    def bad_retrieve(*args, **kwargs):
+        raise ValueError("boom")
+
+    fake_stripe = types.SimpleNamespace(Balance=types.SimpleNamespace(retrieve=bad_retrieve))
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    with pytest.raises(RuntimeError):
+        sbr.get_balance("finance:finance_router_bot")
+
+
 def test_missing_keys_or_rule(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
 

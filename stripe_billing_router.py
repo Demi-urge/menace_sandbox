@@ -400,7 +400,7 @@ def get_balance(
         return float(amount)
     except Exception as exc:  # pragma: no cover - network/API issues
         logger.exception("Stripe balance retrieval failed: %s", exc)
-        return 0.0
+        raise RuntimeError("Stripe balance retrieval failed") from exc
 
 
 def create_customer(
