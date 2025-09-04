@@ -61,12 +61,19 @@ def record_run(result: Any, metrics: Dict[str, Any]) -> None:
     roi = metrics.get("roi")
     coverage = metrics.get("coverage")
     executed_functions = metrics.get("executed_functions")
-    if executed_functions is None and isinstance(coverage, dict):
-        executed_functions = [
-            f"{path}:{fn}"
-            for path, funcs in coverage.items()
-            for fn in funcs
-        ]
+    if executed_functions is None:
+        if isinstance(coverage, dict) and "executed_functions" in coverage:
+            executed_functions = coverage.get("executed_functions")
+        elif isinstance(coverage, dict):
+            executed_functions = [
+                f"{path}:{fn}"
+                for path, funcs in coverage.items()
+                for fn in funcs
+            ]
+        else:
+            cov_attr = getattr(result, "coverage", None)
+            if isinstance(cov_attr, dict):
+                executed_functions = cov_attr.get("executed_functions")
     functions_hit = len(executed_functions) if executed_functions is not None else None
 
     failure = getattr(result, "failure", None)
