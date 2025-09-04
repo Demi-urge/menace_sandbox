@@ -71,10 +71,10 @@ def test_successful_route_and_charge(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
 
-    route = sbr._resolve_route("stripe:finance:finance_router_bot")
+    route = sbr._resolve_route("finance:finance_router_bot")
     assert route["product_id"] == "prod_finance_router"
 
-    res = sbr.charge("stripe:finance:finance_router_bot", 12.5, "desc")
+    res = sbr.charge("finance:finance_router_bot", 12.5, "desc")
     assert res["id"] == "ch_test"
     assert recorded["amount"] == 1250
     assert recorded["customer"] == "cus_finance_default"
@@ -88,16 +88,15 @@ def test_missing_keys_or_rule(monkeypatch, tmp_path):
     monkeypatch.setattr(sbr, "STRIPE_SECRET_KEY", "")
     monkeypatch.setattr(sbr, "STRIPE_PUBLIC_KEY", "")
     with pytest.raises(RuntimeError):
-        sbr._resolve_route("stripe:finance:finance_router_bot")
+        sbr._resolve_route("finance:finance_router_bot")
 
     with pytest.raises(RuntimeError, match="No billing route"):
-        sbr._resolve_route("stripe:finance:unknown_bot")
+        sbr._resolve_route("finance:unknown_bot")
 
 
 def test_region_and_business_overrides(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
     sbr.register_route(
-        "stripe",
         "finance",
         "finance_router_bot",
         {
@@ -109,7 +108,6 @@ def test_region_and_business_overrides(monkeypatch, tmp_path):
     )
     sbr.register_override(
         {
-            "domain": "stripe",
             "business_category": "finance",
             "bot_name": "finance_router_bot",
             "key": "tier",
@@ -118,7 +116,7 @@ def test_region_and_business_overrides(monkeypatch, tmp_path):
         }
     )
     route = sbr._resolve_route(
-        "stripe:finance:finance_router_bot", overrides={"region": "eu", "tier": "enterprise"}
+        "finance:finance_router_bot", overrides={"region": "eu", "tier": "enterprise"}
     )
     assert route["product_id"] == "prod_finance_eu"
     assert route["customer_id"] == "cus_finance_eu"
@@ -128,7 +126,6 @@ def test_region_and_business_overrides(monkeypatch, tmp_path):
 def test_domain_routing_and_invalid_domain(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
     sbr.register_route(
-        "alt",
         "finance",
         "finance_router_bot",
         {
@@ -136,6 +133,7 @@ def test_domain_routing_and_invalid_domain(monkeypatch, tmp_path):
             "price_id": "price_alt",
             "customer_id": "cus_alt",
         },
+        domain="alt",
     )
     route = sbr._resolve_route("alt:finance:finance_router_bot")
     assert route["customer_id"] == "cus_alt"
@@ -147,12 +145,12 @@ def test_key_override_errors(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
     with pytest.raises(RuntimeError):
         sbr._resolve_route(
-            "stripe:finance:finance_router_bot",
+            "finance:finance_router_bot",
             overrides={"secret_key": "sk_live_other"},
         )
     with pytest.raises(RuntimeError):
         sbr._resolve_route(
-            "stripe:finance:finance_router_bot",
+            "finance:finance_router_bot",
             overrides={"public_key": "pk_live_other"},
         )
 
@@ -161,7 +159,6 @@ def test_register_rejects_api_keys(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
     with pytest.raises(ValueError):
         sbr.register_route(
-            "stripe",
             "finance",
             "finance_router_bot",
             {"secret_key": "sk_live_other"},
@@ -169,7 +166,6 @@ def test_register_rejects_api_keys(monkeypatch, tmp_path):
     with pytest.raises(ValueError):
         sbr.register_override(
             {
-                "domain": "stripe",
                 "business_category": "finance",
                 "bot_name": "finance_router_bot",
                 "key": "tier",

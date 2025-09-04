@@ -11,9 +11,9 @@ reimplemented in other modules.
 ```python
 from stripe_billing_router import charge, create_customer
 
-# ``bot_id`` must be in "domain:business_category:bot_name" format.
-charge("stripe:finance:finance_router_bot", 12.5)
-create_customer("stripe:finance:finance_router_bot", {"email": "bot@example.com"})
+# ``bot_id`` may be "business_category:bot_name" or include a domain prefix.
+charge("finance:finance_router_bot", 12.5)
+create_customer("finance:finance_router_bot", {"email": "bot@example.com"})
 ```
 
 ### Extending routing
@@ -26,7 +26,6 @@ adjustments via `register_override`.  More complex policies can subclass
 from stripe_billing_router import register_route
 
 register_route(
-    "stripe",
     "finance",
     "finance_router_bot",
     {"product_id": "prod_finance_router", "price_id": "price_finance_standard"},
