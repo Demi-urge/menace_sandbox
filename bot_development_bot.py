@@ -653,12 +653,12 @@ class BotDevelopmentBot:
             ("flake8", ["flake8", str(path)]),
             ("mypy", ["mypy", str(path)]),
             (
-                "stripe-imports",
+                "stripe-usage",
                 [sys.executable, str(stripe_check), str(path)],
             ),
         ]
         for name, cmd in tools:
-            if name != "stripe-imports" and shutil.which(cmd[0]) is None:
+            if name != "stripe-usage" and shutil.which(cmd[0]) is None:
                 self.logger.warning("%s not installed", name)
                 continue
             proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -668,8 +668,10 @@ class BotDevelopmentBot:
                     "%s failed for %s: %s", name, path, msg
                 )
                 self._escalate(f"{name} failed for {path}: {msg}")
-                if name == "stripe-imports":
-                    raise RuntimeError(f"stripe imports detected in {path}")
+                if name == "stripe-usage":
+                    raise RuntimeError(
+                        f"stripe usage issues detected in {path}"
+                    )
 
     def version_control(
         self, repo_dir: Path, paths: List[Path], message: str = "Auto-generated bot"
