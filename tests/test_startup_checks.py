@@ -1,9 +1,31 @@
-import os
+import sys
 import logging
+import types
+import importlib.util
+from pathlib import Path
 import pytest
 
-import menace.startup_checks as sc
-from menace.audit_trail import AuditTrail
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load(name: str):
+    spec = importlib.util.spec_from_file_location(f"scpkg.{name}", ROOT / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[f"scpkg.{name}"] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+pkg = types.ModuleType("scpkg")
+pkg.__path__ = [str(ROOT)]
+import importlib.machinery
+pkg.__spec__ = importlib.machinery.ModuleSpec("scpkg", loader=None, is_package=True)
+sys.modules["scpkg"] = pkg
+
+AuditTrail = _load("audit_trail").AuditTrail
+_load("dependency_verifier")
+sc = _load("startup_checks")
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 import base64
@@ -115,6 +137,39 @@ def test_run_startup_checks_invokes_optional_verifier(monkeypatch, tmp_path):
     sc.run_startup_checks(pyproject_path=pyproj)
 
     assert called["val"]
+
+
+def test_run_startup_checks_invokes_stripe_router(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_MODE", "test")
+    pyproj = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproj, [])
+    called = {"val": False}
+
+    def fake_verify() -> None:
+        called["val"] = True
+
+    monkeypatch.setattr(sc, "verify_stripe_router", fake_verify)
+    monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
+    monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
+
+    sc.run_startup_checks(pyproject_path=pyproj)
+
+    assert called["val"]
+
+
+def test_verify_stripe_router_checks(monkeypatch):
+    mod = types.SimpleNamespace(
+        BILLING_RULES={("a", "b", "c"): {}},
+        STRIPE_SECRET_KEY="sk",
+        STRIPE_PUBLIC_KEY="pk",
+    )
+    monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
+    sc.verify_stripe_router()
+
+    bad = types.SimpleNamespace(BILLING_RULES={}, STRIPE_SECRET_KEY="", STRIPE_PUBLIC_KEY="")
+    monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", bad)
+    with pytest.raises(RuntimeError):
+        sc.verify_stripe_router()
 
 
 def test_verify_optional_dependencies_reports_missing(monkeypatch):
