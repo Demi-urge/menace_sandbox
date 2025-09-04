@@ -9,18 +9,19 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+from dynamic_path_router import resolve_path
 from prompt_memory_trainer import PromptMemoryTrainer
 
 DEFAULT_STATE_PATH = Path(
     os.getenv(
         "PROMPT_MEMORY_WEIGHTS_PATH",
-        Path(__file__).resolve().parent / "config" / "prompt_memory_weights.json",
+        resolve_path("config/prompt_memory_weights.json"),
     )
 )
 DEFAULT_DB_PATH = Path(
     os.getenv(
         "PROMPT_STYLE_DB_PATH",
-        Path(__file__).resolve().parent / "prompt_styles.db",
+        resolve_path("prompt_styles.db"),
     )
 )
 
