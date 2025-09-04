@@ -76,8 +76,9 @@ def test_extract_target_region_and_patch(monkeypatch, tmp_path):
     mod.fetch_patch = lambda patch_id: PATCH
     monkeypatch.setitem(sys.modules, "quick_fix_engine", mod)
     patch_module = _load_patch_module()
-    commit = patch_module.apply_patch(1, repo)
+    commit, diff = patch_module.apply_patch(1, repo)
     assert len(commit) == 40
+    assert diff == PATCH
 
     after = (repo / "buggy.py").read_text().splitlines()
     assert after[1] == "    result = a / b"

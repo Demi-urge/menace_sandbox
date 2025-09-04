@@ -162,6 +162,7 @@ from .orchestration import (
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt
+from .state_snapshot import capture_snapshot, delta as snapshot_delta
 
 
 from ..self_test_service import SelfTestService
@@ -1484,14 +1485,39 @@ class SelfImprovementEngine:
             patch_id = None
         else:
             if patch_id is not None:
+                pre_snap = capture_snapshot(self.baseline_tracker, SandboxSettings())
                 try:
-                    apply_patch(patch_id, _repo_path())
+                    _, patch_diff = apply_patch(patch_id, _repo_path())
                 except RuntimeError:
                     error_trace = traceback.format_exc()
                     self.logger.exception(
                         "patch application failed", extra=log_record(module=module)
                     )
                     patch_id = None
+                else:
+                    post_snap = capture_snapshot(self.baseline_tracker, SandboxSettings())
+                    delta_vals = snapshot_delta(pre_snap, post_snap)
+                    if (
+                        delta_vals.get("roi", 0.0) < 0
+                        or delta_vals.get("entropy", 0.0) < 0
+                    ):
+                        try:
+                            log_prompt_attempt(
+                                getattr(self.self_coding_engine, "_last_prompt", None),
+                                False,
+                                {"delta": delta_vals, "patch_diff": patch_diff},
+                            )
+                        except Exception:
+                            self.logger.exception("log_prompt_attempt failed")
+                        self.logger.warning(
+                            "patch regression",
+                            extra=log_record(
+                                module=module,
+                                patch_id=patch_id,
+                                delta=delta_vals,
+                                patch_diff=patch_diff,
+                            ),
+                        )
         elapsed = time.perf_counter() - start
         if self.metrics_db:
             try:
