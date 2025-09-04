@@ -52,7 +52,9 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     )
     monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
     monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
-    return _load("stripe_billing_router")
+    sbr = _load("stripe_billing_router")
+    monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: None)
+    return sbr
 
 
 @pytest.fixture
@@ -538,7 +540,10 @@ def test_price_route_negative_amount(monkeypatch, tmp_path):
 
     fake_stripe = types.SimpleNamespace(
         InvoiceItem=types.SimpleNamespace(create=fake_invoice_item_create),
-        Invoice=types.SimpleNamespace(create=lambda **kw: {"id": "in"}, pay=lambda *a, **k: {"id": a[0]}),
+        Invoice=types.SimpleNamespace(
+            create=lambda **kw: {"id": "in"},
+            pay=lambda *a, **k: {"id": a[0]},
+        ),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
 
@@ -596,3 +601,77 @@ def test_create_subscription_missing_fields(monkeypatch, sbr_module):
     monkeypatch.setattr(sbr_module, "stripe", types.SimpleNamespace())
     with pytest.raises(RuntimeError, match="price_id and customer_id are required"):
         sbr_module.create_subscription("finance:finance_router_bot")
+
+
+def test_create_subscription_logs_event(sbr_module, mock_subscription_api, monkeypatch):
+    recorded, fake_stripe = mock_subscription_api
+    log_record: dict[str, object] = {}
+    monkeypatch.setattr(
+        sbr_module.billing_logger, "log_event", lambda **kw: log_record.update(kw)
+    )
+    res = sbr_module.create_subscription(
+        "finance:finance_router_bot", idempotency_key="sub-key"
+    )
+    assert res["id"] == "sub_test"
+    assert log_record["action_type"] == "subscription"
+    assert log_record["id"] == "sub_test"
+
+
+def test_refund_success(monkeypatch, sbr_module):
+    recorded: dict[str, object] = {}
+
+    def fake_refund_create(*, api_key: str, **params):
+        recorded.update(params)
+        recorded["api_key"] = api_key
+        return {"id": "rf_test", "amount": 500}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig", Refund=types.SimpleNamespace(create=fake_refund_create)
+    )
+    monkeypatch.setattr(sbr_module, "stripe", fake_stripe)
+    log_record: dict[str, object] = {}
+    monkeypatch.setattr(
+        sbr_module.billing_logger, "log_event", lambda **kw: log_record.update(kw)
+    )
+    res = sbr_module.refund(
+        "finance:finance_router_bot", "pi_test", amount=5.0, reason="requested_by_customer"
+    )
+    assert res["id"] == "rf_test"
+    assert recorded["payment_intent"] == "pi_test"
+    assert recorded["amount"] == 500
+    assert recorded["api_key"] == "sk_live_dummy"
+    assert log_record["action_type"] == "refund"
+    assert log_record["id"] == "rf_test"
+
+
+def test_create_checkout_session_success(monkeypatch, sbr_module):
+    recorded: dict[str, object] = {}
+
+    def fake_session_create(*, api_key: str, **params):
+        recorded.update(params)
+        recorded["api_key"] = api_key
+        return {"id": "cs_test", "amount_total": 1000}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        checkout=types.SimpleNamespace(
+            Session=types.SimpleNamespace(create=fake_session_create)
+        ),
+    )
+    monkeypatch.setattr(sbr_module, "stripe", fake_stripe)
+    log_record: dict[str, object] = {}
+    monkeypatch.setattr(
+        sbr_module.billing_logger, "log_event", lambda **kw: log_record.update(kw)
+    )
+    params = {
+        "success_url": "https://example.com/s",
+        "cancel_url": "https://example.com/c",
+        "mode": "payment",
+    }
+    res = sbr_module.create_checkout_session("finance:finance_router_bot", params)
+    assert res["id"] == "cs_test"
+    assert recorded["line_items"][0]["price"] == "price_finance_standard"
+    assert recorded["customer"] == "cus_finance_default"
+    assert recorded["api_key"] == "sk_live_dummy"
+    assert log_record["action_type"] == "checkout"
+    assert log_record["id"] == "cs_test"
