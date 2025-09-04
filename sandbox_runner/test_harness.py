@@ -21,6 +21,8 @@ import json
 import urllib.parse
 from typing import Any
 
+from dynamic_path_router import resolve_path
+
 
 from ..error_parser import ErrorParser
 from sandbox_settings import SandboxSettings
@@ -124,6 +126,13 @@ def _run_once(
         tests within it.  ``"docker"`` executes tests inside a temporary Docker
         container.  Defaults to ``"venv"`` for backward compatibility.
     """
+
+    repo_path = Path(resolve_path(str(repo_path)))
+    if changed_path:
+        try:
+            changed_path = Path(resolve_path(str(changed_path)))
+        except FileNotFoundError:
+            changed_path = Path(changed_path)
 
     start = time.time()
     if clone_repo:
