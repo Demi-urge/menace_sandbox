@@ -1,9 +1,8 @@
 # Stripe Billing Router
 
 `stripe_billing_router` maps bots to Stripe products, prices and customers.
-It reads API keys from the `STRIPE_SECRET_KEY` and `STRIPE_PUBLIC_KEY`
-environment variables at import time and raises a `RuntimeError` if they are
-missing.
+API keys are pulled from a secure vault provider or fall back to baked‑in
+production values. A `RuntimeError` is raised if the keys are missing or empty.
 
 ## Usage
 
@@ -11,9 +10,9 @@ Bots are identified by a `"domain:name:category"` string. The router looks up
 routing details for that bot and adds the Stripe keys. For example:
 
 ```python
-from stripe_billing_router import charge, get_balance
+from stripe_billing_router import init_charge, get_balance
 
-charge("finance:finance_router_bot:monetization", amount=10.0)
+init_charge("finance:finance_router_bot:monetization", amount=10.0)
 bal = get_balance("finance:finance_router_bot:monetization")
 ```
 
@@ -37,7 +36,7 @@ Per-region adjustments use the `register_override` hook. A qualifier such as a
 region is supplied at call time via `overrides`:
 
 ```python
-from stripe_billing_router import charge, register_override
+from stripe_billing_router import init_charge, register_override
 
 register_override(
     "finance",
@@ -48,7 +47,7 @@ register_override(
     route={"price_id": "price_finance_eu"},
 )
 
-charge(
+init_charge(
     "finance:finance_router_bot:monetization",
     amount=10.0,
     overrides={"region": "eu"},
