@@ -1,6 +1,6 @@
 strict_fix: |
   Apply the smallest change necessary to address the issue without altering unrelated code.
-delete_and_rebuild: |
+delete_rebuild: |
   Remove the existing implementation entirely and recreate it from scratch.
 comment_refactor: |
   Restructure or improve comments without modifying the runtime behaviour of the code.

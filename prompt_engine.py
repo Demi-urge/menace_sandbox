@@ -756,12 +756,14 @@ class PromptEngine:
         descriptions of file chunks when the full source is too large to
         include.  ``retry_trace`` may contain failure logs or tracebacks from a
         prior attempt.  ``strategy`` selects an optional template from
-        ``prompt_strategy.yaml`` that is inserted near the start of the prompt
-        and recorded in the prompt metadata.  When supplied a "Previous failure"
-        section is appended and the details are de-duplicated so repeated
-        retries do not accumulate duplicate traces.  When retrieval fails or
-        the average confidence of returned patches falls below
-        ``confidence_threshold`` a static fallback template is returned.
+        ``prompt_strategies.yaml`` that is inserted near the start of the prompt
+        and recorded in the prompt metadata.  Recognised values include
+        ``strict_fix``, ``delete_rebuild``, ``comment_refactor`` and
+        ``unit_test_rewrite``.  When supplied a "Previous failure" section is
+        appended and the details are de-duplicated so repeated retries do not
+        accumulate duplicate traces.  When retrieval fails or the average
+        confidence of returned patches falls below ``confidence_threshold`` a
+        static fallback template is returned.
         """
         self._maybe_refresh_optimizer()
         if not self._optimizer_applied:
@@ -1297,8 +1299,10 @@ def build_prompt(
 ) -> Prompt:
     """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`.
 
-    The helper instantiates a temporary :class:`PromptEngine` and returns the
-    resulting :class:`Prompt` instance.
+    ``strategy`` accepts the same values as :meth:`PromptEngine.build_prompt`,
+    e.g. ``strict_fix`` or ``delete_rebuild``.  The helper instantiates a
+    temporary :class:`PromptEngine` and returns the resulting :class:`Prompt`
+    instance.
     """
 
     return PromptEngine.construct_prompt(
