@@ -14,11 +14,12 @@ from typing import Any, Dict
 from filelock import FileLock
 
 from sandbox_settings import SandboxSettings
+from dynamic_path_router import resolve_path
 from .init import _repo_path
 
 _settings = SandboxSettings()
 
-_penalty_path = _repo_path() / _settings.prompt_penalty_path
+_penalty_path = Path(resolve_path(_settings.prompt_penalty_path))
 _penalty_lock = FileLock(str(_penalty_path) + ".lock")
 
 
