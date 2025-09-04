@@ -20,7 +20,7 @@ from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 
 from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
@@ -810,9 +810,11 @@ class PromptEngine:
         snippet_lines = self.build_snippets(ranked)
 
         filename = None
+        raw_filename = None
         original_lines: List[str] = []
         if target_region is not None:
-            filename = target_region.filename or None
+            raw_filename = target_region.filename or None
+            filename = path_for_prompt(raw_filename) if raw_filename else None
             func = target_region.function or None
             instr = f"Modify only lines {target_region.start_line}-{target_region.end_line}"
             if func:
@@ -822,9 +824,9 @@ class PromptEngine:
             instr += " unless surrounding logic is causally required."
 
             original_lines = list(getattr(target_region, "original_lines", []) or [])
-            if not original_lines and filename and Path(filename).exists():
+            if not original_lines and raw_filename and Path(raw_filename).exists():
                 try:
-                    file_lines = Path(filename).read_text(encoding="utf-8").splitlines()
+                    file_lines = Path(raw_filename).read_text(encoding="utf-8").splitlines()
                     start = max(target_region.start_line - 1, 0)
                     end = target_region.end_line
                     original_lines = file_lines[start:end]

@@ -15,9 +15,9 @@ from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
 from codebase_diff_checker import generate_code_diff, flag_risky_changes
 try:  # pragma: no cover - allow flat imports
-    from .dynamic_path_router import resolve_path
+    from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 try:  # pragma: no cover - optional dependency
     from .error_cluster_predictor import ErrorClusterPredictor
 except Exception:  # pragma: no cover - optional dependency
@@ -108,8 +108,9 @@ def generate_patch(
         logger.error("module not found: %s", module)
         return None
 
-    description = description or f"preemptive fix for {path.name}"
-    context_meta: Dict[str, Any] = {"module": str(path), "reason": "preemptive_fix"}
+    prompt_path = path_for_prompt(path.as_posix())
+    description = description or f"preemptive fix for {prompt_path}"
+    context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
     if context:
         context_meta.update(context)
     builder = context_builder
@@ -237,7 +238,7 @@ def generate_patch(
                 return None
             diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
             workflow_changes = [
-                {"file": f, "code": "\n".join(d["added"])}
+                {"file": path_for_prompt(f), "code": "\n".join(d["added"])}
                 for f, d in diff_data.items()
                 if d["added"]
             ]
