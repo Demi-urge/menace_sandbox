@@ -10,8 +10,6 @@ from typing import List, Tuple
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
-from dotenv import load_dotenv
-
 from . import stripe_billing_router
 import logging
 
@@ -150,7 +148,6 @@ class AutoReinvestmentBot:
         db: InvestmentDB | None = None,
         bot_id: str = "finance:finance_router_bot:monetization",
     ) -> None:
-        load_dotenv()
         self.cap_percentage = cap_percentage
         self.safety_reserve = safety_reserve
         self.minimum_threshold = minimum_threshold

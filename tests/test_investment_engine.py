@@ -17,7 +17,7 @@ def test_reinvest_cap(monkeypatch, tmp_path):
         ie.stripe_billing_router, "get_balance", lambda *a, **k: 200.0
     )
     monkeypatch.setattr(
-        ie.stripe_billing_router, "charge", lambda *a, **k: {"status": "succeeded"}
+        ie.stripe_billing_router, "init_charge", lambda *a, **k: {"status": "succeeded"}
     )
     monkeypatch.setattr(engine, "predict", lambda balance, cap: (150.0, 0.2))
 
