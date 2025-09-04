@@ -11,7 +11,7 @@ import time
 import threading
 import asyncio
 import uuid
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, get_project_root
 from .knowledge_graph import KnowledgeGraph
 
 from .advanced_error_management import AutomatedRollbackManager
@@ -480,7 +480,7 @@ class MenaceOrchestrator:
                 from sandbox_runner import discover_recursive_orphans
                 import sandbox_runner.environment as environment
 
-                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                repo = Path(get_project_root())
                 mapping = discover_recursive_orphans(str(repo))
                 modules = set(mapping.keys())
                 if modules:
@@ -500,7 +500,7 @@ class MenaceOrchestrator:
                                 from module_synergy_grapher import ModuleSynergyGrapher
 
                                 grapher = ModuleSynergyGrapher(root=repo)
-                                graph_path = repo / "sandbox_data" / "module_synergy_graph.json"
+                                graph_path = resolve_path("sandbox_data/module_synergy_graph.json")
                                 try:
                                     grapher.load(graph_path)
                                 except Exception:
@@ -514,7 +514,7 @@ class MenaceOrchestrator:
                             if clusterer is None:
                                 from intent_clusterer import IntentClusterer
 
-                                data_dir = repo / "sandbox_data"
+                                data_dir = resolve_path("sandbox_data")
                                 clusterer = IntentClusterer(
                                     local_db_path=data_dir / "intent.db",
                                     shared_db_path=data_dir / "intent.db",
