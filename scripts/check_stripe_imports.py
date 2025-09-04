@@ -37,18 +37,22 @@ from stripe_detection import contains_payment_keyword  # noqa: E402
 REPO_ROOT = get_project_root()
 
 ALLOWED = {
-    resolve_path("stripe_billing_router.py"),  # path-ignore
-    resolve_path("scripts/check_stripe_imports.py"),  # path-ignore
-    resolve_path("startup_checks.py"),  # path-ignore
-    resolve_path("bot_development_bot.py"),  # path-ignore
-    resolve_path("config_loader.py"),  # path-ignore
-    resolve_path("codex_output_analyzer.py"),  # path-ignore
-    resolve_path("stripe_detection.py"),  # path-ignore
+    resolve_path("stripe_billing_router.py").resolve(),
+    resolve_path("scripts/check_stripe_imports.py").resolve(),
+    resolve_path("startup_checks.py").resolve(),
+    resolve_path("bot_development_bot.py").resolve(),
+    resolve_path("config_loader.py").resolve(),
+    resolve_path("codex_output_analyzer.py").resolve(),
+    resolve_path("stripe_detection.py").resolve(),
 }
 # Detect exposures of Stripe keys, including partially redacted ones with ``*``.
 KEY_PATTERN = re.compile(
-    r"(?:sk|pk)_(?:live|test)?_[A-Za-z0-9]*\*+[A-Za-z0-9*]*|sk_live|pk_live|STRIPE_SECRET_KEY|STRIPE_PUBLIC_KEY"
+    (
+        r"(?:sk|pk)_(?:live|test)?_[A-Za-z0-9]*\*+[A-Za-z0-9*]*"
+        r"|sk_live|pk_live|STRIPE_SECRET_KEY|STRIPE_PUBLIC_KEY"
+    )
 )
+
 
 class StripeAnalyzer(ast.NodeVisitor):
     def __init__(self) -> None:
