@@ -169,8 +169,9 @@ def generate_weekly_report(start_date: str | None = None, end_date: str | None =
 def write_report(report_data: Dict[str, Any], output_path: str) -> None:
     """Write *report_data* to JSON and plaintext in *output_path*."""
 
-    os.makedirs(output_path, exist_ok=True)
-    json_path = os.path.join(output_path, "weekly_report.json")
+    output_dir = resolve_path(output_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "weekly_report.json"
     with open(json_path, "w", encoding="utf-8") as fh:
         json.dump(report_data, fh, indent=2)
 
@@ -196,7 +197,7 @@ def write_report(report_data: Dict[str, Any], output_path: str) -> None:
             f"  - {ev.get('timestamp')} {ev.get('reason')} (severity {ev.get('severity')})"
         )
 
-    text_path = os.path.join(output_path, "weekly_report.txt")
+    text_path = output_dir / "weekly_report.txt"
     with open(text_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
 

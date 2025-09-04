@@ -437,7 +437,9 @@ class DeploymentGovernor:
                 roi_min = float(
                     (policy or {}).get("roi_forecast_min", self.raroi_threshold)
                 )
-                logger_obj = ForecastLogger("forecast_records/decision_log.jsonl")
+                logger_obj = ForecastLogger(
+                    resolve_path("forecast_records/decision_log.jsonl")
+                )
                 forecaster = UpgradeForecaster(foresight_tracker)
                 safe, forecast, reason_codes = is_foresight_safe_to_promote(
                     workflow_id,
@@ -636,7 +638,9 @@ def evaluate_workflow(
             roi_min = float(
                 policy.get("roi_forecast_min", DeploymentGovernor.raroi_threshold)
             )
-            logger_obj = ForecastLogger("forecast_records/decision_log.jsonl")
+            logger_obj = ForecastLogger(
+                resolve_path("forecast_records/decision_log.jsonl")
+            )
             forecaster = UpgradeForecaster(foresight_tracker)
             safe, forecast, reason_codes = is_foresight_safe_to_promote(
                 workflow_id,
@@ -788,7 +792,9 @@ def evaluate(
             logger_obj: ForecastLogger | None = None
             try:
                 graph = WorkflowGraph()
-                logger_obj = ForecastLogger("forecast_records/decision_log.jsonl")
+                logger_obj = ForecastLogger(
+                    resolve_path("forecast_records/decision_log.jsonl")
+                )
                 forecaster = UpgradeForecaster(foresight_tracker)
                 safe, forecast, reason_codes = is_foresight_safe_to_promote(
                     workflow_id,
@@ -1145,7 +1151,9 @@ class RuleEvaluator:
                             logger_obj: ForecastLogger | None = None
                             try:
                                 graph = WorkflowGraph()
-                                logger_obj = ForecastLogger("forecast_records/decision_log.jsonl")
+                                logger_obj = ForecastLogger(
+                                    resolve_path("forecast_records/decision_log.jsonl")
+                                )
                                 forecaster = UpgradeForecaster(foresight_tracker)
                                 safe, forecast, reason_codes = is_foresight_safe_to_promote(
                                     workflow_id,

@@ -72,7 +72,9 @@ ROLLBACK_MANAGER = RollbackManager()
 FORESIGHT_TRACKER = ForesightTracker()
 
 # Paths for input logs and output records
-ACTIONS_FILE = os.getenv("ACTIONS_FILE", "/mnt/shared/menace_logs/actions.jsonl")
+ACTIONS_FILE = resolve_path(
+    os.getenv("ACTIONS_FILE", "menace_logs/actions.jsonl")
+)
 CURSOR_FILE = resolve_path("last_processed.txt")
 AUDIT_DIR = resolve_path("audit_logs")
 
