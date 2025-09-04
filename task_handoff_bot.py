@@ -24,6 +24,7 @@ from db_router import (
 )
 from db_dedup import insert_if_unique, ensure_content_hash_column
 from scope_utils import Scope, build_scope_clause
+from dynamic_path_router import resolve_path
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -103,7 +104,7 @@ class WorkflowDB(EmbeddableDBMixin):
 
     def __init__(
         self,
-        path: Path | str = Path("workflows.db"),
+        path: Path | str = resolve_path("workflows.db"),
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         workflow_graph: Optional[WorkflowGraph] = None,
@@ -112,7 +113,7 @@ class WorkflowDB(EmbeddableDBMixin):
         embedding_version: int = 1,
         router: DBRouter | None = None,
     ) -> None:
-        self.path = path
+        self.path = Path(path).resolve()
         self.event_bus = event_bus
         self.graph = workflow_graph
         self.vector_backend = vector_backend  # kept for compatibility
