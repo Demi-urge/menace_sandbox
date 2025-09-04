@@ -8,7 +8,17 @@ from pathlib import Path
 
 import pytest
 
-import self_improvement.targeting as targeting
+import importlib.util
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+_spec = importlib.util.spec_from_file_location(
+    "self_improvement.target_region", ROOT / "self_improvement" / "target_region.py"
+)
+targeting = importlib.util.module_from_spec(_spec)
+sys.modules.setdefault("self_improvement.target_region", targeting)
+assert _spec.loader is not None
+_spec.loader.exec_module(targeting)  # type: ignore[attr-defined]
 from tests.self_improvement.test_patch_application import _load_patch_module
 
 
@@ -62,8 +72,8 @@ def test_extract_target_region_and_patch(monkeypatch, tmp_path):
     monkeypatch.setattr(targeting, "__file__", str(repo / "__init__.py"))
     region = targeting.extract_target_region(trace)
     assert region is not None
-    assert Path(region.file) == repo / "buggy.py"
-    assert region.func_name == "divide"
+    assert Path(region.filename) == repo / "buggy.py"
+    assert region.function == "divide"
     assert region.start_line == 1
     assert region.end_line == 3
 

@@ -1,72 +1,29 @@
+"""Compatibility loader for :mod:`self_improvement.target_region`.
+
+This module dynamically loads the implementation from
+``self_improvement/target_region.py`` without importing the entire
+``self_improvement`` package, which has heavy optional dependencies.
+It exposes ``TargetRegion`` and helper functions for legacy imports.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-import ast
+import importlib.util
+import sys
 from pathlib import Path
-import re
-from typing import Optional
 
+_PATH = Path(__file__).with_name("self_improvement") / "target_region.py"
+_SPEC = importlib.util.spec_from_file_location(
+    "self_improvement.target_region", _PATH
+)
+module = importlib.util.module_from_spec(_SPEC)
+sys.modules.setdefault(_SPEC.name, module)
+assert _SPEC.loader is not None
+_SPEC.loader.exec_module(module)  # type: ignore[attr-defined]
 
-@dataclass
-class TargetRegion:
-    """Represents a contiguous region of source code implicated in a failure."""
+TargetRegion = module.TargetRegion
+region_from_frame = module.region_from_frame
+extract_target_region = module.extract_target_region
 
-    filename: str
-    start_line: int
-    end_line: int
-    function: str
+__all__ = ["TargetRegion", "region_from_frame", "extract_target_region"]
 
-
-_FRAME_RE = re.compile(r'File "([^"]+)", line (\d+), in ([^\n]+)')
-
-
-def _region_from_frame(filename: str, lineno: int, func: str) -> TargetRegion:
-    """Return :class:`TargetRegion` for ``filename``/``lineno``.
-
-    The file is parsed with :mod:`ast` to determine the smallest function or
-    class body enclosing ``lineno``.  When parsing fails the region spans only
-    the provided line.
-    """
-
-    path = Path(filename)
-    try:
-        source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
-    except Exception:
-        return TargetRegion(filename=str(path), start_line=lineno, end_line=lineno, function=func)
-
-    target: ast.AST | None = None
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            start = getattr(node, "lineno", None)
-            end = getattr(node, "end_lineno", start)
-            if start is None or end is None:
-                continue
-            if start <= lineno <= end:
-                if target is None or start >= getattr(target, "lineno", 0):
-                    target = node
-    if target is not None:
-        start = getattr(target, "lineno", lineno)
-        end = getattr(target, "end_lineno", start)
-        name = getattr(target, "name", func)
-        return TargetRegion(filename=str(path), start_line=start, end_line=end, function=name)
-
-    return TargetRegion(filename=str(path), start_line=lineno, end_line=lineno, function=func)
-
-
-def extract_target_region(trace: str) -> Optional[TargetRegion]:
-    """Extract the innermost relevant frame from ``trace``.
-
-    The deepest frame within the stack trace is analysed and converted into a
-    :class:`TargetRegion` using :func:`_region_from_frame`.  ``None`` is returned
-    when no frame information can be determined.
-    """
-
-    frames = _FRAME_RE.findall(trace)
-    if not frames:
-        return None
-    filename, lineno, func = frames[-1]
-    return _region_from_frame(filename, int(lineno), func.strip())
-
-
-__all__ = ["TargetRegion", "extract_target_region"]

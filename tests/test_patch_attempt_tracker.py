@@ -1,24 +1,8 @@
 import importlib.util
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-
-_spec_tr = importlib.util.spec_from_file_location(
-    "menace.target_region", ROOT / "target_region.py"
-)
-tr_module = importlib.util.module_from_spec(_spec_tr)
-sys.modules.setdefault("menace.target_region", tr_module)
-_spec_tr.loader.exec_module(tr_module)  # type: ignore[attr-defined]
-TargetRegion = tr_module.TargetRegion
-
-_spec_pat = importlib.util.spec_from_file_location(
-    "menace.patch_attempt_tracker", ROOT / "patch_attempt_tracker.py"
-)
-pat_module = importlib.util.module_from_spec(_spec_pat)
-sys.modules.setdefault("menace.patch_attempt_tracker", pat_module)
-_spec_pat.loader.exec_module(pat_module)  # type: ignore[attr-defined]
-PatchAttemptTracker = pat_module.PatchAttemptTracker
+from self_improvement.target_region import TargetRegion
+from patch_attempt_tracker import PatchAttemptTracker
 
 
 class DummyLogger:

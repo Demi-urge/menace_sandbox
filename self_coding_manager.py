@@ -448,7 +448,7 @@ class SelfCodingManager:
                 if target_region is None and region_obj is not None:
                     try:
                         target_region = TargetRegion(
-                            file=getattr(region_obj, "file", getattr(region_obj, "filename", "")),
+                            filename=getattr(region_obj, "filename", getattr(region_obj, "file", "")),
                             start_line=getattr(region_obj, "start_line", 0),
                             end_line=getattr(region_obj, "end_line", 0),
                             function=getattr(region_obj, "function", getattr(region_obj, "func_name", "")),
@@ -475,7 +475,7 @@ class SelfCodingManager:
 
                 if target_region is not None:
                     key = (
-                        target_region.file,
+                        target_region.filename,
                         target_region.start_line,
                         target_region.end_line,
                         target_region.function,
@@ -488,16 +488,16 @@ class SelfCodingManager:
                         and target_region.end_line
                     ):
                         target_region = TargetRegion(
-                            file=target_region.file,
+                            filename=target_region.filename,
                             start_line=0,
                             end_line=0,
                             function=target_region.function,
                         )
                         self.logger.info(
                             "escalating target region to function scope",
-                            extra={"file": target_region.file, "function": target_region.function},
+                            extra={"file": target_region.filename, "function": target_region.function},
                         )
-                        failure_counts[(target_region.file, 0, 0, target_region.function)] = 0
+                        failure_counts[(target_region.filename, 0, 0, target_region.function)] = 0
                     elif (
                         count >= 2
                         and not target_region.start_line
@@ -505,16 +505,16 @@ class SelfCodingManager:
                         and target_region.function
                     ):
                         target_region = TargetRegion(
-                            file=target_region.file,
+                            filename=target_region.filename,
                             start_line=0,
                             end_line=0,
                             function="",
                         )
                         self.logger.info(
                             "escalating target region to module scope",
-                            extra={"file": target_region.file},
+                            extra={"file": target_region.filename},
                         )
-                        failure_counts[(target_region.file, 0, 0, "")] = 0
+                        failure_counts[(target_region.filename, 0, 0, "")] = 0
 
                 self.logger.info(
                     "rebuilding context",

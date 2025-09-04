@@ -78,6 +78,7 @@ except Exception:  # pragma: no cover - graceful degradation
         success = False
         stdout = ""
 from .sandbox_settings import SandboxSettings
+from self_improvement.target_region import TargetRegion
 
 try:  # pragma: no cover - optional dependency
     from vector_service import CognitionLayer, PatchLogger, VectorServiceError
@@ -194,14 +195,6 @@ def _count_tokens(text: str) -> int:
 
 
 @dataclass
-class TargetRegion:
-    """Represents a contiguous region within a source file."""
-
-    start_line: int
-    end_line: int
-    func_name: str | None = None
-
-
 class SelfCodingEngine:
     """Generate new helper code based on existing snippets."""
 
@@ -799,9 +792,9 @@ class SelfCodingEngine:
                 target_region.path = str(path)
             target_region.original_lines = lines[start - 1:end]
             func_sig = ""
-            if getattr(target_region, "func_name", None):
+            if getattr(target_region, "function", None):
                 pat = re.compile(
-                    rf"^\s*def\s+{re.escape(target_region.func_name)}\s*\("
+                    rf"^\s*def\s+{re.escape(target_region.function)}\s*\("
                 )
                 for ln in lines:
                     if pat.match(ln):
@@ -810,7 +803,7 @@ class SelfCodingEngine:
             target_region.func_signature = func_sig or None
             threshold = self.chunk_token_threshold or 0
             header = (
-                f"# Region {target_region.func_name or ''} lines"
+                f"# Region {target_region.function or ''} lines"
                 f" {start}-{end}"
             ).strip()
             region_body = "\n".join(target_region.original_lines)
@@ -1343,18 +1336,18 @@ class SelfCodingEngine:
         return True
 
     def _find_function_region(
-        self, lines: List[str], func_name: str
+        self, lines: List[str], function: str
     ) -> TargetRegion | None:
-        """Locate ``func_name`` in ``lines`` returning its :class:`TargetRegion`."""
+        """Locate ``function`` in ``lines`` returning its :class:`TargetRegion`."""
 
         try:
             tree = ast.parse("\n".join(lines))
         except SyntaxError:
             return None
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == func_name:
+            if isinstance(node, ast.FunctionDef) and node.name == function:
                 end = getattr(node, "end_lineno", node.lineno)
-                return TargetRegion(node.lineno, end, func_name)
+                return TargetRegion(start_line=node.lineno, end_line=end, function=function)
         return None
 
     def _run_ci(self, path: Path | None = None) -> TestHarnessResult:
@@ -1487,8 +1480,8 @@ class SelfCodingEngine:
                 return None, False, 0.0
             if _verify(generated):
                 if not self._apply_region_patch(path, original_lines, target_region, generated):
-                    if target_region.func_name:
-                        func_region = self._find_function_region(original_lines, target_region.func_name)
+                    if target_region.function:
+                        func_region = self._find_function_region(original_lines, target_region.function)
                     else:
                         func_region = None
                     if func_region is None:
@@ -1505,9 +1498,9 @@ class SelfCodingEngine:
                         return None, False, 0.0
                     target_region = func_region
             else:
-                if not target_region.func_name:
+                if not target_region.function:
                     return None, False, 0.0
-                func_region = self._find_function_region(original_lines, target_region.func_name)
+                func_region = self._find_function_region(original_lines, target_region.function)
                 if func_region is None:
                     return None, False, 0.0
                 generated = self.generate_helper(
@@ -2553,13 +2546,14 @@ class SelfCodingEngine:
             for node in ast.walk(tree):
                 if (
                     isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and node.name == region.func_name
+                    and node.name == region.function
                 ):
                     end = getattr(node, "end_lineno", node.lineno)
                     return TargetRegion(
                         start_line=node.lineno,
                         end_line=end,
-                        func_name=region.func_name,
+                        function=region.function,
+                        filename=region.filename or str(path),
                     )
         except Exception:
             pass

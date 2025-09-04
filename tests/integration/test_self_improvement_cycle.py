@@ -483,7 +483,7 @@ def test_target_region_escalation(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(scm, "run_tests", run_tests_stub)
 
-    tr = scm.TargetRegion(file=file_path.name, start_line=1, end_line=2, function="foo")
+    tr = scm.TargetRegion(filename=file_path.name, start_line=1, end_line=2, function="foo")
 
     def parse_stub(trace):
         return {"trace": trace, "target_region": tr}
