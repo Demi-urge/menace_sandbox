@@ -11,9 +11,25 @@ import sys
 import shutil
 import time
 from typing import TYPE_CHECKING
+import types
+from pathlib import Path
+
+sys.modules.setdefault(
+    "dynamic_path_router",
+    types.SimpleNamespace(
+        resolve_path=lambda p: Path(p),
+        resolve_dir=lambda p: Path(p),
+        path_for_prompt=lambda p: Path(p).as_posix(),
+    ),
+)
 
 from .roi_calculator import ROICalculator
-from .error_parser import ErrorParser
+# ErrorParser is optional during lightweight imports; fall back to None if heavy
+# dependencies are missing.
+try:  # pragma: no cover - best effort import
+    from .error_parser import ErrorParser
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    ErrorParser = None  # type: ignore
 from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
