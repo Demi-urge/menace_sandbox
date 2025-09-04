@@ -8,7 +8,6 @@ import logging
 import logging.config
 import os
 import argparse
-import re
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,6 +17,7 @@ import sys
 import tokenize
 import io
 from pathlib import Path
+from stripe_detection import PAYMENT_KEYWORDS, HTTP_LIBRARIES, contains_payment_keyword
 
 from dynamic_path_router import resolve_path
 
@@ -74,73 +74,108 @@ def validate_stripe_usage(code: str) -> None:
         If Stripe is used directly or payment keywords appear without
         importing ``stripe_billing_router``.
     """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:  # pragma: no cover - invalid code
+        raise CriticalGenerationFailure(
+            "critical generation failure: could not parse code"
+        ) from exc
 
-    if re.search(r"^\s*import\s+stripe\b", code, re.MULTILINE):
+    class _StripeVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.stripe_import = False
+            self.has_router_import = False
+            self.router_used = False
+            self.has_payment_keyword = False
+            self.raw_api_call = False
+            self.http_names: dict[str, str] = {}
+
+        def visit_Import(self, node: ast.Import) -> None:  # pragma: no cover - simple
+            for alias in node.names:
+                module = alias.name
+                asname = alias.asname or module
+                if module == "stripe" or module.startswith("stripe."):
+                    self.stripe_import = True
+                if module in HTTP_LIBRARIES:
+                    self.http_names[asname] = module
+                if module == "stripe_billing_router":
+                    self.has_router_import = True
+            self.generic_visit(node)
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # pragma: no cover - simple
+            module = node.module or ""
+            if module == "stripe" or module.startswith("stripe."):
+                self.stripe_import = True
+            if module in HTTP_LIBRARIES:
+                for alias in node.names:
+                    name = alias.asname or alias.name
+                    self.http_names[name] = module
+            for alias in node.names:
+                if alias.name == "stripe_billing_router":
+                    self.has_router_import = True
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:  # pragma: no cover - simple
+            root = _root_name(node.func)
+            if root == "stripe_billing_router":
+                self.router_used = True
+            elif root in self.http_names:
+                if any(
+                    isinstance(arg, ast.Constant)
+                    and isinstance(arg.value, str)
+                    and "api.stripe.com" in arg.value
+                    for arg in node.args
+                ):
+                    self.raw_api_call = True
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:  # pragma: no cover - simple
+            if node.id == "stripe_billing_router" and isinstance(node.ctx, ast.Load):
+                self.router_used = True
+            elif isinstance(node.ctx, ast.Store):
+                name = node.id
+                if not name.isupper() and name != "stripe_billing_router":
+                    if contains_payment_keyword(name):
+                        self.has_payment_keyword = True
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # pragma: no cover - simple
+            if contains_payment_keyword(node.name):
+                self.has_payment_keyword = True
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # pragma: no cover - simple
+            if contains_payment_keyword(node.name):
+                self.has_payment_keyword = True
+            self.generic_visit(node)
+
+    def _root_name(node: ast.AST) -> str | None:
+        while isinstance(node, ast.Attribute):
+            node = node.value
+        if isinstance(node, ast.Name):
+            return node.id
+        return None
+
+    visitor = _StripeVisitor()
+    visitor.visit(tree)
+
+    if visitor.stripe_import:
         raise CriticalGenerationFailure(
             "critical generation failure: direct Stripe import detected"
         )
-    if re.search(r"api\.stripe\.com", code):
+    if visitor.raw_api_call:
         raise CriticalGenerationFailure(
             "critical generation failure: direct Stripe API call detected"
         )
-    keywords = (
-        "payment",
-        "checkout",
-        "billing",
-        "stripe",
-        "invoice",
-        "subscription",
-        "payout",
-        "charge",
-    )
-    lowered = code.lower()
-    if any(kw in lowered for kw in keywords):
-        if not re.search(
-            r"^\s*import\s+stripe_billing_router\b", code, re.MULTILINE
-        ):
+    if visitor.has_payment_keyword:
+        if not visitor.has_router_import:
             raise CriticalGenerationFailure(
-                "critical generation failure: payment keywords without"
-                " stripe_billing_router import"
+                "critical generation failure: payment keywords without stripe_billing_router import"
             )
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as exc:  # pragma: no cover - invalid code
-            raise CriticalGenerationFailure(
-                "critical generation failure: could not parse code to verify"
-                " stripe_billing_router usage"
-            ) from exc
-
-        class _StripeRouterUsageVisitor(ast.NodeVisitor):
-            def __init__(self) -> None:
-                self.used = False
-
-            def visit_Call(self, node: ast.Call) -> None:  # pragma: no cover - simple
-                func = node.func
-                if isinstance(func, ast.Name) and func.id == "stripe_billing_router":
-                    self.used = True
-                elif (
-                    isinstance(func, ast.Attribute)
-                    and isinstance(func.value, ast.Name)
-                    and func.value.id == "stripe_billing_router"
-                ):
-                    self.used = True
-                self.generic_visit(node)
-
-            def visit_Attribute(self, node: ast.Attribute) -> None:  # pragma: no cover - simple
-                if (
-                    isinstance(node.value, ast.Name)
-                    and node.value.id == "stripe_billing_router"
-                ):
-                    self.used = True
-                self.generic_visit(node)
-
-        visitor = _StripeRouterUsageVisitor()
-        visitor.visit(tree)
-        if not visitor.used:
+        if not visitor.router_used:
             raise CriticalGenerationFailure(
                 "critical generation failure: stripe_billing_router imported but unused"
             )
-
 
 def configure_logging(
     logger_obj: Optional[logging.Logger] = None,

@@ -4,8 +4,9 @@
 This script guards against direct usage of the Stripe SDK and accidental
 exposure of live Stripe credentials. Run it in two modes:
 
-* Default mode checks Python files for ``stripe`` imports and common payment
-  keywords without ``stripe_billing_router``.
+* Default mode checks Python files for ``stripe`` imports, raw ``api.stripe.com``
+  calls via common HTTP libraries and payment keywords without
+  ``stripe_billing_router``.
 * ``--keys`` scans any files for strings such as ``sk_live``, ``pk_live``,
   ``STRIPE_SECRET_KEY`` or ``STRIPE_PUBLIC_KEY`` outside
   ``stripe_billing_router.py``.
@@ -23,10 +24,9 @@ Scan for potential live keys::
 from __future__ import annotations
 
 import argparse
-import io
+import ast
 import re
 import sys
-import tokenize
 from pathlib import Path
 
 
@@ -35,6 +35,9 @@ def resolve_path(path: str) -> str:
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from stripe_detection import PAYMENT_KEYWORDS, HTTP_LIBRARIES, contains_payment_keyword  # noqa: E402
+
 ALLOWED = {
     (REPO_ROOT / "stripe_billing_router.py").resolve(),  # path-ignore
     (REPO_ROOT / "scripts/check_stripe_imports.py").resolve(),  # path-ignore
@@ -43,48 +46,87 @@ ALLOWED = {
     (REPO_ROOT / "config_loader.py").resolve(),  # path-ignore
     (REPO_ROOT / "codex_output_analyzer.py").resolve(),  # path-ignore
 }
-IMPORT_PATTERN = re.compile(r"^\s*(?:import stripe(?!_billing_router)|from stripe\b)")
-ROUTER_IMPORT = re.compile(
-    r"^\s*(?:from\s+[\.\w]+\s+import\s+stripe_billing_router\b|import\s+stripe_billing_router\b)",
-    re.MULTILINE,
-)
-KEYWORDS = {
-    "stripe",
-    "checkout",
-    "billing",
-    "invoice",
-    "subscription",
-    "payout",
-    "charge",
-}
 KEY_PATTERN = re.compile(
     r"sk_live|pk_live|STRIPE_SECRET_KEY|STRIPE_PUBLIC_KEY"
 )
 
 
-def _check_imports(paths: list[Path]) -> list[str]:
-    offenders: list[str] = []
-    for path in paths:
-        if path.suffix != ".py" or path in ALLOWED:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if IMPORT_PATTERN.search(line):
-                try:
-                    rel = path.relative_to(REPO_ROOT)
-                except ValueError:
-                    rel = path
-                offenders.append(f"{rel}:{lineno}:{line.strip()}")
-    if offenders:
-        print("Direct Stripe imports detected (use stripe_billing_router):")
-    return offenders
+class StripeAnalyzer(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.stripe_lines: list[int] = []
+        self.raw_api_lines: list[int] = []
+        self.keyword_lines: set[int] = set()
+        self.has_router_import = False
+        self.http_names: dict[str, str] = {}
+
+    def visit_Import(self, node: ast.Import) -> None:  # pragma: no cover - simple
+        for alias in node.names:
+            module = alias.name
+            asname = alias.asname or module
+            if module == "stripe" or module.startswith("stripe."):
+                self.stripe_lines.append(node.lineno)
+            if module in HTTP_LIBRARIES:
+                self.http_names[asname] = module
+            if module == "stripe_billing_router":
+                self.has_router_import = True
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # pragma: no cover - simple
+        module = node.module or ""
+        if module == "stripe" or module.startswith("stripe."):
+            self.stripe_lines.append(node.lineno)
+        if module in HTTP_LIBRARIES:
+            for alias in node.names:
+                name = alias.asname or alias.name
+                self.http_names[name] = module
+        for alias in node.names:
+            if alias.name == "stripe_billing_router":
+                self.has_router_import = True
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:  # pragma: no cover - simple
+        root = _root_name(node.func)
+        if root in self.http_names:
+            if any(
+                isinstance(arg, ast.Constant)
+                and isinstance(arg.value, str)
+                and "api.stripe.com" in arg.value
+                for arg in node.args
+            ):
+                self.raw_api_lines.append(node.lineno)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # pragma: no cover - simple
+        if contains_payment_keyword(node.name):
+            self.keyword_lines.add(node.lineno)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # pragma: no cover - simple
+        if contains_payment_keyword(node.name):
+            self.keyword_lines.add(node.lineno)
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:  # pragma: no cover - simple
+        if isinstance(node.ctx, ast.Store):
+            name = node.id
+            if not name.isupper() and name != "stripe_billing_router":
+                if contains_payment_keyword(name):
+                    self.keyword_lines.add(node.lineno)
+        self.generic_visit(node)
 
 
-def _check_keywords(paths: list[Path]) -> list[str]:
-    offenders: list[str] = []
+def _root_name(node: ast.AST) -> str | None:
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
+
+
+def _check_ast(paths: list[Path]) -> list[str]:
+    imports: list[str] = []
+    raw: list[str] = []
+    keywords: list[str] = []
     for path in paths:
         if path.suffix != ".py" or path in ALLOWED:
             continue
@@ -92,33 +134,29 @@ def _check_keywords(paths: list[Path]) -> list[str]:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
+            tree = ast.parse(text)
+        except (OSError, SyntaxError):
             continue
-        if ROUTER_IMPORT.search(text):
-            continue
+        analyzer = StripeAnalyzer()
+        analyzer.visit(tree)
         try:
-            tokens = tokenize.generate_tokens(io.StringIO(text).readline)
-        except tokenize.TokenError:
-            continue
-        for tok in tokens:
-            if tok.type != tokenize.NAME:
-                continue
-            name = tok.string
-            if name.isupper() or name == "stripe_billing_router":
-                continue
-            parts = name.lower().split("_")
-            if any(part in KEYWORDS for part in parts):
-                try:
-                    rel = path.relative_to(REPO_ROOT)
-                except ValueError:
-                    rel = path
-                offenders.append(f"{rel}:{tok.start[0]}:missing stripe_billing_router import")
-                break
-    if offenders:
-        print(
-            "Payment/Stripe keywords without stripe_billing_router import detected:"
-        )
-    return offenders
+            rel = path.relative_to(REPO_ROOT)
+        except ValueError:
+            rel = path
+        for lineno in analyzer.stripe_lines:
+            imports.append(f"{rel}:{lineno}:import stripe")
+        for lineno in analyzer.raw_api_lines:
+            raw.append(f"{rel}:{lineno}:raw api.stripe.com call")
+        if analyzer.keyword_lines and not analyzer.has_router_import:
+            lineno = min(analyzer.keyword_lines)
+            keywords.append(f"{rel}:{lineno}:missing stripe_billing_router import")
+    if imports:
+        print("Direct Stripe imports detected (use stripe_billing_router):")
+    if raw:
+        print("Raw Stripe API usage detected (use stripe_billing_router):")
+    if keywords:
+        print("Payment/Stripe keywords without stripe_billing_router import detected:")
+    return imports + raw + keywords
 
 
 def _check_keys(paths: list[Path]) -> list[str]:
@@ -162,8 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.keys:
         offenders = _check_keys(paths)
     else:
-        offenders = _check_imports(paths)
-        offenders.extend(_check_keywords(paths))
+        offenders = _check_ast(paths)
     if offenders:
         for off in offenders:
             print(off)
