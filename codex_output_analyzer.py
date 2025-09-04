@@ -66,7 +66,10 @@ class CriticalGenerationFailure(RuntimeError):
 
 
 _RAW_STRIPE_PATTERN = re.compile(
-    r"api\.stripe\.com|(?:sk_|pk_)[A-Za-z0-9]+"
+    r"api\.stripe\.com|"  # direct endpoint
+    r"(?:sk|pk)_[A-Za-z0-9*xX]+|"  # raw or masked keys
+    r"(?:c2tf|cGtf)[A-Za-z0-9+/=]{8,}|"  # base64-encoded keys
+    r"(?:YXBpLnN0cmlwZS5jb20=?|aHR0cHM6Ly9hcGkuc3RyaXBlLmNvbQ==)"  # base64 api URL
 )
 
 
