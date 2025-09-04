@@ -27,7 +27,10 @@ from snippet_compressor import compress_snippets
 from chunking import split_into_chunks, summarize_code
 from target_region import TargetRegion, extract_target_region
 from billing.prompt_notice import prepend_payment_notice
-import stripe_billing_router  # noqa: F401
+try:  # pragma: no cover - optional billing integration
+    import stripe_billing_router  # noqa: F401
+except Exception:  # pragma: no cover - ignore missing dependencies
+    stripe_billing_router = None  # type: ignore
 
 
 SYSTEM_NOTICE = prepend_payment_notice([])[0]["content"]
@@ -82,12 +85,14 @@ except Exception:  # pragma: no cover - degrade gracefully when unavailable
 
 DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh implementation."
 
-_STRATEGY_TEMPLATE_PATH = Path(resolve_path("prompt_strategy.yaml"))
+# Strategy templates live in ``templates/prompt_strategies.yaml``.  The helper
+# falls back to an empty mapping when the file is missing or cannot be parsed.
+_STRATEGY_TEMPLATE_PATH = Path(resolve_path("templates/prompt_strategies.yaml"))
 _STRATEGY_TEMPLATES: Dict[str, str] | None = None
 
 
 def _load_strategy_templates() -> Dict[str, str]:
-    """Return cached strategy templates loaded from ``prompt_strategy.yaml``."""
+    """Return cached strategy templates loaded from ``prompt_strategies.yaml``."""
 
     global _STRATEGY_TEMPLATES
     if _STRATEGY_TEMPLATES is None:
@@ -99,8 +104,15 @@ def _load_strategy_templates() -> Dict[str, str]:
                         _STRATEGY_TEMPLATE_PATH.read_text(encoding="utf-8")
                     )
                     if isinstance(data, dict):
-                        raw = data.get("templates", {})
-                        templates = {str(k): str(v) for k, v in raw.items() if isinstance(k, str)}
+                        # Support both a top-level mapping and the legacy
+                        # structure using a ``templates`` key.
+                        raw = data.get("templates", data)
+                        if isinstance(raw, dict):
+                            templates = {
+                                str(k): str(v)
+                                for k, v in raw.items()
+                                if isinstance(k, str)
+                            }
             except Exception:
                 templates = {}
         _STRATEGY_TEMPLATES = templates

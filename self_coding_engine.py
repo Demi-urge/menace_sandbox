@@ -25,7 +25,10 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
-from .advanced_error_management import FormalVerifier
+try:  # pragma: no cover - optional formal verification dependency
+    from .advanced_error_management import FormalVerifier
+except Exception:  # pragma: no cover - degrade gracefully when missing
+    FormalVerifier = object  # type: ignore[misc,assignment]
 from .llm_interface import Prompt, LLMResult, LLMClient
 from .llm_router import client_from_settings
 try:  # shared GPT memory instance
@@ -56,7 +59,10 @@ except Exception:  # pragma: no cover - fallback for flat layout
         recent_error_fix,
         recent_improvement_path,
     )
-from .rollback_manager import RollbackManager
+try:  # pragma: no cover - optional rollback support
+    from .rollback_manager import RollbackManager
+except Exception:  # pragma: no cover - degrade gracefully when missing
+    RollbackManager = object  # type: ignore[misc,assignment]
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
@@ -121,7 +127,10 @@ except Exception:  # pragma: no cover - defensive fallback
                 suggested_fix="install the vector_service package",
             )
 
-from .roi_tracker import ROITracker
+try:  # pragma: no cover - optional ROI tracking
+    from .roi_tracker import ROITracker
+except Exception:  # pragma: no cover - degrade gracefully when missing
+    ROITracker = object  # type: ignore[misc,assignment]
 from .prompt_evolution_memory import PromptEvolutionMemory
 try:  # pragma: no cover - optional dependency
     from .patch_provenance import record_patch_metadata
@@ -172,7 +181,22 @@ from .self_improvement.baseline_tracker import (  # noqa: E402
 try:  # pragma: no cover - optional dependency
     from .self_improvement.init import FileLock, _atomic_write
 except Exception:  # pragma: no cover - fallback for flat layout
-    from self_improvement.init import FileLock, _atomic_write  # type: ignore
+    try:
+        from self_improvement.init import FileLock, _atomic_write  # type: ignore
+    except Exception:  # pragma: no cover - final fallback
+        class FileLock:  # type: ignore[misc]
+            def __init__(self, *_a, **_k) -> None:
+                pass
+
+            def __enter__(self) -> "FileLock":  # pragma: no cover - noop
+                return self
+
+            def __exit__(self, *_a) -> bool:  # pragma: no cover - noop
+                return False
+
+        def _atomic_write(path: str, data: str, *, mode: str = "w") -> None:  # type: ignore[misc]
+            with open(path, mode, encoding="utf-8") as fh:
+                fh.write(data)
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -180,9 +204,9 @@ if TYPE_CHECKING:  # pragma: no cover - type hints
 
 # Load prompt configuration from settings instead of environment variables
 _settings = SandboxSettings()
-VA_PROMPT_TEMPLATE = _settings.va_prompt_template
-VA_PROMPT_PREFIX = _settings.va_prompt_prefix
-VA_REPO_LAYOUT_LINES = _settings.va_repo_layout_lines
+VA_PROMPT_TEMPLATE = getattr(_settings, "va_prompt_template", "")
+VA_PROMPT_PREFIX = getattr(_settings, "va_prompt_prefix", "")
+VA_REPO_LAYOUT_LINES = getattr(_settings, "va_repo_layout_lines", 200)
 
 # Reuse prompt encoder for token counting if available
 
@@ -893,11 +917,14 @@ class SelfCodingEngine:
         retrieval_context: str | None = None,
         repo_layout: str | None = None,
         target_region: TargetRegion | None = None,
+        strategy: str | None = None,
     ) -> str:
         """Return a prompt formatted for :class:`VisualAgentClient`.
 
         When ``target_region`` is provided the line range metadata is embedded in
         the prompt so downstream components can reason about the intended scope.
+        ``strategy`` selects an optional instruction block from the strategy
+        templates.
         """
         func = f"auto_{description.replace(' ', '_')}"
         repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
@@ -912,6 +939,7 @@ class SelfCodingEngine:
                 retry_trace=retry_trace,
                 tone=self.prompt_tone,
                 target_region=target_region,
+                strategy=strategy,
             )
         except TypeError:
             prompt_obj = self.prompt_engine.build_prompt(
@@ -968,6 +996,7 @@ class SelfCodingEngine:
         metadata: Dict[str, Any] | None = None,
         chunk_index: int | None = None,
         target_region: TargetRegion | None = None,
+        strategy: str | None = None,
     ) -> str:
         """Create helper text using snippet and retrieval context.
 
@@ -975,7 +1004,8 @@ class SelfCodingEngine:
         :attr:`prompt_chunk_token_threshold`, the file is summarised via
         :func:`chunking.get_chunk_summaries`.  ``chunk_index`` selects the chunk
         whose raw code is provided to the model; other chunks are represented by
-        their summaries.
+        their summaries.  ``strategy`` allows callers to inject an optional
+        instruction snippet from the strategy templates.
         """
         snippets = self.suggest_snippets(description, limit=3)
         snippet_context = "\n\n".join(s.code for s in snippets)
@@ -1050,8 +1080,7 @@ class SelfCodingEngine:
             str(metadata.get("retrieval_context", "")) if metadata else ""
         )
         retry_trace = self._fetch_retry_trace(metadata)
-        strategy = None
-        if metadata:
+        if strategy is None and metadata:
             strategy = (
                 metadata.get("strategy")
                 or metadata.get("prompt_id")
@@ -1088,7 +1117,6 @@ class SelfCodingEngine:
                 retrieval_context=retrieval_context,
                 retry_trace=retry_trace,
                 summaries=summaries,
-                strategy=strategy,
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
@@ -1236,6 +1264,7 @@ class SelfCodingEngine:
         context_meta: Dict[str, Any] | None = None,
         chunk_index: int | None = None,
         target_region: TargetRegion | None = None,
+        strategy: str | None = None,
     ) -> tuple[str, bool]:
         """Generate helper code and append it to ``path`` if it passes verification.
 
@@ -1245,7 +1274,8 @@ class SelfCodingEngine:
         summaries to keep the prompt size below token limits.  When
         ``target_region`` is supplied, only that snippet and minimal surrounding
         context are presented to the model and the generated code is spliced back
-        into the original file at the specified range.
+        into the original file at the specified range.  ``strategy`` forwards an
+        optional prompt strategy to the underlying :class:`PromptEngine`.
         """
         path = resolve_path(path)
         try:
@@ -1255,9 +1285,10 @@ class SelfCodingEngine:
                 metadata=context_meta,
                 chunk_index=chunk_index,
                 target_region=target_region,
+                strategy=strategy,
             )
         except TypeError:
-            code = self.generate_helper(description)
+            code = self.generate_helper(description, strategy=strategy)
         self.logger.info(
             "patch file",
             extra={

@@ -4,12 +4,3 @@ heuristics:
   ask_type_hints: 0.2
 max_tokens: 256
 default_model: gpt-3.5-turbo
-templates:
-  strict_fix: |
-    Apply the smallest change necessary to address the issue without altering unrelated code.
-  delete_and_rebuild: |
-    Remove the existing implementation entirely and recreate it from scratch.
-  comment_refactor: |
-    Restructure or improve comments without modifying the runtime behaviour of the code.
-  unit_test_rewrite: |
-    Rewrite or expand unit tests to clarify intent while avoiding changes to production code.
