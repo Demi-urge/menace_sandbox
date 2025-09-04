@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import os
+from dynamic_path_router import repo_root
 
 # Allow importing modules from repository root using ``menace`` prefix.
-__path__.append(os.path.dirname(os.path.dirname(__file__)))
+__path__.append(str(repo_root()))
 
 from .numeric_backend import NUMERIC_BACKEND
 

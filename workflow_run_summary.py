@@ -24,7 +24,7 @@ _WORKFLOW_ROI_HISTORY: Dict[str, List[float]] = {}
 _HISTORY_PATH = Path(
     os.environ.get(
         "WORKFLOW_ROI_HISTORY_PATH",
-        Path(__file__).with_name("workflow_roi_history.json"),
+        str(resolve_path("workflow_roi_history.json")),
     )
 )
 

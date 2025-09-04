@@ -7,6 +7,8 @@ import os
 import logging
 import time
 
+from dynamic_path_router import resolve_dir
+
 from .dependency_manager import DependencyManager
 
 _deps = DependencyManager()
@@ -201,7 +203,7 @@ class ResearchBotSettings:
     aggregator_sign_secret: str | None = os.getenv("AGGREGATOR_SIGN_SECRET")
     fallback_log: str = os.getenv(
         "RESEARCH_FALLBACK_LOG",
-        os.path.join(os.path.dirname(__file__), "logs", "aggregator_failures.jsonl"),
+        str(resolve_dir("logs") / "aggregator_failures.jsonl"),
     )
     aggregator_retry_queue: str | None = os.getenv("AGGREGATOR_RETRY_QUEUE")
     cloud_logging_url: str | None = os.getenv("CLOUD_LOGGING_URL")
