@@ -2,13 +2,13 @@ import ast
 import importlib.util
 import types
 import time
-from pathlib import Path
 from typing import Any, Dict
 
+from dynamic_path_router import resolve_path
+
 # Load BaselineTracker
-MODULE_DIR = Path(__file__).resolve().parents[1]
 BT_SPEC = importlib.util.spec_from_file_location(
-    "baseline_tracker", MODULE_DIR / "baseline_tracker.py"
+    "baseline_tracker", resolve_path("self_improvement/baseline_tracker.py")
 )
 baseline_mod = importlib.util.module_from_spec(BT_SPEC)
 assert BT_SPEC and BT_SPEC.loader
@@ -16,7 +16,7 @@ BT_SPEC.loader.exec_module(baseline_mod)  # type: ignore[attr-defined]
 BaselineTracker = baseline_mod.BaselineTracker
 
 # Extract selected methods from engine.py
-ENG_PATH = MODULE_DIR / "engine.py"
+ENG_PATH = resolve_path("self_improvement/engine.py")
 engine_src = ENG_PATH.read_text()
 engine_tree = ast.parse(engine_src)
 future = ast.ImportFrom(module="__future__", names=[ast.alias("annotations", None)], level=0)
@@ -27,7 +27,10 @@ should_trigger = next(
     n for n in class_def.body if isinstance(n, ast.FunctionDef) and n.name == "_should_trigger"
 )
 check_stagnation = next(
-    n for n in class_def.body if isinstance(n, ast.FunctionDef) and n.name == "_check_roi_stagnation"
+    n
+    for n in class_def.body
+    if isinstance(n, ast.FunctionDef)
+    and n.name == "_check_roi_stagnation"
 )
 engine_module = ast.Module(
     [future, ast.ClassDef("SelfImprovementEngine", [], [], [should_trigger, check_stagnation], [])],
@@ -45,7 +48,7 @@ exec(compile(engine_module, "<engine>", "exec"), ns)
 SelfImprovementEngine = ns["SelfImprovementEngine"]
 
 # Extract _should_encode from meta_planning.py
-MP_PATH = MODULE_DIR / "meta_planning.py"
+MP_PATH = resolve_path("self_improvement/meta_planning.py")
 mp_src = MP_PATH.read_text()
 mp_tree = ast.parse(mp_src)
 should_encode_func = next(

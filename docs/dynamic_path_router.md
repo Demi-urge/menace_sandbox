@@ -50,4 +50,12 @@ string literals that end with `.py`. These paths **must** be wrapped with
 clones. The hook fails if an unwrapped `.py` path is found.
 
 Run `pre-commit run check-static-paths --files <changed files>` locally before
-committing to catch violations early.
+committing to catch violations early. The checker can also be invoked directly
+for ad-hoc scans:
+
+```bash
+python tools/check_static_paths.py $(git ls-files 'self_*' 'sandbox_runner/*.py')
+```
+
+The command exits with a non-zero status and lists offending literals when
+violations are detected.

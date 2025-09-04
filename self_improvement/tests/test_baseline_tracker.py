@@ -3,6 +3,8 @@ import sys
 import types
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 
 MODULE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(MODULE_DIR.parent))
@@ -17,7 +19,8 @@ sys.modules.setdefault("menace.self_improvement", sub_pkg)
 sys.modules.setdefault("self_improvement", sub_pkg)
 
 baseline_spec = importlib.util.spec_from_file_location(
-    "menace.self_improvement.baseline_tracker", MODULE_DIR / "baseline_tracker.py"
+    "menace.self_improvement.baseline_tracker",
+    resolve_path("self_improvement/baseline_tracker.py"),
 )
 baseline = importlib.util.module_from_spec(baseline_spec)
 baseline_spec.loader.exec_module(baseline)
@@ -95,4 +98,3 @@ def test_current_and_delta_methods():
     assert tracker.current("pass_rate") == 1.0
     # Average is 0.75 -> delta should be 0.25
     assert tracker.delta("pass_rate") == 0.25
-

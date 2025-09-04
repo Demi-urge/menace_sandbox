@@ -4,6 +4,8 @@ import sys
 import types
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 MODULE_DIR = Path(__file__).resolve().parents[1]
 ROOT_DIR = MODULE_DIR.parent
 sys.path.append(str(ROOT_DIR))
@@ -106,7 +108,8 @@ sys.modules["self_improvement.init"] = init_module
 
 # Load baseline tracker and registry from source files
 baseline_spec = importlib.util.spec_from_file_location(
-    "menace.self_improvement.baseline_tracker", MODULE_DIR / "baseline_tracker.py"
+    "menace.self_improvement.baseline_tracker",
+    resolve_path("self_improvement/baseline_tracker.py"),
 )
 baseline_module = importlib.util.module_from_spec(baseline_spec)
 baseline_spec.loader.exec_module(baseline_module)
@@ -115,7 +118,8 @@ sys.modules["self_improvement.baseline_tracker"] = baseline_module
 BaselineTracker = baseline_module.BaselineTracker
 
 registry_spec = importlib.util.spec_from_file_location(
-    "menace.self_improvement.registry", MODULE_DIR / "registry.py"
+    "menace.self_improvement.registry",
+    resolve_path("self_improvement/registry.py"),
 )
 registry_module = importlib.util.module_from_spec(registry_spec)
 registry_spec.loader.exec_module(registry_module)

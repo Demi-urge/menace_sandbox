@@ -4,6 +4,8 @@ import sys
 import types
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -24,7 +26,8 @@ def _load_init():
     sys.modules.setdefault("sandbox_runner.bootstrap", bootstrap)
 
     spec = importlib.util.spec_from_file_location(
-        "menace.self_improvement.init", Path(__file__).resolve().parents[1] / "init.py"
+        "menace.self_improvement.init",
+        resolve_path("self_improvement/init.py"),
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["menace.self_improvement.init"] = module
