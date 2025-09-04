@@ -19,6 +19,9 @@ import tempfile
 import time
 import json
 from typing import Any
+from statistics import fmean
+
+from self_improvement.baseline_tracker import TRACKER as BASELINE_TRACKER
 
 from ..error_parser import ErrorParser
 
@@ -39,6 +42,10 @@ class TestHarnessResult:
         cloning logs are merged into ``stdout`` for convenience.
     duration:
         Total runtime in seconds.
+    entropy_delta:
+        Change in entropy observed during the test run when coverage
+        information is available. ``None`` when entropy metrics could not be
+        determined.
     """
 
     success: bool
@@ -51,6 +58,7 @@ class TestHarnessResult:
     preset: dict | None = None
     coverage: dict | None = None
     edge_cases: dict | None = None
+    entropy_delta: float | None = None
 
     def __bool__(self) -> bool:  # pragma: no cover - trivial
         return self.success
@@ -347,7 +355,6 @@ def _run_once(
                     )
                 except Exception:
                     cov_data = None
-            function_cov = None
             entropy_delta = None
             if cov_data is not None:
                 try:
@@ -356,21 +363,9 @@ def _run_once(
                     executed_functions = load_coverage_report(cov_data)
                 except Exception:
                     executed_functions = None
-                # Derive function coverage and entropy delta
+                # Derive entropy delta from coverage metrics
                 try:
-                    from self_improvement.metrics import (
-                        compute_entropy_delta as _compute_entropy_delta,
-                        compute_entropy_metrics,
-                    )
-
-                    funcs: list[float] = []
-                    for info in cov_data.get("files", {}).values():
-                        for meta in (info.get("functions") or {}).values():
-                            pct = meta.get("summary", {}).get("percent_covered")
-                            if pct is not None:
-                                funcs.append(float(pct))
-                    if funcs:
-                        function_cov = sum(funcs) / len(funcs)
+                    from self_improvement.metrics import compute_entropy_metrics
 
                     files: list[Path] = []
                     for f in cov_data.get("files", {}):
@@ -379,9 +374,15 @@ def _run_once(
                             files.append(repo_path / rel)
                         except Exception:
                             continue
-                    if function_cov is not None and files:
-                        _, token_complexity = compute_entropy_metrics(files)
-                        entropy_delta, _ = _compute_entropy_delta(function_cov, token_complexity)
+                    if files:
+                        code_diversity, token_complexity = compute_entropy_metrics(files)
+                        current_entropy = fmean([code_diversity, token_complexity])
+                        prev_entropy = BASELINE_TRACKER.current("entropy")
+                        try:
+                            BASELINE_TRACKER.update(entropy=current_entropy)
+                        except Exception:
+                            pass
+                        entropy_delta = current_entropy - prev_entropy
                 except Exception:
                     pass
         if tests.returncode != 0:
@@ -404,6 +405,7 @@ def _run_once(
             preset=preset,
             coverage=cov_data,
             edge_cases=edge_data,
+            entropy_delta=entropy_delta,
         )
         try:
             from .scoring import record_run as _score_record_run
