@@ -3,10 +3,10 @@
 The router contains the Stripe API keys as module level constants and exposes
 helpers that resolve a routing table to determine which Stripe product, price
 and customer should be used for a given bot.  Routing rules are stored in a
-dictionary keyed by ``(region, business_category, bot_name)`` tuples which makes
-it easy to register new combinations or override existing ones dynamically.  A
-fatal exception is raised if the keys are missing or no routing rule matches the
-supplied bot.
+dictionary keyed by ``(domain, region, business_category, bot_name)`` tuples
+which makes it easy to register new combinations or override existing ones
+dynamically.  A fatal exception is raised if the keys are missing or no routing
+rule matches the supplied bot.
 """
 
 from __future__ import annotations
@@ -46,11 +46,12 @@ def _load_key(name: str, prefix: str) -> str:
 STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
 STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
 
-# Base routing rules keyed by (region, business_category, bot_name).  Each value
-# contains identifiers used for billing.  The default region provides backwards
-# compatible behaviour for callers that do not specify a region override.
-ROUTING_TABLE: dict[tuple[str, str, str], dict[str, str]] = {
-    ("default", "finance", "finance_router_bot"): {
+# Base routing rules keyed by (domain, region, business_category, bot_name).
+# Each value contains identifiers used for billing.  The default region provides
+# backwards compatible behaviour for callers that do not specify a region
+# override.
+ROUTING_TABLE: dict[tuple[str, str, str, str], dict[str, str]] = {
+    ("stripe", "default", "finance", "finance_router_bot"): {
         "product_id": "prod_finance_router",
         "price_id": "price_finance_standard",
         "customer_id": "cus_finance_default",
@@ -60,8 +61,9 @@ ROUTING_TABLE: dict[tuple[str, str, str], dict[str, str]] = {
 # Legacy alias maintained for backwards compatibility with existing imports.
 BILLING_RULES = ROUTING_TABLE
 
-# Overrides: (region, business_category, bot_name, key, value) -> route updates
-OVERRIDES: dict[tuple[str, str, str, str, str], dict[str, str]] = {}
+# Overrides: (domain, region, business_category, bot_name, key, value) -> route
+# updates
+OVERRIDES: dict[tuple[str, str, str, str, str, str], dict[str, str]] = {}
 
 
 class RouteStrategy:
@@ -87,6 +89,7 @@ def register_strategy(strategy: RouteStrategy) -> None:
 
 
 def register_route(
+    domain: str,
     business_category: str,
     bot_name: str,
     route: Mapping[str, str],
@@ -95,27 +98,29 @@ def register_route(
 ) -> None:
     """Register or update a base routing rule.
 
-    The rule is stored within :data:`ROUTING_TABLE` under the specified region.
+    The rule is stored within :data:`ROUTING_TABLE` under the specified domain
+    and region.
     """
 
-    ROUTING_TABLE[(region, business_category, bot_name)] = dict(route)
+    ROUTING_TABLE[(domain, region, business_category, bot_name)] = dict(route)
 
 
 def register_override(rule: Mapping[str, Any]) -> None:
     """Register a routing override for a specific bot and qualifier.
 
-    The ``rule`` mapping requires the keys ``business_category``, ``bot_name``,
-    ``key``, ``value`` and ``route``.  The optional ``region`` key defaults to
-    ``"default"``.
+    The ``rule`` mapping requires the keys ``domain``, ``business_category``,
+    ``bot_name``, ``key``, ``value`` and ``route``.  The optional ``region`` key
+    defaults to ``"default"``.
     """
 
+    domain = rule["domain"]
     region = rule.get("region", "default")
     business_category = rule["business_category"]
     bot_name = rule["bot_name"]
     key = rule["key"]
     value = rule["value"]
     route = rule["route"]
-    OVERRIDES[(region, business_category, bot_name, key, value)] = dict(route)
+    OVERRIDES[(domain, region, business_category, bot_name, key, value)] = dict(route)
 
 
 def _client(api_key: str):
@@ -132,45 +137,52 @@ def _client(api_key: str):
     return stripe
 
 
-def _parse_bot_id(bot_id: str) -> tuple[str, str]:
+def _parse_bot_id(bot_id: str) -> tuple[str, str, str]:
     parts = bot_id.split(":")
-    if len(parts) != 2:
+    if len(parts) != 3:
         logger.error("Invalid bot_id '%s'", bot_id)
         raise ValueError(
-            "bot_id must be in 'business_category:bot_name' format"
+            "bot_id must be in 'domain:business_category:bot_name' format"
         )
-    business_category, bot_name = parts
-    return business_category, bot_name
+    domain, business_category, bot_name = parts
+    return domain, business_category, bot_name
 
 
 def _resolve_route(
     bot_id: str, overrides: Optional[Mapping[str, str]] = None
 ) -> dict[str, str]:
-    business_category, bot_name = _parse_bot_id(bot_id)
+    domain, business_category, bot_name = _parse_bot_id(bot_id)
     region = "default"
     if overrides and "region" in overrides:
         region = overrides["region"]
 
+    # Collect supported domains from all routes and overrides
+    supported_domains: set[str] = {d for d, _, _, _ in ROUTING_TABLE.keys()}
+    supported_domains.update(d for d, _, _, _, _, _ in OVERRIDES.keys())
+    if not domain or domain not in supported_domains:
+        logger.error("Unsupported billing domain '%s'", domain)
+        raise RuntimeError(f"Unsupported billing domain '{domain}'")
+
     # Collect supported business categories from all routes and overrides
-    supported_categories: set[str] = {bc for _, bc, _ in ROUTING_TABLE.keys()}
-    supported_categories.update(bc for _, bc, _, _, _ in OVERRIDES.keys())
+    supported_categories: set[str] = {bc for _, _, bc, _ in ROUTING_TABLE.keys()}
+    supported_categories.update(bc for _, _, bc, _, _, _ in OVERRIDES.keys())
     if business_category not in supported_categories:
         logger.error("Unsupported billing category '%s'", business_category)
         raise RuntimeError(
             f"Unsupported billing category '{business_category}'"
         )
 
-    route = ROUTING_TABLE.get((region, business_category, bot_name))
+    route = ROUTING_TABLE.get((domain, region, business_category, bot_name))
     if overrides:
         for key, value in overrides.items():
             if key == "region":
                 continue
             update = OVERRIDES.get(
-                (region, business_category, bot_name, key, value)
+                (domain, region, business_category, bot_name, key, value)
             )
             if update is None:
                 update = OVERRIDES.get(
-                    ("default", business_category, bot_name, key, value)
+                    (domain, "default", business_category, bot_name, key, value)
                 )
             if update:
                 route = {**route, **update} if route else dict(update)

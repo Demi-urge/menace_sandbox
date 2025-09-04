@@ -53,10 +53,10 @@ def test_successful_route_and_charge(monkeypatch):
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
 
-    route = sbr._resolve_route("finance:finance_router_bot")
+    route = sbr._resolve_route("stripe:finance:finance_router_bot")
     assert route["product_id"] == "prod_finance_router"
 
-    res = sbr.charge("finance:finance_router_bot", 12.5, "desc")
+    res = sbr.charge("stripe:finance:finance_router_bot", 12.5, "desc")
     assert res["id"] == "ch_test"
     assert recorded["amount"] == 1250
     assert recorded["customer"] == "cus_finance_default"
@@ -68,15 +68,16 @@ def test_missing_keys_or_rule(monkeypatch):
     monkeypatch.setattr(sbr, "STRIPE_SECRET_KEY", "")
     monkeypatch.setattr(sbr, "STRIPE_PUBLIC_KEY", "")
     with pytest.raises(RuntimeError):
-        sbr._resolve_route("finance:finance_router_bot")
+        sbr._resolve_route("stripe:finance:finance_router_bot")
 
     with pytest.raises(RuntimeError, match="No billing route"):
-        sbr._resolve_route("finance:unknown_bot")
+        sbr._resolve_route("stripe:finance:unknown_bot")
 
 
 def test_region_and_business_overrides(monkeypatch):
     sbr = _import_module(monkeypatch)
     sbr.register_route(
+        "stripe",
         "finance",
         "finance_router_bot",
         {
@@ -88,6 +89,7 @@ def test_region_and_business_overrides(monkeypatch):
     )
     sbr.register_override(
         {
+            "domain": "stripe",
             "business_category": "finance",
             "bot_name": "finance_router_bot",
             "key": "tier",
@@ -96,9 +98,26 @@ def test_region_and_business_overrides(monkeypatch):
         }
     )
     route = sbr._resolve_route(
-        "finance:finance_router_bot", overrides={"region": "eu", "tier": "enterprise"}
+        "stripe:finance:finance_router_bot", overrides={"region": "eu", "tier": "enterprise"}
     )
     assert route["product_id"] == "prod_finance_eu"
     assert route["customer_id"] == "cus_finance_eu"
     assert route["price_id"] == "price_finance_enterprise"
 
+
+def test_domain_routing_and_invalid_domain(monkeypatch):
+    sbr = _import_module(monkeypatch)
+    sbr.register_route(
+        "alt",
+        "finance",
+        "finance_router_bot",
+        {
+            "product_id": "prod_alt",
+            "price_id": "price_alt",
+            "customer_id": "cus_alt",
+        },
+    )
+    route = sbr._resolve_route("alt:finance:finance_router_bot")
+    assert route["customer_id"] == "cus_alt"
+    with pytest.raises(RuntimeError, match="Unsupported billing domain"):
+        sbr._resolve_route("unknown:finance:finance_router_bot")
