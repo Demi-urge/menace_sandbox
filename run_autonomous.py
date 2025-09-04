@@ -32,7 +32,7 @@ import math
 import uuid
 from scipy.stats import t
 from db_router import init_db_router
-from dynamic_path_router import resolve_path, get_project_root, path_for_prompt
+from dynamic_path_router import resolve_path, get_project_root
 from sandbox_settings import SandboxSettings
 from sandbox_runner.bootstrap import (
     bootstrap_environment,
@@ -133,7 +133,7 @@ def _visual_agent_running(urls: str) -> bool:
 
 
 spec = importlib.util.spec_from_file_location(
-    "menace", path_for_prompt("__init__.py")
+    "menace", resolve_path("__init__.py")
 )
 menace_pkg = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace_pkg
@@ -210,7 +210,7 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner", path_for_prompt("sandbox_runner.py")
+        "sandbox_runner", resolve_path("sandbox_runner.py")
     )
     sr_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sr_mod)
@@ -1693,7 +1693,7 @@ def main(argv: List[str] | None = None) -> None:
     if autostart:
         from visual_agent_manager import VisualAgentManager
 
-        agent_mgr = VisualAgentManager(path_for_prompt("menace_visual_agent_2.py"))
+        agent_mgr = VisualAgentManager(str(resolve_path("menace_visual_agent_2.py")))
         if not _visual_agent_running(settings.visual_agent_urls):
             try:
                 logger.info("starting visual agent")
