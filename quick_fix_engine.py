@@ -182,7 +182,11 @@ def generate_patch(
                     if summary:
                         chunk_desc = f"{base_description}\n\n{summary}"
                     try:
-                        pid, _, _ = engine.apply_patch(
+                        apply = getattr(engine, "apply_patch_with_retry")
+                    except AttributeError:
+                        apply = getattr(engine, "apply_patch")
+                    try:
+                        pid, _, _ = apply(
                             path,
                             chunk_desc,
                             reason="preemptive_fix",
@@ -202,7 +206,11 @@ def generate_patch(
                 patch_id = patch_ids[-1] if patch_ids else None
             else:
                 try:
-                    patch_id, _, _ = engine.apply_patch(
+                    apply = getattr(engine, "apply_patch_with_retry")
+                except AttributeError:
+                    apply = getattr(engine, "apply_patch")
+                try:
+                    patch_id, _, _ = apply(
                         path,
                         base_description,
                         reason="preemptive_fix",
