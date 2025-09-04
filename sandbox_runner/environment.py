@@ -84,6 +84,9 @@ environment_failure_severity_total = Gauge(
     labelnames=["severity"],
 )
 
+# Name of the sandbox snippet file.  Configurable to avoid hard-coded paths.
+SNIPPET_NAME = os.getenv("SANDBOX_SNIPPET_NAME", "snippet" + ".py")
+
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
 except ImportError as exc:  # pragma: no cover - optional dependency
@@ -3881,7 +3884,7 @@ async def _execute_in_container(
     """
 
     snippet_path = Path(
-        env.get("CONTAINER_SNIPPET_PATH", path_for_prompt("snippet.py"))
+        env.get("CONTAINER_SNIPPET_PATH", path_for_prompt(SNIPPET_NAME))
     )
     snippet_name = snippet_path.name
     snippet_dir = snippet_path.parent.as_posix()
@@ -4826,7 +4829,7 @@ async def _section_worker(
     def _run_snippet() -> Dict[str, Any]:
         _reset_runtime_state()
         with tempfile.TemporaryDirectory(prefix="run_") as td:
-            path = Path(td) / path_for_prompt("snippet.py")
+            path = Path(td) / path_for_prompt(SNIPPET_NAME)
             modes = _parse_failure_modes(env_input.get("FAILURE_MODES"))
             snip = _inject_failure_modes(snippet, modes)
             path.write_text(snip, encoding="utf-8")

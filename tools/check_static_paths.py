@@ -5,8 +5,8 @@ The hook scans Python source files for string literals ending with ``.py``.
 Any such literal must be wrapped by :func:`resolve_path` or
 :func:`path_for_prompt` to ensure paths remain portable across forks and
 clones.  Strings starting with ``*`` (e.g. ``"*.py"``) or equal to
-``"__init__.py"`` or ``"snippet.py"`` are ignored as they are typically
-wildcards or module names.  A line can be explicitly skipped by adding the
+``"__init__.py"`` are ignored as they are typically wildcards or module
+names.  A line can be explicitly skipped by adding the
 inline comment ``# path-ignore``.
 """
 
@@ -33,7 +33,7 @@ def _is_py_string(node: ast.Constant) -> bool:
     if val.startswith("*"):
         return False
 
-    if val in {"__init__.py", "snippet.py"} and "/" not in val and "\\" not in val:
+    if val == "__init__.py" and "/" not in val and "\\" not in val:
         return False
 
     return True
