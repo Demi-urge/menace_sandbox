@@ -205,7 +205,7 @@ def _make_layer_with_patch_safety(results):
     tracker = DummyROITracker()
     metrics = VectorMetricsDB(":memory:")
     builder = DummyContextBuilder(retriever, ranking_model=ranker)
-    ps = PatchSafety()
+    ps = PatchSafety(failure_db_path=None)
     logger = PatchLogger(vector_metrics=metrics, roi_tracker=tracker, patch_safety=ps)
     layer = CognitionLayer(
         context_builder=builder,

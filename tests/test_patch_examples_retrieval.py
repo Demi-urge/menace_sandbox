@@ -6,6 +6,7 @@ from vector_service.retriever import PatchRetriever, Retriever
 from vector_service.vector_store import AnnoyVectorStore
 from vector_service.context_builder import ContextBuilder
 from vector_service.cognition_layer import CognitionLayer
+from patch_safety import PatchSafety
 
 
 def test_nl_query_returns_patch_diff(monkeypatch, tmp_path):
@@ -31,7 +32,12 @@ def test_nl_query_returns_patch_diff(monkeypatch, tmp_path):
     retr = Retriever()
     monkeypatch.setattr(retr, "search", lambda *a, **k: [])
 
-    cb = ContextBuilder(retriever=retr, patch_retriever=patch_ret, max_tokens=1000)
+    cb = ContextBuilder(
+        retriever=retr,
+        patch_retriever=patch_ret,
+        max_tokens=1000,
+        patch_safety=PatchSafety(failure_db_path=None),
+    )
     monkeypatch.setattr(cb, "refresh_db_weights", lambda *a, **k: None)
     monkeypatch.setattr(cb.patch_safety, "load_failures", lambda *a, **k: None)
 

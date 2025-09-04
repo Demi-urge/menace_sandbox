@@ -25,7 +25,7 @@ class DummyBus:
 
 
 def test_failing_patch_increases_risk_and_penalises_ranker(tmp_path):
-    ps = PatchSafety(threshold=1.1, max_alerts=1, storage_path=str(tmp_path / "failures.jsonl"))
+    ps = PatchSafety(threshold=1.1, max_alerts=1, storage_path=str(tmp_path / "failures.jsonl"), failure_db_path=None)
     vm = VectorMetricsDB(tmp_path / "vec.db")
     bus = DummyBus()
     pl = PatchLogger(patch_safety=ps, vector_metrics=vm, max_alerts=1, event_bus=bus)
@@ -64,7 +64,7 @@ def test_failing_patch_increases_risk_and_penalises_ranker(tmp_path):
 
 
 def test_patch_logger_respects_severity_threshold(tmp_path):
-    ps = PatchSafety(max_alert_severity=0.5)
+    ps = PatchSafety(max_alert_severity=0.5, failure_db_path=None)
     pl = PatchLogger(patch_safety=ps, max_alert_severity=0.5)
     start = _VIOLATIONS.labels("severity")._value.get()
     res = pl.track_contributors(
