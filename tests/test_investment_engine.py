@@ -31,7 +31,6 @@ def _import_investment_engine(monkeypatch):
             "stripe_public_key": "pk_test",
         }.get(name, ""),
     )
-    _load("stripe_handler")
     sbr = _load("stripe_billing_router")
     sys.modules["iepkg.stripe_billing_router"] = sbr
     dbm = _load("db_router")

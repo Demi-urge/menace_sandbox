@@ -47,7 +47,6 @@ def _import_finance_router(monkeypatch):
             "stripe_public_key": "pk_test",
         }.get(name, ""),
     )
-    _load("stripe_handler")
     sbr = _load("stripe_billing_router")
     sys.modules["frbpkg.stripe_billing_router"] = sbr
 

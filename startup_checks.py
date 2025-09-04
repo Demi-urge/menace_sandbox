@@ -106,8 +106,12 @@ def verify_project_dependencies(path: Path = PYPROJECT_PATH) -> list[str]:
 
 def verify_stripe_router() -> None:
     """Import ``stripe_billing_router`` and ensure keys and routes exist."""
+    import importlib
+    import sys
+
+    module_name = f"{__package__}.stripe_billing_router" if __package__ else "stripe_billing_router"
     try:
-        from . import stripe_billing_router as sbr
+        sbr = sys.modules.get(module_name) or importlib.import_module(module_name)
     except Exception as exc:  # pragma: no cover - import failure
         raise RuntimeError(f"stripe_billing_router import failed: {exc}") from exc
     if not getattr(sbr, "BILLING_RULES", None):

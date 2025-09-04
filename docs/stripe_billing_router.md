@@ -6,10 +6,9 @@ production values. A `RuntimeError` is raised if the keys are missing or empty.
 
 ## Bot Invocation and Routing Rules
 
-Bots either import `stripe_billing_router` directly or use the compatibility
-wrapper `stripe_handler`. Each bot supplies a `"domain:name:category"` string
-which the router uses to look up billing information and attach the appropriate
-Stripe keys.
+Bots import `stripe_billing_router` directly. Each bot supplies a
+`"domain:name:category"` string which the router uses to look up billing
+information and attach the appropriate Stripe keys.
 
 Routing rules live in the global `BILLING_RULES` mapping inside
 `stripe_billing_router.py`. Edit this mapping at start‑up or use
