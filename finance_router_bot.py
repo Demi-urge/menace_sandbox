@@ -35,7 +35,7 @@ class Transaction:
 class FinanceRouterBot:
     """Route payments and log payouts for Menace."""
 
-    BOT_ID = "finance:finance_router_bot:monetization"
+    BOT_ID = "finance:finance_router_bot"
 
     def __init__(
         self,

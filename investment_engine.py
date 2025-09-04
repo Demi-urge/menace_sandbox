@@ -16,7 +16,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BOT_ID = "finance:finance_router_bot:monetization"
+DEFAULT_BOT_ID = "finance:finance_router_bot"
 
 
 @dataclass
