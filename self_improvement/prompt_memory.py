@@ -89,6 +89,7 @@ def log_prompt_attempt(
     exec_result: Any,
     roi_meta: Dict[str, Any] | None = None,
     prompt_id: str | None = None,
+    failure_reason: str | None = None,
 ) -> None:
     """Record a prompt attempt outcome.
 
@@ -107,6 +108,9 @@ def log_prompt_attempt(
         objects can be stored.
     roi_meta:
         Optional ROI metrics or other contextual information.
+    failure_reason:
+        Optional string describing why the attempt failed. Only stored for
+        unsuccessful attempts.
     """
 
     metadata = getattr(prompt, "metadata", {}) if prompt is not None else {}
@@ -135,6 +139,8 @@ def log_prompt_attempt(
 
     if roi_meta is not None:
         entry["roi_meta"] = roi_meta
+    if failure_reason is not None:
+        entry["failure_reason"] = failure_reason
 
     path = _log_path(success)
     lock = FileLock(str(path) + ".lock")
