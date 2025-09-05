@@ -20,6 +20,8 @@ import argparse
 import json
 from typing import Any, Dict, Iterable, Iterator
 
+from dynamic_path_router import resolve_path
+
 try:  # pragma: no cover - exercised in tests via fallback
     import networkx as nx  # type: ignore
     _HAS_NX = True
@@ -61,6 +63,8 @@ def log_lineage(
     """
 
     directory_path = Path(directory)
+    if not directory_path.is_absolute():
+        directory_path = Path(resolve_path(".")) / directory_path
     directory_path.mkdir(parents=True, exist_ok=True)
 
     metadata: Dict[str, Any] = {"workflow_id": str(child_id)}
@@ -78,9 +82,12 @@ def log_lineage(
 
 
 # ---------------------------------------------------------------------------
-def _load_summary(directory: Path, wid: str) -> Dict[str, Any] | None:
+def _load_summary(directory: str | Path, wid: str) -> Dict[str, Any] | None:
     """Return summary data for ``wid`` if available."""
-    path = directory / f"{wid}.summary.json"
+    directory_path = Path(directory)
+    if not directory_path.is_absolute():
+        directory_path = Path(resolve_path(".")) / directory_path
+    path = directory_path / f"{wid}.summary.json"
     if not path.exists():
         return None
     try:
@@ -98,6 +105,8 @@ def load_specs(directory: str | Path = "workflows") -> Iterator[Dict[str, Any]]:
     """
 
     directory_path = Path(directory)
+    if not directory_path.is_absolute():
+        directory_path = Path(resolve_path(".")) / directory_path
     specs: Dict[str, Dict[str, Any]] = {}
 
     for path in directory_path.glob("*.workflow.json"):
@@ -131,9 +140,10 @@ def load_specs(directory: str | Path = "workflows") -> Iterator[Dict[str, Any]]:
         parent_roi = None
         if parent:
             parent_spec = specs.get(str(parent))
-            parent_summary = (
-                parent_spec.get("summary") if parent_spec else _load_summary(directory_path, str(parent))
-            )
+            if parent_spec:
+                parent_summary = parent_spec.get("summary")
+            else:
+                parent_summary = _load_summary(directory_path, str(parent))
             try:
                 parent_roi = float(parent_summary.get("roi")) if parent_summary else None
             except Exception:
