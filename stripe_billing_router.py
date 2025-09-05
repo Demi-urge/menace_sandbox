@@ -70,7 +70,7 @@ def _log_payment(
         logger.exception("failed to log payment action '%s' for bot '%s'", action, bot_id)
 
 
-def record_critical_discrepancy(bot_id: str, message: str) -> None:
+def log_critical_discrepancy(bot_id: str, message: str) -> None:
     """Record a critical discrepancy, alert, and rollback."""
 
     rec = DiscrepancyRecord(message=message, metadata={"bot_id": bot_id})
@@ -93,10 +93,6 @@ def record_critical_discrepancy(bot_id: str, message: str) -> None:
             rm.rollback("latest", requesting_bot=bot_id)
         except Exception:
             logger.exception("rollback failed for bot '%s'", bot_id)
-        try:
-            rm.log_healing_action(bot_id, message.replace(" ", "_"))
-        except Exception:
-            logger.exception("rollback logging failed for bot '%s'", bot_id)
 
 
 def _alert_mismatch(
@@ -104,7 +100,7 @@ def _alert_mismatch(
 ) -> None:
     """Backward-compatible wrapper for critical discrepancy handling."""
 
-    record_critical_discrepancy(bot_id, message)
+    log_critical_discrepancy(bot_id, message)
 
 
 def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:
@@ -124,15 +120,15 @@ def _load_key(name: str, prefix: str) -> str:
     key = os.getenv(name.upper()) or provider.get(name)
     if not key:
         logger.error("Stripe API keys must be configured and non-empty")
-        record_critical_discrepancy("unknown", "Stripe key misconfiguration")
+        log_critical_discrepancy("unknown", "Stripe key misconfiguration")
         raise RuntimeError("Stripe API keys must be configured and non-empty")
     if not key.startswith(prefix):
         logger.error("Invalid Stripe API key format for %s", name)
-        record_critical_discrepancy("unknown", "Stripe key misconfiguration")
+        log_critical_discrepancy("unknown", "Stripe key misconfiguration")
         raise RuntimeError("Invalid Stripe API key format")
     if key.startswith(f"{prefix}test"):
         logger.error("Test mode Stripe API keys are not permitted for %s", name)
-        record_critical_discrepancy("unknown", "Stripe key misconfiguration")
+        log_critical_discrepancy("unknown", "Stripe key misconfiguration")
         raise RuntimeError("Test mode Stripe API keys are not permitted")
     return key
 
@@ -382,11 +378,11 @@ def _verify_route(bot_id: str, route: Mapping[str, str]) -> None:
 
     key = route.get("secret_key")
     if not key or key not in ALLOWED_SECRET_KEYS:
-        record_critical_discrepancy(bot_id, "Stripe account mismatch")
+        log_critical_discrepancy(bot_id, "Stripe account mismatch")
         raise RuntimeError("Stripe account mismatch")
     account_id = route.get("account_id", STRIPE_MASTER_ACCOUNT_ID)
     if account_id != STRIPE_MASTER_ACCOUNT_ID:
-        record_critical_discrepancy(bot_id, "Stripe account mismatch")
+        log_critical_discrepancy(bot_id, "Stripe account mismatch")
         raise RuntimeError("Stripe account mismatch")
 
 

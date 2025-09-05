@@ -757,14 +757,14 @@ def test_create_checkout_session_success(monkeypatch, sbr_module):
 
 def test_invalid_secret_key_triggers_alert_and_rollback(monkeypatch, sbr_module):
     alerts: list[tuple[tuple, dict]] = []
-    rollbacks: list[tuple[str, list[str]]] = []
+    rollbacks: list[tuple[str, str]] = []
     monkeypatch.setattr(
         sbr_module.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
     )
 
     class DummyRM:
-        def log_healing_action(self, bot_id, action):
-            rollbacks.append((action, [bot_id]))
+        def rollback(self, revision, requesting_bot):
+            rollbacks.append((revision, requesting_bot))
 
     monkeypatch.setattr(
         sbr_module.rollback_manager, "RollbackManager", lambda: DummyRM()
@@ -780,14 +780,14 @@ def test_invalid_secret_key_triggers_alert_and_rollback(monkeypatch, sbr_module)
 
 def test_invalid_account_triggers_alert_and_rollback(monkeypatch, sbr_module):
     alerts: list[tuple[tuple, dict]] = []
-    rollbacks: list[tuple[str, list[str]]] = []
+    rollbacks: list[tuple[str, str]] = []
     monkeypatch.setattr(
         sbr_module.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
     )
 
     class DummyRM:
-        def log_healing_action(self, bot_id, action):
-            rollbacks.append((action, [bot_id]))
+        def rollback(self, revision, requesting_bot):
+            rollbacks.append((revision, requesting_bot))
 
     monkeypatch.setattr(
         sbr_module.rollback_manager, "RollbackManager", lambda: DummyRM()
