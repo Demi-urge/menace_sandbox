@@ -24,8 +24,12 @@ except Exception:  # pragma: no cover - networkx not available
     nx = None  # type: ignore
     _HAS_NX = False  # type: ignore
 
-from vector_service.vectorizer import SharedVectorService
+try:  # pragma: no cover - optional vector service
+    from vector_service.vectorizer import SharedVectorService  # type: ignore
+except Exception:  # pragma: no cover - graceful fallback if service unavailable
+    SharedVectorService = None  # type: ignore
 from vector_utils import persist_embedding
+from dynamic_path_router import resolve_path
 
 _DEFAULT_BOUNDS = {
     "num_steps": 20.0,
@@ -349,15 +353,26 @@ class WorkflowVectorizer:
         return struct_vec + sem_vec
 
 
+try:
+    _EMBEDDINGS_PATH = resolve_path("embeddings.jsonl").as_posix()
+except FileNotFoundError:
+    _EMBEDDINGS_PATH = (resolve_path(".") / "embeddings.jsonl").as_posix()
+
+
 _DEFAULT_VECTORIZER = WorkflowVectorizer()
-_DEFAULT_SERVICE = SharedVectorService()
+_DEFAULT_SERVICE = None
+if SharedVectorService is not None:  # pragma: no cover - best effort
+    try:
+        _DEFAULT_SERVICE = SharedVectorService()
+    except Exception:
+        _DEFAULT_SERVICE = None
 
 
 def vectorize_and_store(
     record_id: str,
     workflow: Dict[str, Any],
     *,
-    path: str = "embeddings.jsonl",
+    path: str = _EMBEDDINGS_PATH,
     origin_db: str = "workflow",
     metadata: Dict[str, Any] | None = None,
 ) -> List[float]:
@@ -368,6 +383,8 @@ def vectorize_and_store(
         **(metadata or {}),
         **_DEFAULT_VECTORIZER.graph_metrics(),
     }
+    if _DEFAULT_SERVICE is None:  # pragma: no cover - dependency unavailable
+        raise RuntimeError("SharedVectorService unavailable")
     _DEFAULT_SERVICE.vectorise_and_store(
         "workflow",
         record_id,
@@ -378,7 +395,12 @@ def vectorize_and_store(
     return vec
 
 
-def persist_workflow_embedding(record_id: str, workflow: Dict[str, Any]) -> List[float]:
+def persist_workflow_embedding(
+    record_id: str,
+    workflow: Dict[str, Any],
+    *,
+    path: str = _EMBEDDINGS_PATH,
+) -> List[float]:
     """Vectorise ``workflow`` and persist the embedding with metadata."""
 
     vec = _DEFAULT_VECTORIZER.transform(workflow, workflow_id=record_id)
@@ -392,6 +414,7 @@ def persist_workflow_embedding(record_id: str, workflow: Dict[str, Any]) -> List
         vec,
         origin_db="workflow",
         metadata=meta,
+        path=path,
     )
     return vec
 
