@@ -16,9 +16,10 @@ import urllib.error
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 import re
+from dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
-CACHE_FILE = Path(os.getenv("TREND_CACHE", "trending_cache.json"))
+CACHE_FILE = Path(resolve_path(os.getenv("TREND_CACHE", "trending_cache.json")))
 
 try:
     import requests  # type: ignore
