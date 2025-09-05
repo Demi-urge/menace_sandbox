@@ -113,7 +113,7 @@ def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None
     ``stripe_billing_router._resolve_route`` and a ``RuntimeError`` is raised if
     any lookup fails.
     """
-    repo_root = Path(__file__).resolve().parent
+    repo_root = resolve_path(".")
     try:
         files = subprocess.check_output(
             ["git", "ls-files", "*.py"],
