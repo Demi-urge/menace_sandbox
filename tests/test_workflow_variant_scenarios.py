@@ -14,13 +14,13 @@ from workflow_synthesizer import (
 from dynamic_path_router import resolve_path
 
 
-FIXTURES = Path(__file__).with_name("fixtures")
-
-
 def test_generate_variants_filters_invalid_permutations(tmp_path, monkeypatch):
-    base_src = FIXTURES / "workflow_modules"
-    for name in ["mod_a.py", "mod_b.py", "mod_c.py"]:
-        (tmp_path / name[:-3]).write_text((base_src / name).read_text())
+    for src in [
+        resolve_path("tests/fixtures/workflow_modules/mod_a.py"),
+        resolve_path("tests/fixtures/workflow_modules/mod_b.py"),
+        resolve_path("tests/fixtures/workflow_modules/mod_c.py"),
+    ]:
+        (tmp_path / src.stem).write_text(src.read_text())
     monkeypatch.chdir(tmp_path)
 
     base = ["mod_a", "mod_b", "mod_c"]
@@ -259,7 +259,8 @@ def _import_wem(side_effects, generate_calls=None):
     sys.modules["menace_sandbox.workflow_graph"] = graph_mod
 
     spec = importlib.util.spec_from_file_location(
-        "menace_sandbox.workflow_evolution_manager", "workflow_evolution_manager.py"
+        "menace_sandbox.workflow_evolution_manager",
+        resolve_path("workflow_evolution_manager.py"),
     )
     wem = importlib.util.module_from_spec(spec)
     sys.modules["menace_sandbox.workflow_evolution_manager"] = wem
