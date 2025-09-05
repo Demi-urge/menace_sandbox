@@ -81,27 +81,28 @@ _GPT_MEMORY: GPTMemoryManager | None = None
 # Mapping of event types to corrective instructions.
 EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
     "missing_charge": (
-        "Avoid generating bots that make Stripe charges without proper logging or "
-        "central routing."
+        "Avoid creating Stripe charges without billing log entries or central routing."
     ),
-    "missing_refund": "Avoid missing Stripe refund records; log and route all refunds.",
+    "missing_refund": (
+        "Avoid issuing refunds without corresponding ledger entries."
+    ),
     "missing_failure_log": (
-        "Avoid missing failure logs for Stripe operations; capture each error."
+        "Avoid handling Stripe failures without logging the event."
     ),
     "unapproved_workflow": (
-        "Avoid running unapproved workflows; obtain approval before execution."
+        "Avoid running Stripe workflows without explicit approval."
     ),
     "unknown_webhook": (
-        "Avoid using unknown Stripe webhooks; register endpoints or flag for review."
+        "Avoid unregistered Stripe webhooks; register endpoints before use."
     ),
     "disabled_webhook": (
-        "Avoid disabled Stripe webhooks; keep required endpoints active."
+        "Avoid relying on disabled Stripe webhook endpoints."
     ),
     "revenue_mismatch": (
-        "Avoid revenue mismatches; reconcile Stripe totals with internal records."
+        "Avoid revenue figures that diverge from ledger or ROI projections."
     ),
     "account_mismatch": (
-        "Avoid Stripe destination account mismatches; centralize charge routing."
+        "Avoid routing charges to unexpected Stripe accounts."
     ),
 }
 

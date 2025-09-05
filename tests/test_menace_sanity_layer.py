@@ -30,6 +30,13 @@ SEVERITY_MAP = _severity_map()
 SEVERITY_KEYS = sorted(SEVERITY_MAP.keys())
 
 
+@pytest.mark.parametrize("event_type", SEVERITY_KEYS)
+def test_anomaly_instruction_returns_mapping(event_type):
+    expected = msl.EVENT_TYPE_INSTRUCTIONS[event_type]
+    instruction = msl._anomaly_instruction(event_type, {}, expected)
+    assert instruction == expected
+
+
 def test_record_payment_anomaly_writes_db_and_memory(monkeypatch):
     db_calls: list[tuple[str, float, dict]] = []
     mem_calls: list[tuple[str, dict, list[str]]] = []
