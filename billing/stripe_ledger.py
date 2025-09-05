@@ -4,12 +4,14 @@ from __future__ import annotations
 
 This module exposes :class:`StripeLedger` which provides a :meth:`log_event`
 method for persisting billing actions.  A module level :data:`STRIPE_LEDGER`
-instance is exported along with a convenience :func:`log_event` wrapper so other
-modules can easily record Stripe events.
+instance is exported along with convenience wrappers :func:`log_event` and
+``get_events`` so other modules can easily record and query Stripe events.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
+
+import sqlite3
 
 from db_router import DBRouter
 
@@ -18,7 +20,7 @@ try:  # resolve paths dynamically when available
 except Exception:  # pragma: no cover - optional dependency
     resolve_path = None  # type: ignore
 
-__all__ = ["StripeLedger", "STRIPE_LEDGER", "log_event"]
+__all__ = ["StripeLedger", "STRIPE_LEDGER", "log_event", "get_events"]
 
 
 # Determine the storage location for the ledger database
@@ -105,6 +107,36 @@ class StripeLedger:
         self._maybe_compact()
         return int(cursor.lastrowid)
 
+    # ------------------------------------------------------------------
+    def fetch_events(self, start_ts: int, end_ts: int) -> List[dict]:
+        """Return events with ``timestamp`` between ``start_ts`` and ``end_ts``.
+
+        Parameters
+        ----------
+        start_ts:
+            Lower bound (inclusive) for event timestamps.
+        end_ts:
+            Upper bound (inclusive) for event timestamps.
+        """
+
+        conn = self.router.get_connection("stripe_ledger", "read")
+        prev_factory = conn.row_factory
+        try:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT id, action, bot_id, amount, currency, user_email, account_id, timestamp
+                FROM stripe_ledger
+                WHERE timestamp BETWEEN ? AND ?
+                ORDER BY timestamp
+                """,
+                (start_ts, end_ts),
+            )
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.row_factory = prev_factory
+
 
 # Module level singleton for reuse
 STRIPE_LEDGER = StripeLedger()
@@ -122,3 +154,9 @@ def log_event(
     """Convenience wrapper around :class:`StripeLedger.log_event`."""
 
     return STRIPE_LEDGER.log_event(action, bot_id, amount, currency, email, account_id, ts)
+
+
+def get_events(start_ts: int, end_ts: int) -> List[dict]:
+    """Convenience wrapper around :meth:`StripeLedger.fetch_events`."""
+
+    return STRIPE_LEDGER.fetch_events(start_ts, end_ts)
