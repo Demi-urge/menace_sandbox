@@ -137,6 +137,72 @@ _EVENT_BUS = UnifiedEventBus()
 
 _MEMORY_MANAGER: MenaceMemoryManager | None = None
 
+# ---------------------------------------------------------------------------
+# Anomaly suppression configuration
+# ---------------------------------------------------------------------------
+
+_SUPPRESSION_CONFIG_PATH = Path(resolve_path("config/stripe_watchdog.yaml"))
+
+# Default suppression settings – events below ``severity_threshold`` are ignored
+# and identical events are only forwarded ``max_occurrences`` times within
+# ``window_seconds``.
+_SUPPRESSION_SETTINGS: Dict[str, float] = {
+    "window_seconds": 60.0,
+    "max_occurrences": 1.0,
+    "severity_threshold": 0.0,
+}
+
+
+def _load_suppression_settings(path: Path | None = None) -> None:
+    """Load anomaly suppression settings from YAML config."""
+
+    cfg = path or _SUPPRESSION_CONFIG_PATH
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        sup = data.get("anomaly_suppression", {})
+        _SUPPRESSION_SETTINGS["window_seconds"] = float(
+            sup.get("window_seconds", _SUPPRESSION_SETTINGS["window_seconds"])
+        )
+        _SUPPRESSION_SETTINGS["max_occurrences"] = float(
+            sup.get("max_occurrences", _SUPPRESSION_SETTINGS["max_occurrences"])
+        )
+        _SUPPRESSION_SETTINGS["severity_threshold"] = float(
+            sup.get(
+                "severity_threshold", _SUPPRESSION_SETTINGS["severity_threshold"]
+            )
+        )
+    except FileNotFoundError:
+        pass
+    except Exception:  # pragma: no cover - best effort
+        logger.exception(
+            "failed to load anomaly suppression config", extra={"path": str(cfg)}
+        )
+
+
+_load_suppression_settings()
+
+# Cache of recent anomalies keyed by (event_type, metadata_json)
+_ANOMALY_CACHE: Dict[tuple[str, str], List[float]] = {}
+
+
+def _allow_event(event_type: str, metadata: Dict[str, Any], severity: float) -> bool:
+    """Return ``True`` if the event passes severity and dedup filters."""
+
+    if severity < _SUPPRESSION_SETTINGS["severity_threshold"]:
+        return False
+    now = time.time()
+    key = (event_type, json.dumps(metadata, sort_keys=True))
+    window = _SUPPRESSION_SETTINGS["window_seconds"]
+    max_occ = int(_SUPPRESSION_SETTINGS["max_occurrences"])
+    times = [t for t in _ANOMALY_CACHE.get(key, []) if now - t < window]
+    if len(times) >= max_occ:
+        _ANOMALY_CACHE[key] = times
+        return False
+    times.append(now)
+    _ANOMALY_CACHE[key] = times
+    return True
+
 
 def _get_memory_manager() -> MenaceMemoryManager | None:
     """Lazily construct the shared :class:`MenaceMemoryManager`."""
@@ -288,12 +354,25 @@ def record_event(
             )
 
 
-def publish_anomaly(event: dict) -> None:
-    """Publish *event* to the ``billing.anomaly`` topic."""
+def publish_anomaly(event: dict, *, _check: bool = True) -> bool:
+    """Publish *event* to the ``billing.anomaly`` topic.
+
+    Returns ``True`` when the event is forwarded.  When ``_check`` is ``True``
+    (the default) the suppression cache and severity threshold are consulted
+    before emitting the event.  :func:`record_billing_anomaly` performs its own
+    filtering and therefore calls this function with ``_check=False``.
+    """
+
+    if _check and not _allow_event(
+        event.get("event_type", ""), event.get("metadata", {}), float(event.get("severity", 0.0))
+    ):
+        return False
     try:
         _EVENT_BUS.publish("billing.anomaly", event)
+        return True
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to publish billing anomaly")
+        return False
 
 
 def record_billing_anomaly(
@@ -306,6 +385,9 @@ def record_billing_anomaly(
 ) -> None:
     """Persist a billing anomaly to SQLite and optionally publish it."""
 
+    severity = float(severity)
+    if not _allow_event(event_type, metadata, severity):
+        return
     if db_router.GLOBAL_ROUTER is None:
         raise RuntimeError("Database router is not initialised")
     ts = time.time()
@@ -341,7 +423,7 @@ def record_billing_anomaly(
         "source_workflow": source_workflow,
     }
     if publish:
-        publish_anomaly(event)
+        publish_anomaly(event, _check=False)
 
 
 def list_anomalies(limit: int = 20) -> List[dict]:
