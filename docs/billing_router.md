@@ -95,13 +95,13 @@ unavailable—and **must** contain the following fields:
 
 ### Master account, allowed keys and rollback alerts
 
-Set ``STRIPE_ACCOUNT_ID`` to the platform's Stripe master account identifier.
-Secret keys that may be used on behalf of the platform are enumerated via
-``STRIPE_ALLOWED_SECRET_KEYS`` (comma separated) or the ``allowed_secret_keys``
-list in the routing configuration.
+The platform's Stripe master account identifier is hard coded as
+``stripe_billing_router.STRIPE_MASTER_ACCOUNT_ID``.  Secret keys that may be
+used on behalf of the platform are enumerated via ``STRIPE_ALLOWED_SECRET_KEYS``
+(comma separated) or the ``allowed_secret_keys`` list in the routing
+configuration.
 
 ```bash
-export STRIPE_ACCOUNT_ID=acct_master
 export STRIPE_ALLOWED_SECRET_KEYS=sk_prod_main,sk_prod_backup
 ```
 
