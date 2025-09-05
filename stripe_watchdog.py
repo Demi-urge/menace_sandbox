@@ -37,6 +37,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import audit_logger
 import yaml
+import alert_dispatcher
+from dynamic_path_router import resolve_path
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -63,42 +65,54 @@ try:  # Optional dependency – structured billing ledger
 except Exception:  # pragma: no cover - best effort
     STRIPE_LEDGER = None  # type: ignore
 
+try:  # Optional dependency – discrepancy logging
+    from discrepancy_db import DiscrepancyDB, DiscrepancyRecord  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    DiscrepancyDB = None  # type: ignore
+    DiscrepancyRecord = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-#: Approved webhook URLs.  Any endpoint returned by Stripe outside this set is
-#: flagged as an anomaly.
-APPROVED_WEBHOOK_ENDPOINTS = {
+#: Default set of authorised webhook URLs. Any endpoint returned by Stripe
+#: outside this set (and the configured list) is flagged as an anomaly.
+DEFAULT_AUTHORIZED_WEBHOOKS = {
     "https://menace.example.com/stripe/webhook",
 }
 
+#: Default log file for anomaly summaries.
+ANOMALY_LOG = resolve_path("stripe_watchdog.log")
+
 #: Fallback path used when ``StripeLedger`` is unavailable
-LEDGER_FILE = Path("finance_logs/stripe_ledger.jsonl")
+LEDGER_FILE = resolve_path("finance_logs/stripe_ledger.jsonl")
 
-#: Path to YAML configuration containing additional allowed webhook endpoints.
-CONFIG_PATH = Path("config/stripe_watchdog.yaml")
+#: Path to YAML configuration containing the list of authorised webhook
+#: endpoints.
+CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 
 
-def _load_allowed_endpoints(path: Path | None = None) -> set[str]:
-    """Return allowed webhook endpoints from ``path`` if available."""
+def _load_authorized_webhooks(path: Path | None = None) -> set[str]:
+    """Return authorised webhook endpoints from ``path`` if available."""
 
     cfg = path or CONFIG_PATH
     try:
         with cfg.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
     except FileNotFoundError:
-        return set(APPROVED_WEBHOOK_ENDPOINTS)
+        return set(DEFAULT_AUTHORIZED_WEBHOOKS)
     except Exception:
         logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
-        return set(APPROVED_WEBHOOK_ENDPOINTS)
+        return set(DEFAULT_AUTHORIZED_WEBHOOKS)
 
-    endpoints = data.get("allowed_endpoints")
+    endpoints = data.get("authorized_webhooks")
     if isinstance(endpoints, list):
-        return {str(url) for url in endpoints if isinstance(url, str)}
-    return set(APPROVED_WEBHOOK_ENDPOINTS)
+        authorised = {str(url) for url in endpoints if isinstance(url, str)}
+        authorised.update(DEFAULT_AUTHORIZED_WEBHOOKS)
+        return authorised
+    return set(DEFAULT_AUTHORIZED_WEBHOOKS)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -273,6 +287,11 @@ def _emit_anomaly(record: Dict[str, Any], write_codex: bool) -> None:
     """Log *record* and optionally emit a Codex training sample."""
 
     audit_logger.log_event("stripe_anomaly", record)
+    try:
+        with ANOMALY_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        logger.exception("Failed to write anomaly log", extra={"record": record})
     if write_codex and TrainingSample is not None:
         try:  # pragma: no cover - best effort
             TrainingSample(source="stripe_watchdog", content=json.dumps(record))
@@ -382,15 +401,25 @@ def check_webhook_endpoints(
         logger.exception("Stripe webhook endpoint listing failed")
         return []
 
-    allowed = set(str(u) for u in (approved or _load_allowed_endpoints()))
+    allowed = set(str(u) for u in (approved or _load_authorized_webhooks()))
     unknown: List[str] = []
     for ep in _iter(endpoints):
         url = getattr(ep, "url", None)
         if url is None and isinstance(ep, dict):
             url = ep.get("url")
         if url and url not in allowed:
-            unknown.append(str(url))
-            _emit_anomaly({"type": "unknown_webhook", "url": url}, write_codex)
+            url_str = str(url)
+            unknown.append(url_str)
+            _emit_anomaly({"type": "unknown_webhook", "url": url_str}, write_codex)
+            try:  # pragma: no cover - best effort
+                alert_dispatcher.dispatch_alert(
+                    "stripe_unknown_endpoint",
+                    3,
+                    f"Unknown Stripe webhook endpoint: {url_str}",
+                    {"url": url_str},
+                )
+            except Exception:
+                logger.exception("alert dispatch failed", extra={"url": url_str})
     return unknown
 
 
@@ -398,6 +427,7 @@ def compare_revenue(
     charges: Iterable[dict],
     refunds: Iterable[dict],
     *,
+    tolerance: float = 0.1,
     write_codex: bool = False,
 ) -> Optional[Dict[str, float]]:
     """Compare Stripe net revenue with projected revenue from ROI logs."""
@@ -419,15 +449,24 @@ def compare_revenue(
         except Exception:  # pragma: no cover - best effort
             logger.exception("ROIResultsDB query failed")
 
-    if projected and abs(net_revenue - projected) > 0.1 * projected:
-        anomaly = {
-            "type": "revenue_mismatch",
+    if projected and abs(net_revenue - projected) > tolerance * projected:
+        details = {
             "net_revenue": net_revenue,
             "projected_revenue": projected,
             "difference": net_revenue - projected,
         }
-        _emit_anomaly(anomaly, write_codex)
-        return anomaly
+        record = {"type": "revenue_mismatch", **details}
+        _emit_anomaly(record, write_codex)
+        try:  # pragma: no cover - best effort
+            alert_dispatcher.dispatch_alert(
+                "stripe_revenue_mismatch",
+                4,
+                json.dumps(details),
+                details,
+            )
+        except Exception:
+            logger.exception("alert dispatch failed", extra=details)
+        return details
     return None
 
 
@@ -446,11 +485,20 @@ def check_events(hours: int = 1, *, write_codex: bool = False) -> List[Dict[str,
     # Load the entire ledger window; many tests use historical timestamps.
     ledger = load_local_ledger(0, end_ts)
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
-    return detect_missing_charges(charges, ledger, write_codex=write_codex)
+    anomalies = detect_missing_charges(charges, ledger, write_codex=write_codex)
+    if anomalies and DiscrepancyDB and DiscrepancyRecord:
+        try:  # pragma: no cover - best effort
+            msg = f"{len(anomalies)} stripe anomalies detected"
+            DiscrepancyDB().add(
+                DiscrepancyRecord(message=msg, metadata={"count": len(anomalies)})
+            )
+        except Exception:
+            logger.exception("Failed to record discrepancy summary")
+    return anomalies
 
 
 def check_revenue_projection(
-    hours: int = 1, *, write_codex: bool = False
+    hours: int = 1, *, tolerance: float = 0.1, write_codex: bool = False
 ) -> Optional[Dict[str, float]]:
     """Compare revenue for the last ``hours`` against projections."""
 
@@ -461,7 +509,9 @@ def check_revenue_projection(
     start_ts = end_ts - int(hours * 3600)
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
-    return compare_revenue(charges, refunds, write_codex=write_codex)
+    return compare_revenue(
+        charges, refunds, tolerance=tolerance, write_codex=write_codex
+    )
 
 
 # CLI ----------------------------------------------------------------------
@@ -500,7 +550,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     detect_missing_charges(charges, ledger, write_codex=args.write_codex)
     detect_missing_refunds(refunds, ledger, write_codex=args.write_codex)
     detect_failed_events(events, ledger, write_codex=args.write_codex)
-    check_webhook_endpoints(api_key, APPROVED_WEBHOOK_ENDPOINTS, write_codex=args.write_codex)
+    check_webhook_endpoints(api_key, write_codex=args.write_codex)
     compare_revenue(charges, refunds, write_codex=args.write_codex)
 
 

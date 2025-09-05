@@ -41,6 +41,7 @@ ALLOWED = {
     resolve_path("codex_output_analyzer.py").resolve(),
     resolve_path("stripe_detection.py").resolve(),
     resolve_path("billing/openai_wrapper.py").resolve(),
+    resolve_path("stripe_watchdog.py").resolve(),
 }
 # Detect exposures of Stripe keys, including partially redacted ones with ``*``.
 KEY_PATTERN = re.compile(

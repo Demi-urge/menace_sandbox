@@ -213,3 +213,18 @@ if not validate_webhook_account(event):
 When a mismatch is detected the router dispatches the standard alert via
 ``_alert_mismatch`` allowing callers to pause the bot or trigger additional
 review steps.
+
+## Watchdog Webhook Configuration
+
+The companion `stripe_watchdog` module verifies the set of webhook endpoints
+registered in Stripe.  Authorized endpoints are listed in
+`config/stripe_watchdog.yaml`:
+
+```yaml
+authorized_webhooks:
+  - https://example.com/stripe/webhook
+```
+
+During a watchdog run, the output of `stripe.WebhookEndpoint.list()` is compared
+against this list. Any unrecognized endpoint results in a
+`stripe_unknown_endpoint` alert being logged.
