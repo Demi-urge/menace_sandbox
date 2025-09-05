@@ -606,7 +606,9 @@ def charge(
                 or (event.get("transfer_data") or {}).get("destination")
             )
         if destination is None:
-            destination = route.get("secret_key")
+            destination = route.get("account_id")
+            if destination is None:
+                destination = _get_account_id(api_key)
 
         logged_amount = amt
         if logged_amount is None and isinstance(event, Mapping):
@@ -785,7 +787,9 @@ def create_subscription(
                 or (event.get("transfer_data") or {}).get("destination")
             )
         if destination is None:
-            destination = route.get("secret_key")
+            destination = route.get("account_id")
+            if destination is None:
+                destination = _get_account_id(api_key)
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -917,7 +921,9 @@ def refund(
                 except (TypeError, ValueError):
                     logged_amount = None
         if destination is None:
-            destination = route.get("secret_key")
+            destination = route.get("account_id")
+            if destination is None:
+                destination = _get_account_id(api_key)
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -1025,7 +1031,9 @@ def create_checkout_session(
                 except (TypeError, ValueError):
                     logged_amount = None
         if destination is None:
-            destination = route.get("secret_key")
+            destination = route.get("account_id")
+            if destination is None:
+                destination = _get_account_id(api_key)
         raw_json = None
         if isinstance(event, Mapping):
             try:
