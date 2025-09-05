@@ -14,6 +14,8 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
+from dynamic_path_router import resolve_path
+
 try:  # pragma: no cover - allow running as a script
     from .vector_metrics_db import VectorMetricsDB
 except Exception:  # pragma: no cover - fallback when executed directly
@@ -85,7 +87,10 @@ def retrieval_training_samples(
         "SELECT db, rank, hit, contribution, win, regret FROM vector_metrics "
         "WHERE event_type='retrieval' ORDER BY ts DESC"
     )
-    cur = db.conn.execute(sql + (" LIMIT ?" if limit is not None else ""), (limit,) if limit is not None else ())
+    cur = db.conn.execute(
+        sql + (" LIMIT ?" if limit is not None else ""),
+        (limit,) if limit is not None else (),
+    )
     samples: list[dict[str, Any]] = []
     for db_name, rank, hit, contrib, win, regret in cur.fetchall():
         samples.append(
@@ -171,7 +176,11 @@ def cli(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Vector metrics analytics helpers"
     )
-    parser.add_argument("--db", default="vector_metrics.db", help="Path to VectorMetricsDB")
+    parser.add_argument(
+        "--db",
+        default=resolve_path("vector_metrics.db"),
+        help="Path to VectorMetricsDB",
+    )
     parser.add_argument(
         "--roi-summary",
         action="store_true",
