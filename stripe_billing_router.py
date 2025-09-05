@@ -669,8 +669,6 @@ def charge(
                 or (event.get("transfer_data") or {}).get("destination")
                 or destination
             )
-        _validate_destination(bot_id, destination)
-
         logged_amount = amt
         if logged_amount is None and isinstance(event, Mapping):
             possible = event.get("amount") or event.get("amount_paid")
@@ -679,6 +677,12 @@ def charge(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
+
+        mismatch = False
+        if destination and destination != STRIPE_REGISTERED_ACCOUNT_ID:
+            _alert_mismatch(bot_id, destination, amount=logged_amount)
+            had_error = True
+            mismatch = True
 
         raw_json = None
         if isinstance(event, Mapping):
@@ -743,6 +747,8 @@ def charge(
             account_id,
             timestamp_ms,
         )
+        if mismatch:
+            raise RuntimeError("Stripe account mismatch")
 
 
 # Backward compatibility
@@ -855,7 +861,11 @@ def create_subscription(
                 or (event.get("transfer_data") or {}).get("destination")
                 or destination
             )
-        _validate_destination(bot_id, destination)
+        mismatch = False
+        if destination and destination != STRIPE_REGISTERED_ACCOUNT_ID:
+            _alert_mismatch(bot_id, destination)
+            had_error = True
+            mismatch = True
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -917,6 +927,8 @@ def create_subscription(
             account_id,
             timestamp_ms,
         )
+        if mismatch:
+            raise RuntimeError("Stripe account mismatch")
 
 
 def refund(
@@ -994,7 +1006,11 @@ def refund(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
-        _validate_destination(bot_id, destination)
+        mismatch = False
+        if destination and destination != STRIPE_REGISTERED_ACCOUNT_ID:
+            _alert_mismatch(bot_id, destination, amount=logged_amount)
+            had_error = True
+            mismatch = True
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -1040,6 +1056,8 @@ def refund(
             account_id,
             timestamp_ms,
         )
+        if mismatch:
+            raise RuntimeError("Stripe account mismatch")
 
 
 def create_checkout_session(
@@ -1109,7 +1127,11 @@ def create_checkout_session(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
-        _validate_destination(bot_id, destination)
+        mismatch = False
+        if destination and destination != STRIPE_REGISTERED_ACCOUNT_ID:
+            _alert_mismatch(bot_id, destination, amount=logged_amount)
+            had_error = True
+            mismatch = True
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -1155,6 +1177,8 @@ def create_checkout_session(
             account_id,
             timestamp_ms,
         )
+        if mismatch:
+            raise RuntimeError("Stripe account mismatch")
 
 
 __all__ = [
