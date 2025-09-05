@@ -1,4 +1,3 @@
-master_account_id: acct_master
 allowed_secret_keys:
   - sk_live_dummy
 stripe:
@@ -8,6 +7,7 @@ stripe:
         product_id: prod_finance_router
         price_id: price_finance_standard
         customer_id: cus_finance_default
+        account_id: acct_master
         currency: usd
   eu:
     finance:
@@ -15,4 +15,5 @@ stripe:
         product_id: prod_finance_router_eu
         price_id: price_finance_eu
         customer_id: cus_finance_eu
+        account_id: acct_master
         currency: eur

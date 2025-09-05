@@ -36,7 +36,7 @@ def _import_investment_engine(monkeypatch, tmp_path):
         lambda self, name: {
             "stripe_secret_key": "sk_live_dummy",
             "stripe_public_key": "pk_live_dummy",
-            "stripe_master_account_id": "acct_master",
+            "stripe_account_id": "acct_master",
             "stripe_allowed_secret_keys": "sk_live_dummy",
         }.get(name, ""),
     )
@@ -56,6 +56,20 @@ def _import_investment_engine(monkeypatch, tmp_path):
     cfg = tmp_path / "routes.yaml"
     cfg.write_text(yaml.safe_dump(routes))
     monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
+    dd = types.SimpleNamespace(
+        DiscrepancyDB=lambda: types.SimpleNamespace(log=lambda *a, **k: None)
+    )
+    sys.modules["discrepancy_db"] = dd
+    sys.modules["iepkg.discrepancy_db"] = dd
+    arm = types.SimpleNamespace(
+        AutomatedRollbackManager=lambda: type(
+            "ARM",
+            (),
+            {"auto_rollback": lambda self, tag, bots: None},
+        )()
+    )
+    sys.modules["advanced_error_management"] = arm
+    sys.modules["iepkg.advanced_error_management"] = arm
     sbr = _load("stripe_billing_router")
     sys.modules["iepkg.stripe_billing_router"] = sbr
     sys.modules["stripe_billing_router"] = sbr
@@ -163,14 +177,14 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
                 "get": lambda self, name: {
                     "stripe_secret_key": "sk_live_dummy",
                     "stripe_public_key": "pk_live_dummy",
-                    "stripe_master_account_id": "acct_master",
+                    "stripe_account_id": "acct_master",
                     "stripe_allowed_secret_keys": "sk_live_dummy",
                 }.get(name, ""),
             },
         )
     )
     monkeypatch.setitem(sys.modules, "vault_secret_provider", vsp)
-    monkeypatch.setenv("STRIPE_MASTER_ACCOUNT_ID", "acct_master")
+    monkeypatch.setenv("STRIPE_ACCOUNT_ID", "acct_master")
     monkeypatch.setenv("STRIPE_ALLOWED_SECRET_KEYS", "sk_live_dummy")
     cfg = tmp_path / "routes.yaml"
     cfg.write_text(yaml.safe_dump(routes))

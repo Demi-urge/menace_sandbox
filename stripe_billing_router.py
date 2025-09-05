@@ -28,6 +28,7 @@ from discrepancy_db import DiscrepancyDB
 from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
 import rollback_manager
+from advanced_error_management import AutomatedRollbackManager
 
 try:  # optional dependency
     import stripe  # type: ignore
@@ -91,36 +92,7 @@ def _load_key(name: str, prefix: str) -> str:
 
 STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
 STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
-
-
-def _load_master_account_id() -> str:
-    """Return the configured Stripe master account identifier.
-
-    The ID is resolved from, in order of precedence:
-
-    1. ``STRIPE_MASTER_ACCOUNT_ID`` environment variable.
-    2. Secret vault entry ``stripe_master_account_id``.
-    3. ``master_account_id`` field in the Stripe routing configuration file.
-    """
-
-    provider = VaultSecretProvider()
-    acc = os.getenv("STRIPE_MASTER_ACCOUNT_ID") or provider.get(
-        "stripe_master_account_id"
-    )
-    if not acc:
-        cfg_path = os.getenv("STRIPE_ROUTING_CONFIG") or resolve_path(
-            "config/stripe_billing_router.yaml"
-        ).as_posix()
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as fh:
-                data = yaml.safe_load(fh) or {}
-                acc = data.get("master_account_id")
-        except FileNotFoundError:
-            acc = None
-    if not acc:
-        logger.error("Stripe master account ID must be configured and non-empty")
-        raise RuntimeError("Stripe master account ID must be configured and non-empty")
-    return str(acc)
+STRIPE_MASTER_ACCOUNT = _load_key("stripe_account_id", "acct_")
 
 
 def _load_allowed_keys() -> set[str]:
@@ -154,7 +126,6 @@ def _load_allowed_keys() -> set[str]:
     return {STRIPE_SECRET_KEY}
 
 
-MASTER_ACCOUNT_ID = _load_master_account_id()
 ALLOWED_SECRET_KEYS = _load_allowed_keys()
 
 _CONFIG_ENV = "STRIPE_ROUTING_CONFIG"
@@ -227,6 +198,15 @@ def _load_routing_table(path: str) -> dict[tuple[str, str, str, str], dict[str, 
                             raise RuntimeError(
                                 f"Billing route requires non-empty string for {key}"
                             )
+                        if key == "account_id" and not value.startswith("acct_"):
+                            logger.error(
+                                "Billing route %s/%s/%s/%s has invalid account_id",
+                                domain,
+                                region,
+                                business_category,
+                                bot_name,
+                            )
+                            raise RuntimeError("Invalid Stripe account ID format")
                     table[(str(domain), str(region), str(business_category), str(bot_name))] = {
                         str(k): str(v) for k, v in route.items()
                     }
@@ -347,88 +327,39 @@ def _client(api_key: str):
     return None
 
 
-def _validate_account(api_key: str, expected_account_id: str) -> bool:
-    """Return ``True`` if ``api_key`` belongs to ``expected_account_id``."""
+def _handle_critical_discrepancy(bot_id: str, message: str) -> None:
+    """Record, alert and rollback on a critical billing discrepancy."""
 
-    account_id = _get_account_id(api_key)
-    return account_id == expected_account_id
-
-
-def _critical_discrepancy(
-    bot_id: str,
-    route: Mapping[str, str],
-    message: str,
-    *,
-    destination: str | None = None,
-) -> None:
-    """Handle critical billing discrepancies with alerting and rollback."""
-
-    timestamp_ms = int(time.time() * 1000)
-    billing_logger.log_event(
-        id=None,
-        action_type="discrepancy",
-        amount=None,
-        currency=route.get("currency"),
-        timestamp_ms=timestamp_ms,
-        user_email=route.get("user_email"),
-        bot_id=bot_id,
-        destination_account=destination or route.get("secret_key"),
-        raw_event_json=None,
-        error=True,
-    )
-    try:  # pragma: no cover - alerting/rollback side effects
-        alert_dispatcher.dispatch_alert(
-            "critical_discrepancy", severity=5, message=message
-        )
-    except Exception:
-        logger.exception("alert dispatch failed for bot '%s'", bot_id)
     try:
-        rollback_manager.RollbackManager().auto_rollback(bot_id, [bot_id])
-    except Exception:
+        DiscrepancyDB().log(message, {"bot_id": bot_id})
+    except Exception:  # pragma: no cover - best effort logging
+        logger.exception("failed to log discrepancy for bot '%s'", bot_id)
+    try:  # pragma: no cover - external side effects
+        alert_dispatcher.dispatch_alert(
+            "critical_discrepancy", severity=10, message=message, context={"bot_id": bot_id}
+        )
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("alert dispatch failed for bot '%s'", bot_id)
+    try:  # pragma: no cover - rollback side effects
+        AutomatedRollbackManager().auto_rollback("latest", [bot_id])
+    except Exception:  # pragma: no cover - best effort
         logger.exception("rollback failed for bot '%s'", bot_id)
     raise RuntimeError("critical_discrepancy")
 
 
-def _verify_secret_key(bot_id: str, route: Mapping[str, str]) -> None:
+def _verify_route(bot_id: str, route: Mapping[str, str]) -> None:
+    """Validate the resolved route before executing payment actions."""
+
     key = route.get("secret_key")
     if not key or key not in ALLOWED_SECRET_KEYS:
-        _critical_discrepancy(
-            bot_id,
-            route,
-            f"Secret key '{key}' not in allowed list",
-            destination=key,
+        _handle_critical_discrepancy(
+            bot_id, f"Secret key '{key}' not in allowed list"
         )
-    if not _validate_account(key, MASTER_ACCOUNT_ID):
-        acct = _get_account_id(key)
-        _critical_discrepancy(
+    account_id = route.get("account_id", STRIPE_MASTER_ACCOUNT)
+    if account_id != STRIPE_MASTER_ACCOUNT:
+        _handle_critical_discrepancy(
             bot_id,
-            route,
-            f"Account '{acct}' does not match master account",
-            destination=acct,
-        )
-
-
-def _verify_master_account(
-    bot_id: str,
-    route: Mapping[str, str],
-    event: Mapping[str, Any] | None,
-    api_key: str,
-) -> None:
-    destination = None
-    if isinstance(event, Mapping):
-        destination = (
-            event.get("on_behalf_of")
-            or event.get("account")
-            or (event.get("transfer_data") or {}).get("destination")
-        )
-    if destination is None:
-        destination = _get_account_id(api_key)
-    if destination != MASTER_ACCOUNT_ID:
-        _critical_discrepancy(
-            bot_id,
-            route,
-            f"Destination account '{destination}' does not match master account",
-            destination=destination,
+            f"Account '{account_id}' does not match master account",
         )
 
 
@@ -505,9 +436,11 @@ def _resolve_route(
     _validate_no_api_keys(route)
     route.setdefault("secret_key", STRIPE_SECRET_KEY)
     route.setdefault("public_key", STRIPE_PUBLIC_KEY)
+    route.setdefault("account_id", STRIPE_MASTER_ACCOUNT)
     route.setdefault("currency", "usd")
     for strategy in _STRATEGIES:
         route = strategy.apply(bot_id, dict(route))
+    route.setdefault("account_id", STRIPE_MASTER_ACCOUNT)
     route.setdefault("currency", "usd")
     secret = route.get("secret_key", "")
     public = route.get("public_key", "")
@@ -540,7 +473,7 @@ def charge(
     """
 
     route = _resolve_route(bot_id, overrides)
-    _verify_secret_key(bot_id, route)
+    _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
 
@@ -602,7 +535,6 @@ def charge(
                 event = stripe.Invoice.pay(
                     invoice["id"], api_key=api_key, idempotency_key=idempotency_key
                 )
-            _verify_master_account(bot_id, route, event, api_key)
             return event
 
         if amt is None:
@@ -624,7 +556,6 @@ def charge(
             event = client.PaymentIntent.create(**params)
         else:
             event = stripe.PaymentIntent.create(api_key=api_key, **params)
-        _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         destination = None
@@ -712,7 +643,7 @@ def get_balance(
 ) -> float:
     """Return available balance for the given bot."""
     route = _resolve_route(bot_id, overrides)
-    _verify_secret_key(bot_id, route)
+    _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     try:
@@ -720,7 +651,6 @@ def get_balance(
             bal = client.Balance.retrieve()
         else:
             bal = stripe.Balance.retrieve(api_key=api_key)
-        _verify_master_account(bot_id, route, bal, api_key)
         amount = bal.get("available", [{"amount": 0}])[0]["amount"] / 100.0
         return float(amount)
     except Exception as exc:  # pragma: no cover - network/API issues
@@ -736,14 +666,13 @@ def create_customer(
 ) -> dict[str, Any]:
     """Create a new Stripe customer for the given bot."""
     route = _resolve_route(bot_id, overrides)
-    _verify_secret_key(bot_id, route)
+    _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     if client:
         event = client.Customer.create(**customer_info)
     else:
         event = stripe.Customer.create(api_key=api_key, **customer_info)
-    _verify_master_account(bot_id, route, event, api_key)
     return event
 
 
@@ -763,7 +692,7 @@ def create_subscription(
     """
 
     route = _resolve_route(bot_id, overrides)
-    _verify_secret_key(bot_id, route)
+    _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     price = price_id or route.get("price_id")
@@ -782,7 +711,6 @@ def create_subscription(
             event = client.Subscription.create(**sub_params)
         else:
             event = stripe.Subscription.create(api_key=api_key, **sub_params)
-        _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         currency = route.get("currency")
@@ -877,7 +805,7 @@ def refund(
     """Refund a payment for the given bot using ``payment_intent_id``."""
 
     route = _resolve_route(bot_id, overrides)
-    _verify_secret_key(bot_id, route)
+    _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     refund_params: dict[str, Any] = {"payment_intent": payment_intent_id, **params}
@@ -901,7 +829,6 @@ def refund(
             event = client.Refund.create(**refund_params)
         else:
             event = stripe.Refund.create(api_key=api_key, **refund_params)
-        _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         currency = route.get("currency")
@@ -969,7 +896,7 @@ def create_checkout_session(
     """Create a Stripe Checkout session for the given bot."""
 
     route = _resolve_route(bot_id, overrides)
-    _verify_secret_key(bot_id, route)
+    _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
     params = dict(session_params)
@@ -982,7 +909,6 @@ def create_checkout_session(
             event = client.checkout.Session.create(**params)
         else:
             event = stripe.checkout.Session.create(api_key=api_key, **params)
-        _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         currency = route.get("currency")
