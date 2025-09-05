@@ -41,7 +41,9 @@ def test_handle_queues_on_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(cf, "reroute_to_gpt35", boom)
 
     result = cf.handle(Prompt("bye"), "bad news")
-    assert result is None
+    assert isinstance(result, LLMResult)
+    assert result.text == ""
+    assert result.raw["reason"] == "bad news"
 
     record = json.loads(queue_path.read_text().strip())
     assert record["prompt"] == "bye"

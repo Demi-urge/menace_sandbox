@@ -69,6 +69,7 @@ def make_engine(mock_llm):
     engine._last_prompt_metadata = {}
     engine._last_prompt = None
     engine._last_retry_trace = None
+    self_coding_engine._settings = types.SimpleNamespace(codex_retry_delays=[2, 5, 10])
     return engine
 
 

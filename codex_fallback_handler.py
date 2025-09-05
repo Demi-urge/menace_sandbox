@@ -53,19 +53,22 @@ def reroute_to_gpt35(prompt: Prompt) -> LLMResult:
 
 def handle(
     prompt: Prompt, reason: str, *, queue_path: Optional[Path] = None
-) -> Optional[LLMResult]:
+) -> LLMResult:
     """Attempt to reroute ``prompt`` and queue it on persistent failure.
 
-    On success the :class:`LLMResult` from :func:`reroute_to_gpt35` is returned.
-    If rerouting raises an exception, the prompt and failure ``reason`` are
-    written to the queue and ``None`` is returned.
+    Returns
+    -------
+    LLMResult
+        Result from :func:`reroute_to_gpt35`.  When rerouting fails, the prompt
+        is queued for later inspection and an empty :class:`LLMResult` is
+        returned with ``raw`` detailing the failure ``reason``.
     """
 
     try:
         return reroute_to_gpt35(prompt)
-    except Exception:
+    except Exception as exc:
         queue_failed(prompt, reason, path=queue_path or _QUEUE_FILE)
-        return None
+        return LLMResult(text="", raw={"error": str(exc), "reason": reason})
 
 
 __all__ = ["queue_failed", "reroute_to_gpt35", "handle"]

@@ -1057,6 +1057,10 @@ class SelfCodingEngine:
         whose raw code is provided to the model; other chunks are represented by
         their summaries.  ``strategy`` allows callers to inject an optional
         instruction snippet from the strategy templates.
+
+        If the primary Codex call fails to produce valid code, the prompt is
+        retried via :func:`codex_fallback_handler.handle`, which returns an
+        :class:`LLMResult` capturing the rerouted output and metadata.
         """
         snippets = self.suggest_snippets(description, limit=3)
         snippet_context = "\n\n".join(s.code for s in snippets)
@@ -1325,8 +1329,6 @@ class SelfCodingEngine:
                 "codex fallback", extra={"reason": reason, "description": description, "tags": ["degraded"]}
             )
             alt = codex_fallback_handler.handle(prompt_obj, reason)
-            if alt is None:
-                return _fallback()
             ok, checked = _validate(alt.text)
             if not ok:
                 self.logger.warning(
