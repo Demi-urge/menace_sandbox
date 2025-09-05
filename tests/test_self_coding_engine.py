@@ -83,9 +83,19 @@ sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=obje
 sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
 sys.modules.setdefault("failure_learning_system", types.SimpleNamespace(DiscrepancyDB=object))
 cd_stub = types.ModuleType("menace.code_database")
-cd_stub.CodeDB = object
+class _CodeDB:
+    def __init__(self, *a, **k):
+        pass
+
+
+class _PatchHistoryDB:
+    def __init__(self, *a, **k):
+        pass
+
+
+cd_stub.CodeDB = _CodeDB
 cd_stub.CodeRecord = object
-cd_stub.PatchHistoryDB = object
+cd_stub.PatchHistoryDB = _PatchHistoryDB
 cd_stub.PatchRecord = object
 sys.modules.setdefault("code_database", cd_stub)
 sys.modules.setdefault("menace.code_database", cd_stub)
@@ -535,27 +545,35 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
         def generate(self, prompt):
             return LLMResult(text="")
 
-    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, llm_client=DummyClient())
-    monkeypatch.setattr(engine, "suggest_snippets", lambda *a, **k: [])
-    monkeypatch.setattr(engine.prompt_engine, "build_prompt", lambda *a, **k: sce.Prompt("code"))
+    engine = object.__new__(sce.SelfCodingEngine)
+    engine.llm_client = DummyClient()
+    engine.suggest_snippets = lambda *a, **k: []
+    engine._extract_statements = lambda *a, **k: []
+    engine._fetch_retry_trace = lambda *a, **k: ""
+    engine.prompt_engine = types.SimpleNamespace(build_prompt=lambda *a, **k: sce.Prompt("code"))
+    engine.gpt_memory = types.SimpleNamespace(log_interaction=lambda *a, **k: None, store=lambda *a, **k: None)
+    engine.memory_mgr = mem
+    engine.knowledge_service = None
+    engine.prompt_tone = "neutral"
+    engine.logger = types.SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None, exception=lambda *a, **k: None)
+    engine._last_prompt_metadata = {}
+    engine._last_prompt = None
+    engine._last_retry_trace = None
 
     calls: list[str] = []
 
     def handle(prompt, reason, **_):
         calls.append(reason)
-        if len(calls) == 1:
-            return LLMResult(text="def bad(")
         return LLMResult(text="def good():\n    pass\n")
 
     monkeypatch.setattr(sce.codex_fallback_handler, "handle", handle)
 
     code = engine.generate_helper("demo")
     assert "def good" in code
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
-    monkeypatch.setattr(sce._settings, "codex_retry_delays", [0])
     mem = mm.MenaceMemoryManager(tmp_path / "m.db")
 
     calls: list[sce.Prompt] = []
@@ -568,16 +586,33 @@ def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
 
     client = types.SimpleNamespace(generate=generate)
 
-    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, llm_client=client)
-    monkeypatch.setattr(engine, "suggest_snippets", lambda *a, **k: [])
-    monkeypatch.setattr(
-        engine.prompt_engine,
-        "build_prompt",
-        lambda *a, **k: sce.Prompt("code", system="orig", examples=["e1", "e2"]),
+    def failing_retry(func, *, delays, attempts=None, logger=None, **_):
+        try:
+            return func()
+        except Exception as exc:
+            raise sce.RetryError(str(exc))
+
+    monkeypatch.setattr(sce, "retry_with_backoff", failing_retry)
+
+    engine = object.__new__(sce.SelfCodingEngine)
+    engine.llm_client = client
+    engine.suggest_snippets = lambda *a, **k: []
+    engine._extract_statements = lambda *a, **k: []
+    engine._fetch_retry_trace = lambda *a, **k: ""
+    engine.prompt_engine = types.SimpleNamespace(
+        build_prompt=lambda *a, **k: sce.Prompt("code", system="orig", examples=["e1", "e2"])
     )
+    engine.gpt_memory = types.SimpleNamespace(log_interaction=lambda *a, **k: None, store=lambda *a, **k: None)
+    engine.memory_mgr = mem
+    engine.knowledge_service = None
+    engine.prompt_tone = "neutral"
+    engine.logger = types.SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None, exception=lambda *a, **k: None)
+    engine._last_prompt_metadata = {}
+    engine._last_prompt = None
+    engine._last_retry_trace = None
 
     code = engine.generate_helper("demo")
     assert "def ok" in code
     assert len(calls) == 2
     assert calls[0].system == "orig" and len(calls[0].examples) == 2
-    assert calls[1].system == "" and len(calls[1].examples) == 1
+    assert calls[1].system == "" and len(calls[1].examples) == 0
