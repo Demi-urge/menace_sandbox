@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Stripe Watchdog hourly
+
+[Timer]
+OnCalendar=hourly
+Unit=stripe_watchdog.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

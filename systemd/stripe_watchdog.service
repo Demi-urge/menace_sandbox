@@ -1,0 +1,12 @@
+[Unit]
+Description=Stripe Watchdog
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/menace
+ExecStart=/usr/bin/python stripe_watchdog.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
