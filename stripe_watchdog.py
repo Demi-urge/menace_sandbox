@@ -600,6 +600,7 @@ def _emit_anomaly(
             severity=SEVERITY_MAP.get(event_type, 1.0),
             write_codex=write_codex,
             export_training=export_training,
+            self_coding_engine=self_coding_engine,
         )
 
 
@@ -1170,7 +1171,13 @@ def check_events(
                     instruction = menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS.get(
                         event_type, DEFAULT_BILLING_EVENT_INSTRUCTION
                     )
-                    record_billing_event(event_type, metadata, instruction)
+                    record_billing_event(
+                        event_type,
+                        metadata,
+                        instruction,
+                        config_path=CONFIG_PATH,
+                        self_coding_engine=self_coding_engine,
+                    )
                 except Exception:
                     logger.exception(
                         "failed to record billing event", extra={"anomaly": anomaly}
