@@ -2,6 +2,8 @@ import json
 import sys
 import types
 
+import pytest
+
 
 sys.modules.setdefault(
     "vector_service", types.SimpleNamespace(CognitionLayer=lambda: None)
@@ -149,3 +151,82 @@ def test_repeated_anomalies_trigger_param_update(monkeypatch):
     assert engine.calls == [
         {"block_unlogged_charges": True, "event_type": "missing_charge"}
     ]
+
+
+@pytest.mark.parametrize(
+    "event_type, record",
+    [
+        ("missing_charge", {"type": "missing_charge", "id": "ch_x"}),
+        ("missing_refund", {"type": "missing_refund", "refund_id": "re_x"}),
+        (
+            "missing_failure_log",
+            {"type": "missing_failure_log", "event_id": "evt_x"},
+        ),
+        ("unapproved_workflow", {"type": "unapproved_workflow", "bot_id": "bot"}),
+        ("unknown_webhook", {"type": "unknown_webhook", "webhook_id": "wh_x"}),
+        ("disabled_webhook", {"type": "disabled_webhook", "webhook_id": "wh_d"}),
+        (
+            "revenue_mismatch",
+            {"type": "revenue_mismatch", "expected": 10, "actual": 5},
+        ),
+    ],
+)
+def test_emit_anomaly_records_all_outputs(event_type, record, monkeypatch, tmp_path):
+    import stripe_watchdog as sw
+    import db_router
+
+    bus_events: list[tuple[str, dict]] = []
+
+    class DummyBus:
+        def publish(self, topic: str, event: dict) -> None:  # pragma: no cover - simple
+            bus_events.append((topic, event))
+
+    memory_calls: list[tuple[str, dict, list[str]]] = []
+
+    class DummyMemory:
+        def log_interaction(self, instruction, content, *, tags=None):
+            memory_calls.append((instruction, json.loads(content), tags or []))
+
+    router = db_router.DBRouter("alpha", str(tmp_path), str(tmp_path / "shared.db"))
+
+    def fake_payment(event_type, metadata, instruction, *, severity, **kwargs):
+        payment_calls.append((event_type, metadata, instruction, severity))
+
+    payment_calls: list[tuple[str, dict, str, float]] = []
+
+    monkeypatch.setattr(msl.db_router, "GLOBAL_ROUTER", router)
+    monkeypatch.setattr(msl, "_EVENT_BUS", DummyBus())
+    monkeypatch.setattr(msl, "_get_gpt_memory", lambda: DummyMemory())
+    monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
+    monkeypatch.setattr(msl, "_DISCREPANCY_DB", None)
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", fake_payment)
+    monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(sw.ANOMALY_TRAIL, "record", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+
+    sw._emit_anomaly(record, False, False)
+
+    rows = router.local_conn.execute(
+        "SELECT event_type, metadata, severity FROM billing_anomalies"
+    ).fetchall()
+    assert rows and rows[0][0] == event_type
+    assert json.loads(rows[0][1]) == record
+    assert rows[0][2] == sw.SEVERITY_MAP[event_type]
+
+    assert bus_events and bus_events[0][0] == "billing.anomaly"
+    event = bus_events[0][1]
+    assert event["event_type"] == event_type
+    assert event["metadata"] == record
+    assert event["severity"] == sw.SEVERITY_MAP[event_type]
+
+    assert memory_calls
+    instr, payload, _tags = memory_calls[0]
+    assert msl.EVENT_TYPE_INSTRUCTIONS[event_type] in instr
+    expected_meta = dict(record)
+    expected_meta.pop("type")
+    assert payload == {"event_type": event_type, "metadata": expected_meta}
+
+    assert payment_calls and payment_calls[0][2] == msl.EVENT_TYPE_INSTRUCTIONS[event_type]
+    assert payment_calls[0][3] == sw.SEVERITY_MAP[event_type]
+
+    router.close()
