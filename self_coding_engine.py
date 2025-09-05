@@ -1288,10 +1288,8 @@ class SelfCodingEngine:
 
         result = LLMResult()
         try:
-            result = retry_with_backoff(
-                lambda: self.llm_client.generate(prompt_obj),
-                delays=[2, 5, 10],
-                logger=self.logger,
+            result = call_codex_with_backoff(
+                self.llm_client, prompt_obj, logger=self.logger
             )
         except RetryError as exc:
             self._last_retry_trace = str(exc)

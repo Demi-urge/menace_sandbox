@@ -88,17 +88,17 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
 
     call_delays = []
 
-    def fake_retry(func, *, delays, attempts=None, logger=None, **_kw):
-        call_delays.append(list(delays))
-        attempts = attempts or len(delays)
-        for _ in range(attempts):
+    def fake_call(client, prompt, *, logger=None, timeout=30.0):
+        delays = list(self_coding_engine._settings.codex_retry_delays)
+        call_delays.append(delays)
+        for _ in delays:
             try:
-                return func()
+                client.generate(prompt)
             except Exception:
                 continue
         raise self_coding_engine.RetryError("boom")
 
-    monkeypatch.setattr(self_coding_engine, "retry_with_backoff", fake_retry)
+    monkeypatch.setattr(self_coding_engine, "call_codex_with_backoff", fake_call)
     patch_history(monkeypatch)
 
     result = engine.generate_helper("do something")

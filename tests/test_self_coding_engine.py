@@ -586,13 +586,13 @@ def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
 
     client = types.SimpleNamespace(generate=generate)
 
-    def failing_retry(func, *, delays, attempts=None, logger=None, **_):
+    def failing_call(client, prompt, *, logger=None, timeout=30.0):
         try:
-            return func()
+            return client.generate(prompt)
         except Exception as exc:
             raise sce.RetryError(str(exc))
 
-    monkeypatch.setattr(sce, "retry_with_backoff", failing_retry)
+    monkeypatch.setattr(sce, "call_codex_with_backoff", failing_call)
 
     engine = object.__new__(sce.SelfCodingEngine)
     engine.llm_client = client
