@@ -7,6 +7,7 @@ import os
 import time
 
 from visual_agent_manager import VisualAgentManager
+from dynamic_path_router import resolve_path
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -36,7 +37,10 @@ class VisualAgentWatchdog:
     ) -> None:
         self.manager = manager or VisualAgentManager()
         self.check_interval = float(check_interval)
-        self.restart_log = restart_log
+        try:
+            self.restart_log = str(resolve_path(restart_log))
+        except FileNotFoundError:
+            self.restart_log = str(resolve_path(".") / restart_log)
         self.logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
