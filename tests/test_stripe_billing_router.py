@@ -50,7 +50,11 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
     vsp = _load("vault_secret_provider")
     rb = types.SimpleNamespace(
-        RollbackManager=type("RollbackManager", (), {"auto_rollback": lambda self, tag, nodes: None})
+        RollbackManager=type(
+            "RollbackManager",
+            (),
+            {"auto_rollback": lambda self, tag, nodes: None},
+        )
     )
     sys.modules["rollback_manager"] = rb
     sys.modules["sbrpkg.rollback_manager"] = rb
@@ -645,10 +649,14 @@ def test_refund_success(monkeypatch, sbr_module):
         sbr_module.billing_logger, "log_event", lambda **kw: log_record.update(kw)
     )
     res = sbr_module.refund(
-        "finance:finance_router_bot", "pi_test", amount=5.0, reason="requested_by_customer"
+        "finance:finance_router_bot",
+        "ch_test",
+        amount=5.0,
+        user_email="user@example.com",
+        reason="requested_by_customer",
     )
     assert res["id"] == "rf_test"
-    assert recorded["payment_intent"] == "pi_test"
+    assert recorded["charge"] == "ch_test"
     assert recorded["amount"] == 500
     assert recorded["api_key"] == "sk_live_dummy"
     assert log_record["action_type"] == "refund"
@@ -674,15 +682,19 @@ def test_create_checkout_session_success(monkeypatch, sbr_module):
     monkeypatch.setattr(
         sbr_module.billing_logger, "log_event", lambda **kw: log_record.update(kw)
     )
-    params = {
-        "success_url": "https://example.com/s",
-        "cancel_url": "https://example.com/c",
-        "mode": "payment",
-    }
-    res = sbr_module.create_checkout_session("finance:finance_router_bot", params)
+    line_items = [{"price": "price_finance_standard", "quantity": 1}]
+    res = sbr_module.create_checkout_session(
+        "finance:finance_router_bot",
+        line_items,
+        amount=10.0,
+        user_email="user@example.com",
+        success_url="https://example.com/s",
+        cancel_url="https://example.com/c",
+        mode="payment",
+    )
     assert res["id"] == "cs_test"
-    assert recorded["line_items"][0]["price"] == "price_finance_standard"
+    assert recorded["line_items"] == line_items
     assert recorded["customer"] == "cus_finance_default"
     assert recorded["api_key"] == "sk_live_dummy"
-    assert log_record["action_type"] == "checkout"
+    assert log_record["action_type"] == "checkout_session"
     assert log_record["id"] == "cs_test"
