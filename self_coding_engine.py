@@ -13,7 +13,7 @@ import tempfile
 import py_compile
 import re
 import traceback
-import time
+import inspect
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -32,6 +32,7 @@ except Exception:  # pragma: no cover - degrade gracefully when missing
     FormalVerifier = object  # type: ignore[misc,assignment]
 from .llm_interface import Prompt, LLMResult, LLMClient
 from .llm_router import client_from_settings
+from .resilience import retry_with_backoff, RetryError
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1228,18 +1229,26 @@ class SelfCodingEngine:
             prompt_obj.text += "\n\n### Patch history\n" + combined_history
 
         result = LLMResult()
-        for delay in (2, 5, 10):
-            try:
-                result = self.llm_client.generate(prompt_obj)
-                break
-            except Exception as exc:
-                self._last_retry_trace = str(exc)
-                time.sleep(delay)
-        else:
+        retry_kwargs = {"attempts": 3, "logger": self.logger}
+        if "delays" in inspect.signature(retry_with_backoff).parameters:
+            retry_kwargs["delays"] = [2, 5, 10]
+        else:  # pragma: no cover - legacy signature fallback
+            retry_kwargs["delay"] = 2
+        try:
+            result = retry_with_backoff(
+                lambda: self.llm_client.generate(prompt_obj),
+                **retry_kwargs,
+            )
+        except RetryError as exc:
+            self._last_retry_trace = str(exc)
+            self.logger.warning(
+                "llm generation failed after retries; simplifying prompt",
+                extra={"description": description},
+            )
             simple_prompt = Prompt(
                 prompt_obj.text,
                 system="",
-                examples=[],
+                examples=prompt_obj.examples[:1],
                 metadata=getattr(prompt_obj, "metadata", {}),
             )
             prompt_obj = simple_prompt
@@ -1247,28 +1256,15 @@ class SelfCodingEngine:
                 result = self.llm_client.generate(simple_prompt)
             except Exception as exc:
                 self._last_retry_trace = str(exc)
-                alt = codex_fallback_handler.handle_failure(
-                    simple_prompt, None, str(exc)
-                )
-                if alt is None or not alt.text.strip():
-                    return _fallback()
-                result = alt
-            if not result.text.strip():
-                alt = codex_fallback_handler.handle_failure(
-                    simple_prompt, result, "empty completion"
-                )
-                if alt is None or not alt.text.strip():
-                    return _fallback()
-                result = alt
-        text = result.text
-        if not text.strip():
+                result = LLMResult(raw=str(exc))
+        if not result.text.strip():
             alt = codex_fallback_handler.handle_failure(
-                prompt_obj, result, "empty completion"
+                prompt_obj, result, str(result.raw)
             )
             if alt is None or not alt.text.strip():
                 return _fallback()
             result = alt
-            text = result.text
+        text = result.text
         try:
             ast.parse(text)
         except Exception as exc:
