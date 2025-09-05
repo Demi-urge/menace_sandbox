@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterator, Tuple, List
 
 from embeddable_db_mixin import EmbeddableDBMixin
 from code_database import PatchHistoryDB
+from dynamic_path_router import resolve_path
 
 
 class PatchVectorizer(EmbeddableDBMixin):
@@ -23,11 +24,37 @@ class PatchVectorizer(EmbeddableDBMixin):
         backend: str = "annoy",
         embedding_version: int = 1,
     ) -> None:
-        self.db = PatchHistoryDB(path)
+        db_path: Path | str | None
+        if path is not None:
+            try:
+                db_path = Path(resolve_path(str(path)))
+            except FileNotFoundError:
+                db_path = Path(path).resolve()
+        else:
+            db_path = None
+
+        self.db = PatchHistoryDB(db_path)
         self.conn = self.db.router.get_connection("patch_history")
+
+        try:
+            base = Path(resolve_path(str(self.db.path)))
+        except FileNotFoundError:
+            base = Path(self.db.path).resolve()
+
         if index_path is None:
-            index_path = Path(self.db.path).with_suffix(".patch.index")
-        metadata_path = Path(index_path).with_suffix(".json")
+            index_candidate = base.with_suffix(".patch.index")
+        else:
+            index_candidate = Path(index_path)
+        try:
+            index_path = Path(resolve_path(str(index_candidate)))
+        except FileNotFoundError:
+            index_path = index_candidate
+
+        metadata_candidate = Path(index_path).with_suffix(".json")
+        try:
+            metadata_path = Path(resolve_path(str(metadata_candidate)))
+        except FileNotFoundError:
+            metadata_path = metadata_candidate
         EmbeddableDBMixin.__init__(
             self,
             index_path=index_path,
