@@ -44,6 +44,7 @@ from audit_trail import AuditTrail
 from logging.handlers import RotatingFileHandler
 import gzip
 import shutil
+import menace_sanity_layer
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -110,6 +111,10 @@ _DEFAULT_BACKUP_COUNT = 5
 CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 #: Path used when exporting normalized anomalies for training purposes.
 TRAINING_EXPORT = resolve_path("training_data/stripe_anomalies.jsonl")
+
+SANITY_INSTRUCTION = (
+    "Avoid generating bots that make Stripe charges without proper logging or central routing."
+)
 
 
 def _load_log_rotation(path: Path | None = None) -> tuple[int, int]:
@@ -478,6 +483,18 @@ def _emit_anomaly(
             TrainingSample(source="stripe_watchdog", content=json.dumps(record))
         except Exception:
             logger.exception("Failed to create Codex training sample")
+
+    metadata = {k: v for k, v in record.items() if k != "type"}
+    if "id" in metadata:
+        metadata["charge_id"] = metadata.pop("id")
+    metadata.setdefault("reason", record.get("type"))
+    menace_sanity_layer.record_payment_anomaly(
+        record.get("type", "unknown"),
+        metadata,
+        SANITY_INSTRUCTION,
+        write_codex=write_codex,
+        export_training=export_training,
+    )
 
 
 # Detection routines -------------------------------------------------------

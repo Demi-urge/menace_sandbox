@@ -27,6 +27,9 @@ def capture(monkeypatch, tmp_path):
         "dispatch_alert",
         lambda *a, **k: events.append(("alert", a, k)),
     )
+    monkeypatch.setattr(
+        sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None
+    )
 
     class DummyTrail:
         def __init__(self, path):
