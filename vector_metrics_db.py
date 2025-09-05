@@ -10,6 +10,7 @@ import json
 import logging
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
+from dynamic_path_router import resolve_path
 
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
@@ -67,7 +68,7 @@ class VectorMetricsDB:
     def __init__(self, path: Path | str = "vector_metrics.db") -> None:
         LOCAL_TABLES.add("vector_metrics")
         p = Path(path).resolve()
-        default_path = Path("vector_metrics.db").resolve()
+        default_path = resolve_path("vector_metrics.db")
         if GLOBAL_ROUTER is not None and p == default_path:
             self.router = GLOBAL_ROUTER
         else:
