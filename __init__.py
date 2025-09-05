@@ -19,6 +19,7 @@ sys.modules.setdefault(
     types.SimpleNamespace(
         resolve_path=lambda p: Path(p),
         resolve_dir=lambda p: Path(p),
+        resolve_module_path=lambda m: Path(m.replace(".", "/") + ".py"),
         path_for_prompt=lambda p: Path(p).as_posix(),
     ),
 )
@@ -161,7 +162,7 @@ sys.modules.setdefault("menace.alert_dispatcher", _alert_dispatcher)
 _readiness_index = importlib.import_module(__name__ + ".readiness_index")
 sys.modules.setdefault("readiness_index", _readiness_index)
 sys.modules.setdefault("menace.readiness_index", _readiness_index)
-from .dynamic_path_router import resolve_path, get_project_root
+from .dynamic_path_router import resolve_path, resolve_module_path, resolve_dir, get_project_root
 
 _sk_dir = get_project_root() / "sklearn"
 _extra_dir = get_project_root() / "menace"

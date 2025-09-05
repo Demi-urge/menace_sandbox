@@ -16,9 +16,9 @@ except Exception:  # pragma: no cover - top level import fallback
     from db_router import DBRouter, GLOBAL_ROUTER, init_db_router  # type: ignore
 
 try:  # pragma: no cover - support package and flat layouts
-    from .dynamic_path_router import resolve_path
+    from .dynamic_path_router import resolve_path, resolve_module_path
 except Exception:  # pragma: no cover - fallback when executed directly
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, resolve_module_path  # type: ignore
 
 from intent_vectorizer import IntentVectorizer
 
@@ -147,11 +147,10 @@ class IntentDB(EmbeddableDBMixin):
         if not cluster:
             return None
 
-        root = grapher.root or Path.cwd()
         vectors: List[List[float]] = []
         members: List[str] = []
         for mod in cluster:
-            path = Path(resolve_path(root / f"{mod}.py"))
+            path = resolve_module_path(mod.replace("/", "."))
             try:
                 text = self._vectorizer.bundle(path)
             except Exception:

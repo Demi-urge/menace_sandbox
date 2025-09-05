@@ -39,9 +39,9 @@ except Exception:  # pragma: no cover - fallback used in tests
     from knowledge_graph import _SimpleKMeans as KMeans  # type: ignore
 
 try:  # pragma: no cover - allow running as script
-    from .dynamic_path_router import resolve_path  # type: ignore
+    from .dynamic_path_router import resolve_path, resolve_module_path  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, resolve_module_path  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from sklearn.metrics import silhouette_score  # type: ignore
@@ -575,7 +575,7 @@ class IntentClusterer:
             try:
                 mapping = json.loads(map_file.read_text())
                 for mod, gid in mapping.items():
-                    path = Path(resolve_path(root / f"{mod}.py"))
+                    path = resolve_module_path(mod.replace("/", "."))
                     groups.setdefault(str(gid), []).append(str(path))
                 return groups
             except Exception as exc:
@@ -587,7 +587,9 @@ class IntentClusterer:
             grapher = ModuleSynergyGrapher(root=root)
             graph = grapher.load()
             for idx, comp in enumerate(nx.connected_components(graph.to_undirected())):
-                groups[str(idx)] = [str(root / f"{m}.py") for m in comp]
+                groups[str(idx)] = [
+                    str(resolve_module_path(m.replace("/", "."))) for m in comp
+                ]
             return groups
         except Exception as exc:
             logger.exception("failed to build synergy graph under %s: %s", root, exc)
@@ -598,7 +600,9 @@ class IntentClusterer:
 
             graph = build_import_graph(root)
             for idx, comp in enumerate(nx.connected_components(graph.to_undirected())):
-                groups[str(idx)] = [str(root / f"{m}.py") for m in comp]
+                groups[str(idx)] = [
+                    str(resolve_module_path(m.replace("/", "."))) for m in comp
+                ]
             return groups
         except Exception as exc:
             logger.warning(

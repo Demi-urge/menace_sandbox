@@ -62,9 +62,9 @@ from .init import (
     get_default_synergy_weights,
 )
 try:  # pragma: no cover - allow flat imports
-    from ..dynamic_path_router import resolve_path
+    from ..dynamic_path_router import resolve_path, resolve_module_path
 except Exception:  # pragma: no cover - fallback for flat layout
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, resolve_module_path  # type: ignore
 from ..metrics_exporter import (
     synergy_weight_updates_total,
     synergy_weight_update_failures_total,
@@ -4466,7 +4466,7 @@ class SelfImprovementEngine:
                     seen: set[int] = set()
                     for step in getattr(wf, "workflow", []):
                         mod = step.split(":")[0]
-                        file = resolve_path(mod.replace(".", "/") + ".py")
+                        file = resolve_module_path(mod)
                         try:
                             gid = idx.get(file.as_posix())
                         except Exception:
@@ -6239,7 +6239,7 @@ class SelfImprovementEngine:
                     "relevancy audit log failed", extra=log_record(module=mod)
                 )
             try:
-                analyze_redundancy(resolve_path(mod.replace(".", "/") + ".py"))
+                analyze_redundancy(resolve_module_path(mod))
             except Exception:
                 self.logger.exception(
                     "redundancy analysis failed", extra=log_record(module=mod)

@@ -30,7 +30,7 @@ from governed_embeddings import governed_embed
 from module_graph_analyzer import build_import_graph
 from vector_utils import cosine_similarity
 from retry_utils import with_retry
-from dynamic_path_router import resolve_path, get_project_root
+from dynamic_path_router import resolve_path, get_project_root, resolve_module_path
 
 try:  # synergy history DB may need package import
     import synergy_history_db as shd  # type: ignore
@@ -461,7 +461,7 @@ class ModuleSynergyGrapher:
         updated = False
 
         def _worker(mod: str) -> tuple[str, dict[str, object] | None, dict[str, object] | None, bool]:
-            file = Path(resolve_path(root / f"{mod}.py"))
+            file = resolve_module_path(mod.replace("/", "."))
             if not file.exists():
                 return mod, None, None, False
             mtime = file.stat().st_mtime
