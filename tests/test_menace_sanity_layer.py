@@ -70,12 +70,26 @@ def test_watchdog_anomaly_updates_db_memory_and_event_bus(monkeypatch, tmp_path)
     monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
 
     events: list[dict] = []
-    msl._EVENT_BUS = msl.UnifiedEventBus()
+
+    class DummyBus:
+        def __init__(self) -> None:
+            self.handlers: list[tuple[str, object]] = []
+
+        def subscribe(self, topic: str, callback):  # noqa: D401
+            self.handlers.append((topic, callback))
+
+        def publish(self, topic: str, event: object) -> None:  # noqa: D401
+            for t, cb in self.handlers:
+                if t == topic:
+                    cb(topic, event)
+
+    bus = DummyBus()
+    msl._EVENT_BUS = bus
 
     def _handler(_topic, event):
         events.append(event)
 
-    msl._EVENT_BUS.subscribe("billing.anomaly", _handler)
+    bus.subscribe("billing.anomaly", _handler)
 
     class DummyMM:
         def __init__(self) -> None:
