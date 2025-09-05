@@ -18,6 +18,7 @@ from collections import defaultdict, deque
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from dynamic_path_router import resolve_path
 
 from vector_service import (
     CognitionLayer,
@@ -260,8 +261,8 @@ __all__ = ["app"]
 
 # ---------------------------------------------------------------------------
 def evaluate_ranker(
-    vector_db: str | os.PathLike[str] = "vector_metrics.db",
-    patch_db: str | os.PathLike[str] = "metrics.db",
+    vector_db: str | os.PathLike[str] = resolve_path("vector_metrics.db"),
+    patch_db: str | os.PathLike[str] = resolve_path("metrics.db"),
     strategy: str = "roi_weighted_cosine",
 ) -> dict[str, float]:
     """Evaluate ranking effectiveness on historical data.
@@ -274,7 +275,9 @@ def evaluate_ranker(
     import numpy as np
     import retrieval_ranker as rr
 
-    df = rr.load_training_data(vector_db=vector_db, patch_db=patch_db)
+    vdb = resolve_path(str(vector_db))
+    pdb = resolve_path(str(patch_db))
+    df = rr.load_training_data(vector_db=vdb, patch_db=pdb)
     if strategy == "model":
         _tm, metrics = rr.train(df)
         return metrics
@@ -299,8 +302,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Vector service utilities")
     sub = parser.add_subparsers(dest="cmd", required=True)
     ev = sub.add_parser("evaluate", help="Evaluate ranking effectiveness")
-    ev.add_argument("--vector-db", default="vector_metrics.db")
-    ev.add_argument("--patch-db", default="metrics.db")
+    ev.add_argument("--vector-db", default=resolve_path("vector_metrics.db"))
+    ev.add_argument("--patch-db", default=resolve_path("metrics.db"))
     ev.add_argument(
         "--strategy",
         default="roi_weighted_cosine",
@@ -310,7 +313,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.cmd == "evaluate":
         metrics = evaluate_ranker(
-            vector_db=args.vector_db, patch_db=args.patch_db, strategy=args.strategy
+            vector_db=resolve_path(args.vector_db),
+            patch_db=resolve_path(args.patch_db),
+            strategy=args.strategy,
         )
         print(json.dumps(metrics))
         return 0
