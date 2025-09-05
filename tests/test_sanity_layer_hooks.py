@@ -115,7 +115,44 @@ def test_record_event_logs_instruction_and_tags(monkeypatch):
     assert msl.FEEDBACK in tags and msl.ERROR_FIX in tags and "missing_charge" in tags
 
 
-def test_repeated_anomalies_trigger_param_update(monkeypatch):
+@pytest.mark.parametrize(
+    "event_type, metadata, hint",
+    [
+        ("missing_charge", {"charge_id": "ch"}, {"block_unlogged_charges": True}),
+        ("missing_refund", {"refund_id": "re"}, {"block_unlogged_refunds": True}),
+        (
+            "missing_failure_log",
+            {"event_id": "evt"},
+            {"log_stripe_failures": True},
+        ),
+        (
+            "unapproved_workflow",
+            {"bot_id": "bot"},
+            {"enforce_workflow_approval": True},
+        ),
+        (
+            "unknown_webhook",
+            {"webhook_id": "wh"},
+            {"register_stripe_webhooks": True},
+        ),
+        (
+            "disabled_webhook",
+            {"webhook_id": "whd"},
+            {"reactivate_stripe_webhook": True},
+        ),
+        (
+            "revenue_mismatch",
+            {"expected": 10, "actual": 5},
+            {"reconcile_revenue": True},
+        ),
+        (
+            "account_mismatch",
+            {"account_id": "acct"},
+            {"verify_stripe_account": True},
+        ),
+    ],
+)
+def test_repeated_anomalies_trigger_param_update(event_type, metadata, hint, monkeypatch):
     mm_storage = {}
 
     class DummyMM:
@@ -142,15 +179,14 @@ def test_repeated_anomalies_trigger_param_update(monkeypatch):
     engine = DummyEngine()
     for _ in range(msl.PAYMENT_ANOMALY_THRESHOLD):
         msl.record_payment_anomaly(
-            "missing_charge",
-            {"charge_id": "ch"},
+            event_type,
+            metadata,
             self_coding_engine=engine,
         )
 
-    assert mm_storage["billing:missing_charge"]["count"] == msl.PAYMENT_ANOMALY_THRESHOLD
-    assert engine.calls == [
-        {"block_unlogged_charges": True, "event_type": "missing_charge"}
-    ]
+    key = f"billing:{event_type}"
+    assert mm_storage[key]["count"] == msl.PAYMENT_ANOMALY_THRESHOLD
+    assert engine.calls == [{**hint, "event_type": event_type}]
 
 
 @pytest.mark.parametrize(
