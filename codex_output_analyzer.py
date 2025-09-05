@@ -30,14 +30,13 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 # default location for bundled pattern configuration
+_BASE_PATH = resolve_path(".")
 try:
     DEFAULT_PATTERN_CONFIG_PATH = resolve_path(
         "codex_output_analyzer/config/default_pattern_config.json"
     )
 except FileNotFoundError:
-    DEFAULT_PATTERN_CONFIG_PATH = Path(
-        "codex_output_analyzer/config/default_pattern_config.json"
-    )
+    DEFAULT_PATTERN_CONFIG_PATH = _BASE_PATH / "codex_output_analyzer/config/default_pattern_config.json"
 
 # default severity map configuration
 try:
@@ -45,9 +44,7 @@ try:
         "codex_output_analyzer/config/default_severity_map.json"
     )
 except FileNotFoundError:
-    DEFAULT_SEVERITY_MAP_PATH = Path(
-        "codex_output_analyzer/config/default_severity_map.json"
-    )
+    DEFAULT_SEVERITY_MAP_PATH = _BASE_PATH / "codex_output_analyzer/config/default_severity_map.json"
 
 # default suspicious words for comment/docstring extraction
 DEFAULT_SUSPICIOUS_WORDS: Set[str] = {
@@ -317,9 +314,18 @@ def _load_default_pattern_config(path: Optional[Path | str] = None) -> "PatternC
 
     if path is None:
         env = os.getenv("CODEX_DEFAULT_PATTERN_CONFIG")
-        path = Path(env) if env else DEFAULT_PATTERN_CONFIG_PATH
+        if env:
+            try:
+                path = resolve_path(env)
+            except FileNotFoundError:
+                path = _BASE_PATH / env
+        else:
+            path = DEFAULT_PATTERN_CONFIG_PATH
     else:
-        path = Path(path)
+        try:
+            path = resolve_path(path)
+        except FileNotFoundError:
+            path = _BASE_PATH / str(path)
 
     if path.exists():
         try:
@@ -358,9 +364,18 @@ def _load_default_severity_map(path: Optional[Path | str] = None) -> Dict[str, S
 
     if path is None:
         env = os.getenv("CODEX_DEFAULT_SEVERITY_MAP")
-        path = Path(env) if env else DEFAULT_SEVERITY_MAP_PATH
+        if env:
+            try:
+                path = resolve_path(env)
+            except FileNotFoundError:
+                path = _BASE_PATH / env
+        else:
+            path = DEFAULT_SEVERITY_MAP_PATH
     else:
-        path = Path(path)
+        try:
+            path = resolve_path(path)
+        except FileNotFoundError:
+            path = _BASE_PATH / str(path)
 
     if path.exists():
         try:

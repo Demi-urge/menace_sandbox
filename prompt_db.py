@@ -17,7 +17,11 @@ from llm_interface import Completion, Prompt
 # Ensure the prompts table is treated as local by DBRouter
 LOCAL_TABLES.add("prompts")
 
-DB_PATH = resolve_path(os.environ.get("PROMPT_DB_PATH", "prompts.db"))
+_DB_ENV = os.environ.get("PROMPT_DB_PATH", "prompts.db")
+try:
+    DB_PATH = resolve_path(_DB_ENV)
+except FileNotFoundError:
+    DB_PATH = resolve_path(".") / _DB_ENV
 _CONN: sqlite3.Connection | None = None
 
 

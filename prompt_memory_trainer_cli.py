@@ -6,24 +6,16 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
 from typing import Iterable
 
 from dynamic_path_router import resolve_path
 from prompt_memory_trainer import PromptMemoryTrainer
 
-DEFAULT_STATE_PATH = Path(
-    os.getenv(
-        "PROMPT_MEMORY_WEIGHTS_PATH",
-        resolve_path("config/prompt_memory_weights.json"),
-    )
+_BASE = resolve_path(".")
+DEFAULT_STATE_PATH = _BASE / os.getenv(
+    "PROMPT_MEMORY_WEIGHTS_PATH", "config/prompt_memory_weights.json"
 )
-DEFAULT_DB_PATH = Path(
-    os.getenv(
-        "PROMPT_STYLE_DB_PATH",
-        resolve_path("prompt_styles.db"),
-    )
-)
+DEFAULT_DB_PATH = _BASE / os.getenv("PROMPT_STYLE_DB_PATH", "prompt_styles.db")
 
 
 # ---------------------------------------------------------------------------
@@ -34,26 +26,30 @@ def cli(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--state-path",
-        type=Path,
-        default=DEFAULT_STATE_PATH,
+        type=str,
+        default=str(DEFAULT_STATE_PATH),
         help="File storing persistent style weights",
     )
     parser.add_argument(
         "--db-path",
-        type=Path,
-        default=DEFAULT_DB_PATH,
+        type=str,
+        default=str(DEFAULT_DB_PATH),
         help="SQLite database for prompt style statistics",
     )
     parser.add_argument(
         "--records",
-        type=Path,
+        type=str,
         help="JSON file containing new records to append before retraining",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    trainer = PromptMemoryTrainer(state_path=args.state_path, db_path=args.db_path)
+    trainer = PromptMemoryTrainer(
+        state_path=resolve_path(args.state_path),
+        db_path=resolve_path(args.db_path),
+    )
     if args.records:
-        with args.records.open("r", encoding="utf-8") as fh:
+        records_path = resolve_path(args.records)
+        with records_path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
         if isinstance(data, dict):
             records = [data]
