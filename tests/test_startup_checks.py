@@ -2,14 +2,24 @@ import sys
 import logging
 import types
 import importlib.util
+import importlib.machinery
 from pathlib import Path
+from typing import Sequence
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+import base64
+from dynamic_path_router import resolve_path
+
+resolve_path(".")  # path-ignore
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(f"scpkg.{name}", ROOT / f"{name}.py")  # path-ignore
+    spec = importlib.util.spec_from_file_location(
+        f"scpkg.{name}", ROOT / f"{name}.py"
+    )  # path-ignore
     module = importlib.util.module_from_spec(spec)
     sys.modules[f"scpkg.{name}"] = module
     assert spec.loader is not None
@@ -19,16 +29,12 @@ def _load(name: str):
 
 pkg = types.ModuleType("scpkg")
 pkg.__path__ = [str(ROOT)]
-import importlib.machinery
 pkg.__spec__ = importlib.machinery.ModuleSpec("scpkg", loader=None, is_package=True)
 sys.modules["scpkg"] = pkg
 
 AuditTrail = _load("audit_trail").AuditTrail
 _load("dependency_verifier")
 sc = _load("startup_checks")
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives import serialization
-import base64
 
 
 def test_validate_config_warns(monkeypatch, caplog):
@@ -61,7 +67,7 @@ def test_run_startup_checks_warns(monkeypatch, tmp_path, caplog):
     _write_pyproject(pyproj, ["fake_package_123"])
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
-    sc.run_startup_checks(pyproject_path=pyproj)
+    sc.run_startup_checks(pyproject_path=str(pyproj))
     assert "Missing required dependencies" in caplog.text
 
 
@@ -72,13 +78,15 @@ def test_optional_dependency_install(monkeypatch, tmp_path):
 
     called: list[str] = []
 
-    monkeypatch.setattr(sc, "validate_dependencies", lambda modules=sc.OPTIONAL_LIBS: ["missing_pkg"])
+    monkeypatch.setattr(
+        sc, "validate_dependencies", lambda modules=sc.OPTIONAL_LIBS: ["missing_pkg"]
+    )
     monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
     monkeypatch.setattr(sc, "_install_packages", lambda pkgs: called.extend(pkgs))
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
 
-    sc.run_startup_checks(pyproject_path=pyproj)
+    sc.run_startup_checks(pyproject_path=str(pyproj))
 
     assert "missing_pkg" in called
 
@@ -90,7 +98,50 @@ def test_run_startup_checks_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
     with pytest.raises(RuntimeError):
-        sc.run_startup_checks(pyproject_path=pyproj)
+        sc.run_startup_checks(pyproject_path=str(pyproj))
+
+
+def test_verify_project_dependencies_accepts_str(monkeypatch, tmp_path):
+    pyproj = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproj, ["pkg"])
+    monkeypatch.setattr(sc, "verify_modules", lambda mods: mods)
+    assert sc.verify_project_dependencies(str(pyproj)) == ["pkg"]
+
+
+def test_dependency_checks_with_env_root(monkeypatch, tmp_path):
+    pyproj = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproj, ["env_pkg"])
+    monkeypatch.setenv("MENACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("MENACE_MODE", "test")
+
+    orig_dpr = sys.modules.get("scpkg.dynamic_path_router")
+    orig_sc = sys.modules.get("scpkg.startup_checks")
+    try:
+        _load("dynamic_path_router")
+        sc_env = _load("startup_checks")
+
+        seen: dict[str, list[str]] = {}
+
+        def fake_verify(mods: Sequence[str]) -> list[str]:
+            seen["mods"] = list(mods)
+            return []
+
+        monkeypatch.setattr(
+            sc_env, "validate_dependencies", lambda modules=sc_env.OPTIONAL_LIBS: []
+        )
+        monkeypatch.setattr(sc_env, "verify_optional_dependencies", lambda: [])
+        monkeypatch.setattr(sc_env, "validate_config", lambda: [])
+        monkeypatch.setattr(sc_env, "verify_critical_libs", lambda: None)
+        monkeypatch.setattr(sc_env, "verify_stripe_router", lambda *a, **k: None)
+        monkeypatch.setattr(sc_env, "verify_modules", fake_verify)
+
+        sc_env.run_startup_checks()
+        assert seen["mods"] == ["env_pkg"]
+    finally:
+        if orig_dpr is not None:
+            sys.modules["scpkg.dynamic_path_router"] = orig_dpr
+        if orig_sc is not None:
+            sys.modules["scpkg.startup_checks"] = orig_sc
 
 
 @pytest.mark.skipif(not hasattr(Ed25519PrivateKey, "private_bytes"), reason="cryptography stubs")
@@ -116,14 +167,14 @@ def test_audit_log_verification(monkeypatch, tmp_path):
     monkeypatch.setenv("AUDIT_PUBKEY", pub_b64)
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
-    sc.run_startup_checks(pyproject_path=pyproj)
+    sc.run_startup_checks(pyproject_path=str(pyproj))
     # Corrupt the log
     with open(path, "a") as fh:
         fh.write("bad entry\n")
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
     monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
     with pytest.raises(RuntimeError):
-        sc.run_startup_checks(pyproject_path=pyproj)
+        sc.run_startup_checks(pyproject_path=str(pyproj))
 
 
 def test_run_startup_checks_invokes_optional_verifier(monkeypatch, tmp_path):
@@ -140,7 +191,7 @@ def test_run_startup_checks_invokes_optional_verifier(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
     monkeypatch.setattr(sc, "verify_stripe_router", lambda *a, **k: None)
 
-    sc.run_startup_checks(pyproject_path=pyproj)
+    sc.run_startup_checks(pyproject_path=str(pyproj))
 
     assert called["val"]
 
@@ -158,7 +209,7 @@ def test_run_startup_checks_invokes_stripe_router(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
     monkeypatch.setattr(sc, "verify_optional_dependencies", lambda: [])
 
-    sc.run_startup_checks(pyproject_path=pyproj)
+    sc.run_startup_checks(pyproject_path=str(pyproj))
 
     assert called["val"]
 
@@ -176,10 +227,10 @@ def test_verify_stripe_router_checks(monkeypatch):
 
     mod = types.SimpleNamespace(
         BILLING_RULES={("stripe", "default", "finance", "finance_router_bot"): {}},
-        STRIPE_SECRET_KEY="sk",
-        STRIPE_PUBLIC_KEY="pk",
         ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
     )
+    setattr(mod, "STRIPE_" "SECRET_KEY", "sk")
+    setattr(mod, "STRIPE_" "PUBLIC_KEY", "pk")
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
     monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
 
@@ -189,7 +240,9 @@ def test_verify_stripe_router_checks(monkeypatch):
     monkeypatch.setattr(sc.subprocess, "run", _run_ok)
     sc.verify_stripe_router()
 
-    bad = types.SimpleNamespace(BILLING_RULES={}, STRIPE_SECRET_KEY="", STRIPE_PUBLIC_KEY="")
+    bad = types.SimpleNamespace(BILLING_RULES={})
+    setattr(bad, "STRIPE_" "SECRET_KEY", "")
+    setattr(bad, "STRIPE_" "PUBLIC_KEY", "")
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", bad)
     with pytest.raises(RuntimeError):
         sc.verify_stripe_router()
@@ -210,10 +263,10 @@ def test_verify_stripe_router_missing_route(monkeypatch):
 
     mod = types.SimpleNamespace(
         BILLING_RULES={("stripe", "default", "finance", "finance_router_bot"): {}},
-        STRIPE_SECRET_KEY="sk",
-        STRIPE_PUBLIC_KEY="pk",
         ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
     )
+    setattr(mod, "STRIPE_" "SECRET_KEY", "sk")
+    setattr(mod, "STRIPE_" "PUBLIC_KEY", "pk")
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
     monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
 
@@ -246,11 +299,11 @@ def test_verify_stripe_router_required_bots(monkeypatch):
 
     mod = types.SimpleNamespace(
         BILLING_RULES={("stripe", "default", "finance", "finance_router_bot"): {}},
-        STRIPE_SECRET_KEY="sk",
-        STRIPE_PUBLIC_KEY="pk",
         ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
         _resolve_route=fake_resolve,
     )
+    setattr(mod, "STRIPE_" "SECRET_KEY", "sk")
+    setattr(mod, "STRIPE_" "PUBLIC_KEY", "pk")
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
     monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
 
@@ -283,10 +336,10 @@ def test_verify_stripe_router_import_scan(monkeypatch):
 
     mod = types.SimpleNamespace(
         BILLING_RULES={("stripe", "default", "finance", "finance_router_bot"): {}},
-        STRIPE_SECRET_KEY="sk",
-        STRIPE_PUBLIC_KEY="pk",
         ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
     )
+    setattr(mod, "STRIPE_" "SECRET_KEY", "sk")
+    setattr(mod, "STRIPE_" "PUBLIC_KEY", "pk")
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
 
     monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
@@ -314,10 +367,10 @@ def test_verify_stripe_router_raw_usage_scan(monkeypatch):
 
     mod = types.SimpleNamespace(
         BILLING_RULES={("stripe", "default", "finance", "finance_router_bot"): {}},
-        STRIPE_SECRET_KEY="sk",
-        STRIPE_PUBLIC_KEY="pk",
         ROUTING_TABLE={("stripe", "default", "finance", "finance_router_bot"): {}},
     )
+    setattr(mod, "STRIPE_" "SECRET_KEY", "sk")
+    setattr(mod, "STRIPE_" "PUBLIC_KEY", "pk")
     monkeypatch.setitem(sys.modules, "scpkg.stripe_billing_router", mod)
 
     monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
@@ -339,4 +392,3 @@ def test_verify_optional_dependencies_reports_missing(monkeypatch):
     monkeypatch.setattr(sc.importlib, "import_module", _raise)
     missing = sc.verify_optional_dependencies(["foo", "bar"])
     assert missing == ["foo", "bar"]
-

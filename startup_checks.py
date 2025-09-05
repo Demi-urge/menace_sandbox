@@ -88,10 +88,20 @@ def _parse_requirement(req: str) -> str:
     return name.strip()
 
 
-def dependencies_from_pyproject(path: Path = PYPROJECT_PATH) -> Sequence[str]:
+def _coerce_path(path: str | Path) -> Path:
+    """Return ``path`` as an absolute :class:`Path` within the repo."""
+
+    if isinstance(path, Path):
+        return path if path.is_absolute() else resolve_path(path.as_posix())
+    return resolve_path(str(path))
+
+
+def dependencies_from_pyproject(path: str | Path = PYPROJECT_PATH) -> Sequence[str]:
     """Return list of dependency package names from pyproject."""
+
+    target = _coerce_path(path)
     try:
-        with open(path, "rb") as fh:
+        with open(target, "rb") as fh:
             data = tomllib.load(fh)
     except Exception:
         return []
@@ -99,8 +109,9 @@ def dependencies_from_pyproject(path: Path = PYPROJECT_PATH) -> Sequence[str]:
     return [_parse_requirement(d) for d in deps]
 
 
-def verify_project_dependencies(path: Path = PYPROJECT_PATH) -> list[str]:
+def verify_project_dependencies(path: str | Path = PYPROJECT_PATH) -> list[str]:
     """Return missing modules declared in pyproject."""
+
     modules = dependencies_from_pyproject(path)
     return verify_modules(modules)
 
@@ -114,7 +125,6 @@ def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None
     any lookup fails.
     """
     repo_root = resolve_path(".")
-    scripts = resolve_path("scripts")
     try:
         files = subprocess.check_output(
             ["git", "ls-files", "*.py"],
@@ -264,7 +274,7 @@ def _prompt_for_vars(names: Iterable[str]) -> None:
             os.environ[name] = value
 
 
-def run_startup_checks(pyproject_path: Path | None = None) -> None:
+def run_startup_checks(pyproject_path: str | Path | None = None) -> None:
     """Run dependency and configuration checks."""
     missing_optional = validate_dependencies()
     if missing_optional:
