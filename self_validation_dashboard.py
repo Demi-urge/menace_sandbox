@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -14,6 +13,14 @@ from .error_forecaster import ErrorForecaster
 from .dependency_update_bot import DependencyUpdater
 from .error_bot import ErrorDB
 from .knowledge_graph import KnowledgeGraph
+from .dynamic_path_router import resolve_path
+
+
+def _resolve(name: str | Path) -> Path:
+    path = Path(name)
+    if path.is_absolute():
+        return path.resolve()
+    return resolve_path(path)
 
 
 class SelfValidationDashboard:
@@ -34,11 +41,15 @@ class SelfValidationDashboard:
         self.updater = updater
         self.graph = graph
         self.error_db = error_db
-        self.history_file = Path(history_file) if history_file else None
+        self.history_file = (
+            _resolve(history_file) if history_file is not None else None
+        )
         self.timer: Optional[threading.Timer] = None
 
     # ------------------------------------------------------------------
-    def generate_report(self, path: str | Path = "dashboard.json") -> Path:
+    def generate_report(
+        self, path: str | Path = resolve_path("sandbox_data") / "dashboard.json"
+    ) -> Path:
         trend = self.data_bot.long_term_roi_trend(limit=200)
         forecast = 0.0
         if self.error_forecaster:
@@ -115,13 +126,19 @@ class SelfValidationDashboard:
                     err_trends.setdefault(et, []).append(int(e.get("count", 0)))
             if err_trends:
                 report["error_trends"] = err_trends
-        dest = Path(path)
+        dest = _resolve(path)
         dest.write_text(json.dumps(report, indent=2))
         return dest
 
     # ------------------------------------------------------------------
-    def schedule(self, path: str | Path = "dashboard.json", interval: int = 86400) -> None:
+    def schedule(
+        self,
+        path: str | Path = resolve_path("sandbox_data") / "dashboard.json",
+        interval: int = 86400,
+    ) -> None:
         """Periodically generate the dashboard at ``interval`` seconds."""
+
+        path = _resolve(path)
 
         def _loop() -> None:
             self.generate_report(path)
