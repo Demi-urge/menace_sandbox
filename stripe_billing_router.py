@@ -103,17 +103,32 @@ def log_critical_discrepancy(bot_id: str, message: str) -> None:
 
 
 def _alert_mismatch(
-    bot_id: str, account_id: str, message: str = "Stripe account mismatch"
+    bot_id: str,
+    account_id: str,
+    message: str = "Stripe account mismatch",
+    amount: float | None = None,
 ) -> None:
     """Backward-compatible wrapper for critical discrepancy handling."""
 
     log_critical_discrepancy(message, bot_id)
+    try:  # pragma: no cover - rollback side effects
+        rollback_manager.RollbackManager().rollback("latest", requesting_bot=bot_id)
+    except Exception:
+        logger.exception("rollback failed for bot '%s'", bot_id)
+    timestamp_ms = int(time.time() * 1000)
     billing_logger.log_event(
         error=True,
         action_type="mismatch",
         bot_id=bot_id,
         destination_account=account_id,
-        timestamp_ms=int(time.time() * 1000),
+        amount=amount,
+        timestamp_ms=timestamp_ms,
+    )
+    log_billing_event(
+        "mismatch",
+        bot_id=bot_id,
+        amount=amount,
+        destination_account=account_id,
     )
     return
 
@@ -521,7 +536,7 @@ def charge(
 
     account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
-        _alert_mismatch(bot_id, account_id)
+        _alert_mismatch(bot_id, account_id, amount=amount)
         raise RuntimeError("Stripe account mismatch")
 
     price = price_id or route.get("price_id")
@@ -895,7 +910,7 @@ def refund(
     client = _client(api_key)
     account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
-        _alert_mismatch(bot_id, account_id)
+        _alert_mismatch(bot_id, account_id, amount=amount)
         raise RuntimeError("Stripe account mismatch")
     refund_params: dict[str, Any] = {"payment_intent": payment_intent_id, **params}
     if amount is not None:
