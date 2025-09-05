@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Mapping, Sequence, Tuple, Protocol
 import json
 import math
 import uuid
+from dynamic_path_router import resolve_path
 
 try:  # pragma: no cover - optional dependency
     import faiss  # type: ignore
@@ -69,7 +70,7 @@ class FaissVectorStore:
     path: Path
 
     def __post_init__(self) -> None:
-        self.path = Path(self.path)
+        self.path = resolve_path(self.path)
         self.meta_path = self.path.with_suffix(".meta.json")
         if self.path.exists():
             self.load()
@@ -146,7 +147,7 @@ class AnnoyVectorStore:
     metric: str = "angular"
 
     def __post_init__(self) -> None:
-        self.path = Path(self.path)
+        self.path = resolve_path(self.path)
         self.meta_path = self.path.with_suffix(".meta.json")
         self.index = AnnoyIndex(self.dim, self.metric)
         self.ids: List[str] = []
