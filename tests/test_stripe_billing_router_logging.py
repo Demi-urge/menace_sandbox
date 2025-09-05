@@ -160,6 +160,7 @@ def test_charge_logs_to_file(monkeypatch, sbr_file_logger):
         api_key="orig",
         InvoiceItem=types.SimpleNamespace(create=fake_item_create),
         Invoice=types.SimpleNamespace(create=fake_invoice_create, pay=fake_invoice_pay),
+        PaymentIntent=types.SimpleNamespace(create=lambda **kw: {"id": "pi_test"}),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
     calls = []
@@ -174,7 +175,10 @@ def test_charge_logs_to_file(monkeypatch, sbr_file_logger):
     sbr.charge("finance:finance_router_bot", 12.5, "desc")
     records = _read_records(ledger)
     assert any(
-        r.get("action") == "charge" and r.get("amount") == 12.5 for r in records
+        r.get("action") == "charge"
+        and r.get("amount") == 12.5
+        and r.get("charge_id") == "pi_test"
+        for r in records
     )
     assert calls and calls[0].get("error") is False
 
@@ -205,7 +209,10 @@ def test_refund_logs_to_file(monkeypatch, sbr_file_logger):
     sbr.refund("finance:finance_router_bot", "ch_test", amount=5.0)
     records = _read_records(ledger)
     assert any(
-        r.get("action") == "refund" and r.get("amount") == 5.0 for r in records
+        r.get("action") == "refund"
+        and r.get("amount") == 5.0
+        and r.get("charge_id") == "rf_test"
+        for r in records
     )
     assert calls and calls[0].get("error") is False
 
@@ -231,7 +238,10 @@ def test_create_subscription_logs_to_file(monkeypatch, sbr_file_logger):
 
     sbr.create_subscription("finance:finance_router_bot", idempotency_key="sub-key")
     records = _read_records(ledger)
-    assert any(r.get("action") == "subscription" for r in records)
+    assert any(
+        r.get("action") == "subscription" and r.get("charge_id") == "sub_test"
+        for r in records
+    )
     assert calls and calls[0].get("error") is False
 
 
@@ -270,7 +280,9 @@ def test_create_checkout_session_logs_to_file(monkeypatch, sbr_file_logger):
     )
     records = _read_records(ledger)
     assert any(
-        r.get("action") == "checkout_session" and r.get("amount") == 10.0
+        r.get("action") == "checkout_session"
+        and r.get("amount") == 10.0
+        and r.get("charge_id") == "cs_test"
         for r in records
     )
     assert calls and calls[0].get("error") is False

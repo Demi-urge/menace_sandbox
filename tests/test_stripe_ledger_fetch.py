@@ -13,8 +13,12 @@ def _setup_ledger(monkeypatch, tmp_path):
 
 def test_fetch_events(monkeypatch, tmp_path):
     ledger = _setup_ledger(monkeypatch, tmp_path)
-    stripe_ledger.log_event("charge", "bot1", 10.0, "usd", "u1@example.com", "acct1", 100)
-    stripe_ledger.log_event("refund", "bot2", 5.0, "usd", None, "acct2", 200)
+    stripe_ledger.log_event(
+        "charge", "bot1", 10.0, "usd", "u1@example.com", "acct1", 100, "ch_1"
+    )
+    stripe_ledger.log_event(
+        "refund", "bot2", 5.0, "usd", None, "acct2", 200, "ch_2"
+    )
 
     events = stripe_ledger.get_events(50, 150)
     assert [e["action"] for e in events] == ["charge"]
@@ -30,13 +34,16 @@ def test_fetch_events(monkeypatch, tmp_path):
         "currency",
         "user_email",
         "account_id",
+        "charge_id",
         "timestamp",
     }
 
 
 def test_fetch_events_empty(monkeypatch, tmp_path):
     _setup_ledger(monkeypatch, tmp_path)
-    stripe_ledger.log_event("charge", "bot1", 10.0, "usd", "u1@example.com", "acct1", 100)
+    stripe_ledger.log_event(
+        "charge", "bot1", 10.0, "usd", "u1@example.com", "acct1", 100, "ch_1"
+    )
 
     events = stripe_ledger.get_events(200, 300)
     assert events == []

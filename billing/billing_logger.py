@@ -28,6 +28,7 @@ _COLUMNS = [
     "user_email",
     "bot_id",
     "destination_account",
+    "charge_id",
     "raw_event_json",
     "error",
 ]
@@ -50,10 +51,20 @@ def _get_connection():
                 user_email TEXT,
                 bot_id TEXT,
                 destination_account TEXT,
+                charge_id TEXT,
                 raw_event_json TEXT,
                 error INTEGER
             )
             """
+        )
+        conn.commit()
+        # Migration for existing tables without charge_id
+        cur = conn.execute("PRAGMA table_info(stripe_ledger)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "charge_id" not in cols:
+            conn.execute("ALTER TABLE stripe_ledger ADD COLUMN charge_id TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stripe_ledger_charge_id ON stripe_ledger(charge_id)"
         )
         conn.commit()
         return conn

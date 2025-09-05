@@ -105,6 +105,7 @@ def detect_anomalies(
                 user_email=email,
                 bot_id=bot_id,
                 destination_account=destination,
+                charge_id=event.id,
                 raw_event_json=raw_json,
                 error=1,
             )
@@ -130,6 +131,7 @@ def detect_anomalies(
                 user_email=email,
                 bot_id=bot_id,
                 destination_account=destination,
+                charge_id=event.id,
                 raw_event_json=raw_json,
                 error=1,
             )
