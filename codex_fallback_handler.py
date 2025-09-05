@@ -8,6 +8,7 @@ later and, when possible, execution is rerouted to ``gpt-3.5-turbo``.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,8 @@ except Exception:  # pragma: no cover - fallback for direct execution
 
 # Location where failed prompts are stored for later replay
 _QUEUE_FILE = Path("codex_fallback_queue.jsonl")
+
+logger = logging.getLogger(__name__)
 
 
 def queue_failed(prompt: Prompt, reason: str, *, path: Path = _QUEUE_FILE) -> None:
@@ -53,25 +56,40 @@ def reroute_to_gpt35(prompt: Prompt) -> LLMResult:
 
 def handle(
     prompt: Prompt, reason: str, *, queue_path: Optional[Path] = None
-) -> LLMResult:
+) -> Optional[LLMResult]:
     """Attempt to reroute ``prompt`` and queue it on persistent failure.
+
+    Parameters
+    ----------
+    prompt:
+        The original prompt sent to Codex.
+    reason:
+        Explanation of why the fallback was triggered.
+    queue_path:
+        Optional override for the queue location, mainly used in tests.
 
     Returns
     -------
-    LLMResult
-        Result from :func:`reroute_to_gpt35`.  When rerouting fails, the prompt
-        is queued for later inspection and an empty :class:`LLMResult` is
-        returned with ``raw`` detailing the failure ``reason``.
+    Optional[LLMResult]
+        Result from :func:`reroute_to_gpt35`.  ``None`` is returned when the
+        rerouted call fails or does not yield a usable completion.
     """
+
+    logger.warning("codex fallback invoked", extra={"reason": reason})
 
     try:
         result = reroute_to_gpt35(prompt)
-        # Expose the routed model's text via ``result.text`` while preserving
-        # provider specific metadata under ``result.raw``.
-        return result
     except Exception as exc:
+        logger.warning("codex fallback reroute failed", exc_info=True, extra={"reason": reason})
         queue_failed(prompt, reason, path=queue_path or _QUEUE_FILE)
-        return LLMResult(text="", raw={"error": str(exc), "reason": reason})
+        return None
+
+    # Expose the routed model's text via ``result.text`` while preserving
+    # provider specific metadata under ``result.raw``.
+    if not getattr(result, "text", "").strip():
+        logger.warning("codex fallback produced no completion", extra={"reason": reason})
+        return None
+    return result
 
 
 __all__ = ["queue_failed", "reroute_to_gpt35", "handle"]

@@ -1332,37 +1332,7 @@ class SelfCodingEngine:
             except RetryError as exc:
                 self._last_retry_trace = str(exc)
                 result = LLMResult(raw=str(exc))
-        validation: ValidationResult = validate_completion(result.text)
-        if not validation.ok:
-            reason = validation.reason or "unknown"
-            self.logger.warning(
-                "codex fallback",
-                extra={"reason": reason, "description": description, "tags": ["degraded"]},
-            )
-            alt = codex_fallback_handler.handle(prompt_obj, reason)
-            alt_validation: ValidationResult = validate_completion(alt.text)
-            if alt_validation.ok:
-                self.logger.info(
-                    "codex fallback reroute succeeded", extra={"description": description}
-                )
-                result = alt
-                validation = alt_validation
-            else:
-                event = (
-                    "codex fallback queued prompt"
-                    if not alt.text
-                    else "codex fallback invalid result"
-                )
-                self.logger.warning(
-                    event,
-                    extra={
-                        "reason": alt_validation.reason,
-                        "description": description,
-                        "tags": ["degraded"],
-                    },
-                )
-                return _fallback()
-        text = validation.text
+        result, text = self._validate(prompt_obj, result, description)
         if text:
             if self.gpt_memory:
                 try:
@@ -1394,6 +1364,55 @@ class SelfCodingEngine:
             )
             return text + ("\n" if not text.endswith("\n") else "")
         return _fallback()
+
+    def _validate(
+        self, prompt: Prompt, result: LLMResult, description: str
+    ) -> tuple[LLMResult, str | None]:
+        """Validate ``result`` and reroute on empty or malformed text.
+
+        When the initial ``result`` from Codex is empty or cannot be parsed,
+        :func:`codex_fallback_handler.handle` is invoked with the specific
+        failure ``reason``.  A successful reroute returns the alternate
+        :class:`LLMResult` along with its validated text.  Failures return the
+        original ``result`` paired with ``None`` so callers can trigger their
+        built-in fallback behaviour.
+        """
+
+        validation: ValidationResult = validate_completion(result.text)
+        if validation.ok:
+            return result, validation.text
+
+        reason = validation.reason or "unknown"
+        self.logger.warning(
+            "codex fallback",
+            extra={"reason": reason, "description": description, "tags": ["degraded"]},
+        )
+
+        alt = codex_fallback_handler.handle(prompt, reason)
+        if alt is None:
+            return result, None
+
+        alt_validation: ValidationResult = validate_completion(alt.text)
+        if alt_validation.ok:
+            self.logger.info(
+                "codex fallback reroute succeeded", extra={"description": description}
+            )
+            return alt, alt_validation.text
+
+        event = (
+            "codex fallback queued prompt"
+            if not getattr(alt, "text", "").strip()
+            else "codex fallback invalid result"
+        )
+        self.logger.warning(
+            event,
+            extra={
+                "reason": alt_validation.reason,
+                "description": description,
+                "tags": ["degraded"],
+            },
+        )
+        return result, None
 
     def patch_file(
         self,
