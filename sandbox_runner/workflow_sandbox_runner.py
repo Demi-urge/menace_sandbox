@@ -59,7 +59,7 @@ from time import perf_counter, process_time
 from typing import Any, Callable, Iterable, Mapping
 from unittest import mock
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 
 try:  # pragma: no cover - resource module may be missing on some platforms
     import resource  # type: ignore
@@ -804,7 +804,11 @@ class WorkflowSandboxRunner:
                     try:
                         return original_stat(raw, *a, **kw)
                     except Exception:
-                        logger.exception("os.stat failed for absolute path %s", raw)
+                        try:
+                            norm = path_for_prompt(raw)
+                        except Exception:
+                            norm = str(raw)
+                        logger.exception("os.stat failed for absolute path %s", norm)
                 current = os.stat
                 try:
                     os.stat = original_stat
@@ -1346,7 +1350,6 @@ class WorkflowSandboxRunner:
                                 if not new_lines:
                                     continue
                                 orig = pathlib.Path(f)
-                                fp = orig
                                 fpath = orig.as_posix()
                                 try:
                                     fh = original_open(orig, "r", encoding="utf-8")
@@ -1354,7 +1357,6 @@ class WorkflowSandboxRunner:
                                     copy = root / orig.name
                                     if not copy.exists():
                                         continue
-                                    fp = copy
                                     fpath = copy.relative_to(root).as_posix()
                                     try:
                                         fh = original_open(copy, "r", encoding="utf-8")
@@ -1368,7 +1370,10 @@ class WorkflowSandboxRunner:
                                     for node in ast.walk(tree):
                                         if isinstance(node, ast.FunctionDef):
                                             end = getattr(node, "end_lineno", node.lineno)
-                                            if any(l in new_lines for l in range(node.lineno, end + 1)):
+                                            if any(
+                                                line in new_lines
+                                                for line in range(node.lineno, end + 1)
+                                            ):
                                                 cov_funcs.append(f"{fpath}:{node.name}")
                                 except Exception:
                                     continue

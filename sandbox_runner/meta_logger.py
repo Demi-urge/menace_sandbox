@@ -13,6 +13,7 @@ import json
 import math
 
 from logging_utils import get_logger, log_record
+from dynamic_path_router import path_for_prompt
 from audit_trail import AuditTrail
 
 try:  # optional dependency
@@ -98,7 +99,9 @@ class _SandboxMetaLogger:
                         self.module_entropy_deltas[m] = deltas
             except (OSError, json.JSONDecodeError) as exc:  # pragma: no cover - best effort
                 logger.exception("failed to load sandbox history", exc_info=exc)
-        logger.debug("SandboxMetaLogger initialised at %s", path)
+        logger.debug(
+            "SandboxMetaLogger initialised at %s", path_for_prompt(path)
+        )
 
     def log_cycle(
         self,

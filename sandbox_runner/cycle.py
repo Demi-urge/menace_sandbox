@@ -23,7 +23,7 @@ from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 from foresight_tracker import ForesightTracker
 from db_router import GLOBAL_ROUTER, init_db_router
 from alert_dispatcher import dispatch_alert
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 from error_parser import ErrorParser
 
 
@@ -1167,7 +1167,9 @@ def _sandbox_cycle_runner(
                         with open(path, "r", encoding="utf-8", errors="ignore") as fh:
                             total_lines += sum(1 for _ in fh)
                     except Exception:
-                        logger.exception("failed counting lines for %s", path)
+                        logger.exception(
+                            "failed counting lines for %s", path_for_prompt(path)
+                        )
                 if total_lines:
                     coverage_percent = 100.0 * exec_lines / float(total_lines)
                     adaptability = coverage_percent

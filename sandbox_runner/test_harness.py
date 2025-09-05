@@ -21,7 +21,7 @@ import json
 import urllib.parse
 from typing import Any
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 
 
 from ..error_parser import ErrorParser
@@ -270,7 +270,11 @@ def _run_once(
                     try:
                         rel_paths = [p.relative_to(repo_path) for p in rel_paths]
                     except Exception as exc:
-                        logger.warning("Failed to resolve relative paths %s: %s", rel_paths, exc)
+                        logger.warning(
+                            "Failed to resolve relative paths %s: %s",
+                            [path_for_prompt(p) for p in rel_paths],
+                            exc,
+                        )
                     if len(rel_paths) == 1:
                         rel = rel_paths[0]
                         selected = rel.as_posix()
@@ -318,7 +322,11 @@ def _run_once(
                     try:
                         rel_paths = [p.relative_to(repo_path) for p in rel_paths]
                     except Exception as exc:
-                        logger.warning("Failed to resolve relative paths %s: %s", rel_paths, exc)
+                        logger.warning(
+                            "Failed to resolve relative paths %s: %s",
+                            [path_for_prompt(p) for p in rel_paths],
+                            exc,
+                        )
                     if len(rel_paths) == 1:
                         rel = rel_paths[0]
                         selected = rel.as_posix()

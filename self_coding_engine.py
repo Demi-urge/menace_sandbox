@@ -849,7 +849,9 @@ class SelfCodingEngine:
                         line_ranges=[(start, end)],
                     )
                 except Exception:
-                    self.logger.exception("failed to split %s", path)
+                    self.logger.exception(
+                        "failed to split %s", path_for_prompt(path)
+                    )
                     return "", None
                 summaries: List[str] = []
                 for i, ch in enumerate(chunks):
@@ -866,7 +868,9 @@ class SelfCodingEngine:
                     path, threshold, self.llm_client
                 )
             except Exception:
-                self.logger.exception("failed to summarise %s", path)
+                self.logger.exception(
+                    "failed to summarise %s", path_for_prompt(path)
+                )
                 return "", None
 
             lines = code.splitlines()
@@ -1525,12 +1529,16 @@ class SelfCodingEngine:
             )
             if not generated.strip():
                 return None, False, 0.0
-            if _verify(generated):
-                if not self._apply_region_patch(path, original_lines, target_region, generated):
-                    if target_region.function:
-                        func_region = self._find_function_region(original_lines, target_region.function)
-                    else:
-                        func_region = None
+                if _verify(generated):
+                    if not self._apply_region_patch(
+                        path, original_lines, target_region, generated
+                    ):
+                        if target_region.function:
+                            func_region = self._find_function_region(
+                                original_lines, target_region.function
+                            )
+                        else:
+                            func_region = None
                     if func_region is None:
                         return None, False, 0.0
                     generated = self.generate_helper(
