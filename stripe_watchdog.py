@@ -15,6 +15,17 @@ import alert_dispatcher
 from roi_results_db import ROIResultsDB
 
 try:  # pragma: no cover - optional dependency
+    from discrepancy_db import DiscrepancyDB, DiscrepancyRecord
+except Exception:  # pragma: no cover - best effort
+    DiscrepancyDB = None  # type: ignore
+    DiscrepancyRecord = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from codex_db_helpers import TrainingSample
+except Exception:  # pragma: no cover - best effort
+    TrainingSample = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
     from vault_secret_provider import VaultSecretProvider
 except Exception:  # pragma: no cover - best effort
     VaultSecretProvider = None  # type: ignore
@@ -39,6 +50,17 @@ def _ledger_path() -> Path:
 
 
 LEDGER_FILE = _ledger_path()
+
+
+def _log_path() -> Path:
+    try:
+        log_dir = resolve_path("finance_logs")
+    except FileNotFoundError:  # pragma: no cover - fallback
+        log_dir = Path("finance_logs")
+    return log_dir / "stripe_watchdog.log"
+
+
+ANOMALY_LOG = _log_path()
 
 CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 
@@ -193,6 +215,37 @@ def _aggregate_net_revenue(api_key: str) -> float:
     return total / 100.0
 
 
+def _write_anomalies(anomalies: Iterable[dict[str, Any]]) -> None:
+    """Append each anomaly to the log file as a JSON line."""
+
+    try:
+        ANOMALY_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with ANOMALY_LOG.open("a", encoding="utf-8") as fh:
+            for anomaly in anomalies:
+                fh.write(json.dumps(anomaly) + "\n")
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed writing anomalies to %s", ANOMALY_LOG)
+
+
+def _record_training_summary(anomalies: List[dict[str, Any]]) -> None:
+    """Store a brief summary for downstream training."""
+
+    summary = f"{len(anomalies)} Stripe charges missing from billing logs"
+    meta = {"count": len(anomalies)}
+    if DiscrepancyDB and DiscrepancyRecord:
+        try:
+            db = DiscrepancyDB()
+            db.add(DiscrepancyRecord(message=summary, metadata=meta))
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed recording discrepancy summary")
+    if TrainingSample:
+        try:
+            sample = TrainingSample(source="stripe_watchdog", content=summary)
+            logger.debug("training sample created: %s", sample)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed creating training sample")
+
+
 def check_events() -> List[dict[str, Any]]:
     """Return anomalies for Stripe charges missing from the billing logs."""
 
@@ -237,6 +290,8 @@ def check_events() -> List[dict[str, Any]]:
 
     if anomalies:
         logger.warning("Charges missing from billing logs: %s", anomalies)
+        _write_anomalies(anomalies)
+        _record_training_summary(anomalies)
     else:
         logger.info("All Stripe charges logged")
     return anomalies
@@ -299,4 +354,17 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="increase output verbosity for debugging",
+    )
+    args = parser.parse_args()
+    level = logging.WARNING - 10 * args.verbose
+    logging.basicConfig(level=max(level, logging.DEBUG))
     main()
