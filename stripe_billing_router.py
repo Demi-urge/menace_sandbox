@@ -311,12 +311,22 @@ def _load_allowed_keys() -> set[str]:
                     raw = ",".join(keys)
         except FileNotFoundError:
             raw = None
-    if raw:
-        return {k.strip() for k in str(raw).split(",") if k.strip()}
-    return {STRIPE_SECRET_KEY}
+    keys = (
+        {k.strip() for k in str(raw).split(",") if k.strip()}
+        if raw
+        else {STRIPE_SECRET_KEY}
+    )
+    allowed: set[str] = set()
+    for key in keys:
+        account_id = _get_account_id(key) or ""
+        if account_id == STRIPE_MASTER_ACCOUNT_ID:
+            allowed.add(key)
+        else:  # pragma: no cover - defensive logging
+            logger.error(
+                "Ignoring Stripe key for foreign account %s", account_id or "unknown"
+            )
+    return allowed
 
-
-ALLOWED_SECRET_KEYS = _load_allowed_keys()
 
 _CONFIG_ENV = "STRIPE_ROUTING_CONFIG"
 _DEFAULT_CONFIG = resolve_path("config/stripe_billing_router.yaml").as_posix()
@@ -515,6 +525,9 @@ def _client(api_key: str):
     if hasattr(stripe, "StripeClient"):
         return stripe.StripeClient(api_key)
     return None
+
+
+ALLOWED_SECRET_KEYS = _load_allowed_keys()
 
 
 def _verify_route(bot_id: str, route: Mapping[str, str]) -> None:

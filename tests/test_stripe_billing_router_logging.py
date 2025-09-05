@@ -85,6 +85,18 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("STRIPE_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
+    fake_stripe = types.SimpleNamespace(
+        StripeClient=lambda api_key: types.SimpleNamespace(
+            Account=types.SimpleNamespace(
+                retrieve=lambda: {"id": "acct_1H123456789ABCDEF"}
+            )
+        ),
+        Account=types.SimpleNamespace(
+            retrieve=lambda api_key: {"id": "acct_1H123456789ABCDEF"}
+        ),
+    )
+    sys.modules["stripe"] = fake_stripe
+    sys.modules["sbrpkg.stripe"] = fake_stripe
     sbr = _load("stripe_billing_router")
     return sbr
 
