@@ -579,7 +579,8 @@ def load_previous_synergy(
 ) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
     """Return synergy history and moving averages from ``synergy_history.db``."""
 
-    path = Path(data_dir) / "synergy_history.db"
+    data_dir = Path(resolve_path(data_dir))
+    path = data_dir / "synergy_history.db"
     if not path.exists():
         return [], []
     history: list[dict[str, float]] = []
@@ -597,7 +598,11 @@ def load_previous_synergy(
             if isinstance(data, dict):
                 history.append({str(k): float(v) for k, v in data.items()})
     except Exception as exc:  # pragma: no cover - unexpected errors
-        logger.warning("failed to load synergy history %s: %s", path, exc)
+        logger.warning(
+            "failed to load synergy history %s: %s",
+            path_for_prompt(path),
+            exc,
+        )
         history = []
 
     ma_history: list[dict[str, float]] = []

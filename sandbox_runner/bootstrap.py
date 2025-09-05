@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterable
 from logging_utils import get_logger, set_correlation_id, log_record
 
 from packaging.version import Version
-from dynamic_path_router import resolve_path, repo_root
+from dynamic_path_router import resolve_path, repo_root, path_for_prompt
 
 from menace.auto_env_setup import ensure_env
 from menace.default_config_manager import DefaultConfigManager
@@ -432,7 +432,9 @@ def sandbox_health() -> dict[str, bool | dict[str, str]]:
             conn.execute("PRAGMA schema_version")
             conn.close()
         except Exception as exc:
-            logger.error("failed to access database %s: %s", db_path, exc)
+            logger.error(
+                "failed to access database %s: %s", path_for_prompt(db_path), exc
+            )
             db_errors[name] = str(exc)
 
     db_ok = not db_errors

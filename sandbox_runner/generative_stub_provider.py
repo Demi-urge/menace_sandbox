@@ -17,7 +17,7 @@ import re
 import warnings
 import uuid
 from pathlib import Path
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 from collections import Counter, OrderedDict, defaultdict
 import atexit
 import importlib
@@ -47,8 +47,6 @@ from .input_history_db import InputHistoryDB
 from sandbox_settings import SandboxSettings
 from model_registry import get_client
 from llm_interface import Prompt
-
-
 
 # Optional dependencies loaded lazily
 pipeline = None  # type: ignore
@@ -668,7 +666,9 @@ def cleanup_cache_files(config: StubProviderConfig | None = None) -> None:
         except FileNotFoundError:
             continue
         except Exception as exc:  # pragma: no cover - best effort
-            logger.debug("failed to remove cache file %s: %s", path, exc)
+            logger.debug(
+                "failed to remove cache file %s: %s", path_for_prompt(path), exc
+            )
     logger.info(
         "cleanup cache files complete", extra=log_record(event="shutdown")
     )

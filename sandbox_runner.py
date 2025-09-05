@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from db_router import init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
-from dynamic_path_router import resolve_path, repo_root
+from dynamic_path_router import resolve_path, repo_root, path_for_prompt
 
 # Initialise a router for this process with a unique menace_id so
 # ``GLOBAL_ROUTER`` becomes available to imported modules.  Import modules that
@@ -342,10 +342,10 @@ def simulate_meta_workflow(meta_spec, workflows=None, runner=None):
 # ----------------------------------------------------------------------
 def load_modified_code(code_path: str) -> str:
     path = resolve_path(code_path)
-    logger.debug("loading code from %s", path)
+    logger.debug("loading code from %s", path_for_prompt(path))
     with path.open("r", encoding="utf-8") as fh:
         content = fh.read()
-    logger.debug("loaded %d bytes from %s", len(content), path)
+    logger.debug("loaded %d bytes from %s", len(content), path_for_prompt(path))
     return content
 
 
@@ -994,7 +994,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         try:
             res_db = ROIHistoryDB(res_path)
         except Exception:
-            logger.exception("failed to load resource db: %s", res_path)
+            logger.exception(
+                "failed to load resource db: %s", path_for_prompt(res_path)
+            )
 
     pre_roi_bot = None
     if PreExecutionROIBot:
@@ -1166,7 +1168,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             if isinstance(cache_data, dict):
                 suggestion_cache = cache_data
         except Exception:
-            logger.exception("failed to load suggestion cache: %s", cache_path)
+            logger.exception(
+                "failed to load suggestion cache: %s", path_for_prompt(cache_path)
+            )
             suggestion_cache = {}
     global _SUGGESTION_DB
     suggestion_db_path = suggestion_cache.get("db", str(data_dir / "module_suggestions.db"))

@@ -417,7 +417,11 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
                     path.unlink(missing_ok=True)  # type: ignore[arg-type]
         except Exception:
             leftovers.append(str(path))
-            logger.debug("artifact cleanup failed for %s", path, exc_info=True)
+            logger.debug(
+                "artifact cleanup failed for %s",
+                path_for_prompt(path),
+                exc_info=True,
+            )
 
     cov_files: list[Path] = []
     for env_name, default in [
@@ -434,7 +438,11 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
             path.unlink(missing_ok=True)  # type: ignore[arg-type]
         except Exception:
             leftovers.append(str(path))
-            logger.debug("coverage cleanup failed for %s", path, exc_info=True)
+            logger.debug(
+                "coverage cleanup failed for %s",
+                path_for_prompt(path),
+                exc_info=True,
+            )
 
     if shutil.which("docker"):
         try:
@@ -1018,7 +1026,9 @@ def save_scenario_summary(
             json.dump(result, fh, indent=2, sort_keys=True)
     except (OSError, TypeError, ValueError) as exc:
         logger.exception(
-            "failed to save scenario summary", extra={"path": str(path)}, exc_info=exc
+            "failed to save scenario summary",
+            extra={"path": path_for_prompt(path)},
+            exc_info=exc,
         )
     return result
 
@@ -1031,7 +1041,9 @@ def load_scenario_summary() -> Dict[str, Any]:
             return json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning(
-            "failed to load scenario summary", extra={"path": str(path)}, exc_info=exc
+            "failed to load scenario summary",
+            extra={"path": path_for_prompt(path)},
+            exc_info=exc,
         )
         return {}
 
@@ -1556,7 +1568,10 @@ def _finalize_orphan(cid: str, dir_path: str | None) -> None:
         try:
             shutil.rmtree(dir_path)
         except Exception:
-            logger.exception("orphan directory removal failed for %s", dir_path)
+            logger.exception(
+                "orphan directory removal failed for %s",
+                path_for_prompt(dir_path),
+            )
 
 
 def _register_container_finalizer(container: Any) -> None:
@@ -3079,7 +3094,9 @@ def _get_dir_usage(path: str) -> int:
             try:
                 total += os.path.getsize(os.path.join(root_dir, fname))
             except OSError as exc:
-                logger.warning("size check failed for %s: %s", path, exc)
+                logger.warning(
+                    "size check failed for %s: %s", path_for_prompt(path), exc
+                )
     return total
 
 
@@ -3274,7 +3291,11 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 successes += 1
                 continue
             except OSError as exc:
-                logger.warning("cleanup retry failed", extra={"path": item}, exc_info=exc)
+                logger.warning(
+                    "cleanup retry failed",
+                    extra={"path": path_for_prompt(item)},
+                    exc_info=exc,
+                )
                 if os.name == "nt" and _rmtree_windows(item):
                     _remove_failed_cleanup(item)
                     successes += 1
@@ -4501,13 +4522,13 @@ def simulate_execution_environment(
 # ----------------------------------------------------------------------
 def generate_sandbox_report(analysis_result: Dict[str, Any], output_path: str) -> None:
     """Write ``analysis_result`` to ``output_path`` as JSON with timestamp."""
-    logger.debug("writing sandbox report to %s", output_path)
+    logger.debug("writing sandbox report to %s", path_for_prompt(output_path))
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     data = dict(analysis_result)
     data["timestamp"] = datetime.utcnow().isoformat()
     with open(output_path, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, sort_keys=True)
-    logger.debug("sandbox report written: %s", output_path)
+    logger.debug("sandbox report written: %s", path_for_prompt(output_path))
 
 
 # ----------------------------------------------------------------------
@@ -4665,7 +4686,9 @@ def _create_cgroup(cpu: Any, mem: Any) -> Path | None:
                         logger.exception("failed to remove cgroup file %s", f)
                 path.rmdir()
         except Exception as exc2:
-            logger.exception("failed to remove cgroup directory %s", path)
+            logger.exception(
+                "failed to remove cgroup directory %s", path_for_prompt(path)
+            )
         return None
 
 
@@ -5693,7 +5716,9 @@ def _load_callable(path: str | None) -> Callable[..., Any] | None:
         if callable(hook):
             return hook  # type: ignore[return-value]
     except Exception:
-        logger.exception("failed to load strategy hook: %s", path)
+        logger.exception(
+            "failed to load strategy hook: %s", path_for_prompt(path)
+        )
     return None
 
 
@@ -6962,7 +6987,7 @@ def run_repo_section_simulations(
     ):
         from sandbox_runner import scan_repo_sections
 
-        logger.info("scanning repository sections in %s", repo_path)
+        logger.info("scanning repository sections in %s", path_for_prompt(repo_path))
         sections = scan_repo_sections(repo_path, modules=modules)
         tracker = ROITracker()
         plugins = discover_metrics_plugins(os.environ)
@@ -9085,7 +9110,9 @@ def aggregate_synergy_metrics(
         try:
             tracker.load_history(str(hist_path))
         except Exception:
-            logger.exception("failed to load history %s", hist_path)
+            logger.exception(
+                "failed to load history %s", path_for_prompt(hist_path)
+            )
             continue
         vals = tracker.metrics_history.get(metric_name)
         if vals is None:

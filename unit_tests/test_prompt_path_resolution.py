@@ -2,7 +2,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from dynamic_path_router import resolve_path, path_for_prompt
+sys.modules.pop("dynamic_path_router", None)
+import dynamic_path_router as dpr  # noqa: E402
+resolve_path = dpr.resolve_path
+path_for_prompt = dpr.path_for_prompt
+clear_cache = dpr.clear_cache
 
 
 def _visual_agent_prompt(path: str) -> str:
@@ -23,3 +27,13 @@ def test_visual_agent_prompt_resolves_paths():
 def test_error_logger_prompt_resolves_paths():
     prompt = _error_logger_prompt(path_for_prompt("enhancement_bot.py"), "hint")
     assert str(resolve_path("enhancement_bot.py")) in prompt
+
+
+def test_prompt_resolves_after_repo_move(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "error_logger.py").write_text("pass", encoding="utf-8")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    clear_cache()
+    body = _visual_agent_prompt(path_for_prompt("error_logger.py"))
+    assert str(repo / "error_logger.py") in body
