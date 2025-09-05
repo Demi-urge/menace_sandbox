@@ -266,6 +266,7 @@ def call_codex_with_backoff(
                 time.sleep(delay)
     raise RetryError(str(last_exc)) from last_exc
 
+
 class SelfCodingEngine:
     """Generate new helper code based on existing snippets."""
 
@@ -1287,8 +1288,10 @@ class SelfCodingEngine:
 
         result = LLMResult()
         try:
-            result = call_codex_with_backoff(
-                self.llm_client, prompt_obj, logger=self.logger
+            result = retry_with_backoff(
+                lambda: self.llm_client.generate(prompt_obj),
+                delays=[2, 5, 10],
+                logger=self.logger,
             )
         except RetryError as exc:
             self._last_retry_trace = str(exc)
@@ -1296,17 +1299,14 @@ class SelfCodingEngine:
                 "llm generation failed after retries; simplifying prompt",
                 extra={"description": description},
             )
-            simple_prompt = Prompt(
+            prompt_obj = Prompt(
                 prompt_obj.text,
                 system="",
-                examples=prompt_obj.examples[:1],
+                examples=[],
                 metadata=getattr(prompt_obj, "metadata", {}),
             )
-            prompt_obj = simple_prompt
             try:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(self.llm_client.generate, simple_prompt)
-                    result = future.result(timeout=30.0)
+                result = self.llm_client.generate(prompt_obj)
             except Exception as exc:
                 self._last_retry_trace = str(exc)
                 result = LLMResult(raw=str(exc))

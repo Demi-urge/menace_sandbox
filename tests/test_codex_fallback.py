@@ -88,8 +88,9 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
 
     call_delays = []
 
-    def fake_retry(func, *, attempts, delays, logger=None):
-        call_delays.append(delays)
+    def fake_retry(func, *, delays, attempts=None, logger=None, **_kw):
+        call_delays.append(list(delays))
+        attempts = attempts or len(delays)
         for _ in range(attempts):
             try:
                 return func()
@@ -106,7 +107,7 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
     assert mock_llm.generate.call_count == 4
     simple_prompt = mock_llm.generate.call_args_list[-1].args[0]
     assert simple_prompt.system == ""
-    assert simple_prompt.examples == ["ex1"]
+    assert simple_prompt.examples == []
     handle_mock.assert_called_once()
     assert result == "print('hi')\n"
 

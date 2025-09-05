@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import time
 import threading
 import logging
-from typing import Callable, Iterable, Type, TypeVar, Any
+from typing import Callable, Iterable, Type, TypeVar
 
 
 class ResilienceError(Exception):
@@ -36,13 +36,25 @@ def retry_with_backoff(
     exceptions: Iterable[Type[BaseException]] | Type[BaseException] = Exception,
     logger: logging.Logger | None = None,
     max_delay: float = 60.0,
+    delays: Iterable[float] | None = None,
 ) -> T:
-    """Call ``func`` with retries using exponential backoff."""
+    """Call ``func`` with retries using exponential or explicit backoff.
+
+    When ``delays`` is provided it specifies the exact sleep durations between
+    attempts.  Otherwise exponential backoff starting at ``delay`` is used.
+    """
     if isinstance(exceptions, type):
         exc_types: tuple[Type[BaseException], ...] = (exceptions,)
     else:
         exc_types = tuple(exceptions)
-    backoff = delay
+
+    if delays is not None:
+        schedule = list(delays)
+        attempts = len(schedule)
+    else:
+        schedule = []
+        backoff = delay
+
     for i in range(attempts):
         try:
             return func()
@@ -51,8 +63,11 @@ def retry_with_backoff(
                 raise RetryError(str(exc)) from exc
             log = logger or logging
             log.warning("retry %s/%s after error: %s", i + 1, attempts, exc)
-            time.sleep(backoff)
-            backoff = min(backoff * 2, max_delay)
+            if delays is not None:
+                time.sleep(schedule[i])
+            else:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, max_delay)
     raise RetryError("exhausted retries without success")
 
 

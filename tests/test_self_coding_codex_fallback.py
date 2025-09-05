@@ -98,8 +98,9 @@ def test_empty_output_triggers_fallback(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
     seen_delays: list[list[int]] = []
 
-    def fake_retry(func, *, attempts, delays, logger=None):
-        seen_delays.append(delays)
+    def fake_retry(func, *, delays, attempts=None, logger=None, **_kw):
+        seen_delays.append(list(delays))
+        attempts = attempts or len(delays)
         for i in range(attempts):
             try:
                 return func()
@@ -142,8 +143,9 @@ def test_malformed_output_triggers_fallback(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
     seen_delays: list[list[int]] = []
 
-    def fake_retry(func, *, attempts, delays, logger=None):
-        seen_delays.append(delays)
+    def fake_retry(func, *, delays, attempts=None, logger=None, **_kw):
+        seen_delays.append(list(delays))
+        attempts = attempts or len(delays)
         for i in range(attempts):
             try:
                 return func()
