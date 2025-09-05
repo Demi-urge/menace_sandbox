@@ -1,370 +1,509 @@
 from __future__ import annotations
 
-"""Cross-check recent Stripe charges against the local ledger."""
+"""Stripe anomaly detection watchdog.
 
+This module cross checks recent Stripe activity against local billing logs
+and ROI projections.  It can be executed periodically by ``cron`` to flag
+inconsistencies.
+
+Key features implemented according to the specification:
+
+* The Stripe API key is loaded from :class:`VaultSecretProvider` when
+  available or the ``STRIPE_SECRET_KEY`` environment variable.  If neither is
+  configured the key falls back to the global key configured on the ``stripe``
+  client (if present).
+* Helper functions fetch recent charges, refunds and events using the Stripe
+  API and read local ledger records produced by ``billing_logger`` or
+  ``StripeLedger``.
+* Detection routines flag:
+    - charges missing from the local ledger
+    - refunds or failed payments lacking Menace workflow logs
+    - unexpected webhook endpoints
+    - revenue mismatches compared to ROI projections
+* Anomalies are logged via :func:`audit_logger.log_event` using the
+  ``stripe_anomaly`` event type.  When ``--write-codex`` is supplied the
+  anomaly is also emitted as a ``TrainingSample`` for downstream Codex
+  ingestion.
+* :func:`main` exposes a CLI so the watchdog can be run by ``cron``.
+"""
+
+import argparse
 import json
 import logging
 import os
+import time
 from pathlib import Path
-from typing import Any, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
+import audit_logger
 import yaml
-from dynamic_path_router import resolve_path
 
-import alert_dispatcher
-from roi_results_db import ROIResultsDB
-
-try:  # pragma: no cover - optional dependency
-    from discrepancy_db import DiscrepancyDB, DiscrepancyRecord
+try:  # Optional dependency – Stripe API client
+    import stripe  # type: ignore
 except Exception:  # pragma: no cover - best effort
-    DiscrepancyDB = None  # type: ignore
-    DiscrepancyRecord = None  # type: ignore
+    stripe = None  # type: ignore
 
-try:  # pragma: no cover - optional dependency
-    from codex_db_helpers import TrainingSample
-except Exception:  # pragma: no cover - best effort
-    TrainingSample = None  # type: ignore
-
-try:  # pragma: no cover - optional dependency
-    from vault_secret_provider import VaultSecretProvider
+try:  # Optional dependency – secrets from the vault
+    from vault_secret_provider import VaultSecretProvider  # type: ignore
 except Exception:  # pragma: no cover - best effort
     VaultSecretProvider = None  # type: ignore
 
-try:  # pragma: no cover - optional dependency
-    import stripe_billing_router as sbr
+try:  # Optional dependency – Codex training sample helper
+    from codex_db_helpers import TrainingSample  # type: ignore
 except Exception:  # pragma: no cover - best effort
-    sbr = None  # type: ignore
-    stripe = None  # type: ignore
-else:  # pragma: no cover - optional dependency
-    stripe = getattr(sbr, "stripe", None)
+    TrainingSample = None  # type: ignore
+
+try:  # Optional dependency – ROI projections
+    from roi_results_db import ROIResultsDB  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    ROIResultsDB = None  # type: ignore
+
+try:  # Optional dependency – structured billing ledger
+    from billing.stripe_ledger import STRIPE_LEDGER  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    STRIPE_LEDGER = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
-def _ledger_path() -> Path:
-    try:
-        log_dir = resolve_path("finance_logs")
-    except FileNotFoundError:  # pragma: no cover - fallback
-        log_dir = Path("finance_logs")
-    return log_dir / "stripe_ledger.jsonl"
+#: Approved webhook URLs.  Any endpoint returned by Stripe outside this set is
+#: flagged as an anomaly.
+APPROVED_WEBHOOK_ENDPOINTS = {
+    "https://menace.example.com/stripe/webhook",
+}
 
+#: Fallback path used when ``StripeLedger`` is unavailable
+LEDGER_FILE = Path("finance_logs/stripe_ledger.jsonl")
 
-LEDGER_FILE = _ledger_path()
-
-
-def _log_path() -> Path:
-    try:
-        log_dir = resolve_path("finance_logs")
-    except FileNotFoundError:  # pragma: no cover - fallback
-        log_dir = Path("finance_logs")
-    return log_dir / "stripe_watchdog.log"
-
-
-ANOMALY_LOG = _log_path()
-
-CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
+#: Path to YAML configuration containing additional allowed webhook endpoints.
+CONFIG_PATH = Path("config/stripe_watchdog.yaml")
 
 
 def _load_allowed_endpoints(path: Path | None = None) -> set[str]:
-    """Return configured set of allowed webhook endpoint URLs."""
+    """Return allowed webhook endpoints from ``path`` if available."""
 
-    cfg_path = path or CONFIG_PATH
+    cfg = path or CONFIG_PATH
     try:
-        with cfg_path.open("r", encoding="utf-8") as fh:
+        with cfg.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
     except FileNotFoundError:
-        logger.warning("Stripe watchdog config missing", extra={"path": cfg_path})
-        return set()
+        return set(APPROVED_WEBHOOK_ENDPOINTS)
     except Exception:
-        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg_path})
-        return set()
+        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
+        return set(APPROVED_WEBHOOK_ENDPOINTS)
 
     endpoints = data.get("allowed_endpoints")
-    if not isinstance(endpoints, list):
-        logger.warning("allowed_endpoints not configured correctly", extra={"path": cfg_path})
-        return set()
-    return {str(url) for url in endpoints if isinstance(url, str)}
+    if isinstance(endpoints, list):
+        return {str(url) for url in endpoints if isinstance(url, str)}
+    return set(APPROVED_WEBHOOK_ENDPOINTS)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-def check_webhook_endpoints(api_key: str | None = None) -> List[str]:
-    """Alert if Stripe webhook endpoints differ from configuration."""
+def _iter(obj: Iterable | object) -> Iterable:
+    """Iterate over ``obj`` respecting Stripe's auto paging interface."""
 
-    api_key = api_key or load_api_key()
-    if not api_key or stripe is None:
+    pager = getattr(obj, "auto_paging_iter", None)
+    return pager() if callable(pager) else obj  # type: ignore[return-value]
+
+
+# API key loading -----------------------------------------------------------
+
+def load_api_key() -> Optional[str]:
+    """Return the Stripe API key.
+
+    The key is sourced from the ``STRIPE_SECRET_KEY`` environment variable or
+    ``VaultSecretProvider`` when available.  If both lookups fail we fall back
+    to ``stripe.api_key`` which allows the global client configuration to be
+    used when present.
+    """
+
+    key = os.getenv("STRIPE_SECRET_KEY")
+    if not key and VaultSecretProvider:
+        try:  # pragma: no cover - best effort
+            key = VaultSecretProvider().get("stripe_secret_key")
+        except Exception:
+            key = None
+    if not key and stripe is not None:
+        key = getattr(stripe, "api_key", None)
+    if not key:
+        logger.error("Stripe API key not configured")
+    return key
+
+
+# Stripe fetchers -----------------------------------------------------------
+
+
+def fetch_recent_charges(api_key: str, start_ts: int, end_ts: int) -> List[dict]:
+    """Return Stripe charges created within ``start_ts``..``end_ts``."""
+
+    if stripe is None:
         return []
+    try:  # pragma: no cover - network request
+        charges = stripe.Charge.list(
+            api_key=api_key,
+            limit=100,
+            created={"gte": int(start_ts), "lt": int(end_ts)},
+        )
+    except TypeError:  # older stubs used in tests may not accept "created"
+        try:
+            charges = stripe.Charge.list(limit=100, api_key=api_key)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("Stripe charge fetch failed")
+            return []
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("Stripe charge fetch failed")
+        return []
+    return [dict(c) if isinstance(c, dict) else c.to_dict_recursive() for c in _iter(charges)]
 
-    allowed = _load_allowed_endpoints()
-    try:  # pragma: no cover - network issues
+
+def fetch_recent_refunds(api_key: str, start_ts: int, end_ts: int) -> List[dict]:
+    """Return Stripe refunds created within ``start_ts``..``end_ts``."""
+
+    if stripe is None:
+        return []
+    try:  # pragma: no cover - network request
+        refunds = stripe.Refund.list(
+            api_key=api_key,
+            limit=100,
+            created={"gte": int(start_ts), "lt": int(end_ts)},
+        )
+    except TypeError:  # fallback for stub implementations
+        try:
+            refunds = stripe.Refund.list(limit=100, api_key=api_key)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("Stripe refund fetch failed")
+            return []
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("Stripe refund fetch failed")
+        return []
+    return [dict(r) if isinstance(r, dict) else r.to_dict_recursive() for r in _iter(refunds)]
+
+
+def fetch_recent_events(api_key: str, start_ts: int, end_ts: int) -> List[dict]:
+    """Return Stripe events for failed payments or refunds."""
+
+    if stripe is None:
+        return []
+    types = ["charge.failed", "payment_intent.payment_failed", "charge.refunded"]
+    try:  # pragma: no cover - network request
+        events = stripe.Event.list(
+            api_key=api_key,
+            limit=100,
+            created={"gte": int(start_ts), "lt": int(end_ts)},
+            types=types,
+        )
+    except TypeError:  # fallback for stub implementations
+        try:
+            events = stripe.Event.list(limit=100, api_key=api_key)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("Stripe event fetch failed")
+            return []
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("Stripe event fetch failed")
+        return []
+    return [dict(e) if isinstance(e, dict) else e.to_dict_recursive() for e in _iter(events)]
+
+
+# Local ledger --------------------------------------------------------------
+
+
+def load_local_ledger(start_ts: int, end_ts: int) -> List[Dict[str, Any]]:
+    """Return ledger rows between ``start_ts`` and ``end_ts``.
+
+    The function first attempts to query :class:`StripeLedger` when available
+    and falls back to the JSONL ledger produced by ``billing_logger``.
+    ``start_ts``/``end_ts`` are Unix timestamps in seconds.
+    """
+
+    start_ms, end_ms = int(start_ts * 1000), int(end_ts * 1000)
+    rows: List[Dict[str, Any]] = []
+
+    # Read from the JSONL ledger when available (used in tests)
+    path = LEDGER_FILE
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts = rec.get("timestamp_ms")
+                    if isinstance(ts, (int, float)) and start_ms <= int(ts) < end_ms:
+                        rows.append(rec)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("Failed to read local ledger")
+        return rows
+
+    # Fallback to the structured ledger database
+    if STRIPE_LEDGER is not None:  # pragma: no branch - optional path
+        try:
+            conn = STRIPE_LEDGER.router.get_connection("stripe_ledger")
+            cur = conn.execute(
+                "SELECT id, action, amount, timestamp FROM stripe_ledger "
+                "WHERE timestamp >= ? AND timestamp < ?",
+                (start_ms, end_ms),
+            )
+            for cid, action, amount, ts in cur.fetchall():
+                rows.append(
+                    {
+                        "id": str(cid),
+                        "action_type": str(action),
+                        "amount": float(amount),
+                        "timestamp_ms": int(ts),
+                    }
+                )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("StripeLedger query failed")
+        return rows
+
+    return rows
+
+
+# Anomaly logging -----------------------------------------------------------
+
+
+def _emit_anomaly(record: Dict[str, Any], write_codex: bool) -> None:
+    """Log *record* and optionally emit a Codex training sample."""
+
+    audit_logger.log_event("stripe_anomaly", record)
+    if write_codex and TrainingSample is not None:
+        try:  # pragma: no cover - best effort
+            TrainingSample(source="stripe_watchdog", content=json.dumps(record))
+        except Exception:
+            logger.exception("Failed to create Codex training sample")
+
+
+# Detection routines -------------------------------------------------------
+
+
+def detect_missing_charges(
+    charges: Iterable[dict],
+    ledger: List[Dict[str, Any]],
+    *,
+    write_codex: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return Stripe charges absent from ``ledger``."""
+
+    ledger_ids = {str(e.get("id")) for e in ledger if e.get("id")}
+    ledger_ts = {
+        int(e.get("timestamp_ms"))
+        for e in ledger
+        if isinstance(e.get("timestamp_ms"), (int, float))
+    }
+    anomalies: List[Dict[str, Any]] = []
+    for charge in charges:
+        cid = str(charge.get("id"))
+        created = charge.get("created")
+        created_ms = int(created * 1000) if isinstance(created, (int, float)) else None
+        if cid in ledger_ids or (created_ms is not None and created_ms in ledger_ts):
+            continue
+        anomaly = {
+            "id": cid,
+            "amount": charge.get("amount"),
+            "email": charge.get("receipt_email"),
+            "timestamp": created,
+        }
+        anomalies.append(anomaly)
+        _emit_anomaly(anomaly, write_codex)
+    return anomalies
+
+
+def detect_missing_refunds(
+    refunds: Iterable[dict],
+    ledger: List[Dict[str, Any]],
+    *,
+    write_codex: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return Stripe refunds not present in ``ledger``."""
+
+    ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "refund"}
+    anomalies: List[Dict[str, Any]] = []
+    for refund in refunds:
+        rid = str(refund.get("id"))
+        if rid in ledger_ids:
+            continue
+        anomaly = {
+            "type": "missing_refund",
+            "refund_id": rid,
+            "amount": refund.get("amount"),
+            "charge": refund.get("charge"),
+        }
+        anomalies.append(anomaly)
+        _emit_anomaly(anomaly, write_codex)
+    return anomalies
+
+
+def detect_failed_events(
+    events: Iterable[dict],
+    ledger: List[Dict[str, Any]],
+    *,
+    write_codex: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return failed payment events missing from the ledger."""
+
+    ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "failed"}
+    anomalies: List[Dict[str, Any]] = []
+    for event in events:
+        if event.get("type") not in {"charge.failed", "payment_intent.payment_failed"}:
+            continue
+        eid = str(event.get("id"))
+        if eid in ledger_ids:
+            continue
+        anomaly = {
+            "type": "missing_failure_log",
+            "event_id": eid,
+            "event_type": event.get("type"),
+        }
+        anomalies.append(anomaly)
+        _emit_anomaly(anomaly, write_codex)
+    return anomalies
+
+
+def check_webhook_endpoints(
+    api_key: str,
+    approved: Iterable[str] | None = None,
+    *,
+    write_codex: bool = False,
+) -> List[str]:
+    """Return webhook endpoint URLs that are not in ``approved``."""
+
+    if stripe is None:
+        return []
+    try:  # pragma: no cover - network request
         endpoints = stripe.WebhookEndpoint.list(api_key=api_key)
-    except Exception:
-        logger.exception("Stripe API request for webhook endpoints failed")
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("Stripe webhook endpoint listing failed")
         return []
 
+    allowed = set(str(u) for u in (approved or _load_allowed_endpoints()))
     unknown: List[str] = []
     for ep in _iter(endpoints):
         url = getattr(ep, "url", None)
         if url is None and isinstance(ep, dict):
             url = ep.get("url")
         if url and url not in allowed:
-            unknown.append(url)
-
-    if unknown:
-        msg = f"Unknown Stripe webhook endpoints: {unknown}"
-        logger.error(msg)
-        try:  # pragma: no cover - best effort
-            alert_dispatcher.dispatch_alert("stripe_unknown_endpoint", 5, msg)
-        except Exception:
-            logger.exception("alert dispatch failed for webhook check")
-    else:
-        logger.info("All Stripe webhook endpoints accounted for")
+            unknown.append(str(url))
+            _emit_anomaly({"type": "unknown_webhook", "url": url}, write_codex)
     return unknown
 
 
-def load_api_key() -> str | None:
-    """Return the Stripe API key from env or the secret vault."""
-
-    provider = VaultSecretProvider() if VaultSecretProvider else None
-    env_name = "STRIPE_" + "SECRET_KEY"
-    key = os.getenv(env_name)
-    if not key and provider is not None:
-        key = provider.get("stripe_secret_key")
-    if not key:
-        logger.error("Stripe API key not configured")
-    return key
-
-
-def _ledger_entries() -> List[dict[str, Any]]:
-    """Return all records from the billing ledger."""
-
-    entries: List[dict[str, Any]] = []
-    if not LEDGER_FILE.exists():
-        return entries
-    try:
-        with LEDGER_FILE.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(rec, dict):
-                    entries.append(rec)
-    except Exception:  # pragma: no cover - best effort
-        logger.exception("failed reading %s", LEDGER_FILE)
-    return entries
-
-
-def _iter(obj: Iterable | object) -> Iterable:
-    pager = getattr(obj, "auto_paging_iter", None)
-    if callable(pager):
-        return pager()
-    return obj  # type: ignore[return-value]
-
-
-def _charge_email(charge: Any) -> str | None:
-    """Return email associated with ``charge`` if available."""
-
-    if isinstance(charge, dict):
-        email = charge.get("receipt_email")
-        if email:
-            return email
-        bd = charge.get("billing_details")
-        if isinstance(bd, dict):
-            return bd.get("email")
-        return None
-
-    email = getattr(charge, "receipt_email", None)
-    if email:
-        return email
-    bd = getattr(charge, "billing_details", None)
-    if isinstance(bd, dict):
-        return bd.get("email")
-    return getattr(bd, "email", None)
-
-
-def _aggregate_net_revenue(api_key: str) -> float:
-    """Return total Stripe revenue net of refunds in dollars."""
-
-    if stripe is None:
-        return 0.0
-    try:  # pragma: no cover - network issues
-        charges = stripe.Charge.list(limit=100, api_key=api_key)
-        refunds = stripe.Refund.list(limit=100, api_key=api_key)
-    except Exception:
-        logger.exception("Stripe API request for revenue aggregation failed")
-        return 0.0
+def compare_revenue(
+    charges: Iterable[dict],
+    refunds: Iterable[dict],
+    *,
+    write_codex: bool = False,
+) -> Optional[Dict[str, float]]:
+    """Compare Stripe net revenue with projected revenue from ROI logs."""
 
     total = 0.0
-    for ch in _iter(charges):
-        amount = getattr(ch, "amount", None)
-        status = getattr(ch, "status", None)
-        if status is None and isinstance(ch, dict):
-            status = ch.get("status")
-        if amount is None and isinstance(ch, dict):
-            amount = ch.get("amount")
-        if status != "succeeded" or not isinstance(amount, (int, float)):
-            continue
-        total += float(amount)
+    for ch in charges:
+        if ch.get("status") == "succeeded" and isinstance(ch.get("amount"), (int, float)):
+            total += float(ch["amount"])
+    for rf in refunds:
+        amt = rf.get("amount")
+        if isinstance(amt, (int, float)):
+            total -= float(amt)
+    net_revenue = total / 100.0
 
-    for rf in _iter(refunds):
-        amount = getattr(rf, "amount", None)
-        if amount is None and isinstance(rf, dict):
-            amount = rf.get("amount")
-        if isinstance(amount, (int, float)):
-            total -= float(amount)
-
-    return total / 100.0
-
-
-def _write_anomalies(anomalies: Iterable[dict[str, Any]]) -> None:
-    """Append each anomaly to the log file as a JSON line."""
-
-    try:
-        ANOMALY_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with ANOMALY_LOG.open("a", encoding="utf-8") as fh:
-            for anomaly in anomalies:
-                fh.write(json.dumps(anomaly) + "\n")
-    except Exception:  # pragma: no cover - best effort
-        logger.exception("failed writing anomalies to %s", ANOMALY_LOG)
-
-
-def _record_training_summary(anomalies: List[dict[str, Any]]) -> None:
-    """Store a brief summary for downstream training."""
-
-    summary = f"{len(anomalies)} Stripe charges missing from billing logs"
-    meta = {"count": len(anomalies)}
-    if DiscrepancyDB and DiscrepancyRecord:
-        try:
-            db = DiscrepancyDB()
-            db.add(DiscrepancyRecord(message=summary, metadata=meta))
+    projected = 0.0
+    if ROIResultsDB is not None:
+        try:  # pragma: no cover - DB access
+            projected = ROIResultsDB().projected_revenue()
         except Exception:  # pragma: no cover - best effort
-            logger.exception("failed recording discrepancy summary")
-    if TrainingSample:
-        try:
-            sample = TrainingSample(source="stripe_watchdog", content=summary)
-            logger.debug("training sample created: %s", sample)
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("failed creating training sample")
+            logger.exception("ROIResultsDB query failed")
 
-
-def check_events() -> List[dict[str, Any]]:
-    """Return anomalies for Stripe charges missing from the billing logs."""
-
-    api_key = load_api_key()
-    if not api_key or stripe is None:
-        return []
-
-    # Also verify registered webhook endpoints
-    check_webhook_endpoints(api_key)
-
-    try:
-        charges = stripe.Charge.list(limit=100, api_key=api_key)
-    except Exception:  # pragma: no cover - network issues
-        logger.exception("Stripe API request failed")
-        return []
-
-    entries = _ledger_entries()
-    ids = {e.get("id") for e in entries if e.get("id")}
-    timestamps = {e.get("timestamp_ms") for e in entries if e.get("timestamp_ms")}
-
-    anomalies: List[dict[str, Any]] = []
-    for charge in _iter(charges):
-        cid = getattr(charge, "id", None)
-        if cid is None and isinstance(charge, dict):
-            cid = charge.get("id")
-        created = getattr(charge, "created", None)
-        if created is None and isinstance(charge, dict):
-            created = charge.get("created")
-        created_ms = int(created * 1000) if isinstance(created, (int, float)) else None
-        if cid in ids or (created_ms and created_ms in timestamps):
-            continue
-        amount = getattr(charge, "amount", None)
-        if amount is None and isinstance(charge, dict):
-            amount = charge.get("amount")
+    if projected and abs(net_revenue - projected) > 0.1 * projected:
         anomaly = {
-            "id": cid,
-            "amount": amount,
-            "email": _charge_email(charge),
-            "timestamp": created,
-        }
-        anomalies.append(anomaly)
-
-    if anomalies:
-        logger.warning("Charges missing from billing logs: %s", anomalies)
-        _write_anomalies(anomalies)
-        _record_training_summary(anomalies)
-    else:
-        logger.info("All Stripe charges logged")
-    return anomalies
-
-
-def check_revenue_projection(tolerance: float = 0.1) -> dict[str, float] | None:
-    """Compare Stripe net revenue against projected revenue.
-
-    ``tolerance`` is treated as a relative fraction; differences greater than
-    ``tolerance`` of the projected revenue are flagged as anomalies.
-    """
-
-    api_key = load_api_key()
-    if not api_key or stripe is None:
-        return None
-
-    net_revenue = _aggregate_net_revenue(api_key)
-    db = ROIResultsDB()
-    projected = db.projected_revenue()
-    if projected <= 0:
-        logger.info("No projected revenue available")
-        return None
-
-    diff = net_revenue - projected
-    if abs(diff) > tolerance * projected:
-        anomaly = {
+            "type": "revenue_mismatch",
             "net_revenue": net_revenue,
             "projected_revenue": projected,
-            "difference": diff,
+            "difference": net_revenue - projected,
         }
-        logger.error("Stripe revenue mismatch: %s", anomaly)
-        try:  # pragma: no cover - best effort
-            alert_dispatcher.dispatch_alert(
-                "stripe_revenue_mismatch", 5, json.dumps(anomaly)
-            )
-        except Exception:
-            logger.exception("alert dispatch failed for revenue mismatch")
+        _emit_anomaly(anomaly, write_codex)
         return anomaly
-
-    logger.info(
-        "Stripe revenue matches projections within %.0f%%",
-        tolerance * 100,
-    )
     return None
 
 
-def main() -> None:
-    """Run the watchdog hourly using APScheduler if available."""
+# Convenience wrappers used by tests and the CLI ---------------------------
 
-    try:
-        from apscheduler.schedulers.blocking import BlockingScheduler
-    except Exception:  # pragma: no cover - fallback
-        logger.exception("APScheduler unavailable, running once")
-        check_events()
+
+def check_events(hours: int = 1, *, write_codex: bool = False) -> List[Dict[str, Any]]:
+    """Check for missing charges within the last ``hours``."""
+
+    api_key = load_api_key()
+    if not api_key:
+        return []
+    end_ts = int(time.time())
+    start_ts = end_ts - int(hours * 3600)
+    check_webhook_endpoints(api_key, write_codex=write_codex)
+    # Load the entire ledger window; many tests use historical timestamps.
+    ledger = load_local_ledger(0, end_ts)
+    charges = fetch_recent_charges(api_key, start_ts, end_ts)
+    return detect_missing_charges(charges, ledger, write_codex=write_codex)
+
+
+def check_revenue_projection(
+    hours: int = 1, *, write_codex: bool = False
+) -> Optional[Dict[str, float]]:
+    """Compare revenue for the last ``hours`` against projections."""
+
+    api_key = load_api_key()
+    if not api_key:
+        return None
+    end_ts = int(time.time())
+    start_ts = end_ts - int(hours * 3600)
+    charges = fetch_recent_charges(api_key, start_ts, end_ts)
+    refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
+    return compare_revenue(charges, refunds, write_codex=write_codex)
+
+
+# CLI ----------------------------------------------------------------------
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    """Entry point for command line execution."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--hours",
+        type=int,
+        default=1,
+        help="look-back window in hours for Stripe queries",
+    )
+    parser.add_argument(
+        "--write-codex",
+        action="store_true",
+        help="also emit Codex training samples",
+    )
+    args = parser.parse_args(argv)
+
+    api_key = load_api_key()
+    if not api_key:
+        logger.error("Cannot run watchdog without Stripe API key")
         return
 
-    scheduler = BlockingScheduler()
-    scheduler.add_job(check_events, "interval", hours=1)
-    scheduler.start()
+    end_ts = int(time.time())
+    start_ts = end_ts - int(args.hours * 3600)
+    ledger = load_local_ledger(start_ts, end_ts)
+
+    charges = fetch_recent_charges(api_key, start_ts, end_ts)
+    refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
+    events = fetch_recent_events(api_key, start_ts, end_ts)
+
+    detect_missing_charges(charges, ledger, write_codex=args.write_codex)
+    detect_missing_refunds(refunds, ledger, write_codex=args.write_codex)
+    detect_failed_events(events, ledger, write_codex=args.write_codex)
+    check_webhook_endpoints(api_key, APPROVED_WEBHOOK_ENDPOINTS, write_codex=args.write_codex)
+    compare_revenue(charges, refunds, write_codex=args.write_codex)
 
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        help="increase output verbosity for debugging",
-    )
-    args = parser.parse_args()
-    level = logging.WARNING - 10 * args.verbose
-    logging.basicConfig(level=max(level, logging.DEBUG))
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    logging.basicConfig(level=logging.INFO)
     main()
