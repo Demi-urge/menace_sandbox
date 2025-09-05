@@ -17,7 +17,7 @@ billing ledger and alerts on discrepancies.
 
 Set the following environment variables before execution:
 
-- `STRIPE_SECRET_KEY` – Stripe API key used to fetch events.
+- `STRIPE\_SECRET_KEY` – Stripe API key used to fetch events.
 - `STRIPE_ALLOWED_WEBHOOKS` *(optional)* – comma-separated list of additional
   authorized webhook endpoints.
 
@@ -36,36 +36,22 @@ authorized_webhooks:
 
 Endpoints not listed here will trigger an alert.
 
-## Systemd service
+## Systemd timer
 
-To run the watchdog as a background service create a unit file such as:
+The repository includes `systemd/stripe_watchdog.service` and `systemd/stripe_watchdog.timer` which execute the watchdog hourly. Install and enable the timer with:
 
-```
-[Unit]
-Description=Stripe Watchdog
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/path/to/repo
-Environment=STRIPE_SECRET_KEY=sk_live_yourkey
-ExecStart=/usr/bin/python stripe_watchdog.py
-Restart=on-failure
-StandardOutput=append:/path/to/repo/finance_logs/stripe_watchdog.log
-StandardError=append:/path/to/repo/finance_logs/stripe_watchdog.log
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo cp systemd/stripe_watchdog.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now stripe_watchdog.timer
 ```
 
-## Cron scheduling
+## Cron fallback
 
-The watchdog can run continuously via APScheduler, or it may be scheduled
-with cron. To run hourly using cron:
+If systemd is unavailable, an example installer adds a comparable cron job:
 
+```bash
+bash scripts/install_stripe_watchdog_cron.sh
 ```
-0 * * * * cd /path/to/repo && STRIPE_SECRET_KEY=sk_live_yourkey python stripe_watchdog.py >> finance_logs/stripe_watchdog.log 2>&1
-```
 
-This command invokes the watchdog every hour and logs output for later
-inspection.
+The script registers an hourly cron entry running `stripe_watchdog.py`.
