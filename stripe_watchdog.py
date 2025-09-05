@@ -146,7 +146,8 @@ def _sanity_feedback_enabled(path: Path | None = None) -> bool:
 
 SANITY_LAYER_FEEDBACK_ENABLED = _sanity_feedback_enabled()
 
-BILLING_EVENT_INSTRUCTION = (
+# Generic instruction used when no specific guidance exists for an event type.
+DEFAULT_BILLING_EVENT_INSTRUCTION = (
     "Avoid generating bots that issue Stripe charges without logging through billing_logger."
 )
 
@@ -552,7 +553,7 @@ def _emit_anomaly(
         payment_meta.setdefault("reason", record.get("type"))
         event_type = record.get("type", "unknown")
         instruction = menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS.get(
-            event_type, BILLING_EVENT_INSTRUCTION
+            event_type, DEFAULT_BILLING_EVENT_INSTRUCTION
         )
         menace_sanity_layer.record_payment_anomaly(
             event_type,
@@ -1127,11 +1128,11 @@ def check_events(
             metadata["stripe_account"] = account_id
             if SANITY_LAYER_FEEDBACK_ENABLED:
                 try:
-                    record_billing_event(
-                        anomaly.get("type", "unknown"),
-                        metadata,
-                        BILLING_EVENT_INSTRUCTION,
+                    event_type = anomaly.get("type", "unknown")
+                    instruction = menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS.get(
+                        event_type, DEFAULT_BILLING_EVENT_INSTRUCTION
                     )
+                    record_billing_event(event_type, metadata, instruction)
                 except Exception:
                     logger.exception(
                         "failed to record billing event", extra={"anomaly": anomaly}
