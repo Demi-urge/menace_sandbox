@@ -88,27 +88,36 @@ class PromptStrategyManager:
         return selector(ordered)
 
     # ------------------------------------------------------------------
-    def record_failure(
-        self, strategy: str | None = None, failure_reason: str | None = None
+    def ingest(
+        self,
+        strategy: str | None = None,
+        failure_reason: str | None = None,
+        roi_delta: float | None = None,
     ) -> str | None:
-        """Record a failure and return the next strategy to try.
+        """Ingest sandbox metrics for ``strategy``.
 
         Parameters
         ----------
         strategy:
-            The strategy that failed.  Defaults to the current strategy.
+            The strategy that was executed.  Defaults to the current strategy.
         failure_reason:
-            Optional text describing why the attempt failed.  When a keyword
-            from :attr:`keyword_map` is found the corresponding strategy is
-            selected immediately.  Otherwise the strategy with the best
-            recorded ROI is chosen.
+            Optional description of why the attempt failed.
+        roi_delta:
+            Change in ROI produced by the attempt.
+        Returns
+        -------
+        str | None
+            Strategy explicitly selected via keyword mapping, if any.
         """
 
         if not self.strategies:
             return None
         if strategy is None:
             strategy = self.strategies[self.index]
-        self.failure_counts[strategy] = self.failure_counts.get(strategy, 0) + 1
+        roi = float(roi_delta or 0.0)
+        success = failure_reason is None and roi >= 0
+        if not success:
+            self.failure_counts[strategy] = self.failure_counts.get(strategy, 0) + 1
         if failure_reason:
             reason_l = failure_reason.lower()
             for key, strat in self.keyword_map.items():
@@ -116,33 +125,44 @@ class PromptStrategyManager:
                     self.index = self.strategies.index(strat)
                     self._save_state()
                     return strat
+        self.update(strategy, roi, success)
+        return None
 
-        # ROI-based fallback
-        pool = [s for s in self.strategies if s != strategy]
+    # ------------------------------------------------------------------
+    def next(self) -> str | None:
+        """Return the highest scoring strategy based on current stats."""
+
+        if not self.strategies:
+            return None
+        pool = [
+            s
+            for s in self.strategies
+            if self.failure_counts.get(s, 0) < self.failure_limits.get(s, 1)
+        ]
         try:
             best = self.best_strategy(pool) if pool else None
         except Exception:  # pragma: no cover - guard against missing deps
             best = None
         if best:
             self.index = self.strategies.index(best)
-            self._save_state()
-            return best
-
-        # Sequential rotation if ROI stats unavailable
-        limit = self.failure_limits.get(strategy, 1)
-        if self.failure_counts.get(strategy, 0) >= limit:
-            try:
-                idx = self.strategies.index(strategy)
-            except ValueError:
-                idx = self.index
-            self.index = (idx + 1) % len(self.strategies)
         else:
-            try:
-                self.index = self.strategies.index(strategy)
-            except ValueError:
-                pass
+            current = self.strategies[self.index]
+            limit = self.failure_limits.get(current, 1)
+            if self.failure_counts.get(current, 0) >= limit:
+                self.index = (self.index + 1) % len(self.strategies)
         self._save_state()
         return self.strategies[self.index]
+
+    # ------------------------------------------------------------------
+    def record_failure(
+        self, strategy: str | None = None, failure_reason: str | None = None
+    ) -> str | None:
+        """Backward compatible failure recording helper."""
+
+        forced = self.ingest(strategy=strategy, failure_reason=failure_reason, roi_delta=-1.0)
+        if forced:
+            return forced
+        return self.next()
 
     # ------------------------------------------------------------------
     def set_strategies(self, strategies: Sequence[str]) -> None:
@@ -256,8 +276,9 @@ class PromptStrategyManager:
         try:
             with self._state_lock:
                 data = json.loads(self.state_path.read_text(encoding="utf-8"))
-            if not self.strategies:
-                self.strategies = list(data.get("strategies", []))
+            stored = data.get("strategies")
+            if stored:
+                self.strategies = list(stored)
             self.index = int(data.get("index", 0))
             self.failure_counts.update({
                 str(k): int(v) for k, v in data.get("failure_counts", {}).items()

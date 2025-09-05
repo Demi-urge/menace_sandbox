@@ -4,6 +4,7 @@ import logging
 import sys
 import types
 from pathlib import Path
+from filelock import FileLock
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -75,7 +76,10 @@ def _reload(monkeypatch, tmp_path, **env):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     for key, value in env.items():
         monkeypatch.setenv(key, value)
-    return importlib.reload(strategy_rotator)
+    sr = importlib.reload(strategy_rotator)
+    sr.manager.stats_path = Path(tmp_path) / "_strategy_stats.json"
+    sr.manager._stats_lock = FileLock(str(sr.manager.stats_path) + ".lock")
+    return sr
 
 
 def test_keyword_override(tmp_path, monkeypatch):
@@ -98,3 +102,11 @@ def test_failure_limit_from_settings(tmp_path, monkeypatch):
     current = "strict_fix"
     nxt = sr.next_strategy(current, "failure")
     assert nxt == "delete_rebuild"
+
+
+def test_next_prefers_highest_roi(tmp_path, monkeypatch):
+    sr = _reload(monkeypatch, tmp_path)
+    sr.manager.ingest("strict_fix", roi_delta=1.0)
+    sr.manager.ingest("delete_rebuild", failure_reason="bad", roi_delta=-1.0)
+    choice = sr.manager.next()
+    assert choice == "strict_fix"
