@@ -1,4 +1,3 @@
-import ast
 import sys
 import types
 import json
@@ -21,33 +20,13 @@ pkg = types.ModuleType("menace_sandbox.self_improvement")
 pkg.__path__ = [str(ROOT / "self_improvement")]
 sys.modules["menace_sandbox.self_improvement"] = pkg
 
-from menace_sandbox.sandbox_settings import SandboxSettings  # noqa: E402
-import menace_sandbox.prompt_optimizer as prompt_optimizer  # noqa: E402
-from dynamic_path_router import resolve_path  # noqa: E402
+from menace_sandbox.self_improvement.prompt_strategy_manager import (  # noqa: E402
+    PromptStrategyManager,
+)
+from menace_sandbox.self_improvement import prompt_memory  # noqa: E402
 
 
-def _load_select_prompt_strategy(namespace):
-    eng_path = Path(resolve_path(str(ROOT / "self_improvement" / "engine.py")))
-    mod = ast.parse(eng_path.read_text())
-    class_def = next(
-        n
-        for n in mod.body
-        if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"
-    )
-    func_node = next(
-        n
-        for n in class_def.body
-        if isinstance(n, ast.FunctionDef)
-        and n.name == "_select_prompt_strategy"
-    )
-    future = ast.ImportFrom(module="__future__", names=[ast.alias("annotations", None)], level=0)
-    module = ast.Module([future, func_node], type_ignores=[])
-    module = ast.fix_missing_locations(module)
-    exec(compile(module, str(eng_path), "exec"), namespace)
-    return namespace["_select_prompt_strategy"]
-
-
-def test_select_prompt_strategy_prefers_high_roi(tmp_path, monkeypatch):
+def test_best_strategy_prefers_high_roi(tmp_path, monkeypatch):
     stats_path = tmp_path / "stats.json"
     data = {
         "s1": {
@@ -66,14 +45,7 @@ def test_select_prompt_strategy_prefers_high_roi(tmp_path, monkeypatch):
         },
     }
     stats_path.write_text(json.dumps(data))
-
-    namespace = {
-        "load_prompt_penalties": lambda: {},
-        "load_strategy_stats": lambda: prompt_optimizer.load_strategy_stats(stats_path),
-        "SandboxSettings": SandboxSettings,
-    }
-    select = _load_select_prompt_strategy(namespace)
-
-    stub = types.SimpleNamespace(deprioritized_strategies=set(), pending_strategy=None)
-    choice = select(stub, ["s1", "s2"])
-    assert choice == "s2"
+    monkeypatch.setattr(prompt_memory, "load_prompt_penalties", lambda: {})
+    mgr = PromptStrategyManager(stats_path=stats_path)
+    mgr.set_strategies(["s1", "s2"])
+    assert mgr.best_strategy(["s1", "s2"]) == "s2"

@@ -686,32 +686,10 @@ def rank_formats() -> List[Dict[str, Any]]:
 def load_strategy_stats(path: str | Path | None = None) -> Dict[str, Dict[str, float]]:
     """Return per-strategy statistics including scores."""
 
-    p = Path(path) if path is not None else DEFAULT_STRATEGY_PATH
-    if not p.exists():
-        return {}
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    stats: Dict[str, Dict[str, float]] = {}
-    for k, v in data.items():
-        total = max(int(v.get("total", 0)), 1)
-        success = int(v.get("success", 0))
-        roi_sum = float(v.get("roi_sum", 0.0))
-        weighted_roi_sum = float(v.get("weighted_roi_sum", 0.0))
-        weight_sum = float(v.get("weight_sum", 0.0))
-        success_rate = success / total
-        if weight_sum:
-            weighted_roi = weighted_roi_sum / weight_sum
-        else:
-            weighted_roi = roi_sum / total
-        score = success_rate * max(weighted_roi, 0.0)
-        stats[str(k)] = {
-            "success_rate": success_rate,
-            "weighted_roi": weighted_roi,
-            "score": score,
-        }
-    return stats
+    from self_improvement.prompt_strategy_manager import PromptStrategyManager
+
+    p = path if path is not None else DEFAULT_STRATEGY_PATH
+    return PromptStrategyManager.load_strategy_stats(p)
 
 
 def select_strategy(path: str | Path | None = None) -> str | None:

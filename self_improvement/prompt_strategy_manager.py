@@ -40,6 +40,7 @@ class PromptStrategyManager:
         strategies: Sequence[str] | None = None,
         state_path: Path | str | None = None,
         keyword_map: Dict[str, str] | None = None,
+        stats_path: Path | str | None = None,
     ) -> None:
         self.strategies: list[str] = list(strategies or DEFAULT_STRATEGIES)
         if state_path is None:
@@ -52,12 +53,18 @@ class PromptStrategyManager:
         if not isinstance(state_path, Path):
             state_path = resolve_path(state_path)
         self.state_path = state_path
+        if stats_path is None:
+            stats_path = resolve_path("_strategy_stats.json")
+        if not isinstance(stats_path, Path):
+            stats_path = resolve_path(stats_path)
+        self.stats_path = stats_path
         self.keyword_map: Dict[str, str] = dict(keyword_map or KEYWORD_MAP)
         self.index: int = 0
         self.failure_counts: Dict[str, int] = {s: 0 for s in self.strategies}
         self.failure_limits: Dict[str, int] = {s: 1 for s in self.strategies}
-        self.metrics: Dict[str, Dict[str, float]] = {}
+        self.stats: Dict[str, Dict[str, float]] = {}
         self._load_state()
+        self._load_stats()
 
     # ------------------------------------------------------------------
     def _rotated(self) -> list[str]:
@@ -146,17 +153,27 @@ class PromptStrategyManager:
         self._save_state()
 
     # ------------------------------------------------------------------
-    def update(self, strategy: str, roi: float, success: bool) -> None:
+    def update(self, strategy: str, roi: float, success: bool, weight: float = 1.0) -> None:
         """Update ROI statistics for ``strategy``."""
 
-        rec = self.metrics.setdefault(
-            str(strategy), {"attempts": 0, "successes": 0, "roi": 0.0}
+        rec = self.stats.setdefault(
+            str(strategy),
+            {
+                "total": 0,
+                "success": 0,
+                "roi_sum": 0.0,
+                "weighted_roi_sum": 0.0,
+                "weight_sum": 0.0,
+            },
         )
-        rec["attempts"] += 1
+        rec["total"] += 1
         if success:
-            rec["successes"] += 1
+            rec["success"] += 1
             self.failure_counts[str(strategy)] = 0
-        rec["roi"] += float(roi)
+        rec["roi_sum"] += float(roi)
+        rec["weighted_roi_sum"] += float(roi) * float(weight)
+        rec["weight_sum"] += float(weight)
+        self._save_stats()
         self._save_state()
 
     # ------------------------------------------------------------------
@@ -166,18 +183,33 @@ class PromptStrategyManager:
         from . import prompt_memory
         from ..sandbox_settings import SandboxSettings
 
+        self._load_stats()
         penalties = prompt_memory.load_prompt_penalties()
         settings = SandboxSettings()
         threshold = settings.prompt_failure_threshold
+        mult = settings.prompt_penalty_multiplier
         eligible: list[tuple[str, float]] = []
         penalised: list[tuple[str, float]] = []
         for strat in strategies:
             count = penalties.get(str(strat), 0)
-            rec = self.metrics.get(str(strat), {})
-            attempts = rec.get("attempts", 0)
-            avg_roi = rec.get("roi", 0.0) / attempts if attempts else 0.0
+            rec = self.stats.get(str(strat), {})
+            total = int(rec.get("total", 0))
+            success = int(rec.get("success", 0))
+            roi_sum = float(rec.get("roi_sum", 0.0))
+            weighted_roi_sum = float(rec.get("weighted_roi_sum", 0.0))
+            weight_sum = float(rec.get("weight_sum", 0.0))
+            score = 0.0
+            if total:
+                success_rate = success / total
+                if weight_sum:
+                    weighted_roi = weighted_roi_sum / weight_sum
+                else:
+                    weighted_roi = roi_sum / total
+                score = success_rate * max(weighted_roi, 0.0)
+            score = score if score > 0 else 0.1
+            weight = score * (mult if threshold and count >= threshold else 1.0)
             target = penalised if threshold and count >= threshold else eligible
-            target.append((strat, avg_roi))
+            target.append((strat, weight))
         pool = eligible or penalised
         if not pool:
             return None
@@ -197,16 +229,6 @@ class PromptStrategyManager:
             self.failure_limits.update({
                 str(k): int(v) for k, v in data.get("failure_limits", {}).items()
             })
-            raw_metrics = data.get("metrics", {})
-            self.metrics = {
-                str(k): {
-                    "attempts": int(v.get("attempts", 0)),
-                    "successes": int(v.get("successes", 0)),
-                    "roi": float(v.get("roi", 0.0)),
-                }
-                for k, v in raw_metrics.items()
-                if isinstance(v, dict)
-            }
             if self.strategies:
                 self.index %= len(self.strategies)
             else:
@@ -223,7 +245,6 @@ class PromptStrategyManager:
                 "strategies": self.strategies,
                 "failure_counts": self.failure_counts,
                 "failure_limits": self.failure_limits,
-                "metrics": self.metrics,
             }
             with tempfile.NamedTemporaryFile(
                 "w", delete=False, dir=self.state_path.parent, encoding="utf-8"
@@ -233,6 +254,68 @@ class PromptStrategyManager:
             os.replace(tmp, self.state_path)
         except Exception:  # pragma: no cover - best effort persistence
             pass
+
+    # ------------------------------------------------------------------
+    def _load_stats(self) -> None:
+        try:
+            with open(self.stats_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.stats = {
+                str(k): {
+                    "total": int(v.get("total", 0)),
+                    "success": int(v.get("success", 0)),
+                    "roi_sum": float(v.get("roi_sum", 0.0)),
+                    "weighted_roi_sum": float(v.get("weighted_roi_sum", 0.0)),
+                    "weight_sum": float(v.get("weight_sum", 0.0)),
+                }
+                for k, v in data.items()
+                if isinstance(v, dict)
+            }
+        except Exception:
+            self.stats = {}
+
+    # ------------------------------------------------------------------
+    def _save_stats(self) -> None:
+        try:
+            self.stats_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                "w", delete=False, dir=self.stats_path.parent, encoding="utf-8"
+            ) as fh:
+                json.dump(self.stats, fh)
+                tmp = Path(fh.name)
+            os.replace(tmp, self.stats_path)
+        except Exception:  # pragma: no cover - best effort persistence
+            pass
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def load_strategy_stats(
+        cls, path: str | Path | None = None
+    ) -> Dict[str, Dict[str, float]]:
+        p = Path(path) if path is not None else resolve_path("_strategy_stats.json")
+        try:
+            data = json.loads(Path(p).read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        stats: Dict[str, Dict[str, float]] = {}
+        for k, v in data.items():
+            total = max(int(v.get("total", 0)), 1)
+            success = int(v.get("success", 0))
+            roi_sum = float(v.get("roi_sum", 0.0))
+            weighted_roi_sum = float(v.get("weighted_roi_sum", 0.0))
+            weight_sum = float(v.get("weight_sum", 0.0))
+            success_rate = success / total
+            if weight_sum:
+                weighted_roi = weighted_roi_sum / weight_sum
+            else:
+                weighted_roi = roi_sum / total
+            score = success_rate * max(weighted_roi, 0.0)
+            stats[str(k)] = {
+                "success_rate": success_rate,
+                "weighted_roi": weighted_roi,
+                "score": score,
+            }
+        return stats
 
 
 __all__ = ["PromptStrategyManager"]
