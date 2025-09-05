@@ -37,6 +37,7 @@ import logging
 from embeddable_db_mixin import EmbeddableDBMixin
 from license_detector import detect as detect_license
 from security.secret_redactor import redact_dict
+from dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class {class_name}(EmbeddableDBMixin):
             embedding_version=embedding_version,
             backend=vector_backend,
         )
-        schema = Path(__file__).with_name("sql_templates").joinpath("create_fts.sql").read_text()
+        schema = resolve_path("sql_templates/create_fts.sql").read_text()
         schema = schema.replace("code_fts", "{snake}_fts")
         self.conn.executescript(schema)
         self.conn.execute(
