@@ -45,7 +45,7 @@ from logging.handlers import RotatingFileHandler
 import gzip
 import shutil
 import menace_sanity_layer
-from menace_sanity_layer import record_billing_anomaly
+from menace_sanity_layer import record_billing_anomaly, record_billing_event
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -115,6 +115,10 @@ TRAINING_EXPORT = resolve_path("training_data/stripe_anomalies.jsonl")
 
 SANITY_INSTRUCTION = (
     "Avoid generating bots that make Stripe charges without proper logging or central routing."
+)
+
+BILLING_EVENT_INSTRUCTION = (
+    "Avoid generating bots that issue Stripe charges without logging through billing_logger."
 )
 
 
@@ -934,6 +938,30 @@ def check_events(
         write_codex=write_codex,
         export_training=export_training,
     )
+    if anomalies:
+        account_id = None
+        if stripe is not None:
+            try:  # pragma: no cover - network disabled in tests
+                acct = stripe.Account.retrieve(api_key=api_key)
+                account_id = (
+                    acct.get("id") if isinstance(acct, dict) else getattr(acct, "id", None)
+                )
+            except Exception:
+                logger.exception("failed to fetch Stripe account identifier")
+        for anomaly in anomalies:
+            metadata = dict(anomaly)
+            metadata["timestamp"] = datetime.utcnow().isoformat()
+            metadata["stripe_account"] = account_id
+            try:
+                record_billing_event(
+                    anomaly.get("type", "unknown"),
+                    metadata,
+                    BILLING_EVENT_INSTRUCTION,
+                )
+            except Exception:
+                logger.exception(
+                    "failed to record billing event", extra={"anomaly": anomaly}
+                )
     if anomalies and DiscrepancyDB and DiscrepancyRecord:
         try:  # pragma: no cover - best effort
             msg = f"{len(anomalies)} stripe anomalies detected"
