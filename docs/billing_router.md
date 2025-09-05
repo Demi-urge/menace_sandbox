@@ -93,10 +93,11 @@ unavailable—and **must** contain the following fields:
 - ``raw_event_json`` – Raw JSON payload returned by Stripe.
 - ``error`` – ``1`` when a critical discrepancy occurs, otherwise ``0``.
 
-### Master account, allowed keys and rollback alerts
+### Registered account, allowed keys and rollback alerts
 
-The platform's Stripe master account identifier is hard coded as
-``stripe_billing_router.STRIPE_MASTER_ACCOUNT_ID``.  Secret keys that may be
+The platform's Stripe account identifier is hard coded as
+``stripe_billing_router.STRIPE_REGISTERED_ACCOUNT_ID`` and must not be
+overridden via environment variables or secret storage. Secret keys that may be
 used on behalf of the platform are enumerated via ``STRIPE_ALLOWED_SECRET_KEYS``
 (comma separated) or the ``allowed_secret_keys`` list in the routing
 configuration.
@@ -106,8 +107,8 @@ export STRIPE_ALLOWED_SECRET_KEYS=sk_prod_main,sk_prod_backup
 ```
 
 If an unknown key is supplied or a route's ``account_id`` differs from the
-master account, the router records the discrepancy in ``DiscrepancyDB``, sends a
-``critical_discrepancy`` alert and
+registered account, the router records the discrepancy in ``DiscrepancyDB``,
+sends a ``critical_discrepancy`` alert and
 ``AutomatedRollbackManager.auto_rollback`` reverts the most recent sandbox
 changes for the offending bot.
 

@@ -140,10 +140,10 @@ def _validate_destination(bot_id: str, destination_account: str) -> None:
 
     The Stripe API may return events with a ``destination`` or ``on_behalf_of``
     account.  This helper validates that the account matches
-    ``STRIPE_MASTER_ACCOUNT_ID`` and raises an exception if it does not.
+    ``STRIPE_REGISTERED_ACCOUNT_ID`` and raises an exception if it does not.
     """
 
-    if destination_account and destination_account != STRIPE_MASTER_ACCOUNT_ID:
+    if destination_account and destination_account != STRIPE_REGISTERED_ACCOUNT_ID:
         logger.error(
             "Stripe destination mismatch for bot '%s': %s",
             bot_id,
@@ -186,11 +186,15 @@ def _load_key(name: str, prefix: str) -> str:
 STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
 STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
 
-# The identifier for the platform's primary Stripe account. All billing
-# operations are performed on behalf of this account, so the value is hard coded
-# rather than loaded from the environment or secret storage.
-STRIPE_MASTER_ACCOUNT_ID = "acct_1H123456789ABCDEF"
-STRIPE_MASTER_ACCOUNT = STRIPE_MASTER_ACCOUNT_ID
+# The identifier for the platform's primary Stripe account is intentionally
+# immutable and must never be sourced from environment variables or secret
+# storage. All billing operations are performed on behalf of this account.
+STRIPE_REGISTERED_ACCOUNT_ID = "acct_1H123456789ABCDEF"
+STRIPE_REGISTERED_ACCOUNT = STRIPE_REGISTERED_ACCOUNT_ID
+
+# Backwards compatibility aliases
+STRIPE_MASTER_ACCOUNT_ID = STRIPE_REGISTERED_ACCOUNT_ID
+STRIPE_MASTER_ACCOUNT = STRIPE_REGISTERED_ACCOUNT
 
 
 def _load_allowed_keys() -> set[str]:
@@ -432,8 +436,8 @@ def _verify_route(bot_id: str, route: Mapping[str, str]) -> None:
     if not key or key not in ALLOWED_SECRET_KEYS:
         log_critical_discrepancy(bot_id, "Stripe account mismatch")
         raise RuntimeError("Stripe account mismatch")
-    account_id = route.get("account_id", STRIPE_MASTER_ACCOUNT_ID)
-    if account_id != STRIPE_MASTER_ACCOUNT_ID:
+    account_id = route.get("account_id", STRIPE_REGISTERED_ACCOUNT_ID)
+    if account_id != STRIPE_REGISTERED_ACCOUNT_ID:
         log_critical_discrepancy(bot_id, "Stripe account mismatch")
         raise RuntimeError("Stripe account mismatch")
 
@@ -511,11 +515,11 @@ def _resolve_route(
     _validate_no_api_keys(route)
     route.setdefault("secret_key", STRIPE_SECRET_KEY)
     route.setdefault("public_key", STRIPE_PUBLIC_KEY)
-    route.setdefault("account_id", STRIPE_MASTER_ACCOUNT_ID)
+    route.setdefault("account_id", STRIPE_REGISTERED_ACCOUNT_ID)
     route.setdefault("currency", "usd")
     for strategy in _STRATEGIES:
         route = strategy.apply(bot_id, dict(route))
-    route.setdefault("account_id", STRIPE_MASTER_ACCOUNT_ID)
+    route.setdefault("account_id", STRIPE_REGISTERED_ACCOUNT_ID)
     route.setdefault("currency", "usd")
     secret = route.get("secret_key", "")
     public = route.get("public_key", "")
@@ -557,7 +561,7 @@ def charge(
     client = _client(api_key)
 
     account_id = _get_account_id(api_key) or ""
-    if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
+    if account_id != STRIPE_REGISTERED_ACCOUNT_ID or not route.get("secret_key"):
         _alert_mismatch(bot_id, account_id, amount=amount)
         raise RuntimeError("Stripe account mismatch")
 
@@ -805,7 +809,7 @@ def create_subscription(
     key_hash = _hash_api_key(api_key)
     client = _client(api_key)
     account_id = _get_account_id(api_key) or ""
-    if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
+    if account_id != STRIPE_REGISTERED_ACCOUNT_ID or not route.get("secret_key"):
         _alert_mismatch(bot_id, account_id)
         raise RuntimeError("Stripe account mismatch")
     price = price_id or route.get("price_id")
@@ -931,7 +935,7 @@ def refund(
     key_hash = _hash_api_key(api_key)
     client = _client(api_key)
     account_id = _get_account_id(api_key) or ""
-    if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
+    if account_id != STRIPE_REGISTERED_ACCOUNT_ID or not route.get("secret_key"):
         _alert_mismatch(bot_id, account_id, amount=amount)
         raise RuntimeError("Stripe account mismatch")
     refund_params: dict[str, Any] = {"payment_intent": payment_intent_id, **params}
@@ -1053,7 +1057,7 @@ def create_checkout_session(
     key_hash = _hash_api_key(api_key)
     client = _client(api_key)
     account_id = _get_account_id(api_key) or ""
-    if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
+    if account_id != STRIPE_REGISTERED_ACCOUNT_ID or not route.get("secret_key"):
         _alert_mismatch(bot_id, account_id)
         raise RuntimeError("Stripe account mismatch")
     final_params: dict[str, Any] = {"line_items": list(line_items), **params}

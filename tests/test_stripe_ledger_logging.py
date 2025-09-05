@@ -99,7 +99,7 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
 
     sbr = _load("stripe_billing_router")
     monkeypatch.setattr(
-        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID
+        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_REGISTERED_ACCOUNT_ID
     )
     return sbr
 
@@ -134,7 +134,7 @@ def test_charge_writes_ledger(monkeypatch, sbr_with_db):
         return {
             "id": invoice_id,
             "amount_paid": 1250,
-            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
+            "on_behalf_of": sbr.STRIPE_REGISTERED_ACCOUNT_ID,
         }
 
     def fake_customer_retrieve(customer_id, *, api_key=None, **_):
@@ -161,14 +161,14 @@ def test_charge_writes_ledger(monkeypatch, sbr_with_db):
     assert events and events[0][0] == ("charge",)
     assert events[0][1]["amount"] == 12.5
     assert events[0][1]["user_email"] == "cust@example.com"
-    assert events[0][1]["destination_account"] == sbr.STRIPE_MASTER_ACCOUNT_ID
+    assert events[0][1]["destination_account"] == sbr.STRIPE_REGISTERED_ACCOUNT_ID
 
 
 def test_create_subscription_writes_ledger(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
 
     def fake_create(*, api_key, **params):
-        return {"id": "sub_test", "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID}
+        return {"id": "sub_test", "on_behalf_of": sbr.STRIPE_REGISTERED_ACCOUNT_ID}
 
     def fake_customer_retrieve(customer_id, *, api_key=None, **_):
         return {"email": "cust@example.com"}
@@ -197,7 +197,7 @@ def test_create_subscription_writes_ledger(monkeypatch, sbr_with_db):
     assert events and events[0][0] == ("subscription",)
     assert events[0][1]["amount"] == 12.5
     assert events[0][1]["user_email"] == "cust@example.com"
-    assert events[0][1]["destination_account"] == sbr.STRIPE_MASTER_ACCOUNT_ID
+    assert events[0][1]["destination_account"] == sbr.STRIPE_REGISTERED_ACCOUNT_ID
 
 
 def test_refund_writes_ledger(monkeypatch, sbr_with_db):
@@ -207,7 +207,7 @@ def test_refund_writes_ledger(monkeypatch, sbr_with_db):
         return {
             "id": "rf_test",
             "amount": 500,
-            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
+            "on_behalf_of": sbr.STRIPE_REGISTERED_ACCOUNT_ID,
         }
 
     fake_stripe = types.SimpleNamespace(
@@ -228,7 +228,7 @@ def test_create_checkout_session_writes_ledger(monkeypatch, sbr_with_db):
         return {
             "id": "cs_test",
             "amount_total": 1000,
-            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
+            "on_behalf_of": sbr.STRIPE_REGISTERED_ACCOUNT_ID,
         }
 
     fake_stripe = types.SimpleNamespace(

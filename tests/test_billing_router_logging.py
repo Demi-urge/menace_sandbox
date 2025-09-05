@@ -53,7 +53,7 @@ import menace_sandbox.stripe_billing_router as sbr
 
 SECRET = "sk_live_123"
 PUBLIC = "pk_live_123"
-ACCOUNT = sbr.STRIPE_MASTER_ACCOUNT_ID
+ACCOUNT = sbr.STRIPE_REGISTERED_ACCOUNT_ID
 
 def test_charge_logs_events(monkeypatch):
     bot_id = "stripe:cat:bot"
@@ -64,7 +64,7 @@ def test_charge_logs_events(monkeypatch):
         "currency": "usd",
         "user_email": "user@example.com",
     }
-    event = {"id": "pi_1", "amount": 5000, "account": "acct_dest"}
+    event = {"id": "pi_1", "amount": 5000, "account": ACCOUNT}
 
     monkeypatch.setattr(sbr, "_resolve_route", lambda b, overrides=None: route)
     monkeypatch.setattr(sbr, "_verify_route", lambda b, r: None)
@@ -91,13 +91,13 @@ def test_charge_logs_events(monkeypatch):
     assert kwargs["timestamp_ms"] == 1_700_000_000_000
     assert kwargs["user_email"] == "user@example.com"
     assert kwargs["bot_id"] == bot_id
-    assert kwargs["destination_account"] == "acct_dest"
+    assert kwargs["destination_account"] == ACCOUNT
 
     kw = log_billing.call_args.kwargs
     assert kw["amount"] == 50.0
     assert kw["bot_id"] == bot_id
     assert kw["user_email"] == "user@example.com"
-    assert kw["destination_account"] == "acct_dest"
+    assert kw["destination_account"] == ACCOUNT
 
     ledger_args = ledger_log.call_args[0]
     assert ledger_args[0] == "charge"
@@ -116,7 +116,7 @@ def test_subscription_logs_events(monkeypatch):
         "currency": "usd",
         "user_email": "user@example.com",
     }
-    event = {"id": "sub_1", "account": "acct_dest"}
+    event = {"id": "sub_1", "account": ACCOUNT}
 
     class Client:
         Subscription = type("Sub", (), {"create": staticmethod(lambda **kw: event)})
@@ -148,7 +148,7 @@ def test_subscription_logs_events(monkeypatch):
     kwargs = log_event.call_args.kwargs
     assert kwargs["bot_id"] == bot_id
     assert kwargs["user_email"] == "user@example.com"
-    assert kwargs["destination_account"] == "acct_dest"
+    assert kwargs["destination_account"] == ACCOUNT
     assert kwargs["timestamp_ms"] == 1_700_000_000_000
     assert "amount" in kwargs
 
@@ -156,7 +156,7 @@ def test_subscription_logs_events(monkeypatch):
     assert kw["amount"] == pytest.approx(12.34)
     assert kw["bot_id"] == bot_id
     assert kw["user_email"] == "user@example.com"
-    assert kw["destination_account"] == "acct_dest"
+    assert kw["destination_account"] == ACCOUNT
 
     ledger_args = ledger_log.call_args[0]
     assert ledger_args[0] == "subscription"
@@ -175,7 +175,7 @@ def test_refund_logs_events(monkeypatch):
         "currency": "usd",
         "user_email": "user@example.com",
     }
-    event = {"id": "re_1", "amount": 5000, "account": "acct_dest"}
+    event = {"id": "re_1", "amount": 5000, "account": ACCOUNT}
 
     class Client:
         Refund = type("Refund", (), {"create": staticmethod(lambda **kw: event)})
@@ -200,14 +200,14 @@ def test_refund_logs_events(monkeypatch):
     assert kwargs["amount"] == 50.0
     assert kwargs["user_email"] == "user@example.com"
     assert kwargs["bot_id"] == bot_id
-    assert kwargs["destination_account"] == "acct_dest"
+    assert kwargs["destination_account"] == ACCOUNT
     assert kwargs["timestamp_ms"] == 1_700_000_000_000
 
     kw = log_billing.call_args.kwargs
     assert kw["amount"] == 50.0
     assert kw["bot_id"] == bot_id
     assert kw["user_email"] == "user@example.com"
-    assert kw["destination_account"] == "acct_dest"
+    assert kw["destination_account"] == ACCOUNT
 
     ledger_args = ledger_log.call_args[0]
     assert ledger_args[0] == "refund"
@@ -226,7 +226,7 @@ def test_checkout_session_logs_events(monkeypatch):
         "currency": "usd",
         "user_email": "user@example.com",
     }
-    event = {"id": "cs_1", "amount_total": 7000, "account": "acct_dest"}
+    event = {"id": "cs_1", "amount_total": 7000, "account": ACCOUNT}
 
     class Client:
         checkout = type(
@@ -255,14 +255,14 @@ def test_checkout_session_logs_events(monkeypatch):
     assert kwargs["amount"] == 70.0
     assert kwargs["user_email"] == "user@example.com"
     assert kwargs["bot_id"] == bot_id
-    assert kwargs["destination_account"] == "acct_dest"
+    assert kwargs["destination_account"] == ACCOUNT
     assert kwargs["timestamp_ms"] == 1_700_000_000_000
 
     kw = log_billing.call_args.kwargs
     assert kw["amount"] == 70.0
     assert kw["bot_id"] == bot_id
     assert kw["user_email"] == "user@example.com"
-    assert kw["destination_account"] == "acct_dest"
+    assert kw["destination_account"] == ACCOUNT
 
     ledger_args = ledger_log.call_args[0]
     assert ledger_args[0] == "checkout"
