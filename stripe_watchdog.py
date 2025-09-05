@@ -30,6 +30,7 @@ Key features implemented according to the specification:
 import argparse
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -87,9 +88,9 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-#: Default set of authorised webhook URLs. Any endpoint returned by Stripe
+#: Default set of allowed webhook IDs or URLs. Any endpoint returned by Stripe
 #: outside this set (and the configured list) is flagged as an anomaly.
-DEFAULT_AUTHORIZED_WEBHOOKS = {
+DEFAULT_ALLOWED_WEBHOOKS = {
     "https://menace.example.com/stripe/webhook",
 }
 
@@ -99,30 +100,35 @@ ANOMALY_LOG = resolve_path("stripe_watchdog.log")
 #: Fallback path used when ``StripeLedger`` is unavailable
 LEDGER_FILE = resolve_path("finance_logs/stripe_ledger.jsonl")
 
-#: Path to YAML configuration containing the list of authorised webhook
+#: Path to YAML configuration containing the list of allowed webhook
 #: endpoints.
 CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 
 
-def _load_authorized_webhooks(path: Path | None = None) -> set[str]:
-    """Return authorised webhook endpoints from ``path`` if available."""
+def _load_allowed_webhooks(path: Path | None = None) -> set[str]:
+    """Return allowed webhook identifiers from environment or ``path``."""
+
+    allowed = set(DEFAULT_ALLOWED_WEBHOOKS)
+
+    env_val = os.getenv("STRIPE_ALLOWED_WEBHOOKS")
+    if env_val:
+        allowed.update(x.strip() for x in env_val.split(",") if x.strip())
+        return allowed
 
     cfg = path or CONFIG_PATH
     try:
         with cfg.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
     except FileNotFoundError:
-        return set(DEFAULT_AUTHORIZED_WEBHOOKS)
+        return allowed
     except Exception:
         logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
-        return set(DEFAULT_AUTHORIZED_WEBHOOKS)
+        return allowed
 
-    endpoints = data.get("authorized_webhooks")
+    endpoints = data.get("allowed_webhooks") or data.get("authorized_webhooks")
     if isinstance(endpoints, list):
-        authorised = {str(url) for url in endpoints if isinstance(url, str)}
-        authorised.update(DEFAULT_AUTHORIZED_WEBHOOKS)
-        return authorised
-    return set(DEFAULT_AUTHORIZED_WEBHOOKS)
+        allowed.update(str(url) for url in endpoints if isinstance(url, str))
+    return allowed
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -451,7 +457,7 @@ def check_webhook_endpoints(
     *,
     write_codex: bool = False,
 ) -> List[str]:
-    """Return webhook endpoint URLs that are not in ``approved``."""
+    """Return webhook identifiers failing the allowed or enabled checks."""
 
     if stripe is None:
         return []
@@ -461,26 +467,46 @@ def check_webhook_endpoints(
         logger.exception("Stripe webhook endpoint listing failed")
         return []
 
-    allowed = set(str(u) for u in (approved or _load_authorized_webhooks()))
-    unknown: List[str] = []
+    allowed = set(str(u) for u in (approved or _load_allowed_webhooks()))
+    flagged: List[str] = []
     for ep in _iter(endpoints):
-        url = getattr(ep, "url", None)
-        if url is None and isinstance(ep, dict):
-            url = ep.get("url")
-        if url and url not in allowed:
-            url_str = str(url)
-            unknown.append(url_str)
-            _emit_anomaly({"type": "unknown_webhook", "url": url_str}, write_codex)
+        if isinstance(ep, dict):
+            ep_dict = ep
+        else:
+            try:
+                ep_dict = ep.to_dict_recursive()
+            except Exception:  # pragma: no cover - best effort
+                ep_dict = {k: getattr(ep, k, None) for k in ("id", "url", "status")}
+
+        ep_id = ep_dict.get("id")
+        url = ep_dict.get("url")
+        status = ep_dict.get("status")
+        identifier = ep_id or url
+        if identifier is None:
+            continue
+
+        if str(identifier) not in allowed or status != "enabled":
+            flagged.append(str(identifier))
+            anomaly_type = "disabled_webhook" if status != "enabled" else "unknown_webhook"
+            record = {"type": anomaly_type, "id": ep_id, "url": url, "status": status}
+            _emit_anomaly(record, write_codex)
             try:  # pragma: no cover - best effort
+                alert_type = (
+                    "stripe_disabled_endpoint"
+                    if anomaly_type == "disabled_webhook"
+                    else "stripe_unknown_endpoint"
+                )
                 alert_dispatcher.dispatch_alert(
-                    "stripe_unknown_endpoint",
+                    alert_type,
                     3,
-                    f"Unknown Stripe webhook endpoint: {url_str}",
-                    {"url": url_str},
+                    f"Stripe webhook issue: {identifier}",
+                    record,
                 )
             except Exception:
-                logger.exception("alert dispatch failed", extra={"url": url_str})
-    return unknown
+                logger.exception(
+                    "alert dispatch failed", extra={"id": identifier, "status": status}
+                )
+    return flagged
 
 
 def _projected_revenue_between(start_ts: int, end_ts: int) -> float:
