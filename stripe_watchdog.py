@@ -102,6 +102,8 @@ ANOMALY_LOG = _LOG_DIR / "stripe_watchdog_audit.jsonl"
 #: Marker storing the last successful run timestamp.
 _LAST_RUN_FILE = _LOG_DIR / "stripe_watchdog_last_run.txt"
 _MAX_LOG_BYTES = 5 * 1024 * 1024  # 5MB threshold for rotation
+#: Path used when exporting normalized anomalies for training purposes.
+TRAINING_EXPORT = resolve_path("training_data/stripe_anomalies.jsonl")
 
 
 def _prepare_anomaly_log() -> None:
@@ -390,8 +392,10 @@ def load_billing_logs(
 # Anomaly logging -----------------------------------------------------------
 
 
-def _emit_anomaly(record: Dict[str, Any], write_codex: bool) -> None:
-    """Log *record* and optionally emit a Codex training sample."""
+def _emit_anomaly(
+    record: Dict[str, Any], write_codex: bool, export_training: bool
+) -> None:
+    """Log *record* and optionally emit a training sample."""
 
     audit_logger.log_event("stripe_anomaly", record)
     try:
@@ -404,6 +408,18 @@ def _emit_anomaly(record: Dict[str, Any], write_codex: bool) -> None:
         _maybe_rotate_anomaly_log()
     except Exception:
         logger.exception("Failed to write anomaly log", extra={"record": record})
+    if export_training:
+        sample = {
+            "source": "stripe_watchdog",
+            "content": json.dumps(entry),
+            "timestamp": entry["timestamp"],
+        }
+        try:  # pragma: no cover - best effort
+            TRAINING_EXPORT.parent.mkdir(parents=True, exist_ok=True)
+            with open(TRAINING_EXPORT, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(sample) + "\n")
+        except Exception:
+            logger.exception("Failed to export anomaly", extra={"record": record})
     if write_codex and TrainingSample is not None:
         try:  # pragma: no cover - best effort
             TrainingSample(source="stripe_watchdog", content=json.dumps(record))
@@ -420,6 +436,7 @@ def detect_missing_charges(
     billing_logs: List[Dict[str, Any]] | None = None,
     *,
     write_codex: bool = False,
+    export_training: bool = False,
 ) -> List[Dict[str, Any]]:
     """Return Stripe charges absent from local billing logs."""
 
@@ -462,7 +479,7 @@ def detect_missing_charges(
             "timestamp": created,
         }
         anomalies.append(anomaly)
-        _emit_anomaly(anomaly, write_codex)
+        _emit_anomaly(anomaly, write_codex, export_training)
     return anomalies
 
 
@@ -472,6 +489,7 @@ def detect_missing_refunds(
     billing_logs: List[Dict[str, Any]] | None = None,
     *,
     write_codex: bool = False,
+    export_training: bool = False,
 ) -> List[Dict[str, Any]]:
     """Return Stripe refunds absent from the ledger and billing logs."""
 
@@ -510,7 +528,7 @@ def detect_missing_refunds(
             "charge": refund.get("charge"),
         }
         anomalies.append(anomaly)
-        _emit_anomaly(anomaly, write_codex)
+        _emit_anomaly(anomaly, write_codex, export_training)
     return anomalies
 
 
@@ -520,6 +538,7 @@ def detect_failed_events(
     billing_logs: List[Dict[str, Any]] | None = None,
     *,
     write_codex: bool = False,
+    export_training: bool = False,
 ) -> List[Dict[str, Any]]:
     """Return failed payment events missing from the ledger and billing logs."""
 
@@ -550,7 +569,7 @@ def detect_failed_events(
             "event_type": event.get("type"),
         }
         anomalies.append(anomaly)
-        _emit_anomaly(anomaly, write_codex)
+        _emit_anomaly(anomaly, write_codex, export_training)
     return anomalies
 
 
@@ -559,6 +578,7 @@ def check_webhook_endpoints(
     approved: Iterable[str] | None = None,
     *,
     write_codex: bool = False,
+    export_training: bool = False,
 ) -> List[str]:
     """Return webhook identifiers failing the allowed or enabled checks."""
 
@@ -592,7 +612,7 @@ def check_webhook_endpoints(
             flagged.append(str(identifier))
             anomaly_type = "disabled_webhook" if status != "enabled" else "unknown_webhook"
             record = {"type": anomaly_type, "id": ep_id, "url": url, "status": status}
-            _emit_anomaly(record, write_codex)
+            _emit_anomaly(record, write_codex, export_training)
             try:  # pragma: no cover - best effort
                 alert_type = (
                     "stripe_disabled_endpoint"
@@ -643,6 +663,7 @@ def compare_revenue(
     *,
     tolerance: float = 0.1,
     write_codex: bool = False,
+    export_training: bool = False,
 ) -> Optional[Dict[str, float]]:
     """Compare Stripe net revenue with projected revenue from ROI logs."""
 
@@ -670,7 +691,7 @@ def compare_revenue(
             "difference": net_revenue - projected,
         }
         record = {"type": "revenue_mismatch", **details}
-        _emit_anomaly(record, write_codex)
+        _emit_anomaly(record, write_codex, export_training)
         try:  # pragma: no cover - best effort
             alert_dispatcher.dispatch_alert(
                 "stripe_revenue_mismatch",
@@ -690,6 +711,7 @@ def summarize_revenue_window(
     *,
     tolerance: float = 0.1,
     write_codex: bool = False,
+    export_training: bool = False,
 ) -> Dict[str, float]:
     """Summarize Stripe revenue for ``start_ts``..``end_ts`` and compare to projections.
 
@@ -744,7 +766,7 @@ def summarize_revenue_window(
             "end_ts": end_ts,
             **summary,
         }
-        _emit_anomaly(record, write_codex)
+        _emit_anomaly(record, write_codex, export_training)
         try:  # pragma: no cover - best effort
             alert_dispatcher.dispatch_alert(
                 "stripe_revenue_mismatch",
@@ -767,6 +789,7 @@ def compare_revenue_window(
     *,
     tolerance: float = 0.1,
     write_codex: bool = False,
+    export_training: bool = False,
 ) -> Optional[Dict[str, float]]:
     """Compare Stripe revenue and ROI projections for a time window.
 
@@ -775,7 +798,11 @@ def compare_revenue_window(
     """
 
     summary = summarize_revenue_window(
-        start_ts, end_ts, tolerance=tolerance, write_codex=write_codex
+        start_ts,
+        end_ts,
+        tolerance=tolerance,
+        write_codex=write_codex,
+        export_training=export_training,
     )
     projected = summary.get("projected_revenue", 0.0)
     difference = summary.get("difference", 0.0)
@@ -791,7 +818,9 @@ def compare_revenue_window(
 # Convenience wrappers used by tests and the CLI ---------------------------
 
 
-def check_events(hours: int = 1, *, write_codex: bool = False) -> List[Dict[str, Any]]:
+def check_events(
+    hours: int = 1, *, write_codex: bool = False, export_training: bool = False
+) -> List[Dict[str, Any]]:
     """Check for missing charges within the last ``hours``."""
 
     api_key = load_api_key()
@@ -799,13 +828,19 @@ def check_events(hours: int = 1, *, write_codex: bool = False) -> List[Dict[str,
         return []
     end_ts = int(time.time())
     start_ts = end_ts - int(hours * 3600)
-    check_webhook_endpoints(api_key, write_codex=write_codex)
+    check_webhook_endpoints(
+        api_key, write_codex=write_codex, export_training=export_training
+    )
     # Load the entire ledger window; many tests use historical timestamps.
     ledger = load_local_ledger(0, end_ts)
-    billing_logs = load_billing_logs(0, end_ts, action="charge")
+    billing_logs = load_billing_logs(0, end_ts)
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     anomalies = detect_missing_charges(
-        charges, ledger, billing_logs, write_codex=write_codex
+        charges,
+        ledger,
+        billing_logs,
+        write_codex=write_codex,
+        export_training=export_training,
     )
     if anomalies and DiscrepancyDB and DiscrepancyRecord:
         try:  # pragma: no cover - best effort
@@ -819,13 +854,21 @@ def check_events(hours: int = 1, *, write_codex: bool = False) -> List[Dict[str,
 
 
 def check_revenue_projection(
-    hours: int = 1, *, tolerance: float = 0.1, write_codex: bool = False
+    hours: int = 1,
+    *,
+    tolerance: float = 0.1,
+    write_codex: bool = False,
+    export_training: bool = False,
 ) -> Optional[Dict[str, float]]:
     """Compare revenue for the last ``hours`` against projections."""
     end_ts = int(time.time())
     start_ts = end_ts - int(hours * 3600)
     return compare_revenue_window(
-        start_ts, end_ts, tolerance=tolerance, write_codex=write_codex
+        start_ts,
+        end_ts,
+        tolerance=tolerance,
+        write_codex=write_codex,
+        export_training=export_training,
     )
 
 
@@ -852,6 +895,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--write-codex",
         action="store_true",
         help="also emit Codex training samples",
+    )
+    parser.add_argument(
+        "--export-training",
+        action="store_true",
+        help="write normalized anomalies to training_data/stripe_anomalies.jsonl",
     )
     args = parser.parse_args(argv)
 
@@ -884,16 +932,35 @@ def main(argv: Optional[List[str]] = None) -> None:
     events = fetch_recent_events(api_key, start_ts, end_ts)
 
     detect_missing_charges(
-        charges, ledger, charge_logs, write_codex=args.write_codex
+        charges,
+        ledger,
+        charge_logs,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
     )
     detect_missing_refunds(
-        refunds, ledger, refund_logs, write_codex=args.write_codex
+        refunds,
+        ledger,
+        refund_logs,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
     )
     detect_failed_events(
-        events, ledger, failed_logs, write_codex=args.write_codex
+        events,
+        ledger,
+        failed_logs,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
     )
-    check_webhook_endpoints(api_key, write_codex=args.write_codex)
-    compare_revenue_window(start_ts, end_ts, write_codex=args.write_codex)
+    check_webhook_endpoints(
+        api_key, write_codex=args.write_codex, export_training=args.export_training
+    )
+    compare_revenue_window(
+        start_ts,
+        end_ts,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
+    )
     _write_last_run_ts(end_ts)
 
 

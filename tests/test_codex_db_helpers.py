@@ -1,12 +1,13 @@
 import importlib
+import json
 import sqlite3
 import sys
 from types import ModuleType, SimpleNamespace
-from pathlib import Path
 from enum import Enum
+from dynamic_path_router import resolve_path
 
 # Avoid importing the heavy package __init__ by creating a lightweight package
-root = Path(__file__).resolve().parents[1]
+root = resolve_path(".")
 pkg = ModuleType("menace_sandbox")
 pkg.__path__ = [str(root)]
 sys.modules.setdefault("menace_sandbox", pkg)
@@ -305,6 +306,17 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
     db_router = ModuleType("menace_sandbox.db_router")
     db_router.DBRouter = object
     sys.modules["menace_sandbox.db_router"] = db_router
+    top_db_router = ModuleType("db_router")
+    top_db_router.DBRouter = object
+    top_db_router.init_db_router = lambda *a, **k: None
+    top_db_router.GLOBAL_ROUTER = None
+    sys.modules["db_router"] = top_db_router
+    vs = ModuleType("menace_sandbox.vector_service")
+    vs.ContextBuilder = object
+    vs.FallbackResult = object
+    vs.ErrorResult = object
+    sys.modules["menace_sandbox.vector_service"] = vs
+    sys.modules["vector_service"] = vs
     sys.modules.setdefault(
         "menace_sandbox.vision_utils", ModuleType("menace_sandbox.vision_utils")
     )
@@ -366,3 +378,14 @@ def test_aggregate_samples_warns_when_fetcher_fails(monkeypatch, caplog):
 
     assert len(results) == 3
     assert "fetch_summaries" in caplog.text
+
+
+def test_fetch_stripe_anomalies(monkeypatch, tmp_path):
+    file = tmp_path / "stripe_anomalies.jsonl"
+    file.write_text(
+        json.dumps({"source": "stripe_watchdog", "content": "x", "timestamp": 1})
+        + "\n"
+    )
+    monkeypatch.setattr(helpers, "TRAINING_ANOMALY_FILE", file)
+    samples = helpers.fetch_watchdog_anomalies(limit=5)
+    assert samples and samples[0].content == "x"
