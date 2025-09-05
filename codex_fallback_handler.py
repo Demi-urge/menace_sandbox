@@ -65,7 +65,10 @@ def handle(
     """
 
     try:
-        return reroute_to_gpt35(prompt)
+        result = reroute_to_gpt35(prompt)
+        # Expose the routed model's text via ``result.text`` while preserving
+        # provider specific metadata under ``result.raw``.
+        return result
     except Exception as exc:
         queue_failed(prompt, reason, path=queue_path or _QUEUE_FILE)
         return LLMResult(text="", raw={"error": str(exc), "reason": reason})

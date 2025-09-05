@@ -21,7 +21,7 @@ def test_handle_reroutes(monkeypatch):
 
     def fake_reroute(p: Prompt) -> LLMResult:
         called["prompt"] = p.user
-        return LLMResult(text="ok")
+        return LLMResult(text="ok", raw={"model": "gpt-3.5-turbo"})
 
     monkeypatch.setattr(cf, "reroute_to_gpt35", fake_reroute)
 
@@ -29,6 +29,7 @@ def test_handle_reroutes(monkeypatch):
     assert called["prompt"] == "hi"
     assert isinstance(result, LLMResult)
     assert result.text == "ok"
+    assert result.raw["model"] == "gpt-3.5-turbo"
 
 
 def test_handle_queues_on_failure(tmp_path, monkeypatch):
