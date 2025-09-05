@@ -12,6 +12,10 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from logging.handlers import RotatingFileHandler
+import logging
+import shutil
+import os
 
 from dynamic_path_router import resolve_path
 from audit_trail import AuditTrail
@@ -37,8 +41,14 @@ def capture_anomalies(monkeypatch, tmp_path):
             samples.append({"source": source, "content": content})
 
     monkeypatch.setattr(sw, "TrainingSample", DummySample)
-    monkeypatch.setattr(sw, "ANOMALY_LOG", tmp_path / "anomaly.log")
-    monkeypatch.setattr(sw, "ANOMALY_TRAIL", AuditTrail(str(tmp_path / "anomaly.log")))
+    log_path = tmp_path / "anomaly.log"
+    handler = RotatingFileHandler(str(log_path), maxBytes=1024, backupCount=1, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.rotator = lambda src, dst: shutil.move(src, dst)
+    handler.namer = lambda name: name
+    monkeypatch.setattr(sw, "ANOMALY_LOG", log_path)
+    monkeypatch.setattr(sw, "ANOMALY_HANDLER", handler)
+    monkeypatch.setattr(sw, "ANOMALY_TRAIL", AuditTrail(str(log_path), handler=handler))
     resolve_path("config/stripe_watchdog.yaml")
     monkeypatch.setattr(sw.alert_dispatcher, "dispatch_alert", lambda *a, **k: None)
 
@@ -215,7 +225,7 @@ def test_revenue_mismatch(monkeypatch, capture_anomalies):
 def test_logged_charge_not_flagged(monkeypatch, capture_anomalies):
     events, _samples = capture_anomalies
 
-    ledger: list[dict] = []
+    ledger: list[dict] = [{"id": "ch_logged"}]
     billing_logs = [{"amount": 10.0, "timestamp": 2}]
     charges = [
         {"id": "ch_logged", "created": 2, "amount": 1000, "status": "succeeded"}
@@ -232,3 +242,29 @@ def test_logged_charge_not_flagged(monkeypatch, capture_anomalies):
     anomalies = sw.check_events()
 
     assert anomalies == []
+
+
+def test_anomaly_log_rotation(monkeypatch, tmp_path):
+    log_path = tmp_path / "anomaly.log"
+    handler = RotatingFileHandler(
+        str(log_path), maxBytes=200, backupCount=2, encoding="utf-8"
+    )
+    handler.setFormatter(logging.Formatter("%(message)s"))
+
+    def rotator(src, dst):
+        with open(src, "rb") as sf, open(dst, "wb") as df:
+            df.write(sf.read())
+        os.remove(src)
+
+    handler.rotator = rotator
+    handler.namer = lambda name: name
+    monkeypatch.setattr(sw, "ANOMALY_LOG", log_path)
+    monkeypatch.setattr(sw, "ANOMALY_HANDLER", handler)
+    monkeypatch.setattr(sw, "ANOMALY_TRAIL", AuditTrail(str(log_path), handler=handler))
+
+    for _ in range(3):
+        sw.ANOMALY_TRAIL.record({"test": "x" * 150})
+
+    assert log_path.exists()
+    assert log_path.with_name(log_path.name + ".1").exists()
+    assert log_path.with_name(log_path.name + ".2").exists()

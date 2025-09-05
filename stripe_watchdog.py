@@ -41,6 +41,9 @@ import yaml
 import alert_dispatcher
 from dynamic_path_router import resolve_path
 from audit_trail import AuditTrail
+from logging.handlers import RotatingFileHandler
+import gzip
+import shutil
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -101,25 +104,60 @@ _LOG_DIR = resolve_path("finance_logs")
 ANOMALY_LOG = _LOG_DIR / "stripe_watchdog_audit.jsonl"
 #: Marker storing the last successful run timestamp.
 _LAST_RUN_FILE = _LOG_DIR / "stripe_watchdog_last_run.txt"
-_MAX_LOG_BYTES = 5 * 1024 * 1024  # 5MB threshold for rotation
+_DEFAULT_MAX_BYTES = 5 * 1024 * 1024  # 5MB
+_DEFAULT_BACKUP_COUNT = 5
+#: Path to YAML configuration containing the list of allowed webhook endpoints
+CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 #: Path used when exporting normalized anomalies for training purposes.
 TRAINING_EXPORT = resolve_path("training_data/stripe_anomalies.jsonl")
 
 
-def _prepare_anomaly_log() -> None:
-    """Ensure log directory exists and rotate oversized logs."""
+def _load_log_rotation(path: Path | None = None) -> tuple[int, int]:
+    """Return ``maxBytes`` and ``backupCount`` from ``path`` or defaults."""
+
+    cfg = path or CONFIG_PATH
+    max_bytes = _DEFAULT_MAX_BYTES
+    backup_count = _DEFAULT_BACKUP_COUNT
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        rotation = data.get("log_rotation") or {}
+        max_bytes = int(rotation.get("maxBytes", rotation.get("max_bytes", max_bytes)))
+        backup_count = int(
+            rotation.get("backupCount", rotation.get("backup_count", backup_count))
+        )
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
+    return max_bytes, backup_count
+
+
+def _gzip_rotator(source: str, dest: str) -> None:
+    with open(source, "rb") as sf, gzip.open(dest, "wb") as df:
+        shutil.copyfileobj(sf, df)
+    os.remove(source)
+
+
+def _prepare_anomaly_log() -> RotatingFileHandler:
+    """Ensure log directory exists and return a rotating log handler."""
 
     ANOMALY_LOG.parent.mkdir(parents=True, exist_ok=True)
-    if ANOMALY_LOG.exists() and ANOMALY_LOG.stat().st_size > _MAX_LOG_BYTES:
-        backup = ANOMALY_LOG.with_suffix(ANOMALY_LOG.suffix + ".1")
-        try:
-            ANOMALY_LOG.replace(backup)
-        except OSError:
-            pass  # best effort
+    max_bytes, backup_count = _load_log_rotation()
+    handler = RotatingFileHandler(
+        str(ANOMALY_LOG),
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.rotator = _gzip_rotator
+    handler.namer = lambda name: name + ".gz"
+    return handler
 
 
-_prepare_anomaly_log()
-ANOMALY_TRAIL = AuditTrail(str(ANOMALY_LOG))
+ANOMALY_HANDLER = _prepare_anomaly_log()
+ANOMALY_TRAIL = AuditTrail(str(ANOMALY_LOG), handler=ANOMALY_HANDLER)
 
 
 def _read_last_run_ts() -> int:
@@ -141,23 +179,8 @@ def _write_last_run_ts(ts: int) -> None:
         logger.exception("Failed to update last-run marker")
 
 
-def _maybe_rotate_anomaly_log() -> None:
-    """Rotate the anomaly log when exceeding the size threshold."""
-
-    if ANOMALY_LOG.exists() and ANOMALY_LOG.stat().st_size > _MAX_LOG_BYTES:
-        backup = ANOMALY_LOG.with_suffix(ANOMALY_LOG.suffix + ".1")
-        try:
-            ANOMALY_LOG.replace(backup)
-        except OSError:
-            pass  # best effort
-
-
 #: Fallback path used when ``StripeLedger`` is unavailable
 LEDGER_FILE = resolve_path("finance_logs/stripe_ledger.jsonl")
-
-#: Path to YAML configuration containing the list of allowed webhook
-#: endpoints.
-CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 
 
 def _load_allowed_webhooks(path: Path | None = None) -> set[str]:
@@ -436,7 +459,6 @@ def _emit_anomaly(
             "timestamp": int(time.time()),
         }
         ANOMALY_TRAIL.record(entry)
-        _maybe_rotate_anomaly_log()
     except Exception:
         logger.exception("Failed to write anomaly log", extra={"record": record})
     if export_training:
