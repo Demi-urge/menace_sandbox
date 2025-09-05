@@ -43,7 +43,7 @@ from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
 import rollback_manager
 import sandbox_review
-from menace_sanity_layer import record_payment_anomaly
+from menace_sanity_layer import record_payment_anomaly, record_billing_event
 
 try:  # optional dependency
     import stripe  # type: ignore
@@ -126,6 +126,14 @@ def _alert_mismatch(
         {"bot_id": bot_id, "account_id": account_id, "amount": amount},
         "All mismatch events must go through central routing and be logged.",
         severity=5.0,
+    )
+    record_billing_event(
+        "stripe_account_mismatch",
+        {"bot_id": bot_id, "account_id": account_id, "amount": amount},
+        (
+            "Ensure all Stripe operations route through stripe_billing_router "
+            "and validate destination accounts."
+        ),
     )
     trigger_lock(f"Stripe account mismatch for {bot_id}", severity=5)
     log_critical_discrepancy(bot_id, message)

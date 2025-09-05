@@ -7,6 +7,22 @@ FOREIGN_ACCOUNT = "acct_foreign"
 
 @pytest.fixture
 def sbr(monkeypatch, tmp_path):
+    import dynamic_path_router
+    from dynamic_path_router import resolve_path as _orig_resolve
+
+    stub_path = tmp_path / "unified_event_bus.py"  # path-ignore
+    stub_path.write_text("class UnifiedEventBus:\n    pass\n")
+
+    def fake_resolve(name, root=None):
+        if name == "unified_event_bus.py":  # path-ignore
+            return stub_path
+        try:
+            return _orig_resolve(name, root)
+        except TypeError:
+            return _orig_resolve(name)
+
+    monkeypatch.setattr(dynamic_path_router, "resolve_path", fake_resolve)
+
     sbr = _import_module(monkeypatch, tmp_path)
 
     class DummyClient:
@@ -20,6 +36,8 @@ def sbr(monkeypatch, tmp_path):
     monkeypatch.setattr(sbr, "record_payment", lambda *a, **k: None)
     monkeypatch.setattr(sbr, "_log_payment", lambda *a, **k: None)
     monkeypatch.setattr(sbr, "log_billing_event", lambda *a, **k: None)
+    monkeypatch.setattr(sbr, "record_payment_anomaly", lambda *a, **k: None)
+    monkeypatch.setattr(sbr, "record_billing_event", lambda *a, **k: None)
     return sbr
 
 
