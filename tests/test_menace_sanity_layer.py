@@ -37,22 +37,59 @@ def test_record_payment_anomaly_writes_db_and_memory(monkeypatch):
     assert db_calls == [
         ("test_event", 2.5, {"foo": "bar", "write_codex": False, "export_training": False})
     ]
-    assert mem_calls and mem_calls[0][0] == "handle it"
+    assert mem_calls and mem_calls[0][0] == "Avoid handle it."
     assert mem_calls[0][1]["event_type"] == "test_event"
     assert mem_calls[0][1]["metadata"]["foo"] == "bar"
 
 
-def test_record_billing_anomaly_persists_and_publishes(monkeypatch, tmp_path):
+def test_watchdog_anomaly_updates_db_memory_and_event_bus(monkeypatch, tmp_path):
+    """Simulate Stripe watchdog anomaly end-to-end."""
+
     from db_router import init_db_router
 
     init_db_router("ba", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
-    published: list[dict] = []
-    monkeypatch.setattr(msl, "publish_anomaly", lambda ev: published.append(ev))
 
-    msl.record_billing_anomaly(
-        "overcharge", {"amount": 5}, severity=3.0, source_workflow="wf-1"
+    # Ensure temporary paths are used by the watchdog module
+    monkeypatch.setitem(
+        sys.modules,
+        "dynamic_path_router",
+        types.SimpleNamespace(resolve_path=lambda p: tmp_path / p),
     )
+    monkeypatch.delitem(sys.modules, "stripe_watchdog", raising=False)
+    import stripe_watchdog as sw  # noqa: WPS433
+
+    # Avoid file I/O from watchdog and sanity layer
+    monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(sw.ANOMALY_TRAIL, "record", lambda *a, **k: None)
+    monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(msl, "_DISCREPANCY_DB", None)
+    monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
+
+    events: list[dict] = []
+    msl._EVENT_BUS = msl.UnifiedEventBus()
+
+    def _handler(_topic, event):
+        events.append(event)
+
+    msl._EVENT_BUS.subscribe("billing.anomaly", _handler)
+
+    class DummyMM:
+        def __init__(self) -> None:
+            self.stored: list[tuple[str, dict, str]] = []
+
+        def query(self, key, limit):  # noqa: D401
+            return []
+
+        def store(self, key, data, tags=""):
+            self.stored.append((key, data, tags))
+
+    mm = DummyMM()
+    msl._MEMORY_MANAGER = mm
+
+    record = {"type": "overcharge", "id": "ch_1", "amount": 5}
+    sw._emit_anomaly(record, False, False)
 
     anomalies = msl.list_anomalies()
     assert anomalies and anomalies[0]["event_type"] == "overcharge"
-    assert published and published[0]["event_type"] == "overcharge"
+    assert mm.stored and mm.stored[0][0] == "billing:overcharge"
+    assert events and events[0]["event_type"] == "overcharge"
