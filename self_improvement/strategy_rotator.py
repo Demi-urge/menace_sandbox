@@ -17,13 +17,26 @@ KEYWORD_MAP.update({
     "comment": "comment_refactor",
 })
 
+TEMPLATES = [
+    "strict_fix",
+    "delete_rebuild",
+    "comment_refactor",
+    "unit_test_rewrite",
+]
+
 STATE_PATH = Path(SandboxSettings().sandbox_data_dir) / "strategy_rotator_state.json"
 settings = SandboxSettings()
-manager = PromptStrategyManager(state_path=STATE_PATH, keyword_map=KEYWORD_MAP)
+manager = PromptStrategyManager(
+    strategies=TEMPLATES, state_path=STATE_PATH, keyword_map=KEYWORD_MAP
+)
 manager.failure_limits.update(settings.strategy_failure_limits)
 
 
-def next_strategy(strategy: str | None, failure_reason: str | None = None) -> str | None:
+def next_strategy(
+    strategy: str | None,
+    failure_reason: str | None = None,
+    roi_delta: float | None = None,
+) -> str | None:
     """Return the next strategy to try after a failure.
 
     Parameters
@@ -32,9 +45,14 @@ def next_strategy(strategy: str | None, failure_reason: str | None = None) -> st
         The strategy that was attempted.
     failure_reason:
         Optional description of why the attempt failed.
+    roi_delta:
+        ROI change produced by the attempt.
     """
 
-    return manager.record_failure(strategy, failure_reason)
+    forced = manager.ingest(strategy, failure_reason, roi_delta)
+    if forced:
+        return forced
+    return manager.next()
 
 
-__all__ = ["next_strategy", "manager"]
+__all__ = ["next_strategy", "manager", "TEMPLATES"]
