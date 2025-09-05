@@ -11,22 +11,31 @@ import json
 import shutil
 from typing import Iterable
 
+import logging
+
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
 from cryptography.hazmat.primitives import serialization
-import logging
 
 
 class AuditTrail:
-    def __init__(self, path: str, private_key: bytes | None = None) -> None:
+    def __init__(
+        self,
+        path: str,
+        private_key: bytes | None = None,
+        handler: logging.Handler | None = None,
+    ) -> None:
         """Create an audit trail at *path*.
 
         If *private_key* is ``None`` no signing is performed and entries are
         prefixed with ``"-"``. A warning is logged in this case.
+        When ``handler`` is provided entries are written via the handler,
+        enabling external log rotation mechanisms.
         """
         self.path = path
+        self.handler = handler
         if private_key:
             try:
                 # Allow both raw and DER-encoded private keys. The latter is
@@ -74,8 +83,20 @@ class AuditTrail:
         else:
             prefix = "-"
         line = f"{prefix} {message}\n"
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(line)
+        if self.handler:
+            record = logging.LogRecord(
+                name="AuditTrail",
+                level=logging.INFO,
+                pathname=self.path,
+                lineno=0,
+                msg=line,
+                args=(),
+                exc_info=None,
+            )
+            self.handler.emit(record)
+        else:
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(line)
 
     def verify(self, public_key: bytes) -> bool:
         pub = Ed25519PublicKey.from_public_bytes(public_key)

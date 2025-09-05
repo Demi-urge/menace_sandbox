@@ -3,3 +3,6 @@ allowed_webhooks:
   - we_1234567890
 approved_workflows:
   - billing_bot
+log_rotation:
+  maxBytes: 5242880
+  backupCount: 5
