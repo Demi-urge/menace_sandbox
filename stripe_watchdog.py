@@ -135,10 +135,6 @@ def _sanity_feedback_enabled(path: Path | None = None) -> bool:
 
 SANITY_LAYER_FEEDBACK_ENABLED = _sanity_feedback_enabled()
 
-SANITY_INSTRUCTION = (
-    "Avoid generating bots that make Stripe charges without proper logging or central routing."
-)
-
 BILLING_EVENT_INSTRUCTION = (
     "Avoid generating bots that issue Stripe charges without logging through billing_logger."
 )
@@ -528,10 +524,12 @@ def _emit_anomaly(
         if "id" in payment_meta:
             payment_meta["charge_id"] = payment_meta.pop("id")
         payment_meta.setdefault("reason", record.get("type"))
+        event_type = record.get("type", "unknown")
+        instruction = menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS.get(event_type)
         menace_sanity_layer.record_payment_anomaly(
-            record.get("type", "unknown"),
+            event_type,
             payment_meta,
-            SANITY_INSTRUCTION,
+            instruction,
             write_codex=write_codex,
             export_training=export_training,
         )

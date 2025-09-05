@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 from logging.handlers import RotatingFileHandler
@@ -19,6 +22,26 @@ import os
 
 from dynamic_path_router import resolve_path
 from audit_trail import AuditTrail
+
+# Stub heavy optional dependencies before importing stripe_watchdog
+sys.modules.setdefault("vector_service", SimpleNamespace(CognitionLayer=lambda: None))
+
+_TEMP_DIR = tempfile.TemporaryDirectory()
+_STUB_UEB = Path(_TEMP_DIR.name) / "unified_event_bus.py"
+_STUB_UEB.write_text("class UnifiedEventBus:\n    pass\n")
+
+import dynamic_path_router as _dpr
+_orig_resolve = _dpr.resolve_path
+
+def _fake_resolve(name, root=None):
+    if name == "unified_event_bus.py":
+        return _STUB_UEB
+    try:
+        return _orig_resolve(name, root)
+    except TypeError:
+        return _orig_resolve(name)
+
+_dpr.resolve_path = _fake_resolve
 
 import stripe_watchdog as sw
 
@@ -126,7 +149,7 @@ def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
     assert logged["type"] == "unknown_webhook"
-    assert logged["metadata"]["id"] == "we_evil"
+    assert logged["metadata"]["webhook_id"] == "we_evil"
 
 
 def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
@@ -160,7 +183,7 @@ def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
     assert logged["type"] == "disabled_webhook"
-    assert logged["metadata"]["id"] == "we_disabled"
+    assert logged["metadata"]["webhook_id"] == "we_disabled"
 
 
 def test_env_allowed_webhook(monkeypatch):
@@ -292,3 +315,27 @@ def test_emit_anomaly_triggers_sanity_layer(monkeypatch):
 
     assert calls and calls[0][0] == "missing_charge"
     assert calls[0][1]["charge_id"] == "ch_test"
+
+
+def test_emit_anomaly_instruction_varies_by_event_type(monkeypatch):
+    calls: list[tuple[str, dict, str | None]] = []
+
+    monkeypatch.setattr(
+        sw.menace_sanity_layer,
+        "record_payment_anomaly",
+        lambda *a, **k: calls.append(a),
+    )
+    monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "ANOMALY_TRAIL", SimpleNamespace(record=lambda entry: None))
+
+    sw._emit_anomaly({"type": "missing_charge", "id": "ch1"}, False, False)
+    sw._emit_anomaly({"type": "unknown_webhook", "id": "wh1"}, False, False)
+
+    assert len(calls) == 2
+    inst1 = calls[0][2]
+    inst2 = calls[1][2]
+    expected1 = sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS["missing_charge"]
+    expected2 = sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS["unknown_webhook"]
+    assert inst1 == expected1
+    assert inst2 == expected2
+    assert inst1 != inst2
