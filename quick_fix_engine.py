@@ -26,7 +26,13 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
+try:  # pragma: no cover - optional dependency
+    from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
+except Exception:  # pragma: no cover - fallback when vector service is missing
+    ContextBuilder = object  # type: ignore
+    Retriever = object  # type: ignore
+    FallbackResult = object  # type: ignore
+    EmbeddingBackfill = object  # type: ignore
 from patch_provenance import PatchLogger
 try:  # pragma: no cover - optional dependency
     from chunking import get_chunk_summaries
@@ -303,7 +309,7 @@ def generate_patch(
                 )
             return patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
-        logger.error("quick fix generation failed for %s: %s", module, exc)
+        logger.error("quick fix generation failed for %s: %s", prompt_path, exc)
         return None
 
 
@@ -422,14 +428,15 @@ class QuickFixEngine:
             path = resolve_path(f"{module}.py")
         except FileNotFoundError:
             return
-        context_meta = {"error_type": etype, "module": module, "bot": bot}
+        prompt_path = path_for_prompt(path)
+        context_meta = {"error_type": etype, "module": prompt_path, "bot": bot}
         builder = self.context_builder
         ctx_block = ""
         if builder is not None:
             cb_session = uuid.uuid4().hex
             context_meta["context_session_id"] = cb_session
             try:
-                query = f"{etype} in {module}"
+                query = f"{etype} in {prompt_path}"
                 ctx_block = builder.build(query, session_id=cb_session)
                 if isinstance(ctx_block, (FallbackResult, ErrorResult)):
                     ctx_block = ""
@@ -442,7 +449,7 @@ class QuickFixEngine:
         vectors: list[tuple[str, str, float]] = []
         retrieval_metadata: dict[str, dict[str, Any]] = {}
         if self.retriever is not None:
-            _hits, session_id, vectors = self._redundant_retrieve(module, top_k=1)
+            _hits, session_id, vectors = self._redundant_retrieve(prompt_path, top_k=1)
             retrieval_metadata = {
                 f"{h.get('origin_db', '')}:{h.get('record_id', '')}": {
                     "license": h.get("license"),
@@ -472,7 +479,7 @@ class QuickFixEngine:
             self.logger.error("quick fix validation failed: %s", exc)
         try:
             self.graph.add_telemetry_event(
-                bot, etype, module, mods, patch_id=patch_id, resolved=tests_ok
+                bot, etype, prompt_path, mods, patch_id=patch_id, resolved=tests_ok
             )
             self.graph.update_error_stats(self.db)
         except Exception as exc:
@@ -524,14 +531,15 @@ class QuickFixEngine:
                 path = resolve_path(f"{module}.py")
             except FileNotFoundError:
                 continue
-            meta = {"module": module, "reason": "preemptive_patch"}
+            prompt_path = path_for_prompt(path)
+            meta = {"module": prompt_path, "reason": "preemptive_patch"}
             builder = self.context_builder
             ctx = ""
             if builder is not None:
                 cb_session = uuid.uuid4().hex
                 meta["context_session_id"] = cb_session
                 try:
-                    query = f"preemptive patch {module}"
+                    query = f"preemptive patch {prompt_path}"
                     ctx = builder.build(query, session_id=cb_session)
                     if isinstance(ctx, (FallbackResult, ErrorResult)):
                         ctx = ""
@@ -544,7 +552,7 @@ class QuickFixEngine:
             vectors: list[tuple[str, str, float]] = []
             retrieval_metadata: dict[str, dict[str, Any]] = {}
             if self.retriever is not None:
-                _hits, session_id, vectors = self._redundant_retrieve(module, top_k=1)
+                _hits, session_id, vectors = self._redundant_retrieve(prompt_path, top_k=1)
                 retrieval_metadata = {
                     f"{h.get('origin_db', '')}:{h.get('record_id', '')}": {
                         "license": h.get("license"),
@@ -565,17 +573,17 @@ class QuickFixEngine:
                     result = self.manager.run_patch(path, desc)
                 patch_id = getattr(result, "patch_id", None)
             except Exception as exc:  # pragma: no cover - runtime issues
-                self.logger.error("preemptive patch failed for %s: %s", module, exc)
+                self.logger.error("preemptive patch failed for %s: %s", prompt_path, exc)
                 try:
                     try:
                         patch_id = generate_patch(
-                            module,
+                            prompt_path,
                             getattr(self.manager, "engine", None),
                             context_builder=self.context_builder,
                         )
                     except TypeError:
                         patch_id = generate_patch(
-                            module, getattr(self.manager, "engine", None)
+                            prompt_path, getattr(self.manager, "engine", None)
                         )
                 except Exception:
                     patch_id = None
@@ -583,18 +591,20 @@ class QuickFixEngine:
                 self.graph.add_telemetry_event(
                     "predictor",
                     "predicted_high_risk",
-                    module,
+                    prompt_path,
                     None,
                     patch_id=patch_id,
                 )
             except Exception as exc:  # pragma: no cover - graph issues
                 self.logger.error(
-                    "failed to record telemetry for %s: %s", module, exc
+                    "failed to record telemetry for %s: %s", prompt_path, exc
                 )
             try:
-                self.db.log_preemptive_patch(module, risk, patch_id)
+                self.db.log_preemptive_patch(prompt_path, risk, patch_id)
             except Exception as exc:  # pragma: no cover - db issues
-                self.logger.error("failed to record preemptive patch for %s: %s", module, exc)
+                self.logger.error(
+                    "failed to record preemptive patch for %s: %s", prompt_path, exc
+                )
             if self.patch_logger is not None:
                 ids = {f"{o}:{v}": s for o, v, s in vectors}
                 try:
