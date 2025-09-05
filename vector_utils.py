@@ -7,6 +7,8 @@ import math
 from pathlib import Path
 from typing import Iterable, Sequence, Mapping, Any
 
+from dynamic_path_router import resolve_path
+
 
 def cosine_similarity(a: Iterable[float], b: Iterable[float]) -> float:
     """Return cosine similarity between vectors ``a`` and ``b``."""
@@ -34,6 +36,12 @@ def persist_embedding(
     """
 
     file_path = Path(path)
+    if str(path) == "embeddings.jsonl":
+        try:
+            file_path = Path(resolve_path(str(path)))
+        except FileNotFoundError:
+            file_path = Path(resolve_path(".")) / str(path)
+
     file_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "type": kind,
