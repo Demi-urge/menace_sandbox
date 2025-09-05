@@ -21,14 +21,22 @@ except Exception:  # pragma: no cover - fallback for direct execution
 from sandbox_settings import SandboxSettings
 
 
-# Location where failed prompts are stored for later replay
-_QUEUE_FILE = Path("codex_fallback_queue.jsonl")
 _settings = SandboxSettings()
+
+
+def _default_queue_path() -> Path:
+    """Return the configured queue path.
+
+    The value is pulled from :class:`SandboxSettings` via
+    ``codex_retry_queue_path`` so tests can override the destination.
+    """
+
+    return Path(getattr(_settings, "codex_retry_queue_path", "codex_retry_queue.jsonl"))
 
 logger = logging.getLogger(__name__)
 
 
-def queue_failed(prompt: Prompt, reason: str, *, path: Path = _QUEUE_FILE) -> None:
+def queue_failed(prompt: Prompt, reason: str, *, path: Optional[Path] = None) -> None:
     """Persist ``prompt`` and ``reason`` as a JSONL record.
 
     Parameters
@@ -42,6 +50,7 @@ def queue_failed(prompt: Prompt, reason: str, *, path: Path = _QUEUE_FILE) -> No
     """
 
     record = {"prompt": prompt.user, "reason": reason}
+    path = path or _default_queue_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
@@ -91,7 +100,7 @@ def handle(
         logger.warning(
             "codex fallback reroute failed", exc_info=True, extra={"reason": reason}
         )
-        queue_failed(prompt, reason, path=queue_path or _QUEUE_FILE)
+        queue_failed(prompt, reason, path=queue_path)
         return LLMResult(text="", raw={"reason": reason})
 
     # Expose the routed model's text via ``result.text`` while preserving
@@ -100,7 +109,7 @@ def handle(
         logger.warning(
             "codex fallback produced no completion", extra={"reason": reason}
         )
-        queue_failed(prompt, reason, path=queue_path or _QUEUE_FILE)
+        queue_failed(prompt, reason, path=queue_path)
         return LLMResult(text="", raw={"reason": reason})
     return result
 

@@ -1402,8 +1402,11 @@ class SelfCodingEngine:
             extra={"reason": reason, "description": description, "tags": ["degraded"]},
         )
 
+        queue_path = Path(
+            getattr(_settings, "codex_retry_queue_path", "codex_retry_queue.jsonl")
+        )
         alt = codex_fallback_handler.handle(
-            self.simplify_prompt(prompt), reason
+            self.simplify_prompt(prompt), reason, queue_path=queue_path
         )
         if not getattr(alt, "text", "").strip():
             return result, None

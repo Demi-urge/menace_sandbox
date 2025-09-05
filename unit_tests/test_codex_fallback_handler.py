@@ -8,19 +8,22 @@ from menace.llm_interface import LLMResult
 
 def test_queue_failed_writes_jsonl(tmp_path):
     path = tmp_path / "queue.jsonl"
-    cf.queue_failed(Prompt("hello"), "boom", path=path)
+    cf._settings = types.SimpleNamespace(codex_retry_queue_path=str(path))
+    cf.queue_failed(Prompt("hello"), "boom")
 
     data = json.loads(path.read_text().strip())
     assert data["prompt"] == "hello"
     assert data["reason"] == "boom"
 
 
-def test_handle_reroutes(monkeypatch):
+def test_handle_reroutes(monkeypatch, tmp_path):
     prompt = Prompt("hi")
 
     called = {}
 
-    cf._settings = types.SimpleNamespace(codex_fallback_model="alt-model")
+    cf._settings = types.SimpleNamespace(
+        codex_fallback_model="alt-model", codex_retry_queue_path=str(tmp_path / "queue.jsonl")
+    )
 
     def fake_reroute(p: Prompt) -> LLMResult:
         called["prompt"] = p.user
@@ -37,7 +40,7 @@ def test_handle_reroutes(monkeypatch):
 
 def test_handle_queues_on_failure(tmp_path, monkeypatch):
     queue_path = tmp_path / "queue.jsonl"
-    monkeypatch.setattr(cf, "_QUEUE_FILE", queue_path)
+    cf._settings = types.SimpleNamespace(codex_retry_queue_path=str(queue_path))
 
     def boom(_: Prompt) -> LLMResult:
         raise RuntimeError("fail")
@@ -56,7 +59,9 @@ def test_handle_queues_on_failure(tmp_path, monkeypatch):
 
 def test_handle_returns_reason_on_empty_completion(tmp_path, monkeypatch):
     queue_path = tmp_path / "queue.jsonl"
-    monkeypatch.setattr(cf, "_QUEUE_FILE", queue_path)
+    cf._settings = types.SimpleNamespace(
+        codex_retry_queue_path=str(queue_path), codex_fallback_model="m"
+    )
 
     def empty(_: Prompt) -> LLMResult:
         return LLMResult(text="", raw={"model": cf._settings.codex_fallback_model})
@@ -73,7 +78,7 @@ def test_handle_returns_reason_on_empty_completion(tmp_path, monkeypatch):
     assert record["reason"] == "no text"
 
 
-def test_reroute_uses_configured_model(monkeypatch):
+def test_reroute_uses_configured_model(monkeypatch, tmp_path):
     captured = {}
 
     class DummyClient:
@@ -86,7 +91,9 @@ def test_reroute_uses_configured_model(monkeypatch):
             return LLMResult(text="ok", raw={"model": self.model})
 
     monkeypatch.setattr(cf, "LLMClient", DummyClient)
-    cf._settings = types.SimpleNamespace(codex_fallback_model="dummy-model")
+    cf._settings = types.SimpleNamespace(
+        codex_fallback_model="dummy-model", codex_retry_queue_path=str(tmp_path / "queue.jsonl")
+    )
 
     result = cf.reroute_to_fallback_model(Prompt("hi"))
     assert captured["model"] == "dummy-model"
