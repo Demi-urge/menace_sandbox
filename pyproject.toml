@@ -71,6 +71,7 @@ dependencies = [
     ,"cryptography"
     ,"tiktoken"
     ,"vaderSentiment"
+    ,"stripe"
 ]
 
 [project.scripts]
