@@ -71,7 +71,7 @@ dependencies = [
     ,"cryptography"
     ,"tiktoken"
     ,"vaderSentiment"
-    ,"stripe"
+    ,"stripe>=12.5.0"
 ]
 
 [project.scripts]

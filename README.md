@@ -60,7 +60,9 @@ configuration. The generated file includes stub values for critical settings:
 
 ### Billing router
 
-`stripe_billing_router` is the **sole payment interface** for all billing and
+The project depends on the official Stripe SDK (`stripe` Python package) for
+billing features. `stripe_billing_router` is the **sole payment interface** for
+all billing and
 monetisation features.  The router owns the Stripe API keys, resolves per‑bot
 identifiers, supports region overrides and strategy hooks, and aborts if keys or
 routing rules are missing.  The routing configuration
