@@ -1,9 +1,8 @@
 import importlib
 import importlib.util
-import pathlib
 import sys
 
-import pytest
+from dynamic_path_router import resolve_path
 
 
 def test_load_keyword_overrides_repo_moved(tmp_path, monkeypatch):
@@ -12,15 +11,18 @@ def test_load_keyword_overrides_repo_moved(tmp_path, monkeypatch):
     moved_root.mkdir()
     (moved_root / "sandbox_settings.yaml").write_text(config, encoding="utf-8")
 
+    dynamic_router_path = resolve_path("dynamic_path_router.py")
+
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(moved_root))
     monkeypatch.setenv("SANDBOX_SETTINGS_YAML", "sandbox_settings.yaml")
 
     sys.modules.pop("dynamic_path_router", None)
     spec = importlib.util.spec_from_file_location(
         "dynamic_path_router",
-        pathlib.Path(__file__).resolve().parents[1] / "dynamic_path_router.py",
+        dynamic_router_path,
     )
     dynamic_path_router = importlib.util.module_from_spec(spec)
+    sys.modules["dynamic_path_router"] = dynamic_path_router
     assert spec.loader is not None
     spec.loader.exec_module(dynamic_path_router)
     dynamic_path_router._PROJECT_ROOT = None  # type: ignore[attr-defined]
