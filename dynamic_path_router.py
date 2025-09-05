@@ -1,12 +1,13 @@
 """Utilities for resolving files within this repository.
 
-The module provides :func:`resolve_path` which locates files relative to one or
-more project roots.  Roots are determined by consulting optional environment
-overrides (``MENACE_ROOT``/``SANDBOX_REPO_PATH`` or the multi-root variants
-``MENACE_ROOTS``/``SANDBOX_REPO_PATHS``), falling back to ``git rev-parse
---show-toplevel`` and finally searching parent directories for a ``.git``
-directory.  When a direct lookup fails a full ``os.walk`` search is used.
-Successful lookups are cached to avoid repeated scans.
+The module exposes helpers for locating files, directories and modules across
+one or more project roots.  Roots are determined by consulting optional
+environment overrides (``MENACE_ROOT``/``SANDBOX_REPO_PATH`` or the multi-root
+variants ``MENACE_ROOTS``/``SANDBOX_REPO_PATHS``), falling back to
+``git rev-parse --show-toplevel`` and finally searching parent directories for
+a ``.git`` directory.  When a direct lookup fails a full ``os.walk`` search is
+used.  Successful lookups and discovered roots are cached behind a thread-safe
+lock to avoid repeated filesystem walks.
 """
 
 from __future__ import annotations
@@ -196,7 +197,7 @@ def resolve_path(name: str, root: Optional[Path | str] = None) -> Path:
 
 
 def resolve_module_path(module_name: str) -> Path:
-    """Resolve dotted ``module_name`` to a Python source file."""
+    """Resolve dotted ``module_name`` to a Python source file across all roots."""
 
     module_path = Path(*module_name.split("."))
     try:
@@ -206,7 +207,7 @@ def resolve_module_path(module_name: str) -> Path:
 
 
 def resolve_dir(dirname: str) -> Path:
-    """Resolve *dirname* to a directory within the repository."""
+    """Resolve *dirname* to a directory across the configured roots."""
 
     path = resolve_path(dirname)
     if not path.is_dir():

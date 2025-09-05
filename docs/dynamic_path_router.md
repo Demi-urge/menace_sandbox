@@ -20,6 +20,21 @@ order:
 If the direct lookup fails the router performs a recursive walk of the
 repository to locate the file.
 
+When the multi-root variables are present they take precedence over the single
+root overrides.  Each entry is searched in order and the first matching root is
+stored for reuse so subsequent lookups avoid repeated filesystem walks.
+
+## Additional helpers
+
+- `get_project_root` and `get_project_roots` expose the discovered repository
+  roots, optionally selecting one via the `repo_hint` parameter.
+- `resolve_module_path` resolves dotted module names to their source file or
+  package `__init__.py` across all registered roots.
+- `resolve_dir` resolves and validates directory locations.
+
+All resolutions and discovered roots are cached behind a thread-safe lock to
+keep repeated lookups inexpensive.
+
 ## Caching
 
 Successful resolutions are cached in-memory to avoid repeated scans.  Call
