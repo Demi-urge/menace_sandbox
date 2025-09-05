@@ -42,12 +42,45 @@ def test_check_events_detects_missing(monkeypatch, tmp_path):
         ]
     )
     fake_stripe = SimpleNamespace(
-        Charge=SimpleNamespace(list=lambda limit, api_key: charges)
+        Charge=SimpleNamespace(list=lambda limit, api_key: charges),
+        WebhookEndpoint=SimpleNamespace(list=lambda api_key: _fake_list([])),
     )
     monkeypatch.setattr(sw, "stripe", fake_stripe)
     monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test_dummy")
+    monkeypatch.setattr(sw, "_load_allowed_endpoints", lambda path=sw.CONFIG_PATH: set())
 
     anomalies = sw.check_events()
     assert anomalies == [
         {"id": "ch_new", "amount": 3000, "email": "c@example.com", "timestamp": 789}
     ]
+
+
+def test_check_webhook_endpoints_alerts_unknown(monkeypatch, tmp_path):
+    cfg = tmp_path / "stripe_watchdog.yaml"
+    cfg.write_text(
+        "allowed_endpoints:\n  - https://good.example.com/webhook\n"
+    )
+    monkeypatch.setattr(sw, "CONFIG_PATH", cfg)
+
+    endpoints = _fake_list(
+        [
+            {"url": "https://good.example.com/webhook"},
+            {"url": "https://bad.example.com/webhook"},
+        ]
+    )
+    fake_stripe = SimpleNamespace(
+        WebhookEndpoint=SimpleNamespace(list=lambda api_key: endpoints)
+    )
+    monkeypatch.setattr(sw, "stripe", fake_stripe)
+    monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test_dummy")
+
+    calls = []
+
+    def fake_alert(alert_type, severity, message, context=None):
+        calls.append((alert_type, severity, message))
+
+    monkeypatch.setattr(sw.alert_dispatcher, "dispatch_alert", fake_alert)
+
+    unknown = sw.check_webhook_endpoints("sk_test_dummy")
+    assert unknown == ["https://bad.example.com/webhook"]
+    assert calls and calls[0][0] == "stripe_unknown_endpoint"

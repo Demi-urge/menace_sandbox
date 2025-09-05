@@ -8,7 +8,10 @@ import os
 from pathlib import Path
 from typing import Any, Iterable, List
 
+import yaml
 from dynamic_path_router import resolve_path
+
+import alert_dispatcher
 
 try:  # pragma: no cover - optional dependency
     from vault_secret_provider import VaultSecretProvider
@@ -35,6 +38,63 @@ def _ledger_path() -> Path:
 
 
 LEDGER_FILE = _ledger_path()
+
+CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
+
+
+def _load_allowed_endpoints(path: Path | None = None) -> set[str]:
+    """Return configured set of allowed webhook endpoint URLs."""
+
+    cfg_path = path or CONFIG_PATH
+    try:
+        with cfg_path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        logger.warning("Stripe watchdog config missing", extra={"path": cfg_path})
+        return set()
+    except Exception:
+        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg_path})
+        return set()
+
+    endpoints = data.get("allowed_endpoints")
+    if not isinstance(endpoints, list):
+        logger.warning("allowed_endpoints not configured correctly", extra={"path": cfg_path})
+        return set()
+    return {str(url) for url in endpoints if isinstance(url, str)}
+
+
+def check_webhook_endpoints(api_key: str | None = None) -> List[str]:
+    """Alert if Stripe webhook endpoints differ from configuration."""
+
+    api_key = api_key or load_api_key()
+    if not api_key or stripe is None:
+        return []
+
+    allowed = _load_allowed_endpoints()
+    try:  # pragma: no cover - network issues
+        endpoints = stripe.WebhookEndpoint.list(api_key=api_key)
+    except Exception:
+        logger.exception("Stripe API request for webhook endpoints failed")
+        return []
+
+    unknown: List[str] = []
+    for ep in _iter(endpoints):
+        url = getattr(ep, "url", None)
+        if url is None and isinstance(ep, dict):
+            url = ep.get("url")
+        if url and url not in allowed:
+            unknown.append(url)
+
+    if unknown:
+        msg = f"Unknown Stripe webhook endpoints: {unknown}"
+        logger.error(msg)
+        try:  # pragma: no cover - best effort
+            alert_dispatcher.dispatch_alert("stripe_unknown_endpoint", 5, msg)
+        except Exception:
+            logger.exception("alert dispatch failed for webhook check")
+    else:
+        logger.info("All Stripe webhook endpoints accounted for")
+    return unknown
 
 
 def load_api_key() -> str | None:
@@ -104,6 +164,9 @@ def check_events() -> List[dict[str, Any]]:
     api_key = load_api_key()
     if not api_key or stripe is None:
         return []
+
+    # Also verify registered webhook endpoints
+    check_webhook_endpoints(api_key)
 
     try:
         charges = stripe.Charge.list(limit=100, api_key=api_key)
