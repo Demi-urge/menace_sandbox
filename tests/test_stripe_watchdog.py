@@ -115,15 +115,21 @@ def test_orphan_charge_triggers_audit_and_codex(monkeypatch, capture_anomalies):
     anomalies = sw.check_events(write_codex=True)
 
     assert anomalies and anomalies[0]["id"] == "ch_orphan"
+    assert anomalies[0]["module"] == sw.BILLING_ROUTER_MODULE
     assert events and events[0][0] == "stripe_anomaly" and events[0][1]["id"] == "ch_orphan"
+    assert events[0][1]["module"] == sw.BILLING_ROUTER_MODULE
     assert samples and json.loads(samples[0]["content"])["id"] == "ch_orphan"
+    assert json.loads(samples[0]["content"])["module"] == sw.BILLING_ROUTER_MODULE
     assert billing_calls and billing_calls[0][2] == sw.SEVERITY_MAP["missing_charge"]
+    assert billing_calls[0][1]["module"] == sw.BILLING_ROUTER_MODULE
     assert payment_calls and payment_calls[0][3] == sw.SEVERITY_MAP["missing_charge"]
+    assert payment_calls[0][1]["module"] == sw.BILLING_ROUTER_MODULE
     with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
     assert logged["type"] == "missing_charge"
     assert logged["metadata"]["id"] == "ch_orphan"
+    assert logged["metadata"]["module"] == sw.BILLING_ROUTER_MODULE
     assert "timestamp" in logged
 
 
@@ -156,16 +162,21 @@ def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):
 
     assert unknown == ["we_evil"]
     assert {e[1]["type"] for e in events} == {"unknown_webhook"}
+    assert events[0][1]["module"] == sw.WATCHDOG_MODULE
     assert {
         json.loads(s["content"])["type"] for s in samples
     } == {"unknown_webhook"}
+    assert json.loads(samples[0]["content"])["module"] == sw.WATCHDOG_MODULE
     assert billing_calls and billing_calls[0][2] == sw.SEVERITY_MAP["unknown_webhook"]
+    assert billing_calls[0][1]["module"] == sw.WATCHDOG_MODULE
     assert payment_calls and payment_calls[0][3] == sw.SEVERITY_MAP["unknown_webhook"]
+    assert payment_calls[0][1]["module"] == sw.WATCHDOG_MODULE
     with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
     assert logged["type"] == "unknown_webhook"
     assert logged["metadata"]["webhook_id"] == "we_evil"
+    assert logged["metadata"]["module"] == sw.WATCHDOG_MODULE
 
 
 def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
@@ -192,16 +203,21 @@ def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
 
     assert unknown == ["we_disabled"]
     assert {e[1]["type"] for e in events} == {"disabled_webhook"}
+    assert events[0][1]["module"] == sw.WATCHDOG_MODULE
     assert {
         json.loads(s["content"])["type"] for s in samples
     } == {"disabled_webhook"}
+    assert json.loads(samples[0]["content"])["module"] == sw.WATCHDOG_MODULE
     assert billing_calls and billing_calls[0][2] == sw.SEVERITY_MAP["disabled_webhook"]
+    assert billing_calls[0][1]["module"] == sw.WATCHDOG_MODULE
     assert payment_calls and payment_calls[0][3] == sw.SEVERITY_MAP["disabled_webhook"]
+    assert payment_calls[0][1]["module"] == sw.WATCHDOG_MODULE
     with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
     assert logged["type"] == "disabled_webhook"
     assert logged["metadata"]["webhook_id"] == "we_disabled"
+    assert logged["metadata"]["module"] == sw.WATCHDOG_MODULE
 
 
 def test_env_allowed_webhook(monkeypatch):
@@ -233,13 +249,43 @@ def test_unexpected_refund(capture_anomalies):
     anomalies = sw.detect_missing_refunds(refunds, ledger, write_codex=True)
 
     assert anomalies and anomalies[0]["refund_id"] == "rf_1"
+    assert anomalies[0]["module"] == sw.BILLING_ROUTER_MODULE
     assert events and events[0][1]["type"] == "missing_refund"
+    assert events[0][1]["module"] == sw.BILLING_ROUTER_MODULE
     assert samples and json.loads(samples[0]["content"])["refund_id"] == "rf_1"
+    assert json.loads(samples[0]["content"])["module"] == sw.BILLING_ROUTER_MODULE
     with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
     assert logged["type"] == "missing_refund"
     assert logged["metadata"]["refund_id"] == "rf_1"
+    assert logged["metadata"]["module"] == sw.BILLING_ROUTER_MODULE
+
+
+def test_failed_event_missing_logs(capture_anomalies):
+    events, samples, billing_calls, payment_calls = capture_anomalies
+
+    ledger: list[dict] = []
+    stripe_events = [
+        {"id": "evt_1", "type": "charge.failed", "account": "acct"}
+    ]
+
+    anomalies = sw.detect_failed_events(stripe_events, ledger, write_codex=True)
+
+    assert anomalies and anomalies[0]["event_id"] == "evt_1"
+    assert anomalies[0]["module"] == sw.BILLING_ROUTER_MODULE
+    assert events and events[0][1]["event_id"] == "evt_1"
+    assert events[0][1]["module"] == sw.BILLING_ROUTER_MODULE
+    assert samples and json.loads(samples[0]["content"])["event_id"] == "evt_1"
+    assert json.loads(samples[0]["content"])["module"] == sw.BILLING_ROUTER_MODULE
+    assert billing_calls and billing_calls[0][1]["module"] == sw.BILLING_ROUTER_MODULE
+    assert payment_calls and payment_calls[0][1]["module"] == sw.BILLING_ROUTER_MODULE
+    with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
+        line = fh.readline()
+        logged = json.loads(line.split(" ", 1)[1])
+    assert logged["type"] == "missing_failure_log"
+    assert logged["metadata"]["event_id"] == "evt_1"
+    assert logged["metadata"]["module"] == sw.BILLING_ROUTER_MODULE
 
 
 def test_revenue_mismatch(monkeypatch, capture_anomalies):
