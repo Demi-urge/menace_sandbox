@@ -7,6 +7,7 @@ from typing import Optional, List, Dict
 import csv
 
 from joblib import dump
+from dynamic_path_router import resolve_path
 
 from .sql_db import create_session, RLFeedback, RewardEntry, ensure_schema
 from .rl_integration import DatabaseRLResponseRanker
@@ -107,7 +108,7 @@ def train_models(
         ranker.log_outcome("trainer", state, action, reward, state, actions)
         learner.brain.update(list(state), action, reward)
 
-    weights_path = os.path.join(os.path.dirname(__file__), "policy_params.json")
+    weights_path = resolve_path("neurosales") / "policy_params.json"
     with open(weights_path, "w") as f:
         json.dump(learner.brain.params, f)
     print(f"Policy weights saved to {weights_path}")
@@ -138,7 +139,7 @@ def train_engagement_model(dataset_path: str) -> None:
 
     model = LinearRegression()
     model.fit(np.array(X), np.array(y))
-    model_path = os.path.join(os.path.dirname(__file__), "engagement_model.joblib")
+    model_path = resolve_path("neurosales") / "engagement_model.joblib"
     dump(model, model_path)
     print(f"Engagement model saved to {model_path}")
 

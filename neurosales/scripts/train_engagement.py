@@ -3,6 +3,9 @@ import csv
 from pathlib import Path
 from dotenv import load_dotenv
 
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from dynamic_path_router import resolve_path
+
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from joblib import dump
@@ -22,10 +25,9 @@ def load_data(path: Path):
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1]
-    default_path = root / "tests" / "data" / "engagement_train.csv"
+    default_path = resolve_path("neurosales/tests/data/engagement_train.csv")
     data_path = Path(sys.argv[1]) if len(sys.argv) > 1 else default_path
-    model_path = root / "neurosales" / "engagement_model.joblib"
+    model_path = resolve_path("neurosales") / "engagement_model.joblib"
 
     X, y = load_data(data_path)
     model = LinearRegression()
