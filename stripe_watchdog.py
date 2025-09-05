@@ -92,6 +92,22 @@ except Exception:  # pragma: no cover - best effort
     DiscrepancyDB = None  # type: ignore
     DiscrepancyRecord = None  # type: ignore
 
+try:  # Optional dependency – self-coding feedback
+    from self_coding_engine import SelfCodingEngine  # type: ignore
+    from code_database import CodeDB  # type: ignore
+    from menace_memory_manager import MenaceMemoryManager  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    SelfCodingEngine = None  # type: ignore
+    CodeDB = None  # type: ignore
+    MenaceMemoryManager = None  # type: ignore
+
+try:  # Optional dependency – telemetry feedback loop
+    from telemetry_feedback import TelemetryFeedback  # type: ignore
+    from error_logger import ErrorLogger  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    TelemetryFeedback = None  # type: ignore
+    ErrorLogger = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -1227,6 +1243,20 @@ def main(argv: Optional[List[str]] = None) -> None:
     failed_logs = load_billing_logs(start_ts, end_ts, action="failed")
     approved = load_approved_workflows()
 
+    engine = None
+    telemetry = None
+    if SANITY_LAYER_FEEDBACK_ENABLED:
+        if SelfCodingEngine and CodeDB and MenaceMemoryManager:
+            try:
+                engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to initialise SelfCodingEngine")
+        if TelemetryFeedback and ErrorLogger and engine is not None:
+            try:
+                telemetry = TelemetryFeedback(ErrorLogger(), engine)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to initialise telemetry feedback")
+
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
     events = fetch_recent_events(api_key, start_ts, end_ts)
@@ -1238,6 +1268,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
     )
     detect_missing_refunds(
         refunds,
@@ -1246,6 +1278,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
     )
     detect_failed_events(
         events,
@@ -1254,15 +1288,23 @@ def main(argv: Optional[List[str]] = None) -> None:
         approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
     )
     check_webhook_endpoints(
-        api_key, write_codex=args.write_codex, export_training=args.export_training
+        api_key,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
     )
     compare_revenue_window(
         start_ts,
         end_ts,
         write_codex=args.write_codex,
         export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
     )
     _write_last_run_ts(end_ts)
 
