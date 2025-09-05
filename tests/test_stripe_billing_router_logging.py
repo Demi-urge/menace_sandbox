@@ -249,6 +249,103 @@ def test_create_checkout_session_logs_to_file(monkeypatch, sbr_file_logger):
     assert calls and calls[0].get("error") is False
 
 
+@pytest.mark.parametrize(
+    "setup_stripe, invoke",
+    [
+        (
+            lambda: types.SimpleNamespace(
+                api_key="orig",
+                InvoiceItem=types.SimpleNamespace(
+                    create=lambda *, api_key, **p: {"id": "ii_test"}
+                ),
+                Invoice=types.SimpleNamespace(
+                    create=lambda *, api_key, **p: {"id": "in_test"},
+                    pay=lambda invoice_id, *, api_key, **p: {
+                        "id": invoice_id,
+                        "amount_paid": 1250,
+                    },
+                ),
+                Customer=types.SimpleNamespace(retrieve=lambda *a, **k: {}),
+            ),
+            lambda sbr: sbr.charge("finance:finance_router_bot", 12.5, "desc"),
+        ),
+        (
+            lambda: types.SimpleNamespace(
+                api_key="orig",
+                Subscription=types.SimpleNamespace(
+                    create=lambda *, api_key, **p: {"id": "sub_test"}
+                ),
+                Customer=types.SimpleNamespace(retrieve=lambda *a, **k: {}),
+                Price=types.SimpleNamespace(
+                    retrieve=lambda *a, **k: {"unit_amount": 1250}
+                ),
+            ),
+            lambda sbr: sbr.create_subscription(
+                "finance:finance_router_bot", idempotency_key="sub-key"
+            ),
+        ),
+        (
+            lambda: types.SimpleNamespace(
+                api_key="orig",
+                Refund=types.SimpleNamespace(
+                    create=lambda *, api_key, **p: {"id": "rf_test", "amount": 500}
+                ),
+                Customer=types.SimpleNamespace(retrieve=lambda *a, **k: {}),
+            ),
+            lambda sbr: sbr.refund(
+                "finance:finance_router_bot", "pi_test", amount=5.0
+            ),
+        ),
+        (
+            lambda: types.SimpleNamespace(
+                api_key="orig",
+                checkout=types.SimpleNamespace(
+                    Session=types.SimpleNamespace(
+                        create=lambda *, api_key, **p: {
+                            "id": "cs_test",
+                            "amount_total": 1000,
+                        }
+                    )
+                ),
+                Customer=types.SimpleNamespace(retrieve=lambda *a, **k: {}),
+            ),
+            lambda sbr: sbr.create_checkout_session(
+                "finance:finance_router_bot",
+                [{"price": "price_finance_standard", "quantity": 1}],
+                amount=10.0,
+                success_url="https://example.com/s",
+                cancel_url="https://example.com/c",
+                mode="payment",
+            ),
+        ),
+    ],
+)
+def test_logs_use_account_id_no_secret(monkeypatch, sbr_basic, setup_stripe, invoke):
+    sbr = sbr_basic
+    captured_log_event: list[dict] = []
+    captured_record: list[tuple] = []
+    captured_billing: list[tuple] = []
+    monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **k: captured_log_event.append(k))
+    monkeypatch.setattr(
+        sbr, "record_payment", lambda *a, **k: captured_record.append((a, k))
+    )
+    monkeypatch.setattr(
+        sbr, "log_billing_event", lambda action, **k: captured_billing.append((action, k))
+    )
+    monkeypatch.setattr(sbr, "stripe", setup_stripe())
+
+    invoke(sbr)
+
+    assert captured_log_event and captured_log_event[-1]["destination_account"] == "acct_master"
+    assert "sk_live_dummy" not in str(captured_log_event[-1])
+    rec_args, rec_kwargs = captured_record[-1]
+    assert rec_args[3] == "acct_master"
+    assert "sk_live_dummy" not in (str(rec_args) + str(rec_kwargs))
+    action, billing_kwargs = captured_billing[-1]
+    assert billing_kwargs["destination_account"] == "acct_master"
+    assert "sk_live_dummy" not in str(billing_kwargs)
+
+
 def test_charge_logs_error_on_exception(monkeypatch, sbr_basic):
     sbr = sbr_basic
     calls = []
