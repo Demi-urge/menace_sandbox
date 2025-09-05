@@ -61,9 +61,22 @@ def test_detects_unlogged_and_unauthorized(tmp_path, monkeypatch):
 
     logged: list[dict] = []
     monkeypatch.setattr(rad.billing_logger, "log_event", lambda **kw: logged.append(kw))
+    recorded: list[tuple[str, dict, str]] = []
+    monkeypatch.setattr(
+        rad.menace_sanity_layer,
+        "record_payment_anomaly",
+        lambda et, md, instr, **kw: recorded.append((et, md, instr)),
+    )
 
     anomalies = rad.detect_anomalies(hours=1, whitelist_path=whitelist, db_path=db_path)
 
     assert {a["reason"] for a in anomalies} == {"unlogged", "unauthorized"}
     assert {a["id"] for a in anomalies} == {"evt_unlogged", "evt_unauth"}
     assert {e["id"] for e in logged} == {"evt_unlogged", "evt_unauth"}
+    assert {r[0] for r in recorded} == {"unlogged", "unauthorized"}
+    assert {
+        r[1]["stripe_event_id"] for r in recorded if r[0] == "unlogged"
+    } == {"evt_unlogged"}
+    assert {
+        r[1]["stripe_event_id"] for r in recorded if r[0] == "unauthorized"
+    } == {"evt_unauth"}
