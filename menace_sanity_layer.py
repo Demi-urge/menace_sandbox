@@ -114,6 +114,18 @@ EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
 _INSTRUCTION_PATH = Path(resolve_path("config/billing_instructions.yaml"))
 _INSTRUCTION_OVERRIDES: Dict[str, str] | None = None
 
+# Number of times a specific payment anomaly can occur before triggering
+# corrective action.  The threshold is intentionally low to rapidly surface
+# issues such as unlogged charges.
+PAYMENT_ANOMALY_THRESHOLD = 3
+
+# Mapping of anomaly types to generation parameter updates when the threshold
+# is exceeded.  Each hint guides the self-coding engine to avoid repeating the
+# problematic behaviour.
+ANOMALY_HINTS: Dict[str, Dict[str, Any]] = {
+    "missing_charge": {"block_unlogged_charges": True},
+}
+
 # ---------------------------------------------------------------------------
 # Billing anomaly utilities
 
@@ -379,6 +391,7 @@ def record_payment_anomaly(
     severity: float = 1.0,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
 ) -> None:
     """Persist anomaly details, memory feedback and audit trail.
 
@@ -433,21 +446,40 @@ def record_payment_anomaly(
             logger.exception("memory logging failed", extra={"instruction": instruction})
 
     mm = _get_memory_manager()
+    trigger_correction = False
     if mm is not None:
         try:
             key = f"billing:{event_type}"
             data = {"instruction": instruction, "count": 1}
             existing = mm.query(key, 1)
+            prev_count = 0
             if existing:
                 try:
                     existing_data = json.loads(existing[0].data)
-                    if existing_data.get("instruction") == instruction:
-                        data["count"] = existing_data.get("count", 1) + 1
+                    prev_count = int(existing_data.get("count", 0))
                 except Exception:  # pragma: no cover - best effort
-                    logger.exception("failed to parse existing memory entry", extra={"key": key})
+                    logger.exception(
+                        "failed to parse existing memory entry", extra={"key": key}
+                    )
+            data["count"] = prev_count + 1
             mm.store(key, data, tags="billing,anomaly")
+            if (
+                data["count"] >= PAYMENT_ANOMALY_THRESHOLD
+                and prev_count < PAYMENT_ANOMALY_THRESHOLD
+            ):
+                trigger_correction = True
         except Exception:  # pragma: no cover - best effort
             logger.exception("MenaceMemoryManager logging failed")
+
+    if trigger_correction and self_coding_engine is not None:
+        try:  # pragma: no cover - best effort
+            update_fn = getattr(self_coding_engine, "update_generation_params", None)
+            if callable(update_fn):
+                hint = ANOMALY_HINTS.get(event_type, {"block_unlogged_charges": True})
+                hint = {**hint, "event_type": event_type}
+                update_fn(hint)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("self_coding_engine update failed")
 
     try:
         audit_logger.log_event(
