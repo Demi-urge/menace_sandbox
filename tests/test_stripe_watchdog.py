@@ -111,7 +111,7 @@ def test_check_revenue_projection_detects_mismatch(monkeypatch):
     monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test_dummy")
 
     class DummyDB:
-        def projected_revenue(self):
+        def projected_revenue_between(self, start_ts, end_ts):
             return 120.0
 
     monkeypatch.setattr(sw, "ROIResultsDB", lambda: DummyDB())

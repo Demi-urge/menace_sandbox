@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -423,6 +424,31 @@ def check_webhook_endpoints(
     return unknown
 
 
+def _projected_revenue_between(start_ts: int, end_ts: int) -> float:
+    """Return projected revenue logged between ``start_ts`` and ``end_ts``."""
+
+    if ROIResultsDB is None:
+        return 0.0
+    try:  # pragma: no cover - DB access
+        db = ROIResultsDB()
+        method = getattr(db, "projected_revenue_between", None)
+        if callable(method):
+            return float(method(start_ts, end_ts))
+        start_iso = datetime.utcfromtimestamp(start_ts).isoformat()
+        end_iso = datetime.utcfromtimestamp(end_ts).isoformat()
+        cur = db.conn.cursor()
+        cur.execute(
+            "SELECT SUM(roi_gain) FROM workflow_results "
+            "WHERE timestamp >= ? AND timestamp < ?",
+            (start_iso, end_iso),
+        )
+        row = cur.fetchone()
+        return float(row[0] or 0.0)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("ROIResultsDB query failed")
+        return 0.0
+
+
 def compare_revenue(
     charges: Iterable[dict],
     refunds: Iterable[dict],
@@ -470,6 +496,59 @@ def compare_revenue(
     return None
 
 
+def compare_revenue_window(
+    start_ts: int,
+    end_ts: int,
+    *,
+    tolerance: float = 0.1,
+    write_codex: bool = False,
+) -> Optional[Dict[str, float]]:
+    """Compare Stripe revenue and ROI projections for a time window."""
+
+    api_key = load_api_key()
+    if not api_key:
+        return None
+    charges = fetch_recent_charges(api_key, start_ts, end_ts)
+    refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
+
+    total = 0.0
+    for ch in charges:
+        if ch.get("status") == "succeeded" and isinstance(ch.get("amount"), (int, float)):
+            total += float(ch["amount"])
+    for rf in refunds:
+        amt = rf.get("amount")
+        if isinstance(amt, (int, float)):
+            total -= float(amt)
+    net_revenue = total / 100.0
+
+    projected = _projected_revenue_between(start_ts, end_ts)
+
+    if projected and abs(net_revenue - projected) > tolerance * projected:
+        details = {
+            "net_revenue": net_revenue,
+            "projected_revenue": projected,
+            "difference": net_revenue - projected,
+        }
+        record = {
+            "type": "revenue_mismatch",
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            **details,
+        }
+        _emit_anomaly(record, write_codex)
+        try:  # pragma: no cover - best effort
+            alert_dispatcher.dispatch_alert(
+                "stripe_revenue_mismatch",
+                4,
+                json.dumps(details),
+                details,
+            )
+        except Exception:
+            logger.exception("alert dispatch failed", extra=details)
+        return details
+    return None
+
+
 # Convenience wrappers used by tests and the CLI ---------------------------
 
 
@@ -501,16 +580,10 @@ def check_revenue_projection(
     hours: int = 1, *, tolerance: float = 0.1, write_codex: bool = False
 ) -> Optional[Dict[str, float]]:
     """Compare revenue for the last ``hours`` against projections."""
-
-    api_key = load_api_key()
-    if not api_key:
-        return None
     end_ts = int(time.time())
     start_ts = end_ts - int(hours * 3600)
-    charges = fetch_recent_charges(api_key, start_ts, end_ts)
-    refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
-    return compare_revenue(
-        charges, refunds, tolerance=tolerance, write_codex=write_codex
+    return compare_revenue_window(
+        start_ts, end_ts, tolerance=tolerance, write_codex=write_codex
     )
 
 
@@ -551,7 +624,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     detect_missing_refunds(refunds, ledger, write_codex=args.write_codex)
     detect_failed_events(events, ledger, write_codex=args.write_codex)
     check_webhook_endpoints(api_key, write_codex=args.write_codex)
-    compare_revenue(charges, refunds, write_codex=args.write_codex)
+    compare_revenue_window(start_ts, end_ts, write_codex=args.write_codex)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
