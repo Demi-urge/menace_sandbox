@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure repository root on PYTHONPATH so dynamic_path_router is importable
+script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+repo_root="$(cd "$script_dir/.." && pwd -P)"
+export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
+
 # Ensure pip is up to date
 python -m pip install --upgrade pip
 
 # Install pinned runtime dependencies
-pip install --no-cache-dir -r requirements.txt
+req_file=$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('requirements.txt'))
+PY
+)
+pip install --no-cache-dir -r "$req_file"
 
 # Install the package itself in editable mode
-pip install --no-cache-dir -e .
+pip install --no-cache-dir -e "$repo_root"
 
 # Install core testing utilities
 pip install --no-cache-dir pytest hypothesis

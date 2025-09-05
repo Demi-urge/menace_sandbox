@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure repository root on PYTHONPATH so dynamic_path_router is importable
+script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+repo_root="$(cd "$script_dir/.." && pwd -P)"
+export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
+
 # Run base Python environment setup
 setup_env=$(python - <<'PY'
 from dynamic_path_router import resolve_path
 print(resolve_path('setup_env.sh'))
 PY
 )
-"$setup_env"
+
+(cd "$repo_root" && bash "$setup_env")
 
 # Install and verify project dependencies
-python setup_dependencies.py
+(cd "$repo_root" && python setup_dependencies.py)
 
 # Create a .env file with sensible defaults
 python - <<'PY'
