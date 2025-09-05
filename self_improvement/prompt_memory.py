@@ -146,7 +146,11 @@ def log_prompt_attempt(
     failure_reason:
         Optional string describing why the attempt failed.
     sandbox_metrics:
-        Optional dictionary containing sandbox execution metrics.
+        Optional dictionary containing sandbox execution metrics. Selected
+        metrics such as ``sandbox_score``, ``entropy`` and ``tests_passed`` are
+        mirrored to top-level ``score_delta``, ``entropy_delta`` and
+        ``test_status`` fields respectively in failure records. Any additional
+        metrics are also copied to top-level keys for convenience.
     """
 
     metadata = getattr(prompt, "metadata", {}) if prompt is not None else {}
@@ -188,6 +192,22 @@ def log_prompt_attempt(
     if not success:
         entry["failure_reason"] = failure_reason
         entry["sandbox_metrics"] = sandbox_metrics
+        if sandbox_metrics:
+            score = sandbox_metrics.get("sandbox_score")
+            if score is not None:
+                entry["score_delta"] = score
+            entropy = sandbox_metrics.get("entropy")
+            if entropy is not None:
+                entry["entropy_delta"] = entropy
+            tests_passed = sandbox_metrics.get("tests_passed")
+            if tests_passed is None and "tests_failed" in sandbox_metrics:
+                tests_passed = not bool(sandbox_metrics.get("tests_failed"))
+            if tests_passed is not None:
+                entry["test_status"] = bool(tests_passed)
+            for k, v in sandbox_metrics.items():
+                if k in {"sandbox_score", "entropy", "tests_passed", "tests_failed"}:
+                    continue
+                entry[k] = v
 
     if prompt_id and roi_delta is not None:
         try:
