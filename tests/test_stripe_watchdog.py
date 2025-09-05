@@ -30,8 +30,9 @@ _TEMP_DIR = tempfile.TemporaryDirectory()
 _STUB_UEB = Path(_TEMP_DIR.name) / "unified_event_bus.py"
 _STUB_UEB.write_text("class UnifiedEventBus:\n    pass\n")
 
-import dynamic_path_router as _dpr
+import dynamic_path_router as _dpr  # noqa: E402
 _orig_resolve = _dpr.resolve_path
+
 
 def _fake_resolve(name, root=None):
     if name == "unified_event_bus.py":
@@ -41,17 +42,21 @@ def _fake_resolve(name, root=None):
     except TypeError:
         return _orig_resolve(name)
 
+
 _dpr.resolve_path = _fake_resolve
 
-import stripe_watchdog as sw
+
+import stripe_watchdog as sw  # noqa: E402
 
 
 @pytest.fixture
 def capture_anomalies(monkeypatch, tmp_path):
-    """Capture emitted audit events and Codex samples."""
+    """Capture emitted audit events, Codex samples and severity info."""
 
     events: list[tuple[str, dict]] = []
     samples: list[dict] = []
+    billing_calls: list[tuple[str, dict, float]] = []
+    payment_calls: list[tuple[str, dict, str | None, float]] = []
 
     monkeypatch.setattr(
         sw.audit_logger,
@@ -74,15 +79,21 @@ def capture_anomalies(monkeypatch, tmp_path):
     monkeypatch.setattr(sw, "ANOMALY_TRAIL", AuditTrail(str(log_path), handler=handler))
     resolve_path("config/stripe_watchdog.yaml")
     monkeypatch.setattr(sw.alert_dispatcher, "dispatch_alert", lambda *a, **k: None)
-    monkeypatch.setattr(
-        sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None
-    )
 
-    return events, samples
+    def fake_billing(event_type, metadata, *, severity=1.0, **kwargs):
+        billing_calls.append((event_type, metadata, severity))
+
+    def fake_payment(event_type, metadata, instruction, *, severity=1.0, **kwargs):
+        payment_calls.append((event_type, metadata, instruction, severity))
+
+    monkeypatch.setattr(sw, "record_billing_anomaly", fake_billing)
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", fake_payment)
+
+    return events, samples, billing_calls, payment_calls
 
 
 def test_orphan_charge_triggers_audit_and_codex(monkeypatch, capture_anomalies):
-    events, samples = capture_anomalies
+    events, samples, billing_calls, payment_calls = capture_anomalies
 
     ledger = [
         {"id": "ch_logged", "timestamp_ms": 1000},
@@ -105,6 +116,8 @@ def test_orphan_charge_triggers_audit_and_codex(monkeypatch, capture_anomalies):
     assert anomalies and anomalies[0]["id"] == "ch_orphan"
     assert events and events[0][0] == "stripe_anomaly" and events[0][1]["id"] == "ch_orphan"
     assert samples and json.loads(samples[0]["content"])["id"] == "ch_orphan"
+    assert billing_calls and billing_calls[0][2] == sw.SEVERITY_MAP["missing_charge"]
+    assert payment_calls and payment_calls[0][3] == sw.SEVERITY_MAP["missing_charge"]
     with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
@@ -114,7 +127,7 @@ def test_orphan_charge_triggers_audit_and_codex(monkeypatch, capture_anomalies):
 
 
 def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):
-    events, samples = capture_anomalies
+    events, samples, billing_calls, payment_calls = capture_anomalies
 
     endpoints = [
         {
@@ -145,6 +158,8 @@ def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):
     assert {
         json.loads(s["content"])["type"] for s in samples
     } == {"unknown_webhook"}
+    assert billing_calls and billing_calls[0][2] == sw.SEVERITY_MAP["unknown_webhook"]
+    assert payment_calls and payment_calls[0][3] == sw.SEVERITY_MAP["unknown_webhook"]
     with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
@@ -153,7 +168,7 @@ def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):
 
 
 def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
-    events, samples = capture_anomalies
+    events, samples, billing_calls, payment_calls = capture_anomalies
 
     endpoints = [
         {
@@ -179,6 +194,8 @@ def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
     assert {
         json.loads(s["content"])["type"] for s in samples
     } == {"disabled_webhook"}
+    assert billing_calls and billing_calls[0][2] == sw.SEVERITY_MAP["disabled_webhook"]
+    assert payment_calls and payment_calls[0][3] == sw.SEVERITY_MAP["disabled_webhook"]
     with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
         line = fh.readline()
         logged = json.loads(line.split(" ", 1)[1])
@@ -207,7 +224,7 @@ def test_env_allowed_webhook(monkeypatch):
 
 
 def test_unexpected_refund(capture_anomalies):
-    events, samples = capture_anomalies
+    events, samples, _, _ = capture_anomalies
 
     ledger: list[dict] = []
     refunds = [{"id": "rf_1", "amount": 500, "charge": "ch_1"}]
@@ -225,7 +242,7 @@ def test_unexpected_refund(capture_anomalies):
 
 
 def test_revenue_mismatch(monkeypatch, capture_anomalies):
-    events, samples = capture_anomalies
+    events, samples, _, _ = capture_anomalies
 
     charges = [{"amount": 10000, "status": "succeeded"}]
     refunds: list[dict] = []
@@ -249,7 +266,7 @@ def test_revenue_mismatch(monkeypatch, capture_anomalies):
 
 
 def test_logged_charge_not_flagged(monkeypatch, capture_anomalies):
-    events, _samples = capture_anomalies
+    events, _samples, _, _ = capture_anomalies
 
     ledger: list[dict] = [{"id": "ch_logged"}]
     billing_logs = [{"amount": 10.0, "timestamp": 2}]

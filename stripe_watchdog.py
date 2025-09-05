@@ -104,6 +104,17 @@ DEFAULT_ALLOWED_WEBHOOKS = {
     "https://menace.example.com/stripe/webhook",
 }
 
+#: Per-anomaly severity used when logging events to the sanity layer.
+SEVERITY_MAP = {
+    "missing_charge": 2.5,
+    "missing_refund": 2.0,
+    "missing_failure_log": 1.5,
+    "unapproved_workflow": 3.5,
+    "unknown_webhook": 2.0,
+    "disabled_webhook": 3.0,
+    "revenue_mismatch": 4.0,
+}
+
 #: Default log file for anomaly summaries.
 _LOG_DIR = resolve_path("finance_logs")
 #: JSON lines file used for anomaly audit records.
@@ -450,7 +461,10 @@ def load_billing_logs(
     try:  # pragma: no cover - best effort
         db = BillingLogDB()
         cur = db.conn.execute(
-            "SELECT amount, ts, stripe_id, bot_id FROM billing_logs WHERE action = ? AND ts >= ? AND ts < ?",
+            (
+                "SELECT amount, ts, stripe_id, bot_id FROM billing_logs "
+                "WHERE action = ? AND ts >= ? AND ts < ?"
+            ),
             (action, start_iso, end_iso),
         )
         for amount, ts, sid, bot in cur.fetchall():
@@ -525,7 +539,10 @@ def _emit_anomaly(
             logger.exception("Failed to create Codex training sample")
     if SANITY_LAYER_FEEDBACK_ENABLED:
         try:
-            record_billing_anomaly(record.get("type", "unknown"), record)
+            severity = SEVERITY_MAP.get(record.get("type"), 1.0)
+            record_billing_anomaly(
+                record.get("type", "unknown"), record, severity=severity
+            )
         except Exception:
             logger.exception("Failed to record billing anomaly", extra={"record": record})
 
@@ -539,6 +556,7 @@ def _emit_anomaly(
             event_type,
             payment_meta,
             instruction,
+            severity=SEVERITY_MAP.get(event_type, 1.0),
             write_codex=write_codex,
             export_training=export_training,
         )

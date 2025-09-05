@@ -9,9 +9,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-import pytest
+import pytest  # noqa: E402
 
-import stripe_watchdog as sw
+import stripe_watchdog as sw  # noqa: E402
 
 
 @pytest.fixture
@@ -56,6 +56,17 @@ def test_orphan_charge_logged(capture, monkeypatch):
 
     monkeypatch.setattr(sw, "record_event", fake_record_event)
     monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+    billing_calls: list[tuple[str, float]] = []
+    payment_calls: list[tuple[str, float]] = []
+
+    def fake_billing(event_type, metadata, *, severity=1.0, **kwargs):
+        billing_calls.append((event_type, severity))
+
+    def fake_payment(event_type, metadata, instruction=None, *, severity=1.0, **kwargs):
+        payment_calls.append((event_type, severity))
+
+    monkeypatch.setattr(sw, "record_billing_anomaly", fake_billing)
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", fake_payment)
 
     charges = [
         {"id": "ch_known", "created": 1, "amount": 1000, "status": "succeeded"},
@@ -81,11 +92,11 @@ def test_orphan_charge_logged(capture, monkeypatch):
     assert events and events[0][0] == "stripe_anomaly"
     assert record_calls and record_calls[0][2]["self_coding_engine"] is engine
     assert record_calls[0][2]["telemetry_feedback"] is telemetry
+    assert billing_calls and billing_calls[0][1] == sw.SEVERITY_MAP["missing_charge"]
+    assert payment_calls and payment_calls[0][1] == sw.SEVERITY_MAP["missing_charge"]
 
 
 def test_record_billing_event_called(capture, monkeypatch):
-    events = capture
-
     charges = [
         {"id": "ch_new", "created": 1, "amount": 1000, "status": "succeeded"}
     ]
@@ -158,6 +169,7 @@ def test_main_updates_last_run(monkeypatch, tmp_path):
     monkeypatch.setattr(sw, "detect_failed_events", lambda *a, **k: [])
     monkeypatch.setattr(sw, "check_webhook_endpoints", lambda *a, **k: [])
     monkeypatch.setattr(sw, "compare_revenue_window", lambda *a, **k: None)
+
     class DummyTrail:
         def __init__(self, path):
             self.path = path
@@ -276,4 +288,3 @@ def test_detect_failed_events_workflow_approval(capture):
     )
     assert anomalies == []
     assert not events
-
