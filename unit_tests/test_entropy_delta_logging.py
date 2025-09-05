@@ -2,11 +2,9 @@ import importlib.util
 import json
 import sys
 import types
-from pathlib import Path
 from types import SimpleNamespace
 
-
-ROOT = Path(__file__).resolve().parents[1]
+from dynamic_path_router import resolve_path
 
 
 def _load_scoring(monkeypatch):
@@ -16,16 +14,16 @@ def _load_scoring(monkeypatch):
     logging_utils.log_record = lambda **kw: kw
     monkeypatch.setitem(sys.modules, "logging_utils", logging_utils)
 
-    dyn = types.ModuleType("dynamic_path_router")
-    dyn.resolve_path = lambda p: p
-    monkeypatch.setitem(sys.modules, "dynamic_path_router", dyn)
+    results_logger = types.ModuleType("sandbox_results_logger")
+    results_logger.record_run = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "sandbox_results_logger", results_logger)
 
     pkg = types.ModuleType("sandbox_runner")
-    pkg.__path__ = [str(ROOT / "sandbox_runner")]
+    pkg.__path__ = [str(resolve_path("sandbox_runner"))]
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
 
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.scoring", ROOT / "sandbox_runner" / "scoring.py"
+        "sandbox_runner.scoring", resolve_path("sandbox_runner/scoring.py"),
     )
     scoring = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -43,7 +41,10 @@ def _reset_logs(scoring, tmp_path, monkeypatch):
 def test_record_run_entropy_delta_positive(tmp_path, monkeypatch):
     scoring = _load_scoring(monkeypatch)
     _reset_logs(scoring, tmp_path, monkeypatch)
-    scoring.record_run(SimpleNamespace(success=True, duration=1.0, failure=None), {"entropy_delta": 0.5})
+    scoring.record_run(
+        SimpleNamespace(success=True, duration=1.0, failure=None),
+        {"entropy_delta": 0.5},
+    )
     data = json.loads(scoring._RUN_LOG.read_text().splitlines()[0])
     assert data["entropy_delta"] == 0.5
     summary = json.loads(scoring._SUMMARY_FILE.read_text())
@@ -53,7 +54,10 @@ def test_record_run_entropy_delta_positive(tmp_path, monkeypatch):
 def test_record_run_entropy_delta_negative(tmp_path, monkeypatch):
     scoring = _load_scoring(monkeypatch)
     _reset_logs(scoring, tmp_path, monkeypatch)
-    scoring.record_run(SimpleNamespace(success=True, duration=0.1, failure=None), {"entropy_delta": -0.25})
+    scoring.record_run(
+        SimpleNamespace(success=True, duration=0.1, failure=None),
+        {"entropy_delta": -0.25},
+    )
     data = json.loads(scoring._RUN_LOG.read_text().splitlines()[0])
     assert data["entropy_delta"] == -0.25
     summary = json.loads(scoring._SUMMARY_FILE.read_text())
@@ -63,9 +67,11 @@ def test_record_run_entropy_delta_negative(tmp_path, monkeypatch):
 def test_record_run_entropy_delta_zero(tmp_path, monkeypatch):
     scoring = _load_scoring(monkeypatch)
     _reset_logs(scoring, tmp_path, monkeypatch)
-    scoring.record_run(SimpleNamespace(success=True, duration=0.0, failure=None), {"entropy_delta": 0.0})
+    scoring.record_run(
+        SimpleNamespace(success=True, duration=0.0, failure=None),
+        {"entropy_delta": 0.0},
+    )
     data = json.loads(scoring._RUN_LOG.read_text().splitlines()[0])
     assert data["entropy_delta"] == 0.0
     summary = json.loads(scoring._SUMMARY_FILE.read_text())
     assert summary.get("entropy_total", 0.0) == 0.0
-
