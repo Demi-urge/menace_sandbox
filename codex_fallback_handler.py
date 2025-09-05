@@ -18,12 +18,38 @@ from typing import Any
 from dynamic_path_router import resolve_path
 from llm_interface import LLMResult, OpenAIProvider, Prompt
 
+try:  # pragma: no cover - metrics are optional
+    from .metrics_exporter import Gauge  # type: ignore
+except Exception:  # pragma: no cover - fallback when executed directly
+    try:
+        from metrics_exporter import Gauge  # type: ignore
+    except Exception:  # pragma: no cover - metrics unavailable
+        Gauge = None  # type: ignore
+
+
 logger = logging.getLogger(__name__)
 
 # Default location for the retry queue stored as JSONL
 _QUEUE_FILE = resolve_path(os.getenv("CODEX_RETRY_QUEUE", "codex_retry_queue.jsonl"))
 # Default strategy for handling failures: "queue" or "reroute"
 _DEFAULT_STRATEGY = os.getenv("CODEX_FALLBACK_STRATEGY", "reroute").lower()
+
+# Optional gauges for tracking behaviour
+_QUEUE_COUNT = (
+    Gauge("codex_retry_queue_total", "Prompts queued for Codex retry")
+    if Gauge
+    else None
+)
+_REROUTE_COUNT = (
+    Gauge("codex_reroute_total", "Prompts rerouted to alternate model")
+    if Gauge
+    else None
+)
+_REROUTE_FAILURES = (
+    Gauge("codex_reroute_failures_total", "Reroute attempts that failed")
+    if Gauge
+    else None
+)
 
 
 def queue_for_retry(prompt: str | Prompt, *, path: Path = _QUEUE_FILE) -> None:
@@ -35,6 +61,8 @@ def queue_for_retry(prompt: str | Prompt, *, path: Path = _QUEUE_FILE) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
     logger.info("queued prompt for retry", extra={"prompt": text, "queue": str(path)})
+    if _QUEUE_COUNT:
+        _QUEUE_COUNT.inc()
 
 
 def route_to_alt_model(prompt: str | Prompt, model: str = "gpt-3.5-turbo") -> LLMResult:
@@ -51,6 +79,8 @@ def route_to_alt_model(prompt: str | Prompt, model: str = "gpt-3.5-turbo") -> LL
         "rerouting prompt to alternate model",
         extra={"model": getattr(client, "model", model)},
     )
+    if _REROUTE_COUNT:
+        _REROUTE_COUNT.inc()
     return client.generate(p)
 
 
@@ -79,6 +109,8 @@ def handle_failure(
         return route_to_alt_model(prompt)
     except Exception as reroute_exc:  # pragma: no cover - network failure
         logger.error("reroute failed; queueing prompt", exc_info=reroute_exc)
+        if _REROUTE_FAILURES:
+            _REROUTE_FAILURES.inc()
         queue_for_retry(prompt)
         return None
 
