@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Unified learning engine combining pathway, memory, code and ROI data."""
 
-from typing import List, Tuple, Optional, Dict
+from typing import Any, Dict, List, Optional, Tuple
 import time
 import json
 import sqlite3
@@ -10,16 +10,23 @@ from pathlib import Path
 import logging
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+try:  # pragma: no cover - import fallback for runtime flexibility
+    from .dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - import fallback
+    from dynamic_path_router import resolve_path  # type: ignore
 
 from .metrics_exporter import (
     learning_cv_score,
     learning_holdout_score,
     learning_engine_exceptions,
 )
+from .preprocessing_utils import normalize_features, fill_float
+from .neuroplasticity import PathwayDB
+from .menace_memory_manager import MenaceMemoryManager
+from .code_database import CodeDB
+from .resource_allocation_optimizer import ROIDB
 
 logger = logging.getLogger(__name__)
-
-from .preprocessing_utils import normalize_features, fill_float, encode_outcome
 
 try:
     from sklearn.linear_model import LogisticRegression  # type: ignore
@@ -35,11 +42,6 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional
     torch = None  # type: ignore
     nn = None  # type: ignore
-
-from .neuroplasticity import PathwayDB
-from .menace_memory_manager import MenaceMemoryManager
-from .code_database import CodeDB
-from .resource_allocation_optimizer import ROIDB
 
 
 class _FallbackModel:
@@ -147,7 +149,7 @@ class _SimpleNN:
 class SequenceModel:
     """LSTM based sequence classifier with optional pretraining."""
 
-    def __init__(self, hidden: int = 16, epochs: int = 5, lr: float = 0.01, *, pretrain_epochs: int = 0) -> None:
+    def __init__(self, hidden: int = 16, epochs: int = 5, lr: float = 0.01, *, pretrain_epochs: int = 0) -> None:  # noqa: E501
         self.hidden = hidden
         self.epochs = epochs
         self.lr = lr
@@ -185,7 +187,7 @@ class SequenceModel:
             lr=self.lr,
         )
         self.pretrain_optim = torch.optim.Adam(
-            list(self.embed.parameters()) + list(self.lstm.parameters()) + list(self.decoder.parameters()),
+            list(self.embed.parameters()) + list(self.lstm.parameters()) + list(self.decoder.parameters()),  # noqa: E501
             lr=self.lr,
         )
         self.loss_fn = nn.CrossEntropyLoss()
@@ -259,7 +261,7 @@ class SequenceModel:
 class AutoEncoderModel:
     """Simple feed-forward autoencoder with classification head."""
 
-    def __init__(self, hidden: int = 8, epochs: int = 50, lr: float = 0.01, *, pretrain_epochs: int = 10) -> None:
+    def __init__(self, hidden: int = 8, epochs: int = 50, lr: float = 0.01, *, pretrain_epochs: int = 10) -> None:  # noqa: E501
         self.hidden = hidden
         self.epochs = epochs
         self.lr = lr
@@ -435,7 +437,14 @@ class UnifiedLearningEngine:
         self.code_db = code_db
         self.roi_db = roi_db
         self.evaluation_history: List[Dict[str, float]] = []
-        self.persist_path = Path(persist_path) if persist_path else None
+        if persist_path:
+            _pp = Path(persist_path)
+            if _pp.exists():
+                self.persist_path = Path(resolve_path(_pp))
+            else:
+                self.persist_path = Path(resolve_path(_pp.parent)) / _pp.name
+        else:
+            self.persist_path = None
         self._persist_conn: sqlite3.Connection | None = None
         self.router: DBRouter | None = router or GLOBAL_ROUTER
         if self.persist_path and self.persist_path.suffix not in {".json", ".jsonl"}:
@@ -446,7 +455,7 @@ class UnifiedLearningEngine:
             try:
                 self._persist_conn = self.router.get_connection("evaluation")
                 self._persist_conn.execute(
-                    "CREATE TABLE IF NOT EXISTS evaluation(ts REAL, cv_score REAL, holdout_score REAL)"
+                    "CREATE TABLE IF NOT EXISTS evaluation(ts REAL, cv_score REAL, holdout_score REAL)"  # noqa: E501
                 )
                 self._persist_conn.commit()
             except Exception:
@@ -505,7 +514,7 @@ class UnifiedLearningEngine:
             """
             SELECT p.actions, m.frequency, m.avg_exec_time, m.avg_roi, m.myelination_score, m.success_rate
             FROM metadata m JOIN pathways p ON p.id=m.pathway_id
-            """
+            """  # noqa: E501
         )
         X: List[List[float]] = []
         y: List[int] = []
@@ -719,9 +728,10 @@ class UnifiedLearningEngine:
                 raise
         if not self.persist_path:
             return
+        path = resolve_path(self.persist_path.parent) / self.persist_path.name
         if self.persist_path.suffix in {".json", ".jsonl"}:
             try:
-                with open(self.persist_path, "a", encoding="utf-8") as fh:
+                with open(path, "a", encoding="utf-8") as fh:
                     json.dump(result, fh)
                     fh.write("\n")
             except Exception as exc:
@@ -733,7 +743,7 @@ class UnifiedLearningEngine:
             try:
                 conn = self.router.get_connection("evaluation")
                 conn.execute(
-                    "CREATE TABLE IF NOT EXISTS evaluation(ts REAL, cv_score REAL, holdout_score REAL)"
+                    "CREATE TABLE IF NOT EXISTS evaluation(ts REAL, cv_score REAL, holdout_score REAL)"  # noqa: E501
                 )
                 self._persist_conn = conn
             except Exception as exc:
@@ -757,9 +767,12 @@ class UnifiedLearningEngine:
     def auto_train(self, models: List[str] | None = None) -> str:
         """Try various models, tune them and keep the best."""
         models = models or ["logreg", "nn", "transformer"]
-        cfg_path = (
-            (self.persist_path.parent if self.persist_path else Path(".")) / "best_model.json"
+        base_dir = (
+            resolve_path(self.persist_path.parent)
+            if self.persist_path
+            else resolve_path(Path("."))
         )
+        cfg_path = base_dir / "best_model.json"
         if cfg_path.exists():
             try:
                 with open(cfg_path, "r", encoding="utf-8") as fh:
@@ -791,7 +804,14 @@ class UnifiedLearningEngine:
         saved = self.model
         for name in models:
             try:
-                self.__init__(self.pathway_db, self.memory_mgr, self.code_db, self.roi_db, model=name, persist_path=self.persist_path)
+                self.__init__(
+                    self.pathway_db,
+                    self.memory_mgr,
+                    self.code_db,
+                    self.roi_db,
+                    model=name,
+                    persist_path=self.persist_path,
+                )
                 _params = self.tune_hyperparameters()
                 if not self.train():
                     continue
@@ -838,7 +858,7 @@ class UnifiedLearningEngine:
         prob = self.model.predict_proba([vec])[0][1]
         return float(prob)
 
-    def partial_train(self, record: "PathwayRecord") -> bool:
+    def partial_train(self, record: "PathwayRecord") -> bool:  # noqa: F821
         """Incrementally update model with a single record."""
         target = 1 if str(record.outcome).upper().startswith("SUCCESS") else 0
         if isinstance(self.model, (_SimpleTransformer, SequenceModel)):
@@ -872,7 +892,15 @@ class UnifiedLearningEngine:
 
 def load_score_history(path: str | Path, router: DBRouter | None = None) -> List[Dict[str, float]]:
     """Load persisted evaluation results from *path*."""
-    p = Path(path)
+    try:
+        p_raw = Path(path)
+        p = (
+            Path(resolve_path(p_raw))
+            if p_raw.exists()
+            else Path(resolve_path(p_raw.parent)) / p_raw.name
+        )
+    except Exception:
+        return []
     if p.suffix in {".json", ".jsonl"}:
         try:
             with open(p, "r", encoding="utf-8") as fh:
@@ -898,6 +926,5 @@ __all__ = [
     "SequenceModel",
     "AutoEncoderModel",
     "_SimpleTransformer",
-    "tune_hyperparameters",
     "load_score_history",
 ]
