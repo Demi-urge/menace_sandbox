@@ -454,9 +454,11 @@ def test_create_checkout_session_logs_error_on_exception(monkeypatch, sbr_basic)
     assert calls and calls[0].get("error") is True
 
 
-def test_mismatched_account_triggers_alert_and_rollback(monkeypatch, sbr_file_logger):
+def test_charge_mismatched_destination_triggers_alert_and_rollback(
+    monkeypatch, sbr_file_logger
+):
     sbr, ledger = sbr_file_logger
-    alerts = []
+    alerts: list = []
     monkeypatch.setattr(
         sbr.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
     )
@@ -473,8 +475,6 @@ def test_mismatched_account_triggers_alert_and_rollback(monkeypatch, sbr_file_lo
 
     rm = RM()
     monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", lambda: rm)
-
-    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_bad")
 
     def fake_item_create(*, api_key, **params):
         return {"id": "ii_test", **params}
@@ -493,6 +493,127 @@ def test_mismatched_account_triggers_alert_and_rollback(monkeypatch, sbr_file_lo
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
     with pytest.raises(RuntimeError):
         sbr.charge("finance:finance_router_bot", 12.5, "desc")
+    assert alerts and rm.called
+    records = _read_records(ledger)
+    assert any(
+        r.get("action_type") == "mismatch" and r.get("error") == 1 for r in records
+    )
+
+
+def test_subscription_mismatched_destination_triggers_alert_and_rollback(
+    monkeypatch, sbr_file_logger
+):
+    sbr, ledger = sbr_file_logger
+    alerts: list = []
+    monkeypatch.setattr(
+        sbr.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
+    )
+
+    class RM:
+        def __init__(self):
+            self.called = False
+
+        def rollback(self, tag, requesting_bot=None):
+            self.called = True
+
+        def auto_rollback(self, *args, **kwargs):
+            self.rollback("latest", requesting_bot=args[0])
+
+    rm = RM()
+    monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", lambda: rm)
+
+    def fake_sub_create(*, api_key, **params):
+        return {"id": "sub_test", "on_behalf_of": "acct_bad"}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        Subscription=types.SimpleNamespace(create=fake_sub_create),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    with pytest.raises(RuntimeError):
+        sbr.create_subscription("finance:finance_router_bot", idempotency_key="sub-key")
+    assert alerts and rm.called
+    records = _read_records(ledger)
+    assert any(
+        r.get("action_type") == "mismatch" and r.get("error") == 1 for r in records
+    )
+
+
+def test_checkout_session_mismatched_destination_triggers_alert_and_rollback(
+    monkeypatch, sbr_file_logger
+):
+    sbr, ledger = sbr_file_logger
+    alerts: list = []
+    monkeypatch.setattr(
+        sbr.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
+    )
+
+    class RM:
+        def __init__(self):
+            self.called = False
+
+        def rollback(self, tag, requesting_bot=None):
+            self.called = True
+
+        def auto_rollback(self, *args, **kwargs):
+            self.rollback("latest", requesting_bot=args[0])
+
+    rm = RM()
+    monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", lambda: rm)
+
+    def fake_session_create(*, api_key, **params):
+        return {"id": "cs_test", "on_behalf_of": "acct_bad", "amount_total": 1000}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        checkout=types.SimpleNamespace(
+            Session=types.SimpleNamespace(create=fake_session_create)
+        ),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    with pytest.raises(RuntimeError):
+        sbr.create_checkout_session(
+            "finance:finance_router_bot", line_items=[{"price": "p", "quantity": 1}]
+        )
+    assert alerts and rm.called
+    records = _read_records(ledger)
+    assert any(
+        r.get("action_type") == "mismatch" and r.get("error") == 1 for r in records
+    )
+
+
+def test_refund_mismatched_destination_triggers_alert_and_rollback(
+    monkeypatch, sbr_file_logger
+):
+    sbr, ledger = sbr_file_logger
+    alerts: list = []
+    monkeypatch.setattr(
+        sbr.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
+    )
+
+    class RM:
+        def __init__(self):
+            self.called = False
+
+        def rollback(self, tag, requesting_bot=None):
+            self.called = True
+
+        def auto_rollback(self, *args, **kwargs):
+            self.rollback("latest", requesting_bot=args[0])
+
+    rm = RM()
+    monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", lambda: rm)
+
+    def fake_refund_create(*, api_key, **params):
+        return {"id": "rf_test", "on_behalf_of": "acct_bad", "amount": 500}
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        Refund=types.SimpleNamespace(create=fake_refund_create),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    with pytest.raises(RuntimeError):
+        sbr.refund("finance:finance_router_bot", "ch_test", amount=5.0)
     assert alerts and rm.called
     records = _read_records(ledger)
     assert any(
