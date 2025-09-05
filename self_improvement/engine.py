@@ -1686,13 +1686,18 @@ class SelfImprovementEngine:
             if "roi" not in meta and "roi_delta" in meta:
                 meta["roi"] = meta.get("roi_delta", 0.0)
             log_success = success and failure_reason is None
+            metrics_to_log = None
+            if not log_success:
+                metrics_to_log = dict(sandbox_metrics or {})
+                if "tests_passed" in roi_meta:
+                    metrics_to_log.setdefault("tests_passed", roi_meta["tests_passed"])
             log_prompt_attempt(
                 prompt_obj,
                 log_success,
                 exec_res,
                 roi_meta,
                 failure_reason=None if log_success else failure_reason,
-                sandbox_metrics=None if log_success else sandbox_metrics,
+                sandbox_metrics=metrics_to_log,
             )
         except Exception:
             self.logger.exception("log_prompt_attempt failed")

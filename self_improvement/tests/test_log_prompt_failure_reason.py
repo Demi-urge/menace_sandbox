@@ -38,13 +38,22 @@ def test_log_prompt_attempt_records_failure_reason(tmp_path, monkeypatch):
         success=True,
         exec_result={"detail": "x"},
         failure_reason="bad_result",
-        sandbox_metrics={"m": 1},
+        sandbox_metrics={"m": 1, "sandbox_score": 0.2, "tests_passed": False, "entropy": 0.3},
     )
 
     failure_log = tmp_path / "failure.jsonl"
     assert failure_log.exists()
     entry = json.loads(failure_log.read_text().strip())
     assert entry["failure_reason"] == "bad_result"
-    assert entry["sandbox_metrics"] == {"m": 1}
+    assert entry["sandbox_metrics"] == {
+        "m": 1,
+        "sandbox_score": 0.2,
+        "tests_passed": False,
+        "entropy": 0.3,
+    }
+    assert entry["score_delta"] == 0.2
+    assert entry["test_status"] is False
+    assert entry["entropy_delta"] == 0.3
+    assert entry["m"] == 1
     # No success log should be written
     assert not (tmp_path / "success.jsonl").exists()
