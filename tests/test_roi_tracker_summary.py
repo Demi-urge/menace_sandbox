@@ -1,7 +1,24 @@
 import pytest
+from pathlib import Path
+import dynamic_path_router
+import sys
+
+sys.modules["menace"].RAISE_ERRORS = False
+
+dynamic_path_router.resolve_path = lambda p: Path(p).resolve()
+dynamic_path_router.path_for_prompt = lambda p: Path(p).resolve().as_posix()
+
+for p in [
+    Path("workflow_roi_history.json"),
+    Path("menace_roi_tracker_local.db"),
+    Path("shared/global.db"),
+]:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.touch()
+
 import menace.roi_tracker as rt
 
-rt.ROITracker.load_prediction_history = lambda self, path="roi_events.db": None
+rt.ROITracker.load_prediction_history = lambda self, path=None: None
 
 def test_prediction_summary():
     tracker = rt.ROITracker()

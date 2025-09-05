@@ -32,12 +32,29 @@ sys.modules.setdefault("menace.learning_engine", le_mod)
 sys.modules.setdefault("menace.unified_learning_engine", ue_mod)
 sys.modules.setdefault("menace.action_learning_engine", ae_mod)
 
+import sys
+from pathlib import Path
+import dynamic_path_router
+
+sys.modules["menace"].RAISE_ERRORS = False
+
+dynamic_path_router.resolve_path = lambda p: Path(p).resolve()
+dynamic_path_router.path_for_prompt = lambda p: Path(p).resolve().as_posix()
+
+for p in [
+    Path("workflow_roi_history.json"),
+    Path("menace_roi_tracker_local.db"),
+    Path("shared/global.db"),
+]:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.touch()
+
 import menace.evaluation_manager as em
 import menace.evaluation_dashboard as ed
 import menace.roi_tracker as rt
 import menace.telemetry_backend as tb
 
-rt.ROITracker.load_prediction_history = lambda self, path="roi_events.db": None
+rt.ROITracker.load_prediction_history = lambda self, path=None: None
 # Clear stubs for optional libs after import
 for mod in [
     "networkx",

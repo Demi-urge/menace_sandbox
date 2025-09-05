@@ -1166,8 +1166,8 @@ class ROITracker:
         window: int = 20,
         mae_threshold: float = 0.1,
         acc_threshold: float = 0.6,
-        history_path: str = "sandbox_data/roi_history.json",
-        roi_events_path: str = "roi_events.db",
+        history_path: str | None = None,
+        roi_events_path: str | None = None,
         drift_threshold: float = 0.3,
     ) -> tuple[float, float]:
         """Evaluate prediction accuracy and trigger retraining when needed.
@@ -1180,14 +1180,26 @@ class ROITracker:
         :class:`AdaptiveROIPredictor`.
         """
 
-        try:
-            history_path = str(resolve_path(history_path))
-        except FileNotFoundError:
-            history_path = str(Path(history_path))
-        try:
-            roi_events_path = str(resolve_path(roi_events_path))
-        except FileNotFoundError:
-            roi_events_path = str(Path(roi_events_path))
+        if history_path is None:
+            try:
+                history_path = str(resolve_path("sandbox_data/roi_history.json"))
+            except FileNotFoundError:
+                history_path = "sandbox_data/roi_history.json"
+        else:
+            try:
+                history_path = str(resolve_path(history_path))
+            except FileNotFoundError:
+                history_path = str(Path(history_path))
+        if roi_events_path is None:
+            try:
+                roi_events_path = str(resolve_path("roi_events.db"))
+            except FileNotFoundError:
+                roi_events_path = "roi_events.db"
+        else:
+            try:
+                roi_events_path = str(resolve_path(roi_events_path))
+            except FileNotFoundError:
+                roi_events_path = str(Path(roi_events_path))
         logger.debug(
             "evaluate_model using history_path=%s, roi_events_path=%s",
             history_path,
