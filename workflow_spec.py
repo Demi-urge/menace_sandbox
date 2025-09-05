@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from datetime import datetime, timezone
 from uuid import uuid4
+from dynamic_path_router import resolve_path
 
 
 MAX_ID_ATTEMPTS = 5
@@ -133,15 +134,23 @@ def save_spec(spec: dict, path: Path, *, summary_path: Path | str | None = None)
     # Ensure metadata block is present with required fields
     metadata = dict(spec.get("metadata") or {})
     if summary_path is not None:
-        metadata["summary_path"] = str(summary_path)
+        spath = Path(summary_path)
+        if not spath.is_absolute():
+            spath = Path(resolve_path(".")) / spath
+        metadata["summary_path"] = str(spath)
     elif "summary_path" in metadata and metadata["summary_path"] is not None:
-        metadata["summary_path"] = str(metadata["summary_path"])
+        spath = Path(str(metadata["summary_path"]))
+        if not spath.is_absolute():
+            spath = Path(resolve_path(".")) / spath
+        metadata["summary_path"] = str(spath)
     metadata.setdefault("workflow_id", str(uuid4()))
     metadata.setdefault("parent_id", None)
     metadata.setdefault("mutation_description", "")
     metadata.setdefault("created_at", datetime.now(timezone.utc).isoformat())
 
     path = Path(path)
+    if not path.is_absolute():
+        path = Path(resolve_path(".")) / path
     parent = path.parent
     if parent.name != "workflows":
         parent = parent / "workflows"
