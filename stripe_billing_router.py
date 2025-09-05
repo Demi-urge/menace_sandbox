@@ -22,6 +22,7 @@ from dynamic_path_router import resolve_path
 
 from billing import billing_logger
 from billing.billing_ledger import record_payment
+from discrepancy_db import DiscrepancyDB
 from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
 import rollback_manager
@@ -33,6 +34,30 @@ except Exception as exc:  # pragma: no cover - optional dependency
     logging.getLogger(__name__).warning("stripe library unavailable: %s", exc)
 
 logger = logging.getLogger(__name__)
+
+
+def log_critical_discrepancy(message: str, bot_id: str) -> None:
+    """Log a critical discrepancy, alert, and rollback.
+
+    The discrepancy *message* is stored in :class:`DiscrepancyDB` with the
+    associated *bot_id*. An alert is dispatched and the latest sandbox changes
+    from that bot are rolled back.
+    """
+
+    try:
+        DiscrepancyDB().log(message, {"bot_id": bot_id})
+    except Exception:
+        logger.exception("failed to log discrepancy for bot '%s'", bot_id)
+    try:  # pragma: no cover - external side effects
+        alert_dispatcher.dispatch_alert(
+            "critical_discrepancy", severity=5, message=message
+        )
+    except Exception:
+        logger.exception("alert dispatch failed for bot '%s'", bot_id)
+    try:  # pragma: no cover - rollback side effects
+        rollback_manager.RollbackManager().rollback("latest", requesting_bot=bot_id)
+    except Exception:
+        logger.exception("rollback failed for bot '%s'", bot_id)
 
 
 def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:
