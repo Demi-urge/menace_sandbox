@@ -13,16 +13,20 @@ self-improvement mode.
   `pip install sandbox_runner quick_fix_engine`.
 - Optional: `prometheus-client` exposes metrics via HTTP.
 
-## Launch `start_autonomous_sandbox.py`
+## Launch `sandbox_runner.py`
 
-Start the sandbox with an optional log level:
+Start the sandbox with an optional log level using `dynamic_path_router.resolve_path`:
 
 ```bash
-python start_autonomous_sandbox.py --log-level INFO
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --log-level INFO
 ```
 
-The wrapper forwards control to `sandbox_runner.bootstrap.launch_sandbox` and
-exits with a non-zero status when initialisation fails.
+The entry script forwards control to `sandbox_runner.bootstrap.launch_sandbox`
+and exits with a non-zero status when initialisation fails.
 
 ## Environment variables
 

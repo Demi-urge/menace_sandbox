@@ -602,7 +602,11 @@ A new `menace` CLI wraps common workflows so you no longer need to remember indi
 Apply a patch to a module and log provenance:
 
 ```bash
-python menace_cli.py patch path/to/module.py --desc "Fix bug" --context '{"foo": "bar"}'
+python menace_cli.py patch "$(python - <<'PY'
+from dynamic_path_router import path_for_prompt
+print(path_for_prompt('bots/example.py'))
+PY
+)" --desc "Fix bug" --context '{"foo": "bar"}'
 ```
 
 The command prints the patch ID and affected files. The `--context` value must be valid JSON.
@@ -823,7 +827,11 @@ python scripts/launch_personal.py
 ```
 Alternatively start the agent on demand and run the sandbox with:
 ```bash
-python scripts/run_personal_sandbox.py
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --visual-agent
 ```
 
 To run the sandbox directly with metrics visualisation, use the convenience
