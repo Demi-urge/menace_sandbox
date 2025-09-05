@@ -6,3 +6,4 @@ approved_workflows:
 log_rotation:
   maxBytes: 5242880
   backupCount: 5
+sanity_layer_feedback: true

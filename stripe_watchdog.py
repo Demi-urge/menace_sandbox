@@ -45,7 +45,11 @@ from logging.handlers import RotatingFileHandler
 import gzip
 import shutil
 import menace_sanity_layer
-from menace_sanity_layer import record_billing_anomaly, record_billing_event
+from menace_sanity_layer import (
+    record_billing_anomaly,
+    record_billing_event,
+    record_event,
+)
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -112,6 +116,24 @@ _DEFAULT_BACKUP_COUNT = 5
 CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 #: Path used when exporting normalized anomalies for training purposes.
 TRAINING_EXPORT = resolve_path("training_data/stripe_anomalies.jsonl")
+
+
+def _sanity_feedback_enabled(path: Path | None = None) -> bool:
+    """Return whether Sanity Layer feedback is enabled in config."""
+
+    cfg = path or CONFIG_PATH
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        return bool(data.get("sanity_layer_feedback", True))
+    except FileNotFoundError:
+        return True
+    except Exception:
+        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
+        return True
+
+
+SANITY_LAYER_FEEDBACK_ENABLED = _sanity_feedback_enabled()
 
 SANITY_INSTRUCTION = (
     "Avoid generating bots that make Stripe charges without proper logging or central routing."
@@ -462,10 +484,18 @@ def _emit_anomaly(
     """Log *record* and optionally emit a training sample."""
 
     audit_logger.log_event("stripe_anomaly", record)
+    metadata = {k: v for k, v in record.items() if k != "type"}
+
+    if SANITY_LAYER_FEEDBACK_ENABLED:
+        try:
+            record_event(record.get("type", "unknown"), metadata)
+        except Exception:
+            logger.exception("Failed to record sanity event", extra={"record": record})
+
     try:
         entry = {
             "type": record.get("type", "unknown"),
-            "metadata": {k: v for k, v in record.items() if k != "type"},
+            "metadata": metadata,
             "timestamp": int(time.time()),
         }
         ANOMALY_TRAIL.record(entry)
@@ -488,23 +518,23 @@ def _emit_anomaly(
             TrainingSample(source="stripe_watchdog", content=json.dumps(record))
         except Exception:
             logger.exception("Failed to create Codex training sample")
+    if SANITY_LAYER_FEEDBACK_ENABLED:
+        try:
+            record_billing_anomaly(record.get("type", "unknown"), record)
+        except Exception:
+            logger.exception("Failed to record billing anomaly", extra={"record": record})
 
-    try:
-        record_billing_anomaly(record["type"], record)
-    except Exception:
-        logger.exception("Failed to record billing anomaly", extra={"record": record})
-
-    metadata = {k: v for k, v in record.items() if k != "type"}
-    if "id" in metadata:
-        metadata["charge_id"] = metadata.pop("id")
-    metadata.setdefault("reason", record.get("type"))
-    menace_sanity_layer.record_payment_anomaly(
-        record.get("type", "unknown"),
-        metadata,
-        SANITY_INSTRUCTION,
-        write_codex=write_codex,
-        export_training=export_training,
-    )
+        payment_meta = dict(metadata)
+        if "id" in payment_meta:
+            payment_meta["charge_id"] = payment_meta.pop("id")
+        payment_meta.setdefault("reason", record.get("type"))
+        menace_sanity_layer.record_payment_anomaly(
+            record.get("type", "unknown"),
+            payment_meta,
+            SANITY_INSTRUCTION,
+            write_codex=write_codex,
+            export_training=export_training,
+        )
 
 
 # Detection routines -------------------------------------------------------
@@ -535,7 +565,12 @@ def detect_missing_charges(
         log = billing_map.get(cid)
         bot_id = log.get("bot_id") if log else None
         if bot_id and approved and bot_id not in approved:
-            anomaly = {"type": "unapproved_workflow", "id": cid, "bot_id": bot_id}
+            anomaly = {
+                "type": "unapproved_workflow",
+                "id": cid,
+                "bot_id": bot_id,
+                "account_id": charge.get("account"),
+            }
             anomalies.append(anomaly)
             _emit_anomaly(anomaly, write_codex, export_training)
             try:  # pragma: no cover - best effort
@@ -557,6 +592,7 @@ def detect_missing_charges(
             "amount": charge.get("amount"),
             "email": charge.get("receipt_email"),
             "timestamp": charge.get("created"),
+            "account_id": charge.get("account"),
         }
         anomalies.append(anomaly)
         _emit_anomaly(anomaly, write_codex, export_training)
@@ -588,7 +624,12 @@ def detect_missing_refunds(
         log = billing_map.get(rid)
         bot_id = log.get("bot_id") if log else None
         if bot_id and approved and bot_id not in approved:
-            anomaly = {"type": "unapproved_workflow", "refund_id": rid, "bot_id": bot_id}
+            anomaly = {
+                "type": "unapproved_workflow",
+                "refund_id": rid,
+                "bot_id": bot_id,
+                "account_id": refund.get("account"),
+            }
             anomalies.append(anomaly)
             _emit_anomaly(anomaly, write_codex, export_training)
             try:  # pragma: no cover - best effort
@@ -609,6 +650,7 @@ def detect_missing_refunds(
             "refund_id": rid,
             "amount": refund.get("amount"),
             "charge": refund.get("charge"),
+            "account_id": refund.get("account"),
         }
         anomalies.append(anomaly)
         _emit_anomaly(anomaly, write_codex, export_training)
@@ -642,7 +684,12 @@ def detect_failed_events(
         log = billing_map.get(eid)
         bot_id = log.get("bot_id") if log else None
         if bot_id and approved and bot_id not in approved:
-            anomaly = {"type": "unapproved_workflow", "event_id": eid, "bot_id": bot_id}
+            anomaly = {
+                "type": "unapproved_workflow",
+                "event_id": eid,
+                "bot_id": bot_id,
+                "account_id": event.get("account"),
+            }
             anomalies.append(anomaly)
             _emit_anomaly(anomaly, write_codex, export_training)
             try:  # pragma: no cover - best effort
@@ -662,6 +709,7 @@ def detect_failed_events(
             "type": "missing_failure_log",
             "event_id": eid,
             "event_type": event.get("type"),
+            "account_id": event.get("account"),
         }
         anomalies.append(anomaly)
         _emit_anomaly(anomaly, write_codex, export_training)
@@ -706,7 +754,13 @@ def check_webhook_endpoints(
         if str(identifier) not in allowed or status != "enabled":
             flagged.append(str(identifier))
             anomaly_type = "disabled_webhook" if status != "enabled" else "unknown_webhook"
-            record = {"type": anomaly_type, "id": ep_id, "url": url, "status": status}
+            record = {
+                "type": anomaly_type,
+                "webhook_id": ep_id,
+                "webhook_url": url,
+                "status": status,
+                "account_id": ep_dict.get("account"),
+            }
             _emit_anomaly(record, write_codex, export_training)
             try:  # pragma: no cover - best effort
                 alert_type = (
@@ -762,6 +816,8 @@ def compare_revenue(
 ) -> Optional[Dict[str, float]]:
     """Compare Stripe net revenue with projected revenue from ROI logs."""
 
+    charges = list(charges)
+    refunds = list(refunds)
     total = 0.0
     for ch in charges:
         if ch.get("status") == "succeeded" and isinstance(ch.get("amount"), (int, float)):
@@ -780,10 +836,19 @@ def compare_revenue(
             logger.exception("ROIResultsDB query failed")
 
     if projected and abs(net_revenue - projected) > tolerance * projected:
+        charge_ids = [ch.get("id") for ch in charges if ch.get("id")]
+        refund_ids = [rf.get("id") for rf in refunds if rf.get("id")]
+        account_ids = list(
+            {ch.get("account") for ch in charges if ch.get("account")}
+            | {rf.get("account") for rf in refunds if rf.get("account")}
+        )
         details = {
             "net_revenue": net_revenue,
             "projected_revenue": projected,
             "difference": net_revenue - projected,
+            "charge_ids": charge_ids,
+            "refund_ids": refund_ids,
+            "account_ids": account_ids,
         }
         record = {"type": "revenue_mismatch", **details}
         _emit_anomaly(record, write_codex, export_training)
@@ -952,16 +1017,17 @@ def check_events(
             metadata = dict(anomaly)
             metadata["timestamp"] = datetime.utcnow().isoformat()
             metadata["stripe_account"] = account_id
-            try:
-                record_billing_event(
-                    anomaly.get("type", "unknown"),
-                    metadata,
-                    BILLING_EVENT_INSTRUCTION,
-                )
-            except Exception:
-                logger.exception(
-                    "failed to record billing event", extra={"anomaly": anomaly}
-                )
+            if SANITY_LAYER_FEEDBACK_ENABLED:
+                try:
+                    record_billing_event(
+                        anomaly.get("type", "unknown"),
+                        metadata,
+                        BILLING_EVENT_INSTRUCTION,
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed to record billing event", extra={"anomaly": anomaly}
+                    )
     if anomalies and DiscrepancyDB and DiscrepancyRecord:
         try:  # pragma: no cover - best effort
             msg = f"{len(anomalies)} stripe anomalies detected"
