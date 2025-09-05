@@ -1,8 +1,12 @@
+"""Tests for account destination mismatches in payment functions."""
+
 import types
 
 import pytest
 
 from .test_stripe_billing_router_logging import _import_module
+
+MISMATCH_ACCOUNT = "acct_bad"
 
 
 @pytest.fixture
@@ -40,7 +44,7 @@ def test_charge_blocks_on_mismatch(monkeypatch, sbr):
     )
     fake_stripe = types.SimpleNamespace(
         PaymentIntent=types.SimpleNamespace(
-            create=lambda **kw: {"id": "pi", "on_behalf_of": "acct_bad"}
+            create=lambda **kw: {"id": "pi", "on_behalf_of": MISMATCH_ACCOUNT}
         )
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
@@ -56,9 +60,9 @@ def test_charge_blocks_on_mismatch(monkeypatch, sbr):
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: logs.append(kw))
     with pytest.raises(RuntimeError, match="Stripe account mismatch"):
         sbr.charge("finance:finance_router_bot", amount=5.0, description="d")
-    assert alerts == [("finance:finance_router_bot", "acct_bad", 5.0)]
+    assert alerts == [("finance:finance_router_bot", MISMATCH_ACCOUNT, 5.0)]
     log = _get_action_log(logs, "charge")
-    assert log["error"] is True and log["destination_account"] == "acct_bad"
+    assert log["error"] is True and log["destination_account"] == MISMATCH_ACCOUNT
     assert not sbr.record_calls
     assert not sbr.billing_event_calls
     assert not sbr.log_payment_calls
@@ -67,7 +71,7 @@ def test_charge_blocks_on_mismatch(monkeypatch, sbr):
 def test_subscription_blocks_on_mismatch(monkeypatch, sbr):
     fake_stripe = types.SimpleNamespace(
         Subscription=types.SimpleNamespace(
-            create=lambda **kw: {"id": "sub", "account": "acct_bad"}
+            create=lambda **kw: {"id": "sub", "account": MISMATCH_ACCOUNT}
         )
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
@@ -83,9 +87,9 @@ def test_subscription_blocks_on_mismatch(monkeypatch, sbr):
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: logs.append(kw))
     with pytest.raises(RuntimeError, match="Stripe account mismatch"):
         sbr.create_subscription("finance:finance_router_bot")
-    assert alerts == [("finance:finance_router_bot", "acct_bad")]
+    assert alerts == [("finance:finance_router_bot", MISMATCH_ACCOUNT)]
     log = _get_action_log(logs, "subscription")
-    assert log["error"] is True and log["destination_account"] == "acct_bad"
+    assert log["error"] is True and log["destination_account"] == MISMATCH_ACCOUNT
     assert not sbr.record_calls
     assert not sbr.billing_event_calls
     assert not sbr.log_payment_calls
@@ -94,7 +98,7 @@ def test_subscription_blocks_on_mismatch(monkeypatch, sbr):
 def test_refund_blocks_on_mismatch(monkeypatch, sbr):
     fake_stripe = types.SimpleNamespace(
         Refund=types.SimpleNamespace(
-            create=lambda **kw: {"id": "rf", "amount": 500, "on_behalf_of": "acct_bad"}
+            create=lambda **kw: {"id": "rf", "amount": 500, "on_behalf_of": MISMATCH_ACCOUNT}
         )
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
@@ -110,9 +114,9 @@ def test_refund_blocks_on_mismatch(monkeypatch, sbr):
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: logs.append(kw))
     with pytest.raises(RuntimeError, match="Stripe account mismatch"):
         sbr.refund("finance:finance_router_bot", "pi", amount=5.0)
-    assert alerts == [("finance:finance_router_bot", "acct_bad", 5.0)]
+    assert alerts == [("finance:finance_router_bot", MISMATCH_ACCOUNT, 5.0)]
     log = _get_action_log(logs, "refund")
-    assert log["error"] is True and log["destination_account"] == "acct_bad"
+    assert log["error"] is True and log["destination_account"] == MISMATCH_ACCOUNT
     assert not sbr.record_calls
     assert not sbr.billing_event_calls
     assert not sbr.log_payment_calls
@@ -124,7 +128,7 @@ def test_checkout_session_blocks_on_mismatch(monkeypatch, sbr):
             Session=types.SimpleNamespace(
                 create=lambda **kw: {
                     "id": "cs",
-                    "account": "acct_bad",
+                    "account": MISMATCH_ACCOUNT,
                     "amount_total": 500,
                 }
             )
@@ -146,9 +150,9 @@ def test_checkout_session_blocks_on_mismatch(monkeypatch, sbr):
             "finance:finance_router_bot",
             line_items=[{"price": "price_finance_standard", "quantity": 1}],
         )
-    assert alerts == [("finance:finance_router_bot", "acct_bad", 5.0)]
+    assert alerts == [("finance:finance_router_bot", MISMATCH_ACCOUNT, 5.0)]
     log = _get_action_log(logs, "checkout_session")
-    assert log["error"] is True and log["destination_account"] == "acct_bad"
+    assert log["error"] is True and log["destination_account"] == MISMATCH_ACCOUNT
     assert not sbr.record_calls
     assert not sbr.billing_event_calls
     assert not sbr.log_payment_calls

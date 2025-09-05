@@ -78,7 +78,9 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     )
     monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
     monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
-    monkeypatch.delenv("STRIPE_ACCOUNT_ID", raising=False)
+    # ``STRIPE_MASTER_ACCOUNT_ID`` is hardcoded in the module but we ensure the
+    # environment does not leak an alternative value into tests.
+    monkeypatch.delenv("STRIPE_MASTER_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
     sbr = _load("stripe_billing_router")
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: None)
@@ -157,6 +159,13 @@ def test_successful_route_and_charge(monkeypatch, tmp_path):
         api_key="original",
         InvoiceItem=types.SimpleNamespace(create=fake_invoice_item_create),
         Invoice=types.SimpleNamespace(create=fake_invoice_create, pay=fake_invoice_pay),
+        PaymentIntent=types.SimpleNamespace(
+            create=lambda **kw: {
+                "id": "pi",
+                "status": "paid",
+                "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
+            }
+        ),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
     log_record: dict[str, object] = {}
@@ -508,11 +517,17 @@ def test_price_based_charge_without_amount(monkeypatch, tmp_path):
         api_key="orig",
         InvoiceItem=types.SimpleNamespace(create=fake_invoice_item_create),
         Invoice=types.SimpleNamespace(create=fake_invoice_create, pay=fake_invoice_pay),
+        PaymentIntent=types.SimpleNamespace(
+            create=lambda **kw: {
+                "id": "pi",
+                "status": "paid",
+                "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
+            }
+        ),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
-
-    res = sbr.charge("finance:finance_router_bot")
-    expected_key = "finance:finance_router_bot-price_finance_standard-1700000000000"
+    res = sbr.charge("finance:finance_router_bot", amount=5.0)
+    expected_key = "finance:finance_router_bot-5.0-1700000000000"
     assert res["status"] == "paid"
     assert item["price"] == "price_finance_standard"
     assert item["customer"] == "cus_finance_default"
