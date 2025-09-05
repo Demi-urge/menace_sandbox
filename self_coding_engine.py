@@ -256,7 +256,7 @@ def call_codex_with_backoff(
             return future.result(timeout=timeout_val)
 
     return retry_with_backoff(
-        _attempt, attempts=len(delays), delays=delays, logger=log
+        _attempt, attempts=len(delays) + 1, delays=delays, logger=log
     )
 
 

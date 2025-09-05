@@ -60,7 +60,8 @@ def retry_with_backoff(
 
     if delays is not None:
         schedule = list(delays)
-        attempts = len(schedule)
+        if len(schedule) < attempts - 1:
+            raise ValueError("not enough delay values for requested attempts")
     else:
         schedule = []
         backoff = delay

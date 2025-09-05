@@ -4,6 +4,44 @@ from pathlib import Path
 from dynamic_path_router import resolve_path
 
 import pytest
+import importlib.util
+import sys
+import types
+
+cd_stub = types.SimpleNamespace(
+    CodeDB=object,
+    CodeRecord=object,
+    PatchHistoryDB=object,
+    PatchRecord=object,
+)
+sys.modules.setdefault("code_database", cd_stub)
+sys.modules.setdefault("menace.code_database", cd_stub)
+
+sys.modules.setdefault(
+    "gpt_memory",
+    types.SimpleNamespace(
+        GPTMemoryManager=object,
+        INSIGHT="INSIGHT",
+        _summarise_text=lambda text, *a, **k: text,
+    ),
+)
+sys.modules.setdefault(
+    "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None, DBRouter=object, init_db_router=lambda *a, **k: None)
+)
+sys.modules.setdefault("vector_service", types.SimpleNamespace(CognitionLayer=object))
+
+spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
+menace_pkg = importlib.util.module_from_spec(spec)
+menace_pkg.__path__ = [str(Path().resolve())]
+sys.modules.setdefault("menace", menace_pkg)
+spec.loader.exec_module(menace_pkg)
+
+spec = importlib.util.spec_from_file_location(
+    "menace.self_coding_engine", resolve_path("self_coding_engine.py")
+)
+sce = importlib.util.module_from_spec(spec)
+sys.modules.setdefault("menace.self_coding_engine", sce)
+spec.loader.exec_module(sce)
 
 
 def _build_check_permission():
@@ -78,4 +116,26 @@ def test_insight_integration(caplog):
         hist = _integrate_insights(engine, "desc")
     assert "fb" in hist and "path" in hist and "fix" in hist
     assert any("patch history context" in r.message for r in caplog.records)
+
+
+def test_call_codex_with_backoff_retries(monkeypatch):
+    delays = [2, 5, 10]
+    monkeypatch.setattr(sce._settings, "codex_retry_delays", delays)
+    sleeps: list[float] = []
+    monkeypatch.setattr(sce.time, "sleep", lambda d: sleeps.append(d))
+
+    class FailClient:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, prompt):
+            self.calls += 1
+            raise Exception("boom")
+
+    client = FailClient()
+    with pytest.raises(sce.RetryError):
+        sce.call_codex_with_backoff(client, sce.Prompt("x"))
+
+    assert sleeps == delays
+    assert client.calls == len(delays) + 1
 
