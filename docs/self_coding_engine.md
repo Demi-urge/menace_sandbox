@@ -5,13 +5,27 @@
 ## Usage
 
 ```python
-from pathlib import Path
+from dynamic_path_router import resolve_path
 from menace.self_coding_engine import SelfCodingEngine
 from menace.code_database import CodeDB
 from menace.menace_memory_manager import MenaceMemoryManager
 
-engine = SelfCodingEngine(CodeDB("code.db"), MenaceMemoryManager("mem.db"))
-engine.apply_patch(Path("utils.py"), "normalize text")
+engine = SelfCodingEngine(
+    CodeDB(resolve_path('code.db')),
+    MenaceMemoryManager(resolve_path('mem.db')),
+)
+engine.apply_patch(resolve_path('utils.py'), 'normalize text')
+```
+
+Set `MENACE_ROOT` or `SANDBOX_REPO_PATH` to point the resolver at a different
+clone. For multi-root setups specify `MENACE_ROOTS` or `SANDBOX_REPO_PATHS` and
+pass `repo_hint` to `resolve_path` when targeting a specific checkout:
+
+```bash
+MENACE_ROOTS="/repo/main:/repo/alt" python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('code.db', repo_hint='/repo/alt'))
+PY
 ```
 
 - **suggest_snippets** – fetch related `CodeRecord` objects from `CodeDB`.

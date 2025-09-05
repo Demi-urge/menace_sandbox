@@ -24,6 +24,29 @@ When the multi-root variables are present they take precedence over the single
 root overrides.  Each entry is searched in order and the first matching root is
 stored for reuse so subsequent lookups avoid repeated filesystem walks.
 
+## Examples
+
+Always call `resolve_path` instead of embedding string literals. The resolver
+honours environment overrides and multi-root configurations.
+
+### Override repository root
+
+```bash
+MENACE_ROOT=/alt/clone python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+```
+
+### Multi-root lookup
+
+```bash
+MENACE_ROOTS="/repo/main:/repo/fork" python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py', repo_hint='/repo/fork'))
+PY
+```
+
 ## Additional helpers
 
 - `get_project_root` and `get_project_roots` expose the discovered repository

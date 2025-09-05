@@ -3,11 +3,16 @@
 `SelfImprovementEngine` runs a model automation pipeline whenever metrics signal the need for an update. The engine can target any bot by supplying a `bot_name` and pipeline instance.
 
 ```python
+import os
+from dynamic_path_router import resolve_path
 from menace.self_improvement.api import SelfImprovementEngine, ImprovementEngineRegistry
 from menace.model_automation_pipeline import ModelAutomationPipeline
 
-engine = SelfImprovementEngine(bot_name="alpha",
-                               pipeline=ModelAutomationPipeline())
+engine = SelfImprovementEngine(
+    bot_name="alpha",
+    pipeline=ModelAutomationPipeline(),
+    state_path=resolve_path(f"{os.getenv('SANDBOX_DATA_DIR', 'sandbox_data')}/alpha_state.json"),
+)
 registry = ImprovementEngineRegistry()
 registry.register_engine("alpha", engine)
 
@@ -15,6 +20,17 @@ registry.register_engine("alpha", engine)
 results = registry.run_all_cycles(energy=2)
 for name, outcome in results.items():
     print(name, outcome.roi.roi_gain)
+```
+
+Set `MENACE_ROOT` or `SANDBOX_REPO_PATH` to direct `resolve_path` at a different
+checkout. For multi-root environments define `MENACE_ROOTS` or
+`SANDBOX_REPO_PATHS` and use `repo_hint` to select a specific root:
+
+```bash
+MENACE_ROOTS="/repo/main:/repo/alt" python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py', repo_hint='/repo/alt'))
+PY
 ```
 
 When a `SelfCodingEngine` is supplied, the engine may patch helper code before running the automation pipeline. See [self_coding_engine.md](self_coding_engine.md) for more information.
