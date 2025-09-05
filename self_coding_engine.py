@@ -237,11 +237,11 @@ def call_codex_with_backoff(
     """Invoke ``llm_client.generate`` with retries and fixed backoff delays.
 
     Each attempt enforces a timeout and exceptions are logged before sleeping
-    for 2s → 5s → 10s between attempts.  A :class:`RetryError` is raised when
-    all retries fail.
+    for the configured delays (defaulting to ``[2, 5, 10]``). A
+    :class:`RetryError` is raised when all retries fail.
     """
 
-    delays = [2, 5, 10]
+    delays = _settings.codex_retry_delays
     log = logger or logging.getLogger(__name__)
 
     def _attempt() -> LLMResult:
