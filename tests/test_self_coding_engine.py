@@ -541,13 +541,13 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
 
     calls: list[str] = []
 
-    def handle_failure(prompt, exc="", result=None):
-        calls.append(exc)
+    def handle(prompt, reason, **_):
+        calls.append(reason)
         if len(calls) == 1:
             return LLMResult(text="def bad(")
         return LLMResult(text="def good():\n    pass\n")
 
-    monkeypatch.setattr(sce.codex_fallback_handler, "handle_failure", handle_failure)
+    monkeypatch.setattr(sce.codex_fallback_handler, "handle", handle)
 
     code = engine.generate_helper("demo")
     assert "def good" in code

@@ -92,7 +92,7 @@ def test_empty_output_triggers_fallback(monkeypatch):
 
     alt_result = LLMResult(text="print('hi')")
     handle_mock = MagicMock(return_value=alt_result)
-    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle_failure", handle_mock)
+    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle", handle_mock)
 
     sleeps: list[float] = []
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
@@ -137,7 +137,7 @@ def test_malformed_output_triggers_fallback(monkeypatch):
 
     alt_result = LLMResult(text="print('fixed')")
     handle_mock = MagicMock(return_value=alt_result)
-    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle_failure", handle_mock)
+    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle", handle_mock)
 
     sleeps: list[float] = []
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))

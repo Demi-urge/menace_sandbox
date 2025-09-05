@@ -125,4 +125,16 @@ def handle_failure(
         return None
 
 
-__all__ = ["handle_failure", "queue_for_retry", "route_to_alt_model"]
+def handle(prompt: str | Prompt, reason: str, *, strategy: str | None = None) -> LLMResult | None:
+    """Queue or reroute *prompt* because of *reason*.
+
+    This wrapper emits a log entry so upstream components can detect when the
+    system is operating in a degraded state.  It then delegates to
+    :func:`handle_failure` for the actual queue or reroute behaviour.
+    """
+
+    logger.warning("codex fallback engaged", extra={"reason": reason})
+    return handle_failure(prompt, exc=reason, strategy=strategy)
+
+
+__all__ = ["handle_failure", "queue_for_retry", "route_to_alt_model", "handle"]
