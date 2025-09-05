@@ -43,6 +43,36 @@ def test_emit_anomaly_triggers_record_event(monkeypatch):
     assert calls[0][2]["telemetry_feedback"] is telemetry
 
 
+def test_record_payment_anomaly_telemetry_feedback(monkeypatch):
+    class DummyTelemetry:
+        def __init__(self):
+            self.events: list[tuple[str, dict]] = []
+            self.checked = 0
+
+        def record_event(self, event_type, metadata):
+            self.events.append((event_type, metadata))
+
+        def check(self):
+            self.checked += 1
+
+    telemetry = DummyTelemetry()
+
+    monkeypatch.setattr(msl, "_DISCREPANCY_DB", None)
+    monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
+    monkeypatch.setattr(msl, "_get_memory_manager", lambda: None)
+    monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
+
+    msl.record_payment_anomaly(
+        "missing_charge",
+        {"charge_id": "ch_1"},
+        telemetry_feedback=telemetry,
+    )
+
+    assert telemetry.events and telemetry.events[0][0] == "missing_charge"
+    assert telemetry.events[0][1]["charge_id"] == "ch_1"
+    assert telemetry.checked == 1
+
+
 def _stub_unified_event_bus(monkeypatch, tmp_path):
     import dynamic_path_router
     from dynamic_path_router import resolve_path

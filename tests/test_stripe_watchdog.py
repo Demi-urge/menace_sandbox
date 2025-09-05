@@ -361,13 +361,12 @@ def test_anomaly_log_rotation(monkeypatch, tmp_path):
 
 
 def test_emit_anomaly_triggers_sanity_layer(monkeypatch):
-    calls: list[tuple[str, dict, str | None]] = []
+    calls: list[tuple[tuple, dict]] = []
 
-    monkeypatch.setattr(
-        sw.menace_sanity_layer,
-        "record_payment_anomaly",
-        lambda *a, **k: calls.append(a),
-    )
+    def fake_payment(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", fake_payment)
     monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
     monkeypatch.setattr(
         sw,
@@ -375,12 +374,22 @@ def test_emit_anomaly_triggers_sanity_layer(monkeypatch):
         SimpleNamespace(record=lambda entry: None),
     )
 
-    sw._emit_anomaly({"type": "missing_charge", "id": "ch_test"}, False, False)
+    engine = object()
+    telemetry = object()
+    sw._emit_anomaly(
+        {"type": "missing_charge", "id": "ch_test"},
+        False,
+        False,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
+    )
 
-    assert calls and calls[0][0] == "missing_charge"
-    assert calls[0][1]["charge_id"] == "ch_test"
+    assert calls and calls[0][0][0] == "missing_charge"
+    assert calls[0][0][1]["charge_id"] == "ch_test"
     expected = sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS["missing_charge"]
-    assert calls[0][2] == expected
+    assert calls[0][0][2] == expected
+    assert calls[0][1]["self_coding_engine"] is engine
+    assert calls[0][1]["telemetry_feedback"] is telemetry
 
 
 @pytest.mark.parametrize("event_type", list(sw.SEVERITY_MAP.keys()))

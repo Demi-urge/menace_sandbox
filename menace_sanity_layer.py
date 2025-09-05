@@ -514,6 +514,7 @@ def record_payment_anomaly(
     write_codex: bool = False,
     export_training: bool = False,
     self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> None:
     """Persist anomaly details, memory feedback and audit trail.
 
@@ -532,6 +533,12 @@ def record_payment_anomaly(
         Whether the anomaly should be emitted as a Codex training sample.
     export_training:
         Whether the anomaly should be exported for training datasets.
+    self_coding_engine:
+        Optional hook allowing repeated anomalies to influence generation
+        parameters.
+    telemetry_feedback:
+        Optional hook for emitting telemetry events and performing health
+        checks related to the anomaly.
     """
 
     instruction = _anomaly_instruction(event_type, metadata, instruction)
@@ -600,6 +607,21 @@ def record_payment_anomaly(
                 update_fn(hint)
         except Exception:  # pragma: no cover - best effort
             logger.exception("self_coding_engine update failed")
+
+    if telemetry_feedback is not None:
+        try:  # pragma: no cover - best effort
+            feedback_fn = getattr(
+                telemetry_feedback, "record_event", None
+            ) or getattr(telemetry_feedback, "log_event", None)
+            if callable(feedback_fn):
+                feedback_fn(event_type, meta)
+            check_fn = getattr(telemetry_feedback, "check", None)
+            if callable(check_fn):
+                check_fn()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "telemetry_feedback hook failed", extra={"event_type": event_type}
+            )
 
     try:
         audit_logger.log_event(
