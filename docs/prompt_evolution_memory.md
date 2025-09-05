@@ -9,8 +9,8 @@ runs to analyse what formatting strategies yield the best return on investment
 ## Log format
 
 Entries are appended to line-delimited JSON files. Successful executions are
-written to `prompt_success_log.json` while failures go to
-`prompt_failure_log.json`.
+written to `sandbox_data/prompt_success_log.jsonl` while failures go to
+`sandbox_data/prompt_failure_log.jsonl`.
 
 ```json
 {
@@ -88,9 +88,9 @@ prompts, continually improving style and section ordering.
 ### PromptEvolutionMemory
 
 * `success_path` – destination for successful execution logs
-  (default: `prompt_success_log.json`).
+  (default: `sandbox_data/prompt_success_log.jsonl`).
 * `failure_path` – destination for failed execution logs
-  (default: `prompt_failure_log.json`).
+  (default: `sandbox_data/prompt_failure_log.jsonl`).
 
 ### PromptOptimizer
 
@@ -110,7 +110,7 @@ below prints the average ROI for successful prompts:
 import json
 from pathlib import Path
 
-success_log = Path("prompt_success_log.json")
+success_log = Path("sandbox_data/prompt_success_log.jsonl")
 entries = [json.loads(l) for l in success_log.read_text().splitlines() if l]
 avg_roi = sum(e.get("roi", {}).get("roi_delta", 0) for e in entries) / len(entries)
 print(f"average ROI: {avg_roi:.2f}")

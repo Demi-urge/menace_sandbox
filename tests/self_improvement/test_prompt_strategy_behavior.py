@@ -54,9 +54,9 @@ def dummy_prompt(strategy_templates):
 
 
 def test_failure_reason_logged(tmp_path, monkeypatch, dummy_prompt):
-    monkeypatch.setattr(prompt_memory, "_repo_path", lambda: tmp_path)
-    monkeypatch.setattr(prompt_memory._settings, "prompt_failure_log_path", "fail.json")
-    monkeypatch.setattr(prompt_memory._settings, "prompt_success_log_path", "succ.json")
+    monkeypatch.setattr(prompt_memory, "resolve_path", lambda p: str(tmp_path / p))
+    monkeypatch.setattr(prompt_memory._settings, "prompt_failure_log_path", "fail.jsonl")
+    monkeypatch.setattr(prompt_memory._settings, "prompt_success_log_path", "succ.jsonl")
 
     prompt_memory.log_prompt_attempt(
         dummy_prompt,
@@ -66,7 +66,7 @@ def test_failure_reason_logged(tmp_path, monkeypatch, dummy_prompt):
         sandbox_metrics={"s": 2},
     )
 
-    log_path = tmp_path / "fail.json"
+    log_path = tmp_path / "fail.jsonl"
     entry = json.loads(log_path.read_text().splitlines()[0])
     assert entry["failure_reason"] == "api_error"
     assert entry["sandbox_metrics"] == {"s": 2}
@@ -120,7 +120,7 @@ def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats, mon
 
 def test_roi_stats_logged(tmp_path, monkeypatch, dummy_prompt):
     path = Path(resolve_path(str(tmp_path / "stats.json")))
-    monkeypatch.setattr(prompt_memory, "_repo_path", lambda: tmp_path)
+    monkeypatch.setattr(prompt_memory, "resolve_path", lambda p: str(tmp_path / p))
     monkeypatch.setattr(prompt_memory, "_strategy_stats_path", path)
     from filelock import FileLock
     monkeypatch.setattr(

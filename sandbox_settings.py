@@ -745,12 +745,12 @@ class SandboxSettings(BaseSettings):
         description="Base64-encoded private key for signing audit entries.",
     )
     prompt_success_log_path: str = Field(
-        "prompt_success_log.json",
+        "sandbox_data/prompt_success_log.jsonl",
         env="PROMPT_SUCCESS_LOG_PATH",
         description="Path for recording successful prompt executions.",
     )
     prompt_failure_log_path: str = Field(
-        "prompt_failure_log.json",
+        "sandbox_data/prompt_failure_log.jsonl",
         env="PROMPT_FAILURE_LOG_PATH",
         description="Path for recording failed prompt executions.",
     )

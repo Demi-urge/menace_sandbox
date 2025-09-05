@@ -96,8 +96,8 @@ settings = load_sandbox_settings("docs/sandbox_config.sample.yaml")
 These weights influence the risk score produced by `_analyse_module`.
 
 ## Prompt logging defaults
-- `prompt_success_log_path`: `prompt_success_log.json` (`PROMPT_SUCCESS_LOG_PATH`)
-- `prompt_failure_log_path`: `prompt_failure_log.json` (`PROMPT_FAILURE_LOG_PATH`)
+- `prompt_success_log_path`: `sandbox_data/prompt_success_log.jsonl` (`PROMPT_SUCCESS_LOG_PATH`)
+- `prompt_failure_log_path`: `sandbox_data/prompt_failure_log.jsonl` (`PROMPT_FAILURE_LOG_PATH`)
 
 ## Prompt chunking defaults
 - `prompt_chunk_token_threshold`: `3500` (`PROMPT_CHUNK_TOKEN_THRESHOLD`)

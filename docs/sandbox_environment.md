@@ -31,8 +31,8 @@ data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 
 These optional variables control where prompt execution results are stored:
 
-- `PROMPT_SUCCESS_LOG_PATH` – path for successful prompt logs (default `prompt_success_log.json`).
-- `PROMPT_FAILURE_LOG_PATH` – path for failed prompt logs (default `prompt_failure_log.json`).
+- `PROMPT_SUCCESS_LOG_PATH` – path for successful prompt logs (default `sandbox_data/prompt_success_log.jsonl`).
+- `PROMPT_FAILURE_LOG_PATH` – path for failed prompt logs (default `sandbox_data/prompt_failure_log.jsonl`).
 
 ## Container execution variables
 

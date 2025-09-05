@@ -31,15 +31,14 @@ class PromptEvolutionMemory:
     """Append prompt execution records to JSONL logs.
 
     The memory stores each prompt attempt in line-delimited JSON files.
-    Successful executions are written to ``prompt_success_log.json`` while
-    failures are appended to ``prompt_failure_log.json``. Each record captures
-    the prompt contents, optional formatting metadata, execution results and
-    ROI metrics. The files are JSONL formatted regardless of the ``.json``
-    extension.
+    Successful executions are written to ``sandbox_data/prompt_success_log.jsonl``
+    while failures are appended to ``sandbox_data/prompt_failure_log.jsonl``.
+    Each record captures the prompt contents, optional formatting metadata,
+    execution results and ROI metrics.
     """
 
-    success_path: Path = _ROOT / "prompt_success_log.json"
-    failure_path: Path = _ROOT / "prompt_failure_log.json"
+    success_path: Path = _ROOT / "sandbox_data" / "prompt_success_log.jsonl"
+    failure_path: Path = _ROOT / "sandbox_data" / "prompt_failure_log.jsonl"
 
     def __post_init__(self) -> None:  # pragma: no cover - trivial
         for path in (self.success_path, self.failure_path):
