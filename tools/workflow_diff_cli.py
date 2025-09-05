@@ -20,6 +20,7 @@ import os
 import difflib
 from pathlib import Path
 from typing import Tuple
+from dynamic_path_router import resolve_path
 
 
 def _load_spec(base: Path, workflow_id: str) -> Tuple[Path, dict]:
@@ -53,8 +54,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    base_dir = Path(args.dir)
-    workflows_dir = base_dir / "workflows" if base_dir.name != "workflows" else base_dir
+    base_dir = resolve_path(args.dir)
+    workflows_dir = (
+        base_dir
+        if base_dir.name == "workflows"
+        else resolve_path("workflows", root=args.dir)
+    )
+    try:
+        workflows_dir.relative_to(base_dir)
+    except ValueError:
+        workflows_dir = resolve_path(base_dir / "workflows")
 
     child_path, child_data = _load_spec(workflows_dir, str(args.child_id))
     md = child_data.get("metadata", {})
