@@ -30,7 +30,7 @@ class BillingEvent:
     currency: str | None = None
     user_email: str | None = None
     destination_account: str | None = None
-    stripe_key: str | None = None
+    key_hash: str | None = None
     ts: str | None = None  # ISO timestamp; defaults to CURRENT_TIMESTAMP
 
 
@@ -55,12 +55,18 @@ class BillingLogDB:
                 currency TEXT,
                 user_email TEXT,
                 destination_account TEXT,
-                stripe_key TEXT,
+                key_hash TEXT,
                 ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
         )
         self.conn.commit()
+        # Migration: rename legacy stripe_key column to key_hash
+        cur.execute("PRAGMA table_info(billing_logs)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "stripe_key" in cols and "key_hash" not in cols:
+            cur.execute("ALTER TABLE billing_logs RENAME COLUMN stripe_key TO key_hash")
+            self.conn.commit()
 
     # ------------------------------------------------------------------
     def log(self, event: BillingEvent) -> int:
@@ -71,7 +77,7 @@ class BillingLogDB:
             """
             INSERT INTO billing_logs(
                 action, bot_id, amount, currency, user_email,
-                destination_account, stripe_key, ts
+                destination_account, key_hash, ts
             ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
             """,
             (
@@ -81,7 +87,7 @@ class BillingLogDB:
                 event.currency,
                 event.user_email,
                 event.destination_account,
-                event.stripe_key,
+                event.key_hash,
                 event.ts,
             ),
         )
@@ -101,7 +107,7 @@ def log_billing_event(
     currency: str | None = None,
     user_email: str | None = None,
     destination_account: str | None = None,
-    stripe_key: str | None = None,
+    key_hash: str | None = None,
     ts: str | None = None,
 ) -> int:
     """Insert a billing event into the ``billing_logs`` table."""
@@ -113,7 +119,7 @@ def log_billing_event(
         currency=currency,
         user_email=user_email,
         destination_account=destination_account,
-        stripe_key=stripe_key,
+        key_hash=key_hash,
         ts=ts,
     )
     return _DEFAULT_DB.log(event)
