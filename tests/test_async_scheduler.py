@@ -5,6 +5,8 @@ import os
 import types
 import pytest
 
+from dynamic_path_router import resolve_path
+
 ROOT = Path(__file__).resolve().parents[1]
 
 def load_mod(name, file):
@@ -20,8 +22,8 @@ def load_mod(name, file):
     spec.loader.exec_module(mod)
     return mod
 
-cms = load_mod('cross_model_scheduler', 'cross_model_scheduler.py')
-sts = load_mod('self_test_service', 'self_test_service.py')
+cms = load_mod('cross_model_scheduler', resolve_path('cross_model_scheduler.py'))
+sts = load_mod('self_test_service', resolve_path('self_test_service.py'))
 
 class DummyThread:
     def __init__(self, target=None, daemon=None):
