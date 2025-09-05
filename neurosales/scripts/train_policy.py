@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from dynamic_path_router import resolve_path
 from neurosales.policy_learning import PolicyLearner
 
 load_dotenv()
@@ -31,8 +33,12 @@ def _infer_spec(records):
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1]
-    dataset = Path(sys.argv[1]) if len(sys.argv) > 1 else root / "tests" / "data" / "policy_train.json"
+    root = resolve_path(".")
+    dataset = (
+        Path(sys.argv[1])
+        if len(sys.argv) > 1
+        else resolve_path("neurosales/tests/data/policy_train.json")
+    )
     records = _load_records(dataset)
     actions, state_dim = _infer_spec(records)
     tactics = {a: "flat" for a in actions}
@@ -42,7 +48,7 @@ def main() -> None:
         json.dump(records, f)
     learner.train_from_dataset(str(tmp_path))
     tmp_path.unlink()
-    weights_path = root / "neurosales" / "policy_params.json"
+    weights_path = resolve_path("neurosales") / "policy_params.json"
     with open(weights_path, "w") as f:
         json.dump(learner.brain.params, f)
     print(f"Weights saved to {weights_path}")

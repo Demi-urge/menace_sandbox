@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import heapq
 import json
-import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import logging
+
+from dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +97,9 @@ class CandidateResponseScorer:
         if self._lr is not None:
             try:
                 from joblib import load  # type: ignore
-                import os
 
-                model_path = os.path.join(os.path.dirname(__file__), "engagement_model.joblib")
-                if os.path.exists(model_path):
+                model_path = resolve_path("neurosales") / "engagement_model.joblib"
+                if model_path.exists():
                     self._lr = load(model_path)
                     self._model_loaded = True
             except Exception:  # pragma: no cover - fallback to heuristic
@@ -113,8 +113,8 @@ class CandidateResponseScorer:
 
         self.policy_params = None
         try:
-            weights_path = os.path.join(os.path.dirname(__file__), "policy_params.json")
-            if os.path.exists(weights_path):
+            weights_path = resolve_path("neurosales") / "policy_params.json"
+            if weights_path.exists():
                 with open(weights_path) as pf:
                     self.policy_params = json.load(pf)
         except Exception:

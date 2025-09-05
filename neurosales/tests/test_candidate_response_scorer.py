@@ -20,7 +20,7 @@ stub_user_prefs.PreferenceProfile = type("PP", (), {"embedding": []})
 
 spec = importlib.util.spec_from_file_location(
     "neurosales.scoring",
-    str(resolve_path("neurosales/scoring.py")),
+    str(resolve_path("neurosales/neurosales/scoring.py")),
 )
 scoring = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("neurosales", types.ModuleType("neurosales"))
@@ -33,8 +33,8 @@ CandidateResponseScorer = scoring.CandidateResponseScorer
 
 
 def test_engagement_prediction_changes_after_training(tmp_path):
-    model_path = os.path.join(os.path.dirname(scoring.__file__), "engagement_model.joblib")
-    if os.path.exists(model_path):
+    model_path = resolve_path("neurosales") / "engagement_model.joblib"
+    if model_path.exists():
         os.remove(model_path)
 
     scorer = CandidateResponseScorer()

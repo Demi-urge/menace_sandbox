@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import math
-import os
 import json
 import random
+from pathlib import Path
 from typing import Dict, List, Tuple
+
+from dynamic_path_router import resolve_path
 
 from .rl_integration import ReplayBuffer, Experience
 from .rlhf import RLHFPolicyManager
@@ -94,8 +96,10 @@ class PolicyLearner:
         self.tactics = tactics
         self.brain = PPOBrain(state_dim, actions, lr=lr)
         if weights_path is None:
-            weights_path = os.path.join(os.path.dirname(__file__), "policy_params.json")
-        if os.path.exists(weights_path):
+            weights_path = resolve_path("neurosales") / "policy_params.json"
+        else:
+            weights_path = Path(weights_path)
+        if weights_path.exists():
             try:
                 with open(weights_path) as f:
                     self.brain.params = json.load(f)
