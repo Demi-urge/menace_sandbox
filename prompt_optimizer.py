@@ -612,8 +612,8 @@ class PromptOptimizer:
         return self.aggregate()
 
 
-DEFAULT_WEIGHTS_PATH = Path("prompt_format_weights.json")
-DEFAULT_STRATEGY_PATH = Path("_strategy_stats.json")
+DEFAULT_WEIGHTS_PATH = resolve_path("prompt_format_weights.json")
+DEFAULT_STRATEGY_PATH = resolve_path("_strategy_stats.json")
 
 
 def load_logs(success_path: str | Path, failure_path: str | Path) -> List[Dict[str, Any]]:
