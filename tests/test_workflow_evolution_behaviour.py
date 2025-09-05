@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from workflow_synthesizer import generate_variants, ModuleIOAnalyzer, WorkflowSynthesizer
+from dynamic_path_router import resolve_path
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +176,7 @@ def _load_manager(variant_rois, generate_calls=None, diminishing=0.05):
 # Tests
 
 def test_variant_generation_obeys_dependencies(tmp_path, monkeypatch):
-    base_src = Path(__file__).with_name("fixtures") / "workflow_modules"
+    base_src = resolve_path("tests/fixtures/workflow_modules")
     for name in ["mod_a.py", "mod_b.py", "mod_c.py"]:
         # write modules without extension so ModuleIOAnalyzer resolves them
         (tmp_path / name[:-3]).write_text((base_src / name).read_text())

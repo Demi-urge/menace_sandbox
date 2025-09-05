@@ -6,6 +6,8 @@ import types
 from pathlib import Path
 from typing import List
 
+from dynamic_path_router import resolve_path
+
 import networkx as nx
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,11 +77,9 @@ def _force_simple(monkeypatch):
     )
 
 
-FIX_DIR = Path(__file__).resolve().parent / "fixtures" / "workflows"
-
-
 def _load(name: str) -> dict:
-    return json.loads((FIX_DIR / name).read_text())
+    path = resolve_path(f"tests/fixtures/workflows/{name}")
+    return json.loads(path.read_text())
 
 
 def test_similarity_and_entropy(monkeypatch):

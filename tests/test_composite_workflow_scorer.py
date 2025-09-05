@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict
 
 import pytest
+from dynamic_path_router import resolve_path
 
 
 class _StubDBRouter:
@@ -61,14 +62,14 @@ sys.modules[
 )
 
 
-FIXTURES = Path(__file__).parent / "fixtures" / "workflow_modules"
-
-
 def _copy_fixture_modules(tmp_path: Path) -> None:
     """Copy minimal workflow modules into ``tmp_path``."""
 
     for name in ("mod_a.py", "mod_b.py", "mod_c.py"):
-        shutil.copy(FIXTURES / name, tmp_path / name)
+        shutil.copy(
+            resolve_path(f"tests/fixtures/workflow_modules/{name}"),
+            tmp_path / name,
+        )
 
 
 def _stub_calculator_factory():

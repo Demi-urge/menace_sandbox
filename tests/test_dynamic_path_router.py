@@ -1,3 +1,4 @@
+import importlib
 import importlib.util
 import shutil
 from pathlib import Path
@@ -5,6 +6,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from dynamic_path_router import resolve_path
 
 
 def _load_router(path: Path):
@@ -32,7 +34,7 @@ def test_resolve_path_with_env_override(monkeypatch, env_var):
         (repo / ".git").mkdir(parents=True)
         shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")
         shutil.copy(
-            project_root / "tests" / "fixtures" / "patch_outcomes.jsonl",
+            resolve_path("tests/fixtures/patch_outcomes.jsonl"),
             repo / "patch_outcomes.jsonl",
         )
 
@@ -60,7 +62,7 @@ def test_resolve_path_jsonl_in_nested_repo(monkeypatch):
 
         shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")
         shutil.copy(
-            project_root / "tests" / "fixtures" / "patch_outcomes.jsonl",
+            resolve_path("tests/fixtures/patch_outcomes.jsonl"),
             repo / "patch_outcomes.jsonl",
         )
 

@@ -1,11 +1,15 @@
 import json
 from pathlib import Path
 
+import json
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("networkx")
 
 import dynamic_module_mapper as dmm
+from dynamic_path_router import resolve_path
 
 
 def _read_map(path: Path) -> dict:
@@ -87,8 +91,9 @@ def test_semantic_group_no_imports(tmp_path):
 
 
 def test_semantic_fixture_grouping(tmp_path):
-    src = Path(__file__).parent / "fixtures" / "semantic"
     import shutil
+
+    src = resolve_path("tests/fixtures/semantic")
     shutil.copytree(src, tmp_path / "mods")
     plain = dmm.build_module_map(tmp_path / "mods", algorithm="label")
     idxs = {plain["a"], plain["b"], plain["c"]}

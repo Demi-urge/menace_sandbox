@@ -1,16 +1,17 @@
 import json
 from pathlib import Path
 
+import json
+
 import pytest
 
 from workflow_vectorizer import WorkflowVectorizer
-
-_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "workflow_examples.json"
+from dynamic_path_router import resolve_path
 
 
 @pytest.fixture
 def sample_workflows():
-    with open(_FIXTURE) as fh:
+    with resolve_path("tests/fixtures/workflow_examples.json").open() as fh:
         return json.load(fh)
 
 

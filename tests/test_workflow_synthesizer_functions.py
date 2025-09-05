@@ -4,12 +4,11 @@ from pathlib import Path
 import networkx as nx
 
 import workflow_synthesizer as ws
-
-FIXTURES = Path(__file__).parent / "fixtures" / "workflow_modules"
+from dynamic_path_router import resolve_path
 
 
 def _copy_modules(tmp_path: Path) -> None:
-    for mod in FIXTURES.glob("*.py"):
+    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):
         shutil.copy(mod, tmp_path / mod.name)
 
 

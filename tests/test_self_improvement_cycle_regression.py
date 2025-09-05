@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import pytest
+from dynamic_path_router import resolve_path
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures" / "regression"
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -113,5 +113,7 @@ def test_self_improvement_cycle_matches_fixture():
     with pytest.raises(asyncio.TimeoutError):
         asyncio.run(asyncio.wait_for(run_cycle(), timeout=0.01))
 
-    expected = json.loads((FIXTURES / "self_improvement_events.json").read_text())
+    expected = json.loads(
+        resolve_path("tests/fixtures/regression/self_improvement_events.json").read_text()
+    )
     assert [list(e) for e in bus.events] == expected

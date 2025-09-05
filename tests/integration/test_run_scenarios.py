@@ -1,8 +1,9 @@
 import json
-from pathlib import Path
+
 import pytest
 from tests.test_menace_master import _setup_mm_stubs
 from tests.test_scenario_roi_deltas import _setup_tracker
+from dynamic_path_router import resolve_path
 
 
 def test_run_scenarios_all_paths(monkeypatch):
@@ -10,9 +11,8 @@ def test_run_scenarios_all_paths(monkeypatch):
     rt = _setup_tracker(monkeypatch)
     import sandbox_runner.environment as env
 
-    fixtures = Path(__file__).resolve().parents[1] / "fixtures"
-    hostile = json.loads((fixtures / "hostile_input.json").read_text())
-    flaky = json.loads((fixtures / "flaky_upstream.json").read_text())
+    hostile = json.loads(resolve_path("tests/fixtures/hostile_input.json").read_text())
+    flaky = json.loads(resolve_path("tests/fixtures/flaky_upstream.json").read_text())
 
     scenario_data = {
         "normal": (3.0, 2.0),
