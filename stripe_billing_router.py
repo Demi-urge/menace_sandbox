@@ -43,6 +43,7 @@ from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
 import rollback_manager
 import sandbox_review
+from menace_sanity_layer import record_payment_anomaly
 
 try:  # optional dependency
     import stripe  # type: ignore
@@ -83,7 +84,12 @@ def _log_payment(
 
 def log_critical_discrepancy(bot_id: str, message: str) -> None:
     """Record a critical discrepancy, alert, and rollback."""
-
+    record_payment_anomaly(
+        "critical_discrepancy",
+        {"bot_id": bot_id, "message": message},
+        "Route all payment events through central handler and log anomalies.",
+        severity=5.0,
+    )
     rec = DiscrepancyRecord(message=message, metadata={"bot_id": bot_id})
     try:
         DiscrepancyDB().add(rec)
@@ -113,9 +119,14 @@ def _alert_mismatch(
     amount: float | None = None,
 ) -> None:
     """Backward-compatible wrapper for critical discrepancy handling."""
-
     from evolution_lock_flag import trigger_lock
 
+    record_payment_anomaly(
+        "stripe_account_mismatch",
+        {"bot_id": bot_id, "account_id": account_id, "amount": amount},
+        "All mismatch events must go through central routing and be logged.",
+        severity=5.0,
+    )
     trigger_lock(f"Stripe account mismatch for {bot_id}", severity=5)
     log_critical_discrepancy(bot_id, message)
     # Pause the bot in the sandbox so further actions require review.
