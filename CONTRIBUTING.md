@@ -43,6 +43,36 @@ and the workflow fails if any static path is detected.
 Run this command locally (or `pre-commit run check-static-paths --all-files`)
 before pushing changes to catch issues early.
 
+## `dynamic_path_router.resolve_path`
+
+`dynamic_path_router.resolve_path` returns an absolute path within the
+repository. Use it whenever code, scripts, or tests need to locate files so the
+project works from any checkout. The resolver's behaviour and advanced options
+are documented in [docs/dynamic_path_router.md](docs/dynamic_path_router.md).
+
+**Scripts**
+
+```bash
+python "$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py'))
+PY
+)" --help
+```
+
+**Tests**
+
+```python
+from dynamic_path_router import resolve_path
+
+def test_example():
+    data = resolve_path('sandbox_data/example.json')
+    assert data.exists()
+```
+
+Run `pre-commit run check-static-paths --all-files` before committing to ensure
+no hard-coded `.py` paths slip through.
+
 ## Stripe integration
 
 To centralize billing logic and API configuration, the `stripe` Python package
