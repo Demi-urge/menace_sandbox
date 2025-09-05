@@ -4962,7 +4962,7 @@ async def _section_worker(
                 metrics = runner.run(lambda: exec(snip, {}), **rc)
                 if _SandboxMetaLogger:
                     try:
-                        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                        data_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
                         meta = _SandboxMetaLogger(data_dir / "sandbox_meta.log")
                         succ = sum(1 for m in metrics.modules if m.success)
                         fail = sum(1 for m in metrics.modules if not m.success)
