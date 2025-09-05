@@ -74,3 +74,50 @@ tracked text files for raw Stripe keys or payment related keywords such as
 "payment", "checkout" or "billing".  Any file mentioning these keywords must
 also reference ``stripe_billing_router`` or the check fails.
 
+### Ledger schema and automatic logging
+
+Every billing operation recorded through ``stripe_billing_router`` is persisted
+via ``billing_logger.log_event``.  Records are written to the ``stripe_ledger``
+table—falling back to ``finance_logs/stripe_ledger.jsonl`` when the database is
+unavailable—and contain the following columns:
+
+- ``id``
+- ``action_type``
+- ``amount``
+- ``currency``
+- ``timestamp_ms``
+- ``user_email``
+- ``bot_id``
+- ``destination_account``
+- ``raw_event_json``
+- ``error``
+
+### Master account and rollback alerts
+
+Set ``STRIPE_MASTER_ACCOUNT_ID`` to the platform's Stripe master account
+identifier.  The router verifies that each Stripe response references this
+account.  If a different account is detected the event is logged with
+``error=1``, ``alert_dispatcher`` sends a ``critical_discrepancy`` alert and
+``rollback_manager.RollbackManager.auto_rollback`` attempts to revert the
+action.
+
+### Example flows with logging
+
+```python
+from stripe_billing_router import (
+    charge,
+    refund,
+    create_subscription,
+    create_checkout_session,
+)
+
+# Each call below automatically appends a row to ``stripe_ledger``
+charge("finance:finance_router_bot", amount=10.0)
+refund("finance:finance_router_bot", "pi_123", amount=5.0)
+create_subscription("finance:finance_router_bot")
+create_checkout_session(
+    "finance:finance_router_bot",
+    {"success_url": "https://example.com/s", "cancel_url": "https://example.com/c", "mode": "payment"},
+)
+```
+

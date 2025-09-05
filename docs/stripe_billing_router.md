@@ -54,6 +54,9 @@ from stripe_billing_router import (
     get_balance,
 )
 
+# Each helper automatically logs to the ``stripe_ledger`` table
+# via ``billing_logger.log_event``.
+
 # One‑off payment via PaymentIntent
 charge("finance:finance_router_bot", amount=10.0)
 
@@ -141,3 +144,33 @@ charge(
 ```
 
 These examples update the price while leaving the base rule unchanged.
+
+## Ledger Schema and Automatic Logging
+
+All billing helpers call ``billing_logger.log_event`` which persists a record to
+the ``stripe_ledger`` table (falling back to ``finance_logs/stripe_ledger.jsonl``
+if the database is unavailable).  The schema columns are:
+
+- ``id``
+- ``action_type``
+- ``amount``
+- ``currency``
+- ``timestamp_ms``
+- ``user_email``
+- ``bot_id``
+- ``destination_account``
+- ``raw_event_json``
+- ``error``
+
+### Master Account Verification and Rollback
+
+The router expects a platform master account identifier supplied via the
+``STRIPE_MASTER_ACCOUNT_ID`` environment variable (or secret vault).  Each
+Stripe response must reference this account; if a mismatch is detected the
+router logs a discrepancy with ``error=1``, dispatches a
+``critical_discrepancy`` alert and triggers
+``rollback_manager.RollbackManager.auto_rollback``.
+
+```bash
+export STRIPE_MASTER_ACCOUNT_ID=acct_master
+```
