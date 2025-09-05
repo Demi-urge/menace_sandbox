@@ -84,9 +84,25 @@ EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
         "Avoid generating bots that make Stripe charges without proper logging or "
         "central routing."
     ),
-    "unapproved_workflow": "Ensure all workflows are approved before execution.",
-    "unknown_webhook": "Register webhooks explicitly or flag them for review.",
-    "account_mismatch": "Stripe destination mismatch detected—centralize charge routing.",
+    "missing_refund": "Avoid missing Stripe refund records; log and route all refunds.",
+    "missing_failure_log": (
+        "Avoid missing failure logs for Stripe operations; capture each error."
+    ),
+    "unapproved_workflow": (
+        "Avoid running unapproved workflows; obtain approval before execution."
+    ),
+    "unknown_webhook": (
+        "Avoid using unknown Stripe webhooks; register endpoints or flag for review."
+    ),
+    "disabled_webhook": (
+        "Avoid disabled Stripe webhooks; keep required endpoints active."
+    ),
+    "revenue_mismatch": (
+        "Avoid revenue mismatches; reconcile Stripe totals with internal records."
+    ),
+    "account_mismatch": (
+        "Avoid Stripe destination account mismatches; centralize charge routing."
+    ),
 }
 
 # ---------------------------------------------------------------------------
