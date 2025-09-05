@@ -119,7 +119,10 @@ def test_codex_fallback_queue_on_malformed(monkeypatch):
 
     queue_mock = MagicMock()
     monkeypatch.setattr(
-        self_coding_engine.codex_fallback_handler, "queue_for_retry", queue_mock
+        self_coding_engine.codex_fallback_handler,
+        "queue_for_retry",
+        queue_mock,
+        raising=False,
     )
 
     def handle(prompt, reason, **_):

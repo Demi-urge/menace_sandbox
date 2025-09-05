@@ -2,6 +2,7 @@ import json
 
 import menace.codex_fallback_handler as cf
 from menace.prompt_types import Prompt
+from menace.llm_interface import LLMResult
 
 
 def test_queue_failed_writes_jsonl(tmp_path):
@@ -18,28 +19,29 @@ def test_handle_reroutes(monkeypatch):
 
     called = {}
 
-    def fake_reroute(p: Prompt) -> str:
+    def fake_reroute(p: Prompt) -> LLMResult:
         called["prompt"] = p.user
-        return "ok"
+        return LLMResult(text="ok")
 
     monkeypatch.setattr(cf, "reroute_to_gpt35", fake_reroute)
 
     result = cf.handle(prompt, "oops")
     assert called["prompt"] == "hi"
-    assert result == "ok"
+    assert isinstance(result, LLMResult)
+    assert result.text == "ok"
 
 
 def test_handle_queues_on_failure(tmp_path, monkeypatch):
     queue_path = tmp_path / "queue.jsonl"
     monkeypatch.setattr(cf, "_QUEUE_FILE", queue_path)
 
-    def boom(_: Prompt) -> str:
+    def boom(_: Prompt) -> LLMResult:
         raise RuntimeError("fail")
 
     monkeypatch.setattr(cf, "reroute_to_gpt35", boom)
 
     result = cf.handle(Prompt("bye"), "bad news")
-    assert result == ""
+    assert result is None
 
     record = json.loads(queue_path.read_text().strip())
     assert record["prompt"] == "bye"
