@@ -11,7 +11,7 @@ def test_ask_with_memory_keys_use_module_action():
         parts = set(path.parts)
         if any(p.startswith('.') for p in parts) or 'build' in parts or 'dist' in parts:
             continue
-        if path.name == "test_ask_with_memory_lint.py":
+        if path.name == "test_ask_with_memory_lint.py":  # path-ignore
             continue
         try:
             tree = ast.parse(path.read_text())
@@ -30,8 +30,8 @@ def test_ask_with_memory_keys_use_module_action():
                                 failures.append(f"{path}:{node.lineno}")
                         elif isinstance(key_node, ast.JoinedStr):
                             const_text = "".join(
-                                part.value for part in key_node.values if isinstance(part, ast.Constant)
-                            )
+                                part.value for part in key_node.values if isinstance(part, ast.Constant)  # noqa: E501
+                            )  # noqa: E501
                             if "." not in const_text:
                                 failures.append(f"{path}:{node.lineno}")
                         else:

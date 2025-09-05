@@ -3,8 +3,6 @@ import shutil
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
@@ -17,11 +15,11 @@ def test_modules_respect_sandbox_repo_path(tmp_path, monkeypatch):
     dpr.clear_cache()
 
     for name in [
-        "patch_branch_manager.py",
-        "patch_provenance_service.py",
-        "patch_attempt_tracker.py",
-        "sandbox_runner.py",
-        "run_autonomous.py",
+        "patch_branch_manager.py",  # path-ignore
+        "patch_provenance_service.py",  # path-ignore
+        "patch_attempt_tracker.py",  # path-ignore
+        "sandbox_runner.py",  # path-ignore
+        "run_autonomous.py",  # path-ignore
     ]:
         resolved = dpr.resolve_path(name)
         assert str(resolved).startswith(str(clone))

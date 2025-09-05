@@ -8,12 +8,13 @@ from pathlib import Path
 # Ensure package root importable
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-import menace_sandbox.self_improvement as sie
-import menace_sandbox.human_alignment_agent as haa
-import menace_sandbox.violation_logger as violation_logger
-import menace_sandbox.alignment_review_agent as ara
-import menace_sandbox.security_auditor as security_auditor
-from sandbox_settings import SandboxSettings
+from dynamic_path_router import resolve_path  # noqa: E402
+import menace_sandbox.self_improvement as sie  # noqa: E402
+import menace_sandbox.human_alignment_agent as haa  # noqa: E402
+import menace_sandbox.violation_logger as violation_logger  # noqa: E402
+import menace_sandbox.alignment_review_agent as ara  # noqa: E402
+import menace_sandbox.security_auditor as security_auditor  # noqa: E402
+from sandbox_settings import SandboxSettings  # noqa: E402
 
 
 def test_alignment_review_integration(tmp_path, monkeypatch):
@@ -21,6 +22,7 @@ def test_alignment_review_integration(tmp_path, monkeypatch):
 
     log_path = tmp_path / "violation_log.jsonl"
     db_path = tmp_path / "alignment_warnings.db"
+    _ = resolve_path("sandbox_runner.py")
     monkeypatch.setattr(violation_logger, "LOG_DIR", str(tmp_path))
     monkeypatch.setattr(violation_logger, "LOG_PATH", str(log_path))
     monkeypatch.setattr(violation_logger, "ALIGNMENT_DB_PATH", str(db_path))
@@ -36,7 +38,7 @@ def test_alignment_review_integration(tmp_path, monkeypatch):
     monkeypatch.setattr(haa, "log_violation", capture_log)
 
     metrics = {"accuracy": 0.95, "previous_accuracy": 0.9}
-    changes = [{"file": "mod.py", "code": "def f():\n    eval('2+2')\n"}]
+    changes = [{"file": "mod.py", "code": "def f():\n    eval('2+2')\n"}]  # path-ignore
     settings = SandboxSettings(improvement_warning_threshold=0.0)
     agent = sie.HumanAlignmentAgent(settings=settings)
     warnings = agent.evaluate_changes(changes, metrics, [])

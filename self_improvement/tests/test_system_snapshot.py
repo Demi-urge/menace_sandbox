@@ -76,7 +76,7 @@ def test_capture_snapshot(monkeypatch, tmp_path):
     assert snap.call_graph_complexity == 2.0
     assert snap.token_diversity == 0.6
     assert snap.metadata["prompt"] == "test prompt"
-    assert snap.metadata["module_paths"] == ["a.py", "b.py"]
+    assert snap.metadata["module_paths"] == ["a.py", "b.py"]  # path-ignore
 
 
 def test_compare_snapshots():

@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def test_generate_patch_logs_alignment_warning(tmp_path, monkeypatch):
-    src = tmp_path / "mod.py"
+    src = tmp_path / "mod.py"  # path-ignore
     src.write_text("def f():\n    return 1\n")
 
     class Engine:
@@ -27,7 +27,7 @@ def test_generate_patch_logs_alignment_warning(tmp_path, monkeypatch):
 
 
 def test_self_debugger_preemptive_patch_logs_warning(tmp_path, monkeypatch):
-    src = tmp_path / "mod.py"
+    src = tmp_path / "mod.py"  # path-ignore
     src.write_text("def f():\n    return 1\n")
 
     logs = []

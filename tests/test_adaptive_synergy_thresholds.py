@@ -38,8 +38,10 @@ def _load_run_autonomous(monkeypatch):
     class _Lock:
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             pass
+
     fl.FileLock = _Lock
     fl.Timeout = RuntimeError
     monkeypatch.setitem(sys.modules, "filelock", fl)
@@ -61,11 +63,13 @@ def _load_run_autonomous(monkeypatch):
     monkeypatch.setitem(sys.modules, "menace_sandbox.environment_generator", env_gen)
 
     tracker = types.ModuleType("menace.roi_tracker")
+
     class DummyTracker:
         def __init__(self, *a, **k):
             self.module_deltas = {}
             self.metrics_history = {}
             self.roi_history = []
+
     tracker.ROITracker = DummyTracker
     monkeypatch.setitem(sys.modules, "menace.roi_tracker", tracker)
     monkeypatch.setitem(sys.modules, "menace_sandbox.roi_tracker", tracker)
@@ -100,7 +104,9 @@ def _load_run_autonomous(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda x: "/usr/bin/" + x)
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: types.SimpleNamespace())
 
-    spec = importlib.util.spec_from_file_location("run_autonomous", "run_autonomous.py")
+    spec = importlib.util.spec_from_file_location(
+        "run_autonomous", str(resolve_path("run_autonomous.py"))
+    )
     mod = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = mod
     spec.loader.exec_module(mod)
@@ -135,4 +141,3 @@ def test_auto_threshold_convergence(monkeypatch, tmp_path):
     assert abs(ema_auto - ema_fixed) < 1e-9
     assert conf_auto == pytest.approx(conf_fixed)
     assert conf_auto > 0.9
-
