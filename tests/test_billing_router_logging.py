@@ -1,6 +1,7 @@
 import os
 from unittest.mock import MagicMock
 import pytest
+# flake8: noqa
 
 # Ensure Stripe keys exist before importing module
 os.environ.setdefault("STRIPE_SECRET_KEY", "sk_live_default")
@@ -53,7 +54,7 @@ import menace_sandbox.stripe_billing_router as sbr
 
 SECRET = "sk_live_123"
 PUBLIC = "pk_live_123"
-ACCOUNT = sbr.STRIPE_REGISTERED_ACCOUNT_ID
+ACCOUNT = sbr.STRIPE_MASTER_ACCOUNT_ID
 
 def test_charge_logs_events(monkeypatch):
     bot_id = "stripe:cat:bot"

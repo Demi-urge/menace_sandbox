@@ -8,7 +8,7 @@ from .test_stripe_billing_router_logging import _import_module
 @pytest.fixture
 def sbr(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
-    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: sbr.STRIPE_REGISTERED_ACCOUNT_ID)
+    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID)
     monkeypatch.setattr(sbr, "record_payment", lambda *a, **k: None)
     monkeypatch.setattr(sbr, "_log_payment", lambda *a, **k: None)
     monkeypatch.setattr(sbr, "log_billing_event", lambda *a, **k: None)
