@@ -19,9 +19,10 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 
 from .adaptive_roi_dataset import build_dataset
+from dynamic_path_router import resolve_path
 
 # Path where the trained model is stored
-MODEL_DIR = Path(__file__).resolve().parent / "models"
+MODEL_DIR = resolve_path("analytics/models")
 MODEL_PATH = MODEL_DIR / "adaptive_roi_gbr.joblib"
 
 
@@ -34,6 +35,7 @@ def train(save_path: Path | str = MODEL_PATH) -> GradientBoostingRegressor:
         Location where the trained model should be written.  Defaults to
         :data:`MODEL_PATH`.
     """
+    save_path = Path(save_path)
     data = build_dataset()
     if data.empty:
         raise RuntimeError("Training dataset is empty")
@@ -59,6 +61,7 @@ def retrain(save_path: Path | str = MODEL_PATH) -> Dict[str, float]:
         :data:`MODEL_PATH`.
     """
 
+    save_path = Path(save_path)
     data = build_dataset()
     if data.empty:
         raise RuntimeError("Training dataset is empty")
@@ -84,7 +87,7 @@ def retrain(save_path: Path | str = MODEL_PATH) -> Dict[str, float]:
 def load(model_path: Path | str = MODEL_PATH) -> GradientBoostingRegressor:
     """Load a previously trained model."""
 
-    return joblib.load(model_path)
+    return joblib.load(Path(model_path))
 
 
 def classify_growth(pred_series: Sequence[float]) -> str:
