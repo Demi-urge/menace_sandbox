@@ -1,6 +1,12 @@
 import json
+import sys
+import types
 
-import menace_sanity_layer as msl
+sys.modules.setdefault(
+    "vector_service", types.SimpleNamespace(CognitionLayer=lambda: None)
+)
+
+import menace_sanity_layer as msl  # noqa: E402
 
 
 def test_record_payment_anomaly_writes_db_and_memory(monkeypatch):
@@ -34,3 +40,19 @@ def test_record_payment_anomaly_writes_db_and_memory(monkeypatch):
     assert mem_calls and mem_calls[0][0] == "handle it"
     assert mem_calls[0][1]["event_type"] == "test_event"
     assert mem_calls[0][1]["metadata"]["foo"] == "bar"
+
+
+def test_record_billing_anomaly_persists_and_publishes(monkeypatch, tmp_path):
+    from db_router import init_db_router
+
+    init_db_router("ba", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
+    published: list[dict] = []
+    monkeypatch.setattr(msl, "publish_anomaly", lambda ev: published.append(ev))
+
+    msl.record_billing_anomaly(
+        "overcharge", {"amount": 5}, severity=3.0, source_workflow="wf-1"
+    )
+
+    anomalies = msl.list_anomalies()
+    assert anomalies and anomalies[0]["event_type"] == "overcharge"
+    assert published and published[0]["event_type"] == "overcharge"
