@@ -4,6 +4,7 @@ import types
 import importlib
 from pathlib import Path
 
+
 ROOT = Path(__file__).resolve().parents[1]
 PARENT = ROOT.parent
 if str(PARENT) not in sys.path:
@@ -64,3 +65,29 @@ def test_strategy_rotation_persists(tmp_path):
 
     eng3 = MiniEngine(state_file)
     assert eng3.next_strategy() == "s1"
+
+
+def test_failure_reason_selects_keyword_strategy(tmp_path):
+    mgr = PromptStrategyManager(state_path=Path(resolve_path(tmp_path / "state.json")))
+    mgr.set_strategies(["strict_fix", "delete_rebuild", "unit_test_rewrite"])
+    mgr.index = mgr.strategies.index("delete_rebuild")
+    nxt = mgr.record_failure("delete_rebuild", "needs refactor")
+    assert nxt == "strict_fix"
+
+
+def test_roi_fallback_used_when_no_keyword(tmp_path, monkeypatch):
+    mgr = PromptStrategyManager(
+        ["strict_fix", "delete_rebuild"],
+        state_path=Path(resolve_path(tmp_path / "state.json")),
+    )
+
+    called = {}
+
+    def fake_best(strats):
+        called["pool"] = list(strats)
+        return "delete_rebuild"
+
+    monkeypatch.setattr(mgr, "best_strategy", fake_best)
+    nxt = mgr.record_failure("strict_fix", "unknown failure")
+    assert called["pool"] == ["delete_rebuild"]
+    assert nxt == "delete_rebuild"
