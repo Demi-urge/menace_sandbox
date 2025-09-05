@@ -13,6 +13,11 @@ import logging
 import numpy as np
 
 try:  # pragma: no cover - allow package or local imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback
+    from dynamic_path_router import resolve_path  # type: ignore
+
+try:  # pragma: no cover - allow package or local imports
     from .foresight_tracker import ForesightTracker
 except Exception:  # pragma: no cover
     from foresight_tracker import ForesightTracker  # type: ignore
@@ -68,7 +73,7 @@ class UpgradeForecaster:
     ) -> None:
         self.tracker = tracker
         self.horizon = max(3, min(5, int(horizon)))
-        self.records_base = Path(records_base)
+        self.records_base = Path(resolve_path(records_base))
         self.records_base.mkdir(parents=True, exist_ok=True)
         self.logger = logger
         self.simulations = max(3, min(5, int(simulations)))
@@ -451,7 +456,7 @@ def load_record(
     """
 
     wf_id = str(workflow_id)
-    base = Path(records_base)
+    base = Path(resolve_path(records_base))
     if patch is not None:
         patch_repr = list(patch) if not isinstance(patch, str) else patch
         try:
@@ -509,7 +514,7 @@ def list_records(records_base: str | Path) -> List[dict]:
         and the result is sorted by workflow and timestamp.
     """
 
-    base = Path(records_base)
+    base = Path(resolve_path(records_base))
     if not base.exists():
         return []
 
@@ -551,7 +556,7 @@ def delete_record(
     """
 
     wf_id = str(workflow_id)
-    base = Path(records_base)
+    base = Path(resolve_path(records_base))
 
     if upgrade_id is None:
         latest: tuple[int, float] | None = None
