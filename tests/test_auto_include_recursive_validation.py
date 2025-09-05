@@ -4,11 +4,16 @@ import types
 from pathlib import Path
 
 import sandbox_runner.environment as env
+from dynamic_path_router import resolve_path
 
 
 class DummyTracker:
     def save_history(self, path: str) -> None:
         Path(path).write_text(json.dumps({"roi_history": [0]}))
+
+
+GOOD = "good.py"  # path-ignore
+BAD = "bad.py"  # path-ignore
 
 
 def test_recursive_skips_redundant(monkeypatch, tmp_path):
@@ -17,8 +22,8 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     calls: dict[str, object] = {}
 
-    (tmp_path / "good.py").write_text("VALUE = 1\n")
-    (tmp_path / "bad.py").write_text("VALUE = 0\n")
+    (tmp_path / GOOD).write_text("VALUE = 1\n")
+    (tmp_path / BAD).write_text("VALUE = 0\n")
 
     def fake_generate(mods, workflows_db="workflows.db"):
         calls["generate"] = list(mods)
@@ -38,7 +43,7 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
 
     def classify(path):
         calls.setdefault("analyze", []).append(Path(path).name)
-        return "redundant" if Path(path).name == "bad.py" else "candidate"
+        return "redundant" if Path(path).name == BAD else "candidate"
 
     monkeypatch.setitem(
         sys.modules,
@@ -54,13 +59,15 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
         types.SimpleNamespace(discover_isolated_modules=lambda *a, **k: []),
     )
 
-    result, tested = env.auto_include_modules(["good.py", "bad.py"])
+    good = resolve_path(GOOD).as_posix()
+    bad = resolve_path(BAD).as_posix()
+    result, tested = env.auto_include_modules([good, bad])
 
     assert result is tracker
-    assert tested == {"added": ["bad.py", "good.py"], "failed": [], "redundant": ["bad.py"]}
-    assert calls["generate"] == ["good.py"]
-    assert calls["integrate"] == ["good.py"]
-    assert sorted(calls["analyze"]) == ["bad.py", "good.py"]
+    assert tested == {"added": [bad, good], "failed": [], "redundant": [bad]}
+    assert calls["generate"] == [good]
+    assert calls["integrate"] == [good]
+    assert sorted(calls["analyze"]) == [BAD, GOOD]
 
 
 def test_recursive_validated_integration(monkeypatch, tmp_path):
@@ -69,7 +76,7 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
     calls: dict[str, object] = {}
 
-    (tmp_path / "good.py").write_text("VALUE = 1\n")
+    (tmp_path / GOOD).write_text("VALUE = 1\n")
 
     def fake_generate(mods, workflows_db="workflows.db"):
         calls["generate"] = list(mods)
@@ -118,15 +125,16 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
         types.SimpleNamespace(SelfTestService=DummySelfTest),
     )
 
-    result, tested = env.auto_include_modules(["good.py"], validate=True)
+    good = resolve_path(GOOD).as_posix()
+    result, tested = env.auto_include_modules([good], validate=True)
 
     assert result is tracker
-    assert tested == {"added": ["good.py"], "failed": [], "redundant": []}
-    assert calls["generate"] == ["good.py"]
-    assert calls["integrate"] == ["good.py"]
+    assert tested == {"added": [good], "failed": [], "redundant": []}
+    assert calls["generate"] == [good]
+    assert calls["integrate"] == [good]
     assert calls["selftest"] == [
         (
-            "good.py",
+            good,
             {
                 "include_orphans": False,
                 "discover_orphans": False,
@@ -139,5 +147,5 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
             },
         )
     ]
-    assert calls["analyze"].count("good.py") == 1
+    assert calls["analyze"].count(GOOD) == 1
     assert (tmp_path / "roi_history.json").exists()

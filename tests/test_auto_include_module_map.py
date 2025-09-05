@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 import sandbox_runner.environment as env
+from dynamic_path_router import resolve_path
+
+MOD = resolve_path("mod.py").as_posix()
 
 
 class DummyTracker:
@@ -33,7 +36,7 @@ def test_auto_include_updates_module_map(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
     class DummyROITracker:
         def __init__(self):
-            self.module_deltas = {"mod.py": [20.0]}
+            self.module_deltas = {MOD: [20.0]}
             self.roi_history = []
 
         def load_history(self, path: str) -> None:
@@ -56,21 +59,21 @@ def test_auto_include_updates_module_map(monkeypatch, tmp_path):
         ),
     )
 
-    env.auto_include_modules(["mod.py"])
+    env.auto_include_modules([MOD])
 
     map_path = Path(tmp_path, "module_map.json")
     assert map_path.exists()
     data = json.loads(map_path.read_text())
     if "modules" in data:
         data = data["modules"]
-    assert "mod.py" in data
+    assert MOD in data
 
 
 @pytest.mark.parametrize(
     "existing",
     [
-        {"mod.py": 1},
-        {"modules": {"mod.py": 1}},
+        {MOD: 1},
+        {"modules": {MOD: 1}},
     ],
 )
 def test_auto_include_skips_existing(monkeypatch, tmp_path, existing):
@@ -115,7 +118,7 @@ def test_auto_include_skips_existing(monkeypatch, tmp_path, existing):
     )
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
 
-    env.auto_include_modules(["mod.py"])
+    env.auto_include_modules([MOD])
 
     assert json.loads(map_path.read_text()) == existing
     assert not called["gen"]
@@ -175,13 +178,13 @@ def test_redundant_module_validated_and_skipped(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules(["mod.py"], validate=True)
+    result, tested = env.auto_include_modules([MOD], validate=True)
 
     assert result is tracker
-    assert calls.get("selftest") == "mod.py"
+    assert calls.get("selftest") == MOD
     assert calls.get("run") is True
     assert "generate" not in calls and "integrate" not in calls
-    assert tested == {"added": ["mod.py"], "failed": [], "redundant": ["mod.py"]}
+    assert tested == {"added": [MOD], "failed": [], "redundant": [MOD]}
 
 
 def test_redundant_module_integrated_when_flag_set(monkeypatch, tmp_path):
@@ -239,20 +242,20 @@ def test_redundant_module_integrated_when_flag_set(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules(["mod.py"], validate=True)
+    result, tested = env.auto_include_modules([MOD], validate=True)
 
     assert result is tracker
-    assert calls.get("selftest") == "mod.py"
+    assert calls.get("selftest") == MOD
     assert calls.get("run") is True
-    assert calls.get("generate") == ["mod.py"]
-    assert calls.get("integrate") == ["mod.py"]
+    assert calls.get("generate") == [MOD]
+    assert calls.get("integrate") == [MOD]
     map_path = Path(tmp_path, "module_map.json")
     assert map_path.exists()
     data = json.loads(map_path.read_text())
     if "modules" in data:
         data = data["modules"]
-    assert "mod.py" in data
-    assert tested == {"added": ["mod.py"], "failed": [], "redundant": ["mod.py"]}
+    assert MOD in data
+    assert tested == {"added": [MOD], "failed": [], "redundant": [MOD]}
 
 
 def test_module_skipped_below_roi_threshold(monkeypatch, tmp_path):
@@ -305,9 +308,9 @@ def test_module_skipped_below_roi_threshold(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules(["mod.py"])
+    result, tested = env.auto_include_modules([MOD])
 
     assert calls["integrate"] == []
     map_path = Path(tmp_path, "module_map.json")
     assert not map_path.exists()
-    assert "mod.py" in tested.get("low_roi", [])
+    assert MOD in tested.get("low_roi", [])

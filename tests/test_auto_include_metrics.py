@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 
 import sandbox_runner.environment as env
+from dynamic_path_router import resolve_path
 
 
 class DummyTracker:
@@ -43,10 +44,11 @@ def test_auto_include_modules_saves_roi(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules(["mod.py"])
+    MOD = resolve_path("mod.py").as_posix()
+    result, tested = env.auto_include_modules([MOD])
 
     assert result is tracker
-    assert tested == {"added": ["mod.py"], "failed": [], "redundant": []}
+    assert tested == {"added": [MOD], "failed": [], "redundant": []}
     assert calls.get("run") is True
     history = Path(tmp_path, "roi_history.json")
     assert history.exists()

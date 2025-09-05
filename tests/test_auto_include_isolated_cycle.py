@@ -16,8 +16,8 @@ _integrate_orphans, _update_orphan_modules, _refresh_module_map, _test_orphan_mo
 def test_auto_include_isolated_cycle(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "iso.py").write_text("import dep\n")
-    (repo / "dep.py").write_text("x = 1\n")
+    (repo / "iso.py").write_text("import dep\n")  # path-ignore
+    (repo / "dep.py").write_text("x = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -33,7 +33,7 @@ def test_auto_include_isolated_cycle(monkeypatch, tmp_path):
     def discover(path, *, recursive=True):
         called["recursive"] = recursive
         assert Path(path) == repo
-        return ["iso.py", "dep.py"]
+        return ["iso.py", "dep.py"]  # path-ignore
 
     mod.discover_isolated_modules = discover
     pkg = types.ModuleType("scripts")
@@ -55,7 +55,7 @@ def test_auto_include_isolated_cycle(monkeypatch, tmp_path):
     _update_orphan_modules(engine)
 
     data = json.loads((data_dir / "module_map.json").read_text())
-    assert set(data.get("modules", {})) == {"iso.py", "dep.py"}
+    assert set(data.get("modules", {})) == {"iso.py", "dep.py"}  # path-ignore
     orphans = json.loads((data_dir / "orphan_modules.json").read_text())
     assert orphans == []
     assert called.get("recursive") is True
