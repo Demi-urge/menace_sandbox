@@ -1,23 +1,30 @@
 import json
 import sys
 import types
-from pathlib import Path
+from dynamic_path_router import resolve_path
 
 
 def test_simulate_chains_executes_and_persists(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKFLOW_ROI_HISTORY_PATH", str(tmp_path / "roi_history.json"))
+    monkeypatch.setenv(
+        "WORKFLOW_ROI_HISTORY_PATH", str(resolve_path("roi_history.json", tmp_path))
+    )
 
     wfm = types.ModuleType("workflow_evolution_manager")
+
     def _build_callable(sequence: str):
         modules = [m for m in sequence.split("-") if m]
         funcs = []
         for m in modules:
+            def _default():
+                return True
+
             try:
                 mod = __import__(m)
-                fn = getattr(mod, "main", getattr(mod, "run", lambda: True))
+                fn = getattr(mod, "main", getattr(mod, "run", _default))
             except Exception:
-                fn = lambda: True
+                fn = _default
             funcs.append(fn)
+
         def _wf():
             ok = True
             for fn in funcs:
@@ -34,6 +41,7 @@ def test_simulate_chains_executes_and_persists(tmp_path, monkeypatch):
         def __init__(self, success: bool):
             self.success_rate = 1.0 if success else 0.0
             self.roi_gain = 0.0
+
     class DummyScorer:
         def run(self, fn, wf_id, run_id=None):
             return DummyResult(bool(fn()))
@@ -42,6 +50,7 @@ def test_simulate_chains_executes_and_persists(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "composite_workflow_scorer", cws)
 
     wsc = types.ModuleType("workflow_synergy_comparator")
+
     def _entropy(spec):
         modules = [s.get("module") for s in spec.get("steps", [])]
         counts = {}
@@ -54,15 +63,18 @@ def test_simulate_chains_executes_and_persists(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "workflow_synergy_comparator", wsc)
 
     stab = types.ModuleType("workflow_stability_db")
+
     class DummyStabilityDB:
         def is_stable(self, *a, **k):
             return False
+
         def mark_stable(self, *a, **k):
             pass
     stab.WorkflowStabilityDB = DummyStabilityDB
     monkeypatch.setitem(sys.modules, "workflow_stability_db", stab)
 
     sugg = types.ModuleType("workflow_chain_suggester")
+
     class DummySuggester:
         def suggest_chains(self, *a, **k):
             return []
@@ -70,6 +82,7 @@ def test_simulate_chains_executes_and_persists(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "workflow_chain_suggester", sugg)
 
     summary = types.ModuleType("workflow_run_summary")
+
     def record_run(*a, **k):
         pass
     summary.record_run = record_run
@@ -82,14 +95,18 @@ def test_simulate_chains_executes_and_persists(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "mod_a", mod_a)
     monkeypatch.setitem(sys.modules, "mod_b", mod_b)
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    sys.path.insert(0, str(resolve_path(".")))
     import importlib
     sys.modules.pop("workflow_chain_simulator", None)
     import workflow_chain_simulator as sim
     sim = importlib.reload(sim)
-    monkeypatch.setattr(sim, "RESULTS_PATH", tmp_path / "results.json")
+    monkeypatch.setattr(sim, "RESULTS_PATH", resolve_path("results.json", tmp_path))
     orig_persist = sim._persist_outcomes
-    monkeypatch.setattr(sim, "_persist_outcomes", lambda outcomes, path=sim.RESULTS_PATH: orig_persist(outcomes, path))
+
+    def _persist(outcomes, path=sim.RESULTS_PATH):
+        return orig_persist(outcomes, path)
+
+    monkeypatch.setattr(sim, "_persist_outcomes", _persist)
 
     results = sim.simulate_chains([["mod_a"], ["mod_b"]])
 
@@ -97,14 +114,16 @@ def test_simulate_chains_executes_and_persists(tmp_path, monkeypatch):
     assert results[0]["failure_rate"] == 0.0
     assert results[1]["failure_rate"] == 1.0
 
-    saved = json.loads((tmp_path / "results.json").read_text())
+    saved = json.loads(resolve_path("results.json", tmp_path).read_text())
     assert saved[0]["chain"] == ["mod_a"]
     assert saved[1]["chain"] == ["mod_b"]
 
 
 def test_simulate_suggested_chains_handles_failed_runs(tmp_path, monkeypatch):
     """Chains suggested by the suggester are executed and failures recorded."""
-    monkeypatch.setenv("WORKFLOW_ROI_HISTORY_PATH", str(tmp_path / "roi_history.json"))
+    monkeypatch.setenv(
+        "WORKFLOW_ROI_HISTORY_PATH", str(resolve_path("roi_history.json", tmp_path))
+    )
 
     wfm = types.ModuleType("workflow_evolution_manager")
 
@@ -160,7 +179,7 @@ def test_simulate_suggested_chains_handles_failed_runs(tmp_path, monkeypatch):
     mod_ok.main = lambda: True
     monkeypatch.setitem(sys.modules, "mod_ok", mod_ok)
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    sys.path.insert(0, str(resolve_path(".")))
     import importlib
     import workflow_chain_simulator as sim
     sim = importlib.reload(sim)
@@ -170,7 +189,7 @@ def test_simulate_suggested_chains_handles_failed_runs(tmp_path, monkeypatch):
             return [["mod_ok"], ["mod_error"]]
 
     monkeypatch.setattr(sim, "WorkflowChainSuggester", DummySuggester)
-    monkeypatch.setattr(sim, "RESULTS_PATH", tmp_path / "results.json")
+    monkeypatch.setattr(sim, "RESULTS_PATH", resolve_path("results.json", tmp_path))
     monkeypatch.setattr(sim, "_persist_outcomes", lambda *a, **k: None)
 
     results = sim.simulate_suggested_chains([0.0], top_k=2)
