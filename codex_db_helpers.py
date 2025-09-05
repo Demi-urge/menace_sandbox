@@ -21,7 +21,9 @@ alias.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
+from datetime import datetime
 from typing import Iterable, List, Optional
 
 from .chatgpt_enhancement_bot import EnhancementDB
@@ -29,9 +31,12 @@ from .workflow_summary_db import WorkflowSummaryDB
 from .discrepancy_db import DiscrepancyDB
 from .task_handoff_bot import WorkflowDB as TaskWorkflowDB
 from .scope_utils import Scope, build_scope_clause
+from dynamic_path_router import resolve_path
 
 
 logger = logging.getLogger(__name__)
+
+TRAINING_ANOMALY_FILE = resolve_path("training_data/stripe_anomalies.jsonl")
 
 
 @dataclass
@@ -264,6 +269,54 @@ def fetch_workflows(
     return samples
 
 
+def fetch_watchdog_anomalies(
+    *,
+    sort_by: str = "timestamp",
+    limit: int = 100,
+    include_embeddings: bool = False,
+    scope: Scope = Scope.ALL,
+) -> List[TrainingSample]:
+    """Return anomaly samples exported by :mod:`stripe_watchdog`.
+
+    The ``scope`` parameter is accepted for API compatibility but currently
+    ignored as the export file is not scoped.
+    """
+
+    if not TRAINING_ANOMALY_FILE.exists():
+        return []
+
+    rows: List[TrainingSample] = []
+    try:
+        with TRAINING_ANOMALY_FILE.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except Exception:  # pragma: no cover - best effort
+                    continue
+                ts = data.get("timestamp")
+                if isinstance(ts, (int, float)):
+                    ts_str = datetime.utcfromtimestamp(ts).isoformat()
+                else:
+                    ts_str = str(ts) if ts is not None else None
+                rows.append(
+                    TrainingSample(
+                        source=str(data.get("source", "stripe_watchdog")),
+                        content=data.get("content", ""),
+                        timestamp=ts_str,
+                    )
+                )
+    except Exception:  # pragma: no cover - best effort
+        logger.warning("failed to load stripe anomaly training data")
+
+    key_func = {
+        "timestamp": lambda s: s.timestamp or "",
+    }.get(sort_by, lambda s: s.timestamp or "")
+    return sorted(rows, key=key_func, reverse=True)[:limit]
+
+
 def aggregate_samples(
     sort_by: str = "timestamp",
     limit: int = 100,
@@ -286,6 +339,7 @@ def aggregate_samples(
         ("fetch_summaries", fetch_summaries),
         ("fetch_discrepancies", fetch_discrepancies),
         ("fetch_workflows", fetch_workflows),
+        ("fetch_watchdog_anomalies", fetch_watchdog_anomalies),
     ]
     samples: List[TrainingSample] = []
     for name, fetch in fetchers:
@@ -303,8 +357,12 @@ def aggregate_samples(
             continue
 
     key_map = {
-        "confidence": lambda s: s.confidence if s.confidence is not None else float("-inf"),
-        "outcome_score": lambda s: s.outcome_score if s.outcome_score is not None else float("-inf"),
+        "confidence": lambda s: (
+            s.confidence if s.confidence is not None else float("-inf")
+        ),
+        "outcome_score": lambda s: (
+            s.outcome_score if s.outcome_score is not None else float("-inf")
+        ),
         "timestamp": lambda s: s.timestamp or "",
     }
     key_func = key_map.get(sort_by, key_map["timestamp"])
@@ -322,6 +380,7 @@ __all__ = [
     "fetch_summaries",
     "fetch_discrepancies",
     "fetch_workflows",
+    "fetch_watchdog_anomalies",
     "aggregate_samples",
     "aggregate_examples",
 ]

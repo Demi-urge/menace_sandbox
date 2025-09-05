@@ -228,3 +228,17 @@ authorized_webhooks:
 During a watchdog run, the output of `stripe.WebhookEndpoint.list()` is compared
 against this list. Any unrecognized endpoint results in a
 `stripe_unknown_endpoint` alert being logged.
+
+### Training Data Export
+
+`stripe_watchdog` can also export anomalies for model training.  Running the
+watchdog with the `--export-training` flag appends normalized records to
+`training_data/stripe_anomalies.jsonl`.  Each line is a JSON object matching the
+[`codex_training_data`](codex_training_data.md) format, for example:
+
+```json
+{"source": "stripe_watchdog", "content": "{\"type\": \"unknown_webhook\"}", "timestamp": 1690000000}
+```
+
+These exports can be ingested by existing training data loaders alongside other
+Codex samples.
