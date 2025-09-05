@@ -84,7 +84,7 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: None)
     monkeypatch.setattr(sbr, "log_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(
-        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_REGISTERED_ACCOUNT_ID
+        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID
     )
     return sbr
 

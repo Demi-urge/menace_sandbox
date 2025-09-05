@@ -107,7 +107,7 @@ def sbr_file_logger(monkeypatch, tmp_path):
     monkeypatch.setattr(sbr, "billing_logger", bl)
     monkeypatch.setattr(sbr, "record_payment", ledger_mod.record_payment)
     monkeypatch.setattr(
-        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_REGISTERED_ACCOUNT_ID
+        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID
     )
     return sbr, ledger_file
 
@@ -116,7 +116,7 @@ def sbr_file_logger(monkeypatch, tmp_path):
 def sbr_basic(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_REGISTERED_ACCOUNT_ID
+        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID
     )
     monkeypatch.setattr(sbr, "record_payment", lambda *a, **k: None)
     monkeypatch.setattr(sbr, "_log_payment", lambda *a, **k: None)
@@ -141,7 +141,7 @@ def test_charge_logs_to_file(monkeypatch, sbr_file_logger):
         return {
             "id": invoice_id,
             "amount_paid": 1250,
-            "on_behalf_of": sbr.STRIPE_REGISTERED_ACCOUNT_ID,
+            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
         }
 
     fake_stripe = types.SimpleNamespace(
@@ -174,7 +174,7 @@ def test_refund_logs_to_file(monkeypatch, sbr_file_logger):
         return {
             "id": "rf_test",
             "amount": 500,
-            "on_behalf_of": sbr.STRIPE_REGISTERED_ACCOUNT_ID,
+            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
         }
 
     fake_stripe = types.SimpleNamespace(
@@ -202,7 +202,7 @@ def test_create_subscription_logs_to_file(monkeypatch, sbr_file_logger):
     sbr, ledger = sbr_file_logger
 
     def fake_create(*, api_key, **params):
-        return {"id": "sub_test", "on_behalf_of": sbr.STRIPE_REGISTERED_ACCOUNT_ID}
+        return {"id": "sub_test", "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID}
 
     fake_stripe = types.SimpleNamespace(
         api_key="orig", Subscription=types.SimpleNamespace(create=fake_create)
@@ -230,7 +230,7 @@ def test_create_checkout_session_logs_to_file(monkeypatch, sbr_file_logger):
         return {
             "id": "cs_test",
             "amount_total": 1000,
-            "on_behalf_of": sbr.STRIPE_REGISTERED_ACCOUNT_ID,
+            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
         }
 
     fake_stripe = types.SimpleNamespace(
@@ -354,14 +354,14 @@ def test_logs_use_account_id_no_secret(monkeypatch, sbr_basic, setup_stripe, inv
     assert (
         captured_log_event
         and captured_log_event[-1]["destination_account"]
-        == sbr.STRIPE_REGISTERED_ACCOUNT_ID
+        == sbr.STRIPE_MASTER_ACCOUNT_ID
     )
     assert "sk_live_dummy" not in str(captured_log_event[-1])
     rec_args, rec_kwargs = captured_record[-1]
-    assert rec_args[3] == sbr.STRIPE_REGISTERED_ACCOUNT_ID
+    assert rec_args[3] == sbr.STRIPE_MASTER_ACCOUNT_ID
     assert "sk_live_dummy" not in (str(rec_args) + str(rec_kwargs))
     action, billing_kwargs = captured_billing[-1]
-    assert billing_kwargs["destination_account"] == sbr.STRIPE_REGISTERED_ACCOUNT_ID
+    assert billing_kwargs["destination_account"] == sbr.STRIPE_MASTER_ACCOUNT_ID
     assert "sk_live_dummy" not in str(billing_kwargs)
 
 

@@ -96,8 +96,9 @@ unavailable—and **must** contain the following fields:
 ### Registered account, allowed keys and rollback alerts
 
 The platform's Stripe account identifier is hard coded as
-``stripe_billing_router.STRIPE_REGISTERED_ACCOUNT_ID`` and must not be
-overridden via environment variables or secret storage. Secret keys that may be
+``stripe_billing_router.STRIPE_MASTER_ACCOUNT_ID`` (aliased as
+``STRIPE_REGISTERED_ACCOUNT_ID``) and must not be overridden via environment
+variables or secret storage. Secret keys that may be
 used on behalf of the platform are enumerated via ``STRIPE_ALLOWED_SECRET_KEYS``
 (comma separated) or the ``allowed_secret_keys`` list in the routing
 configuration.

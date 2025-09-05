@@ -192,12 +192,14 @@ STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
 # The identifier for the platform's primary Stripe account is intentionally
 # immutable and must never be sourced from environment variables or secret
 # storage. All billing operations are performed on behalf of this account.
-STRIPE_REGISTERED_ACCOUNT_ID = "acct_1H123456789ABCDEF"
-STRIPE_REGISTERED_ACCOUNT = STRIPE_REGISTERED_ACCOUNT_ID
+# There is deliberately no environment or secret-based fallback so this value
+# cannot be overridden at runtime.
+STRIPE_MASTER_ACCOUNT_ID = "acct_1H123456789ABCDEF"
 
 # Backwards compatibility aliases
-STRIPE_MASTER_ACCOUNT_ID = STRIPE_REGISTERED_ACCOUNT_ID
-STRIPE_MASTER_ACCOUNT = STRIPE_REGISTERED_ACCOUNT
+STRIPE_REGISTERED_ACCOUNT_ID = STRIPE_MASTER_ACCOUNT_ID
+STRIPE_REGISTERED_ACCOUNT = STRIPE_MASTER_ACCOUNT_ID
+STRIPE_MASTER_ACCOUNT = STRIPE_MASTER_ACCOUNT_ID
 
 
 def _load_allowed_keys() -> set[str]:

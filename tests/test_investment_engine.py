@@ -197,7 +197,7 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     monkeypatch.setattr(
-        module, "_get_account_id", lambda api_key: module.STRIPE_REGISTERED_ACCOUNT_ID
+        module, "_get_account_id", lambda api_key: module.STRIPE_MASTER_ACCOUNT_ID
     )
     monkeypatch.setattr(module.billing_logger, "log_event", lambda **kw: None)
     monkeypatch.setattr(module, "_verify_route", lambda *a, **k: None)

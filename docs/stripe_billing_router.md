@@ -186,9 +186,9 @@ Investigate these alerts by inspecting the discrepancy record; they typically
 indicate a misconfigured key or account.
 
 The platform's registered account identifier is hard coded as
-``stripe_billing_router.STRIPE_REGISTERED_ACCOUNT_ID``. This value is immutable
-and must never be overridden or sourced from environment variables or secret
-storage.
+``stripe_billing_router.STRIPE_MASTER_ACCOUNT_ID`` (also exported as
+``STRIPE_REGISTERED_ACCOUNT_ID``). This value is immutable and must never be
+overridden or sourced from environment variables or secret storage.
 
 A ``critical_discrepancy`` alert signals the automatic rollback described
 above; resolve the configuration issue before retrying the billing operation.
