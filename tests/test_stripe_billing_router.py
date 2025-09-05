@@ -756,43 +756,30 @@ def test_create_checkout_session_success(monkeypatch, sbr_module):
     assert ledger_calls and ledger_calls[0][0] == "checkout"
 
 
-def test_invalid_secret_key_triggers_alert_and_rollback(monkeypatch, sbr_module):
-    alerts: list[tuple[tuple, dict]] = []
-    rollbacks: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        sbr_module.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
-    )
+def test_invalid_secret_key_triggers_alert(monkeypatch, sbr_module):
+    called: dict[str, object] = {}
 
-    class DummyRM:
-        def rollback(self, revision, requesting_bot):
-            rollbacks.append((revision, requesting_bot))
+    def fake_alert(bot_id: str, account_id: str, **_: object) -> None:
+        called["bot_id"] = bot_id
+        called["account_id"] = account_id
 
-    monkeypatch.setattr(
-        sbr_module.rollback_manager, "RollbackManager", lambda: DummyRM()
-    )
+    monkeypatch.setattr(sbr_module, "_alert_mismatch", fake_alert)
 
     with pytest.raises(RuntimeError, match="Stripe account mismatch"):
         sbr_module._verify_route(
             "finance:finance_router_bot", {"secret_key": "sk_live_bad"}
         )
 
-    assert alerts and rollbacks
+    assert called == {"bot_id": "finance:finance_router_bot", "account_id": "unknown"}
 
 
-def test_invalid_account_triggers_alert_and_rollback(monkeypatch, sbr_module):
-    alerts: list[tuple[tuple, dict]] = []
-    rollbacks: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        sbr_module.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
-    )
+def test_invalid_account_triggers_alert(monkeypatch, sbr_module):
+    called: list[tuple[str, str]] = []
 
-    class DummyRM:
-        def rollback(self, revision, requesting_bot):
-            rollbacks.append((revision, requesting_bot))
+    def fake_alert(bot_id: str, account_id: str, **_: object) -> None:
+        called.append((bot_id, account_id))
 
-    monkeypatch.setattr(
-        sbr_module.rollback_manager, "RollbackManager", lambda: DummyRM()
-    )
+    monkeypatch.setattr(sbr_module, "_alert_mismatch", fake_alert)
 
     route = {
         "secret_key": sbr_module.STRIPE_SECRET_KEY,
@@ -801,4 +788,4 @@ def test_invalid_account_triggers_alert_and_rollback(monkeypatch, sbr_module):
     with pytest.raises(RuntimeError, match="Stripe account mismatch"):
         sbr_module._verify_route("finance:finance_router_bot", route)
 
-    assert alerts and rollbacks
+    assert called == [("finance:finance_router_bot", "acct_bad")]

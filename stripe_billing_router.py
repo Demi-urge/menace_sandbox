@@ -522,11 +522,11 @@ def _verify_route(bot_id: str, route: Mapping[str, str]) -> None:
 
     key = route.get("secret_key")
     if not key or key not in ALLOWED_SECRET_KEYS:
-        log_critical_discrepancy(bot_id, "Stripe account mismatch")
+        _alert_mismatch(bot_id, route.get("account_id") or "unknown")
         raise RuntimeError("Stripe account mismatch")
     account_id = route.get("account_id", STRIPE_MASTER_ACCOUNT_ID)
     if account_id != STRIPE_MASTER_ACCOUNT_ID:
-        log_critical_discrepancy(bot_id, "Stripe account mismatch")
+        _alert_mismatch(bot_id, account_id)
         raise RuntimeError("Stripe account mismatch")
 
 
