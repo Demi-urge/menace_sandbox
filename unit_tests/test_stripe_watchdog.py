@@ -58,13 +58,13 @@ def test_orphan_charge_logged(capture, monkeypatch):
     monkeypatch.setattr(sw, "record_event", fake_record_event)
     monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
     billing_calls: list[tuple[str, float]] = []
-    payment_calls: list[tuple[str, float]] = []
+    payment_calls: list[tuple[str, float, dict]] = []
 
     def fake_billing(event_type, metadata, *, severity=1.0, **kwargs):
         billing_calls.append((event_type, severity))
 
     def fake_payment(event_type, metadata, instruction=None, *, severity=1.0, **kwargs):
-        payment_calls.append((event_type, severity))
+        payment_calls.append((event_type, severity, kwargs))
 
     monkeypatch.setattr(sw, "record_billing_anomaly", fake_billing)
     monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", fake_payment)
@@ -95,6 +95,8 @@ def test_orphan_charge_logged(capture, monkeypatch):
     assert record_calls[0][2]["telemetry_feedback"] is telemetry
     assert billing_calls and billing_calls[0][1] == sw.SEVERITY_MAP["missing_charge"]
     assert payment_calls and payment_calls[0][1] == sw.SEVERITY_MAP["missing_charge"]
+    assert payment_calls[0][2]["self_coding_engine"] is engine
+    assert payment_calls[0][2]["telemetry_feedback"] is telemetry
 
 
 def test_record_billing_event_called(capture, monkeypatch):

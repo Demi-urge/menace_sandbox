@@ -34,7 +34,9 @@ earlier issues.
 * `record_billing_anomaly` stores events in the `billing_anomalies`
   table and publishes them on the `"billing.anomaly"` topic.
 * `record_payment_anomaly` logs contextual guidance to
-  `MenaceMemoryManager`, allowing behaviour to be refined over time.
+  `MenaceMemoryManager`, allowing behaviour to be refined over time. Optional
+  ``self_coding_engine`` and ``telemetry_feedback`` hooks can adjust generation
+  parameters and emit telemetry when anomalies occur.
 * Optional `GPT_MEMORY_MANAGER` and `DiscrepancyDB` integrations provide
   additional audit trails when available.
 * `record_billing_event` captures general billing issues, storing a

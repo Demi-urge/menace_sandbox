@@ -663,6 +663,7 @@ def _emit_anomaly(
             write_codex=write_codex,
             export_training=export_training,
             self_coding_engine=self_coding_engine,
+            telemetry_feedback=telemetry_feedback,
         )
 
 
