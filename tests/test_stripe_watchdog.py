@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from dynamic_path_router import resolve_path
+
 import stripe_watchdog as sw
 
 
@@ -35,6 +37,7 @@ def capture_anomalies(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sw, "TrainingSample", DummySample)
     monkeypatch.setattr(sw, "ANOMALY_LOG", tmp_path / "anomaly.log")
+    resolve_path("config/stripe_watchdog.yaml")
     monkeypatch.setattr(sw.alert_dispatcher, "dispatch_alert", lambda *a, **k: None)
 
     return events, samples
@@ -70,8 +73,16 @@ def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):
     events, samples = capture_anomalies
 
     endpoints = [
-        {"url": "https://good.example.com/hook"},
-        {"url": "https://evil.example.com/hook"},
+        {
+            "id": "we_good",
+            "url": "https://good.example.com/hook",
+            "status": "enabled",
+        },
+        {
+            "id": "we_evil",
+            "url": "https://evil.example.com/hook",
+            "status": "enabled",
+        },
     ]
 
     fake_stripe = SimpleNamespace(
@@ -80,12 +91,65 @@ def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):
     monkeypatch.setattr(sw, "stripe", fake_stripe)
 
     unknown = sw.check_webhook_endpoints(
-        api_key="sk_test", approved=["https://good.example.com/hook"], write_codex=True
+        api_key="sk_test",
+        approved=["we_good"],
+        write_codex=True,
     )
 
-    assert unknown == ["https://evil.example.com/hook"]
-    assert events and events[0][1]["type"] == "unknown_webhook"
-    assert samples and json.loads(samples[0]["content"])["type"] == "unknown_webhook"
+    assert unknown == ["we_evil"]
+    assert {e[1]["type"] for e in events} == {"unknown_webhook"}
+    assert {
+        json.loads(s["content"])["type"] for s in samples
+    } == {"unknown_webhook"}
+
+
+def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
+    events, samples = capture_anomalies
+
+    endpoints = [
+        {
+            "id": "we_disabled",
+            "url": "https://good.example.com/hook",
+            "status": "disabled",
+        }
+    ]
+
+    fake_stripe = SimpleNamespace(
+        WebhookEndpoint=SimpleNamespace(list=lambda api_key: endpoints)
+    )
+    monkeypatch.setattr(sw, "stripe", fake_stripe)
+
+    unknown = sw.check_webhook_endpoints(
+        api_key="sk_test",
+        approved=["we_disabled", "https://good.example.com/hook"],
+        write_codex=True,
+    )
+
+    assert unknown == ["we_disabled"]
+    assert {e[1]["type"] for e in events} == {"disabled_webhook"}
+    assert {
+        json.loads(s["content"])["type"] for s in samples
+    } == {"disabled_webhook"}
+
+
+def test_env_allowed_webhook(monkeypatch):
+    endpoints = [
+        {
+            "id": "we_env",
+            "url": "https://env.example.com/hook",
+            "status": "enabled",
+        }
+    ]
+
+    fake_stripe = SimpleNamespace(
+        WebhookEndpoint=SimpleNamespace(list=lambda api_key: endpoints)
+    )
+    monkeypatch.setattr(sw, "stripe", fake_stripe)
+    monkeypatch.setenv("STRIPE_ALLOWED_WEBHOOKS", "we_env")
+
+    unknown = sw.check_webhook_endpoints(api_key="sk_test")
+
+    assert unknown == []
 
 
 def test_unexpected_refund(capture_anomalies):

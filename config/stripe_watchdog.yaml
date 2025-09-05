@@ -1,2 +1,3 @@
-authorized_webhooks:
+allowed_webhooks:
   - https://example.com/stripe/webhook
+  - we_1234567890
