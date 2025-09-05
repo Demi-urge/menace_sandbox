@@ -1260,7 +1260,30 @@ class SelfCodingEngine:
                 if alt is None or not alt.text.strip():
                     return _fallback()
                 result = alt
-        text = result.text.strip()
+        text = result.text
+        if not text.strip():
+            alt = codex_fallback_handler.handle_failure(
+                prompt_obj, result, "empty completion"
+            )
+            if alt is None or not alt.text.strip():
+                return _fallback()
+            result = alt
+            text = result.text
+        try:
+            ast.parse(text)
+        except Exception as exc:
+            alt = codex_fallback_handler.handle_failure(
+                prompt_obj, result, f"syntax error: {exc}"
+            )
+            if alt is None or not alt.text.strip():
+                return _fallback()
+            result = alt
+            try:
+                ast.parse(result.text)
+            except Exception:
+                return _fallback()
+            text = result.text
+        text = text.strip()
         if text:
             if self.gpt_memory:
                 try:
