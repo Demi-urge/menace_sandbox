@@ -164,6 +164,7 @@ from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt
 from .prompt_strategies import PromptStrategy
 from .prompt_strategy_manager import PromptStrategyManager
+from . import strategy_rotator
 from .snapshot_tracker import (
     capture as capture_snapshot,
     compute_delta as snapshot_delta,
@@ -899,7 +900,6 @@ class SelfImprovementEngine:
         self.cycle_logs: list[dict[str, Any]] = []
         self.warning_summary: list[dict[str, Any]] = []
         self.strategy_confidence: Dict[str, int] = {}
-        self.deprioritized_strategies: set[str] = set()
         self.pending_strategy: str | None = None
         self.strategy_manager = PromptStrategyManager()
         self._snapshot_tracker = SnapshotTracker()
@@ -6557,10 +6557,18 @@ class SelfImprovementEngine:
             failure_reason = "entropy_regression"
 
         strategy = None
+        next_template = None
         if prompt is not None:
             metadata = getattr(prompt, "metadata", {})
             if isinstance(metadata, dict):
                 strategy = metadata.get("strategy") or metadata.get("prompt_id")
+                if strategy:
+                    try:
+                        next_template = strategy_rotator.next_strategy(
+                            str(strategy), failure_reason or "regression"
+                        )
+                    except Exception:
+                        self.logger.exception("strategy rotation failed")
 
         success = failure_reason is None
         log_prompt_attempt(
@@ -6592,18 +6600,11 @@ class SelfImprovementEngine:
                     self.logger.exception("confidence update failed")
         else:
             if strategy:
-                # Mark failed strategy to avoid immediate reuse and pick a new one
-                self.deprioritized_strategies.add(str(strategy))
                 try:
                     snapshot_tracker.record_downgrade(str(strategy))
                 except Exception:
                     pass
-                try:
-                    self.pending_strategy = self.strategy_manager.record_failure(
-                        str(strategy), failure_reason
-                    )
-                except Exception:
-                    self.logger.exception("strategy rotation failed")
+                self.pending_strategy = next_template
 
         if strategy and hasattr(self, "strategy_manager"):
             try:
@@ -6616,24 +6617,18 @@ class SelfImprovementEngine:
     def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
         """Pick the best prompt strategy via the strategy manager."""
 
-        candidates = [s for s in strategies if s not in self.deprioritized_strategies]
-        return self.strategy_manager.best_strategy(candidates)
+        return self.strategy_manager.best_strategy(strategies)
 
     def next_prompt_strategy(self) -> str | None:
         """Return the next prompt strategy based on historical performance."""
 
         pending = getattr(self, "pending_strategy", None)
-        if (
-            pending
-            and pending in self.strategy_manager.strategies
-            and pending not in self.deprioritized_strategies
-        ):
+        if pending and pending in self.strategy_manager.strategies:
             self.pending_strategy = None
             return pending
 
         def selector(seq: Sequence[str]) -> str | None:
-            candidates = [s for s in seq if s not in self.deprioritized_strategies]
-            return self._select_prompt_strategy(candidates)
+            return self._select_prompt_strategy(seq)
 
         return self.strategy_manager.select(selector)
 

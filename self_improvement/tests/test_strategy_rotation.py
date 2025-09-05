@@ -1,5 +1,5 @@
-import logging
 import importlib
+import logging
 import sys
 import types
 from pathlib import Path
@@ -12,9 +12,9 @@ sys.modules.setdefault("dynamic_path_router", types.SimpleNamespace(resolve_path
 pkg = types.ModuleType("menace_sandbox.self_improvement")
 pkg.__path__ = [str(ROOT / "self_improvement")]
 sys.modules["menace_sandbox.self_improvement"] = pkg
-PromptStrategyManager = importlib.import_module(
-    "menace_sandbox.self_improvement.prompt_strategy_manager"
-).PromptStrategyManager
+strategy_rotator = importlib.import_module(
+    "menace_sandbox.self_improvement.strategy_rotator"
+)
 
 
 class DummyPrompt:
@@ -26,17 +26,14 @@ class MiniEngine:
     def __init__(self):
         self.logger = logging.getLogger("test")
         self.pending_strategy = None
-        self.strategy_manager = PromptStrategyManager()
+        self.strategy_manager = strategy_rotator.manager
 
     def _record_snapshot_delta(self, prompt, delta):
-        success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
-        if success:
-            return
         strategy = getattr(prompt, "metadata", {}).get("strategy")
         if strategy:
-            self.pending_strategy = self.strategy_manager.record_failure(
-                str(strategy), "regression"
-            )
+            nxt = strategy_rotator.next_strategy(str(strategy), "regression")
+            if delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0:
+                self.pending_strategy = nxt
 
     def next_prompt_strategy(self):
         pending = self.pending_strategy
@@ -49,8 +46,23 @@ class MiniEngine:
 def test_rotation_and_pending_strategy():
     eng = MiniEngine()
     prompt = DummyPrompt("strict_fix")
-    eng._record_snapshot_delta(prompt, {"roi": -1})
-    assert eng.strategy_manager.failure_counts["strict_fix"] == 1
+
+    called: dict[str, tuple[str, str]] = {}
+
+    def fake_next_strategy(current, reason):
+        called["args"] = (current, reason)
+        return "delete_rebuild"
+
+    import menace_sandbox.self_improvement.strategy_rotator as sr
+
+    original = sr.next_strategy
+    try:
+        sr.next_strategy = fake_next_strategy  # type: ignore
+        eng._record_snapshot_delta(prompt, {"roi": -1})
+    finally:
+        sr.next_strategy = original  # type: ignore
+
+    assert called["args"] == ("strict_fix", "regression")
     assert eng.pending_strategy == "delete_rebuild"
 
     choice = eng.next_prompt_strategy()
