@@ -131,6 +131,10 @@ SEVERITY_MAP = {
     "revenue_mismatch": 4.0,
 }
 
+# Module identifiers used for targeted remediation by downstream consumers.
+BILLING_ROUTER_MODULE = "stripe_billing_router"
+WATCHDOG_MODULE = "stripe_watchdog"
+
 #: Default log file for anomaly summaries.
 _LOG_DIR = resolve_path("finance_logs")
 #: JSON lines file used for anomaly audit records.
@@ -639,6 +643,7 @@ def detect_missing_charges(
                 "id": cid,
                 "bot_id": bot_id,
                 "account_id": charge.get("account"),
+                "module": BILLING_ROUTER_MODULE,
             }
             anomalies.append(anomaly)
             _emit_anomaly(
@@ -668,6 +673,7 @@ def detect_missing_charges(
             "email": charge.get("receipt_email"),
             "timestamp": charge.get("created"),
             "account_id": charge.get("account"),
+            "module": BILLING_ROUTER_MODULE,
         }
         anomalies.append(anomaly)
         _emit_anomaly(
@@ -712,6 +718,7 @@ def detect_missing_refunds(
                 "refund_id": rid,
                 "bot_id": bot_id,
                 "account_id": refund.get("account"),
+                "module": BILLING_ROUTER_MODULE,
             }
             anomalies.append(anomaly)
             _emit_anomaly(
@@ -740,6 +747,7 @@ def detect_missing_refunds(
             "amount": refund.get("amount"),
             "charge": refund.get("charge"),
             "account_id": refund.get("account"),
+            "module": BILLING_ROUTER_MODULE,
         }
         anomalies.append(anomaly)
         _emit_anomaly(
@@ -786,6 +794,7 @@ def detect_failed_events(
                 "event_id": eid,
                 "bot_id": bot_id,
                 "account_id": event.get("account"),
+                "module": BILLING_ROUTER_MODULE,
             }
             anomalies.append(anomaly)
             _emit_anomaly(
@@ -813,6 +822,7 @@ def detect_failed_events(
             "event_id": eid,
             "event_type": event.get("type"),
             "account_id": event.get("account"),
+            "module": BILLING_ROUTER_MODULE,
         }
         anomalies.append(anomaly)
         _emit_anomaly(
@@ -871,6 +881,7 @@ def check_webhook_endpoints(
                 "webhook_url": url,
                 "status": status,
                 "account_id": ep_dict.get("account"),
+                "module": WATCHDOG_MODULE,
             }
             _emit_anomaly(
                 record,
