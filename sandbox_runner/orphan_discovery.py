@@ -442,34 +442,22 @@ def _extract_module_from_call(
 def _cache_path(repo: Path | str) -> Path:
     """Return path to the orphan module cache for ``repo``."""
 
-    repo_path = Path(repo)
-    data_dir = os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
-    cache_dir = Path(data_dir)
-    if not cache_dir.is_absolute():
-        cache_dir = repo_path / cache_dir
-    return cache_dir / "orphan_modules.json"
+    data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    return data_dir / "orphan_modules.json"
 
 
 def _classification_path(repo: Path | str) -> Path:
     """Return path to the orphan classification cache for ``repo``."""
 
-    repo_path = Path(repo)
-    data_dir = os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
-    cache_dir = Path(data_dir)
-    if not cache_dir.is_absolute():
-        cache_dir = repo_path / cache_dir
-    return cache_dir / "orphan_classifications.json"
+    data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    return data_dir / "orphan_classifications.json"
 
 
 def _trace_path(repo: Path | str) -> Path:
     """Return path to the orphan trace history for ``repo``."""
 
-    repo_path = Path(repo)
-    data_dir = os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
-    cache_dir = Path(data_dir)
-    if not cache_dir.is_absolute():
-        cache_dir = repo_path / cache_dir
-    return cache_dir / "orphan_traces.json"
+    data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    return data_dir / "orphan_traces.json"
 
 
 def load_orphan_traces(repo: Path | str) -> Dict[str, Dict[str, Any]]:
