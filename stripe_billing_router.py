@@ -129,6 +129,24 @@ def _alert_mismatch(
     return
 
 
+def _validate_destination(bot_id: str, destination_account: str) -> None:
+    """Ensure ``destination_account`` matches the master Stripe account.
+
+    The Stripe API may return events with a ``destination`` or ``on_behalf_of``
+    account.  This helper validates that the account matches
+    ``STRIPE_MASTER_ACCOUNT_ID`` and raises an exception if it does not.
+    """
+
+    if destination_account and destination_account != STRIPE_MASTER_ACCOUNT_ID:
+        logger.error(
+            "Stripe destination mismatch for bot '%s': %s",
+            bot_id,
+            destination_account,
+        )
+        _alert_mismatch(bot_id, destination_account)
+        raise RuntimeError("Stripe account mismatch")
+
+
 def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:
     """Ensure a route mapping does not attempt to override Stripe keys."""
 
@@ -641,6 +659,7 @@ def charge(
                 or (event.get("transfer_data") or {}).get("destination")
                 or destination
             )
+        _validate_destination(bot_id, destination)
 
         logged_amount = amt
         if logged_amount is None and isinstance(event, Mapping):
@@ -826,6 +845,7 @@ def create_subscription(
                 or (event.get("transfer_data") or {}).get("destination")
                 or destination
             )
+        _validate_destination(bot_id, destination)
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -964,6 +984,7 @@ def refund(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
+        _validate_destination(bot_id, destination)
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -1078,6 +1099,7 @@ def create_checkout_session(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
+        _validate_destination(bot_id, destination)
         raw_json = None
         if isinstance(event, Mapping):
             try:
