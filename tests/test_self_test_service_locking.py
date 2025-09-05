@@ -66,7 +66,7 @@ def load_self_test_service():
     pkg.__path__ = [str(ROOT)]
     pkg.__spec__ = importlib.machinery.ModuleSpec('menace', loader=None, is_package=True)
     sys.modules['menace'] = pkg
-    spec = importlib.util.spec_from_file_location('menace.self_test_service', ROOT / 'self_test_service.py')
+    spec = importlib.util.spec_from_file_location('menace.self_test_service', ROOT / 'self_test_service.py')  # path-ignore
     mod = importlib.util.module_from_spec(spec)
     sys.modules['menace.self_test_service'] = mod
     spec.loader.exec_module(mod)
@@ -235,7 +235,7 @@ def _proc_run_once(root: str, lock_path: str, q):
     pkg.__path__ = [root]
     pkg.__spec__ = importlib.machinery.ModuleSpec('menace', loader=None, is_package=True)
     sys.modules['menace'] = pkg
-    spec = importlib.util.spec_from_file_location('menace.self_test_service', Path(root) / 'self_test_service.py')
+    spec = importlib.util.spec_from_file_location('menace.self_test_service', Path(root) / 'self_test_service.py')  # path-ignore
     mod = importlib.util.module_from_spec(spec)
     sys.modules['menace.self_test_service'] = mod
     spec.loader.exec_module(mod)

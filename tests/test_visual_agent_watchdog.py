@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 spec = importlib.util.spec_from_file_location(
     "visual_agent_watchdog",
-    str(ROOT / "visual_agent_watchdog.py"),
+    str(ROOT / "visual_agent_watchdog.py"),  # path-ignore
 )
 va_wd = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(va_wd)

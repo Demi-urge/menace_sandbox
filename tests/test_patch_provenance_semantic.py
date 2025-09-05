@@ -16,7 +16,7 @@ def test_rejects_semantic_risk(tmp_path):
     res = client.post(
         "/patches",
         json={
-            "filename": "m.py",
+            "filename": "m.py",  # path-ignore
             "description": "eval('data')",
             "roi_before": 0.0,
             "roi_after": 0.0,

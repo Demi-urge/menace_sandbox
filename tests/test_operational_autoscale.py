@@ -9,7 +9,7 @@ def _prepare(monkeypatch):
     monkeypatch.setitem(sys.modules, "jinja2", stub)
     monkeypatch.setitem(sys.modules, "yaml", stub)
     monkeypatch.setitem(sys.modules, "matplotlib", types.ModuleType("matplotlib"))
-    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", types.ModuleType("pyplot"))
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", types.ModuleType("pyplot"))  # path-ignore
     monkeypatch.setitem(sys.modules, "sqlalchemy", types.ModuleType("sqlalchemy"))
     monkeypatch.setitem(sys.modules, "httpx", types.ModuleType("httpx"))
     monkeypatch.setitem(

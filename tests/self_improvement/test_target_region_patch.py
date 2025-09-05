@@ -17,9 +17,9 @@ def divide(a, b):
 """
 
 PATCH = """\
-diff --git a/buggy.py b/buggy.py
---- a/buggy.py
-+++ b/buggy.py
+diff --git a/buggy.py b/buggy.py  # path-ignore
+--- a/buggy.py  # path-ignore
++++ b/buggy.py  # path-ignore
 @@ -1,3 +1,3 @@
  def divide(a, b):
 -    result = a / 0
@@ -57,7 +57,7 @@ def test_extract_target_region_and_patch(monkeypatch, tmp_path):
         check=True,
     ).stdout
 
-    monkeypatch.setattr(targeting, "__file__", str(repo / "__init__.py"))
+    monkeypatch.setattr(targeting, "__file__", str(repo / "__init__.py"))  # path-ignore
     region = targeting.extract_target_region(trace)
     assert region is not None
     assert Path(region.filename) == repo / "buggy.py"  # path-ignore

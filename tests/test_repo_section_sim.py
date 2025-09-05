@@ -116,7 +116,7 @@ def test_repo_section_sim(monkeypatch, tmp_path):
 
     import sandbox_runner
 
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text("def foo():\n    return 1\n")
 
     def fake_sim(code_str, stub=None):
@@ -184,7 +184,7 @@ def test_repo_section_sim_multi_env_predictions(monkeypatch, tmp_path):
 
     import sandbox_runner
 
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text("def foo():\n    return 1\n")
 
     def fake_sim(code_str, stub=None):
@@ -260,7 +260,7 @@ def test_section_worker_concurrency(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -274,7 +274,7 @@ def test_section_worker_concurrency(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "psutil", None)
     monkeypatch.setattr(env.multiprocessing, "cpu_count", lambda: 2)
 
-    sections = {f"m{i}.py": {f"s{j}": ["pass"]} for i in range(5) for j in range(2)}
+    sections = {f"m{i}.py": {f"s{j}": ["pass"]} for i in range(5) for j in range(2)}  # path-ignore
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",

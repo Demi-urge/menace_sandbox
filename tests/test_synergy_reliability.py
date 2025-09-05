@@ -10,7 +10,7 @@ import os
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 spec = importlib.util.spec_from_file_location(
-    "menace", resolve_path("__init__.py")
+    "menace", resolve_path("__init__.py")  # path-ignore
 )
 menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
@@ -140,7 +140,7 @@ def _run_sandbox_loop(monkeypatch, tmp_path, reliability):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[str(resolve_dir("sandbox_runner"))],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)

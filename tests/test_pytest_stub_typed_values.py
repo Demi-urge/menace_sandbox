@@ -30,10 +30,10 @@ def test_stub_handles_typed_annotations(tmp_path, monkeypatch):
         "        called.append((colour, pts))\n"
     )
 
-    mod_path = tmp_path / "typed_mod.py"
+    mod_path = tmp_path / "typed_mod.py"  # path-ignore
     mod_path.write_text(mod_code, encoding="utf-8")
 
-    hook_mod = tmp_path / "hook_mod.py"
+    hook_mod = tmp_path / "hook_mod.py"  # path-ignore
     hook_mod.write_text(
         "def gen(p):\n    if p.name == 'a':\n        return 42\n",
         encoding="utf-8",

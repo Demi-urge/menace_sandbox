@@ -10,7 +10,7 @@ pkg.__path__ = [str(ROOT)]
 sys.modules["menace"] = pkg
 spec = importlib.util.spec_from_file_location(
     "menace.secret_rotation_service",
-    ROOT / "secret_rotation_service.py",
+    ROOT / "secret_rotation_service.py",  # path-ignore
     submodule_search_locations=[str(ROOT)],
 )
 svc_mod = importlib.util.module_from_spec(spec)

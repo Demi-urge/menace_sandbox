@@ -102,7 +102,7 @@ init_mod.settings = _SandboxSettings()
 sys.modules["menace.self_improvement.init"] = init_mod
 spec = importlib.util.spec_from_file_location(
     "menace.self_improvement.meta_planning",
-    resolve_path("self_improvement/meta_planning.py"),
+    resolve_path("self_improvement/meta_planning.py"),  # path-ignore
 )
 mp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mp)

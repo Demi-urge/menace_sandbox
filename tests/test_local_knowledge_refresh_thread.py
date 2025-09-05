@@ -104,7 +104,7 @@ def _load_run_autonomous(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "run_autonomous",
-        resolve_path("run_autonomous.py"),
+        resolve_path("run_autonomous.py"),  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "run_autonomous", mod)

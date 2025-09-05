@@ -32,7 +32,7 @@ sys.modules["menace"] = pkg
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_validation_dashboard",
-    ROOT / "self_validation_dashboard.py",
+    ROOT / "self_validation_dashboard.py",  # path-ignore
     submodule_search_locations=[str(ROOT)],
 )
 svd_mod = importlib.util.module_from_spec(spec)

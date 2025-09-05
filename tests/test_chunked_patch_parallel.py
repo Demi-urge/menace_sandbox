@@ -11,7 +11,7 @@ import chunking as pc
 
 def _prepare_engine(tmp_path: Path, monkeypatch):
     engine = _setup_engine(tmp_path, monkeypatch)
-    path = tmp_path / "big.py"
+    path = tmp_path / "big.py"  # path-ignore
     path.write_text("def a():\n    pass\n\ndef b():\n    pass\n")
 
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)

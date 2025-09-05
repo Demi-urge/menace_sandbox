@@ -24,7 +24,7 @@ class RecordingEngine:
 
 def test_escalation_and_reset():
     tracker = PatchAttemptTracker()
-    filename = "mod" + ".py"
+    filename = "mod" + ".py"  # path-ignore
     region = TargetRegion(start_line=1, end_line=2, function="f", filename=filename)
 
     level, _ = tracker.level_for(region, region)
@@ -50,7 +50,7 @@ def test_escalation_and_reset():
 
 
 def test_engine_respects_target_region(tmp_path):
-    path = tmp_path / ("mod" + ".py")
+    path = tmp_path / ("mod" + ".py")  # path-ignore
     path.write_text(
         "def f():\n"
         "    a = 1\n"

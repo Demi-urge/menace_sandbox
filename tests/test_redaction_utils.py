@@ -11,7 +11,7 @@ def test_redact_text_on_fixtures():
     secret_aws = "AKIA1234567890ABCDEF"
     secrets = [secret_api, secret_bearer, secret_private, secret_aws]
 
-    for path in FIXTURE_DIR.glob("*.py"):
+    for path in FIXTURE_DIR.glob("*.py"):  # path-ignore
         original = path.read_text()
         combined = original + "\n" + "\n".join(secrets)
         redacted = redact_text(combined)

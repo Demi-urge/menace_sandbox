@@ -6,7 +6,7 @@ import db_router
 
 
 def create_dummy(tmp_path: Path) -> str:
-    mod = tmp_path / "dummy.py"
+    mod = tmp_path / "dummy.py"  # path-ignore
     mod.write_text(
         """from __future__ import annotations
 
@@ -36,7 +36,7 @@ def test_run_unit(tmp_path):
 
 
 def create_imports(tmp_path: Path) -> str:
-    mod_a = tmp_path / "defs.py"
+    mod_a = tmp_path / "defs.py"  # path-ignore
     mod_a.write_text(
         """calls = []
 
@@ -49,7 +49,7 @@ class ExtCls:
 """
     )
 
-    mod_b = tmp_path / "use_defs.py"
+    mod_b = tmp_path / "use_defs.py"  # path-ignore
     mod_b.write_text(
         """from defs import ext_func, ExtCls
 

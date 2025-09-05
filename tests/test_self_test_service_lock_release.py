@@ -46,7 +46,7 @@ def load_self_test_service():
     pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
     pkg.__spec__ = importlib.machinery.ModuleSpec('menace', loader=None, is_package=True)
     sys.modules['menace'] = pkg
-    path = resolve_path('self_test_service.py')
+    path = resolve_path('self_test_service.py')  # path-ignore
     spec = importlib.util.spec_from_file_location(
         'menace.self_test_service', str(path)
     )

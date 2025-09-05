@@ -51,7 +51,7 @@ def test_checkpoint_and_confidence(tmp_path, monkeypatch):
 
     repo = tmp_path / ss.resolve_path("repo")
     repo.mkdir()
-    module = repo / ss.resolve_path("module.py")
+    module = repo / ss.resolve_path("module.py")  # path-ignore
     module.write_text("a = 1\n", encoding="utf-8")
 
     data_dir = tmp_path / ss.resolve_path("data")
@@ -112,10 +112,10 @@ def test_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
 
     repo = tmp_path / ss.resolve_path("repo")
     repo.mkdir()
-    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")  # path-ignore
     sub = repo / "sub"
     sub.mkdir()
-    (sub / "b.py").write_text("b = 2\n", encoding="utf-8")
+    (sub / "b.py").write_text("b = 2\n", encoding="utf-8")  # path-ignore
 
     data_dir = tmp_path / ss.resolve_path("data")
 
@@ -141,4 +141,4 @@ def test_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
 
     assert snap.entropy == 2.0
     assert snap.token_diversity == 2.0
-    assert set(captured["files"]) == {repo / "a.py", sub / "b.py"}
+    assert set(captured["files"]) == {repo / "a.py", sub / "b.py"}  # path-ignore

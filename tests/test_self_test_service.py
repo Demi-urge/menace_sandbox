@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT))
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_test_service",
-    ROOT / "self_test_service.py",
+    ROOT / "self_test_service.py",  # path-ignore
 )
 mod = importlib.util.module_from_spec(spec)
 import sys  # noqa: E402

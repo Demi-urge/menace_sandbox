@@ -8,7 +8,7 @@ from pathlib import Path
 
 def _load_metrics():
     repo = Path(__file__).resolve().parent.parent
-    metrics_path = repo / "self_improvement" / "metrics.py"
+    metrics_path = repo / "self_improvement" / "metrics.py"  # path-ignore
     spec = importlib.util.spec_from_file_location(
         "menace.self_improvement.metrics", metrics_path
     )
@@ -23,16 +23,16 @@ def _load_metrics():
 def test_ast_fallback_maintainability(monkeypatch, tmp_path):
     metrics = _load_metrics()
     code = """def f(a, b):\n    if a > b:\n        return a - b\n    return a + b\n"""
-    src = tmp_path / "foo.py"
+    src = tmp_path / "foo.py"  # path-ignore
     src.write_text(code)
     monkeypatch.setattr(metrics, "cc_visit", None)
     monkeypatch.setattr(metrics, "mi_visit", None)
     per_file, total, avg, tests, ent, div = metrics._collect_metrics([src], tmp_path)
-    assert total == per_file["foo.py"]["complexity"]
-    assert avg == per_file["foo.py"]["maintainability"]
+    assert total == per_file["foo.py"]["complexity"]  # path-ignore
+    assert avg == per_file["foo.py"]["maintainability"]  # path-ignore
     # Expected maintainability calculated using the MI formula
     # from the AST fallback implementation.
-    file_complexity = per_file["foo.py"]["complexity"]
+    file_complexity = per_file["foo.py"]["complexity"]  # path-ignore
     import ast, keyword, tokenize, io
 
     ops, operands = set(), set()
@@ -70,7 +70,7 @@ def test_ast_fallback_maintainability(monkeypatch, tmp_path):
         * 100
         / 171,
     )
-    assert math.isclose(per_file["foo.py"]["maintainability"], expected, rel_tol=1e-6)
+    assert math.isclose(per_file["foo.py"]["maintainability"], expected, rel_tol=1e-6)  # path-ignore
     assert tests == 0
     assert ent >= 0.0 and div >= 0.0
 
@@ -78,7 +78,7 @@ def test_ast_fallback_maintainability(monkeypatch, tmp_path):
 def test_radon_metrics_used(monkeypatch, tmp_path):
     metrics = _load_metrics()
     code = "def f():\n    return 1\n"
-    src = tmp_path / "foo.py"
+    src = tmp_path / "foo.py"  # path-ignore
     src.write_text(code)
     calls = {"cc": 0, "mi": 0}
 
@@ -98,7 +98,7 @@ def test_radon_metrics_used(monkeypatch, tmp_path):
     monkeypatch.setattr(metrics, "mi_visit", fake_mi)
 
     per_file, total, avg, tests, ent, div = metrics._collect_metrics([src], tmp_path)
-    assert per_file["foo.py"] == {
+    assert per_file["foo.py"] == {  # path-ignore
         "complexity": 7,
         "maintainability": 88.0,
         "token_entropy": ent,
@@ -114,7 +114,7 @@ def test_skip_dirs_setting(tmp_path):
     metrics = _load_metrics()
     build = tmp_path / "build"
     build.mkdir()
-    src = build / "foo.py"
+    src = build / "foo.py"  # path-ignore
     src.write_text("def f():\n    return 1\n")
 
     per_file, total, avg, tests, ent, div = metrics._collect_metrics([src], tmp_path)
@@ -127,4 +127,4 @@ def test_skip_dirs_setting(tmp_path):
     per_file, total, avg, tests, ent, div = metrics._collect_metrics(
         [src], tmp_path, settings=settings
     )
-    assert "build/foo.py" in per_file
+    assert "build/foo.py" in per_file  # path-ignore

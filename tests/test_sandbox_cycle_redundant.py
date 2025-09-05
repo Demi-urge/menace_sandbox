@@ -24,7 +24,7 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
     monkeypatch.setattr(cycle, "append_orphan_cache", lambda *a, **k: None)
     monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *a, **k: None)
 
-    (tmp_path / "foo.py").write_text("pass\n")
+    (tmp_path / "foo.py").write_text("pass\n")  # path-ignore
 
     def fake_discover(repo_path):
         assert Path(repo_path) == tmp_path
@@ -57,7 +57,7 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
         sandbox=types.SimpleNamespace(analyse_and_fix=lambda *a, **k: None),
         repo=tmp_path,
         module_map=set(),
-        orphan_traces={"foo.py": {"parents": [], "redundant": True}},
+        orphan_traces={"foo.py": {"parents": [], "redundant": True}},  # path-ignore
         tracker=types.SimpleNamespace(register_metrics=lambda *a, **k: None, merge_history=lambda *a, **k: None),
         models=[],
         module_counts={},
@@ -71,7 +71,7 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
         cycle._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
 
     assert calls == []
-    assert ctx.orphan_traces == {"foo.py": {"parents": [], "redundant": True}}
+    assert ctx.orphan_traces == {"foo.py": {"parents": [], "redundant": True}}  # path-ignore
 
 
 def test_redundant_modules_can_be_tested(monkeypatch, tmp_path):
@@ -91,7 +91,7 @@ def test_redundant_modules_can_be_tested(monkeypatch, tmp_path):
 
     cache_vals = [
         {},
-        {"foo.py": {"classification": "legacy", "redundant": True}},
+        {"foo.py": {"classification": "legacy", "redundant": True}},  # path-ignore
     ]
 
     def fake_load_cache(_repo):
@@ -99,7 +99,7 @@ def test_redundant_modules_can_be_tested(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cycle, "load_orphan_cache", fake_load_cache)
 
-    (tmp_path / "foo.py").write_text("pass\n")
+    (tmp_path / "foo.py").write_text("pass\n")  # path-ignore
 
     def fake_discover(repo_path):
         assert Path(repo_path) == tmp_path
@@ -130,7 +130,7 @@ def test_redundant_modules_can_be_tested(monkeypatch, tmp_path):
     ctx = types.SimpleNamespace(
         repo=tmp_path,
         module_map=set(),
-        orphan_traces={"foo.py": {"parents": [], "classification": "redundant", "redundant": True}},
+        orphan_traces={"foo.py": {"parents": [], "classification": "redundant", "redundant": True}},  # path-ignore
         tracker=types.SimpleNamespace(merge_history=lambda *a, **k: None),
         settings=types.SimpleNamespace(
             auto_include_isolated=True, recursive_isolated=True, test_redundant_modules=True
@@ -139,5 +139,5 @@ def test_redundant_modules_can_be_tested(monkeypatch, tmp_path):
 
     cycle.include_orphan_modules(ctx)
 
-    assert calls == [["foo.py"]]
-    assert ctx.orphan_traces["foo.py"]["classification"] == "legacy"
+    assert calls == [["foo.py"]]  # path-ignore
+    assert ctx.orphan_traces["foo.py"]["classification"] == "legacy"  # path-ignore

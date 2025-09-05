@@ -152,7 +152,7 @@ def setup_stubs(monkeypatch, tmp_path: Path, captured: dict):
 
 
 def load_module(monkeypatch):
-    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
+    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"  # path-ignore
     sys.modules.pop("run_autonomous", None)
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)

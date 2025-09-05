@@ -23,7 +23,7 @@ def _load_verify_dependencies():
     sys.modules.setdefault("menace_sandbox.self_improvement", sub_pkg)
 
     spec = importlib.util.spec_from_file_location(
-        "menace_sandbox.self_improvement.init", root / "self_improvement" / "init.py"
+        "menace_sandbox.self_improvement.init", root / "self_improvement" / "init.py"  # path-ignore
     )
     module = importlib.util.module_from_spec(spec)
     module.__package__ = "menace_sandbox.self_improvement"

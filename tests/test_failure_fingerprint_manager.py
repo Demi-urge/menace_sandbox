@@ -38,7 +38,7 @@ from menace.failure_fingerprint_store import FailureFingerprint
 
 TRACE = (
     "Traceback (most recent call last):\n"
-    '  File "mod.py", line 1, in <module>\n'
+    '  File "mod.py", line 1, in <module>\n'  # path-ignore
     "    1/0\n"
     "ZeroDivisionError: division by zero"
 )
@@ -53,7 +53,7 @@ class DummyStore:
         if self.sim is None:
             return []
         emb = [self.sim, math.sqrt(1 - self.sim**2)]
-        match = FailureFingerprint("a.py", "f", "e", "t", "p", embedding=emb)
+        match = FailureFingerprint("a.py", "f", "e", "t", "p", embedding=emb)  # path-ignore
         return [match]
 
 
@@ -80,7 +80,7 @@ class DummyPipeline:
 
 
 def _setup_repo(tmp_path: Path) -> Path:
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     return file_path
 

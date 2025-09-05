@@ -15,11 +15,11 @@ def test_entropy_ceiling_flags_and_halts(tmp_path):
     cycles = 0
 
     for roi in roi_values:
-        log.log_cycle(cycles, roi, ["m.py"], "cycle")
+        log.log_cycle(cycles, roi, ["m.py"], "cycle")  # path-ignore
         cycles += 1
         if log.ceiling(0.3, consecutive=2):
             break
 
-    assert "m.py" in log.flagged_sections
+    assert "m.py" in log.flagged_sections  # path-ignore
     assert cycles == 4
 

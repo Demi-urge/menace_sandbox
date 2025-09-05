@@ -28,7 +28,7 @@ import importlib.util
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
-    "menace", root / "__init__.py", submodule_search_locations=[str(root)]
+    "menace", root / "__init__.py", submodule_search_locations=[str(root)]  # path-ignore
 )
 pkg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pkg)
@@ -54,13 +54,13 @@ class DummyTelem:
 
 
 def test_analyse_and_fix(monkeypatch, tmp_path):
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text("def x():\n    pass\n")
     log = f"File '{mod}', line 1, in x"
     eng = DummyEngine()
     dbg = ad.AutomatedDebugger(DummyTelem(log), eng)
     monkeypatch.setitem(sys.modules, "sandbox_runner", types.SimpleNamespace(integrate_new_orphans=lambda p: None))
-    monkeypatch.setattr(ad.tempfile, "NamedTemporaryFile", lambda *a, **k: open(tmp_path / "t.py", "w+"))
+    monkeypatch.setattr(ad.tempfile, "NamedTemporaryFile", lambda *a, **k: open(tmp_path / "t.py", "w+"))  # path-ignore
     monkeypatch.setattr(ad.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=b"", stdout=""))
     dbg.analyse_and_fix()
     assert eng.called
@@ -69,7 +69,7 @@ def test_analyse_and_fix(monkeypatch, tmp_path):
 def test_generate_tests_absolute_path(monkeypatch, tmp_path):
     eng = DummyEngine()
     dbg = ad.AutomatedDebugger(DummyTelem(), eng)
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text("def x():\n    pass\n")
     monkeypatch.chdir(tmp_path)
     log = f"File '{mod}', line 1, in x"
@@ -80,8 +80,8 @@ def test_generate_tests_absolute_path(monkeypatch, tmp_path):
 def test_generate_tests_traceback(monkeypatch, tmp_path):
     eng = DummyEngine()
     dbg = ad.AutomatedDebugger(DummyTelem(), eng)
-    a = tmp_path / "a.py"
-    b = tmp_path / "b.py"
+    a = tmp_path / "a.py"  # path-ignore
+    b = tmp_path / "b.py"  # path-ignore
     a.write_text("def foo():\n    bar()\n")
     b.write_text("def bar():\n    pass\n")
     monkeypatch.chdir(tmp_path)

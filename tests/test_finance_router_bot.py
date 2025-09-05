@@ -20,7 +20,7 @@ def _import_finance_router(monkeypatch, tmp_path):
 
     def _load(name: str):
         spec = importlib.util.spec_from_file_location(
-            f"frbpkg.{name}", resolve_path(f"{name}.py")
+            f"frbpkg.{name}", resolve_path(f"{name}.py")  # path-ignore
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[f"frbpkg.{name}"] = module
@@ -235,7 +235,7 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
     sys.modules["advanced_error_management"] = arm
     sys.modules.pop("stripe_billing_router", None)
     spec = importlib.util.spec_from_file_location(
-        "stripe_billing_router", resolve_path("stripe_billing_router.py")
+        "stripe_billing_router", resolve_path("stripe_billing_router.py")  # path-ignore
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["stripe_billing_router"] = module

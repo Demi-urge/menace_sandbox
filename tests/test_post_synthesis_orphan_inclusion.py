@@ -16,13 +16,13 @@ class SelfCodingEngine:
 
 def test_post_synthesis_orphan_inclusion(monkeypatch, tmp_path):
     repo = tmp_path
-    (repo / "existing.py").write_text("def foo():\n    pass\n")
-    (repo / "helper.py").write_text("import new_module\n")
-    (repo / "new_module.py").write_text("VALUE = 1\n")
+    (repo / "existing.py").write_text("def foo():\n    pass\n")  # path-ignore
+    (repo / "helper.py").write_text("import new_module\n")  # path-ignore
+    (repo / "new_module.py").write_text("VALUE = 1\n")  # path-ignore
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
     module_map_path = data_dir / "module_map.json"
-    module_map_path.write_text(json.dumps({"modules": {"existing.py": 1}}))
+    module_map_path.write_text(json.dumps({"modules": {"existing.py": 1}}))  # path-ignore
     graph_path = data_dir / "module_synergy_graph.json"
     graph_path.write_text(json.dumps({"modules": []}))
 
@@ -82,8 +82,8 @@ def test_post_synthesis_orphan_inclusion(monkeypatch, tmp_path):
 
     def integrate_orphans(repo_path, router=None):
         from sandbox_runner.environment import auto_include_modules
-        auto_include_modules(["helper.py", "new_module.py"])
-        return ["helper.py", "new_module.py"]
+        auto_include_modules(["helper.py", "new_module.py"])  # path-ignore
+        return ["helper.py", "new_module.py"]  # path-ignore
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
@@ -99,14 +99,14 @@ def test_post_synthesis_orphan_inclusion(monkeypatch, tmp_path):
 
     monkeypatch.setattr(engine, "patch_file", fake_patch_file)
 
-    engine.apply_patch(Path("existing.py"), "add helper import")
+    engine.apply_patch(Path("existing.py"), "add helper import")  # path-ignore
 
     module_map = json.loads(module_map_path.read_text())["modules"]
-    assert "new_module.py" in module_map
-    assert "helper.py" in module_map
+    assert "new_module.py" in module_map  # path-ignore
+    assert "helper.py" in module_map  # path-ignore
 
     graph_data = json.loads(graph_path.read_text())
     assert "new_module" in graph_data["modules"]
     assert "helper" in graph_data["modules"]
 
-    assert clusterer_calls == ["helper.py", "new_module.py"]
+    assert clusterer_calls == ["helper.py", "new_module.py"]  # path-ignore

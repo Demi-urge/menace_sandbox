@@ -20,7 +20,7 @@ def WorkflowSandboxRunner():
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner.workflow_sandbox_runner",
-        resolve_path("workflow_sandbox_runner.py"),
+        resolve_path("workflow_sandbox_runner.py"),  # path-ignore
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

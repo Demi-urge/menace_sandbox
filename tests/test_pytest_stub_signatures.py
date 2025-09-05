@@ -94,7 +94,7 @@ def load_self_test_service():
     pkg.RAISE_ERRORS = False
     sys.modules["menace"] = pkg
     spec = importlib.util.spec_from_file_location(
-        "menace.self_test_service", ROOT / "self_test_service.py"
+        "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules["menace.self_test_service"] = mod
@@ -106,7 +106,7 @@ sts = load_self_test_service()
 
 
 def test_stub_supplies_dummy_args(tmp_path, monkeypatch):
-    mod_path = tmp_path / "sample_mod.py"
+    mod_path = tmp_path / "sample_mod.py"  # path-ignore
     mod_path.write_text(
         "called = []\n"
         "def func(a, b):\n"

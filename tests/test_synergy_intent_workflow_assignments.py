@@ -13,7 +13,7 @@ class IntentSuggester:
             self.members = None
 
     def _search_related(self, prompt, top_k=5):
-        return [self.Match("extra_step.py")]
+        return [self.Match("extra_step.py")]  # path-ignore
 
 
 def test_synergy_and_intent_cluster_assignments():

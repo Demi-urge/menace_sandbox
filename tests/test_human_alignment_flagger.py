@@ -2,27 +2,27 @@ import menace.human_alignment_flagger as haf
 import pytest
 from sandbox_settings import AlignmentRules, SandboxSettings
 
-MODULE = "module" + ".py"
-WORKFLOW = "workflow" + ".py"
-COMPLEX = "complex" + ".py"
-CLEAN = "clean" + ".py"
-FOO = "foo" + ".py"
-BAR = "bar" + ".py"
-RUN = "run" + ".py"
-FS = "fs" + ".py"
-LINT = "lint" + ".py"
-BE = "be" + ".py"
-COMP = "comp" + ".py"
-DYN = "dyn" + ".py"
-TYPES = "types" + ".py"
+MODULE = "module" + ".py"  # path-ignore
+WORKFLOW = "workflow" + ".py"  # path-ignore
+COMPLEX = "complex" + ".py"  # path-ignore
+CLEAN = "clean" + ".py"  # path-ignore
+FOO = "foo" + ".py"  # path-ignore
+BAR = "bar" + ".py"  # path-ignore
+RUN = "run" + ".py"  # path-ignore
+FS = "fs" + ".py"  # path-ignore
+LINT = "lint" + ".py"  # path-ignore
+BE = "be" + ".py"  # path-ignore
+COMP = "comp" + ".py"  # path-ignore
+DYN = "dyn" + ".py"  # path-ignore
+TYPES = "types" + ".py"  # path-ignore
 
 
 @pytest.fixture
 def unsafe_patch() -> str:
     return (
-        """diff --git a/foo.py b/foo.py
---- a/foo.py
-+++ b/foo.py
+        """diff --git a/foo.py b/foo.py  # path-ignore
+--- a/foo.py  # path-ignore
++++ b/foo.py  # path-ignore
 @@ -1,2 +1 @@
 -import logging
 -logging.info('hi')
@@ -34,9 +34,9 @@ def unsafe_patch() -> str:
 @pytest.fixture
 def clean_patch() -> str:
     return (
-        """diff --git a/foo.py b/foo.py
---- a/foo.py
-+++ b/foo.py
+        """diff --git a/foo.py b/foo.py  # path-ignore
+--- a/foo.py  # path-ignore
++++ b/foo.py  # path-ignore
 @@ -0,0 +1 @@
 +print('hello')
 """
@@ -46,9 +46,9 @@ def clean_patch() -> str:
 @pytest.fixture
 def comment_removal_patch() -> str:
     return (
-        """diff --git a/foo.py b/foo.py
---- a/foo.py
-+++ b/foo.py
+        """diff --git a/foo.py b/foo.py  # path-ignore
+--- a/foo.py  # path-ignore
++++ b/foo.py  # path-ignore
 @@ -1,2 +1 @@
 -# explanatory comment
 -x = compute()
@@ -60,9 +60,9 @@ def comment_removal_patch() -> str:
 @pytest.fixture
 def obfuscation_patch() -> str:
     return (
-        """diff --git a/bar.py b/bar.py
---- a/bar.py
-+++ b/bar.py
+        """diff --git a/bar.py b/bar.py  # path-ignore
+--- a/bar.py  # path-ignore
++++ b/bar.py  # path-ignore
 @@ -1,2 +1,2 @@
 --result = do()
 --return result
@@ -75,9 +75,9 @@ def obfuscation_patch() -> str:
 @pytest.fixture
 def exec_patch() -> str:
     return (
-        """diff --git a/foo.py b/foo.py
---- a/foo.py
-+++ b/foo.py
+        """diff --git a/foo.py b/foo.py  # path-ignore
+--- a/foo.py  # path-ignore
++++ b/foo.py  # path-ignore
 @@ -0,0 +1 @@
 +exec('print(1)')
 """
@@ -87,9 +87,9 @@ def exec_patch() -> str:
 @pytest.fixture
 def network_patch() -> str:
     return (
-        """diff --git a/foo.py b/foo.py
---- a/foo.py
-+++ b/foo.py
+        """diff --git a/foo.py b/foo.py  # path-ignore
+--- a/foo.py  # path-ignore
++++ b/foo.py  # path-ignore
 @@ -0,0 +2 @@
 +import requests
 +requests.get('http://example.com')
@@ -100,9 +100,9 @@ def network_patch() -> str:
 @pytest.fixture
 def unsandboxed_fs_patch() -> str:
     return (
-        """diff --git a/fs.py b/fs.py
---- a/fs.py
-+++ b/fs.py
+        """diff --git a/fs.py b/fs.py  # path-ignore
+--- a/fs.py  # path-ignore
++++ b/fs.py  # path-ignore
 @@ -0,0 +1 @@
 +open('/etc/passwd', 'w')
 """
@@ -112,9 +112,9 @@ def unsandboxed_fs_patch() -> str:
 @pytest.fixture
 def linter_patch() -> str:
     return (
-        """diff --git a/lint.py b/lint.py
---- a/lint.py
-+++ b/lint.py
+        """diff --git a/lint.py b/lint.py  # path-ignore
+--- a/lint.py  # path-ignore
++++ b/lint.py  # path-ignore
 @@ -0,0 +1 @@
 +x = 1  # noqa
 """
@@ -124,9 +124,9 @@ def linter_patch() -> str:
 @pytest.fixture
 def subprocess_patch() -> str:
     return (
-        """diff --git a/run.py b/run.py
---- a/run.py
-+++ b/run.py
+        """diff --git a/run.py b/run.py  # path-ignore
+--- a/run.py  # path-ignore
++++ b/run.py  # path-ignore
 @@ -0,0 +2 @@
 +import subprocess
 +subprocess.run('ls', shell=True)
@@ -137,9 +137,9 @@ def subprocess_patch() -> str:
 @pytest.fixture
 def semantic_subprocess_patch() -> str:
     return (
-        """diff --git a/run.py b/run.py
---- a/run.py
-+++ b/run.py
+        """diff --git a/run.py b/run.py  # path-ignore
+--- a/run.py  # path-ignore
++++ b/run.py  # path-ignore
 @@ -0,0 +2 @@
 +import subprocess
 +subprocess.call('ls', shell=True)
@@ -150,9 +150,9 @@ def semantic_subprocess_patch() -> str:
 @pytest.fixture
 def missing_type_hints_patch() -> str:
     return (
-        """diff --git a/types.py b/types.py
---- a/types.py
-+++ b/types.py
+        """diff --git a/types.py b/types.py  # path-ignore
+--- a/types.py  # path-ignore
++++ b/types.py  # path-ignore
 @@ -0,0 +2 @@
 +def add(a, b):
 +    return a + b
@@ -163,9 +163,9 @@ def missing_type_hints_patch() -> str:
 @pytest.fixture
 def high_complexity_patch() -> str:
     return (
-        """diff --git a/complex.py b/complex.py
---- a/complex.py
-+++ b/complex.py
+        """diff --git a/complex.py b/complex.py  # path-ignore
+--- a/complex.py  # path-ignore
++++ b/complex.py  # path-ignore
 @@ -0,0 +12 @@
 +def complex(x):
 +    if a:
@@ -187,9 +187,9 @@ def high_complexity_patch() -> str:
 @pytest.fixture
 def todo_patch() -> str:
     return (
-        """diff --git a/todo.py b/todo.py
---- a/todo.py
-+++ b/todo.py
+        """diff --git a/todo.py b/todo.py  # path-ignore
+--- a/todo.py  # path-ignore
++++ b/todo.py  # path-ignore
 @@ -0,0 +1 @@
 # TODO: fix
 """
@@ -223,9 +223,9 @@ def json_credential_patch() -> str:
 @pytest.fixture
 def secret_diff_patch() -> str:
     return (
-        """diff --git a/secrets.py b/secrets.py
---- a/secrets.py
-+++ b/secrets.py
+        """diff --git a/secrets.py b/secrets.py  # path-ignore
+--- a/secrets.py  # path-ignore
++++ b/secrets.py  # path-ignore
 @@ -0,0 +1 @@
 +password = \"supersecret\"
 """
@@ -594,8 +594,8 @@ def test_flag_improvement_detects_broad_except():
 def test_flag_improvement_detects_removed_type_hints():
     code = "def add(a, b):\n    return a + b"
     diff = (
-        "--- a/module.py\n"
-        "+++ b/module.py\n"
+        "--- a/module.py\n"  # path-ignore
+        "+++ b/module.py\n"  # path-ignore
         "@@\n"
         "-def add(a: int, b: int) -> int:\n"
         "-    return a + b\n"
@@ -829,7 +829,7 @@ def test_custom_complexity_threshold_suppresses_warning(high_complexity_diff):
 
 def test_rule_callable_param(todo_patch):
     def direct_rule(path, added, removed):
-        if path.endswith("todo" + ".py"):
+        if path.endswith("todo" + ".py"):  # path-ignore
             return [{"severity": 1, "message": "direct rule"}]
         return []
 

@@ -36,11 +36,11 @@ def test_failed_patch_logs_fingerprint(monkeypatch, tmp_path):
         return None, False, 0.0
 
     eng.apply_patch = types.MethodType(fail, eng)
-    eng.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=1)
+    eng.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=1)  # path-ignore
 
     log_file = tmp_path / "failure_fingerprints.jsonl"
     data = json.loads(log_file.read_text().strip())
-    assert data["filename"] == "mod.py"
+    assert data["filename"] == "mod.py"  # path-ignore
     assert data["function_name"] == "<module>"
     assert "ZeroDivisionError" in data["error_message"]
     assert data["prompt_text"] == "prompt!"
@@ -61,7 +61,7 @@ def test_second_run_warns_on_similar_failure(monkeypatch, tmp_path):
 
     eng2.apply_patch = types.MethodType(fail_then_succeed, eng2)
     prior = FailureFingerprint.from_failure(
-        "prev.py", "main", SAMPLE_TRACE, "Boom", "p"
+        "prev.py", "main", SAMPLE_TRACE, "Boom", "p"  # path-ignore
     )
     monkeypatch.setattr(sce, "find_similar", lambda emb, thresh: [prior])
     monkeypatch.setattr(
@@ -69,7 +69,7 @@ def test_second_run_warns_on_similar_failure(monkeypatch, tmp_path):
         "check_similarity_and_warn",
         lambda *a, **k: (a[3], False, 0.0, [prior], "WARNING"),
     )
-    pid, reverted, delta = eng2.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=2)
+    pid, reverted, delta = eng2.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=2)  # path-ignore
     assert pid == 1 and not reverted
     assert any("WARNING" in d for d in calls[1:])
 
@@ -86,7 +86,7 @@ def test_second_run_skips_after_similarity_limit(monkeypatch, tmp_path):
 
     eng.apply_patch = types.MethodType(fail_only, eng)
     prior = FailureFingerprint.from_failure(
-        "mod.py", "<module>", SAMPLE_TRACE, "ZeroDivisionError: division by zero", "prompt!"
+        "mod.py", "<module>", SAMPLE_TRACE, "ZeroDivisionError: division by zero", "prompt!"  # path-ignore
     )
     monkeypatch.setattr(sce, "find_similar", lambda emb, thresh: [prior, prior, prior])
     monkeypatch.setattr(
@@ -94,5 +94,5 @@ def test_second_run_skips_after_similarity_limit(monkeypatch, tmp_path):
         "check_similarity_and_warn",
         lambda *a, **k: (a[3], False, 0.0, [prior, prior, prior], "WARNING"),
     )
-    pid, reverted, delta = eng.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=3)
+    pid, reverted, delta = eng.apply_patch_with_retry(Path("mod.py"), "desc", max_attempts=3)  # path-ignore
     assert pid is None and len(calls) == 1

@@ -7,7 +7,7 @@ import pytest
 from vector_service.retriever import PatchRetriever
 
 _spec_vs = importlib.util.spec_from_file_location(
-    "vector_service.vector_store", pathlib.Path("vector_service/vector_store.py")
+    "vector_service.vector_store", pathlib.Path("vector_service/vector_store.py")  # path-ignore
 )
 _vs_mod = importlib.util.module_from_spec(_spec_vs)
 sys.modules["vector_service.vector_store"] = _vs_mod

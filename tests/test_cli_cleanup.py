@@ -12,8 +12,8 @@ def test_cli_cleanup(tmp_path):
     pkg = tmp_path / "pkg"
     sr = pkg / "sandbox_runner"
     sr.mkdir(parents=True)
-    (sr / "__init__.py").write_text("")
-    cli_src = resolve_path("sandbox_runner/cli.py")
+    (sr / "__init__.py").write_text("")  # path-ignore
+    cli_src = resolve_path("sandbox_runner/cli.py")  # path-ignore
     (sr / "cli.py").write_text(cli_src.read_text())  # path-ignore
     (sr / "environment.py").write_text(  # path-ignore
         """
@@ -49,7 +49,7 @@ def retry_failed_cleanup():
 
     mn = pkg / "menace"
     mn.mkdir()
-    (mn / "__init__.py").write_text("")
+    (mn / "__init__.py").write_text("")  # path-ignore
     (mn / "metrics_dashboard.py").write_text("class MetricsDashboard: pass")  # path-ignore
     (mn / "environment_generator.py").write_text(  # path-ignore
         "def generate_presets(n=None):\n    return [{}]\n"

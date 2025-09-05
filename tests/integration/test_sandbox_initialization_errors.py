@@ -128,7 +128,7 @@ def test_dependency_check_raises_on_missing(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner_main",
-        resolve_path("sandbox_runner.py"),
+        resolve_path("sandbox_runner.py"),  # path-ignore
     )
     sr = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

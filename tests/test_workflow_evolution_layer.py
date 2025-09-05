@@ -178,7 +178,7 @@ def evolution_setup():
     # finally load workflow evolution manager --------------------------
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.workflow_evolution_manager",
-        resolve_path("workflow_evolution_manager.py"),
+        resolve_path("workflow_evolution_manager.py"),  # path-ignore
     )
     wem = importlib.util.module_from_spec(spec)
     sys.modules["menace_sandbox.workflow_evolution_manager"] = wem

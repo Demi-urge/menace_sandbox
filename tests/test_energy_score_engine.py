@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def load_energy_score_engine():
-    path = Path(__file__).resolve().parents[1] / 'capital_management_bot.py'
+    path = Path(__file__).resolve().parents[1] / 'capital_management_bot.py'  # path-ignore
     source = path.read_text()
     module = ast.parse(source)
     for node in module.body:

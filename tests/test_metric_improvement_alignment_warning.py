@@ -10,7 +10,7 @@ def test_metric_improvement_still_warns(tmp_path):
     # Improved accuracy metric but reduced tests and higher complexity
     metrics = {"accuracy": 0.95, "previous_accuracy": 0.9}
     code = "def f(x):\n    if x:\n        return x\n"
-    module = tmp_path / ("module" + ".py")
+    module = tmp_path / ("module" + ".py")  # path-ignore
     warnings = haf.flag_improvement(
         workflow_changes=[{"file": str(module), "code": code}],
         metrics=metrics,

@@ -19,14 +19,14 @@ def test_repeated_failures_record_fingerprints(monkeypatch, tmp_path):
         return None, False, 0.0
 
     eng.apply_patch = types.MethodType(always_fail, eng)
-    eng.apply_patch_with_retry(Path("mod.py"), "first", max_attempts=1)
-    eng.apply_patch_with_retry(Path("mod.py"), "second", max_attempts=1)
+    eng.apply_patch_with_retry(Path("mod.py"), "first", max_attempts=1)  # path-ignore
+    eng.apply_patch_with_retry(Path("mod.py"), "second", max_attempts=1)  # path-ignore
 
     log_file = tmp_path / "failure_fingerprints.jsonl"
     lines = log_file.read_text().strip().splitlines()
     assert len(lines) == 2
     data = [json.loads(l) for l in lines]
-    assert all(d["filename"] == "mod.py" for d in data)
+    assert all(d["filename"] == "mod.py" for d in data)  # path-ignore
 
 
 def test_retry_warns_on_matching_fingerprint(monkeypatch, tmp_path):
@@ -40,7 +40,7 @@ def test_retry_warns_on_matching_fingerprint(monkeypatch, tmp_path):
         return None, False, 0.0
 
     eng1.apply_patch = types.MethodType(fail_once, eng1)
-    eng1.apply_patch_with_retry(Path("mod.py"), "first", max_attempts=1)
+    eng1.apply_patch_with_retry(Path("mod.py"), "first", max_attempts=1)  # path-ignore
 
     # Load the fingerprint that was written
     log_file = tmp_path / "failure_fingerprints.jsonl"
@@ -71,7 +71,7 @@ def test_retry_warns_on_matching_fingerprint(monkeypatch, tmp_path):
         lambda *a, **k: (a[3], False, 0.0, [prior], "WARNING"),
     )
 
-    pid, reverted, _ = eng2.apply_patch_with_retry(Path("mod.py"), "second", max_attempts=2)
+    pid, reverted, _ = eng2.apply_patch_with_retry(Path("mod.py"), "second", max_attempts=2)  # path-ignore
     assert pid == 1 and not reverted
     assert any("WARNING" in d for d in calls[1:])
 
@@ -87,7 +87,7 @@ def test_retry_skips_after_similarity_limit(monkeypatch, tmp_path):
         return None, False, 0.0
 
     eng1.apply_patch = types.MethodType(fail_once, eng1)
-    eng1.apply_patch_with_retry(Path("mod.py"), "first", max_attempts=1)
+    eng1.apply_patch_with_retry(Path("mod.py"), "first", max_attempts=1)  # path-ignore
 
     log_file = tmp_path / "failure_fingerprints.jsonl"
     entry = json.loads(log_file.read_text().strip())
@@ -115,7 +115,7 @@ def test_retry_skips_after_similarity_limit(monkeypatch, tmp_path):
         lambda *a, **k: (a[3], False, 0.0, [prior, prior, prior], "WARNING"),
     )
 
-    pid, _, _ = eng2.apply_patch_with_retry(Path("mod.py"), "second", max_attempts=3)
+    pid, _, _ = eng2.apply_patch_with_retry(Path("mod.py"), "second", max_attempts=3)  # path-ignore
     assert pid is None and len(calls) == 1
 
 
@@ -128,7 +128,7 @@ def test_prompt_optimizer_penalizes_from_fingerprint_log(tmp_path):
     success.write_text(
         json.dumps(
             {
-                "module": "mod.py",
+                "module": "mod.py",  # path-ignore
                 "action": "<module>",
                 "prompt": "prompt!",
                 "success": True,
@@ -140,7 +140,7 @@ def test_prompt_optimizer_penalizes_from_fingerprint_log(tmp_path):
     )
     failure.write_text("", encoding="utf-8")
 
-    fp = FailureFingerprint("mod.py", "<module>", "err", "trace", "prompt!")
+    fp = FailureFingerprint("mod.py", "<module>", "err", "trace", "prompt!")  # path-ignore
     fp_data = asdict(fp)
     fp_data.pop("hash", None)
     log_file.write_text(
@@ -157,7 +157,7 @@ def test_prompt_optimizer_penalizes_from_fingerprint_log(tmp_path):
         fingerprint_threshold=1,
     )
     key = (
-        "mod.py",
+        "mod.py",  # path-ignore
         "<module>",
         "neutral",
         (),

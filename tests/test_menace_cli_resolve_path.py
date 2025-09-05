@@ -43,7 +43,7 @@ def test_handle_new_db_uses_resolved_path(monkeypatch):
 
     def fake_resolve(path):
         store["resolved"] = path
-        return Path("/tmp/db_script.py")
+        return Path("/tmp/db_script.py")  # path-ignore
 
     monkeypatch.setattr(menace_cli, "resolve_path", fake_resolve)
     monkeypatch.setattr(menace_cli, "_run", _capture_run(store))
@@ -51,8 +51,8 @@ def test_handle_new_db_uses_resolved_path(monkeypatch):
     args = argparse.Namespace(name="demo")
     rc = menace_cli.handle_new_db(args)
     assert rc == 0
-    assert store["resolved"] == "scripts/new_db_template.py"
-    assert store["cmd"][1] == "/tmp/db_script.py"
+    assert store["resolved"] == "scripts/new_db_template.py"  # path-ignore
+    assert store["cmd"][1] == "/tmp/db_script.py"  # path-ignore
 
 
 def test_handle_new_vector_uses_resolved_path(monkeypatch):
@@ -60,7 +60,7 @@ def test_handle_new_vector_uses_resolved_path(monkeypatch):
 
     def fake_resolve(path):
         store["resolved"] = path
-        return Path("/tmp/vector_script.py")
+        return Path("/tmp/vector_script.py")  # path-ignore
 
     monkeypatch.setattr(menace_cli, "resolve_path", fake_resolve)
     monkeypatch.setattr(menace_cli, "_run", _capture_run(store))
@@ -73,6 +73,6 @@ def test_handle_new_vector_uses_resolved_path(monkeypatch):
     )
     rc = menace_cli.handle_new_vector(args)
     assert rc == 0
-    assert store["resolved"] == "scripts/new_vector_module.py"
-    assert store["cmd"][1] == "/tmp/vector_script.py"
+    assert store["resolved"] == "scripts/new_vector_module.py"  # path-ignore
+    assert store["cmd"][1] == "/tmp/vector_script.py"  # path-ignore
 

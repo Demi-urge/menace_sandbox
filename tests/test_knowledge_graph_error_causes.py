@@ -14,7 +14,7 @@ def test_update_error_stats_records_causes(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e.db")
     logger = elog.ErrorLogger(db)
 
-    mod = tmp_path / "m.py"
+    mod = tmp_path / "m.py"  # path-ignore
     mod.write_text("def boom():\n    raise ValueError('bad')\n")
     sys.path.insert(0, str(tmp_path))
     m = importlib.import_module("m")

@@ -142,7 +142,7 @@ def _load_manager(variant_seq="mod_a", variant_roi=1.5):
 
     # Load the workflow_evolution_manager module under the package namespace
     spec = importlib.util.spec_from_file_location(
-        "menace_sandbox.workflow_evolution_manager", "workflow_evolution_manager.py"
+        "menace_sandbox.workflow_evolution_manager", "workflow_evolution_manager.py"  # path-ignore
     )
     wem = importlib.util.module_from_spec(spec)
     sys.modules["menace_sandbox.workflow_evolution_manager"] = wem

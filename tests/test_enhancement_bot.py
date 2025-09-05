@@ -10,7 +10,7 @@ import menace.chatgpt_enhancement_bot as ceb
 
 
 def test_evaluate_and_log(tmp_path):
-    f = tmp_path / "a.py"
+    f = tmp_path / "a.py"  # path-ignore
     f.write_text("def run(x, y):\n    total = 0\n    for _ in range(1000):\n        total += x + y\n    return total\n")
     new_code = "def run(x, y):\n    return (x + y) * 1000\n"
     db = ceb.EnhancementDB(tmp_path / "e.db")

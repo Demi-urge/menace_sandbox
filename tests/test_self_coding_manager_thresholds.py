@@ -87,7 +87,7 @@ def test_dynamic_confidence_threshold_blocks_merge(monkeypatch, tmp_path):
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
     mgr.baseline_tracker.update(confidence=0.9)
 
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 

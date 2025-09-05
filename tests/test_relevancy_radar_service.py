@@ -267,9 +267,9 @@ def test_dependency_chain_not_flagged(monkeypatch, tmp_path):
 
     # Create a small repository layout where ``core`` imports ``helper`` and an
     # additional module ``loner`` is unused.
-    (tmp_path / "core.py").write_text("import helper\n")
-    (tmp_path / "helper.py").write_text("\n")
-    (tmp_path / "loner.py").write_text("\n")
+    (tmp_path / "core.py").write_text("import helper\n")  # path-ignore
+    (tmp_path / "helper.py").write_text("\n")  # path-ignore
+    (tmp_path / "loner.py").write_text("\n")  # path-ignore
 
     # Build a minimal import graph: core -> helper, loner isolated.
     import networkx as nx

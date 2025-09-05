@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
-    "sandbox_runner.environment", ROOT / "sandbox_runner" / "environment.py"
+    "sandbox_runner.environment", ROOT / "sandbox_runner" / "environment.py"  # path-ignore
 )
 env = importlib.util.module_from_spec(spec)
 sys.modules["sandbox_runner"] = types.ModuleType("sandbox_runner")

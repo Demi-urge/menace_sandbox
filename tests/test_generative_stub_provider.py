@@ -289,7 +289,7 @@ def test_generated_stub_bad_type(monkeypatch, tmp_path, caplog):
 
 def test_import_exit_no_errors(tmp_path):
     cache = tmp_path / "cache.json"
-    test_file = tmp_path / "t.py"
+    test_file = tmp_path / "t.py"  # path-ignore
     test_file.write_text(
         "import sandbox_runner.generative_stub_provider\n"
         "def test_dummy():\n    pass\n"

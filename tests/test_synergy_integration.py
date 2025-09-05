@@ -12,7 +12,7 @@ import sandbox_runner.environment as env
 def _load_engine():
     os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
     spec = importlib.util.spec_from_file_location(
-        "menace", Path(__file__).resolve().parents[1] / "__init__.py"
+        "menace", Path(__file__).resolve().parents[1] / "__init__.py"  # path-ignore
     )
     menace = importlib.util.module_from_spec(spec)
     sys.modules["menace"] = menace
@@ -122,7 +122,7 @@ def test_synergy_integration(monkeypatch, tmp_path):
     clone = tmp_path / "clone"
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "sandbox_runner.py").write_text("print('ok')")
+    (repo / "sandbox_runner.py").write_text("print('ok')")  # path-ignore
 
     monkeypatch.setattr(env, "SANDBOX_REPO_PATH", repo)
     import sandbox_runner.config as conf
@@ -133,7 +133,7 @@ def test_synergy_integration(monkeypatch, tmp_path):
     def fake_copytree(src, dst, dirs_exist_ok=True):
         Path(dst).mkdir(parents=True, exist_ok=True)
         (Path(dst) / "data").mkdir(exist_ok=True)
-        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")
+        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")  # path-ignore
     monkeypatch.setattr(env.shutil, "copytree", fake_copytree)
     monkeypatch.setattr(env.shutil, "rmtree", lambda path, ignore_errors=True: None)
     monkeypatch.setattr(env, "_docker_available", lambda: False)

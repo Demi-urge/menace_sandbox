@@ -16,9 +16,9 @@ from dynamic_path_router import resolve_path
 
 def test_generate_variants_filters_invalid_permutations(tmp_path, monkeypatch):
     for src in [
-        resolve_path("tests/fixtures/workflow_modules/mod_a.py"),
-        resolve_path("tests/fixtures/workflow_modules/mod_b.py"),
-        resolve_path("tests/fixtures/workflow_modules/mod_c.py"),
+        resolve_path("tests/fixtures/workflow_modules/mod_a.py"),  # path-ignore
+        resolve_path("tests/fixtures/workflow_modules/mod_b.py"),  # path-ignore
+        resolve_path("tests/fixtures/workflow_modules/mod_c.py"),  # path-ignore
     ]:
         (tmp_path / src.stem).write_text(src.read_text())
     monkeypatch.chdir(tmp_path)
@@ -70,7 +70,7 @@ def test_benchmark_workflow_variants_calculates_roi_delta():
         def record_mutation_outcome(*a, **k):
             pass
 
-    src = resolve_path("self_improvement/orchestration_utils.py").read_text()
+    src = resolve_path("self_improvement/orchestration_utils.py").read_text()  # path-ignore
     tree = ast.parse(src)
     func_node = next(
         n
@@ -260,7 +260,7 @@ def _import_wem(side_effects, generate_calls=None):
 
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.workflow_evolution_manager",
-        resolve_path("workflow_evolution_manager.py"),
+        resolve_path("workflow_evolution_manager.py"),  # path-ignore
     )
     wem = importlib.util.module_from_spec(spec)
     sys.modules["menace_sandbox.workflow_evolution_manager"] = wem

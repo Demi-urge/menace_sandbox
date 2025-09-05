@@ -12,7 +12,7 @@ def _stub_deps():
         mod = types.ModuleType("jinja2")
         mod.Template = type("T", (), {"render": lambda self,*a,**k: ""})
         sys.modules["jinja2"] = mod
-    for name in ["yaml", "numpy", "matplotlib", "matplotlib.pyplot", "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives", "cryptography.hazmat.primitives.asymmetric"]:
+    for name in ["yaml", "numpy", "matplotlib", "matplotlib.pyplot", "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives", "cryptography.hazmat.primitives.asymmetric"]:  # path-ignore
         sys.modules.setdefault(name, types.ModuleType(name))
     sys.modules.pop('menace.database_steward_bot', None)
     sys.modules.pop('menace.capital_management_bot', None)

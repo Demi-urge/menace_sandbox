@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _load_meta_planning():
-    src = (ROOT / "self_improvement" / "meta_planning.py").read_text()
+    src = (ROOT / "self_improvement" / "meta_planning.py").read_text()  # path-ignore
     tree = ast.parse(src)
     wanted = {"_get_entropy_threshold", "_should_encode", "self_improvement_cycle"}
     nodes = [

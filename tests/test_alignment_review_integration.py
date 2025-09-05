@@ -22,7 +22,7 @@ def test_alignment_review_integration(tmp_path, monkeypatch):
 
     log_path = tmp_path / "violation_log.jsonl"
     db_path = tmp_path / "alignment_warnings.db"
-    _ = resolve_path("sandbox_runner.py")
+    _ = resolve_path("sandbox_runner.py")  # path-ignore
     monkeypatch.setattr(violation_logger, "LOG_DIR", str(tmp_path))
     monkeypatch.setattr(violation_logger, "LOG_PATH", str(log_path))
     monkeypatch.setattr(violation_logger, "ALIGNMENT_DB_PATH", str(db_path))

@@ -11,7 +11,7 @@ sys.modules.setdefault("git", git_mod)
 for mod in [
     "marshmallow",
     "matplotlib",
-    "matplotlib.pyplot",
+    "matplotlib.pyplot",  # path-ignore
     "requests",
     "pymongo",
     "redis",

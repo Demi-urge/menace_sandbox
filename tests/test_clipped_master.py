@@ -11,7 +11,7 @@ def test_run_script_merges_env(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    script = tmp_path / "dummy.py"
+    script = tmp_path / "dummy.py"  # path-ignore
     script.write_text("print('hi')")
 
     monkeypatch.setenv("DISPLAY", ":1")
@@ -30,5 +30,5 @@ def test_cli_resolves_default_script_from_other_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(clipped_master, "run_scripts", fake_run_scripts)
     monkeypatch.chdir(tmp_path)
     clipped_master.main([])
-    expected = str(resolve_path("menace_master.py"))
+    expected = str(resolve_path("menace_master.py"))  # path-ignore
     assert captured["scripts"] == [expected]

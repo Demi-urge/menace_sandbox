@@ -9,7 +9,7 @@ from dynamic_path_router import resolve_path
 
 
 def _copy_modules(tmp_path: Path) -> None:
-    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):
+    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):  # path-ignore
         shutil.copy(mod, tmp_path / mod.name)
 
 
@@ -25,7 +25,7 @@ def test_orphan_inclusion_after_synthesis(monkeypatch, tmp_path):
     _copy_modules(tmp_path)
     extra_dir = tmp_path / "extra"
     extra_dir.mkdir()
-    (extra_dir / "mod.py").write_text("VALUE = 1\n")
+    (extra_dir / "mod.py").write_text("VALUE = 1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
@@ -79,7 +79,7 @@ def test_orphan_inclusion_after_synthesis(monkeypatch, tmp_path):
             try_integrate_into_workflows,
         )
 
-        _, res = auto_include_modules(["extra/mod.py"], recursive=True, router=router)
+        _, res = auto_include_modules(["extra/mod.py"], recursive=True, router=router)  # path-ignore
         added = res.get("added", [])
         if added:
             try_integrate_into_workflows(sorted(added), router=router)
@@ -98,5 +98,5 @@ def test_orphan_inclusion_after_synthesis(monkeypatch, tmp_path):
     synth = ws.WorkflowSynthesizer()
     synth.generate_workflows(start_module="mod_a", limit=1, max_depth=1)
 
-    assert auto_called["auto"] == ["extra/mod.py"]
-    assert auto_called["workflow"] == ["extra/mod.py"]
+    assert auto_called["auto"] == ["extra/mod.py"]  # path-ignore
+    assert auto_called["workflow"] == ["extra/mod.py"]  # path-ignore

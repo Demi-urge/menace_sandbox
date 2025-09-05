@@ -93,11 +93,11 @@ def make_store(tmp_path: Path) -> FailureFingerprintStore:
 
 def test_log_writes_jsonl_and_embeddings(tmp_path: Path) -> None:
     store = make_store(tmp_path)
-    fp = FailureFingerprint("a.py", "f", "err", "trace", "prompt")
+    fp = FailureFingerprint("a.py", "f", "err", "trace", "prompt")  # path-ignore
     store.log(fp)
     # JSONL line written
     data = json.loads(store.path.read_text().strip())
-    assert data["filename"] == "a.py"
+    assert data["filename"] == "a.py"  # path-ignore
     # embedding persisted via vector store
     rid = store._id_for(fp)
     assert rid in store.vector_service.vector_store.records
@@ -105,11 +105,11 @@ def test_log_writes_jsonl_and_embeddings(tmp_path: Path) -> None:
 
 def test_find_similar_above_threshold(tmp_path: Path) -> None:
     store = make_store(tmp_path)
-    fp1 = FailureFingerprint("a.py", "f", "err", "trace", "p1")
+    fp1 = FailureFingerprint("a.py", "f", "err", "trace", "p1")  # path-ignore
     store.log(fp1)
-    fp2 = FailureFingerprint("b.py", "g", "err", "trace", "p2")
+    fp2 = FailureFingerprint("b.py", "g", "err", "trace", "p2")  # path-ignore
     matches = store.find_similar(fp2, threshold=0.0)
-    assert matches and matches[0].filename == "a.py"
+    assert matches and matches[0].filename == "a.py"  # path-ignore
 
 
 # ---------------------------------------------------------------------------
@@ -253,18 +253,18 @@ def test_run_patch_skips_on_high_similarity(
     initial = [
         TestResult("1 passed", "", True),
         TestResult(
-            "File \"mod.py\", line 1, in bad\nValueError: boom",
+            "File \"mod.py\", line 1, in bad\nValueError: boom",  # path-ignore
             "",
             False,
             failure={
-                "stack": 'File "mod.py", line 1, in bad\nValueError: boom',
+                "stack": 'File "mod.py", line 1, in bad\nValueError: boom',  # path-ignore
                 "strategy_tag": "tag",
             },
         ),
     ]
     manager, store, _engine = _load_manager(monkeypatch, tmp_path, initial)
 
-    target = Path("dummy_patch_target.py")
+    target = Path("dummy_patch_target.py")  # path-ignore
     target.write_text("x = 1", encoding="utf-8")
     import subprocess
 
@@ -288,7 +288,7 @@ def test_run_patch_skips_on_high_similarity(
     )
     try:
         fp_match = FailureFingerprint(
-            "mod.py", "bad", "ValueError: boom", "trace", "prompt", embedding=[1.0, 0.0]
+            "mod.py", "bad", "ValueError: boom", "trace", "prompt", embedding=[1.0, 0.0]  # path-ignore
         )
         calls = {"n": 0}
 
@@ -309,11 +309,11 @@ def test_run_patch_warns_on_low_similarity(
     initial = [
         TestResult("1 passed", "", True),
         TestResult(
-            "File \"mod.py\", line 1, in bad\nValueError: boom",
+            "File \"mod.py\", line 1, in bad\nValueError: boom",  # path-ignore
             "",
             False,
             failure={
-                "stack": 'File "mod.py", line 1, in bad\nValueError: boom',
+                "stack": 'File "mod.py", line 1, in bad\nValueError: boom',  # path-ignore
                 "strategy_tag": "tag",
             },
         ),
@@ -321,7 +321,7 @@ def test_run_patch_warns_on_low_similarity(
     ]
     manager, store, engine = _load_manager(monkeypatch, tmp_path, initial)
 
-    target = Path("dummy_patch_target.py")
+    target = Path("dummy_patch_target.py")  # path-ignore
     target.write_text("x = 1", encoding="utf-8")
     import subprocess
 
@@ -347,7 +347,7 @@ def test_run_patch_warns_on_low_similarity(
     )
     try:
         fp_match = FailureFingerprint(
-            "mod.py", "bad", "ValueError: boom", "trace", "prompt", embedding=[0.0, 1.0]
+            "mod.py", "bad", "ValueError: boom", "trace", "prompt", embedding=[0.0, 1.0]  # path-ignore
         )
         calls = {"n": 0}
 
@@ -380,12 +380,12 @@ def test_provisional_fingerprint_skips(
 
     def fake_find(fp, threshold=None):
         return [
-            fp_mod.FailureFingerprint("f.py", "", "e", "t", "p", embedding=[1.0, 0.0])
+            fp_mod.FailureFingerprint("f.py", "", "e", "t", "p", embedding=[1.0, 0.0])  # path-ignore
         ]
 
     store.find_similar = fake_find
 
-    target = Path("dummy_patch_target.py")
+    target = Path("dummy_patch_target.py")  # path-ignore
     target.write_text("x = 1", encoding="utf-8")
     import subprocess
 
@@ -424,12 +424,12 @@ def test_provisional_fingerprint_warns(
 
     def fake_find(fp, threshold=None):
         return [
-            fp_mod.FailureFingerprint("f.py", "", "e", "t", "p", embedding=[0.0, 1.0])
+            fp_mod.FailureFingerprint("f.py", "", "e", "t", "p", embedding=[0.0, 1.0])  # path-ignore
         ]
 
     store.find_similar = fake_find
 
-    target = Path("dummy_patch_target.py")
+    target = Path("dummy_patch_target.py")  # path-ignore
     target.write_text("x = 1", encoding="utf-8")
     import subprocess
 

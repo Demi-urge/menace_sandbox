@@ -9,7 +9,7 @@ from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
     "menace",
-    Path(__file__).resolve().parents[1] / "__init__.py",
+    Path(__file__).resolve().parents[1] / "__init__.py",  # path-ignore
     submodule_search_locations=[str(Path(__file__).resolve().parents[1])],
 )
 menace = importlib.util.module_from_spec(spec)

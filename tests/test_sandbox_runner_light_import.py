@@ -8,8 +8,8 @@ def test_light_import_orphan_utils(tmp_path, monkeypatch):
     sr = importlib.import_module("sandbox_runner")
     assert "sandbox_runner.environment" not in sys.modules
 
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("x = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("x = 1\n")  # path-ignore
 
     orphans = sr.discover_orphan_modules(str(tmp_path), recursive=False)
     assert orphans == ["a"]

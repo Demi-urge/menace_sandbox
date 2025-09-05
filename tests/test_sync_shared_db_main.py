@@ -11,7 +11,7 @@ def _run_sync_once(queue_dir: Path, db_path: Path, monkeypatch) -> None:
         sys,
         "argv",
         [
-            "sync_shared_db.py",
+            "sync_shared_db.py",  # path-ignore
             "--queue-dir",
             str(queue_dir),
             "--db-path",
@@ -99,7 +99,7 @@ def test_replay_failed(tmp_path, monkeypatch):
         sys,
         "argv",
         [
-            "sync_shared_db.py",
+            "sync_shared_db.py",  # path-ignore
             "--queue-dir",
             str(queue_dir),
             "--db-path",

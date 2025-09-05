@@ -13,7 +13,7 @@ if "menace.synergy_predictor" in sys.modules:
 else:  # pragma: no cover - allow running file directly
     spec = importlib.util.spec_from_file_location(
         "menace.synergy_predictor",
-        Path(__file__).resolve().parents[1] / "menace" / "synergy_predictor.py",
+        Path(__file__).resolve().parents[1] / "menace" / "synergy_predictor.py",  # path-ignore
     )
     sp = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sp)
@@ -26,7 +26,7 @@ else:  # pragma: no cover - allow running file directly
     pkg.logging_utils = log_mod
     rt_spec = importlib.util.spec_from_file_location(
         "menace.roi_tracker",
-        Path(__file__).resolve().parents[1] / "roi_tracker.py",
+        Path(__file__).resolve().parents[1] / "roi_tracker.py",  # path-ignore
     )
     rt = importlib.util.module_from_spec(rt_spec)
     rt_spec.loader.exec_module(rt)

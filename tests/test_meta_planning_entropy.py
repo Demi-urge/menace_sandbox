@@ -7,7 +7,7 @@ from statistics import fmean
 from self_improvement.baseline_tracker import BaselineTracker
 
 
-src_path = Path(__file__).resolve().parents[1] / "self_improvement" / "meta_planning.py"
+src_path = Path(__file__).resolve().parents[1] / "self_improvement" / "meta_planning.py"  # path-ignore
 tree = ast.parse(src_path.read_text(), filename=str(src_path))
 ns: dict[str, object] = {}
 ns["SandboxSettings"] = object

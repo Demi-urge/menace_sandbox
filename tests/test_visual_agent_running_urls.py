@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def _load_func():
-    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
+    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"  # path-ignore
     lines = path.read_text().splitlines()
     start = next(i for i, l in enumerate(lines) if l.startswith("def _visual_agent_running"))
     indent = len(lines[start]) - len(lines[start].lstrip())

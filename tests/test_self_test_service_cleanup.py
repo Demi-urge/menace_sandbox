@@ -63,7 +63,7 @@ def load_self_test_service():
     pkg.__path__ = [str(ROOT)]
     pkg.__spec__ = importlib.machinery.ModuleSpec('menace', loader=None, is_package=True)
     sys.modules['menace'] = pkg
-    spec = importlib.util.spec_from_file_location('menace.self_test_service', ROOT / 'self_test_service.py')
+    spec = importlib.util.spec_from_file_location('menace.self_test_service', ROOT / 'self_test_service.py')  # path-ignore
     mod = importlib.util.module_from_spec(spec)
     sys.modules['menace.self_test_service'] = mod
     spec.loader.exec_module(mod)
@@ -177,7 +177,7 @@ def test_remove_stale_containers_failure_metric(monkeypatch):
 
 def test_run_module_harness_cleans_stub(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(sts.settings, "sandbox_data_dir", tmp_path)
-    mod_file = tmp_path / "m.py"
+    mod_file = tmp_path / "m.py"  # path-ignore
     mod_file.write_text("def f():\n    return 1\n")
 
     def fake_run(*args, **kwargs):

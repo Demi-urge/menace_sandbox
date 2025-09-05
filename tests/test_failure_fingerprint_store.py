@@ -62,21 +62,21 @@ def make_store(tmp_path):
 
 def test_log_and_find_similar(tmp_path):
     store = make_store(tmp_path)
-    fp1 = FailureFingerprint('a.py', 'func', 'oops', 'trace one', 'p1')
+    fp1 = FailureFingerprint('a.py', 'func', 'oops', 'trace one', 'p1')  # path-ignore
     store.log(fp1)
     assert fp1.embedding and fp1.embedding_metadata['dim'] == 2
     rid1 = store._id_for(fp1)
     assert 'embedding_meta' in store.vector_service.vector_store.meta[rid1]
 
-    fp2 = FailureFingerprint('b.py', 'func2', 'err', 'trace one', 'p2')
+    fp2 = FailureFingerprint('b.py', 'func2', 'err', 'trace one', 'p2')  # path-ignore
     matches = store.find_similar(fp2)
-    assert matches and matches[0].filename == 'a.py'
+    assert matches and matches[0].filename == 'a.py'  # path-ignore
 
 
 def test_compact_rewrites_store(tmp_path):
     store = make_store(tmp_path)
-    fp1 = FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p')
-    fp2 = FailureFingerprint('b.py', 'g', 'e', 'trace two', 'p')
+    fp1 = FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p')  # path-ignore
+    fp2 = FailureFingerprint('b.py', 'g', 'e', 'trace two', 'p')  # path-ignore
     store.log(fp1)
     store.log(fp2)
     rid1 = store._id_for(fp1)
@@ -91,9 +91,9 @@ def test_compact_rewrites_store(tmp_path):
 
 def test_cluster_assignment(tmp_path):
     store = make_store(tmp_path)
-    fp1 = FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p')
-    fp2 = FailureFingerprint('b.py', 'g', 'e', 'trace one', 'p')
-    fp3 = FailureFingerprint('c.py', 'h', 'e', 'xyz', 'p')
+    fp1 = FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p')  # path-ignore
+    fp2 = FailureFingerprint('b.py', 'g', 'e', 'trace one', 'p')  # path-ignore
+    fp3 = FailureFingerprint('c.py', 'h', 'e', 'xyz', 'p')  # path-ignore
     store.log(fp1)
     store.log(fp2)
     store.log(fp3)
@@ -101,14 +101,14 @@ def test_cluster_assignment(tmp_path):
     assert fp1.cluster_id == fp2.cluster_id
     assert fp3.cluster_id != fp1.cluster_id
     cluster = store.get_cluster(fp1.cluster_id)
-    assert {f.filename for f in cluster} == {'a.py', 'b.py'}
+    assert {f.filename for f in cluster} == {'a.py', 'b.py'}  # path-ignore
 
 
 def test_duplicate_increments_count(tmp_path):
     store = make_store(tmp_path)
-    fp = FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p')
+    fp = FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p')  # path-ignore
     store.add(fp)
-    store.add(FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p'))
+    store.add(FailureFingerprint('a.py', 'f', 'e', 'trace one', 'p'))  # path-ignore
     rid = store._id_for(fp)
     assert store._cache[rid].count == 2
     with store.path.open('r', encoding='utf-8') as fh:

@@ -12,7 +12,7 @@ def test_extract_target_region_from_string(tmp_path):
         "def outer():\n"
         "    inner()\n"
     )
-    path = tmp_path / "m.py"
+    path = tmp_path / "m.py"  # path-ignore
     path.write_text(src)
 
     trace = (
@@ -35,7 +35,7 @@ def test_extract_target_region(tmp_path):
         "def outer():\n"
         "    inner()\n"
     )
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text(source)
 
     spec = importlib.util.spec_from_file_location("mod", path)

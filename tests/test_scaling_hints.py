@@ -41,7 +41,7 @@ matplotlib_stub.__path__ = []
 sys.modules.setdefault("matplotlib", matplotlib_stub)
 plt_stub = types.ModuleType("pyplot")
 plt_stub.plot = lambda *a, **k: None
-sys.modules["matplotlib.pyplot"] = plt_stub
+sys.modules["matplotlib.pyplot"] = plt_stub  # path-ignore
 if "git" in sys.modules:
     sys.modules["git"].Repo = object
 if "dotenv" in sys.modules:

@@ -11,7 +11,7 @@ def test_environment_respects_sandbox_repo_path(tmp_path, monkeypatch):
     (repo / ".git").mkdir(parents=True)
     sub = repo / "submodule"
     (sub / ".git").mkdir(parents=True)
-    mod = sub / "helper.py"
+    mod = sub / "helper.py"  # path-ignore
     mod.write_text("def hi():\n    return 'hi'\n")
 
     data_dir = repo / "sandbox_data"

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_test_service",
-    ROOT / "self_test_service.py",
+    ROOT / "self_test_service.py",  # path-ignore
 )
 mod = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
@@ -49,7 +49,7 @@ mod.analyze_redundancy = lambda p: False
 def test_include_orphans(tmp_path, monkeypatch):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    (data_dir / "orphan_modules.json").write_text(json.dumps(["foo.py", "bar.py"]))
+    (data_dir / "orphan_modules.json").write_text(json.dumps(["foo.py", "bar.py"]))  # path-ignore
 
     calls = []
 
@@ -89,8 +89,8 @@ def test_include_orphans(tmp_path, monkeypatch):
     svc.run_once()
 
     joined = [" ".join(map(str, c)) for c in calls]
-    assert any("foo.py" in c for c in joined)
-    assert any("bar.py" in c for c in joined)
+    assert any("foo.py" in c for c in joined)  # path-ignore
+    assert any("bar.py" in c for c in joined)  # path-ignore
     assert svc.results.get("orphan_total") == 2
     assert svc.results.get("orphan_failed") == 0
 
@@ -137,10 +137,10 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert set(data) == {"foo.py", "bar.py"}
+    assert set(data) == {"foo.py", "bar.py"}  # path-ignore
     joined = [" ".join(map(str, c)) for c in calls]
-    assert any("foo.py" in c for c in joined)
-    assert any("bar.py" in c for c in joined)
+    assert any("foo.py" in c for c in joined)  # path-ignore
+    assert any("bar.py" in c for c in joined)  # path-ignore
 
 
 def test_discover_orphans_option(tmp_path, monkeypatch):
@@ -186,10 +186,10 @@ def test_discover_orphans_option(tmp_path, monkeypatch):
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert set(data) == {"foo.py", "bar.py"}
+    assert set(data) == {"foo.py", "bar.py"}  # path-ignore
     joined = [" ".join(map(str, c)) for c in calls]
-    assert any("foo.py" in c for c in joined)
-    assert any("bar.py" in c for c in joined)
+    assert any("foo.py" in c for c in joined)  # path-ignore
+    assert any("bar.py" in c for c in joined)  # path-ignore
 
 
 def test_discover_isolated_option(tmp_path, monkeypatch):
@@ -226,7 +226,7 @@ def test_discover_isolated_option(tmp_path, monkeypatch):
     import types
 
     mod_iso = types.ModuleType("scripts.discover_isolated_modules")
-    mod_iso.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py", "bar.py"]
+    mod_iso.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py", "bar.py"]  # path-ignore
     pkg = types.ModuleType("scripts")
     pkg.discover_isolated_modules = mod_iso
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
@@ -240,10 +240,10 @@ def test_discover_isolated_option(tmp_path, monkeypatch):
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert data == ["foo.py", "bar.py"]
+    assert data == ["foo.py", "bar.py"]  # path-ignore
     joined = [" ".join(map(str, c)) for c in calls]
-    assert any("foo.py" in c for c in joined)
-    assert any("bar.py" in c for c in joined)
+    assert any("foo.py" in c for c in joined)  # path-ignore
+    assert any("bar.py" in c for c in joined)  # path-ignore
 
 
 def test_recursive_option_used(tmp_path, monkeypatch):
@@ -344,11 +344,11 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     )
     svc.run_once()
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert data == ["foo.py"]
+    assert data == ["foo.py"]  # path-ignore
 
     svc.run_once()
     data2 = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert sorted(data2) == ["bar.py", "foo.py"]
+    assert sorted(data2) == ["bar.py", "foo.py"]  # path-ignore
     assert len(calls) == 2
     for repo, m in calls:
         assert Path(repo) == tmp_path
@@ -357,9 +357,9 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
 
 def test_recursive_chain_modules(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n")
-    (tmp_path / "c.py").write_text("x = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n")  # path-ignore
+    (tmp_path / "c.py").write_text("x = 1\n")  # path-ignore
 
     calls = []
 
@@ -406,11 +406,11 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert sorted(data) == ["a.py", "b.py", "c.py"]
+    assert sorted(data) == ["a.py", "b.py", "c.py"]  # path-ignore
     joined = "\n".join(calls)
-    assert "a.py" in joined
-    assert "b.py" in joined
-    assert "c.py" in joined
+    assert "a.py" in joined  # path-ignore
+    assert "b.py" in joined  # path-ignore
+    assert "c.py" in joined  # path-ignore
     assert Path(params["repo"]) == tmp_path
     assert Path(params["map"]).resolve() == (tmp_path / "sandbox_data" / "module_map.json").resolve()
 
@@ -461,10 +461,10 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     svc.run_once(refresh_orphans=True)
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert sorted(data) == ["a.py", "b.py"]
+    assert sorted(data) == ["a.py", "b.py"]  # path-ignore
     joined = "\n".join(calls)
-    assert "a.py" in joined
-    assert "b.py" in joined
+    assert "a.py" in joined  # path-ignore
+    assert "b.py" in joined  # path-ignore
     assert len(discover_calls) == 1
     repo, m = discover_calls[0]
     assert Path(repo) == tmp_path
@@ -489,7 +489,7 @@ def test_env_disables_recursive_orphans(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     find_mod = types.ModuleType("scripts.find_orphan_modules")
-    find_mod.find_orphan_modules = lambda root: [tmp_path / "foo.py"]
+    find_mod.find_orphan_modules = lambda root: [tmp_path / "foo.py"]  # path-ignore
     scripts_pkg = types.ModuleType("scripts")
     scripts_pkg.find_orphan_modules = find_mod.find_orphan_modules
     monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", find_mod)
@@ -498,13 +498,13 @@ def test_env_disables_recursive_orphans(tmp_path, monkeypatch):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     svc = mod.SelfTestService()
     modules = svc._discover_orphans()
-    assert modules == ["foo.py"]
+    assert modules == ["foo.py"]  # path-ignore
     assert called.get("used") is None
 
 
 def test_discover_orphans_skips_redundant(tmp_path, monkeypatch):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("# deprecated\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("# deprecated\n")  # path-ignore
 
     import types
 
@@ -517,7 +517,7 @@ def test_discover_orphans_skips_redundant(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     def fake_analyze(path: Path) -> bool:
-        return path.name == "b.py"
+        return path.name == "b.py"  # path-ignore
 
     monkeypatch.setattr(mod, "analyze_redundancy", fake_analyze)
 
@@ -527,9 +527,9 @@ def test_discover_orphans_skips_redundant(tmp_path, monkeypatch):
     svc = mod.SelfTestService()
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     modules = svc._discover_orphans()
-    assert modules == ["a.py"]
-    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]
-    assert svc.orphan_traces["b.py"]["redundant"] is True
+    assert modules == ["a.py"]  # path-ignore
+    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]  # path-ignore
+    assert svc.orphan_traces["b.py"]["redundant"] is True  # path-ignore
 
 
 @pytest.mark.parametrize("var", ["SELF_TEST_DISABLE_ORPHANS", "SANDBOX_DISABLE_ORPHANS"])
@@ -563,7 +563,7 @@ def _setup_isolated(monkeypatch):
 
     def discover(root, *, recursive=True):
         called["recursive"] = recursive
-        return ["foo.py"]
+        return ["foo.py"]  # path-ignore
 
     mod_iso = types.ModuleType("scripts.discover_isolated_modules")
     mod_iso.discover_isolated_modules = discover
@@ -594,7 +594,7 @@ def test_recursive_isolated_setting(tmp_path, monkeypatch):
 
     assert called.get("recursive") is False
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert data == ["foo.py"]
+    assert data == ["foo.py"]  # path-ignore
 
 
 def test_recursive_isolated_arg(tmp_path, monkeypatch):
@@ -607,12 +607,12 @@ def test_recursive_isolated_arg(tmp_path, monkeypatch):
 
     assert called.get("recursive") is True
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert data == ["foo.py"]
+    assert data == ["foo.py"]  # path-ignore
 
 
 def test_isolated_cleanup_passed(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
-    (tmp_path / "foo.py").write_text("x = 1\n")
+    (tmp_path / "foo.py").write_text("x = 1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)
 
     async def fake_exec(*cmd, **kwargs):
@@ -642,7 +642,7 @@ def test_isolated_cleanup_passed(tmp_path, monkeypatch):
     import types
 
     mod_iso = types.ModuleType("scripts.discover_isolated_modules")
-    mod_iso.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py"]
+    mod_iso.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py"]  # path-ignore
     pkg = types.ModuleType("scripts")
     pkg.discover_isolated_modules = mod_iso
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
@@ -661,15 +661,15 @@ def test_isolated_cleanup_passed(tmp_path, monkeypatch):
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == []
-    assert calls == [["foo.py"]]
-    assert svc.results.get("orphan_passed") == ["foo.py"]
+    assert calls == [["foo.py"]]  # path-ignore
+    assert svc.results.get("orphan_passed") == ["foo.py"]  # path-ignore
 
 
 def test_orphan_cleanup_passed(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
-    (tmp_path / "foo.py").write_text("x = 1\n")
+    (tmp_path / "foo.py").write_text("x = 1\n")  # path-ignore
     (tmp_path / "sandbox_data" / "orphan_modules.json").write_text(
-        json.dumps(["foo.py"])
+        json.dumps(["foo.py"])  # path-ignore
     )
     monkeypatch.chdir(tmp_path)
 
@@ -710,14 +710,14 @@ def test_orphan_cleanup_passed(tmp_path, monkeypatch):
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == []
-    assert svc.results.get("orphan_passed") == ["foo.py"]
+    assert svc.results.get("orphan_passed") == ["foo.py"]  # path-ignore
 
 
 def test_default_integration_reports(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    (tmp_path / "foo.py").write_text("VALUE = 1\n")
+    (tmp_path / "foo.py").write_text("VALUE = 1\n")  # path-ignore
 
     mod.analyze_redundancy = lambda p: False
 
@@ -746,7 +746,7 @@ def test_default_integration_reports(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_pkg)
 
     iso_mod = types.ModuleType("scripts.discover_isolated_modules")
-    iso_mod.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py"]
+    iso_mod.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py"]  # path-ignore
     scripts_pkg = types.ModuleType("scripts")
     scripts_pkg.discover_isolated_modules = iso_mod
     monkeypatch.setitem(sys.modules, "scripts", scripts_pkg)
@@ -779,5 +779,5 @@ def test_default_integration_reports(monkeypatch, tmp_path):
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
 
-    assert svc.results.get("integration") == {"integrated": ["foo.py"], "redundant": []}
+    assert svc.results.get("integration") == {"integrated": ["foo.py"], "redundant": []}  # path-ignore
 

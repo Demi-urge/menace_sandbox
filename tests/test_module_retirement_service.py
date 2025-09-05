@@ -14,7 +14,7 @@ def _stub_build_graph(root):
 
 
 def test_retire_module_zero_impact(monkeypatch, tmp_path):
-    module = tmp_path / "demo.py"
+    module = tmp_path / "demo.py"  # path-ignore
     module.write_text("print('hi')")
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)
@@ -60,7 +60,7 @@ def test_retire_module_zero_impact(monkeypatch, tmp_path):
     service = ModuleRetirementService(tmp_path)
     res = service.process_flags(flags)
 
-    retired = tmp_path / "sandbox_data" / "retired_modules" / "demo.py"
+    retired = tmp_path / "sandbox_data" / "retired_modules" / "demo.py"  # path-ignore
     assert res == {"demo": "retired"}
     assert retired.exists()
     assert captured["results"] == {"demo": "retired"}

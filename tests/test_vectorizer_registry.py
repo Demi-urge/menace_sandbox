@@ -54,7 +54,7 @@ def test_registry_enables_vectorization_and_backfill(monkeypatch):
 def test_auto_discovered_vectorizer_scheduled(tmp_path, monkeypatch):
     """Vectorizers placed under vector_service.* are backfilled automatically."""
 
-    toy_plugin = tmp_path / "toy_plugin.py"
+    toy_plugin = tmp_path / "toy_plugin.py"  # path-ignore
     toy_plugin.write_text(
         """
 from vector_service.embedding_backfill import EmbeddableDBMixin
@@ -76,8 +76,8 @@ class ToyDB(EmbeddableDBMixin):
 
     vs_extra = tmp_path / "extra_vs"
     vs_extra.mkdir()
-    (vs_extra / "__init__.py").write_text("")
-    (vs_extra / "toy_vectorizer.py").write_text(
+    (vs_extra / "__init__.py").write_text("")  # path-ignore
+    (vs_extra / "toy_vectorizer.py").write_text(  # path-ignore
         """
 DB_MODULE = "toy_plugin"
 DB_CLASS = "ToyDB"

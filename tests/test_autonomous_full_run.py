@@ -8,7 +8,7 @@ from dynamic_path_router import resolve_path
 
 
 def load_module():
-    path = resolve_path("run_autonomous.py")
+    path = resolve_path("run_autonomous.py")  # path-ignore
     sys.modules.pop("menace", None)
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)

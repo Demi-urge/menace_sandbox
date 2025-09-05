@@ -63,7 +63,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # dynamically load SelfTestService
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 self_test_mod = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
@@ -105,7 +105,7 @@ sys.modules.setdefault("module_index_db", module_index_db)
 
 def _load_refresh_methods(fake_generate, fake_try, fake_run=lambda *a, **k: None):
     """Extract refresh helpers from self_improvement with hooks."""
-    path = ROOT / "self_improvement.py"
+    path = ROOT / "self_improvement.py"  # path-ignore
     src = path.read_text()
     tree = ast.parse(src)
     methods = []
@@ -146,8 +146,8 @@ def _load_refresh_methods(fake_generate, fake_try, fake_run=lambda *a, **k: None
 def test_recursive_isolated_integration(monkeypatch, tmp_path):
     # prepare small repo tree
     (tmp_path / "sandbox_data").mkdir()
-    (tmp_path / "helper.py").write_text("VALUE = 1\n")
-    (tmp_path / "isolated.py").write_text("import helper\n")
+    (tmp_path / "helper.py").write_text("VALUE = 1\n")  # path-ignore
+    (tmp_path / "isolated.py").write_text("import helper\n")  # path-ignore
 
     # stub discovery to ensure recursion
     called: dict[str, object] = {}
@@ -155,9 +155,9 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
     def fake_discover(root, *, recursive=True):
         called["root"] = Path(root)
         called["recursive"] = recursive
-        mods = ["isolated.py"]
+        mods = ["isolated.py"]  # path-ignore
         if recursive:
-            mods.append("helper.py")
+            mods.append("helper.py")  # path-ignore
         return mods
 
     iso_mod = types.ModuleType("scripts.discover_isolated_modules")
@@ -175,7 +175,7 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
         path = None
         for i, a in enumerate(cmd):
             s = str(a)
-            if s.endswith(".py") and mod_arg is None:
+            if s.endswith(".py") and mod_arg is None:  # path-ignore
                 mod_arg = s
             if s.startswith("--json-report-file"):
                 path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
@@ -263,12 +263,12 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
     asyncio.run(svc._run_once())
 
     assert called.get("recursive") is True
-    assert set(executed) == {"helper.py", "isolated.py"}
-    assert set(passed) == {"helper.py", "isolated.py"}
+    assert set(executed) == {"helper.py", "isolated.py"}  # path-ignore
+    assert set(passed) == {"helper.py", "isolated.py"}  # path-ignore
     data = json.loads(map_path.read_text()).get("modules", {})
-    assert {"helper.py", "isolated.py"}.issubset(data.keys())
-    assert generated and sorted(generated[0]) == ["helper.py", "isolated.py"]
-    assert integrated and sorted(integrated[0]) == ["helper.py", "isolated.py"]
+    assert {"helper.py", "isolated.py"}.issubset(data.keys())  # path-ignore
+    assert generated and sorted(generated[0]) == ["helper.py", "isolated.py"]  # path-ignore
+    assert integrated and sorted(integrated[0]) == ["helper.py", "isolated.py"]  # path-ignore
     assert simulated
     mods_path = tmp_path / "orphan_modules.json"
     if mods_path.exists():
@@ -280,8 +280,8 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
     # prepare small repo tree
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    (tmp_path / "helper.py").write_text("VALUE = 2\n")
-    (tmp_path / "orphan.py").write_text("import helper\n")
+    (tmp_path / "helper.py").write_text("VALUE = 2\n")  # path-ignore
+    (tmp_path / "orphan.py").write_text("import helper\n")  # path-ignore
 
     # stub recursive orphan discovery
     called: list[dict[str, object]] = []
@@ -302,7 +302,7 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
         path = None
         for i, a in enumerate(cmd):
             s = str(a)
-            if s.endswith(".py") and mod_arg is None:
+            if s.endswith(".py") and mod_arg is None:  # path-ignore
                 mod_arg = s
             if s.startswith("--json-report-file"):
                 path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
@@ -393,12 +393,12 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
 
     assert called and called[0]["root"] == str(tmp_path)
     assert Path(str(called[0]["module_map"])).resolve() == map_path
-    assert set(executed) == {"helper.py", "orphan.py"}
-    assert set(passed) == {"helper.py", "orphan.py"}
+    assert set(executed) == {"helper.py", "orphan.py"}  # path-ignore
+    assert set(passed) == {"helper.py", "orphan.py"}  # path-ignore
     data = json.loads(map_path.read_text()).get("modules", {})
-    assert {"helper.py", "orphan.py"}.issubset(data.keys())
-    assert generated and sorted(generated[0]) == ["helper.py", "orphan.py"]
-    assert integrated and sorted(integrated[0]) == ["helper.py", "orphan.py"]
+    assert {"helper.py", "orphan.py"}.issubset(data.keys())  # path-ignore
+    assert generated and sorted(generated[0]) == ["helper.py", "orphan.py"]  # path-ignore
+    assert integrated and sorted(integrated[0]) == ["helper.py", "orphan.py"]  # path-ignore
     assert simulated
     mods_path = data_dir / "orphan_modules.json"
     assert json.loads(mods_path.read_text()) == []
@@ -406,7 +406,7 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
 
 def test_generate_stub_with_scenarios(monkeypatch, tmp_path):
     (tmp_path / "sandbox_data").mkdir()
-    module_path = tmp_path / "math_mod.py"
+    module_path = tmp_path / "math_mod.py"  # path-ignore
     module_path.write_text("def add(a, b):\n    return a + b\n")
 
     scenarios = {

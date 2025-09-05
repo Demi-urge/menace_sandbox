@@ -21,7 +21,7 @@ for dep in ("pyautogui", "mss", "cv2", "numpy"):
 
 
 def test_visual_agent_concurrency(tmp_path):
-    script = tmp_path / "server.py"
+    script = tmp_path / "server.py"  # path-ignore
     script.write_text(textwrap.dedent(
         """
         import sys, types, threading, importlib, time, os
@@ -45,7 +45,7 @@ def test_visual_agent_concurrency(tmp_path):
         filelock_mod.Timeout = DummyTimeout
         sys.modules['filelock'] = filelock_mod
         pt_mod = types.ModuleType('pytesseract')
-        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
         pt_mod.image_to_string = lambda *a, **k: ''
         pt_mod.image_to_data = lambda *a, **k: {}
         pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -125,7 +125,7 @@ def test_visual_agent_concurrency(tmp_path):
 def test_run_requests_enqueue_during_active_run(tmp_path):
     """Additional /run requests are queued while a job is running."""
 
-    script = tmp_path / "server_active.py"
+    script = tmp_path / "server_active.py"  # path-ignore
     script.write_text(textwrap.dedent(
         """
         import sys, types, threading, importlib, time, os
@@ -149,7 +149,7 @@ def test_run_requests_enqueue_during_active_run(tmp_path):
         filelock_mod.Timeout = DummyTimeout
         sys.modules['filelock'] = filelock_mod
         pt_mod = types.ModuleType('pytesseract')
-        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
         pt_mod.image_to_string = lambda *a, **k: ''
         pt_mod.image_to_data = lambda *a, **k: {}
         pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -235,7 +235,7 @@ def test_run_requests_enqueue_during_active_run(tmp_path):
 def test_overlapping_run_requests(tmp_path):
     """First run is accepted while the second is rejected."""
 
-    script = tmp_path / "server.py"
+    script = tmp_path / "server.py"  # path-ignore
     script.write_text(
         textwrap.dedent(
             """
@@ -260,7 +260,7 @@ def test_overlapping_run_requests(tmp_path):
             filelock_mod.Timeout = DummyTimeout
             sys.modules['filelock'] = filelock_mod
             pt_mod = types.ModuleType('pytesseract')
-            pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+            pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
             pt_mod.image_to_string = lambda *a, **k: ''
             pt_mod.image_to_data = lambda *a, **k: {}
             pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -331,7 +331,7 @@ def test_overlapping_run_requests(tmp_path):
 
 
 def test_visual_agent_queue_persistence(tmp_path):
-    script = tmp_path / "server.py"
+    script = tmp_path / "server.py"  # path-ignore
     script.write_text(textwrap.dedent(
         """
         import sys, types, threading, importlib, time, os, json
@@ -355,7 +355,7 @@ def test_visual_agent_queue_persistence(tmp_path):
         filelock_mod.Timeout = DummyTimeout
         sys.modules['filelock'] = filelock_mod
         pt_mod = types.ModuleType('pytesseract')
-        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
         pt_mod.image_to_string = lambda *a, **k: ''
         pt_mod.image_to_data = lambda *a, **k: {}
         pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -440,7 +440,7 @@ def test_visual_agent_queue_persistence(tmp_path):
 
 
 def test_visual_agent_auto_recover(tmp_path):
-    script = tmp_path / "server.py"
+    script = tmp_path / "server.py"  # path-ignore
     script.write_text(textwrap.dedent(
         """
         import sys, types, threading, importlib, time, os
@@ -464,7 +464,7 @@ def test_visual_agent_auto_recover(tmp_path):
         filelock_mod.Timeout = DummyTimeout
         sys.modules['filelock'] = filelock_mod
         pt_mod = types.ModuleType('pytesseract')
-        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
         pt_mod.image_to_string = lambda *a, **k: ''
         pt_mod.image_to_data = lambda *a, **k: {}
         pt_mod.Output = types.SimpleNamespace(DICT=0)

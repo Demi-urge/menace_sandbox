@@ -19,12 +19,12 @@ def _write_module(tmp_path: Path, rel: str, content: str) -> None:
 @pytest.fixture()
 def cli_env(tmp_path: Path):
     modules = {
-        "vector_service/__init__.py": """
+        "vector_service/__init__.py": """  # path-ignore
 class ContextBuilder:
     def __init__(self, retriever=None):
         self.retriever = retriever
 """,
-        "vector_service/retriever.py": """
+        "vector_service/retriever.py": """  # path-ignore
 import os, types
 if os.environ.get('RETRIEVER_IMPORT_ERROR') == '1':
     raise ImportError('fail retriever')
@@ -41,7 +41,7 @@ class FallbackResult(list):
 def fts_search(q, dbs=None, limit=None):
     return [{'origin_db': 'code', 'record_id': 2, 'score': 0.5, 'text': 'fts'}]
 """,
-        "vector_service/embedding_backfill.py": """
+        "vector_service/embedding_backfill.py": """  # path-ignore
 import os
 class EmbeddingBackfill:
     def run(self, session_id=None, dbs=None, batch_size=None, backend=None):
@@ -49,11 +49,11 @@ class EmbeddingBackfill:
             from vector_service.exceptions import VectorServiceError
             raise VectorServiceError('embed failure')
 """,
-        "vector_service/exceptions.py": """
+        "vector_service/exceptions.py": """  # path-ignore
 class VectorServiceError(Exception):
     pass
 """,
-        "universal_retriever.py": """
+        "universal_retriever.py": """  # path-ignore
 import os, types
 if os.environ.get('UNIVERSAL_IMPORT_ERROR') == '1':
     raise ImportError('fail universal')
@@ -62,7 +62,7 @@ class UniversalRetriever:
         hit = types.SimpleNamespace(origin_db='uni', record_id=3, score=0.1, text='uni')
         return [hit], '', []
 """,
-        "quick_fix_engine.py": """
+        "quick_fix_engine.py": """  # path-ignore
 import os
 
 def generate_patch(module, context_builder=None, engine=None, description=None, patch_logger=None, context=None):
@@ -70,14 +70,14 @@ def generate_patch(module, context_builder=None, engine=None, description=None, 
         return None
     return 7
 """,
-        "code_database.py": """
+        "code_database.py": """  # path-ignore
 class PatchHistoryDB:
     def __init__(self):
-        self.records = {7: type('R', (), {'filename': 'mod.py'})()}
+        self.records = {7: type('R', (), {'filename': 'mod.py'})()}  # path-ignore
     def get(self, pid):
         return self.records.get(pid)
 """,
-        "patch_provenance.py": """
+        "patch_provenance.py": """  # path-ignore
 class PatchLogger:
     def __init__(self, patch_db=None):
         pass
@@ -88,7 +88,7 @@ def search_patches_by_vector(*args, **kwargs):
 def search_patches_by_license(*args, **kwargs):
     return []
 """,
-        "cache_utils.py": """
+        "cache_utils.py": """  # path-ignore
 def _get_cache():
     class C: pass
     return C()
@@ -103,7 +103,7 @@ def show_cache():
 def cache_stats():
     return {}
 """,
-        "scripts/new_db_template.py": """
+        "scripts/new_db_template.py": """  # path-ignore
 import os, sys
 if os.environ.get('TEST_NEW_DB_FAIL') == '1':
     sys.exit(1)
@@ -157,7 +157,7 @@ def test_patch_success(cli_env):
     tmp, env = cli_env
     res = _run(tmp, env, "patch", "mod", "--desc", "fix")
     assert res.returncode == 0
-    assert json.loads(res.stdout) == {"patch_id": 7, "files": ["mod.py"]}
+    assert json.loads(res.stdout) == {"patch_id": 7, "files": ["mod.py"]}  # path-ignore
 
 
 def test_patch_failure(cli_env):

@@ -9,7 +9,7 @@ if "menace.roi_tracker" in sys.modules:
 else:  # pragma: no cover - allow running file directly
     spec = importlib.util.spec_from_file_location(
         "menace.roi_tracker",
-        Path(__file__).resolve().parents[1] / "roi_tracker.py",
+        Path(__file__).resolve().parents[1] / "roi_tracker.py",  # path-ignore
     )
     rt = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(rt)

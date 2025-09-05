@@ -14,7 +14,7 @@ ROOT = repo_root()
 
 
 def _load_meta_planning():
-    src = resolve_path("self_improvement/meta_planning.py").read_text()
+    src = resolve_path("self_improvement/meta_planning.py").read_text()  # path-ignore
     tree = ast.parse(src)
     wanted = {"_get_entropy_threshold", "_should_encode", "self_improvement_cycle"}
     nodes = [
@@ -57,7 +57,7 @@ package = types.ModuleType("sandbox_runner")
 package.__path__ = [str(package_path)]
 sys.modules["sandbox_runner"] = package
 spec = importlib.util.spec_from_file_location(
-    "sandbox_runner.workflow_sandbox_runner", resolve_path("workflow_sandbox_runner.py")
+    "sandbox_runner.workflow_sandbox_runner", resolve_path("workflow_sandbox_runner.py")  # path-ignore
 )
 wsr = importlib.util.module_from_spec(spec)
 assert spec.loader

@@ -21,7 +21,7 @@ def test_simulate_full_environment_vm(monkeypatch, tmp_path):
     def fake_copytree(src, dst, dirs_exist_ok=True):
         Path(dst).mkdir(parents=True, exist_ok=True)
         (Path(dst) / "data").mkdir(exist_ok=True)
-        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")
+        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")  # path-ignore
     monkeypatch.setattr(env.shutil, "copytree", fake_copytree)
     monkeypatch.setattr(env.shutil, "rmtree", lambda path, ignore_errors=True: None)
     monkeypatch.setattr(env.shutil, "which", lambda name: "/usr/bin/qemu-system-x86_64")
@@ -60,7 +60,7 @@ def test_simulate_full_environment_vm_fallback(monkeypatch, tmp_path):
     def fake_copytree(src, dst, dirs_exist_ok=True):
         Path(dst).mkdir(parents=True, exist_ok=True)
         (Path(dst) / "data").mkdir(exist_ok=True)
-        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")
+        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")  # path-ignore
 
     monkeypatch.setattr(env.shutil, "copytree", fake_copytree)
     monkeypatch.setattr(env.shutil, "rmtree", lambda *a, **k: None)
@@ -99,7 +99,7 @@ def test_simulate_full_environment_vm_timeout(monkeypatch, tmp_path):
     def fake_copytree(src, dst, dirs_exist_ok=True):
         Path(dst).mkdir(parents=True, exist_ok=True)
         (Path(dst) / "data").mkdir(exist_ok=True)
-        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")
+        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")  # path-ignore
 
     monkeypatch.setattr(env.shutil, "copytree", fake_copytree)
     monkeypatch.setattr(env.shutil, "which", lambda name: "/usr/bin/qemu-system-x86_64")
@@ -151,7 +151,7 @@ def test_vm_overlay_cleanup_backoff(monkeypatch, tmp_path):
     def fake_copytree(src, dst, dirs_exist_ok=True):
         Path(dst).mkdir(parents=True, exist_ok=True)
         (Path(dst) / "data").mkdir(exist_ok=True)
-        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")
+        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")  # path-ignore
 
     monkeypatch.setattr(env.shutil, "copytree", fake_copytree)
     monkeypatch.setattr(env.shutil, "which", lambda n: "/usr/bin/qemu-system-x86_64")

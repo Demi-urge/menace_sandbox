@@ -11,7 +11,7 @@ import os
 
 # Load package to allow relative imports
 spec = importlib.util.spec_from_file_location(
-    'menace', pathlib.Path(__file__).resolve().parents[1] / '__init__.py'
+    'menace', pathlib.Path(__file__).resolve().parents[1] / '__init__.py'  # path-ignore
 )
 menace_pkg = importlib.util.module_from_spec(spec)
 sys.modules['menace'] = menace_pkg
@@ -106,7 +106,7 @@ def test_run_patch_records_outcome(monkeypatch, tmp_path):
         data_bot=DummyDataBot(),
     )
 
-    file_path = tmp_path / 'x.py'
+    file_path = tmp_path / 'x.py'  # path-ignore
     file_path.write_text('x = 1\n')
 
     tmpdir_path = tmp_path / 'clone'

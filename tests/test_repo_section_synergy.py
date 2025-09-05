@@ -62,7 +62,7 @@ def test_run_repo_section_synergy(monkeypatch, tmp_path):
     _setup_mm_stubs(monkeypatch)
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
-    (tmp_path / "m.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n")  # path-ignore
 
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
@@ -89,7 +89,7 @@ def test_run_repo_section_synergy(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},  # path-ignore
         raising=False,
     )
 
@@ -157,7 +157,7 @@ def test_repo_section_synergy_cli(tmp_path, capsys):
 
     import importlib.util
     from pathlib import Path
-    spec = importlib.util.spec_from_file_location("menace.roi_tracker", Path("roi_tracker.py"))
+    spec = importlib.util.spec_from_file_location("menace.roi_tracker", Path("roi_tracker.py"))  # path-ignore
     rt = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(rt)
     sys.modules.setdefault("menace.roi_tracker", rt)

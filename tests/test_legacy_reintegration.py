@@ -37,7 +37,7 @@ def _common_setup(monkeypatch, tmp_path):
     monkeypatch.setattr(cycle, "append_orphan_classifications", lambda *a, **k: None)
     monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *a, **k: None)
     monkeypatch.setattr(cycle, "load_orphan_cache", lambda *_a, **_k: {})
-    (tmp_path / "foo.py").write_text("pass\n")
+    (tmp_path / "foo.py").write_text("pass\n")  # path-ignore
     def fake_discover(repo_path):
         assert Path(repo_path) == tmp_path
         return {"foo": {"parents": [], "classification": "legacy", "redundant": True}}
@@ -61,9 +61,9 @@ def test_legacy_module_logged_and_counted(monkeypatch, tmp_path, caplog):
     )
     caplog.set_level(logging.INFO, logger=cycle.logger.name)
     cycle.include_orphan_modules(ctx)
-    assert calls == [["foo.py"]]
+    assert calls == [["foo.py"]]  # path-ignore
     records = [r for r in caplog.records if r.message == "isolated module tests"]
-    assert records and records[-1].legacy == ["foo.py"]
+    assert records and records[-1].legacy == ["foo.py"]  # path-ignore
     assert cycle.orphan_modules_legacy_total.value == 1
 
 
@@ -83,6 +83,6 @@ def test_legacy_module_reintroduced_decrements(monkeypatch, tmp_path):
         settings=SandboxSettings(),
     )
     cycle.include_orphan_modules(ctx)
-    assert calls == [["foo.py"]]
+    assert calls == [["foo.py"]]  # path-ignore
     assert cycle.orphan_modules_legacy_total.value == 0
-    assert "foo.py" not in ctx.orphan_traces
+    assert "foo.py" not in ctx.orphan_traces  # path-ignore

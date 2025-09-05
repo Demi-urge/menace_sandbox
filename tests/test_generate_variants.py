@@ -14,7 +14,7 @@ class DummyIntent:
             self.members = None
 
     def _search_related(self, prompt, top_k=5):
-        return [self.Match("extra_mod.py")]
+        return [self.Match("extra_mod.py")]  # path-ignore
 
 
 def test_generate_variants_basic():

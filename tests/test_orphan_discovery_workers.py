@@ -6,9 +6,9 @@ from sandbox_runner import orphan_discovery
 
 
 def _setup_repo(tmp_path: Path) -> None:
-    (tmp_path / "mod1.py").write_text("import mod2\n")
-    (tmp_path / "mod2.py").write_text("# empty\n")
-    (tmp_path / "mod3.py").write_text("# orphan\n")
+    (tmp_path / "mod1.py").write_text("import mod2\n")  # path-ignore
+    (tmp_path / "mod2.py").write_text("# empty\n")  # path-ignore
+    (tmp_path / "mod3.py").write_text("# orphan\n")  # path-ignore
 
 
 def test_parallel_vs_sequential(tmp_path, monkeypatch):

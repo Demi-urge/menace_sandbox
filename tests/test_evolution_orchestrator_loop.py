@@ -77,9 +77,9 @@ def test_full_loop(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "git.exc", git_exc)
     matplotlib_stub = types.ModuleType("matplotlib")
     plt_stub = types.ModuleType("pyplot")
-    matplotlib_stub.pyplot = plt_stub
+    matplotlib_stub.pyplot = plt_stub  # path-ignore
     monkeypatch.setitem(sys.modules, "matplotlib", matplotlib_stub)
-    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", plt_stub)
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", plt_stub)  # path-ignore
     monkeypatch.setitem(
         sys.modules,
         "dotenv",

@@ -67,7 +67,7 @@ def _load_module(monkeypatch, tmp_path):
 
     # ``SandboxSettings`` already defined on stub module above
 
-    path = Path(__file__).resolve().parent.parent / "self_improvement" / "__init__.py"
+    path = Path(__file__).resolve().parent.parent / "self_improvement" / "__init__.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace.self_improvement", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
@@ -132,7 +132,7 @@ def test_try_integrate_failure_logged_and_raised(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(mod.environment, "try_integrate_into_workflows", fail)
     caplog.set_level("ERROR")
     with pytest.raises(RuntimeError):
-        mod.SelfImprovementEngine._update_orphan_modules(engine, ["a.py"])
+        mod.SelfImprovementEngine._update_orphan_modules(engine, ["a.py"])  # path-ignore
     assert "workflow integration failed" in caplog.text
 
 
@@ -149,7 +149,7 @@ def test_integrate_orphans_failure_logged(monkeypatch, tmp_path, caplog):
     engine._integrate_orphans = fail
     caplog.set_level("ERROR")
     with pytest.raises(RuntimeError):
-        mod.SelfImprovementEngine._update_orphan_modules(engine, ["b.py"])
+        mod.SelfImprovementEngine._update_orphan_modules(engine, ["b.py"])  # path-ignore
     assert "orphan integration failed" in caplog.text
 
 
@@ -166,6 +166,6 @@ def test_refresh_module_map_failure_logged(monkeypatch, tmp_path, caplog):
     engine._refresh_module_map = fail
     caplog.set_level("ERROR")
     with pytest.raises(RuntimeError):
-        mod.SelfImprovementEngine._update_orphan_modules(engine, ["c.py"])
+        mod.SelfImprovementEngine._update_orphan_modules(engine, ["c.py"])  # path-ignore
     assert "module map refresh failed" in caplog.text
 

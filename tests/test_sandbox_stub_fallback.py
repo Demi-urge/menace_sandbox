@@ -135,7 +135,7 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     va_mod.VisualAgentClientStub = VisualAgentClientStub
     monkeypatch.setitem(sys.modules, "menace.visual_agent_client", va_mod)
 
-    path = resolve_path("sandbox_runner.py")
+    path = resolve_path("sandbox_runner.py")  # path-ignore
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
         str(path),
@@ -154,7 +154,7 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
 
 
 def test_generate_input_stubs_seed(monkeypatch):
-    path = resolve_path("sandbox_runner/environment.py")
+    path = resolve_path("sandbox_runner/environment.py")  # path-ignore
     spec = importlib.util.spec_from_file_location("sandbox_runner.environment", str(path))
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = [str(path.parent)]

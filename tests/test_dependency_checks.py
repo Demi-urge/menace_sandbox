@@ -55,7 +55,7 @@ def _stub_modules(exclude: set[str] | None = None) -> None:
 
 def _load_init():
     spec = importlib.util.spec_from_file_location(
-        "self_improvement.init", resolve_path("self_improvement/init.py")
+        "self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

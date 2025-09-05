@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 self_test_mod = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
@@ -25,7 +25,7 @@ REGISTRY._names_to_collectors.clear()
 spec.loader.exec_module(self_test_mod)
 self_test_mod.analyze_redundancy = lambda p: False
 
-spec_db = importlib.util.spec_from_file_location("module_index_db", ROOT / "module_index_db.py")
+spec_db = importlib.util.spec_from_file_location("module_index_db", ROOT / "module_index_db.py")  # path-ignore
 module_index_db = importlib.util.module_from_spec(spec_db)
 spec_db.loader.exec_module(module_index_db)
 sys.modules["module_index_db"] = module_index_db
@@ -33,8 +33,8 @@ sys.modules["module_index_db"] = module_index_db
 
 def test_default_auto_integration(monkeypatch, tmp_path):
     (tmp_path / "sandbox_data").mkdir()
-    (tmp_path / "helper.py").write_text("VALUE = 1\n")
-    (tmp_path / "isolated.py").write_text("import helper\n")
+    (tmp_path / "helper.py").write_text("VALUE = 1\n")  # path-ignore
+    (tmp_path / "isolated.py").write_text("import helper\n")  # path-ignore
 
     import types
     runner = types.ModuleType("sandbox_runner")
@@ -114,7 +114,7 @@ def test_default_auto_integration(monkeypatch, tmp_path):
     svc.run_once()
 
     data = json.loads(map_path.read_text())
-    assert set(data["modules"].keys()) == {"isolated.py", "helper.py"}
-    assert generated and generated[0] == ["helper.py", "isolated.py"]
-    assert integrated and integrated[0] == ["helper.py", "isolated.py"]
+    assert set(data["modules"].keys()) == {"isolated.py", "helper.py"}  # path-ignore
+    assert generated and generated[0] == ["helper.py", "isolated.py"]  # path-ignore
+    assert integrated and integrated[0] == ["helper.py", "isolated.py"]  # path-ignore
     assert simulated and simulated[0] is True

@@ -88,7 +88,7 @@ def test_run_repo_section_simulations_canonical(monkeypatch, tmp_path):
     root = Path(__file__).resolve().parents[1]
     monkeypatch.setattr(sys.modules["menace"], "__path__", [str(root)])
 
-    (tmp_path / "m.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n")  # path-ignore
 
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
@@ -113,7 +113,7 @@ def test_run_repo_section_simulations_canonical(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},  # path-ignore
         raising=False,
     )
 

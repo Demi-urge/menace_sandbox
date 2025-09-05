@@ -68,7 +68,7 @@ def test_chunk_file_ast_and_token_limits(tmp_path, monkeypatch):
         "def b():\n    return 2\n\n"
         "def c():\n    return 3\n"
     )
-    path = tmp_path / "sample.py"
+    path = tmp_path / "sample.py"  # path-ignore
     path.write_text(code)
     monkeypatch.setattr(chunking, "_count_tokens", lambda t: len(t.split()))
     chunks = chunking.chunk_file(path, 5)
@@ -107,7 +107,7 @@ class DummyRetriever:
 
 
 def test_prompt_from_summaries_under_limit(tmp_path, monkeypatch):
-    file = tmp_path / "big.py"
+    file = tmp_path / "big.py"  # path-ignore
     code = "def big():\n" + "    x = 0\n" * 2000
     file.write_text(code)
 
@@ -148,7 +148,7 @@ def test_patch_application_on_chunked_file(tmp_path, monkeypatch):
         "def a():\n    pass\n\n"
         "def b():\n    pass\n"
     )
-    path = tmp_path / "big.py"
+    path = tmp_path / "big.py"  # path-ignore
     path.write_text(code)
     monkeypatch.setattr(chunking, "_count_tokens", lambda t: len(t.split()))
     chunks = chunking.chunk_file(path, 5)

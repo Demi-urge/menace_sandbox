@@ -18,7 +18,7 @@ sys.modules.setdefault("pandas", types.ModuleType("pandas"))
 
 spec = importlib.util.spec_from_file_location(
     "menace.databases",
-    resolve_path("databases.py"),
+    resolve_path("databases.py"),  # path-ignore
     submodule_search_locations=[str(ROOT)],
 )
 mn = importlib.util.module_from_spec(spec)
@@ -27,7 +27,7 @@ spec.loader.exec_module(mn)
 
 spec = importlib.util.spec_from_file_location(
     "menace.db_router",
-    resolve_path("db_router.py"),
+    resolve_path("db_router.py"),  # path-ignore
     submodule_search_locations=[str(ROOT)],
 )
 dr = importlib.util.module_from_spec(spec)

@@ -8,7 +8,7 @@ from dynamic_path_router import resolve_path
 
 
 def _copy_modules(tmp_path: Path) -> None:
-    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):
+    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):  # path-ignore
         shutil.copy(mod, tmp_path / mod.name)
 
 

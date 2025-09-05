@@ -182,7 +182,7 @@ def _load_engine():
 
     spec = importlib.util.spec_from_file_location(
         "menace.self_improvement",
-        os.path.join(os.path.dirname(__file__), "..", "self_improvement.py"),
+        os.path.join(os.path.dirname(__file__), "..", "self_improvement.py"),  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
@@ -249,7 +249,7 @@ def test_growth_class_alters_action_selection():
         eng._collect_action_features = lambda: [[0.5, 0.0]]
         eng.baseline_margin = 0.0
         _BT_SPEC = importlib.util.spec_from_file_location(
-            "baseline_tracker", Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py"
+            "baseline_tracker", Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py"  # path-ignore
         )
         baseline_tracker = importlib.util.module_from_spec(_BT_SPEC)
         assert _BT_SPEC and _BT_SPEC.loader

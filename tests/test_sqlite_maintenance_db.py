@@ -77,7 +77,7 @@ sys.modules["menace"] = package
 package.__path__ = [os.path.join(os.path.dirname(__file__), "..")]
 spec = importlib.util.spec_from_file_location(
     "menace.communication_maintenance_bot",
-    os.path.join(os.path.dirname(__file__), "..", "communication_maintenance_bot.py"),
+    os.path.join(os.path.dirname(__file__), "..", "communication_maintenance_bot.py"),  # path-ignore
 )
 cmb = importlib.util.module_from_spec(spec)
 sys.modules["menace.communication_maintenance_bot"] = cmb

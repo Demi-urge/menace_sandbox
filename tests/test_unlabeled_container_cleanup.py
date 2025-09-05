@@ -42,7 +42,7 @@ def test_unlabeled_container_removed(monkeypatch, tmp_path):
             return types.SimpleNamespace(returncode=0, stdout='')
         if cmd[:3] == ['docker', 'ps', '-a']:
             out = (
-                f'abc\t2023-01-01 00:00:00 +0000 UTC\t"python {resolve_path("sandbox_runner.py").name}"\n'
+                f'abc\t2023-01-01 00:00:00 +0000 UTC\t"python {resolve_path("sandbox_runner.py").name}"\n'  # path-ignore
                 'def\t2023-01-01 00:00:00 +0000 UTC\t"other"\n'
             )
             return types.SimpleNamespace(returncode=0, stdout=out)

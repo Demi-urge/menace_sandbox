@@ -3,7 +3,7 @@ import roi_tracker as rt
 from dynamic_path_router import resolve_path
 
 spec = importlib.util.spec_from_file_location(
-    "env", str(resolve_path("sandbox_runner/environment.py"))
+    "env", str(resolve_path("sandbox_runner/environment.py"))  # path-ignore
 )
 env = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(env)

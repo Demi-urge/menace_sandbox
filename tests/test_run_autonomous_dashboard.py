@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_module(monkeypatch):
-    path = ROOT / "run_autonomous.py"
+    path = ROOT / "run_autonomous.py"  # path-ignore
     sys.modules.pop("menace", None)
     monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/usr/bin/true")
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())

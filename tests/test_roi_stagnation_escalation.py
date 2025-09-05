@@ -4,14 +4,14 @@ import types
 from pathlib import Path
 from typing import Any, Dict
 
-_BT_PATH = Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py"
+_BT_PATH = Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py"  # path-ignore
 spec = importlib.util.spec_from_file_location("baseline_tracker", _BT_PATH)
 baseline_tracker = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 spec.loader.exec_module(baseline_tracker)  # type: ignore[attr-defined]
 BaselineTracker = baseline_tracker.BaselineTracker
 
-ENG_PATH = Path(__file__).resolve().parents[1] / "self_improvement" / "engine.py"
+ENG_PATH = Path(__file__).resolve().parents[1] / "self_improvement" / "engine.py"  # path-ignore
 src = ENG_PATH.read_text()
 tree = ast.parse(src)
 future = ast.ImportFrom(module="__future__", names=[ast.alias("annotations", None)], level=0)

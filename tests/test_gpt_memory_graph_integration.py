@@ -27,10 +27,10 @@ def test_memory_event_updates_knowledge_graph(tmp_path):
     mgr.log_interaction(
         "idea1",
         "result",
-        tags=["bot:alpha", "code:module.py", "error:ValueError"],
+        tags=["bot:alpha", "code:module.py", "error:ValueError"],  # path-ignore
     )
     inode = "insight:idea1"
     assert inode in kg.graph
     assert (inode, "bot:alpha") in kg.graph.edges
-    assert (inode, "code:module.py") in kg.graph.edges
+    assert (inode, "code:module.py") in kg.graph.edges  # path-ignore
     assert (inode, "error_category:ValueError") in kg.graph.edges

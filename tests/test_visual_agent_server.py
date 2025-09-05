@@ -43,7 +43,7 @@ async def test_run_endpoint_busy(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -120,7 +120,7 @@ async def test_run_endpoint_concurrent_single_job(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -211,7 +211,7 @@ async def test_cancel_queued_task(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -271,7 +271,7 @@ async def test_cancel_running_task(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -339,7 +339,7 @@ async def test_uvicorn_sequential_requests(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -430,7 +430,7 @@ def _setup_va(monkeypatch, tmp_path, start_worker=False):
     monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)

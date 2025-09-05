@@ -17,7 +17,7 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
 
     def _load(name: str):
         spec = importlib.util.spec_from_file_location(
-            f"sbrpkg.{name}", resolve_path(f"{name}.py")
+            f"sbrpkg.{name}", resolve_path(f"{name}.py")  # path-ignore
         )
         module = importlib.util.module_from_spec(spec)
         sys.modules[f"sbrpkg.{name}"] = module

@@ -80,7 +80,7 @@ def _common_stubs(monkeypatch):
 def test_missing_canonical_scenario_added(monkeypatch, tmp_path):
     _common_stubs(monkeypatch)
 
-    (tmp_path / "m.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n")  # path-ignore
 
     import sandbox_runner
     import sandbox_runner.environment as env
@@ -88,7 +88,7 @@ def test_missing_canonical_scenario_added(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},  # path-ignore
         raising=False,
     )
     monkeypatch.setattr(
@@ -118,14 +118,14 @@ def test_missing_canonical_scenario_added(monkeypatch, tmp_path):
     )
 
     expected = {"high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"}
-    assert set(details["m.py"].keys()) == expected
+    assert set(details["m.py"].keys()) == expected  # path-ignore
 
 
 def test_module_specific_presets(monkeypatch, tmp_path):
     _common_stubs(monkeypatch)
 
-    (tmp_path / "a.py").write_text("def f():\n    return 1\n")
-    (tmp_path / "b.py").write_text("def g():\n    return 2\n")
+    (tmp_path / "a.py").write_text("def f():\n    return 1\n")  # path-ignore
+    (tmp_path / "b.py").write_text("def g():\n    return 2\n")  # path-ignore
 
     import sandbox_runner
     import sandbox_runner.environment as env
@@ -133,7 +133,7 @@ def test_module_specific_presets(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p, modules=None: {"a.py": {"s": ["pass"]}, "b.py": {"s": ["pass"]}},
+        lambda p, modules=None: {"a.py": {"s": ["pass"]}, "b.py": {"s": ["pass"]}},  # path-ignore
         raising=False,
     )
     monkeypatch.setattr(
@@ -161,6 +161,6 @@ def test_module_specific_presets(monkeypatch, tmp_path):
         return_details=True,
     )
 
-    lst_a = details["a.py"]["high_latency_api"]
-    lst_b = details["b.py"]["high_latency_api"]
+    lst_a = details["a.py"]["high_latency_api"]  # path-ignore
+    lst_b = details["b.py"]["high_latency_api"]  # path-ignore
     assert lst_a is not lst_b

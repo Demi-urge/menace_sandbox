@@ -57,15 +57,15 @@ def test_auto_include_reverts_on_negative_roi(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules(["mod.py"])
+    result, tested = env.auto_include_modules(["mod.py"])  # path-ignore
 
     map_path = Path(tmp_path, "module_map.json")
     assert not map_path.exists()
 
     cache_path = Path(tmp_path, "orphan_modules.json")
     data = json.loads(cache_path.read_text())
-    assert data["mod.py"]["rejected"] is True
-    assert tested == {"added": [], "failed": [], "redundant": [], "rejected": ["mod.py"]}
+    assert data["mod.py"]["rejected"] is True  # path-ignore
+    assert tested == {"added": [], "failed": [], "redundant": [], "rejected": ["mod.py"]}  # path-ignore
     assert result is tracker1
     history = json.loads(Path(tmp_path, "roi_history.json").read_text())
     assert history["roi_history"] == [1.0]

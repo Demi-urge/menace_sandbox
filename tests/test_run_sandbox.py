@@ -318,7 +318,7 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
 
         def run_cycle(self):
             if self.db:
-                self.db.get("new.py")
+                self.db.get("new.py")  # path-ignore
             class Res:
                 roi = None
             return Res()
@@ -361,7 +361,7 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
     monkeypatch.setattr(sys.modules["menace.data_bot"], "MetricsDB", DummyBot)
 
     module_map = tmp_path / "module_map.json"
-    module_map.write_text("{\"old.py\": 42}")
+    module_map.write_text("{\"old.py\": 42}")  # path-ignore
     ctx = sandbox_runner._sandbox_init({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))
     sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
     sandbox_runner._sandbox_cleanup(ctx)
@@ -373,9 +373,9 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
 def test_module_map_clusters_have_same_index(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()
-    (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("from . import b\nb.f()\n")
-    (pkg / "b.py").write_text("def f():\n    pass\n")
+    (pkg / "__init__.py").write_text("")  # path-ignore
+    (pkg / "a.py").write_text("from . import b\nb.f()\n")  # path-ignore
+    (pkg / "b.py").write_text("def f():\n    pass\n")  # path-ignore
     from scripts.generate_module_map import generate_module_map
     generate_module_map(tmp_path / "sandbox_data" / "module_map.json", root=tmp_path)
     from module_index_db import ModuleIndexDB
@@ -493,7 +493,7 @@ def test_section_short_circuit(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     monkeypatch.setenv("SANDBOX_CYCLES", "5")
@@ -502,7 +502,7 @@ def test_section_short_circuit(monkeypatch, tmp_path):
     sandbox_runner._sandbox_cleanup(ctx)
 
     assert improver.calls < 5
-    assert "mod.py:sec" in TrackLogger.instance.flagged_sections
+    assert "mod.py:sec" in TrackLogger.instance.flagged_sections  # path-ignore
 
 
 def test_failure_modes_timeout(monkeypatch):
@@ -625,7 +625,7 @@ def test_workflow_run_called(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[str(resolve_dir("sandbox_runner"))],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -645,8 +645,8 @@ def test_workflow_run_called(monkeypatch, tmp_path):
 
     class DummyCtx:
         def __init__(self):
-            self.sections = {"m.py": {"sec": ["pass"]}}
-            self.all_section_names = {"m.py:sec"}
+            self.sections = {"m.py": {"sec": ["pass"]}}  # path-ignore
+            self.all_section_names = {"m.py:sec"}  # path-ignore
             self.meta_log = DummyMeta()
             self.tracker = tracker
             self.res_db = None
@@ -720,7 +720,7 @@ def test_no_workflow_run_option(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[str(resolve_dir("sandbox_runner"))],
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
@@ -779,7 +779,7 @@ def test_dynamic_workflows_build_from_repo(monkeypatch, tmp_path):
     pkg.__path__ = [str(ROOT)]
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        ROOT / "task_handoff_bot.py",
+        ROOT / "task_handoff_bot.py",  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)

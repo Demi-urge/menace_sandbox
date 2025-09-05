@@ -13,26 +13,26 @@ pkg.__path__ = [str(TMP), str(ROOT)]
 sys.modules["menace"] = pkg
 
 # write stub modules to temporary package path
-(TMP / "telemetry_feedback.py").write_text(
+(TMP / "telemetry_feedback.py").write_text(  # path-ignore
     """class TelemetryFeedback:\n    def __init__(self, logger=None, engine=None):\n        self.interval=0\n        self.started=False\n        self.stopped=False\n    def start(self):\n        self.started=True\n    def stop(self):\n        self.stopped=True\n"""
 )
-(TMP / "error_logger.py").write_text(
+(TMP / "error_logger.py").write_text(  # path-ignore
     "class ErrorLogger:\n    def __init__(self, **kwargs):\n        pass\n"
 )
-(TMP / "self_coding_engine.py").write_text(
+(TMP / "self_coding_engine.py").write_text(  # path-ignore
     "class SelfCodingEngine:\n    def __init__(self, *a, **k):\n        pass\n"
 )
-(TMP / "code_database.py").write_text("class CodeDB:\n    pass\n")
-(TMP / "menace_memory_manager.py").write_text(
+(TMP / "code_database.py").write_text("class CodeDB:\n    pass\n")  # path-ignore
+(TMP / "menace_memory_manager.py").write_text(  # path-ignore
     "class MenaceMemoryManager:\n    pass\n"
 )
-(TMP / "knowledge_graph.py").write_text(
+(TMP / "knowledge_graph.py").write_text(  # path-ignore
     """class KnowledgeGraph:\n    def __init__(self):\n        self.traces=[]\n    def add_crash_trace(self, name, trace):\n        self.traces.append((name, trace))\n"""
 )
 
 spec = importlib.util.spec_from_file_location(
     "menace.debug_loop_service",
-    ROOT / "debug_loop_service.py",
+    ROOT / "debug_loop_service.py",  # path-ignore
     submodule_search_locations=[str(TMP), str(ROOT)],
 )
 mod = importlib.util.module_from_spec(spec)

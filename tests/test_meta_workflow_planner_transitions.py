@@ -8,7 +8,7 @@ from dynamic_path_router import resolve_path
 from meta_workflow_planner import MetaWorkflowPlanner
 
 spec = importlib.util.spec_from_file_location(
-    "workflow_sandbox_runner", resolve_path("workflow_sandbox_runner.py")
+    "workflow_sandbox_runner", resolve_path("workflow_sandbox_runner.py")  # path-ignore
 )
 wsr = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
 assert spec.loader is not None

@@ -41,7 +41,7 @@ ss_mod.ServiceSupervisor = ServiceSupervisor
 sys.modules["menace.service_supervisor"] = ss_mod
 
 spec_cs = importlib.util.spec_from_file_location(
-    "menace.cluster_supervisor", ROOT / "cluster_supervisor.py"
+    "menace.cluster_supervisor", ROOT / "cluster_supervisor.py"  # path-ignore
 )
 cs = importlib.util.module_from_spec(spec_cs)
 spec_cs.loader.exec_module(cs)

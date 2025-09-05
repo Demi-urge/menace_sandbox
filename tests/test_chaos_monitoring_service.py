@@ -13,22 +13,22 @@ pkg.RAISE_ERRORS = False
 sys.modules["menace"] = pkg
 
 # stub modules
-(TMP / "chaos_scheduler.py").write_text(
+(TMP / "chaos_scheduler.py").write_text(  # path-ignore
     """class ChaosScheduler:\n    def __init__(self, watchdog=None):\n        self.watchdog=watchdog\n        self.interval=0\n        self.started=False\n    def start(self):\n        self.started=True\n"""
 )
-(TMP / "watchdog.py").write_text(
+(TMP / "watchdog.py").write_text(  # path-ignore
     """class Watchdog:\n    def __init__(self, *a, **k):\n        self.synthetic_faults=[]\n"""
 )
-(TMP / "error_bot.py").write_text("class ErrorDB: pass\n")
-(TMP / "resource_allocation_optimizer.py").write_text("class ROIDB: pass\n")
-(TMP / "data_bot.py").write_text("class MetricsDB: pass\n")
-(TMP / "advanced_error_management.py").write_text(
+(TMP / "error_bot.py").write_text("class ErrorDB: pass\n")  # path-ignore
+(TMP / "resource_allocation_optimizer.py").write_text("class ROIDB: pass\n")  # path-ignore
+(TMP / "data_bot.py").write_text("class MetricsDB: pass\n")  # path-ignore
+(TMP / "advanced_error_management.py").write_text(  # path-ignore
     """class AutomatedRollbackManager:\n    def __init__(self, raise_error=False):\n        self.raise_error=raise_error\n        self.calls=[]\n    def auto_rollback(self, version, bots):\n        self.calls.append((version, bots))\n        if self.raise_error:\n            raise RuntimeError('boom')\n"""
 )
 
 spec = importlib.util.spec_from_file_location(
     "menace.chaos_monitoring_service",
-    ROOT / "chaos_monitoring_service.py",
+    ROOT / "chaos_monitoring_service.py",  # path-ignore
     submodule_search_locations=[str(TMP), str(ROOT)],
 )
 mod = importlib.util.module_from_spec(spec)

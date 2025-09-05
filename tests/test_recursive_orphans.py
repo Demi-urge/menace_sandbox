@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_methods():
-    path = ROOT / "self_improvement.py"
+    path = ROOT / "self_improvement.py"  # path-ignore
     src = path.read_text()
     tree = ast.parse(src)
     methods = []
@@ -138,7 +138,7 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
     assert called.get("used") is True
     assert Path(called["repo"]) == tmp_path
     assert Path(called["map"]).resolve() == (tmp_path / "module_map.json").resolve()
-    assert integrated.get("paths") == [str(tmp_path / "foo/bar.py")]
+    assert integrated.get("paths") == [str(tmp_path / "foo/bar.py")]  # path-ignore
     data = json.loads((tmp_path / "orphan_modules.json").read_text())
     assert data == []
 
@@ -155,7 +155,7 @@ def test_clean_orphans_removes_passing(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_CLEAN_ORPHANS", "1")
 
     mods_path = tmp_path / "orphan_modules.json"
-    mods_path.write_text(json.dumps(["foo.py", "bar.py"]))
+    mods_path.write_text(json.dumps(["foo.py", "bar.py"]))  # path-ignore
 
     eng = types.SimpleNamespace(logger=DummyLogger())
     eng._integrate_orphans = lambda paths: {Path(p).name for p in paths}
@@ -168,7 +168,7 @@ def test_clean_orphans_removes_passing(monkeypatch, tmp_path):
     _update_orphan_modules(eng)
 
     data = json.loads(mods_path.read_text())
-    assert data == ["bar.py"]
+    assert data == ["bar.py"]  # path-ignore
 
 
 def test_update_orphan_modules_with_modules(monkeypatch, tmp_path):
@@ -202,14 +202,14 @@ def test_update_orphan_modules_with_modules(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
-    (tmp_path / "orphan_modules.json").write_text(json.dumps(["foo.py"]))
+    (tmp_path / "orphan_modules.json").write_text(json.dumps(["foo.py"]))  # path-ignore
 
-    _update_orphan_modules(eng, ["foo.py"])
+    _update_orphan_modules(eng, ["foo.py"])  # path-ignore
 
-    assert calls["integrated"] == [str(tmp_path / "foo.py")]
+    assert calls["integrated"] == [str(tmp_path / "foo.py")]  # path-ignore
     assert calls["refresh"] == 1
     assert json.loads((tmp_path / "orphan_modules.json").read_text()) == []
-    assert calls["auto"] == ["foo.py"]
+    assert calls["auto"] == ["foo.py"]  # path-ignore
 
 
 def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
@@ -235,7 +235,7 @@ def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
     eng._test_orphan_modules = types.MethodType(_test_orphan_modules, eng)
     eng._collect_recursive_modules = lambda mods: set(mods)
 
-    _refresh_module_map(eng, ["foo.py"])
+    _refresh_module_map(eng, ["foo.py"])  # path-ignore
 
     # integration should occur via ``_integrate_orphans`` but orphan discovery
     # is postponed until explicitly triggered
@@ -246,13 +246,13 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
     index = DummyIndex(tmp_path / "module_map.json")
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "iso.py").write_text("pass\n")
+    (repo / "iso.py").write_text("pass\n")  # path-ignore
 
     mod = types.ModuleType("scripts.discover_isolated_modules")
 
     def discover(path, *, recursive=True):
         assert Path(path) == repo
-        return ["iso.py"]
+        return ["iso.py"]  # path-ignore
 
     mod.discover_isolated_modules = discover
     pkg = types.ModuleType("scripts")
@@ -297,7 +297,7 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
     map_file = tmp_path / "module_map.json"
     assert map_file.exists()
     data = json.loads(map_file.read_text())
-    assert data["modules"].get("iso.py") == 1
+    assert data["modules"].get("iso.py") == 1  # path-ignore
     mods_path = tmp_path / "orphan_modules.json"
     assert json.loads(mods_path.read_text()) == []
 
@@ -306,7 +306,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     index = DummyIndex(tmp_path / "module_map.json")
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "iso.py").write_text("pass\n")
+    (repo / "iso.py").write_text("pass\n")  # path-ignore
 
     called = {}
     mod = types.ModuleType("scripts.discover_isolated_modules")
@@ -314,7 +314,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     def discover(path, *, recursive=True):
         called["recursive"] = recursive
         assert Path(path) == repo
-        return ["iso.py"]
+        return ["iso.py"]  # path-ignore
 
     mod.discover_isolated_modules = discover
     pkg = types.ModuleType("scripts")
@@ -361,7 +361,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     map_file = tmp_path / "module_map.json"
     assert map_file.exists()
     data = json.loads(map_file.read_text())
-    assert data["modules"].get("iso.py") == 1
+    assert data["modules"].get("iso.py") == 1  # path-ignore
     mods_path = tmp_path / "orphan_modules.json"
     assert json.loads(mods_path.read_text()) == []
     assert called.get("recursive") is False
@@ -396,7 +396,7 @@ def test_refresh_map_skips_failing_modules(monkeypatch, tmp_path):
 
     def fake_run(repo_path, modules=None, return_details=False, **k):
         details = {
-            m: {"sec": [{"result": {"exit_code": 1 if m == "bad.py" else 0}}]}
+            m: {"sec": [{"result": {"exit_code": 1 if m == "bad.py" else 0}}]}  # path-ignore
             for m in modules or []
         }
         tracker = types.SimpleNamespace(
@@ -410,9 +410,9 @@ def test_refresh_map_skips_failing_modules(monkeypatch, tmp_path):
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
-    _refresh_module_map(eng, ["good.py", "bad.py"])
+    _refresh_module_map(eng, ["good.py", "bad.py"])  # path-ignore
 
-    # only good.py should be integrated
-    assert "good.py" in eng.module_clusters
-    assert "bad.py" not in eng.module_clusters
-    assert any("bad.py" in (extra or {}).get("module", "") for _, extra in logger.info_calls)
+    # only good.py should be integrated  # path-ignore
+    assert "good.py" in eng.module_clusters  # path-ignore
+    assert "bad.py" not in eng.module_clusters  # path-ignore
+    assert any("bad.py" in (extra or {}).get("module", "") for _, extra in logger.info_calls)  # path-ignore

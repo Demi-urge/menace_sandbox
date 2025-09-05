@@ -20,7 +20,7 @@ sys.modules.setdefault("pandas", types.ModuleType("pandas"))
 
 def _load(name: str):
     spec = importlib.util.spec_from_file_location(
-        f"menace.{name}", ROOT / f"{name}.py", submodule_search_locations=[str(ROOT)]
+        f"menace.{name}", ROOT / f"{name}.py", submodule_search_locations=[str(ROOT)]  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[f"menace.{name}"] = mod

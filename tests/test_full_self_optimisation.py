@@ -33,11 +33,11 @@ for mod in ("numpy", "git"):
 stub.Repo = object
 matplotlib_stub = types.ModuleType("matplotlib")
 plt_stub = types.ModuleType("pyplot")
-matplotlib_stub.pyplot = plt_stub
+matplotlib_stub.pyplot = plt_stub  # path-ignore
 if "matplotlib" not in sys.modules:
     sys.modules["matplotlib"] = matplotlib_stub
-if "matplotlib.pyplot" not in sys.modules:
-    sys.modules["matplotlib.pyplot"] = plt_stub
+if "matplotlib.pyplot" not in sys.modules:  # path-ignore
+    sys.modules["matplotlib.pyplot"] = plt_stub  # path-ignore
 dotenv_stub = types.ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda *a, **k: None
 if "dotenv" not in sys.modules:
@@ -141,16 +141,16 @@ def test_full_self_optimisation(tmp_path, monkeypatch):
     monkeypatch.setattr(orch, "_latest_roi", lambda: 0.0)
     monkeypatch.setattr(orch, "_error_rate", lambda: 0.2)
 
-    patch_file = tmp_path / "auto_helpers.py"
+    patch_file = tmp_path / "auto_helpers.py"  # path-ignore
     patch_file.write_text("def x():\n    pass\n")
     monkeypatch.chdir(tmp_path)
 
     orch.run_cycle()
 
     patches = patch_db.top_patches(limit=10)
-    assert patches and any(p.filename.endswith("auto_helpers.py") for p in patches)
+    assert patches and any(p.filename.endswith("auto_helpers.py") for p in patches)  # path-ignore
 
-    self_patch = [p for p in patches if p.filename.endswith("self_improvement.py")]
+    self_patch = [p for p in patches if p.filename.endswith("self_improvement.py")]  # path-ignore
     assert self_patch
 
     events = hist.fetch()

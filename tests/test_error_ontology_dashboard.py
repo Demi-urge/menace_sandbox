@@ -28,7 +28,7 @@ class DummyErrorDB:
 
 spec = importlib.util.spec_from_file_location(
     "menace.error_ontology_dashboard",
-    ROOT / "error_ontology_dashboard.py",
+    ROOT / "error_ontology_dashboard.py",  # path-ignore
     submodule_search_locations=[str(ROOT)],
 )
 mod = importlib.util.module_from_spec(spec)

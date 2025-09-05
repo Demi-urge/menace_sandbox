@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Load SelfTestService dynamically
 spec = importlib.util.spec_from_file_location(
     "menace.self_test_service",
-    ROOT / "self_test_service.py",
+    ROOT / "self_test_service.py",  # path-ignore
 )
 svc_mod = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
@@ -53,7 +53,7 @@ svc_mod.analyze_redundancy = lambda p: False
 # Helper to compile discover_isolated_modules with stubs
 
 def _load_discover(find_func, import_func, recursive_func):
-    path = ROOT / "scripts" / "discover_isolated_modules.py"
+    path = ROOT / "scripts" / "discover_isolated_modules.py"  # path-ignore
     src = path.read_text()
     tree = ast.parse(src)
     func = None
@@ -80,14 +80,14 @@ def _load_discover(find_func, import_func, recursive_func):
 # ----------------------------------------------------------------------
 
 def test_recursive_import_includes_dependencies(tmp_path):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("x = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("x = 1\n")  # path-ignore
 
     calls = {"rec": 0, "imp": 0}
 
     def find_orphans(root, recursive=False):
         assert Path(root) == tmp_path
-        return [Path("a.py")]
+        return [Path("a.py")]  # path-ignore
 
     def import_orphans(root, recursive=False):
         calls["imp"] += 1
@@ -102,7 +102,7 @@ def test_recursive_import_includes_dependencies(tmp_path):
     res = discover(str(tmp_path), recursive=True)
     assert calls["rec"] == 1
     assert calls["imp"] == 1
-    assert sorted(res) == ["a.py", "b.py"]
+    assert sorted(res) == ["a.py", "b.py"]  # path-ignore
 
 
 # ----------------------------------------------------------------------
@@ -154,21 +154,21 @@ def test_service_recursive_isolated_updates_file(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
     monkeypatch.chdir(tmp_path)
 
-    called = _setup_isolated(monkeypatch, ["foo.py", "bar.py"])
+    called = _setup_isolated(monkeypatch, ["foo.py", "bar.py"])  # path-ignore
     svc = svc_mod.SelfTestService(discover_isolated=True, recursive_isolated=True)
     asyncio.run(svc._run_once())
 
     assert called.get("recursive") is True
     assert Path(called.get("root")) == tmp_path
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert sorted(data) == ["bar.py", "foo.py"]
+    assert sorted(data) == ["bar.py", "foo.py"]  # path-ignore
 
 
 def test_settings_enable_isolated_processing(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
     monkeypatch.chdir(tmp_path)
 
-    called = _setup_isolated(monkeypatch, ["one.py"])
+    called = _setup_isolated(monkeypatch, ["one.py"])  # path-ignore
     monkeypatch.setenv("SELF_TEST_DISCOVER_ORPHANS", "0")
     monkeypatch.setenv("SELF_TEST_RECURSIVE_ORPHANS", "0")
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
@@ -186,14 +186,14 @@ def test_settings_enable_isolated_processing(tmp_path, monkeypatch):
 
 
 def test_discover_isolated_records_dependencies(tmp_path, monkeypatch):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("x = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("x = 1\n")  # path-ignore
 
     import types
 
     def fake_discover(root, recursive=True):
         assert recursive is True
-        return [Path("a.py")]
+        return [Path("a.py")]  # path-ignore
 
     mod_iso = types.ModuleType("scripts.discover_isolated_modules")
     mod_iso.discover_isolated_modules = fake_discover
@@ -211,19 +211,19 @@ def test_discover_isolated_records_dependencies(tmp_path, monkeypatch):
         recursive_isolated=True,
     )
     mods = svc._discover_isolated()
-    assert set(mods) == {"a.py", "b.py"}
-    assert svc.orphan_traces.get("b.py", {}).get("parents") == ["a.py"]
+    assert set(mods) == {"a.py", "b.py"}  # path-ignore
+    assert svc.orphan_traces.get("b.py", {}).get("parents") == ["a.py"]  # path-ignore
 
 
 def test_discover_isolated_skips_redundant(tmp_path, monkeypatch):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("# deprecated\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("# deprecated\n")  # path-ignore
 
     import types
 
     def fake_discover(root, recursive=True):
         assert recursive is True
-        return [Path("a.py")]
+        return [Path("a.py")]  # path-ignore
 
     mod_iso = types.ModuleType("scripts.discover_isolated_modules")
     mod_iso.discover_isolated_modules = fake_discover
@@ -233,7 +233,7 @@ def test_discover_isolated_skips_redundant(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts", pkg)
 
     def fake_analyze(path: Path) -> bool:
-        return path.name == "b.py"
+        return path.name == "b.py"  # path-ignore
 
     monkeypatch.setattr(svc_mod, "analyze_redundancy", fake_analyze)
 
@@ -247,6 +247,6 @@ def test_discover_isolated_skips_redundant(tmp_path, monkeypatch):
     )
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     mods = svc._discover_isolated()
-    assert mods == ["a.py"]
-    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]
-    assert svc.orphan_traces["b.py"]["redundant"] is True
+    assert mods == ["a.py"]  # path-ignore
+    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]  # path-ignore
+    assert svc.orphan_traces["b.py"]["redundant"] is True  # path-ignore

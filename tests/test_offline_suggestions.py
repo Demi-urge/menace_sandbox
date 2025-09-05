@@ -74,14 +74,14 @@ import patch_suggestion_db as psdb
 
 def test_choose_suggestion_uses_db(tmp_path):
     db = psdb.PatchSuggestionDB(tmp_path / "s.db")
-    db.add(psdb.SuggestionRecord(module="mod.py", description="add logging"))
-    db.add(psdb.SuggestionRecord(module="mod.py", description="add logging"))
-    db.add(psdb.SuggestionRecord(module="mod.py", description="improve error"))
-    ctx = types.SimpleNamespace(suggestion_cache={"mod.py": "fallback"}, suggestion_db=db)
-    assert _choose_suggestion(ctx, "mod.py") == "add logging"
+    db.add(psdb.SuggestionRecord(module="mod.py", description="add logging"))  # path-ignore
+    db.add(psdb.SuggestionRecord(module="mod.py", description="add logging"))  # path-ignore
+    db.add(psdb.SuggestionRecord(module="mod.py", description="improve error"))  # path-ignore
+    ctx = types.SimpleNamespace(suggestion_cache={"mod.py": "fallback"}, suggestion_db=db)  # path-ignore
+    assert _choose_suggestion(ctx, "mod.py") == "add logging"  # path-ignore
 
 
 def test_choose_suggestion_fallback():
-    ctx = types.SimpleNamespace(suggestion_cache={"mod.py": "fallback"}, suggestion_db=None)
-    assert _choose_suggestion(ctx, "mod.py") == "fallback"
+    ctx = types.SimpleNamespace(suggestion_cache={"mod.py": "fallback"}, suggestion_db=None)  # path-ignore
+    assert _choose_suggestion(ctx, "mod.py") == "fallback"  # path-ignore
 

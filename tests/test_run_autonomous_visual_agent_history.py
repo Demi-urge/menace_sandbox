@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_module(monkeypatch):
-    path = ROOT / "run_autonomous.py"
+    path = ROOT / "run_autonomous.py"  # path-ignore
     sys.modules.pop("menace", None)
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
@@ -110,7 +110,7 @@ def setup_stubs(monkeypatch):
 
 
 def _start_server(tmp_path: Path):
-    script = tmp_path / "server.py"
+    script = tmp_path / "server.py"  # path-ignore
     script.write_text(
         textwrap.dedent(
             """
@@ -128,7 +128,7 @@ def _start_server(tmp_path: Path):
             )
             sys.modules['pyautogui'] = pyautogui
             pt_mod = types.ModuleType('pytesseract')
-            pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+            pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
             pt_mod.image_to_string = lambda *a, **k: ''
             pt_mod.image_to_data = lambda *a, **k: {}
             pt_mod.Output = types.SimpleNamespace(DICT=0)

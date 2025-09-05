@@ -15,7 +15,7 @@ TOKEN = "tombalolosvisualagent123"
 
 
 def _write_script(path: Path, recover: bool = False) -> Path:
-    script = path / ("recover.py" if recover else "server.py")
+    script = path / ("recover.py" if recover else "server.py")  # path-ignore
     script.write_text(textwrap.dedent(f"""
         import sys, types, time, os, runpy
         heavy = ['cv2', 'numpy']
@@ -45,7 +45,7 @@ def _write_script(path: Path, recover: bool = False) -> Path:
         )
         sys.modules['pyautogui'] = pyautogui
         pt_mod = types.ModuleType('pytesseract')
-        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
         pt_mod.image_to_string = lambda *a, **k: ''
         pt_mod.image_to_data = lambda *a, **k: {{}}
         pt_mod.Output = types.SimpleNamespace(DICT=0)

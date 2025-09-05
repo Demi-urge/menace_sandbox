@@ -28,10 +28,10 @@ def _stub_embeddings(monkeypatch):
 
 
 def _build_sample_graph(tmp_path: Path):
-    (tmp_path / "a.py").write_text(
+    (tmp_path / "a.py").write_text(  # path-ignore
         "import b\n\n\ndef a_func():\n    return 1\n"
     )
-    (tmp_path / "b.py").write_text(
+    (tmp_path / "b.py").write_text(  # path-ignore
         "def b_func():\n    return 2\n"
     )
     grapher = ModuleSynergyGrapher()
@@ -53,19 +53,19 @@ def test_build_graph_basic(tmp_path: Path):
 
 
 def test_update_graph(tmp_path: Path):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("")  # path-ignore
     grapher = ModuleSynergyGrapher()
     grapher.build_graph(tmp_path)
     assert ("a", "b") in grapher.graph.edges
 
     # Change module ``a`` to remove import, edge should disappear
-    (tmp_path / "a.py").write_text("")
+    (tmp_path / "a.py").write_text("")  # path-ignore
     grapher.update_graph(["a"])
     assert ("a", "b") not in grapher.graph.edges
 
     # Add new module and ensure connections are added
-    (tmp_path / "c.py").write_text("import a\n")
+    (tmp_path / "c.py").write_text("import a\n")  # path-ignore
     grapher.update_graph(["c"])
     assert "c" in grapher.graph
     assert ("c", "a") in grapher.graph.edges
@@ -74,14 +74,14 @@ def test_update_graph(tmp_path: Path):
 def test_update_graph_removed_module(tmp_path: Path):
     """Modules deleted from disk should be pruned from the graph."""
 
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("")  # path-ignore
     grapher = ModuleSynergyGrapher()
     grapher.build_graph(tmp_path)
     assert "b" in grapher.graph
 
     # Remove module ``b`` entirely
-    (tmp_path / "b.py").unlink()
+    (tmp_path / "b.py").unlink()  # path-ignore
     grapher.update_graph(["b"])
 
     assert "b" not in grapher.graph
@@ -91,8 +91,8 @@ def test_update_graph_removed_module(tmp_path: Path):
 def test_build_save_load_cluster(tmp_path: Path):
     """End-to-end test covering graph build, save/load and clustering."""
 
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("")  # path-ignore
 
     grapher = ModuleSynergyGrapher()
     graph = grapher.build_graph(tmp_path)
@@ -133,8 +133,8 @@ def test_config_overrides(tmp_path: Path):
 
 
 def test_learn_coefficients_from_history(tmp_path: Path):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("")  # path-ignore
 
     db_path = tmp_path / "synergy_history.db"
     conn = shd.connect(db_path)
@@ -157,16 +157,16 @@ def test_learn_coefficients_from_history(tmp_path: Path):
 
 
 def test_structure_similarity(tmp_path: Path):
-    (tmp_path / "c.py").write_text("x = 1\n")
-    (tmp_path / "d.py").write_text("x = 2\n")
+    (tmp_path / "c.py").write_text("x = 1\n")  # path-ignore
+    (tmp_path / "d.py").write_text("x = 2\n")  # path-ignore
     graph = ModuleSynergyGrapher().build_graph(tmp_path)
     assert graph.has_edge("c", "d")
     assert graph["c"]["d"]["weight"] == pytest.approx(1 / 3)
 
 
 def test_workflow_cooccurrence(tmp_path: Path, monkeypatch):
-    (tmp_path / "wfa.py").write_text("print('a')\n")
-    (tmp_path / "wfb.py").write_text("print('b')\n")
+    (tmp_path / "wfa.py").write_text("print('a')\n")  # path-ignore
+    (tmp_path / "wfb.py").write_text("print('b')\n")  # path-ignore
 
     db_path = tmp_path / "workflows.db"
     db_path.touch()
@@ -189,8 +189,8 @@ def test_workflow_cooccurrence(tmp_path: Path, monkeypatch):
 
 
 def test_embedding_similarity(tmp_path: Path, monkeypatch):
-    (tmp_path / "e.py").write_text('"""alpha beta"""')
-    (tmp_path / "f.py").write_text('"""alpha beta"""')
+    (tmp_path / "e.py").write_text('"""alpha beta"""')  # path-ignore
+    (tmp_path / "f.py").write_text('"""alpha beta"""')  # path-ignore
 
     def fake_embed(text: str) -> list[float]:
         return [1.0, 0.0] if "alpha" in text else [0.0, 1.0]
@@ -245,17 +245,17 @@ def test_get_synergy_cluster_cycle_terminates():
 def test_build_graph_scores_all_metrics(tmp_path: Path, monkeypatch):
     """Edges combine import, structure, co-occurrence and embeddings."""
 
-    (tmp_path / "mod1.py").write_text(
+    (tmp_path / "mod1.py").write_text(  # path-ignore
         '"""module a"""\nimport mod2\n\n'
         'def foo():\n    pass\n\n'
         'class K:\n    pass\n'
     )
-    (tmp_path / "mod2.py").write_text(
+    (tmp_path / "mod2.py").write_text(  # path-ignore
         '"""module b"""\n'
         'def foo():\n    pass\n\n'
         'class K:\n    pass\n'
     )
-    (tmp_path / "mod3.py").write_text('"""module c"""')
+    (tmp_path / "mod3.py").write_text('"""module c"""')  # path-ignore
 
     embed_map = {
         "module a": [1.0, 0.0],
@@ -283,17 +283,17 @@ def test_build_graph_scores_all_metrics(tmp_path: Path, monkeypatch):
 
 
 def test_update_graph_only_recomputes_affected_edges(tmp_path: Path, monkeypatch):
-    (tmp_path / "mod1.py").write_text(
+    (tmp_path / "mod1.py").write_text(  # path-ignore
         '"""module a"""\nimport mod2\n\n'
         'def foo():\n    pass\n\n'
         'class K:\n    pass\n'
     )
-    (tmp_path / "mod2.py").write_text(
+    (tmp_path / "mod2.py").write_text(  # path-ignore
         '"""module b"""\n'
         'def foo():\n    pass\n\n'
         'class K:\n    pass\n'
     )
-    (tmp_path / "mod3.py").write_text('"""module c"""')
+    (tmp_path / "mod3.py").write_text('"""module c"""')  # path-ignore
 
     embed_map = {
         "module a": [1.0, 0.0],
@@ -317,7 +317,7 @@ def test_update_graph_only_recomputes_affected_edges(tmp_path: Path, monkeypatch
     graph = grapher.build_graph(tmp_path)
     before = {(a, b): d["weight"] for a, b, d in graph.edges(data=True)}
 
-    (tmp_path / "mod2.py").write_text(
+    (tmp_path / "mod2.py").write_text(  # path-ignore
         '"""module b new"""\n'
         'def bar():\n    pass\n\n'
         'class L:\n    pass\n'

@@ -143,7 +143,7 @@ sys.modules['vector_service'] = vs_mod
 sys.modules['vector_service.context_builder'] = types.SimpleNamespace(record_failed_tags=lambda _tags: None)
 
 # Load SelfDebuggerSandbox module
-_spec = importlib.util.spec_from_file_location('menace.self_debugger_sandbox', Path(__file__).resolve().parents[1] / 'self_debugger_sandbox.py')
+_spec = importlib.util.spec_from_file_location('menace.self_debugger_sandbox', Path(__file__).resolve().parents[1] / 'self_debugger_sandbox.py')  # path-ignore
 sds = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None
 _spec.loader.exec_module(sds)

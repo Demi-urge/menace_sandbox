@@ -25,7 +25,7 @@ def _load_env():
         pkg = types.ModuleType('sandbox_runner')
         pkg.__path__ = [str(pkg_path)]
         sys.modules['sandbox_runner'] = pkg
-    path = pkg_path / 'environment.py'
+    path = pkg_path / 'environment.py'  # path-ignore
     spec = importlib.util.spec_from_file_location('sandbox_runner.environment', path)
     env = importlib.util.module_from_spec(spec)
     sys.modules['sandbox_runner.environment'] = env

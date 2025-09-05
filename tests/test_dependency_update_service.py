@@ -36,7 +36,7 @@ def _load_service():
     sys.modules["menace.deployment_bot"] = stub
     spec = importlib.util.spec_from_file_location(
         "menace.dependency_update_service",
-        ROOT / "dependency_update_service.py",
+        ROOT / "dependency_update_service.py",  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     mod = importlib.util.module_from_spec(spec)

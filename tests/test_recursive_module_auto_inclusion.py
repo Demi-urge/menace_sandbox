@@ -37,7 +37,7 @@ def _prepare(monkeypatch, repo, data_dir):
     def fake_discover_isolated(path, *, recursive=True):
         assert Path(path) == repo
         assert recursive is True
-        return ["iso.py"]
+        return ["iso.py"]  # path-ignore
 
     iso_mod.discover_isolated_modules = fake_discover_isolated
     scripts_pkg = types.ModuleType("scripts")
@@ -97,9 +97,9 @@ def _prepare(monkeypatch, repo, data_dir):
 
 def test_recursive_module_auto_inclusion(tmp_path, monkeypatch):
     repo = tmp_path
-    (repo / "iso.py").write_text("import dep\n")
-    (repo / "dep.py").write_text("x = 1\n")
-    (repo / "old.py").write_text("x = 2\n")
+    (repo / "iso.py").write_text("import dep\n")  # path-ignore
+    (repo / "dep.py").write_text("x = 1\n")  # path-ignore
+    (repo / "old.py").write_text("x = 2\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -110,9 +110,9 @@ def test_recursive_module_auto_inclusion(tmp_path, monkeypatch):
         cycle._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
 
     # dependency and main module are self-tested and integrated
-    assert calls and calls[0] == ["dep.py", "iso.py"]
+    assert calls and calls[0] == ["dep.py", "iso.py"]  # path-ignore
     data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {"iso.py", "dep.py"}
+    assert set(data["modules"]) == {"iso.py", "dep.py"}  # path-ignore
     # redundant module is cached but not integrated
-    assert ctx.orphan_traces.get("old.py", {}).get("redundant") is True
-    assert "old.py" not in data["modules"]
+    assert ctx.orphan_traces.get("old.py", {}).get("redundant") is True  # path-ignore
+    assert "old.py" not in data["modules"]  # path-ignore

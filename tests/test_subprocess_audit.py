@@ -109,7 +109,7 @@ def _make_service(tmp_path):
 @pytest.mark.skipif(SelfTestService is None, reason="self_test_service unavailable")
 def test_service_subprocess_failure(monkeypatch, tmp_path, caplog):
     svc = _make_service(tmp_path)
-    mod = tmp_path / "test_mod.py"
+    mod = tmp_path / "test_mod.py"  # path-ignore
     mod.write_text("def test_a():\n    assert True\n")
 
     def fake_run(cmd, **kwargs):
@@ -125,7 +125,7 @@ def test_service_subprocess_failure(monkeypatch, tmp_path, caplog):
 @pytest.mark.skipif(SelfTestService is None, reason="self_test_service unavailable")
 def test_service_subprocess_timeout(monkeypatch, tmp_path, caplog):
     svc = _make_service(tmp_path)
-    mod = tmp_path / "test_mod.py"
+    mod = tmp_path / "test_mod.py"  # path-ignore
     mod.write_text("def test_a():\n    assert True\n")
 
     def fake_run(cmd, **kwargs):

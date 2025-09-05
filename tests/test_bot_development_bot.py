@@ -15,7 +15,7 @@ stub.DBRouter = object
 sys.modules.setdefault("menace.db_router", stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
-    "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]
+    "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]  # path-ignore
 )
 menace_pkg = importlib.util.module_from_spec(pkg_spec)
 sys.modules["menace"] = menace_pkg
@@ -72,11 +72,11 @@ def test_build_from_plan(tmp_path):
     cfg.visual_token_refresh_cmd = "cmd"
     bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
     files = bot.build_from_plan(_json())
-    assert (tmp_path / "sample_bot" / "sample_bot.py") in files
-    assert (tmp_path / "sample_bot" / "sample_bot.py").exists()
+    assert (tmp_path / "sample_bot" / "sample_bot.py") in files  # path-ignore
+    assert (tmp_path / "sample_bot" / "sample_bot.py").exists()  # path-ignore
     req = tmp_path / "sample_bot" / "requirements.txt"
     assert req.exists()
-    test_file = tmp_path / "sample_bot" / "tests" / "test_run.py"
+    test_file = tmp_path / "sample_bot" / "tests" / "test_run.py"  # path-ignore
     assert test_file.exists()
 
 
@@ -186,7 +186,7 @@ def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):
     spec2["name"] = "sample_bot2"
     plan = json.dumps([_spec_dict(), spec2])
     paths = bot.build_from_plan(plan)
-    assert (tmp_path / "sample_bot" / "sample_bot.py") in paths
+    assert (tmp_path / "sample_bot" / "sample_bot.py") in paths  # path-ignore
     assert calls.get("workers") == 2
 
 

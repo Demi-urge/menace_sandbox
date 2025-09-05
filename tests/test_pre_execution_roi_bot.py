@@ -83,7 +83,7 @@ def load_mod():
             pass
         mod.UnifiedEventBus = UnifiedEventBus
         sys.modules["menace.unified_event_bus"] = mod
-    path = ROOT / "pre_execution_roi_bot.py"
+    path = ROOT / "pre_execution_roi_bot.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace.pre_execution_roi_bot", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["menace.pre_execution_roi_bot"] = mod

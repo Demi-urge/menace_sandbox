@@ -44,11 +44,11 @@ def _build_dbs() -> tuple[_CtxConnWrapper, _CtxConnWrapper]:
         """
     )
     patch_conn.executemany(
-        "INSERT INTO patch_history VALUES (1,'low.py',?,?,?,?)",
+        "INSERT INTO patch_history VALUES (1,'low.py',?,?,?,?)",  # path-ignore
         [(-5.0, 0, 0, 0.0), (-4.0, 0, 0, 0.0), (-6.0, 0, 0, 0.0)],
     )
     patch_conn.executemany(
-        "INSERT INTO patch_history VALUES (2,'med.py',?,?,?,?)",
+        "INSERT INTO patch_history VALUES (2,'med.py',?,?,?,?)",  # path-ignore
         [(-1.0, 0, 0, 0.0), (-1.5, 0, 0, 0.0), (-0.5, 0, 0, 0.0)],
     )
     return _CtxConnWrapper(code_conn), _CtxConnWrapper(patch_conn)
@@ -60,10 +60,10 @@ def test_classifier_queue_and_top_suggestions(tmp_path) -> None:
     suggestions = list(classifier.scan_repo())
     assert len(suggestions) == 2
     by_path = {s.path: s for s in suggestions}
-    assert by_path["low.py"].score > by_path["med.py"].score
+    assert by_path["low.py"].score > by_path["med.py"].score  # path-ignore
 
     db = PatchSuggestionDB(tmp_path / "s.db")
     db.queue_suggestions(suggestions)
     top = db.top_suggestions(2)
-    assert [s.module for s in top] == ["low.py", "med.py"]
-    assert top[0].rationale == by_path["low.py"].rationale
+    assert [s.module for s in top] == ["low.py", "med.py"]  # path-ignore
+    assert top[0].rationale == by_path["low.py"].rationale  # path-ignore

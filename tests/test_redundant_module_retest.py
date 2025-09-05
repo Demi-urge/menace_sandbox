@@ -7,14 +7,14 @@ import menace.self_improvement as sie
 
 def test_redundant_modules_retested(monkeypatch, tmp_path):
     repo = tmp_path
-    (repo / "red.py").write_text("x = 1\n")
+    (repo / "red.py").write_text("x = 1\n")  # path-ignore
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
-    (data_dir / "orphan_modules.json").write_text(json.dumps(["red.py"]))
+    (data_dir / "orphan_modules.json").write_text(json.dumps(["red.py"]))  # path-ignore
     (data_dir / "orphan_classifications.json").write_text(
-        json.dumps({"red.py": {"classification": "redundant"}})
+        json.dumps({"red.py": {"classification": "redundant"}})  # path-ignore
     )
 
     calls: dict[str, object] = {}
@@ -36,5 +36,5 @@ def test_redundant_modules_retested(monkeypatch, tmp_path):
 
     eng.retest_redundant_modules()
 
-    assert calls.get("mods") == ["red.py"]
+    assert calls.get("mods") == ["red.py"]  # path-ignore
     assert calls.get("validate") is True

@@ -38,7 +38,7 @@ class DummyContextBuilder:
 # ---------------------------------------------------------------------------
 
 def test_patch_success(monkeypatch, tmp_path, capsys):
-    module = tmp_path / "mod.py"
+    module = tmp_path / "mod.py"  # path-ignore
     module.write_text("x=1\n")
 
     monkeypatch.setattr(vector_service, "ContextBuilder", DummyContextBuilder)
@@ -68,7 +68,7 @@ def test_patch_invalid_path(monkeypatch, tmp_path):
 
     rc = menace_cli.main([
         "patch",
-        str(tmp_path / "missing.py"),
+        str(tmp_path / "missing.py"),  # path-ignore
         "--desc",
         "bad",
     ])
@@ -78,7 +78,7 @@ def test_patch_invalid_path(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_patch_bad_context(monkeypatch, tmp_path, capsys):
-    module = tmp_path / "mod_bad_ctx.py"
+    module = tmp_path / "mod_bad_ctx.py"  # path-ignore
     module.write_text("x=1\n")
     monkeypatch.setattr(vector_service, "ContextBuilder", DummyContextBuilder)
 
@@ -98,7 +98,7 @@ def test_patch_bad_context(monkeypatch, tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 def test_patch_description_and_context(monkeypatch, tmp_path):
-    module = tmp_path / "mod2.py"
+    module = tmp_path / "mod2.py"  # path-ignore
     module.write_text("x=1\n")
     monkeypatch.setattr(vector_service, "ContextBuilder", DummyContextBuilder)
 

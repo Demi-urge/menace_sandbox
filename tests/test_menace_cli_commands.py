@@ -102,7 +102,7 @@ def test_patch_command(monkeypatch, tmp_path):
         sys.modules["quick_fix_engine"], "generate_patch", fake_generate_patch
     )
 
-    mod = tmp_path / "m.py"
+    mod = tmp_path / "m.py"  # path-ignore
     mod.write_text("x=1")
 
     monkeypatch.setattr(sys, "stdout", io.StringIO())

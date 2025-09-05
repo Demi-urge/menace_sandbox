@@ -22,9 +22,9 @@ sys.modules.setdefault("git", stub)
 stub.Repo = object
 matplotlib_stub = types.ModuleType("matplotlib")
 plt_stub = types.ModuleType("pyplot")
-matplotlib_stub.pyplot = plt_stub
+matplotlib_stub.pyplot = plt_stub  # path-ignore
 sys.modules.setdefault("matplotlib", matplotlib_stub)
-sys.modules.setdefault("matplotlib.pyplot", plt_stub)
+sys.modules.setdefault("matplotlib.pyplot", plt_stub)  # path-ignore
 dotenv_stub = types.ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda *a, **k: None
 sys.modules.setdefault("dotenv", dotenv_stub)

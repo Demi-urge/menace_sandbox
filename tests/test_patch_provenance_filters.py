@@ -13,8 +13,8 @@ from vector_service.patch_logger import PatchLogger
 
 def _setup_db(path):
     db = PatchHistoryDB(path)
-    pid1 = db.add(PatchRecord("a.py", "desc1", 1.0, 2.0))
-    pid2 = db.add(PatchRecord("b.py", "desc2", 1.0, 2.0))
+    pid1 = db.add(PatchRecord("a.py", "desc1", 1.0, 2.0))  # path-ignore
+    pid2 = db.add(PatchRecord("b.py", "desc2", 1.0, 2.0))  # path-ignore
     db.log_ancestry(pid1, [("o", "v1", 0.5, "GPL", "fp1", ["malware"])])
     db.log_ancestry(pid2, [("o", "v2", 0.7, "MIT", "fp2", ["trojan"])])
     return db, pid1, pid2
@@ -26,22 +26,22 @@ def test_service_filters(tmp_path):
     client = app.test_client()
     res = client.get("/patches", query_string={"license": "GPL"})
     assert res.get_json() == [
-        {"id": pid1, "filename": "a.py", "description": "desc1"}
+        {"id": pid1, "filename": "a.py", "description": "desc1"}  # path-ignore
     ]
     res = client.get("/patches", query_string={"semantic_alert": "trojan"})
     assert res.get_json() == [
-        {"id": pid2, "filename": "b.py", "description": "desc2"}
+        {"id": pid2, "filename": "b.py", "description": "desc2"}  # path-ignore
     ]
     res = client.get("/patches", query_string={"license_fingerprint": "fp2"})
     assert res.get_json() == [
-        {"id": pid2, "filename": "b.py", "description": "desc2"}
+        {"id": pid2, "filename": "b.py", "description": "desc2"}  # path-ignore
     ]
     res = client.get(
         "/patches",
         query_string={"license": "GPL", "semantic_alert": "malware"},
     )
     assert res.get_json() == [
-        {"id": pid1, "filename": "a.py", "description": "desc1"}
+        {"id": pid1, "filename": "a.py", "description": "desc1"}  # path-ignore
     ]
 
 
@@ -108,7 +108,7 @@ def test_cli_filters(tmp_path):
 
 def test_track_contributors_sorted(tmp_path):
     db = PatchHistoryDB(tmp_path / "t.db")
-    pid = db.add(PatchRecord("c.py", "desc", 0.0, 0.0))
+    pid = db.add(PatchRecord("c.py", "desc", 0.0, 0.0))  # path-ignore
     logger = PatchLogger(patch_db=db)
     vectors = [("o:v2", 0.8), ("o:v1", 0.2)]
     meta = {

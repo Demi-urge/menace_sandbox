@@ -19,11 +19,11 @@ def _make_clusterer(tmp_path: Path) -> ic.IntentClusterer:
 def test_fallback_groups_by_dependency_graph(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "module_synergy_grapher", None)
     clusterer = _make_clusterer(tmp_path)
-    a = tmp_path / "a.py"
+    a = tmp_path / "a.py"  # path-ignore
     a.write_text("import b\n")
-    b = tmp_path / "b.py"
+    b = tmp_path / "b.py"  # path-ignore
     b.write_text("\n")
-    solo = tmp_path / "solo.py"
+    solo = tmp_path / "solo.py"  # path-ignore
     solo.write_text("\n")
     groups = clusterer._load_synergy_groups(tmp_path)
     gsets = [set(map(Path, members)) for members in groups.values()]

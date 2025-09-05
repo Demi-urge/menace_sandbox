@@ -7,7 +7,7 @@ from pathlib import Path
 # Ensure menace package can be imported similar to other tests
 ROOT = Path(__file__).resolve().parents[1]
 
-spec = importlib.util.spec_from_file_location("menace", ROOT / "__init__.py")
+spec = importlib.util.spec_from_file_location("menace", ROOT / "__init__.py")  # path-ignore
 menace_pkg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(menace_pkg)
 sys.modules.setdefault("menace", menace_pkg)

@@ -6,7 +6,7 @@ from sandbox_runner import cycle
 
 
 def test_reruns_flagged_module_on_change(tmp_path, monkeypatch):
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text("VALUE = 1\n")
 
     monkeypatch.setattr(cycle, "discover_recursive_orphans", lambda repo: {})
@@ -57,24 +57,24 @@ def test_reruns_flagged_module_on_change(tmp_path, monkeypatch):
         repo=tmp_path,
         settings=Settings(),
         module_map=set(),
-        orphan_traces={"mod.py": {"classification": "candidate", "parents": []}},
+        orphan_traces={"mod.py": {"classification": "candidate", "parents": []}},  # path-ignore
         tracker=types.SimpleNamespace(merge_history=lambda self, other: None),
     )
 
     cycle.include_orphan_modules(ctx)
-    assert calls == [["mod.py"]]
-    first_mtime = ctx.orphan_traces["mod.py"]["mtime"]
+    assert calls == [["mod.py"]]  # path-ignore
+    first_mtime = ctx.orphan_traces["mod.py"]["mtime"]  # path-ignore
     cache_path = tmp_path / "sandbox_data" / "orphan_modules.json"
     data = json.loads(cache_path.read_text())
-    assert data["mod.py"]["failed"] is True
-    assert "mtime" in data["mod.py"]
+    assert data["mod.py"]["failed"] is True  # path-ignore
+    assert "mtime" in data["mod.py"]  # path-ignore
 
     time.sleep(1)
     mod.write_text("VALUE = 2\n")
 
     cycle.include_orphan_modules(ctx)
-    assert calls[1] == ["mod.py"]
-    assert "mod.py" not in ctx.orphan_traces
+    assert calls[1] == ["mod.py"]  # path-ignore
+    assert "mod.py" not in ctx.orphan_traces  # path-ignore
     data = json.loads(cache_path.read_text())
-    assert "mod.py" not in data
+    assert "mod.py" not in data  # path-ignore
     assert metrics["orphan_modules_reintroduced_total"].inc_calls == 1

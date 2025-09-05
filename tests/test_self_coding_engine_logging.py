@@ -151,7 +151,7 @@ def test_knowledge_service_logging(monkeypatch, caplog):
     )
     caplog.set_level(logging.WARNING)
     caplog.clear()
-    target = dynamic_path_router.resolve_path("tests/fixtures/semantic/a.py")
+    target = dynamic_path_router.resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
     engine.generate_helper("desc", path=target)
     messages = [record.message for record in caplog.records]
     assert any("recent_feedback" in m for m in messages)
@@ -180,7 +180,7 @@ def test_tempfile_cleanup_logging(monkeypatch, caplog, tmp_path):
     monkeypatch.setattr(sce.Path, "unlink", bad_unlink)
     caplog.set_level(logging.ERROR)
     caplog.clear()
-    target = tmp_path / "t.py"
+    target = tmp_path / "t.py"  # path-ignore
     target.write_text("print('hi')\n")
     engine.patch_file(target, "desc")
     assert any("temporary file cleanup failed" in r.message for r in caplog.records)

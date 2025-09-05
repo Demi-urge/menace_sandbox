@@ -12,7 +12,7 @@ def test_roundtrip_and_invalidation(tmp_path: Path) -> None:
     cache = ChunkSummaryCache(cache_dir)
 
     # Prepare sample file and compute path hash
-    file = tmp_path / "sample.py"
+    file = tmp_path / "sample.py"  # path-ignore
     file.write_text("print('hello')\n")
     path_hash = cache.hash_path(file)
 
@@ -36,7 +36,7 @@ def test_roundtrip_and_invalidation(tmp_path: Path) -> None:
 def test_file_change_invalidates_cache_via_chunking(tmp_path: Path, monkeypatch) -> None:
     """Changing a source file triggers cache invalidation on access."""
 
-    file = tmp_path / "sample.py"
+    file = tmp_path / "sample.py"  # path-ignore
     file.write_text("def a():\n    return 1\n")
 
     cache_dir = tmp_path / "cache"
@@ -66,7 +66,7 @@ def test_file_change_invalidates_cache_via_chunking(tmp_path: Path, monkeypatch)
 def test_concurrent_requests_use_per_path_lock(tmp_path: Path, monkeypatch) -> None:
     """Parallel summary requests for the same file only compute once."""
 
-    file = tmp_path / "sample.py"
+    file = tmp_path / "sample.py"  # path-ignore
     file.write_text("def a():\n    return 1\n")
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()

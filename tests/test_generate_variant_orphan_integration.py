@@ -9,7 +9,7 @@ from dynamic_path_router import resolve_path
 
 
 def _copy_modules(tmp_path: Path) -> None:
-    for name in ("mod_a.py", "mod_b.py"):
+    for name in ("mod_a.py", "mod_b.py"):  # path-ignore
         shutil.copy(
             resolve_path(f"tests/fixtures/workflow_modules/{name}"),
             tmp_path / name,
@@ -20,7 +20,7 @@ def test_generate_variants_integrates_orphans(monkeypatch, tmp_path):
     os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
     _copy_modules(tmp_path)
-    (tmp_path / "helper.py").write_text("def helper(data):\n    return data\n")
+    (tmp_path / "helper.py").write_text("def helper(data):\n    return data\n")  # path-ignore
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
@@ -50,7 +50,7 @@ def test_generate_variants_integrates_orphans(monkeypatch, tmp_path):
                 self.members = None
 
         def _search_related(self, prompt: str, top_k: int = 5):
-            return [self.Match("helper.py")]
+            return [self.Match("helper.py")]  # path-ignore
 
         def index_modules(self, paths):
             intent_called["paths"] = list(paths)
@@ -67,9 +67,9 @@ def test_generate_variants_integrates_orphans(monkeypatch, tmp_path):
         from module_synergy_grapher import ModuleSynergyGrapher
         ModuleSynergyGrapher(repo).update_graph(["helper"])
         from intent_clusterer import IntentClusterer
-        IntentClusterer().index_modules([repo / "helper.py"])
-        workflow_called["mods"] = ["helper.py"]
-        return ["helper.py"], True, True
+        IntentClusterer().index_modules([repo / "helper.py"])  # path-ignore
+        workflow_called["mods"] = ["helper.py"]  # path-ignore
+        return ["helper.py"], True, True  # path-ignore
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
@@ -81,6 +81,6 @@ def test_generate_variants_integrates_orphans(monkeypatch, tmp_path):
 
     assert any("helper" in v for v in variants)
     assert integrate_called.get("called") is True
-    assert workflow_called["mods"] == ["helper.py"]
+    assert workflow_called["mods"] == ["helper.py"]  # path-ignore
     assert synergy_called["names"] == ["helper"]
-    assert intent_called["paths"] == [tmp_path / "helper.py"]
+    assert intent_called["paths"] == [tmp_path / "helper.py"]  # path-ignore

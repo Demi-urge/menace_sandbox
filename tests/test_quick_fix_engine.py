@@ -54,7 +54,7 @@ sys.modules.setdefault("vector_service.patch_logger", types.SimpleNamespace(Patc
 # Load QuickFixEngine without importing the full package
 spec = importlib.util.spec_from_file_location(
     "menace.quick_fix_engine",
-    dynamic_path_router.path_for_prompt("quick_fix_engine.py"),
+    dynamic_path_router.path_for_prompt("quick_fix_engine.py"),  # path-ignore
 )
 quick_fix = importlib.util.module_from_spec(spec)
 sys.modules["menace.quick_fix_engine"] = quick_fix
@@ -83,7 +83,7 @@ def test_telemetry_error_logged(monkeypatch, tmp_path, caplog):
         threshold=1,
         graph=FailingGraph(),
     )
-    (tmp_path / "bot.py").write_text("x = 1\n")
+    (tmp_path / "bot.py").write_text("x = 1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
@@ -119,13 +119,13 @@ def test_run_targets_frequent_module(tmp_path, monkeypatch):
         threshold=2,
         graph=DummyGraph(),
     )
-    (tmp_path / "b.py").write_text("x=1\n")
+    (tmp_path / "b.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
     engine.run("bot")
-    assert engine.manager.calls[0][0] == dynamic_path_router.resolve_path("b.py")
+    assert engine.manager.calls[0][0] == dynamic_path_router.resolve_path("b.py")  # path-ignore
     assert engine.graph.events[0][0][2] == "b"
     assert engine.graph.events[0][1]["resolved"] is True
     assert engine.graph.updated is engine.db
@@ -163,10 +163,10 @@ def test_preemptive_patch_modules(tmp_path, monkeypatch):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "mod.py").write_text("x=1\n")
+    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     modules = [("mod", 0.9), ("low", 0.1)]
     engine.preemptive_patch_modules(modules, risk_threshold=0.5)
-    assert mgr.calls == [(dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")]
+    assert mgr.calls == [(dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")]  # path-ignore
     assert db.records == [("mod", 0.9, 123)]
 
 
@@ -177,15 +177,15 @@ def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "mod.py").write_text("x=1\n")
+    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setattr(quick_fix, "generate_patch", lambda m, engine=None: 999)
     engine.preemptive_patch_modules([("mod", 0.8)], risk_threshold=0.5)
-    assert mgr.calls == [(dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")]
+    assert mgr.calls == [(dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")]  # path-ignore
     assert db.records == [("mod", 0.8, 999)]
 
 
 def test_generate_patch_blocks_risky(monkeypatch, tmp_path):
-    path = tmp_path / "a.py"
+    path = tmp_path / "a.py"  # path-ignore
     path.write_text("x=1\n")
 
     class DummyEngine:
@@ -209,7 +209,7 @@ def test_run_records_retrieval_metadata(tmp_path, monkeypatch):
     from vector_service.patch_logger import PatchLogger
 
     db = PatchHistoryDB()
-    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))
+    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))  # path-ignore
 
     class Manager:
         def run_patch(self, path, desc, context_meta=None):
@@ -235,7 +235,7 @@ def test_run_records_retrieval_metadata(tmp_path, monkeypatch):
         retriever=Retriever(),
         patch_logger=PatchLogger(patch_db=db),
     )
-    (tmp_path / "mod.py").write_text("x=1\n")
+    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
@@ -254,7 +254,7 @@ def test_run_records_ancestry_without_logger(tmp_path, monkeypatch):
     from patch_provenance import get_patch_provenance
 
     db = PatchHistoryDB()
-    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))
+    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))  # path-ignore
 
     class Manager:
         def __init__(self):
@@ -274,7 +274,7 @@ def test_run_records_ancestry_without_logger(tmp_path, monkeypatch):
         graph=DummyGraph(),
         retriever=Retriever(),
     )
-    (tmp_path / "mod.py").write_text("x=1\n")
+    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
@@ -292,7 +292,7 @@ def test_generate_patch_resolves_module_path(tmp_path, monkeypatch):
     (repo / ".git").mkdir()
     nested = repo / "pkg"
     nested.mkdir()
-    mod = nested / "mod.py"
+    mod = nested / "mod.py"  # path-ignore
     mod.write_text("x=1\n")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     dynamic_path_router.clear_cache()

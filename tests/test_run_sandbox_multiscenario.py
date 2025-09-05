@@ -112,14 +112,14 @@ def test_run_sandbox_multiscenario(monkeypatch, tmp_path):
         return {'exit_code': exit_code}, [(0.0, roi, metrics)]
 
     def fake_scan_repo_sections(repo_path, modules=None):
-        mod_file = Path(repo_path) / 'mod.py'
-        return {'mod.py': {'sec': mod_file.read_text().splitlines()}}
+        mod_file = Path(repo_path) / 'mod.py'  # path-ignore
+        return {'mod.py': {'sec': mod_file.read_text().splitlines()}}  # path-ignore
     monkeypatch.setattr(sandbox_runner, 'scan_repo_sections', fake_scan_repo_sections, raising=False)
 
     monkeypatch.setattr(env, 'simulate_execution_environment', lambda *a, **k: {})
     monkeypatch.setattr(env, '_section_worker', fake_worker)
 
-    mod = tmp_path / 'mod.py'
+    mod = tmp_path / 'mod.py'  # path-ignore
     mod.write_text('def foo():\n    return 1\n')
 
     presets = [
@@ -138,9 +138,9 @@ def test_run_sandbox_multiscenario(monkeypatch, tmp_path):
     for scen in ['one', 'two', 'three']:
         assert any(f'm:{scen}' in m for m in tracker.metrics)
 
-    assert details['mod.py']['three'][0]['result']['exit_code'] == 1
-    assert details['mod.py']['one'][0]['result']['exit_code'] == 0
-    assert details['mod.py']['two'][0]['result']['exit_code'] == 1
+    assert details['mod.py']['three'][0]['result']['exit_code'] == 1  # path-ignore
+    assert details['mod.py']['one'][0]['result']['exit_code'] == 0  # path-ignore
+    assert details['mod.py']['two'][0]['result']['exit_code'] == 1  # path-ignore
 
 
 def test_run_sandbox_hostile_misuse_concurrency_metrics(monkeypatch, tmp_path):
@@ -187,14 +187,14 @@ def test_run_sandbox_hostile_misuse_concurrency_metrics(monkeypatch, tmp_path):
         return {'exit_code': 0}, [(0.0, roi, metrics)]
 
     def fake_scan_repo_sections(repo_path, modules=None):
-        mod_file = Path(repo_path) / 'mod.py'
-        return {'mod.py': {'sec': mod_file.read_text().splitlines()}}
+        mod_file = Path(repo_path) / 'mod.py'  # path-ignore
+        return {'mod.py': {'sec': mod_file.read_text().splitlines()}}  # path-ignore
     monkeypatch.setattr(sandbox_runner, 'scan_repo_sections', fake_scan_repo_sections, raising=False)
 
     monkeypatch.setattr(env, 'simulate_execution_environment', lambda *a, **k: {})
     monkeypatch.setattr(env, '_section_worker', fake_worker)
 
-    mod = tmp_path / 'mod.py'
+    mod = tmp_path / 'mod.py'  # path-ignore
     mod.write_text('def foo():\n    return 1\n')
 
     presets = [

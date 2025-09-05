@@ -10,8 +10,8 @@ from dynamic_path_router import resolve_path
 @pytest.mark.parametrize(
     "module_file, module_name",
     [
-        ("error_parser.py", "error_parser_copy"),
-        ("failure_localization.py", "failure_localization_copy"),
+        ("error_parser.py", "error_parser_copy"),  # path-ignore
+        ("failure_localization.py", "failure_localization_copy"),  # path-ignore
     ],
 )
 def test_modules_import_target_region_when_relocated(tmp_path, module_file, module_name):
@@ -33,7 +33,7 @@ def test_self_coding_engine_fallback_imports_target_region():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "_target_region_fallback", resolve_path("self_improvement/target_region.py")
+        "_target_region_fallback", resolve_path("self_improvement/target_region.py")  # path-ignore
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["_target_region_fallback"] = module

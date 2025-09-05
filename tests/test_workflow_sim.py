@@ -144,7 +144,7 @@ def test_workflow_sim(monkeypatch, tmp_path):
     pkg.__path__ = [str(ROOT)]
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        resolve_path("task_handoff_bot.py"),
+        resolve_path("task_handoff_bot.py"),  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -262,7 +262,7 @@ def test_workflow_sim_multi_env(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        resolve_path("task_handoff_bot.py"),
+        resolve_path("task_handoff_bot.py"),  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -333,7 +333,7 @@ def test_workflow_sim_combined(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        resolve_path("task_handoff_bot.py"),
+        resolve_path("task_handoff_bot.py"),  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -415,7 +415,7 @@ def test_workflow_function_execution(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        resolve_path("task_handoff_bot.py"),
+        resolve_path("task_handoff_bot.py"),  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -485,7 +485,7 @@ def test_workflow_sim_details(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        resolve_path("task_handoff_bot.py"),
+        resolve_path("task_handoff_bot.py"),  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)

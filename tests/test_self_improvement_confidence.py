@@ -7,7 +7,7 @@ import pytest
 from dynamic_path_router import resolve_path
 
 
-source = resolve_path("self_improvement/engine.py").read_text()
+source = resolve_path("self_improvement/engine.py").read_text()  # path-ignore
 module_ast = ast.parse(source)
 cls = next(
     n for n in module_ast.body if isinstance(n, ast.ClassDef) and n.name == "SelfImprovementEngine"

@@ -5,7 +5,7 @@ import sys
 import types
 from pathlib import Path
 
-RA_PATH = Path(__file__).resolve().parents[1] / "run_autonomous.py"
+RA_PATH = Path(__file__).resolve().parents[1] / "run_autonomous.py"  # path-ignore
 
 sys.modules.pop("dynamic_path_router", None)
 import dynamic_path_router as dpr  # noqa: E402

@@ -24,7 +24,7 @@ def test_no_direct_sqlite_connect_usage() -> None:
     offenders: list[str] = []
     this_test = Path(__file__).relative_to(repo_root).as_posix()
     pattern = "sqlite3." + "connect("
-    for path in repo_root.rglob("*.py"):
+    for path in repo_root.rglob("*.py"):  # path-ignore
         rel = path.relative_to(repo_root).as_posix()
         if rel == this_test:
             continue  # ignore this test file which intentionally mentions the pattern

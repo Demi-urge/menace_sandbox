@@ -8,7 +8,7 @@ from dynamic_path_router import resolve_path
 
 def _load_baseline_tracker():
     spec = importlib.util.spec_from_file_location(
-        "baseline", resolve_path("self_improvement/baseline_tracker.py")
+        "baseline", resolve_path("self_improvement/baseline_tracker.py")  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -16,7 +16,7 @@ def _load_baseline_tracker():
 
 
 def _load_eval_method():
-    src = resolve_path("self_improvement/engine.py").read_text()
+    src = resolve_path("self_improvement/engine.py").read_text()  # path-ignore
     tree = ast.parse(src)
     func = None
     for node in tree.body:

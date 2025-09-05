@@ -5,7 +5,7 @@ from patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 def test_enhancement_outcome_reporting(tmp_path):
     db = PatchSuggestionDB(tmp_path / "s.db")
     # Add suggestion and capture ID
-    rec = SuggestionRecord(module="mod.py", description="refactor")
+    rec = SuggestionRecord(module="mod.py", description="refactor")  # path-ignore
     sugg_id = db.add(rec)
     assert sugg_id
     # Log two outcomes for same suggestion

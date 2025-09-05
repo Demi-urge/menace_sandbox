@@ -12,7 +12,7 @@ from concurrent.futures import Future
 
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
-    "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]
+    "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]  # path-ignore
 )
 menace_pkg = importlib.util.module_from_spec(pkg_spec)
 import sys
@@ -462,7 +462,7 @@ def test_main_runs_single_worker(monkeypatch):
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -501,7 +501,7 @@ def test_dataset_dir_env(monkeypatch, tmp_path):
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)

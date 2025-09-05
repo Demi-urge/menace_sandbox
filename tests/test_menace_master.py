@@ -170,7 +170,7 @@ def test_init_unused_bot_logs_failure(monkeypatch, caplog):
     _setup_mm_stubs(monkeypatch)
     _stub_module(monkeypatch, "menace.bot_development_bot", BotDevelopmentBot=FailingBot)
 
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm
@@ -232,7 +232,7 @@ def test_main_run_cycles(monkeypatch):
     _stub_module(monkeypatch, "menace.override_policy", OverridePolicyManager=DummyService, OverrideDB=DummyBot)
     _stub_module(monkeypatch, "menace.unified_update_service", UnifiedUpdateService=DummyService)
 
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm
@@ -255,7 +255,7 @@ def test_auto_service_setup_root(monkeypatch):
         _install_systemd=lambda: called.append("systemd"),
         _install_windows=lambda: called.append("windows"),
     )
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm
@@ -278,7 +278,7 @@ def test_auto_service_setup_user(monkeypatch, caplog):
         _install_systemd=lambda: called.append("systemd"),
         _install_windows=lambda: called.append("windows"),
     )
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm
@@ -296,7 +296,7 @@ def test_auto_service_setup_user(monkeypatch, caplog):
 
 def test_first_run_triggers_sandbox(monkeypatch, tmp_path):
     _setup_mm_stubs(monkeypatch)
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm
@@ -343,7 +343,7 @@ def test_first_run_triggers_sandbox(monkeypatch, tmp_path):
 
 def test_first_run_failure_no_flag(monkeypatch, tmp_path):
     _setup_mm_stubs(monkeypatch)
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm
@@ -394,7 +394,7 @@ def test_first_run_failure_no_flag(monkeypatch, tmp_path):
 
 def test_sandbox_skipped_on_run_once_error(monkeypatch, tmp_path, caplog):
     _setup_mm_stubs(monkeypatch)
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm

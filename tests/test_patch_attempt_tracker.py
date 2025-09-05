@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 _spec_tr = importlib.util.spec_from_file_location(
     "menace.self_improvement.target_region",
-    ROOT / "self_improvement" / "target_region.py",
+    ROOT / "self_improvement" / "target_region.py",  # path-ignore
 )
 tr_module = importlib.util.module_from_spec(_spec_tr)
 sys.modules.setdefault("menace.self_improvement.target_region", tr_module)
@@ -14,7 +14,7 @@ _spec_tr.loader.exec_module(tr_module)  # type: ignore[attr-defined]
 TargetRegion = tr_module.TargetRegion
 
 _spec_pat = importlib.util.spec_from_file_location(
-    "menace.patch_attempt_tracker", ROOT / "patch_attempt_tracker.py"
+    "menace.patch_attempt_tracker", ROOT / "patch_attempt_tracker.py"  # path-ignore
 )
 pat_module = importlib.util.module_from_spec(_spec_pat)
 sys.modules.setdefault("menace.patch_attempt_tracker", pat_module)
@@ -42,7 +42,7 @@ def _apply(path: Path, region: TargetRegion | None) -> None:
 
 
 def test_escalation_from_region_to_module(tmp_path):
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text(
         "def f():\n    a=1\n    b=2\n    return a+b\n\n"
         "def g():\n    return 42\n"
@@ -95,7 +95,7 @@ def test_escalation_from_region_to_module(tmp_path):
 
 
 def test_reset_clears_escalation(tmp_path):
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text("def f():\n    pass\n")
     region = TargetRegion(filename=str(path), start_line=1, end_line=1, function="f")
     func_region = TargetRegion(filename=str(path), start_line=1, end_line=2, function="f")
@@ -120,7 +120,7 @@ def test_reset_clears_escalation(tmp_path):
 
 
 def test_module_level_after_two_function_failures(tmp_path):
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text("def f():\n    a=1\n    b=2\n    return a+b\n")
 
     region = TargetRegion(filename=str(path), start_line=2, end_line=2, function="f")

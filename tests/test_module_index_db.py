@@ -21,13 +21,13 @@ def test_get_resolves_suffix(tmp_path):
     path = tmp_path / "map.json"
     path.write_text(json.dumps({"foo": 7}))
     db = ModuleIndexDB(path)
-    assert db.get("foo.py") == 7
+    assert db.get("foo.py") == 7  # path-ignore
 
 
 def test_distinct_paths(tmp_path):
     db = ModuleIndexDB(tmp_path / "map.json")
-    idx_a = db.get("a/foo.py")
-    idx_b = db.get("b/foo.py")
+    idx_a = db.get("a/foo.py")  # path-ignore
+    idx_b = db.get("b/foo.py")  # path-ignore
     assert idx_a != idx_b
 
 
@@ -77,22 +77,22 @@ def test_autodiscover_deprecated(monkeypatch, tmp_path):
 
 def test_refresh_generates_when_unknown(monkeypatch, tmp_path):
     path = tmp_path / "map.json"
-    path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))
+    path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))  # path-ignore
     db = ModuleIndexDB(path)
     called = {}
 
     def fake_generate(output, *, root, algorithm, threshold, semantic, exclude=None):
         called["called"] = True
-        output.write_text(json.dumps({"old.py": 0, "new.py": 1}))
-        return {"old.py": 0, "new.py": 1}
+        output.write_text(json.dumps({"old.py": 0, "new.py": 1}))  # path-ignore
+        return {"old.py": 0, "new.py": 1}  # path-ignore
 
     monkeypatch.setattr("module_index_db.generate_module_map", fake_generate)
 
-    db.refresh(["new.py"])
+    db.refresh(["new.py"])  # path-ignore
     assert called.get("called")
-    assert db.get("new.py") == 1
+    assert db.get("new.py") == 1  # path-ignore
 
     called.clear()
-    db.refresh(["old.py"])
+    db.refresh(["old.py"])  # path-ignore
     assert not called
 

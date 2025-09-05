@@ -38,7 +38,7 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
 
     setup_stubs(monkeypatch, tmp_path)
 
-    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
+    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"  # path-ignore
     sys.modules.pop("run_autonomous", None)
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
@@ -87,10 +87,10 @@ root = r'{root}'
 parent = os.path.dirname(root)
 sys.path.insert(0, parent)
 sys.path.insert(1, root)
-spec = importlib.util.spec_from_file_location('menace', os.path.join(root, '__init__.py'))
+spec = importlib.util.spec_from_file_location('menace', os.path.join(root, '__init__.py'))  # path-ignore
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 sys.modules.setdefault('menace', mod)
-spec = importlib.util.spec_from_file_location('menace.synergy_exporter', os.path.join(root, 'synergy_exporter.py'))
+spec = importlib.util.spec_from_file_location('menace.synergy_exporter', os.path.join(root, 'synergy_exporter.py'))  # path-ignore
 mod2 = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod2)
 mod2.main(['--history-file', r'{hist_file}', '--port', '{port}', '--interval', '0.05'])
 """
@@ -170,12 +170,12 @@ root = r'{root}'
 parent = os.path.dirname(root)
 sys.path.insert(0, parent)
 sys.path.insert(1, root)
-spec = importlib.util.spec_from_file_location('menace', os.path.join(root, '__init__.py'))
+spec = importlib.util.spec_from_file_location('menace', os.path.join(root, '__init__.py'))  # path-ignore
 menace_mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(menace_mod)
 sys.modules.setdefault('menace', menace_mod)
-spec = importlib.util.spec_from_file_location('menace.synergy_auto_trainer', os.path.join(root, 'synergy_auto_trainer.py'))
+spec = importlib.util.spec_from_file_location('menace.synergy_auto_trainer', os.path.join(root, 'synergy_auto_trainer.py'))  # path-ignore
 sat = importlib.util.module_from_spec(spec); spec.loader.exec_module(sat)
-spec2 = importlib.util.spec_from_file_location('menace.synergy_exporter', os.path.join(root, 'synergy_exporter.py'))
+spec2 = importlib.util.spec_from_file_location('menace.synergy_exporter', os.path.join(root, 'synergy_exporter.py'))  # path-ignore
 se = importlib.util.module_from_spec(spec2); spec2.loader.exec_module(se)
 import types
 a_mod = types.ModuleType('menace.audit_trail')
@@ -186,7 +186,7 @@ class DummyTrail:
         pass
 a_mod.AuditTrail = DummyTrail
 sys.modules['menace.audit_trail'] = a_mod
-spec3 = importlib.util.spec_from_file_location('synergy_tools', os.path.join(root, 'synergy_tools.py'))
+spec3 = importlib.util.spec_from_file_location('synergy_tools', os.path.join(root, 'synergy_tools.py'))  # path-ignore
 tools = importlib.util.module_from_spec(spec3); spec3.loader.exec_module(tools)
 log_file = os.path.join(r'{tmp_path}', 'called.json')
 def fake_train(history, path):

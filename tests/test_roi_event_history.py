@@ -17,7 +17,7 @@ def _setup_stubs(monkeypatch):
     monkeypatch.setitem(sys.modules, "numpy", stub)
     monkeypatch.setitem(sys.modules, "git", types.SimpleNamespace(Repo=object))
     monkeypatch.setitem(sys.modules, "matplotlib", types.ModuleType("matplotlib"))
-    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", types.ModuleType("pyplot"))
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", types.ModuleType("pyplot"))  # path-ignore
     monkeypatch.setitem(sys.modules, "dotenv", types.SimpleNamespace(load_dotenv=lambda *a, **k: None))
     monkeypatch.setitem(sys.modules, "prometheus_client", types.SimpleNamespace(CollectorRegistry=object, Counter=object, Gauge=object))
     monkeypatch.setitem(sys.modules, "sklearn", stub)

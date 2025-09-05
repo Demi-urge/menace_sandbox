@@ -90,7 +90,7 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
     def fake_try(mods):
         updated = []
         for wid, steps in workflows.items():
-            step_groups = {index.get(f"{s}.py") for s in steps}
+            step_groups = {index.get(f"{s}.py") for s in steps}  # path-ignore
             for m in mods:
                 if index.get(Path(m).name) in step_groups:
                     name = Path(m).with_suffix("").as_posix().replace("/", ".")

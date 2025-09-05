@@ -156,7 +156,7 @@ class DummyMetaLogger:
         return []
 
     def diminishing(self, threshold=None, consecutive=3, entropy_threshold=None):
-        return ["mod.py"]
+        return ["mod.py"]  # path-ignore
 
 
 class DummyEngine:
@@ -220,7 +220,7 @@ def test_orphan_inclusion_updates_tracker(monkeypatch, tmp_path):
     from sandbox_runner import cycle
     from menace_sandbox.roi_tracker import ROITracker
 
-    (tmp_path / "mod.py").write_text("VALUE = 1\n")
+    (tmp_path / "mod.py").write_text("VALUE = 1\n")  # path-ignore
 
     monkeypatch.setitem(
         sys.modules,
@@ -278,13 +278,13 @@ def test_orphan_inclusion_updates_tracker(monkeypatch, tmp_path):
             self.repo = repo
             self.settings = Settings()
             self.module_map = set()
-            self.orphan_traces = {"mod.py": {"classification": "candidate", "parents": []}}
+            self.orphan_traces = {"mod.py": {"classification": "candidate", "parents": []}}  # path-ignore
             self.tracker = ROITracker()
 
     ctx = Ctx(tmp_path)
     cycle.include_orphan_modules(ctx)
 
-    assert calls.get("mods") == ["mod.py"]
+    assert calls.get("mods") == ["mod.py"]  # path-ignore
     assert ctx.tracker.roi_history == [0.5]
     assert ctx.tracker.metrics_history["custom"] == [1.0]
 
@@ -295,7 +295,7 @@ def test_orphan_counter_failure_logged(monkeypatch, tmp_path, caplog):
 
     from menace.sandbox_runner import cycle
 
-    (tmp_path / "mod.py").write_text("VALUE = 1\n")
+    (tmp_path / "mod.py").write_text("VALUE = 1\n")  # path-ignore
 
     monkeypatch.setitem(
         sys.modules,
@@ -356,7 +356,7 @@ def test_orphan_counter_failure_logged(monkeypatch, tmp_path, caplog):
             self.repo = repo
             self.settings = Settings()
             self.module_map = set()
-            self.orphan_traces = {"mod.py": {"classification": "candidate", "parents": []}}
+            self.orphan_traces = {"mod.py": {"classification": "candidate", "parents": []}}  # path-ignore
             self.tracker = DummyTracker()
 
     ctx = Ctx(tmp_path)
@@ -367,7 +367,7 @@ def test_orphan_counter_failure_logged(monkeypatch, tmp_path, caplog):
     assert any(
         "failed to update orphan module counters" in r.message for r in caplog.records
     )
-    assert "mod.py" in ctx.module_map
+    assert "mod.py" in ctx.module_map  # path-ignore
 
 
 def test_repo_section_metrics(monkeypatch, tmp_path):
@@ -416,7 +416,7 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -427,12 +427,12 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},  # path-ignore
         raising=False,
     )
 
     code = "def a():\n    pass\n\ndef b():\n    pass\n"
-    (tmp_path / "m.py").write_text(code)
+    (tmp_path / "m.py").write_text(code)  # path-ignore
 
     calls = []
 
@@ -505,7 +505,7 @@ def test_gpt_trigger_on_diminishing(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -567,7 +567,7 @@ def test_section_loop_gpt_trigger(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -581,7 +581,7 @@ def test_section_loop_gpt_trigger(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     sandbox_runner._run_sandbox(argparse.Namespace(sandbox_data_dir=str(tmp_path)))
@@ -638,7 +638,7 @@ def test_metrics_db_records(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -652,7 +652,7 @@ def test_metrics_db_records(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     sandbox_runner._run_sandbox(argparse.Namespace(sandbox_data_dir=str(tmp_path)))
@@ -742,7 +742,7 @@ def test_metric_predictions_recorded(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -756,7 +756,7 @@ def test_metric_predictions_recorded(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     ctx = sandbox_runner._sandbox_init(
@@ -819,7 +819,7 @@ def test_section_worker_netem(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1007,7 +1007,7 @@ def test_auto_prompt_selection(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1089,7 +1089,7 @@ def test_prompt_truncation_and_metrics(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1173,7 +1173,7 @@ def test_prompt_synergy_and_length(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1267,7 +1267,7 @@ def test_preset_adaptation(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1281,14 +1281,14 @@ def test_preset_adaptation(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     sandbox_runner.SANDBOX_ENV_PRESETS = [{"foo": "bar"}]
     ctx = sandbox_runner._sandbox_init(
         {}, argparse.Namespace(sandbox_data_dir=str(tmp_path))
     )
-    sandbox_runner._sandbox_cycle_runner(ctx, "mod.py:sec", "pass", ctx.tracker)
+    sandbox_runner._sandbox_cycle_runner(ctx, "mod.py:sec", "pass", ctx.tracker)  # path-ignore
     sandbox_runner._sandbox_cleanup(ctx)
 
     assert calls.get("tracker") is ctx.tracker
@@ -1353,7 +1353,7 @@ def test_preset_persistence_across_runs(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1367,7 +1367,7 @@ def test_preset_persistence_across_runs(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     def fake_cycle(ctx, sec, snip, tracker, scenario=None):
@@ -1389,11 +1389,11 @@ def test_preset_persistence_across_runs(monkeypatch, tmp_path):
 
     sandbox_runner.SANDBOX_ENV_PRESETS = [{"num": 0}]
     tracker = DummyTracker()
-    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker)
+    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker)  # path-ignore
     assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"num": 1}]
 
     tracker2 = DummyTracker()
-    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker2)
+    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker2)  # path-ignore
     assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"num": 2}]
 
     assert count["val"] == 2
@@ -1453,7 +1453,7 @@ def test_no_preset_adapt_flag(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1467,7 +1467,7 @@ def test_no_preset_adapt_flag(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     def fake_cycle(ctx, sec, snip, tracker, scenario=None):
@@ -1489,11 +1489,11 @@ def test_no_preset_adapt_flag(monkeypatch, tmp_path):
 
     sandbox_runner.SANDBOX_ENV_PRESETS = [{"num": 0}]
     tracker = DummyTracker()
-    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker)
+    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker)  # path-ignore
     assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"num": 0}]
 
     tracker2 = DummyTracker()
-    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker2)
+    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker2)  # path-ignore
     assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"num": 0}]
 
 
@@ -1603,7 +1603,7 @@ def test_brainstorm_trigger_on_low_roi(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1622,7 +1622,7 @@ def test_brainstorm_trigger_on_low_roi(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     ctx = sandbox_runner._sandbox_init(
@@ -1694,7 +1694,7 @@ def test_brainstorm_trigger_on_resilience_drop(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -1713,7 +1713,7 @@ def test_brainstorm_trigger_on_resilience_drop(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},  # path-ignore
     )
 
     ctx = sandbox_runner._sandbox_init(
@@ -1784,7 +1784,7 @@ def test_sandbox_prediction_mae_and_reliability(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path, modules=None: {"m.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"m.py": {"sec": ["pass"]}},  # path-ignore
     )
     monkeypatch.setattr(rt.ROITracker, "forecast", lambda self: (0.15, (0.0, 0.0)))
 
@@ -1917,7 +1917,7 @@ def test_workflow_sim_synergy_metrics(monkeypatch, tmp_path):
 
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        ROOT / "task_handoff_bot.py",
+        ROOT / "task_handoff_bot.py",  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -2121,7 +2121,7 @@ def test_modules_marked_complete_skip_improvement(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
-        str(resolve_path("sandbox_runner.py")),
+        str(resolve_path("sandbox_runner.py")),  # path-ignore
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
@@ -2140,7 +2140,7 @@ def test_modules_marked_complete_skip_improvement(monkeypatch):
     class Meta:
         def __init__(self):
             self.flagged_sections = set()
-            self.module_deltas = {"m.py:sec": [0.0, 0.0, 0.0]}
+            self.module_deltas = {"m.py:sec": [0.0, 0.0, 0.0]}  # path-ignore
             self.last_patch_id = 0
 
         def log_cycle(self, *a, **k):
@@ -2150,13 +2150,13 @@ def test_modules_marked_complete_skip_improvement(monkeypatch):
             return []
 
         def diminishing(self, threshold=None, consecutive=3, entropy_threshold=None):
-            self.flagged_sections.add("m.py:sec")
-            return ["m.py:sec"]
+            self.flagged_sections.add("m.py:sec")  # path-ignore
+            return ["m.py:sec"]  # path-ignore
 
     ctx = types.SimpleNamespace(
         meta_log=Meta(),
-        sections={"m.py": {"sec": ["pass"]}},
-        all_section_names={"m.py:sec"},
+        sections={"m.py": {"sec": ["pass"]}},  # path-ignore
+        all_section_names={"m.py:sec"},  # path-ignore
         tracker=DummyTracker(),
         settings=types.SimpleNamespace(
             entropy_plateau_threshold=None, entropy_plateau_consecutive=None
@@ -2178,7 +2178,7 @@ def test_modules_marked_complete_skip_improvement(monkeypatch):
                 continue
             sandbox_runner._sandbox_cycle_runner(ctx, section_name, "", ctx.tracker)
 
-    assert calls == ["m.py:sec"]
+    assert calls == ["m.py:sec"]  # path-ignore
 
 
 def test_ranking_prefers_raroi():
@@ -2186,17 +2186,17 @@ def test_ranking_prefers_raroi():
     tracker.update(
         0.0,
         1.0,
-        ["risky.py"],
+        ["risky.py"],  # path-ignore
         metrics={"workflow_type": "critical", "rollback_probability": 0.8},
     )
     tracker.update(
         0.0,
         0.6,
-        ["safe.py"],
+        ["safe.py"],  # path-ignore
         metrics={"workflow_type": "standard", "rollback_probability": 0.0},
     )
     ranking = tracker.rankings()
-    assert ranking[0][0] == "safe.py"
+    assert ranking[0][0] == "safe.py"  # path-ignore
     assert ranking[0][1] > ranking[1][1]
     assert ranking[0][2] < ranking[1][2]
     expected_safe = 0.6 * (1 - np.std([1.0, 0.6]))

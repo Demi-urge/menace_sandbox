@@ -30,7 +30,7 @@ def test_cleanup_removes_lock(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)
@@ -83,7 +83,7 @@ def _setup_module(monkeypatch, tmp_path, pid_exists=lambda pid: False):
     monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)

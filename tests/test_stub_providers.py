@@ -18,7 +18,7 @@ def _load(name: str, path: Path):
     spec.loader.exec_module(module)
     return module
 
-sp = _load("stub_providers", ROOT / "sandbox_runner" / "stub_providers.py")
+sp = _load("stub_providers", ROOT / "sandbox_runner" / "stub_providers.py")  # path-ignore
 from sandbox_settings import SandboxSettings
 
 

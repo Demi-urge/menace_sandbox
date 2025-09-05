@@ -46,7 +46,7 @@ sys.modules.setdefault("sandbox_runner.bootstrap", bootstrap_mod)
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_improvement.learners",
-    resolve_path("self_improvement/learners.py"),
+    resolve_path("self_improvement/learners.py"),  # path-ignore
 )
 sie = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = sie

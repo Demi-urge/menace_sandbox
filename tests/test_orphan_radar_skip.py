@@ -34,9 +34,9 @@ def test_retire_flag_skips_module(monkeypatch, tmp_path):
     monkeypatch.setattr(rr, "_RELEVANCY_FLAGS_FILE", tmp_path / "relevancy_flags.json")
     rr._module_usage_counter.clear()
     rr._relevancy_flags.clear()
-    monkeypatch.setattr(rr, "load_usage_stats", lambda: {"other.py": 1})
+    monkeypatch.setattr(rr, "load_usage_stats", lambda: {"other.py": 1})  # path-ignore
 
-    res = eng._test_orphan_modules(["foo.py"])
+    res = eng._test_orphan_modules(["foo.py"])  # path-ignore
     assert res == set()
-    assert eng.orphan_traces["foo.py"]["radar_flag"] == "retire"
+    assert eng.orphan_traces["foo.py"]["radar_flag"] == "retire"  # path-ignore
     assert calls == []

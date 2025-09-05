@@ -74,7 +74,7 @@ class DummyPipeline:
 
 
 def _setup_repo(tmp_path):
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     return file_path
 

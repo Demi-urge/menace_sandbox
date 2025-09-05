@@ -17,13 +17,13 @@ sys.modules.setdefault('menace.capital_management_bot', types.SimpleNamespace(Ca
 sys.modules.setdefault('menace.data_bot', types.SimpleNamespace(DataBot=object))  # noqa: E501
 sys.modules.setdefault('menace.unified_event_bus', types.SimpleNamespace(UnifiedEventBus=object))
 spec = importlib.util.spec_from_file_location(
-    'menace.adaptive_trigger_service', str(resolve_path('adaptive_trigger_service.py'))
+    'menace.adaptive_trigger_service', str(resolve_path('adaptive_trigger_service.py'))  # path-ignore
 )
 adaptive_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adaptive_mod)
 AdaptiveTriggerService = adaptive_mod.AdaptiveTriggerService
 spec_bus = importlib.util.spec_from_file_location(
-    'menace.unified_event_bus', str(resolve_path('unified_event_bus.py'))
+    'menace.unified_event_bus', str(resolve_path('unified_event_bus.py'))  # path-ignore
 )
 bus_mod = importlib.util.module_from_spec(spec_bus)
 spec_bus.loader.exec_module(bus_mod)

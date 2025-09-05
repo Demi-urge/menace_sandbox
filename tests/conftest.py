@@ -82,7 +82,7 @@ sys.modules.setdefault("menace.run_autonomous", run_auto_stub)
 
 # Load the real menace package if possible but tolerate missing system deps
 if os.getenv("MENACE_IMPORT_REAL", "0") == "1":
-    spec = importlib.util.spec_from_file_location("menace", ROOT / "__init__.py")
+    spec = importlib.util.spec_from_file_location("menace", ROOT / "__init__.py")  # path-ignore
     real_mod = importlib.util.module_from_spec(spec)
     try:  # pragma: no cover - defensive against SystemExit
         spec.loader.exec_module(real_mod)  # type: ignore[attr-defined]

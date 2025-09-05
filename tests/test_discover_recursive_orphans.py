@@ -30,8 +30,8 @@ def _import_recursive(monkeypatch):
 
 def test_recursive_import_includes_dependencies(tmp_path, monkeypatch):
     discover_recursive_orphans = _import_recursive(monkeypatch)
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("x = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("x = 1\n")  # path-ignore
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     (data_dir / "module_map.json").write_text(json.dumps({"modules": {}}))
@@ -57,7 +57,7 @@ from sandbox_runner.orphan_discovery import discover_recursive_orphans as _disco
 
 
 def test_discover_orphans_marks_redundant(tmp_path, monkeypatch):
-    (tmp_path / "dup.py").write_text("pass\n")
+    (tmp_path / "dup.py").write_text("pass\n")  # path-ignore
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     (data_dir / "module_map.json").write_text(json.dumps({"modules": {}}))
@@ -78,8 +78,8 @@ def test_discover_orphans_marks_redundant(tmp_path, monkeypatch):
 
 def test_skip_dirs_env(tmp_path, monkeypatch):
     (tmp_path / "foo").mkdir()
-    (tmp_path / "foo" / "ignore.py").write_text("pass\n")
-    (tmp_path / "keep.py").write_text("pass\n")
+    (tmp_path / "foo" / "ignore.py").write_text("pass\n")  # path-ignore
+    (tmp_path / "keep.py").write_text("pass\n")  # path-ignore
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     (data_dir / "module_map.json").write_text(json.dumps({"modules": {}}))

@@ -24,8 +24,8 @@ def test_cycle_validates_orphans(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg_stub)
 
     repo = tmp_path
-    (repo / "root.py").write_text("VALUE = 1\n")
-    (repo / "dep_pass.py").write_text("VALUE = 1\n")
+    (repo / "root.py").write_text("VALUE = 1\n")  # path-ignore
+    (repo / "dep_pass.py").write_text("VALUE = 1\n")  # path-ignore
 
     grapher_calls: list[list[str]] = []
 
@@ -61,7 +61,7 @@ def test_cycle_validates_orphans(monkeypatch, tmp_path):
 
     cycle = importlib.import_module("sandbox_runner.cycle")
 
-    added = {"root.py", "dep_pass.py"}
+    added = {"root.py", "dep_pass.py"}  # path-ignore
     dotted = {Path(m).with_suffix("").as_posix().replace("/", ".") for m in added}
 
     grapher = mg_mod.ModuleSynergyGrapher(root=repo)
@@ -83,4 +83,4 @@ def test_cycle_validates_orphans(monkeypatch, tmp_path):
     clusterer.index_modules(paths)
 
     assert grapher_calls == [["dep_pass", "root"]]
-    assert set(cluster_calls) == {str(repo / "root.py"), str(repo / "dep_pass.py")}
+    assert set(cluster_calls) == {str(repo / "root.py"), str(repo / "dep_pass.py")}  # path-ignore

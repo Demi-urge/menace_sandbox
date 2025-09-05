@@ -37,7 +37,7 @@ sys.modules["menace.workflow_cloner"].WorkflowCloner = DummyCloner
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_evaluation_service",
-    ROOT / "self_evaluation_service.py",
+    ROOT / "self_evaluation_service.py",  # path-ignore
     submodule_search_locations=[str(ROOT)],
 )
 mod = importlib.util.module_from_spec(spec)

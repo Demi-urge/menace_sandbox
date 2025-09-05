@@ -115,7 +115,7 @@ class DummyDataBot:
 
 @pytest.mark.parametrize("backend", ["venv", "docker"])
 def test_closed_loop_patch(monkeypatch, tmp_path, backend):
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    return 1\n", encoding="utf-8")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
@@ -188,7 +188,7 @@ def test_closed_loop_patch(monkeypatch, tmp_path, backend):
 
 
 def test_run_patch_failure_no_attribute_error(monkeypatch, tmp_path):
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    return 1\n", encoding="utf-8")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
@@ -238,14 +238,14 @@ def test_run_patch_failure_no_attribute_error(monkeypatch, tmp_path):
 def _prepare_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "mod.py").write_text("def mod():\n    return 1\n", encoding="utf-8")
+    (repo / "mod.py").write_text("def mod():\n    return 1\n", encoding="utf-8")  # path-ignore
     tests = repo / "tests"
     tests.mkdir()
-    (tests / "test_mod.py").write_text(
+    (tests / "test_mod.py").write_text(  # path-ignore
         "from mod import mod\n\n" "def test_mod():\n    assert mod() == 1\n",
         encoding="utf-8",
     )
-    (tests / "test_other.py").write_text(
+    (tests / "test_other.py").write_text(  # path-ignore
         "def test_other():\n    assert True\n", encoding="utf-8"
     )
     return repo, tests
@@ -276,13 +276,13 @@ def test_harness_filters_specific_test_file(monkeypatch, tmp_path):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    result = th.run_tests(repo, tests / "test_mod.py")
+    result = th.run_tests(repo, tests / "test_mod.py")  # path-ignore
     if isinstance(result, list):
         result = result[0]
 
-    assert pytest_cmds and str(Path("tests/test_mod.py")) in pytest_cmds[0]
+    assert pytest_cmds and str(Path("tests/test_mod.py")) in pytest_cmds[0]  # path-ignore
     assert "-k" not in pytest_cmds[0]
-    assert result.path == "tests/test_mod.py"
+    assert result.path == "tests/test_mod.py"  # path-ignore
 
 
 def test_harness_uses_k_filter_for_module(monkeypatch, tmp_path):
@@ -310,11 +310,11 @@ def test_harness_uses_k_filter_for_module(monkeypatch, tmp_path):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    result = th.run_tests(repo, repo / "mod.py")
+    result = th.run_tests(repo, repo / "mod.py")  # path-ignore
     if isinstance(result, list):
         result = result[0]
 
     assert pytest_cmds and "-k" in pytest_cmds[0]
     k_index = pytest_cmds[0].index("-k") + 1
     assert pytest_cmds[0][k_index] == "mod"
-    assert result.path == "mod.py"
+    assert result.path == "mod.py"  # path-ignore

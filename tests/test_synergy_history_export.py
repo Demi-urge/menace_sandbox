@@ -29,11 +29,11 @@ def _parse_metrics(text: str) -> dict[str, float]:
 def test_history_persistence_and_export(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
     se_spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.synergy_exporter", root / "synergy_exporter.py"
+        "sandbox_runner.synergy_exporter", root / "synergy_exporter.py"  # path-ignore
     )
     se = importlib.util.module_from_spec(se_spec)
     me_spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.metrics_exporter", root / "metrics_exporter.py"
+        "sandbox_runner.metrics_exporter", root / "metrics_exporter.py"  # path-ignore
     )
     me_alias = importlib.util.module_from_spec(me_spec)
     me_spec.loader.exec_module(me_alias)
