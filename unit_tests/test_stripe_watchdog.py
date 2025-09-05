@@ -18,9 +18,15 @@ import stripe_watchdog as sw
 def capture(monkeypatch, tmp_path):
     """Capture audit events and ensure logs go to a temp file."""
 
-    events: list[tuple[str, dict]] = []
-    monkeypatch.setattr(sw.audit_logger, "log_event", lambda et, data: events.append((et, data)))
-    monkeypatch.setattr(sw.alert_dispatcher, "dispatch_alert", lambda *a, **k: None)
+    events: list = []
+    monkeypatch.setattr(
+        sw.audit_logger, "log_event", lambda et, data: events.append((et, data))
+    )
+    monkeypatch.setattr(
+        sw.alert_dispatcher,
+        "dispatch_alert",
+        lambda *a, **k: events.append(("alert", a, k)),
+    )
 
     class DummyTrail:
         def __init__(self, path):
@@ -147,4 +153,68 @@ def test_detect_failed_events_id_matching():
 
     anomalies = sw.detect_failed_events(events, ledger, billing_logs)
     assert len(anomalies) == 1 and anomalies[0]["event_id"] == "ev3"
+
+
+def _has_alert(events):
+    return any(e[0] == "alert" for e in events)
+
+
+def test_detect_missing_charges_workflow_approval(capture):
+    events = capture
+    charges = [{"id": "ch1", "created": 1, "amount": 1000}]
+    ledger = [{"id": "ch1"}]
+    logs = [{"stripe_id": "ch1", "bot_id": "bot_a"}]
+
+    anomalies = sw.detect_missing_charges(
+        charges, ledger, logs, approved_workflows=["bot_b"]
+    )
+    assert anomalies and anomalies[0]["type"] == "unapproved_workflow"
+    assert _has_alert(events)
+
+    events.clear()
+    anomalies = sw.detect_missing_charges(
+        charges, ledger, logs, approved_workflows=["bot_a"]
+    )
+    assert anomalies == []
+    assert not events
+
+
+def test_detect_missing_refunds_workflow_approval(capture):
+    events = capture
+    refunds = [{"id": "re1", "amount": 100, "charge": "c1"}]
+    ledger = [{"id": "re1", "action_type": "refund"}]
+    logs = [{"stripe_id": "re1", "bot_id": "bot_a"}]
+
+    anomalies = sw.detect_missing_refunds(
+        refunds, ledger, logs, approved_workflows=["bot_b"]
+    )
+    assert anomalies and anomalies[0]["type"] == "unapproved_workflow"
+    assert _has_alert(events)
+
+    events.clear()
+    anomalies = sw.detect_missing_refunds(
+        refunds, ledger, logs, approved_workflows=["bot_a"]
+    )
+    assert anomalies == []
+    assert not events
+
+
+def test_detect_failed_events_workflow_approval(capture):
+    events = capture
+    failed_events = [{"id": "ev1", "type": "charge.failed"}]
+    ledger = [{"id": "ev1", "action_type": "failed"}]
+    logs = [{"stripe_id": "ev1", "bot_id": "bot_a"}]
+
+    anomalies = sw.detect_failed_events(
+        failed_events, ledger, logs, approved_workflows=["bot_b"]
+    )
+    assert anomalies and anomalies[0]["type"] == "unapproved_workflow"
+    assert _has_alert(events)
+
+    events.clear()
+    anomalies = sw.detect_failed_events(
+        failed_events, ledger, logs, approved_workflows=["bot_a"]
+    )
+    assert anomalies == []
+    assert not events
 

@@ -185,6 +185,35 @@ def _load_allowed_webhooks(path: Path | None = None) -> set[str]:
         allowed.update(str(url) for url in endpoints if isinstance(url, str))
     return allowed
 
+
+def load_approved_workflows(path: Path | None = None) -> set[str]:
+    """Return approved workflow or bot identifiers.
+
+    Reads from the ``STRIPE_APPROVED_WORKFLOWS`` environment variable when
+    set or from the YAML config at ``path``/``CONFIG_PATH`` otherwise.
+    """
+
+    env_val = os.getenv("STRIPE_APPROVED_WORKFLOWS")
+    if env_val:
+        return {w.strip() for w in env_val.split(",") if w.strip()}
+
+    cfg = path or CONFIG_PATH
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        return set()
+    except Exception:
+        logger.exception(
+            "Failed to load Stripe watchdog config", extra={"path": cfg}
+        )
+        return set()
+
+    workflows = data.get("approved_workflows") or data.get("approved_bot_ids")
+    if isinstance(workflows, list):
+        return {str(w) for w in workflows if isinstance(w, str)}
+    return set()
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -370,10 +399,10 @@ def load_billing_logs(
     try:  # pragma: no cover - best effort
         db = BillingLogDB()
         cur = db.conn.execute(
-            "SELECT amount, ts, stripe_id FROM billing_logs WHERE action = ? AND ts >= ? AND ts < ?",
+            "SELECT amount, ts, stripe_id, bot_id FROM billing_logs WHERE action = ? AND ts >= ? AND ts < ?",
             (action, start_iso, end_iso),
         )
-        for amount, ts, sid in cur.fetchall():
+        for amount, ts, sid, bot in cur.fetchall():
             try:
                 ts_epoch = datetime.fromisoformat(ts).timestamp() if ts else None
             except Exception:
@@ -383,6 +412,7 @@ def load_billing_logs(
                     "amount": float(amount) if amount is not None else None,
                     "timestamp": ts_epoch,
                     "stripe_id": str(sid) if sid is not None else None,
+                    "bot_id": str(bot) if bot is not None else None,
                 }
             )
     except Exception:
@@ -435,6 +465,7 @@ def detect_missing_charges(
     charges: Iterable[dict],
     ledger: List[Dict[str, Any]],
     billing_logs: List[Dict[str, Any]] | None = None,
+    approved_workflows: Iterable[str] | None = None,
     *,
     write_codex: bool = False,
     export_training: bool = False,
@@ -442,16 +473,34 @@ def detect_missing_charges(
     """Return Stripe charges absent from local billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("id")}
-    billing_ids = {
-        str(rec.get("stripe_id"))
+    billing_map = {
+        str(rec.get("stripe_id")): rec
         for rec in (billing_logs or [])
         if rec.get("stripe_id")
     }
+    approved = {str(w) for w in (approved_workflows or [])}
 
     anomalies: List[Dict[str, Any]] = []
     for charge in charges:
         cid = str(charge.get("id"))
-        if cid in ledger_ids or cid in billing_ids:
+        log = billing_map.get(cid)
+        bot_id = log.get("bot_id") if log else None
+        if bot_id and approved and bot_id not in approved:
+            anomaly = {"type": "unapproved_workflow", "id": cid, "bot_id": bot_id}
+            anomalies.append(anomaly)
+            _emit_anomaly(anomaly, write_codex, export_training)
+            try:  # pragma: no cover - best effort
+                alert_dispatcher.dispatch_alert(
+                    "stripe_unapproved_workflow",
+                    3,
+                    f"Unapproved workflow: {bot_id}",
+                    anomaly,
+                )
+            except Exception:
+                logger.exception(
+                    "alert dispatch failed", extra={"id": cid, "bot_id": bot_id}
+                )
+        if cid in ledger_ids or log:
             continue
         anomaly = {
             "type": "missing_charge",
@@ -469,6 +518,7 @@ def detect_missing_refunds(
     refunds: Iterable[dict],
     ledger: List[Dict[str, Any]],
     billing_logs: List[Dict[str, Any]] | None = None,
+    approved_workflows: Iterable[str] | None = None,
     *,
     write_codex: bool = False,
     export_training: bool = False,
@@ -476,16 +526,34 @@ def detect_missing_refunds(
     """Return Stripe refunds absent from the ledger and billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "refund"}
-    billing_ids = {
-        str(rec.get("stripe_id"))
+    billing_map = {
+        str(rec.get("stripe_id")): rec
         for rec in (billing_logs or [])
         if rec.get("stripe_id")
     }
+    approved = {str(w) for w in (approved_workflows or [])}
 
     anomalies: List[Dict[str, Any]] = []
     for refund in refunds:
         rid = str(refund.get("id"))
-        if rid in ledger_ids or rid in billing_ids:
+        log = billing_map.get(rid)
+        bot_id = log.get("bot_id") if log else None
+        if bot_id and approved and bot_id not in approved:
+            anomaly = {"type": "unapproved_workflow", "refund_id": rid, "bot_id": bot_id}
+            anomalies.append(anomaly)
+            _emit_anomaly(anomaly, write_codex, export_training)
+            try:  # pragma: no cover - best effort
+                alert_dispatcher.dispatch_alert(
+                    "stripe_unapproved_workflow",
+                    3,
+                    f"Unapproved workflow: {bot_id}",
+                    anomaly,
+                )
+            except Exception:
+                logger.exception(
+                    "alert dispatch failed", extra={"id": rid, "bot_id": bot_id}
+                )
+        if rid in ledger_ids or log:
             continue
         anomaly = {
             "type": "missing_refund",
@@ -502,6 +570,7 @@ def detect_failed_events(
     events: Iterable[dict],
     ledger: List[Dict[str, Any]],
     billing_logs: List[Dict[str, Any]] | None = None,
+    approved_workflows: Iterable[str] | None = None,
     *,
     write_codex: bool = False,
     export_training: bool = False,
@@ -509,18 +578,36 @@ def detect_failed_events(
     """Return failed payment events missing from the ledger and billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "failed"}
-    billing_ids = {
-        str(rec.get("stripe_id"))
+    billing_map = {
+        str(rec.get("stripe_id")): rec
         for rec in (billing_logs or [])
         if rec.get("stripe_id")
     }
+    approved = {str(w) for w in (approved_workflows or [])}
 
     anomalies: List[Dict[str, Any]] = []
     for event in events:
         if event.get("type") not in {"charge.failed", "payment_intent.payment_failed"}:
             continue
         eid = str(event.get("id"))
-        if eid in ledger_ids or eid in billing_ids:
+        log = billing_map.get(eid)
+        bot_id = log.get("bot_id") if log else None
+        if bot_id and approved and bot_id not in approved:
+            anomaly = {"type": "unapproved_workflow", "event_id": eid, "bot_id": bot_id}
+            anomalies.append(anomaly)
+            _emit_anomaly(anomaly, write_codex, export_training)
+            try:  # pragma: no cover - best effort
+                alert_dispatcher.dispatch_alert(
+                    "stripe_unapproved_workflow",
+                    3,
+                    f"Unapproved workflow: {bot_id}",
+                    anomaly,
+                )
+            except Exception:
+                logger.exception(
+                    "alert dispatch failed", extra={"id": eid, "bot_id": bot_id}
+                )
+        if eid in ledger_ids or log:
             continue
         anomaly = {
             "type": "missing_failure_log",
@@ -798,6 +885,7 @@ def check_events(
         charges,
         ledger,
         billing_logs,
+        load_approved_workflows(),
         write_codex=write_codex,
         export_training=export_training,
     )
@@ -885,6 +973,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     charge_logs = load_billing_logs(start_ts, end_ts, action="charge")
     refund_logs = load_billing_logs(start_ts, end_ts, action="refund")
     failed_logs = load_billing_logs(start_ts, end_ts, action="failed")
+    approved = load_approved_workflows()
 
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
@@ -894,6 +983,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         charges,
         ledger,
         charge_logs,
+        approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
     )
@@ -901,6 +991,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         refunds,
         ledger,
         refund_logs,
+        approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
     )
@@ -908,6 +999,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         events,
         ledger,
         failed_logs,
+        approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
     )
