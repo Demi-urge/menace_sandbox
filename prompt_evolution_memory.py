@@ -23,9 +23,6 @@ except Exception:  # pragma: no cover - llm_interface unavailable
         ) from exc
 
 
-_ROOT = resolve_path(".")
-
-
 @dataclass
 class PromptEvolutionMemory:
     """Append prompt execution records to JSONL logs.
@@ -37,8 +34,8 @@ class PromptEvolutionMemory:
     execution results and ROI metrics.
     """
 
-    success_path: Path = _ROOT / "sandbox_data" / "prompt_success_log.jsonl"
-    failure_path: Path = _ROOT / "sandbox_data" / "prompt_failure_log.jsonl"
+    success_path: Path = resolve_path("sandbox_data/prompt_success_log.jsonl")
+    failure_path: Path = resolve_path("sandbox_data/prompt_failure_log.jsonl")
 
     def __post_init__(self) -> None:  # pragma: no cover - trivial
         for path in (self.success_path, self.failure_path):
