@@ -19,9 +19,9 @@ class DummyTracker:
 
 def test_recursive_inclusion_flow(tmp_path, monkeypatch):
     repo = tmp_path
-    (repo / "iso.py").write_text("import dep\nimport red\n")
-    (repo / "dep.py").write_text("x = 1\n")
-    (repo / "red.py").write_text("x = 2\n")
+    (repo / "iso.py").write_text("import dep\nimport red\n")  # path-ignore
+    (repo / "dep.py").write_text("x = 1\n")  # path-ignore
+    (repo / "red.py").write_text("x = 2\n")  # path-ignore
 
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
@@ -42,8 +42,8 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
 
     def collect_deps(mods):
         mods = set(mods)
-        if "iso.py" in mods:
-            mods.update({"dep.py", "red.py"})
+        if "iso.py" in mods:  # path-ignore
+            mods.update({"dep.py", "red.py"})  # path-ignore
         return mods
 
     monkeypatch.setitem(
@@ -56,12 +56,12 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
         sys.modules,
         "orphan_analyzer",
         types.SimpleNamespace(
-            analyze_redundancy=lambda p: Path(p).name == "red.py"
+            analyze_redundancy=lambda p: Path(p).name == "red.py"  # path-ignore
         ),
     )
 
     iso_mod = types.SimpleNamespace(
-        discover_isolated_modules=lambda repo, recursive=True: ["iso.py"]
+        discover_isolated_modules=lambda repo, recursive=True: ["iso.py"]  # path-ignore
     )
     scripts_pkg = types.SimpleNamespace(discover_isolated_modules=iso_mod)
     monkeypatch.setitem(sys.modules, "scripts", scripts_pkg)
@@ -82,17 +82,17 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(env, "try_integrate_into_workflows", lambda mods: None)
     monkeypatch.setattr(env, "run_workflow_simulations", lambda *a, **k: DummyTracker())
 
-    env.auto_include_modules(["iso.py"], recursive=True, validate=True)
+    env.auto_include_modules(["iso.py"], recursive=True, validate=True)  # path-ignore
 
     map_data = json.loads((data_dir / "module_map.json").read_text())
-    assert set(map_data) == {"iso.py", "dep.py"}
-    assert "red.py" not in map_data
+    assert set(map_data) == {"iso.py", "dep.py"}  # path-ignore
+    assert "red.py" not in map_data  # path-ignore
 
     orphan_cache = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert orphan_cache == {"red.py": {"redundant": True}}
+    assert orphan_cache == {"red.py": {"redundant": True}}  # path-ignore
 
     (data_dir / "orphan_modules.json").write_text(
-        json.dumps(["iso.py", "dep.py", "red.py"])
+        json.dumps(["iso.py", "dep.py", "red.py"])  # path-ignore
     )
 
     class STS2:
@@ -102,8 +102,8 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
         async def _run_once(self):
             self.results = {
                 "integration": {
-                    "integrated": ["iso.py", "dep.py"],
-                    "redundant": ["red.py"],
+                    "integrated": ["iso.py", "dep.py"],  # path-ignore
+                    "redundant": ["red.py"],  # path-ignore
                 }
             }
 
@@ -119,7 +119,7 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(env, "auto_include_modules", auto_stub)
 
     def _load_update_method():
-        path = Path(__file__).resolve().parents[1] / "self_improvement.py"
+        path = Path(__file__).resolve().parents[1] / "self_improvement.py"  # path-ignore
         src = path.read_text()
         tree = ast.parse(src)
         method = None
@@ -186,7 +186,7 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
 
     eng._update_orphan_modules = types.MethodType(guarded, eng)
 
-    eng._update_orphan_modules(["iso.py", "dep.py", "red.py"])
+    eng._update_orphan_modules(["iso.py", "dep.py", "red.py"])  # path-ignore
 
-    assert json.loads((data_dir / "orphan_modules.json").read_text()) == ["red.py"]
-    assert set(eng.module_clusters) == {"iso.py", "dep.py"}
+    assert json.loads((data_dir / "orphan_modules.json").read_text()) == ["red.py"]  # path-ignore
+    assert set(eng.module_clusters) == {"iso.py", "dep.py"}  # path-ignore

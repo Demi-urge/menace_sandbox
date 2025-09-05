@@ -23,7 +23,7 @@ def _proc_lock(root: str, lock_path: str, q):
     pkg.__path__ = [str(Path(root)/'sandbox_runner')]
     pkg.__spec__ = importlib.machinery.ModuleSpec('sandbox_runner', loader=None, is_package=True)
     sys.modules['sandbox_runner'] = pkg
-    spec = importlib.util.spec_from_file_location('sandbox_runner.environment', Path(root)/'sandbox_runner'/'environment.py')
+    spec = importlib.util.spec_from_file_location('sandbox_runner.environment', Path(root)/'sandbox_runner'/'environment.py')  # path-ignore
     env = importlib.util.module_from_spec(spec)
     sys.modules['sandbox_runner.environment'] = env
     spec.loader.exec_module(env)
@@ -68,7 +68,7 @@ def _proc_fail(root: str, lock_path: str, q, mode: str):
     pkg.__path__ = [str(Path(root)/'sandbox_runner')]
     pkg.__spec__ = importlib.machinery.ModuleSpec('sandbox_runner', loader=None, is_package=True)
     sys.modules['sandbox_runner'] = pkg
-    spec = importlib.util.spec_from_file_location('sandbox_runner.environment', Path(root)/'sandbox_runner'/'environment.py')
+    spec = importlib.util.spec_from_file_location('sandbox_runner.environment', Path(root)/'sandbox_runner'/'environment.py')  # path-ignore
     env = importlib.util.module_from_spec(spec)
     sys.modules['sandbox_runner.environment'] = env
     spec.loader.exec_module(env)

@@ -109,11 +109,11 @@ def test_self_improvement_cycle_runs(tmp_path, monkeypatch, in_memory_dbs):
     sys.modules["menace.sandbox_settings"] = sandbox_settings_module
 
     init_module = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
     meta_planning = _load_module(
         "menace.self_improvement.meta_planning",
-        resolve_path("self_improvement/meta_planning.py"),
+        resolve_path("self_improvement/meta_planning.py"),  # path-ignore
     )
 
     monkeypatch.setattr(baseline_tracker.TRACKER, "get", track)
@@ -220,11 +220,11 @@ def test_self_improvement_cycle_handles_db_errors(tmp_path, monkeypatch, in_memo
     sys.modules["menace.sandbox_settings"] = sandbox_settings_module
 
     init_module = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
     meta_planning = _load_module(
         "menace.self_improvement.meta_planning",
-        resolve_path("self_improvement/meta_planning.py"),
+        resolve_path("self_improvement/meta_planning.py"),  # path-ignore
     )
 
     monkeypatch.setattr(init_module, "verify_dependencies", lambda auto_install=False: None)
@@ -309,11 +309,11 @@ def test_start_self_improvement_cycle_dependency_failure(tmp_path, monkeypatch, 
     sys.modules["menace.sandbox_settings"] = sandbox_settings_module
 
     init_module = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
     meta_planning = _load_module(
         "menace.self_improvement.meta_planning",
-        resolve_path("self_improvement/meta_planning.py"),
+        resolve_path("self_improvement/meta_planning.py"),  # path-ignore
     )
     monkeypatch.setattr(init_module, "load_sandbox_settings", lambda: SandboxSettings())
     monkeypatch.setattr(init_module, "verify_dependencies", lambda auto_install=False: None)
@@ -330,7 +330,7 @@ def test_start_self_improvement_cycle_dependency_failure(tmp_path, monkeypatch, 
 
 
 def _load_cycle_funcs():
-    src = resolve_path("self_improvement/meta_planning.py").read_text()
+    src = resolve_path("self_improvement/meta_planning.py").read_text()  # path-ignore
     tree = ast.parse(src)
     wanted = {
         "self_improvement_cycle",

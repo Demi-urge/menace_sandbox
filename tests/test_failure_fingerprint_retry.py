@@ -11,7 +11,7 @@ sce = setup.sce
 
 SAMPLE_TRACE = (
     'Traceback (most recent call last):\n'
-    '  File "mod.py", line 1, in <module>\n'
+    '  File "mod.py", line 1, in <module>\n'  # path-ignore
     '    1/0\n'
     'ZeroDivisionError: division by zero'
 )
@@ -75,10 +75,10 @@ def _build_engine(monkeypatch, tmp_path, similar_return, skip: bool = False):
 
 
 def test_retry_prompt_adjusted_for_similar_failure(monkeypatch, tmp_path):
-    prior = DummyFP("prev.py", "main", "t", "Boom", "p", timestamp=1.0)
+    prior = DummyFP("prev.py", "main", "t", "Boom", "p", timestamp=1.0)  # path-ignore
     eng, records, calls, db = _build_engine(monkeypatch, tmp_path, [prior])
 
-    pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=2)
+    pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=2)  # path-ignore
     assert pid == 1 and not reverted
     assert any("WARNING" in d for d in calls[1:])
     assert any("retry_adjusted" in r for r in records)
@@ -87,10 +87,10 @@ def test_retry_prompt_adjusted_for_similar_failure(monkeypatch, tmp_path):
 
 
 def test_retry_skipped_after_similarity_limit(monkeypatch, tmp_path):
-    prev = [DummyFP("a.py", "f", "t", "Boom", "p", timestamp=i + 1) for i in range(3)]
+    prev = [DummyFP("a.py", "f", "t", "Boom", "p", timestamp=i + 1) for i in range(3)]  # path-ignore
     eng, records, calls, db = _build_engine(monkeypatch, tmp_path, prev)
 
-    pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=3)
+    pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=3)  # path-ignore
     assert pid is None and len(calls) == 1
     assert any(r.get("reason") == "retry_skipped_due_to_similarity" for r in records)
     row = db.conn.execute("SELECT description, outcome FROM patch_history").fetchall()
@@ -101,10 +101,10 @@ def test_retry_skipped_after_similarity_limit(monkeypatch, tmp_path):
 
 
 def test_retry_skipped_when_configured(monkeypatch, tmp_path):
-    prior = DummyFP("prev.py", "main", "t", "Boom", "p", timestamp=1.0)
+    prior = DummyFP("prev.py", "main", "t", "Boom", "p", timestamp=1.0)  # path-ignore
     eng, records, calls, db = _build_engine(monkeypatch, tmp_path, [prior], skip=True)
 
-    pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=2)
+    pid, reverted, delta = eng.apply_patch_with_retry(Path("f.py"), "desc", max_attempts=2)  # path-ignore
     assert pid is None and len(calls) == 1
     assert any(r.get("reason") == "retry_skipped_due_to_similarity" for r in records)
     row = db.conn.execute("SELECT description, outcome FROM patch_history").fetchall()

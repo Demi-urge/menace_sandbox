@@ -12,7 +12,7 @@ def _load_env(monkeypatch=None):
     pkg = sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
     pkg.__path__ = [str(ROOT / "sandbox_runner")]
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.environment", resolve_path("sandbox_runner/environment.py")
+        "sandbox_runner.environment", resolve_path("sandbox_runner/environment.py")  # path-ignore
     )
     env = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner.environment"] = env
@@ -32,7 +32,7 @@ def _load_env(monkeypatch=None):
 def _load_thb():
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        resolve_path("task_handoff_bot.py"),
+        resolve_path("task_handoff_bot.py"),  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -91,14 +91,14 @@ def test_try_integrate_into_workflows(tmp_path, monkeypatch):
     class DummyClusterer:
         def __init__(self):
             self.clusters = {
-                str(resolve_path("a.py")): [1],
-                str(resolve_path("b.py")): [1],
+                str(resolve_path("a.py")): [1],  # path-ignore
+                str(resolve_path("b.py")): [1],  # path-ignore
             }
 
     clusterer = DummyClusterer()
 
     updated = env.try_integrate_into_workflows(
-        [resolve_path("b.py")], workflows_db=db_path, intent_clusterer=clusterer
+        [resolve_path("b.py")], workflows_db=db_path, intent_clusterer=clusterer  # path-ignore
     )
     recs = {r.wid: r for r in wf_db.fetch(limit=10)}
     assert wid1 in updated
@@ -134,7 +134,7 @@ def test_try_integrate_no_match(tmp_path, monkeypatch):
     sts_stub.SelfTestService = DummySTS
     monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
 
-    updated = env.try_integrate_into_workflows([resolve_path("d.py")], workflows_db=db_path)
+    updated = env.try_integrate_into_workflows([resolve_path("d.py")], workflows_db=db_path)  # path-ignore
     rec = wf_db.fetch(limit=10)[0]
     assert not updated
     assert rec.workflow == ["a"]
@@ -193,7 +193,7 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
     (tmp_path / "pkg1" / "orphan.py").write_text("def o1():\n    pass\n")  # path-ignore
     (tmp_path / "pkg2").mkdir()
     (tmp_path / "pkg2" / "orphan.py").write_text("def o2():\n    pass\n")  # path-ignore
-    mods = [resolve_path("pkg1/orphan.py"), resolve_path("pkg2/orphan.py")]
+    mods = [resolve_path("pkg1/orphan.py"), resolve_path("pkg2/orphan.py")]  # path-ignore
     updated = env.try_integrate_into_workflows(mods, workflows_db=db_path)
     rec = {r.wid: r for r in wf_db.fetch(limit=10)}[wid]
     assert wid in updated
@@ -236,8 +236,8 @@ def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
     class DummyClusterer:
         def __init__(self):
             self.clusters = {
-                str(resolve_path("a.py")): [1],
-                str(resolve_path("b.py")): [2],
+                str(resolve_path("a.py")): [1],  # path-ignore
+                str(resolve_path("b.py")): [2],  # path-ignore
             }
 
     clusterer = DummyClusterer()
@@ -249,7 +249,7 @@ def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
     )
 
     updated = env.try_integrate_into_workflows(
-        [resolve_path("b.py")],
+        [resolve_path("b.py")],  # path-ignore
         workflows_db=db_path,
         intent_clusterer=clusterer,
     )

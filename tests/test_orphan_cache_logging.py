@@ -3,7 +3,7 @@ import sandbox_runner.orphan_discovery as od
 
 
 def test_cache_update_logs_error(tmp_path, monkeypatch, caplog):
-    (tmp_path / "a.py").write_text("x = 1\n")
+    (tmp_path / "a.py").write_text("x = 1\n")  # path-ignore
 
     def boom(*args, **kwargs):
         raise RuntimeError("boom")

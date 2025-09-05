@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(f"scpkg.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"scpkg.{name}", ROOT / f"{name}.py")  # path-ignore
     module = importlib.util.module_from_spec(spec)
     sys.modules[f"scpkg.{name}"] = module
     assert spec.loader is not None
@@ -292,7 +292,7 @@ def test_verify_stripe_router_import_scan(monkeypatch):
     monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
 
     def _run(cmd, **k):
-        if "check_stripe_imports.py" in cmd[1]:
+        if "check_stripe_imports.py" in cmd[1]:  # path-ignore
             return types.SimpleNamespace(returncode=1, stdout="bad", stderr="")
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -323,7 +323,7 @@ def test_verify_stripe_router_raw_usage_scan(monkeypatch):
     monkeypatch.setattr(sc.subprocess, "check_output", lambda *a, **k: "")
 
     def _run(cmd, **k):
-        if "check_raw_stripe_usage.py" in cmd[1]:
+        if "check_raw_stripe_usage.py" in cmd[1]:  # path-ignore
             return types.SimpleNamespace(returncode=1, stdout="bad", stderr="")
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 

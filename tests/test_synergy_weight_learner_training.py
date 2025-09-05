@@ -10,7 +10,7 @@ torch = pytest.importorskip("torch")
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 spec = importlib.util.spec_from_file_location(
-    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")
+    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")  # path-ignore
 )
 menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace

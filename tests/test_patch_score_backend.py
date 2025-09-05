@@ -192,9 +192,9 @@ def test_alignment_check_blocks_secret_diff():
         "description": "p1",
         "result": "ok",
         "diff": (
-            "diff --git a/x.py b/x.py\n"
-            "--- a/x.py\n"
-            "+++ b/x.py\n"
+            "diff --git a/x.py b/x.py\n"  # path-ignore
+            "--- a/x.py\n"  # path-ignore
+            "+++ b/x.py\n"  # path-ignore
             "@@ -0,0 +1 @@\n"
             "+password = 'secret'\n"
         ),

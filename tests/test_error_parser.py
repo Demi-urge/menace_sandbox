@@ -7,13 +7,13 @@ from error_parser import ErrorParser, parse_failure
 
 def test_parse_failure_pytest_assertion():
     trace = (
-        "tests/test_sample.py:3: in test_example\n"
+        "tests/test_sample.py:3: in test_example\n"  # path-ignore
         "    assert 1 == 2\n"
         "E   AssertionError: assert 1 == 2\n"
     )
     result = ErrorParser.parse_failure(trace)
     assert result["strategy_tag"] == "assertion_error"
-    assert "tests/test_sample.py" in result["stack"]
+    assert "tests/test_sample.py" in result["stack"]  # path-ignore
     assert result["signature"]
 
 
@@ -33,7 +33,7 @@ def test_parse_failure_extracts_tags():
 
 
 def test_parse_returns_target_region(tmp_path):
-    mod = tmp_path / "sample.py"
+    mod = tmp_path / "sample.py"  # path-ignore
     mod.write_text("def fail():\n    raise RuntimeError('x')\nfail()\n")
     try:
         code = compile(mod.read_text(), str(mod), "exec")
@@ -70,10 +70,10 @@ def test_parse_failure_nested_exception():
 
 
 def test_parse_failure_multifile_trace(tmp_path):
-    mod_inner = tmp_path / "inner.py"
+    mod_inner = tmp_path / "inner.py"  # path-ignore
     mod_inner.write_text("def boom():\n    raise ValueError('x')\n")
 
-    mod_outer = tmp_path / "outer.py"
+    mod_outer = tmp_path / "outer.py"  # path-ignore
     mod_outer.write_text(
         "import inner\n\n"
         "def run():\n"

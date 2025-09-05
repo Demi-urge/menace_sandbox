@@ -21,7 +21,7 @@ sys.modules.setdefault("sandbox_runner", sandbox)
 sys.modules.setdefault("sandbox_runner.environment", env_mod)
 sys.modules.setdefault("sandbox_runner.bootstrap", boot_mod)
 spec = importlib.util.spec_from_file_location(
-    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")
+    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")  # path-ignore
 )
 menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace

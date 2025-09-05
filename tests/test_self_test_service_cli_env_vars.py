@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _load_module(monkeypatch):
     spec = importlib.util.spec_from_file_location(
-        "menace.self_test_service", ROOT / "self_test_service.py"
+        "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     pkg = types.ModuleType("menace")

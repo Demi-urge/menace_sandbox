@@ -95,7 +95,7 @@ class DummyDataBot:
 
 
 def setup(monkeypatch, tmp_path, confidence):
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("x=1\n", encoding="utf-8")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 

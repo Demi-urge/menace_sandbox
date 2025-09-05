@@ -7,7 +7,7 @@ import pytest
 
 # helper to load fallback ignoring any installed annoy package
 FALLBACK_SPEC = importlib.util.spec_from_file_location(
-    "annoy_fallback", Path(__file__).resolve().parents[1] / "annoy" / "__init__.py"
+    "annoy_fallback", Path(__file__).resolve().parents[1] / "annoy" / "__init__.py"  # path-ignore
 )
 FALLBACK_MOD = importlib.util.module_from_spec(FALLBACK_SPEC)
 sys.modules["annoy_fallback"] = FALLBACK_MOD

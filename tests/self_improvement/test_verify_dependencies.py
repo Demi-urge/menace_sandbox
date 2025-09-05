@@ -59,7 +59,7 @@ def _prepare_modules(*, missing: tuple[str, ...] = ()):  # pragma: no cover - he
 def test_verify_dependencies_does_not_attempt_install(monkeypatch):
     _prepare_modules(missing=("quick_fix_engine",))
     init_mod = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
 
     def fail_run(*args, **kwargs):
@@ -87,7 +87,7 @@ def test_verify_dependencies_does_not_attempt_install(monkeypatch):
 def test_verify_dependencies_attempts_install_when_enabled(monkeypatch):
     _prepare_modules(missing=("quick_fix_engine",))
     init_mod = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
 
     cmds: list[list[str]] = []
@@ -127,7 +127,7 @@ def test_verify_dependencies_attempts_install_when_enabled(monkeypatch):
 def test_verify_dependencies_install_failure_raises(monkeypatch):
     _prepare_modules(missing=("quick_fix_engine",))
     init_mod = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
 
     def failing_run(cmd, check):
@@ -149,7 +149,7 @@ def test_verify_dependencies_install_failure_raises(monkeypatch):
 def test_verify_dependencies_reports_version_mismatch(monkeypatch):
     _prepare_modules()
     init_mod = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
 
     def fake_version(name):
@@ -169,7 +169,7 @@ def test_logs_when_neurosales_metadata_missing(monkeypatch, caplog):
     _prepare_modules()
     sys.modules["neurosales"] = types.ModuleType("neurosales")
     init_mod = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
 
     def fake_version(name: str) -> str:

@@ -13,7 +13,7 @@ from menace_sandbox.vector_metrics_db import VectorMetricsDB
 
 def test_patch_logger_logs_ancestry(tmp_path):
     db = PatchHistoryDB(tmp_path / "p.db")
-    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))
+    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))  # path-ignore
     pl = PatchLogger(patch_db=db)
     pl.track_contributors({"o1:v1": 0.2, "o2:v2": 0.9, "o3:v3": 0.5}, True, patch_id=str(pid), session_id="s")
     rows = db.get_ancestry(pid)
@@ -27,7 +27,7 @@ def test_patch_logger_logs_ancestry(tmp_path):
 
 def test_patch_logger_records_provenance(tmp_path):
     db = PatchHistoryDB(tmp_path / "p.db")
-    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))
+    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))  # path-ignore
     pl = PatchLogger(patch_db=db)
     meta = {"o1:v1": {"license": "MIT", "semantic_alerts": ["unsafe"]}}
     pl.track_contributors({"o1:v1": 0.8}, True, patch_id=str(pid), session_id="s", retrieval_metadata=meta)
@@ -49,7 +49,7 @@ def test_patch_logger_records_provenance(tmp_path):
 def test_vector_metrics_records_alignment_severity(tmp_path):
     db = PatchHistoryDB(tmp_path / "p.db")
     vm = VectorMetricsDB(tmp_path / "v.db")
-    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))
+    pid = db.add(PatchRecord("a.py", "desc", 1.0, 2.0))  # path-ignore
     pl = PatchLogger(patch_db=db, vector_metrics=vm, max_alert_severity=5.0)
     meta = {"o1:v1": {"alignment_severity": 2}}
     pl.track_contributors({"o1:v1": 0.5}, True, patch_id=str(pid), session_id="s", retrieval_metadata=meta)

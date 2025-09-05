@@ -748,7 +748,7 @@ def test_synergy_network_latency_prediction_cancels_increase():
 
 
 def test_infer_profiles_from_ast(tmp_path):
-    mod = tmp_path / "sample_mod.py"
+    mod = tmp_path / "sample_mod.py"  # path-ignore
     mod.write_text(
         "import network_utils\n"
         "from threading import Thread\n"
@@ -771,7 +771,7 @@ def test_infer_profiles_from_ast(tmp_path):
 
 
 def test_suggest_profiles_merges_ast_and_name(tmp_path):
-    mod = tmp_path / "auth_helper.py"
+    mod = tmp_path / "auth_helper.py"  # path-ignore
     mod.write_text(
         "import threading\n"
         "@cache_response\n"

@@ -34,14 +34,14 @@ def _dummy_run(cmd: list[str], root):
 
 def test_new_db_scaffold(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "__init__.py").write_text("__all__ = []\n")
+    (tmp_path / "__init__.py").write_text("__all__ = []\n")  # path-ignore
 
     monkeypatch.setattr(menace_cli, "_run", lambda cmd: _dummy_run(cmd, tmp_path))
 
     rc = menace_cli.main(["new-db", "sample"])
     assert rc == 0
 
-    mod = tmp_path / "sample_db.py"
+    mod = tmp_path / "sample_db.py"  # path-ignore
     assert mod.exists()
     text = mod.read_text()
     assert "EmbeddableDBMixin" in text
@@ -50,7 +50,7 @@ def test_new_db_scaffold(tmp_path, monkeypatch):
     assert "detect_license" in text
     assert "redact_dict" in text
 
-    init_text = (tmp_path / "__init__.py").read_text()
+    init_text = (tmp_path / "__init__.py").read_text()  # path-ignore
     assert "from .sample_db import SampleDB" in init_text
     assert '"sample_db"' in init_text
 

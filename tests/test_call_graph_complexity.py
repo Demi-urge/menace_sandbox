@@ -27,7 +27,7 @@ dynamic_path_router.resolve_path = lambda p: Path(p)
 sys.modules.setdefault("dynamic_path_router", dynamic_path_router)
 
 spec = importlib.util.spec_from_file_location(
-    "relevancy_radar", Path(__file__).resolve().parents[1] / "relevancy_radar.py"
+    "relevancy_radar", Path(__file__).resolve().parents[1] / "relevancy_radar.py"  # path-ignore
 )
 relevancy_radar = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(relevancy_radar)

@@ -6,7 +6,7 @@ import environment_generator as eg
 import sandbox_runner
 
 spec = importlib.util.spec_from_file_location(
-    "menace", Path(__file__).resolve().parents[1] / "__init__.py"
+    "menace", Path(__file__).resolve().parents[1] / "__init__.py"  # path-ignore
 )
 menace_pkg = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace_pkg
@@ -19,7 +19,7 @@ from tests.test_menace_master import _setup_mm_stubs, DummyBot, _stub_module
 
 
 def _load_master():
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm
@@ -287,7 +287,7 @@ def test_autonomous_presets_reused(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
 
-    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
+    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     run_autonomous = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = run_autonomous

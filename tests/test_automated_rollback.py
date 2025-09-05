@@ -16,7 +16,7 @@ sys.modules.setdefault("git", git_mod)
 for mod in [
     "marshmallow",
     "matplotlib",
-    "matplotlib.pyplot",
+    "matplotlib.pyplot",  # path-ignore
     "requests",
     "pymongo",
     "redis",
@@ -128,8 +128,8 @@ def test_multi_node_auto_rollback(tmp_path, monkeypatch):
     orch.register_engine("A", eng_a)
     orch.register_engine("B", eng_b)
 
-    pa = tmp_path / "a.py"
-    pb = tmp_path / "b.py"
+    pa = tmp_path / "a.py"  # path-ignore
+    pb = tmp_path / "b.py"  # path-ignore
     pa.write_text("def a():\n    pass\n")
     pb.write_text("def b():\n    pass\n")
 

@@ -7,10 +7,10 @@ from pathlib import Path
 def test_recursive_orphan_integration(monkeypatch, tmp_path):
     repo = tmp_path
     (repo / "nested").mkdir()
-    (repo / "nested/helper.py").write_text(
+    (repo / "nested/helper.py").write_text(  # path-ignore
         "def greet():\n    return 'hi'\n"
     )
-    (repo / "orphan.py").write_text(
+    (repo / "orphan.py").write_text(  # path-ignore
         "from nested.helper import greet\n\n"
     )
 
@@ -76,9 +76,9 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
     monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
 
-    tracker, tested = env.auto_include_modules(["orphan.py"], recursive=True, validate=True)
+    tracker, tested = env.auto_include_modules(["orphan.py"], recursive=True, validate=True)  # path-ignore
 
-    expected = {"orphan.py", "nested/helper.py"}
+    expected = {"orphan.py", "nested/helper.py"}  # path-ignore
     assert set(calls.get("generate", [])) == expected
     assert set(calls.get("integrate", [])) == expected
     assert calls.get("run") is True

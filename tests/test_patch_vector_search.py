@@ -8,8 +8,8 @@ from code_database import PatchHistoryDB, PatchRecord
 
 def test_find_patches_by_vector(tmp_path):
     db = PatchHistoryDB(tmp_path / "p.db")
-    pid1 = db.add(PatchRecord("a.py", "desc1", 1.0, 2.0))
-    pid2 = db.add(PatchRecord("b.py", "desc2", 1.0, 2.0))
+    pid1 = db.add(PatchRecord("a.py", "desc1", 1.0, 2.0))  # path-ignore
+    pid2 = db.add(PatchRecord("b.py", "desc2", 1.0, 2.0))  # path-ignore
     db.log_ancestry(pid1, [("o", "v1", 0.5)])
     db.log_ancestry(pid2, [("o", "v1", 0.2), ("o", "v2", 0.7)])
 

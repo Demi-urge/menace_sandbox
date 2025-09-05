@@ -14,9 +14,9 @@ sys.modules.setdefault("sandbox_settings", sandbox_settings)
 def test_relevancy_retirement_flow(tmp_path, monkeypatch):
     repo = tmp_path
     # create modules
-    (repo / "used_module.py").write_text("def used():\n    return 42\n")
-    (repo / "main.py").write_text("import used_module\n")
-    (repo / "orphan.py").write_text("def orphan():\n    return 0\n")
+    (repo / "used_module.py").write_text("def used():\n    return 42\n")  # path-ignore
+    (repo / "main.py").write_text("import used_module\n")  # path-ignore
+    (repo / "orphan.py").write_text("def orphan():\n    return 0\n")  # path-ignore
 
     # ensure radar writes inside temp repo
     import relevancy_radar
@@ -66,10 +66,10 @@ def test_relevancy_retirement_flow(tmp_path, monkeypatch):
     service = module_retirement_service.ModuleRetirementService(repo)
     service.process_flags(flags)
 
-    archive = repo / "sandbox_data" / "retired_modules" / "orphan.py"
+    archive = repo / "sandbox_data" / "retired_modules" / "orphan.py"  # path-ignore
     assert archive.exists()
-    assert not (repo / "orphan.py").exists()
+    assert not (repo / "orphan.py").exists()  # path-ignore
     # non-flagged modules remain
-    assert (repo / "used_module.py").exists()
-    assert (repo / "main.py").exists()
-    assert not (repo / "sandbox_data" / "retired_modules" / "used_module.py").exists()
+    assert (repo / "used_module.py").exists()  # path-ignore
+    assert (repo / "main.py").exists()  # path-ignore
+    assert not (repo / "sandbox_data" / "retired_modules" / "used_module.py").exists()  # path-ignore

@@ -102,7 +102,7 @@ def test_provision_failure_emits_event(monkeypatch):
     for mod, name in bot_modules.items():
         _stub_module(monkeypatch, f"menace.{mod}", **{name: DummyObj})
 
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm
@@ -213,7 +213,7 @@ def test_missing_requests_installs(monkeypatch):
 
     installs = []
 
-    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("menace_master", path)
     mm = importlib.util.module_from_spec(spec)
     sys.modules["menace_master"] = mm

@@ -29,8 +29,8 @@ class DummySTS:
     async def _run_once(self):
         self.results = {
             "integration": {
-                "integrated": ["new_mod.py"],
-                "redundant": ["old_mod.py"],
+                "integrated": ["new_mod.py"],  # path-ignore
+                "redundant": ["old_mod.py"],  # path-ignore
             },
             "failed": 0,
         }
@@ -89,12 +89,12 @@ engine = types.SimpleNamespace(
 
 
 def test_engine_integrates_and_records():
-    paths = ["new_mod.py", "old_mod.py"]
+    paths = ["new_mod.py", "old_mod.py"]  # path-ignore
     result = sie.SelfImprovementEngine._test_orphan_modules(engine, paths)
-    assert result == {"new_mod.py"}
-    assert calls["mods"] == ["new_mod.py"]
+    assert result == {"new_mod.py"}  # path-ignore
+    assert calls["mods"] == ["new_mod.py"]  # path-ignore
     assert calls["recursive"] is True
-    assert engine.orphan_traces.get("old_mod.py", {}).get("redundant") is True
+    assert engine.orphan_traces.get("old_mod.py", {}).get("redundant") is True  # path-ignore
     # ensure metrics recorded
     metrics = engine.data_bot.metrics_db.records
     passed = [m for m in metrics if m[1] == "self_test_passed"]

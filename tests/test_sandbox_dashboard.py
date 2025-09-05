@@ -11,7 +11,7 @@ sys.modules["menace"] = pkg
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(
-        f"menace.{name}", ROOT / f"{name}.py", submodule_search_locations=[str(ROOT)]
+        f"menace.{name}", ROOT / f"{name}.py", submodule_search_locations=[str(ROOT)]  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[f"menace.{name}"] = mod

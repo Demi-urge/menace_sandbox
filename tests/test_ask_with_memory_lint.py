@@ -7,7 +7,7 @@ def test_ask_with_memory_keys_use_module_action():
     root = Path(__file__).resolve().parents[1]
     pattern = re.compile(r"^[\w_]+\.[\w_]+")
     failures = []
-    for path in root.rglob("*.py"):
+    for path in root.rglob("*.py"):  # path-ignore
         parts = set(path.parts)
         if any(p.startswith('.') for p in parts) or 'build' in parts or 'dist' in parts:
             continue

@@ -8,13 +8,13 @@ def test_tree_backtrack_and_clone(tmp_path):
     e_db = EvolutionHistoryDB(tmp_path / "e.db")
     p_db = PatchHistoryDB(tmp_path / "p.db")
 
-    root_patch = PatchRecord(filename="a.py", description="root", roi_before=0, roi_after=1)
+    root_patch = PatchRecord(filename="a.py", description="root", roi_before=0, roi_after=1)  # path-ignore
     root_id = p_db.add(root_patch)
     root_event = EvolutionEvent("root", 0, 1, 1.0, patch_id=root_id, workflow_id=1)
     root_event_id = e_db.add(root_event)
 
     bad_patch = PatchRecord(
-        filename="a.py",
+        filename="a.py",  # path-ignore
         description="bad",
         roi_before=1,
         roi_after=0.5,
@@ -53,7 +53,7 @@ def test_backtrack_failed_path_multilevel(tmp_path):
     p_db = PatchHistoryDB(tmp_path / "p.db")
 
     root = PatchRecord(
-        filename="a.py",
+        filename="a.py",  # path-ignore
         description="root",
         roi_before=0,
         roi_after=1,
@@ -61,7 +61,7 @@ def test_backtrack_failed_path_multilevel(tmp_path):
     )
     root_id = p_db.add(root)
     bad1 = PatchRecord(
-        filename="a.py",
+        filename="a.py",  # path-ignore
         description="bad1",
         roi_before=1,
         roi_after=0.5,
@@ -70,7 +70,7 @@ def test_backtrack_failed_path_multilevel(tmp_path):
     )
     bad1_id = p_db.add(bad1)
     bad2 = PatchRecord(
-        filename="a.py",
+        filename="a.py",  # path-ignore
         description="bad2",
         roi_before=0.5,
         roi_after=0.2,
@@ -89,7 +89,7 @@ def test_clone_branch_for_ab_test_copies_fields(tmp_path):
     p_db = PatchHistoryDB(tmp_path / "p.db")
 
     original = PatchRecord(
-        filename="a.py",
+        filename="a.py",  # path-ignore
         description="orig",
         roi_before=1.0,
         roi_after=1.5,
@@ -156,7 +156,7 @@ def test_render_tree_generates_dot(tmp_path):
     e_db = EvolutionHistoryDB(tmp_path / "e.db")
     p_db = PatchHistoryDB(tmp_path / "p.db")
 
-    patch = PatchRecord(filename="a.py", description="root", roi_before=0, roi_after=1)
+    patch = PatchRecord(filename="a.py", description="root", roi_before=0, roi_after=1)  # path-ignore
     pid = p_db.add(patch)
     event = EvolutionEvent("root", 0, 1, 1.0, patch_id=pid, workflow_id=1)
     e_db.add(event)

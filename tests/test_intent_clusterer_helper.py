@@ -8,10 +8,10 @@ def test_find_modules_related_to_helper(monkeypatch):
 
         def find_modules_related_to(self, query, top_k=5, *, include_clusters=False):
             self.args = (query, top_k, include_clusters)
-            return [ic.IntentMatch(path="x.py", similarity=1.0, cluster_ids=[])]
+            return [ic.IntentMatch(path="x.py", similarity=1.0, cluster_ids=[])]  # path-ignore
 
     dummy = Dummy()
     monkeypatch.setattr(ic, "IntentClusterer", lambda: dummy)
     res = ic.find_modules_related_to("demo", top_k=2)
-    assert res == [ic.IntentMatch(path="x.py", similarity=1.0, cluster_ids=[])]
+    assert res == [ic.IntentMatch(path="x.py", similarity=1.0, cluster_ids=[])]  # path-ignore
     assert dummy.args == ("demo", 2, False)

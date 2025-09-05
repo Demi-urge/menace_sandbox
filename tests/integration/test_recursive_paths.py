@@ -51,11 +51,11 @@ def test_recursive_paths(tmp_path, monkeypatch):
 
     # create two orphan chains in separate directories
     (tmp_path / "one").mkdir()
-    (tmp_path / "one" / "__init__.py").write_text("\n")
+    (tmp_path / "one" / "__init__.py").write_text("\n")  # path-ignore
     (tmp_path / "one" / "a.py").write_text("import one.b\nVALUE = 1\n")  # path-ignore
     (tmp_path / "one" / "b.py").write_text("VALUE = 2\n")  # path-ignore
     (tmp_path / "two").mkdir()
-    (tmp_path / "two" / "__init__.py").write_text("\n")
+    (tmp_path / "two" / "__init__.py").write_text("\n")  # path-ignore
     (tmp_path / "two" / "a.py").write_text("import two.b\nVALUE = 3\n")  # path-ignore
     (tmp_path / "two" / "b.py").write_text("VALUE = 4\n")  # path-ignore
 
@@ -95,7 +95,7 @@ def test_recursive_paths(tmp_path, monkeypatch):
         clean_orphans=True,
         integration_callback=integrate,
     )
-    mods = [Path(*name.split(".")).with_suffix(".py").as_posix() for name in mapping]
+    mods = [Path(*name.split(".")).with_suffix(".py").as_posix() for name in mapping]  # path-ignore
     svc.integration_callback(mods)
 
     assert calls and calls[0] == [

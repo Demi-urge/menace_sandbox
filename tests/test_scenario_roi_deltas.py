@@ -52,7 +52,7 @@ def _setup_tracker(monkeypatch):
     bb_mod.BorderlineBucket = BorderlineBucket
     sys.modules.setdefault("menace.borderline_bucket", bb_mod)
 
-    spec = importlib.util.spec_from_file_location("menace.roi_tracker", ROOT / "roi_tracker.py")
+    spec = importlib.util.spec_from_file_location("menace.roi_tracker", ROOT / "roi_tracker.py")  # path-ignore
     rt = importlib.util.module_from_spec(spec)
     sys.modules["menace.roi_tracker"] = rt
     spec.loader.exec_module(rt)

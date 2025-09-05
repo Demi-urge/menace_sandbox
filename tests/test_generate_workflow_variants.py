@@ -9,7 +9,7 @@ class DummyIntent:
             self.members = None
 
     def _search_related(self, prompt: str, top_k: int = 5):  # pragma: no cover - simple stub
-        return [self.Match("extra_mod.py")]
+        return [self.Match("extra_mod.py")]  # path-ignore
 
 
 def test_generate_workflow_variants_basic(monkeypatch):

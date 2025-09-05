@@ -208,6 +208,6 @@ def test_debug_and_deploy_runs_sandbox(monkeypatch, tmp_path):
             calls.append("fix")
 
     monkeypatch.setattr(lmb, "SelfDebuggerSandbox", DummySandbox)
-    (tmp_path / "mod.py").write_text("def run():\n    pass\n")
+    (tmp_path / "mod.py").write_text("def run():\n    pass\n")  # path-ignore
     lmb.debug_and_deploy(tmp_path)
     assert "fix" in calls

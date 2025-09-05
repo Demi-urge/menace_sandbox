@@ -110,7 +110,7 @@ def load_engine_module():
             pass
 
     add_stub("prompt_engine", types.SimpleNamespace(PromptEngine=DummyPromptEngine))
-    path = dynamic_path_router.resolve_path("self_coding_engine.py")
+    path = dynamic_path_router.resolve_path("self_coding_engine.py")  # path-ignore
     spec = importlib.util.spec_from_file_location("menace.self_coding_engine", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules["menace.self_coding_engine"] = module

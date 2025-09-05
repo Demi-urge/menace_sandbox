@@ -13,7 +13,7 @@ def test_region_cli_counts(tmp_path, capsys):
     )
     store.add(
         FailureFingerprint(
-            "a.py",
+            "a.py",  # path-ignore
             "f",
             "e",
             "trace one",
@@ -24,7 +24,7 @@ def test_region_cli_counts(tmp_path, capsys):
     )
     store.add(
         FailureFingerprint(
-            "b.py",
+            "b.py",  # path-ignore
             "g",
             "e",
             "trace two",
@@ -35,7 +35,7 @@ def test_region_cli_counts(tmp_path, capsys):
     )
     store.add(
         FailureFingerprint(
-            "c.py",
+            "c.py",  # path-ignore
             "h",
             "e",
             "trace three",

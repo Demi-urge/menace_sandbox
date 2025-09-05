@@ -40,6 +40,8 @@ and clones. The `tools/check_static_paths.py` pre-commit hook scans for these
 violations.
 CI enforces this rule by running `python tools/check_static_paths.py $(git ls-files '*.py')`,
 and the workflow fails if any static path is detected.
+Run this command locally (or `pre-commit run check-static-paths --all-files`)
+before pushing changes to catch issues early.
 
 ## Stripe integration
 

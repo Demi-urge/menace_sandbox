@@ -7,7 +7,7 @@ import menace.db_router as db_router
 
 
 def create_dummy(tmp_path: Path) -> str:
-    mod = tmp_path / "dummy_mod.py"
+    mod = tmp_path / "dummy_mod.py"  # path-ignore
     mod.write_text("""def ping(x=None):\n    return x""")
     sys.path.insert(0, str(tmp_path))
     return "dummy_mod"

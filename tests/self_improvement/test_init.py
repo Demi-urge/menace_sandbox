@@ -56,7 +56,7 @@ def test_get_default_synergy_weights_reflects_settings(monkeypatch):
         ),
     )
     init_module = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
     first = init_module.get_default_synergy_weights()
 
@@ -102,7 +102,7 @@ def test_init_creates_synergy_weights(tmp_path, monkeypatch):
     sys.modules["menace.self_improvement.meta_planning"] = meta_stub
 
     init_module = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
 
     monkeypatch.setattr(
@@ -157,7 +157,7 @@ def test_init_meta_planning_failure(tmp_path, monkeypatch, caplog):
     sys.modules["menace.self_improvement.meta_planning"] = meta_stub
 
     init_module = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
 
     monkeypatch.setattr(
@@ -199,7 +199,7 @@ def test_init_enables_auto_install_when_unattended(tmp_path, monkeypatch):
     sys.modules["menace.self_improvement.meta_planning"] = meta_stub
 
     init_module = _load_module(
-        "menace.self_improvement.init", resolve_path("self_improvement/init.py")
+        "menace.self_improvement.init", resolve_path("self_improvement/init.py")  # path-ignore
     )
 
     settings = SandboxSettings()

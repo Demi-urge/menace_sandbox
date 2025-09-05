@@ -10,7 +10,7 @@ from dynamic_path_router import resolve_path
 
 def _copy_modules(tmp_path: Path) -> None:
     """Copy fixture workflow modules into *tmp_path* for testing."""
-    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):
+    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):  # path-ignore
         shutil.copy(mod, tmp_path / mod.name)
 
 
@@ -25,9 +25,9 @@ def test_generate_workflows_indexes_discovered_modules(tmp_path, monkeypatch):
 
     def fake_scan(repo, modules=None, *, logger=None, router=None):
         calls["synergy"] = ["extra.mod"]
-        calls["intent"] = [Path(repo) / "extra/mod.py"]
-        calls["workflow"] = ["extra/mod.py"]
-        return ["extra/mod.py"], True, True
+        calls["intent"] = [Path(repo) / "extra/mod.py"]  # path-ignore
+        calls["workflow"] = ["extra/mod.py"]  # path-ignore
+        return ["extra/mod.py"], True, True  # path-ignore
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
@@ -39,7 +39,7 @@ def test_generate_workflows_indexes_discovered_modules(tmp_path, monkeypatch):
     synth.generate_workflows(start_module="mod_a", limit=1, max_depth=1)
 
     assert calls["synergy"] == ["extra.mod"]
-    assert calls["intent"] == [tmp_path / "extra/mod.py"]
+    assert calls["intent"] == [tmp_path / "extra/mod.py"]  # path-ignore
 
 
 def _load_env():
@@ -50,7 +50,7 @@ def _load_env():
     pkg = sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
     pkg.__path__ = [str(root / "sandbox_runner")]
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.environment", root / "sandbox_runner" / "environment.py"
+        "sandbox_runner.environment", root / "sandbox_runner" / "environment.py"  # path-ignore
     )
     env = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner.environment"] = env
@@ -65,7 +65,7 @@ def _load_thb():
     root = Path(__file__).resolve().parents[1]
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        root / "task_handoff_bot.py",
+        root / "task_handoff_bot.py",  # path-ignore
         submodule_search_locations=[str(root)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -90,7 +90,7 @@ def test_generate_workflows_for_modules_auto_indexes(tmp_path, monkeypatch):
     auto_called: dict[str, list[str]] = {}
     def fake_auto(mods, recursive=True, router=None):
         auto_called["mods"] = list(mods)
-        return None, {"added": ["extra/mod.py"]}
+        return None, {"added": ["extra/mod.py"]}  # path-ignore
     monkeypatch.setattr(env, "auto_include_modules", fake_auto)
 
     synergy_called: dict[str, list[str]] = {}
@@ -121,11 +121,11 @@ def test_generate_workflows_for_modules_auto_indexes(tmp_path, monkeypatch):
         SimpleNamespace(IntentClusterer=FakeClusterer),
     )
 
-    env.generate_workflows_for_modules(["foo.py"], workflows_db=tmp_path / "wf.db")
+    env.generate_workflows_for_modules(["foo.py"], workflows_db=tmp_path / "wf.db")  # path-ignore
 
-    assert auto_called["mods"] == ["extra/mod.py"]
+    assert auto_called["mods"] == ["extra/mod.py"]  # path-ignore
     assert synergy_called["names"] == ["extra/mod"]
-    assert intent_called["paths"] == [tmp_path / "extra/mod.py"]
+    assert intent_called["paths"] == [tmp_path / "extra/mod.py"]  # path-ignore
 
 
 def test_evolve_auto_indexes_promoted_orphans(tmp_path, monkeypatch):
@@ -184,18 +184,18 @@ def test_evolve_auto_indexes_promoted_orphans(tmp_path, monkeypatch):
     env_mod = types.ModuleType("sandbox_runner.environment")
     def fake_auto(mods, recursive=True, validate=True, router=None):
         auto_called["mods"] = list(mods)
-        return None, {"added": ["extra/mod.py"]}
+        return None, {"added": ["extra/mod.py"]}  # path-ignore
     env_mod.auto_include_modules = fake_auto
     sys.modules["sandbox_runner.environment"] = env_mod
 
     def integrate_orphans(repo, router=None):
         from sandbox_runner.environment import auto_include_modules
-        auto_include_modules(["extra/mod.py"], recursive=True, router=router)
+        auto_include_modules(["extra/mod.py"], recursive=True, router=router)  # path-ignore
         from module_synergy_grapher import ModuleSynergyGrapher
         ModuleSynergyGrapher(repo).update_graph(["extra.mod"])
         from intent_clusterer import IntentClusterer
-        IntentClusterer(None, None).index_modules([Path(repo) / "extra/mod.py"])
-        return ["extra/mod.py"]
+        IntentClusterer(None, None).index_modules([Path(repo) / "extra/mod.py"])  # path-ignore
+        return ["extra/mod.py"]  # path-ignore
 
     post_mod = types.ModuleType("sandbox_runner.post_update")
     post_mod.integrate_orphans = integrate_orphans
@@ -277,6 +277,6 @@ def test_evolve_auto_indexes_promoted_orphans(tmp_path, monkeypatch):
 
     wem.evolve(lambda: True, 1, variants=1)
 
-    assert auto_called["mods"] == ["extra/mod.py"]
+    assert auto_called["mods"] == ["extra/mod.py"]  # path-ignore
     assert synergy_called["names"] == ["extra.mod"]
-    assert intent_called["paths"] == [tmp_path / "extra/mod.py"]
+    assert intent_called["paths"] == [tmp_path / "extra/mod.py"]  # path-ignore

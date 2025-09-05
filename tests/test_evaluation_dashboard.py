@@ -268,7 +268,7 @@ def test_relevancy_radar_panel_includes_impact_and_flag(tmp_path, monkeypatch):
         json.dumps({"alpha": {"imports": 10, "executions": 0, "impact": 2.5}})
     )
 
-    monkeypatch.setattr(ed, "__file__", str(tmp_path / "evaluation_dashboard.py"))
+    monkeypatch.setattr(ed, "__file__", str(tmp_path / "evaluation_dashboard.py"))  # path-ignore
     monkeypatch.setattr(ed, "flagged_modules", lambda: {"alpha": "retire"})
 
     panel = dash.relevancy_radar_panel()

@@ -83,7 +83,7 @@ sys.modules.setdefault(
 )
 
 spec_adb = importlib.util.spec_from_file_location(
-    "menace.automated_debugger", ROOT / "automated_debugger.py"
+    "menace.automated_debugger", ROOT / "automated_debugger.py"  # path-ignore
 )
 automated_debugger = importlib.util.module_from_spec(spec_adb)
 sys.modules["menace.automated_debugger"] = automated_debugger
@@ -92,7 +92,7 @@ spec_adb.loader.exec_module(automated_debugger)
 AutomatedDebugger = automated_debugger.AutomatedDebugger
 
 spec_scm = importlib.util.spec_from_file_location(
-    "menace.self_coding_manager", ROOT / "self_coding_manager.py"
+    "menace.self_coding_manager", ROOT / "self_coding_manager.py"  # path-ignore
 )
 self_coding_manager = importlib.util.module_from_spec(spec_scm)
 sys.modules["menace.self_coding_manager"] = self_coding_manager
@@ -143,7 +143,7 @@ class DummyDataBot:
         return 0.0
 
 def test_automated_debugger_escalation_and_reset(tmp_path, monkeypatch):
-    mod = tmp_path / "buggy.py"
+    mod = tmp_path / "buggy.py"  # path-ignore
     mod.write_text("def f():\n    raise ValueError('boom')\n")
     log = f"Traceback (most recent call last):\n  File \"{mod}\", line 2, in f\nValueError: boom"
 
@@ -174,7 +174,7 @@ def test_automated_debugger_escalation_and_reset(tmp_path, monkeypatch):
 def test_self_coding_manager_escalation_and_reset(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
-    mod = repo / "buggy.py"
+    mod = repo / "buggy.py"  # path-ignore
     mod.write_text("def f():\n    raise ValueError('boom')\n")
 
     manager = SelfCodingManager(DummyEngine(), DummyPipeline(), data_bot=DummyDataBot())

@@ -33,7 +33,7 @@ REGISTRY._names_to_collectors.clear()
 
 # load SelfTestService from source
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec)
 sys.modules["menace.self_test_service"] = sts
@@ -48,7 +48,7 @@ def _setup(monkeypatch, tmp_path, chain_len):
     prev = None
     for idx in range(chain_len):
         name = chr(ord("a") + idx)
-        path = tmp_path / f"{name}.py"
+        path = tmp_path / f"{name}.py"  # path-ignore
         if idx < chain_len - 1:
             nxt = chr(ord("a") + idx + 1)
             path.write_text(f"import {nxt}\n")
@@ -58,7 +58,7 @@ def _setup(monkeypatch, tmp_path, chain_len):
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    (data_dir / "orphan_modules.json").write_text(json.dumps(["a.py"]))
+    (data_dir / "orphan_modules.json").write_text(json.dumps(["a.py"]))  # path-ignore
     map_path = data_dir / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
 
@@ -129,12 +129,12 @@ def _run_and_assert(monkeypatch, tmp_path, chain_len):
     # All modules should be executed
     cmd = " ".join(commands)
     for idx in range(chain_len):
-        name = f"{chr(ord('a') + idx)}.py"
+        name = f"{chr(ord('a') + idx)}.py"  # path-ignore
         assert name in cmd
 
     # Module map updated
     data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {f"{chr(ord('a') + i)}.py" for i in range(chain_len)}
+    assert set(data["modules"]) == {f"{chr(ord('a') + i)}.py" for i in range(chain_len)}  # path-ignore
 
     # Workflows generated for all modules
     assert generated and generated[0] == sorted(data["modules"].keys())

@@ -13,9 +13,9 @@ class DummyTracker:
 
 def test_recursive_inclusion_integration(tmp_path, monkeypatch):
     repo = tmp_path
-    (repo / "iso.py").write_text("import helper\nimport bad\n")
-    (repo / "helper.py").write_text("x = 1\n")
-    (repo / "bad.py").write_text("x = 2\n")
+    (repo / "iso.py").write_text("import helper\nimport bad\n")  # path-ignore
+    (repo / "helper.py").write_text("x = 1\n")  # path-ignore
+    (repo / "bad.py").write_text("x = 2\n")  # path-ignore
 
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
@@ -35,8 +35,8 @@ def test_recursive_inclusion_integration(tmp_path, monkeypatch):
 
     def collect_deps(mods):
         mods = set(mods)
-        if "iso.py" in mods:
-            mods.update({"helper.py", "bad.py"})
+        if "iso.py" in mods:  # path-ignore
+            mods.update({"helper.py", "bad.py"})  # path-ignore
         return mods
 
     monkeypatch.setitem(
@@ -49,15 +49,15 @@ def test_recursive_inclusion_integration(tmp_path, monkeypatch):
         sys.modules,
         "orphan_analyzer",
         types.SimpleNamespace(
-            analyze_redundancy=lambda p: Path(p).name == "bad.py",
+            analyze_redundancy=lambda p: Path(p).name == "bad.py",  # path-ignore
             classify_module=lambda p: "redundant"
-            if Path(p).name == "bad.py"
+            if Path(p).name == "bad.py"  # path-ignore
             else "candidate",
         ),
     )
 
     iso_mod = types.SimpleNamespace(
-        discover_isolated_modules=lambda repo, recursive=True: ["iso.py"]
+        discover_isolated_modules=lambda repo, recursive=True: ["iso.py"]  # path-ignore
     )
     scripts_pkg = types.SimpleNamespace(discover_isolated_modules=iso_mod)
     monkeypatch.setitem(sys.modules, "scripts", scripts_pkg)
@@ -78,11 +78,11 @@ def test_recursive_inclusion_integration(tmp_path, monkeypatch):
     monkeypatch.setattr(env, "try_integrate_into_workflows", lambda mods: None)
     monkeypatch.setattr(env, "run_workflow_simulations", lambda *a, **k: DummyTracker())
 
-    env.auto_include_modules(["iso.py"], recursive=True, validate=True)
+    env.auto_include_modules(["iso.py"], recursive=True, validate=True)  # path-ignore
 
     map_data = json.loads((data_dir / "module_map.json").read_text())
-    assert set(map_data) == {"iso.py", "helper.py"}
-    assert "bad.py" not in map_data
+    assert set(map_data) == {"iso.py", "helper.py"}  # path-ignore
+    assert "bad.py" not in map_data  # path-ignore
 
     orphan_cache = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert orphan_cache.get("bad.py", {}).get("redundant") is True
+    assert orphan_cache.get("bad.py", {}).get("redundant") is True  # path-ignore

@@ -6,12 +6,12 @@ from menace_sandbox.roi_tracker import ROITracker
 
 
 def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
-    (tmp_path / "isolated.py").write_text("import helper\nimport legacy\n")
-    (tmp_path / "helper.py").write_text("VALUE = 1\n")
-    (tmp_path / "legacy.py").write_text("VALUE = 2\n")
+    (tmp_path / "isolated.py").write_text("import helper\nimport legacy\n")  # path-ignore
+    (tmp_path / "helper.py").write_text("VALUE = 1\n")  # path-ignore
+    (tmp_path / "legacy.py").write_text("VALUE = 2\n")  # path-ignore
 
     def fake_analyze(path: Path) -> bool:
-        return path.name == "legacy.py"
+        return path.name == "legacy.py"  # path-ignore
 
     monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", fake_analyze)
 
@@ -57,7 +57,7 @@ def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
 
     import scripts.discover_isolated_modules as dim
 
-    monkeypatch.setattr(dim, "discover_isolated_modules", lambda *_, **__: ["isolated.py"])
+    monkeypatch.setattr(dim, "discover_isolated_modules", lambda *_, **__: ["isolated.py"])  # path-ignore
 
     class Settings:
         auto_include_isolated = True
@@ -74,10 +74,10 @@ def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
     ctx = Ctx(tmp_path)
     cycle.include_orphan_modules(ctx)
 
-    assert sorted(calls["mods"]) == ["helper.py", "isolated.py"]
+    assert sorted(calls["mods"]) == ["helper.py", "isolated.py"]  # path-ignore
     assert calls["recursive"] and calls["validate"]
-    assert ctx.module_map == {"isolated.py", "helper.py"}
-    assert "legacy.py" not in calls["mods"]
-    assert sorted(ctx.orphan_traces.keys()) == ["legacy.py"]
-    assert ctx.orphan_traces["legacy.py"]["redundant"] is True
+    assert ctx.module_map == {"isolated.py", "helper.py"}  # path-ignore
+    assert "legacy.py" not in calls["mods"]  # path-ignore
+    assert sorted(ctx.orphan_traces.keys()) == ["legacy.py"]  # path-ignore
+    assert ctx.orphan_traces["legacy.py"]["redundant"] is True  # path-ignore
     assert ctx.tracker.roi_history == [0.2]

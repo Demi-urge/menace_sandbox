@@ -109,7 +109,7 @@ def _setup(monkeypatch, roi_seq, syn_seq):
 
 def _load_module():
     import importlib.util
-    path = Path("run_autonomous.py")
+    path = Path("run_autonomous.py")  # path-ignore
     if "run_autonomous" in sys.modules:
         return sys.modules["run_autonomous"]
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))

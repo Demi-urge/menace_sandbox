@@ -141,7 +141,7 @@ def test_coverage_summary_flags_missing(monkeypatch, tmp_path, caplog):
     pkg.__path__ = [str(ROOT)]
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        ROOT / "task_handoff_bot.py",
+        ROOT / "task_handoff_bot.py",  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)

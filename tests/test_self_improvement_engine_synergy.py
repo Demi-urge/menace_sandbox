@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 spec = importlib.util.spec_from_file_location(
-    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")
+    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")  # path-ignore
 )
 menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
@@ -71,10 +71,10 @@ if "filelock" not in sys.modules:
 
 if "matplotlib" not in sys.modules:
     mpl_mod = types.ModuleType("matplotlib")
-    pyplot_mod = types.ModuleType("matplotlib.pyplot")
-    mpl_mod.pyplot = pyplot_mod
+    pyplot_mod = types.ModuleType("matplotlib.pyplot")  # path-ignore
+    mpl_mod.pyplot = pyplot_mod  # path-ignore
     sys.modules["matplotlib"] = mpl_mod
-    sys.modules["matplotlib.pyplot"] = pyplot_mod
+    sys.modules["matplotlib.pyplot"] = pyplot_mod  # path-ignore
 
 if "dotenv" not in sys.modules:
     dotenv_mod = types.ModuleType("dotenv")

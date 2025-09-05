@@ -17,9 +17,9 @@ sys.modules.setdefault("yaml", yaml_mod)
 stub = types.ModuleType("numpy")
 sys.modules.setdefault("numpy", stub)
 mpl = types.ModuleType("matplotlib")
-mpl.pyplot = types.ModuleType("pyplot")
+mpl.pyplot = types.ModuleType("pyplot")  # path-ignore
 sys.modules.setdefault("matplotlib", mpl)
-sys.modules.setdefault("matplotlib.pyplot", mpl.pyplot)
+sys.modules.setdefault("matplotlib.pyplot", mpl.pyplot)  # path-ignore
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
 sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
 sys.modules.setdefault("cryptography.hazmat.primitives", types.ModuleType("primitives"))
@@ -192,7 +192,7 @@ def test_rollback_logs_negative_outcome(tmp_path, monkeypatch):
     monkeypatch.setattr(engine.data_bot, "roi", lambda *a, **k: next(roi_vals))
     monkeypatch.setattr(engine.data_bot, "complexity_score", lambda *a, **k: 0.0)
     monkeypatch.setattr(engine, "_current_errors", lambda: 0)
-    path = tmp_path / "bot.py"
+    path = tmp_path / "bot.py"  # path-ignore
     path.write_text("def x():\n    pass\n")
     context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1", 0.0)]}
     patch_id, reverted, _ = engine.apply_patch(path, "test", context_meta=context)
@@ -224,7 +224,7 @@ def test_failed_tests_log_negative_outcome(tmp_path, monkeypatch):
     monkeypatch.setattr(engine.data_bot, "roi", lambda *a, **k: 0.0)
     monkeypatch.setattr(engine.data_bot, "complexity_score", lambda *a, **k: 0.0)
     monkeypatch.setattr(engine, "_current_errors", lambda: 0)
-    path = tmp_path / "bot.py"
+    path = tmp_path / "bot.py"  # path-ignore
     path.write_text("def y():\n    pass\n")
     context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1", 0.0)]}
     patch_id, reverted, _ = engine.apply_patch(path, "test", context_meta=context)

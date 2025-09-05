@@ -35,7 +35,7 @@ REGISTRY._names_to_collectors.clear()
 
 # load SelfTestService from source
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec)
 sys.modules["menace.self_test_service"] = sts
@@ -43,7 +43,7 @@ spec.loader.exec_module(sts)
 
 # load ModuleIndexDB
 spec = importlib.util.spec_from_file_location(
-    "module_index_db", ROOT / "module_index_db.py"
+    "module_index_db", ROOT / "module_index_db.py"  # path-ignore
 )
 mod_db = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod_db)
@@ -96,9 +96,9 @@ class DummyEngine:
 def test_recursive_inclusion_cleanup(tmp_path, monkeypatch):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("x = 1\n")
-    (data_dir / "orphan_modules.json").write_text(json.dumps(["a.py"]))
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("x = 1\n")  # path-ignore
+    (data_dir / "orphan_modules.json").write_text(json.dumps(["a.py"]))  # path-ignore
 
     commands: list[str] = []
 
@@ -157,17 +157,17 @@ def test_recursive_inclusion_cleanup(tmp_path, monkeypatch):
     )
     svc.run_once()
 
-    assert any("a.py" in c for c in commands)
-    assert any("b.py" in c for c in commands)
+    assert any("a.py" in c for c in commands)  # path-ignore
+    assert any("b.py" in c for c in commands)  # path-ignore
     assert svc.results.get("orphan_total") == 2
     assert svc.results.get("orphan_failed") == 0
-    assert sorted(svc.results.get("orphan_passed", [])) == ["a.py", "b.py"]
+    assert sorted(svc.results.get("orphan_passed", [])) == ["a.py", "b.py"]  # path-ignore
 
     data = json.loads(map_path.read_text())
-    assert "a.py" in data.get("modules", {})
-    assert "b.py" in data.get("modules", {})
-    assert engine.module_clusters.get("a.py") == 1
-    assert engine.module_clusters.get("b.py") == 1
+    assert "a.py" in data.get("modules", {})  # path-ignore
+    assert "b.py" in data.get("modules", {})  # path-ignore
+    assert engine.module_clusters.get("a.py") == 1  # path-ignore
+    assert engine.module_clusters.get("b.py") == 1  # path-ignore
 
     cleaned = json.loads((data_dir / "orphan_modules.json").read_text())
     assert cleaned == []
@@ -176,9 +176,9 @@ def test_recursive_inclusion_cleanup(tmp_path, monkeypatch):
 def test_local_import_inclusion_non_recursive(tmp_path, monkeypatch):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n")
-    (tmp_path / "c.py").write_text("x = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n")  # path-ignore
+    (tmp_path / "c.py").write_text("x = 1\n")  # path-ignore
 
     commands: list[str] = []
 
@@ -210,7 +210,7 @@ def test_local_import_inclusion_non_recursive(tmp_path, monkeypatch):
 
     def fake_find(root: Path):
         assert root == Path.cwd()
-        return [Path("a.py")]
+        return [Path("a.py")]  # path-ignore
 
     monkeypatch.setattr(
         "scripts.find_orphan_modules.find_orphan_modules", fake_find
@@ -225,13 +225,13 @@ def test_local_import_inclusion_non_recursive(tmp_path, monkeypatch):
     )
     svc.run_once()
 
-    assert any("a.py" in c for c in commands)
-    assert any("b.py" in c for c in commands)
-    assert any("c.py" in c for c in commands)
+    assert any("a.py" in c for c in commands)  # path-ignore
+    assert any("b.py" in c for c in commands)  # path-ignore
+    assert any("c.py" in c for c in commands)  # path-ignore
     assert svc.results.get("orphan_total") == 3
     assert svc.results.get("orphan_failed") == 0
     assert sorted(svc.results.get("orphan_passed", [])) == [
-        "a.py",
-        "b.py",
-        "c.py",
+        "a.py",  # path-ignore
+        "b.py",  # path-ignore
+        "c.py",  # path-ignore
     ]

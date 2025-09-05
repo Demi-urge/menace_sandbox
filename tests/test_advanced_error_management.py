@@ -13,7 +13,7 @@ from dynamic_path_router import resolve_path
 
 
 def _setup_dbs(tmp_path: Path):
-    _ = resolve_path("sandbox_runner.py")
+    _ = resolve_path("sandbox_runner.py")  # path-ignore
     err = eb.ErrorDB(tmp_path / "e.db")
     roi = rao.ROIDB(tmp_path / "r.db")
     metrics = db.MetricsDB(tmp_path / "m.db")

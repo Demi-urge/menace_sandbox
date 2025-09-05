@@ -50,9 +50,9 @@ def test_map_module_identifier_records_output_impact(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cycle.threading, "Thread", DummyThread)
 
-    mod1 = tmp_path / "hero_mod.py"
+    mod1 = tmp_path / "hero_mod.py"  # path-ignore
     mod1.write_text("", encoding="utf-8")
-    mod2 = tmp_path / "retire_mod.py"
+    mod2 = tmp_path / "retire_mod.py"  # path-ignore
     mod2.write_text("", encoding="utf-8")
 
     cycle.map_module_identifier(str(mod1), tmp_path, 10.0)

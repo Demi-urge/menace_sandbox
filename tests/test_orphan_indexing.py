@@ -7,8 +7,8 @@ from pathlib import Path
 
 def test_workflow_synthesis_orphan_indexing(monkeypatch, tmp_path):
     repo = tmp_path
-    (repo / "main.py").write_text("import helper\n")
-    (repo / "helper.py").write_text("VALUE = 1\n")
+    (repo / "main.py").write_text("import helper\n")  # path-ignore
+    (repo / "helper.py").write_text("VALUE = 1\n")  # path-ignore
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
 
@@ -94,7 +94,7 @@ def test_workflow_synthesis_orphan_indexing(monkeypatch, tmp_path):
 
     ctx = types.SimpleNamespace(
         repo=repo,
-        module_map={"main.py"},
+        module_map={"main.py"},  # path-ignore
         orphan_traces={},
         settings=types.SimpleNamespace(
             auto_include_isolated=True,
@@ -108,4 +108,4 @@ def test_workflow_synthesis_orphan_indexing(monkeypatch, tmp_path):
 
     assert discover_called.get("called")
     assert grapher_calls == [["helper"]]
-    assert str(repo / "helper.py") in cluster_calls
+    assert str(repo / "helper.py") in cluster_calls  # path-ignore

@@ -44,7 +44,7 @@ def test_auto_include_modules_saves_roi(monkeypatch, tmp_path):
         ),
     )
 
-    MOD = resolve_path("mod.py").as_posix()
+    MOD = resolve_path("mod.py").as_posix()  # path-ignore
     result, tested = env.auto_include_modules([MOD])
 
     assert result is tracker

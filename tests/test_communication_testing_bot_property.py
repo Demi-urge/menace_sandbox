@@ -8,7 +8,7 @@ import menace.db_router as db_router
 @settings(max_examples=5, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.from_regex(r"[A-Za-z_][A-Za-z0-9_]*", fullmatch=True))
 def test_functional_random_module(tmp_path, name):
-    mod = tmp_path / f"{name}.py"
+    mod = tmp_path / f"{name}.py"  # path-ignore
     mod.write_text("def ping(x=None):\n    return x")
     sys.path.insert(0, str(tmp_path))
     ctb.register_module(name)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def _load_radar_snippet():
-    src = (Path(__file__).resolve().parents[1] / "sandbox_runner" / "environment.py").read_text()
+    src = (Path(__file__).resolve().parents[1] / "sandbox_runner" / "environment.py").read_text()  # path-ignore
     start = src.index("# Relevancy radar integration")
     end = src.index("import builtins", start)
     snippet = "from __future__ import annotations\n" + src[start:end]

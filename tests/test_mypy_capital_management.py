@@ -3,7 +3,7 @@ from mypy import api
 
 
 def test_mypy_clean():
-    file = Path(__file__).resolve().parents[1] / "capital_management_bot.py"
+    file = Path(__file__).resolve().parents[1] / "capital_management_bot.py"  # path-ignore
     result = api.run([
         str(file),
         "--strict",

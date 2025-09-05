@@ -83,7 +83,7 @@ def test_forecast_metric():
 def test_save_and_load_json(tmp_path):
     tracker = rt.ROITracker()
     for i in range(5):
-        tracker.update(0.0, float(i), [f"m{i}.py"], metrics={"metric": float(i)})
+        tracker.update(0.0, float(i), [f"m{i}.py"], metrics={"metric": float(i)})  # path-ignore
     tracker.record_prediction(0.5, 0.6)
     tracker.record_prediction(0.7, 0.8)
     tracker.record_metric_prediction("metric", 1.0, 0.5)
@@ -124,7 +124,7 @@ def test_save_and_load_json(tmp_path):
 def test_save_and_load_sqlite(tmp_path):
     tracker = rt.ROITracker()
     for i in range(3):
-        tracker.update(0.0, float(i), [f"x{i}.py"], metrics={"m": float(i)})
+        tracker.update(0.0, float(i), [f"x{i}.py"], metrics={"m": float(i)})  # path-ignore
     tracker.record_prediction(1.0, 0.9)
     tracker.synergy_history.append({"synergy_roi": 0.2})
     tracker.record_scenario_delta(
@@ -162,10 +162,10 @@ def test_save_and_load_sqlite(tmp_path):
 def test_entropy_plateau_detection():
     tracker = rt.ROITracker()
     tracker.module_entropy_deltas = {
-        "a.py": [0.005, 0.004, 0.003],
-        "b.py": [0.02, 0.01, 0.02],
+        "a.py": [0.005, 0.004, 0.003],  # path-ignore
+        "b.py": [0.02, 0.01, 0.02],  # path-ignore
     }
-    assert tracker.entropy_plateau(0.01, 3) == ["a.py"]
+    assert tracker.entropy_plateau(0.01, 3) == ["a.py"]  # path-ignore
 
 
 def test_roi_tracker_filters_outliers():
@@ -223,24 +223,24 @@ def test_cli_forecast(tmp_path, capsys):
 
 def test_cli_rank(tmp_path, capsys):
     tracker = rt.ROITracker()
-    tracker.update(0.0, 0.5, ["a.py", "b.py"])
-    tracker.update(0.5, 1.0, ["b.py"])
+    tracker.update(0.0, 0.5, ["a.py", "b.py"])  # path-ignore
+    tracker.update(0.5, 1.0, ["b.py"])  # path-ignore
     hist = tmp_path / "hist.json"
     tracker.save_history(str(hist))
 
     rt.cli(["rank", str(hist)])
     out = capsys.readouterr().out.strip().splitlines()
-    assert any(line.startswith("a.py") for line in out)
-    assert any(line.startswith("b.py") for line in out)
+    assert any(line.startswith("a.py") for line in out)  # path-ignore
+    assert any(line.startswith("b.py") for line in out)  # path-ignore
     assert all("(roi" in line for line in out)
 
 
 def test_module_deltas_tracked():
     tracker = rt.ROITracker()
-    tracker.update(0.0, 0.5, ["a.py", "b.py"])
-    tracker.update(0.5, 1.0, ["b.py"])
-    assert tracker.module_deltas["a.py"] == [0.5]
-    assert tracker.module_deltas["b.py"] == [0.5, 0.5]
+    tracker.update(0.0, 0.5, ["a.py", "b.py"])  # path-ignore
+    tracker.update(0.5, 1.0, ["b.py"])  # path-ignore
+    assert tracker.module_deltas["a.py"] == [0.5]  # path-ignore
+    assert tracker.module_deltas["b.py"] == [0.5, 0.5]  # path-ignore
 
 
 def test_update_without_modules():
@@ -256,7 +256,7 @@ def test_entropy_delta_history(tmp_path, monkeypatch):
     monkeypatch.setenv("PATCH_HISTORY_DB_PATH", str(db_path))
     patch_db = PatchHistoryDB(str(db_path))
     rec = PatchRecord(
-        filename="a.py",
+        filename="a.py",  # path-ignore
         description="",
         roi_before=0.0,
         roi_after=0.0,
@@ -266,7 +266,7 @@ def test_entropy_delta_history(tmp_path, monkeypatch):
     tracker = rt.ROITracker()
     tracker.metrics_history["synergy_shannon_entropy"] = [0.1, 0.3]
     tracker.record_prediction(0.0, 0.0)
-    assert rt.ROITracker.entropy_delta_history(tracker, "a.py") == [pytest.approx(0.1)]
+    assert rt.ROITracker.entropy_delta_history(tracker, "a.py") == [pytest.approx(0.1)]  # path-ignore
 
 
 def test_arima_order_selection_cached(monkeypatch):

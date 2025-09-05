@@ -40,11 +40,11 @@ sys.modules["git.exc"] = git_exc
 
 matplotlib_stub = types.ModuleType("matplotlib")
 plt_stub = types.ModuleType("pyplot")
-matplotlib_stub.pyplot = plt_stub
+matplotlib_stub.pyplot = plt_stub  # path-ignore
 if "matplotlib" not in sys.modules:
     sys.modules["matplotlib"] = matplotlib_stub
-if "matplotlib.pyplot" not in sys.modules:
-    sys.modules["matplotlib.pyplot"] = plt_stub
+if "matplotlib.pyplot" not in sys.modules:  # path-ignore
+    sys.modules["matplotlib.pyplot"] = plt_stub  # path-ignore
 
 dotenv_stub = types.ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda *a, **k: None

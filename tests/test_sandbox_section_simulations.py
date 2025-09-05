@@ -103,10 +103,10 @@ def test_section_metrics_and_diminishing(tmp_path):
     tracker = DummyTracker()
     for i in range(4):
         res = engine.run_cycle()
-        tracker.update(0.01 * i, res.roi.roi, modules=["mod.py"], metrics={"m": i})
-        log.log_cycle(i, res.roi.roi, ["mod.py"], "test")
+        tracker.update(0.01 * i, res.roi.roi, modules=["mod.py"], metrics={"m": i})  # path-ignore
+        log.log_cycle(i, res.roi.roi, ["mod.py"], "test")  # path-ignore
     flags = log.diminishing(tracker.diminishing())
-    assert "mod.py" in flags
+    assert "mod.py" in flags  # path-ignore
     assert tracker.metrics_history["m"] == [0, 1, 2, 3]
 
 
@@ -178,7 +178,7 @@ def test_run_repo_section_simulations_plugins(monkeypatch, tmp_path):
     _setup_mm_stubs(monkeypatch)
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
-    (tmp_path / "m.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n")  # path-ignore
 
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
@@ -208,7 +208,7 @@ def test_run_repo_section_simulations_plugins(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},  # path-ignore
         raising=False,
     )
     monkeypatch.setattr(sandbox_runner, "simulate_execution_environment", lambda *a, **k: {"risk_flags_triggered": []})
@@ -228,7 +228,7 @@ def test_run_repo_section_simulations_plugins(monkeypatch, tmp_path):
     monkeypatch.setattr(sandbox_runner.metrics_plugins, "collect_plugin_metrics", collect)
 
     presets = {
-        "m.py": [
+        "m.py": [  # path-ignore
             {"SCENARIO_NAME": "dev", "CPU_LIMIT": "1", "MEMORY_LIMIT": "32Mi"},
             {"SCENARIO_NAME": "prod", "CPU_LIMIT": "2", "MEMORY_LIMIT": "64Mi"},
         ]
@@ -240,7 +240,7 @@ def test_run_repo_section_simulations_plugins(monkeypatch, tmp_path):
 
     assert len(tracker.calls) == 2
     seen = {call["modules"][1]: call for call in tracker.calls}
-    for preset in presets["m.py"]:
+    for preset in presets["m.py"]:  # path-ignore
         name = preset["SCENARIO_NAME"]
         metrics = seen[name]["metrics"]
         assert "plugin_metric" in metrics
@@ -253,7 +253,7 @@ def test_run_repo_section_simulations_details(monkeypatch, tmp_path):
     _setup_mm_stubs(monkeypatch)
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
-    (tmp_path / "m.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n")  # path-ignore
 
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement", SelfImprovementEngine=DummyBot)
@@ -283,14 +283,14 @@ def test_run_repo_section_simulations_details(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},  # path-ignore
         raising=False,
     )
     monkeypatch.setattr(sandbox_runner, "simulate_execution_environment", lambda *a, **k: {"risk_flags_triggered": []})
     monkeypatch.setattr(env, "_section_worker", _fake_worker)
 
     presets = {
-        "m.py": [
+        "m.py": [  # path-ignore
             {"SCENARIO_NAME": "dev", "CPU_LIMIT": "1", "MEMORY_LIMIT": "32Mi"},
             {"SCENARIO_NAME": "prod", "CPU_LIMIT": "2", "MEMORY_LIMIT": "64Mi"},
         ]
@@ -301,8 +301,8 @@ def test_run_repo_section_simulations_details(monkeypatch, tmp_path):
     )
 
     assert tracker.calls
-    assert set(details["m.py"]) == {"dev", "prod"}
+    assert set(details["m.py"]) == {"dev", "prod"}  # path-ignore
     for scen in ("dev", "prod"):
-        rec = details["m.py"][scen][0]
+        rec = details["m.py"][scen][0]  # path-ignore
         assert rec["section"] == "sec"
         assert rec["preset"]["SCENARIO_NAME"] == scen

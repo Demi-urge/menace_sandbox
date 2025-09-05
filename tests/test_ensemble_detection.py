@@ -11,7 +11,7 @@ def _prepare(monkeypatch):
         "yaml",
         "numpy",
         "matplotlib",
-        "matplotlib.pyplot",
+        "matplotlib.pyplot",  # path-ignore
         "cryptography",
         "cryptography.hazmat",
         "cryptography.hazmat.primitives",
@@ -25,7 +25,7 @@ def _prepare(monkeypatch):
     monkeypatch.setitem(sys.modules, "yaml", stub)
     mpl = sys.modules["matplotlib"]
     mpl.__path__ = []  # type: ignore[attr-defined]
-    mpl.pyplot = sys.modules["matplotlib.pyplot"]
+    mpl.pyplot = sys.modules["matplotlib.pyplot"]  # path-ignore
 
     # minimal SQLAlchemy Engine and crypto stubs
     sys.modules["sqlalchemy.engine"].Engine = type("Engine", (), {})
@@ -145,7 +145,7 @@ def test_ensemble_detection_fallback(tmp_path, monkeypatch, caplog):
         "yaml",
         "numpy",
         "matplotlib",
-        "matplotlib.pyplot",
+        "matplotlib.pyplot",  # path-ignore
         "cryptography",
         "cryptography.hazmat",
         "cryptography.hazmat.primitives",

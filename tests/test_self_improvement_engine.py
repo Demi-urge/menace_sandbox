@@ -9,7 +9,7 @@ from pathlib import Path
 import types
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 spec = importlib.util.spec_from_file_location(
-    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")
+    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")  # path-ignore
 )
 menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
@@ -91,10 +91,10 @@ if "filelock" not in sys.modules:
 
 if "matplotlib" not in sys.modules:
     mpl_mod = types.ModuleType("matplotlib")
-    pyplot_mod = types.ModuleType("matplotlib.pyplot")
-    mpl_mod.pyplot = pyplot_mod
+    pyplot_mod = types.ModuleType("matplotlib.pyplot")  # path-ignore
+    mpl_mod.pyplot = pyplot_mod  # path-ignore
     sys.modules["matplotlib"] = mpl_mod
-    sys.modules["matplotlib.pyplot"] = pyplot_mod
+    sys.modules["matplotlib.pyplot"] = pyplot_mod  # path-ignore
 
 if "dotenv" not in sys.modules:
     dotenv_mod = types.ModuleType("dotenv")
@@ -392,7 +392,7 @@ sys.modules["menace.error_logger"] = err_logger_mod
 import menace.self_improvement as sie
 
 _BT_SPEC = importlib.util.spec_from_file_location(
-    "baseline_tracker", Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py"
+    "baseline_tracker", Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py"  # path-ignore
 )
 baseline_tracker = importlib.util.module_from_spec(_BT_SPEC)
 assert _BT_SPEC and _BT_SPEC.loader
@@ -659,7 +659,7 @@ def test_policy_state_with_patch_metrics(tmp_path):
 
     patch_db.add(
         cd.PatchRecord(
-            filename="a.py",
+            filename="a.py",  # path-ignore
             description="d1",
             roi_before=1.0,
             roi_after=2.0,
@@ -672,7 +672,7 @@ def test_policy_state_with_patch_metrics(tmp_path):
     )
     patch_db.add(
         cd.PatchRecord(
-            filename="b.py",
+            filename="b.py",  # path-ignore
             description="d2",
             roi_before=2.0,
             roi_after=1.5,
@@ -989,7 +989,7 @@ def test_roi_history_group_ids(tmp_path, monkeypatch):
                 "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, entropy_delta REAL, reverted INTEGER)"
             )
             conn.execute(
-                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0.0, 0)"
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0.0, 0)"  # path-ignore
             )
             conn.commit()
             import contextlib
@@ -1017,7 +1017,7 @@ def test_roi_history_group_ids(tmp_path, monkeypatch):
         capital_bot=DummyCapitalBot(),
         patch_db=patch_db,
         module_index=module_index,
-        module_groups={"a.py": "core"},
+        module_groups={"a.py": "core"},  # path-ignore
     )
 
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
@@ -1032,9 +1032,9 @@ def test_roi_history_group_ids(tmp_path, monkeypatch):
 def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "old.py").write_text("print('old')")
+    (repo / "old.py").write_text("print('old')")  # path-ignore
     map_path = tmp_path / "module_map.json"
-    map_path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))
+    map_path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))  # path-ignore
     os.utime(map_path, (0, 0))
 
     class DummyPatchDB:
@@ -1046,7 +1046,7 @@ def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
                 "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, entropy_delta REAL, reverted INTEGER, ts TEXT)"
             )
             conn.execute(
-                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted, ts) VALUES ('new.py', 0.0, 0.0, 0.0, 0, ?)",
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted, ts) VALUES ('new.py', 0.0, 0.0, 0.0, 0, ?)",  # path-ignore
                 (datetime.utcnow().isoformat(),),
             )
             conn.commit()
@@ -1072,7 +1072,7 @@ def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
 
     def fake_build(repo_path, **kw):
         assert Path(repo_path) == repo
-        return {"old.py": 0, "new.py": 1}
+        return {"old.py": 0, "new.py": 1}  # path-ignore
 
     monkeypatch.setattr(sie, "build_module_map", fake_build)
 
@@ -1109,7 +1109,7 @@ def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
 
     engine.run_cycle()
-    gid = module_index.get("new.py")
+    gid = module_index.get("new.py")  # path-ignore
     assert gid == 1
     assert engine.roi_group_history.get(gid) == [1.0]
 
@@ -1119,13 +1119,13 @@ def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
 
 def test_init_refresh_called_for_unknown_patches(tmp_path, monkeypatch):
     map_path = tmp_path / "module_map.json"
-    map_path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))
+    map_path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))  # path-ignore
     class DummyPatchDB:
         def _connect(self):
             import sqlite3
             conn = sqlite3.connect(":memory:")
             conn.execute("CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT)")
-            conn.execute("INSERT INTO patch_history(filename) VALUES('new.py')")
+            conn.execute("INSERT INTO patch_history(filename) VALUES('new.py')")  # path-ignore
             conn.commit()
             import contextlib
             @contextlib.contextmanager
@@ -1159,7 +1159,7 @@ def test_init_refresh_called_for_unknown_patches(tmp_path, monkeypatch):
         patch_db=patch_db,
         module_index=module_index,
     )
-    assert called.get("mods") == ["new.py"]
+    assert called.get("mods") == ["new.py"]  # path-ignore
 
 
 def test_init_discovers_module_groups(tmp_path, monkeypatch):
@@ -1172,7 +1172,7 @@ def test_init_discovers_module_groups(tmp_path, monkeypatch):
                 "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, entropy_delta REAL, reverted INTEGER)"
             )
             conn.execute(
-                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0.0, 0)"
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0.0, 0)"  # path-ignore
             )
             conn.commit()
 
@@ -1236,11 +1236,11 @@ def test_init_discovers_module_groups(tmp_path, monkeypatch):
 
     engine.run_cycle()
 
-    gid = engine.module_clusters.get("a.py")
+    gid = engine.module_clusters.get("a.py")  # path-ignore
     assert gid is not None
     assert engine.roi_group_history.get(gid) == [1.0]
     data = json.loads((tmp_path / "map.json").read_text())
-    assert data["modules"].get("a.py") == gid
+    assert data["modules"].get("a.py") == gid  # path-ignore
 
 
 def test_update_orphan_modules_nested_dependencies(tmp_path, monkeypatch):
@@ -1248,9 +1248,9 @@ def test_update_orphan_modules_nested_dependencies(tmp_path, monkeypatch):
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "a.py").write_text("import b\n")
-    (repo / "b.py").write_text("import c\n")
-    (repo / "c.py").write_text("x = 1\n")
+    (repo / "a.py").write_text("import b\n")  # path-ignore
+    (repo / "b.py").write_text("import c\n")  # path-ignore
+    (repo / "c.py").write_text("x = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -1261,7 +1261,7 @@ def test_update_orphan_modules_nested_dependencies(tmp_path, monkeypatch):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
 
     eng = types.SimpleNamespace(
-        orphan_traces={"c.py": {"parents": ["b.py"], "redundant": True}},
+        orphan_traces={"c.py": {"parents": ["b.py"], "redundant": True}},  # path-ignore
         module_index=None,
         module_clusters={},
         logger=types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None),
@@ -1303,18 +1303,18 @@ def test_update_orphan_modules_nested_dependencies(tmp_path, monkeypatch):
     eng._update_orphan_modules = types.MethodType(
         sie.SelfImprovementEngine._update_orphan_modules, eng
     )
-    eng._update_orphan_modules(["a.py"])
+    eng._update_orphan_modules(["a.py"])  # path-ignore
 
-    assert calls[0] == ["a.py", "b.py"]
-    assert integrated[:2] == ["a.py", "b.py"]
+    assert calls[0] == ["a.py", "b.py"]  # path-ignore
+    assert integrated[:2] == ["a.py", "b.py"]  # path-ignore
     data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {"a.py", "b.py"}
-    assert "c.py" not in data["modules"]
+    assert set(data["modules"]) == {"a.py", "b.py"}  # path-ignore
+    assert "c.py" not in data["modules"]  # path-ignore
     orphan_file = data_dir / "orphan_modules.json"
     assert orphan_file.exists()
-    assert eng.orphan_traces.get("c.py", {}).get("redundant") is True
-    assert eng.orphan_traces["b.py"]["parents"] == ["a.py"]
-    assert eng.orphan_traces["c.py"]["parents"] == ["b.py"]
+    assert eng.orphan_traces.get("c.py", {}).get("redundant") is True  # path-ignore
+    assert eng.orphan_traces["b.py"]["parents"] == ["a.py"]  # path-ignore
+    assert eng.orphan_traces["c.py"]["parents"] == ["b.py"]  # path-ignore
 
 class DummyPredictor:
     def __init__(self, mapping):

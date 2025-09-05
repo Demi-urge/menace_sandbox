@@ -15,7 +15,7 @@ def a():
 def b():
     return 2
 """
-    file = path / "sample.py"
+    file = path / "sample.py"  # path-ignore
     file.write_text(code)
     return file
 
@@ -92,7 +92,7 @@ def _write_large(path: Path, funcs: int = 4, lines: int = 900) -> Path:
     for i in range(funcs):
         body = "\n".join(f"    v_{i}_{j} = {j}" for j in range(lines))
         chunks.append(f"def f{i}():\n{body}\n")
-    file = path / "big.py"
+    file = path / "big.py"  # path-ignore
     file.write_text("\n\n".join(chunks))
     return file
 

@@ -14,7 +14,7 @@ def test_scaffold(tmp_path):
     shutil.copy(repo_root / "sql_templates" / "create_fts.sql", sql_dir / "create_fts.sql")
 
     # Minimal package to allow __init__ updates
-    (tmp_path / "__init__.py").write_text("__all__ = []\n")
+    (tmp_path / "__init__.py").write_text("__all__ = []\n")  # path-ignore
 
     create_db_scaffold("demo", root=tmp_path)
 

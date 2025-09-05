@@ -17,7 +17,7 @@ TOKEN = "tombalolosvisualagent123"
 
 pkg_path = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
-    "menace", pkg_path / "__init__.py", submodule_search_locations=[str(pkg_path)]
+    "menace", pkg_path / "__init__.py", submodule_search_locations=[str(pkg_path)]  # path-ignore
 )
 menace_pkg = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace_pkg
@@ -27,7 +27,7 @@ from menace.visual_agent_client import VisualAgentClient
 
 
 def _start_server(tmp_path: Path):
-    script = tmp_path / "server.py"
+    script = tmp_path / "server.py"  # path-ignore
     script.write_text(textwrap.dedent(
         """
         import sys, types, importlib, time, os
@@ -44,7 +44,7 @@ def _start_server(tmp_path: Path):
         )
         sys.modules['pyautogui'] = pyautogui
         pt_mod = types.ModuleType('pytesseract')
-        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
         pt_mod.image_to_string = lambda *a, **k: ''
         pt_mod.image_to_data = lambda *a, **k: {}
         pt_mod.Output = types.SimpleNamespace(DICT=0)

@@ -167,7 +167,7 @@ sys.modules.setdefault(
 
 rt_spec = importlib.util.spec_from_file_location(
     "menace.roi_tracker",
-    dynamic_path_router.path_for_prompt("roi_tracker.py"),
+    dynamic_path_router.path_for_prompt("roi_tracker.py"),  # path-ignore
 )
 rt = importlib.util.module_from_spec(rt_spec)
 assert rt_spec.loader is not None
@@ -272,7 +272,7 @@ from pathlib import Path as _P
 
 _spec = importlib.util.spec_from_file_location(
     "menace.self_debugger_sandbox",
-    dynamic_path_router.path_for_prompt("self_debugger_sandbox.py"),
+    dynamic_path_router.path_for_prompt("self_debugger_sandbox.py"),  # path-ignore
 )
 sds = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sds)
@@ -587,7 +587,7 @@ def test_run_tests_includes_telemetry(monkeypatch, tmp_path):
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
     monkeypatch.chdir(tmp_path)
 
-    base = Path("test_base.py")
+    base = Path("test_base.py")  # path-ignore
     base.write_text("def test_base():\n    assert True\n")
 
     called = {}
@@ -645,7 +645,7 @@ def test_coverage_xml_report_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(sds, "Coverage", Cov)
 
-    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))  # path-ignore
     assert percent == 0.0
     assert "coverage generation failed" in caplog.text
     assert "boom" in caplog.text
@@ -677,7 +677,7 @@ def test_coverage_report_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(sds, "Coverage", Cov)
 
-    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))  # path-ignore
     assert percent == 0.0
     assert "coverage generation failed" in caplog.text
 
@@ -701,7 +701,7 @@ def test_coverage_records_executed_functions(monkeypatch, tmp_path):
 
         def xml_report(self, outfile=None, include=None):
             Path(outfile).write_text(
-                """<coverage><packages><package><classes><class filename='foo.py'>"
+                """<coverage><packages><package><classes><class filename='foo.py'>"  # path-ignore
                 "<methods>"
                 "<method name='run'><lines><line number='1' hits='1'/></lines></method>"
                 "<method name='skip'><lines><line number='2' hits='0'/></lines></method>"
@@ -719,9 +719,9 @@ def test_coverage_records_executed_functions(monkeypatch, tmp_path):
         lambda *a, **k: captured.update(a[1] if len(a) > 1 else a[0]),
     )
 
-    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+    percent, _ = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))  # path-ignore
     assert percent == 100.0
-    assert captured.get("executed_functions") == ["foo.py:run"]
+    assert captured.get("executed_functions") == ["foo.py:run"]  # path-ignore
 
 
 def test_coverage_subprocess_failure(monkeypatch):
@@ -735,14 +735,14 @@ def test_coverage_subprocess_failure(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
 
     with pytest.raises(sds.CoverageSubprocessError) as exc:
-        asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+        asyncio.run(dbg._coverage_percent([Path("dummy.py")]))  # path-ignore
     assert "boom" in str(exc.value)
 
 
 def test_flakiness_deterministic(monkeypatch):
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
     monkeypatch.setattr(dbg, "_run_tests", lambda p, env=None: (80.0, 0.0))
-    assert dbg._test_flakiness(Path("dummy.py")) == 0.0
+    assert dbg._test_flakiness(Path("dummy.py")) == 0.0  # path-ignore
 
 
 def test_flakiness_variable(monkeypatch):
@@ -753,7 +753,7 @@ def test_flakiness_variable(monkeypatch):
         return cov_vals.pop(0), 0.0
 
     monkeypatch.setattr(dbg, "_run_tests", fake_run)
-    flakiness = dbg._test_flakiness(Path("dummy.py"))
+    flakiness = dbg._test_flakiness(Path("dummy.py"))  # path-ignore
     assert abs(flakiness - 6.324) < 0.001
 
 
@@ -768,7 +768,7 @@ def test_flakiness_handles_failed_runs(monkeypatch):
         return v, 0.0
 
     monkeypatch.setattr(dbg, "_run_tests", flaky_run)
-    flakiness = dbg._test_flakiness(Path("dummy.py"))
+    flakiness = dbg._test_flakiness(Path("dummy.py"))  # path-ignore
     assert flakiness > 10.0
 
 
@@ -787,7 +787,7 @@ def test_run_tests_retries_on_subprocess_failure(monkeypatch):
     monkeypatch.setattr(dbg, "_recent_logs", lambda limit=5: [])
     monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
     dbg._test_retries = 2
-    cov, _ = dbg._run_tests(Path("dummy.py"))
+    cov, _ = dbg._run_tests(Path("dummy.py"))  # path-ignore
     assert cov == 80.0
     assert calls["n"] == 2
 
@@ -1095,7 +1095,7 @@ def test_run_tests_logs_output(monkeypatch, tmp_path):
     )
 
     with pytest.raises(RuntimeError):
-        dbg._run_tests(Path("test_dummy.py"))
+        dbg._run_tests(Path("test_dummy.py"))  # path-ignore
 
     assert dbg._last_test_log is not None
     assert dbg._last_test_log.exists()
@@ -1147,9 +1147,9 @@ def test_flakiness_history_affects_score(tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
     dbg._score_db = patch_db
-    patch_db.record_flakiness("a.py", 1.0)
+    patch_db.record_flakiness("a.py", 1.0)  # path-ignore
     base = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0)
-    penalized = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, filename="a.py")
+    penalized = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, filename="a.py")  # path-ignore
     assert penalized < base
 
 
@@ -1327,7 +1327,7 @@ def test_analyse_and_fix_records_history(monkeypatch, tmp_path):
     )
     row = cur.fetchone()
     assert row is not None
-    assert "test_auto.py" in row[0]
+    assert "test_auto.py" in row[0]  # path-ignore
     assert row[1] >= 0.0
 
     rows = dbg.recent_scores(1)

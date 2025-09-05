@@ -12,9 +12,9 @@ pytest.importorskip("sqlalchemy")
 
 
 def test_links_and_status(tmp_path):
-    p = tmp_path / "b.py"
+    p = tmp_path / "b.py"  # path-ignore
     p.write_text("def run():\n    pass\n")
-    shutil.copy(p, "b.py")
+    shutil.copy(p, "b.py")  # path-ignore
 
     enh_db = ceb.EnhancementDB(tmp_path / "e.db")
     eid = enh_db.add(ceb.Enhancement(idea="i", rationale="r"))
@@ -43,7 +43,7 @@ def test_links_and_status(tmp_path):
     )
     spec = db.DeploymentSpec(name="test", resources={}, env={})
     bot.deploy("run", ["b"], spec, model_id=1, enhancements=[eid], contrarian_id=cid)
-    os.remove("b.py")
+    os.remove("b.py")  # path-ignore
 
     assert enh_db.bots_for(eid)
     with menace.engine.connect() as conn:
@@ -53,9 +53,9 @@ def test_links_and_status(tmp_path):
 
 
 def test_contrarian_timestamp_update(tmp_path):
-    p = tmp_path / "c.py"
+    p = tmp_path / "c.py"  # path-ignore
     p.write_text("def run():\n    pass\n")
-    shutil.copy(p, "c.py")
+    shutil.copy(p, "c.py")  # path-ignore
 
     contr_db = cdb.ContrarianDB(tmp_path / "c.db")
     rec = cdb.ContrarianRecord(
@@ -73,15 +73,15 @@ def test_contrarian_timestamp_update(tmp_path):
     )
     spec = db.DeploymentSpec(name="test", resources={}, env={})
     bot.deploy("run", ["c"], spec, contrarian_id=cid)
-    os.remove("c.py")
+    os.remove("c.py")  # path-ignore
 
     assert contr_db.get(cid).timestamp_last_evaluated != "old"
 
 
 def test_contrarian_new_strategy_links(tmp_path):
-    p = tmp_path / "d.py"
+    p = tmp_path / "d.py"  # path-ignore
     p.write_text("def run():\n    pass\n")
-    shutil.copy(p, "d.py")
+    shutil.copy(p, "d.py")  # path-ignore
 
     contr_db = cdb.ContrarianDB(tmp_path / "c.db")
     cid = contr_db.add(cdb.ContrarianRecord(innovation_name="n", innovation_type="y"))
@@ -122,7 +122,7 @@ def test_contrarian_new_strategy_links(tmp_path):
         contrarian_id=cid,
         errors=[err_id],
     )
-    os.remove("d.py")
+    os.remove("d.py")  # path-ignore
 
     assert contr_db.workflows_for(cid)
     assert contr_db.enhancements_for(cid) == [eid]
@@ -132,9 +132,9 @@ def test_contrarian_new_strategy_links(tmp_path):
 
 
 def test_workflow_status_failure(tmp_path, monkeypatch):
-    p = tmp_path / "f.py"
+    p = tmp_path / "f.py"  # path-ignore
     p.write_text("def run():\n    pass\n")
-    shutil.copy(p, "f.py")
+    shutil.copy(p, "f.py")  # path-ignore
 
     wf_db = db.WorkflowDB(tmp_path / "wf.db")
     wid = wf_db.add(db.WorkflowRecord(workflow=["step"]))
@@ -148,7 +148,7 @@ def test_workflow_status_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(bot, "run_tests", lambda **k: (False, []))
 
     bot.deploy("run", ["f"], spec, workflows=[wid])
-    os.remove("f.py")
+    os.remove("f.py")  # path-ignore
 
     assert wf_db.fetch()[0].status == "failed"
 

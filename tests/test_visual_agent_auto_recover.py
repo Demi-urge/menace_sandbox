@@ -65,7 +65,7 @@ def _setup_va(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "uvicorn", uvicorn_mod)
 
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)

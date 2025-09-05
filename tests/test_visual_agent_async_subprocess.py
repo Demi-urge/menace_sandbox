@@ -16,7 +16,7 @@ pytest.importorskip("httpx")
 
 @pytest.mark.asyncio
 async def test_visual_agent_async_subprocess(tmp_path):
-    script = tmp_path / "server.py"
+    script = tmp_path / "server.py"  # path-ignore
     script.write_text(textwrap.dedent(
         """
         import sys, types, threading, importlib, time, os
@@ -37,7 +37,7 @@ async def test_visual_agent_async_subprocess(tmp_path):
         filelock_mod.Timeout = DummyTimeout
         sys.modules['filelock'] = filelock_mod
         pt_mod = types.ModuleType('pytesseract')
-        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+        pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')  # path-ignore
         pt_mod.image_to_string = lambda *a, **k: ''
         pt_mod.image_to_data = lambda *a, **k: {}
         pt_mod.Output = types.SimpleNamespace(DICT=0)

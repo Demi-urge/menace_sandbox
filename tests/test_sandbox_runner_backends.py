@@ -13,7 +13,7 @@ def _prepare_repo(tmp_path: Path) -> Path:
     (repo / "requirements.txt").write_text("")
     tests = repo / "tests"
     tests.mkdir()
-    (tests / "test_mod.py").write_text("def test_ok():\n    assert True\n")
+    (tests / "test_mod.py").write_text("def test_ok():\n    assert True\n")  # path-ignore
     subprocess.run(["git", "init"], cwd=repo, capture_output=True)
     subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
@@ -22,7 +22,7 @@ def _prepare_repo(tmp_path: Path) -> Path:
 
 def test_run_tests_supports_backends(monkeypatch, tmp_path):
     repo = _prepare_repo(tmp_path)
-    path = resolve_path("sandbox_runner/test_harness.py")
+    path = resolve_path("sandbox_runner/test_harness.py")  # path-ignore
     pkg = types.ModuleType("menace.sandbox_runner")
     pkg.__path__ = []  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "menace.sandbox_runner", pkg)
@@ -117,7 +117,7 @@ def test_run_patch_forwards_backend(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "menace.pre_execution_roi_bot", prb_stub)
     import menace.self_coding_manager as scm
 
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("x = 1\n")
 
     class Engine:

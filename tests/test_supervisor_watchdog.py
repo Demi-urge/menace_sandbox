@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Create minimal menace package to load module under test
 spec_sw = importlib.util.spec_from_file_location(
     "menace.supervisor_watchdog",
-    str(ROOT / "supervisor_watchdog.py"),
+    str(ROOT / "supervisor_watchdog.py"),  # path-ignore
 )
 sw = importlib.util.module_from_spec(spec_sw)
 spec_sw.loader.exec_module(sw)

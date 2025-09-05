@@ -65,7 +65,7 @@ def _load_qfe(monkeypatch):
         types.SimpleNamespace(log_violation=lambda *a, **k: None),
     )
     spec = importlib.util.spec_from_file_location(
-        "menace.quick_fix_engine", root / "quick_fix_engine.py"
+        "menace.quick_fix_engine", root / "quick_fix_engine.py"  # path-ignore
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -78,7 +78,7 @@ def _load_qfe(monkeypatch):
 
 def test_generate_patch_triggers_scan_once_success(monkeypatch, tmp_path):
     qfe = _load_qfe(monkeypatch)
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text("VALUE = 1\n")
     monkeypatch.chdir(tmp_path)
 
@@ -106,7 +106,7 @@ def test_generate_patch_triggers_scan_once_success(monkeypatch, tmp_path):
 
 def test_generate_patch_scan_failure_handled(monkeypatch, tmp_path):
     qfe = _load_qfe(monkeypatch)
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text("VALUE = 1\n")
     monkeypatch.chdir(tmp_path)
 
@@ -143,7 +143,7 @@ from tests.test_self_debugger_sandbox import sds, DummyTelem, DummyEngine  # noq
 
 
 def test_preemptive_fix_triggers_scan_once_success(monkeypatch, tmp_path):
-    (tmp_path / "mod.py").write_text("VALUE = 1\n")
+    (tmp_path / "mod.py").write_text("VALUE = 1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)
 
     calls = []
@@ -157,7 +157,7 @@ def test_preemptive_fix_triggers_scan_once_success(monkeypatch, tmp_path):
     monkeypatch.setattr(sds, "_collect_diff_data", lambda *a, **k: {})
 
     predictor = types.SimpleNamespace(
-        predict_high_risk_modules=lambda top_n=5: ["mod.py"]
+        predict_high_risk_modules=lambda top_n=5: ["mod.py"]  # path-ignore
     )
     sandbox = sds.SelfDebuggerSandbox(
         DummyTelem(), DummyEngine(), error_predictor=predictor
@@ -168,7 +168,7 @@ def test_preemptive_fix_triggers_scan_once_success(monkeypatch, tmp_path):
 
 
 def test_preemptive_fix_scan_failure_handled(monkeypatch, tmp_path):
-    (tmp_path / "mod.py").write_text("VALUE = 1\n")
+    (tmp_path / "mod.py").write_text("VALUE = 1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)
 
     calls = []
@@ -182,7 +182,7 @@ def test_preemptive_fix_scan_failure_handled(monkeypatch, tmp_path):
     monkeypatch.setattr(sds, "_collect_diff_data", lambda *a, **k: {})
 
     predictor = types.SimpleNamespace(
-        predict_high_risk_modules=lambda top_n=5: ["mod.py"]
+        predict_high_risk_modules=lambda top_n=5: ["mod.py"]  # path-ignore
     )
     sandbox = sds.SelfDebuggerSandbox(
         DummyTelem(), DummyEngine(), error_predictor=predictor
@@ -196,8 +196,8 @@ def test_preemptive_fix_scan_failure_handled(monkeypatch, tmp_path):
 
 def test_new_module_included_after_scan(monkeypatch, tmp_path):
     repo = tmp_path
-    (repo / "existing.py").write_text("X = 1\n")
-    (repo / "new_mod.py").write_text("Y = 2\n")
+    (repo / "existing.py").write_text("X = 1\n")  # path-ignore
+    (repo / "new_mod.py").write_text("Y = 2\n")  # path-ignore
 
     workflow_list: list[str] = []
 
@@ -230,11 +230,11 @@ def test_new_module_included_after_scan(monkeypatch, tmp_path):
     from sandbox_runner.orphan_integration import post_round_orphan_scan
 
     added, syn_ok, intent_ok = post_round_orphan_scan(
-        repo, modules=["new_mod.py"], logger=None, router=None
+        repo, modules=["new_mod.py"], logger=None, router=None  # path-ignore
     )
 
-    assert added == [str(repo / "new_mod.py")]
-    assert workflow_list == [str(repo / "new_mod.py")]
+    assert added == [str(repo / "new_mod.py")]  # path-ignore
+    assert workflow_list == [str(repo / "new_mod.py")]  # path-ignore
     assert syn_ok is True and intent_ok is True
 
 

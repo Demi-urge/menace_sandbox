@@ -154,7 +154,7 @@ def _setup_va_real(monkeypatch, tmp_path):
     for name in heavy:
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
     pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
     pt_mod.image_to_string = lambda *a, **k: ""
     pt_mod.image_to_data = lambda *a, **k: {}
     pt_mod.Output = types.SimpleNamespace(DICT=0)

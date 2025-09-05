@@ -11,7 +11,7 @@ import importlib.util
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
@@ -86,7 +86,7 @@ def test_redundant_module_skipped(tmp_path, monkeypatch):
     monkeypatch.setattr(ModuleIndexDB, "refresh", _fake_refresh)
 
     def fake_analyze(path: Path) -> bool:
-        return path.name == "dup.py"
+        return path.name == "dup.py"  # path-ignore
 
     monkeypatch.setattr(sys.modules[__name__], "analyze_redundancy", fake_analyze)
     env_mod = types.ModuleType("env")
@@ -97,10 +97,10 @@ def test_redundant_module_skipped(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
 
-    engine._integrate_orphans([str(tmp_path / "dup.py")])
+    engine._integrate_orphans([str(tmp_path / "dup.py")])  # path-ignore
 
     data = json.loads(map_path.read_text())
-    assert "dup.py" not in data.get("modules", {})
+    assert "dup.py" not in data.get("modules", {})  # path-ignore
     assert "redundant module skipped" in engine.logger.info_msgs
     assert not wf_calls
 
@@ -120,9 +120,9 @@ def test_module_integrated(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
 
-    engine._integrate_orphans([str(tmp_path / "ok.py")])
+    engine._integrate_orphans([str(tmp_path / "ok.py")])  # path-ignore
 
-    assert engine.module_clusters.get("ok.py") == 1
+    assert engine.module_clusters.get("ok.py") == 1  # path-ignore
 
 
 def test_update_orphan_modules_skips_redundant_when_disabled(monkeypatch, tmp_path):
@@ -167,8 +167,8 @@ def test_update_orphan_modules_skips_redundant_when_disabled(monkeypatch, tmp_pa
 
     mod_file = tmp_path / "orphan_modules.json"
     data = json.loads(mod_file.read_text()) if mod_file.exists() else []
-    assert "foo.py" not in data
-    assert calls and calls[0].name == "foo.py"
+    assert "foo.py" not in data  # path-ignore
+    assert calls and calls[0].name == "foo.py"  # path-ignore
     assert tested == [[]]
     assert "redundant module skipped" in eng.logger.info_msgs
     assert "redundant modules skipped" in eng.logger.info_msgs
@@ -191,11 +191,11 @@ def test_update_orphan_modules_tests_redundant_when_enabled(monkeypatch, tmp_pat
     ss_mod.SandboxSettings = _SS
     monkeypatch.setitem(sys.modules, "sandbox_settings", ss_mod)
 
-    module_path = tmp_path / "dup.py"
+    module_path = tmp_path / "dup.py"  # path-ignore
     module_path.write_text("pass\n")
 
     meta = tmp_path / "orphan_classifications.json"
-    meta.write_text(json.dumps({"dup.py": {"classification": "redundant"}}))
+    meta.write_text(json.dumps({"dup.py": {"classification": "redundant"}}))  # path-ignore
 
     sr = types.ModuleType("sandbox_runner")
     sr.discover_recursive_orphans = lambda repo, module_map=None: {}
@@ -228,8 +228,8 @@ def test_update_orphan_modules_tests_redundant_when_enabled(monkeypatch, tmp_pat
 
     update(eng, modules=[str(module_path)])
 
-    assert calls and Path(calls[0][0]).name == "dup.py"
-    assert integrated and Path(integrated[0]).name == "dup.py"
+    assert calls and Path(calls[0][0]).name == "dup.py"  # path-ignore
+    assert integrated and Path(integrated[0]).name == "dup.py"  # path-ignore
 
 
 def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
@@ -253,8 +253,8 @@ def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
 
     mods = svc._discover_orphans()
 
-    assert mods == [str(Path("foo.py"))]
-    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]
+    assert mods == [str(Path("foo.py"))]  # path-ignore
+    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]  # path-ignore
     assert "redundant module skipped" in svc.logger.info_msgs
 
 
@@ -266,7 +266,7 @@ def test_discover_isolated_filters(monkeypatch, tmp_path):
     mod = types.ModuleType("scripts.discover_isolated_modules")
 
     def discover(path, *, recursive=True):
-        return [Path("foo.py"), Path("foo.py"), Path("dup.py")]
+        return [Path("foo.py"), Path("foo.py"), Path("dup.py")]  # path-ignore
 
     mod.discover_isolated_modules = discover
     pkg = types.ModuleType("scripts")
@@ -284,8 +284,8 @@ def test_discover_isolated_filters(monkeypatch, tmp_path):
 
     mods = svc._discover_isolated()
 
-    assert mods == [str(Path("foo.py"))]
-    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]
+    assert mods == [str(Path("foo.py"))]  # path-ignore
+    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]  # path-ignore
     assert "redundant module skipped" in svc.logger.info_msgs
 
 
@@ -295,7 +295,7 @@ def test_discover_orphans_filters_non_recursive(monkeypatch, tmp_path):
     svc.logger = DummyLogger()
 
     def fake_find(root: Path):
-        return [Path("foo.py"), Path("dup.py")]
+        return [Path("foo.py"), Path("dup.py")]  # path-ignore
 
     monkeypatch.setattr(
         "scripts.find_orphan_modules.find_orphan_modules", fake_find
@@ -311,8 +311,8 @@ def test_discover_orphans_filters_non_recursive(monkeypatch, tmp_path):
 
     mods = svc._discover_orphans()
 
-    assert mods == [str(Path("foo.py"))]
-    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]
+    assert mods == [str(Path("foo.py"))]  # path-ignore
+    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]  # path-ignore
     assert "redundant module skipped" in svc.logger.info_msgs
 
 
@@ -333,9 +333,9 @@ def test_discover_orphans_records_redundant_metadata(monkeypatch, tmp_path):
     monkeypatch.setattr(sts, "analyze_redundancy", lambda p: False)
     mods = svc._discover_orphans()
 
-    assert sorted(mods) == [str(Path("foo.py"))]
-    dup_key = str(Path("dup.py"))
-    foo_key = str(Path("foo.py"))
+    assert sorted(mods) == [str(Path("foo.py"))]  # path-ignore
+    dup_key = str(Path("dup.py"))  # path-ignore
+    foo_key = str(Path("foo.py"))  # path-ignore
     assert svc.orphan_traces[dup_key]["redundant"] is True
     assert svc.orphan_traces[foo_key]["redundant"] is False
 

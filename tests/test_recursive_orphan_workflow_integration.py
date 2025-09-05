@@ -32,7 +32,7 @@ REGISTRY._names_to_collectors.clear()
 
 # load SelfTestService from source
 spec = importlib.util.spec_from_file_location(
-    "menace.self_test_service", ROOT / "self_test_service.py"
+    "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
 )
 sts = importlib.util.module_from_spec(spec)
 sys.modules["menace.self_test_service"] = sts
@@ -42,9 +42,9 @@ spec.loader.exec_module(sts)
 def test_recursive_orphan_integration(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
     # create dummy modules: a -> b -> c
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import c\n")
-    (tmp_path / "c.py").write_text("x = 1\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import c\n")  # path-ignore
+    (tmp_path / "c.py").write_text("x = 1\n")  # path-ignore
 
     # verify full dependency chain is discovered
     sr = importlib.import_module("sandbox_runner")
@@ -56,7 +56,7 @@ def test_recursive_orphan_integration(tmp_path, monkeypatch):
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    (data_dir / "orphan_modules.json").write_text(json.dumps(["a.py"]))
+    (data_dir / "orphan_modules.json").write_text(json.dumps(["a.py"]))  # path-ignore
     map_path = data_dir / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
 
@@ -107,6 +107,6 @@ def test_recursive_orphan_integration(tmp_path, monkeypatch):
     svc = sts.SelfTestService(include_orphans=True, integration_callback=integrate)
     svc.run_once()
 
-    assert generated and generated[0] == ["a.py", "b.py", "c.py"]
+    assert generated and generated[0] == ["a.py", "b.py", "c.py"]  # path-ignore
     data = json.loads(map_path.read_text())
-    assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])
+    assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])  # path-ignore

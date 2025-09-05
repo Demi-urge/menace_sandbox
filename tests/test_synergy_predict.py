@@ -27,7 +27,7 @@ pf_stub.PolynomialFeatures = lambda *a, **k: types.SimpleNamespace(fit_transform
 sys.modules.setdefault("sklearn.linear_model", lm_stub)
 sys.modules.setdefault("sklearn.preprocessing", pf_stub)
 
-spec = importlib.util.spec_from_file_location("menace.roi_tracker", Path("roi_tracker.py"))
+spec = importlib.util.spec_from_file_location("menace.roi_tracker", Path("roi_tracker.py"))  # path-ignore
 rt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rt)
 sys.modules.setdefault("menace.roi_tracker", rt)

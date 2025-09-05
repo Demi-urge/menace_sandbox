@@ -545,7 +545,7 @@ def test_harness_failure_frames(tmp_path, monkeypatch):
     (repo / "requirements.txt").write_text("")
     tests_dir = repo / "tests"
     tests_dir.mkdir()
-    tests_dir.joinpath("test_mod.py").write_text(
+    tests_dir.joinpath("test_mod.py").write_text(  # path-ignore
         textwrap.dedent(
             """
             def helper():
@@ -568,7 +568,7 @@ def test_harness_failure_frames(tmp_path, monkeypatch):
     assert result.failure is not None
     assert result.failure["function"] == "helper"
     assert result.failure["line"] == "3"
-    assert result.failure["file"].endswith("test_mod.py")
+    assert result.failure["file"].endswith("test_mod.py")  # path-ignore
     frames = result.failure["frames"]
     assert frames[-1]["function"] == "helper"
     assert frames[-2]["function"] == "test_fail"

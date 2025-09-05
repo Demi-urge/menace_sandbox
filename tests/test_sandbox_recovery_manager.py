@@ -11,7 +11,7 @@ import types
 ROOT = Path(__file__).resolve().parents[1]
 
 spec = importlib.util.spec_from_file_location(
-    "sandbox_recovery_manager", str(ROOT / "sandbox_recovery_manager.py")
+    "sandbox_recovery_manager", str(ROOT / "sandbox_recovery_manager.py")  # path-ignore
 )
 srm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(srm)
@@ -249,7 +249,7 @@ def test_run_autonomous_integration(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
 
-    path = ROOT / "run_autonomous.py"
+    path = ROOT / "run_autonomous.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     run_autonomous = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = run_autonomous
@@ -328,7 +328,7 @@ def test_run_autonomous_multiple_runs(monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
 
-    path = ROOT / "run_autonomous.py"
+    path = ROOT / "run_autonomous.py"  # path-ignore
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     run_autonomous = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = run_autonomous

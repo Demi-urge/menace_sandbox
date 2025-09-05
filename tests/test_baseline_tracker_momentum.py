@@ -6,7 +6,7 @@ import pytest
 
 spec = importlib.util.spec_from_file_location(
     "baseline_tracker",
-    Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py",
+    Path(__file__).resolve().parents[1] / "self_improvement" / "baseline_tracker.py",  # path-ignore
 )
 baseline_tracker = importlib.util.module_from_spec(spec)
 assert spec and spec.loader

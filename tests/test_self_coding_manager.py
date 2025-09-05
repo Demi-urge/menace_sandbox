@@ -83,7 +83,7 @@ def test_run_patch_logs_evolution(monkeypatch, tmp_path):
     engine = DummyEngine()
     pipeline = DummyPipeline()
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
@@ -139,7 +139,7 @@ def test_run_patch_logging_error(monkeypatch, tmp_path, caplog):
     engine = DummyEngine()
     pipeline = DummyPipeline()
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
@@ -205,7 +205,7 @@ def test_approval_logs_audit_failure(monkeypatch, tmp_path, caplog):
         bot_name="bot",
     )
     caplog.set_level(logging.ERROR)
-    file_path = tmp_path / "x.py"
+    file_path = tmp_path / "x.py"  # path-ignore
     file_path.write_text("x = 1\n")
     assert policy.approve(file_path)
     assert "failed to log healing action" in caplog.text
@@ -244,7 +244,7 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
     pipeline = DummyPipeline()
     data_bot = DummyDataBot()
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 

@@ -253,7 +253,7 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
             s = str(a)
             if s.startswith("--json-report-file"):
                 path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
-            if s.endswith(".py"):
+            if s.endswith(".py"):  # path-ignore
                 mod_path = s
         if path:
             if mod_path.endswith("b.py"):  # path-ignore

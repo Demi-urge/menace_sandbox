@@ -8,7 +8,7 @@ from dynamic_path_router import resolve_path
 
 
 def _load_test_harness(monkeypatch):
-    path = resolve_path("sandbox_runner/test_harness.py")
+    path = resolve_path("sandbox_runner/test_harness.py")  # path-ignore
     spec = importlib.util.spec_from_file_location("menace.sandbox_runner.test_harness", path)
     th = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -24,7 +24,7 @@ def _prepare_repo(tmp_path: Path) -> Path:
     (repo / "requirements.txt").write_text("")
     tests = repo / "tests"
     tests.mkdir()
-    (tests / "test_mod.py").write_text("def test_ok():\n    assert True\n")
+    (tests / "test_mod.py").write_text("def test_ok():\n    assert True\n")  # path-ignore
     subprocess.run(["git", "init"], cwd=repo, capture_output=True)
     subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)

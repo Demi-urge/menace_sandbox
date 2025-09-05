@@ -6,14 +6,14 @@ import importlib.metadata as metadata
 
 
 def _candidate_module(tmp_path: Path) -> Path:
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text('"""doc"""\n')
     return mod
 
 
 def test_env_var_classifier(monkeypatch, tmp_path):
     mod = _candidate_module(tmp_path)
-    plugin = tmp_path / "plugin_env.py"
+    plugin = tmp_path / "plugin_env.py"  # path-ignore
     plugin.write_text(
         "def classify(path, metrics):\n    return 'legacy'\n"
     )

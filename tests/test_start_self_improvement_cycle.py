@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_module():
-    src = (ROOT / "self_improvement" / "meta_planning.py").read_text()
+    src = (ROOT / "self_improvement" / "meta_planning.py").read_text()  # path-ignore
     tree = ast.parse(src)
     wanted = {"start_self_improvement_cycle", "self_improvement_cycle", "_evaluate_cycle"}
     nodes = [

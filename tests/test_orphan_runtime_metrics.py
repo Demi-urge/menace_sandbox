@@ -1,7 +1,7 @@
 import orphan_analyzer
 
 def test_subprocess_and_env_detection(tmp_path):
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text(
         "import os, subprocess, threading\n"
         "os.environ['X'] = '1'\n"

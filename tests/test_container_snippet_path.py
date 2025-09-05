@@ -50,7 +50,7 @@ package = types.ModuleType("sandbox_runner")
 package.__path__ = [str(root / "sandbox_runner")]
 sys.modules["sandbox_runner"] = package
 sys.path.append(str(root))
-env_path = root / "sandbox_runner" / "environment.py"
+env_path = root / "sandbox_runner" / "environment.py"  # path-ignore
 spec = importlib.util.spec_from_file_location(
     "sandbox_runner.environment", env_path
 )
@@ -117,7 +117,7 @@ def test_container_snippet_path_env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(environment, "pooled_container", fake_pooled)
 
-    custom_path = "/alt/path.py"
+    custom_path = "/alt/path.py"  # path-ignore
 
     env = {"CONTAINER_SNIPPET_PATH": custom_path, "CPU_LIMIT": "1"}
     asyncio.run(environment._execute_in_container("print()", env))

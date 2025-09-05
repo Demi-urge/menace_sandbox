@@ -228,7 +228,7 @@ sys.modules.setdefault(
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_coding_engine",
-    dynamic_path_router.path_for_prompt("self_coding_engine.py"),
+    dynamic_path_router.path_for_prompt("self_coding_engine.py"),  # path-ignore
 )
 sce = importlib.util.module_from_spec(spec)
 sys.modules["menace.self_coding_engine"] = sce
@@ -261,7 +261,7 @@ def test_apply_patch_reverts_on_complexity(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_run_ci", lambda *a, **k: True)
     monkeypatch.setattr(engine, "generate_helper", lambda d: "def auto_x():\n    pass\n")
 
-    path = tmp_path / "bot.py"
+    path = tmp_path / "bot.py"  # path-ignore
     path.write_text("def x():\n    pass\n")
 
     calls = {"count": 0}
@@ -315,7 +315,7 @@ def test_apply_patch_verifier_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_run_ci", ci_stub)
     monkeypatch.setattr(engine, "generate_helper", lambda d: "def auto_y():\n pass\n")
 
-    path = tmp_path / "bot.py"
+    path = tmp_path / "bot.py"  # path-ignore
     path.write_text("def y():\n    pass\n")
 
     patch_id, reverted, _ = engine.apply_patch(path, "test")
@@ -349,7 +349,7 @@ def test_sync_git_called_on_success(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_run_ci", lambda *a, **k: True)
     monkeypatch.setattr(engine, "generate_helper", lambda d: "def auto_z():\n    pass\n")
 
-    path = tmp_path / "bot.py"
+    path = tmp_path / "bot.py"  # path-ignore
     path.write_text("def z():\n    pass\n")
 
     calls = []
@@ -389,7 +389,7 @@ def test_rollback_patch(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_run_ci", ci_stub)
     monkeypatch.setattr(engine, "generate_helper", lambda d: "def auto_rb():\n    pass\n")
 
-    path = tmp_path / "bot.py"
+    path = tmp_path / "bot.py"  # path-ignore
     path.write_text("def rb():\n    pass\n")
 
     patch_id, reverted, _ = engine.apply_patch(path, "helper")

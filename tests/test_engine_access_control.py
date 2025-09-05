@@ -23,7 +23,7 @@ def test_apply_patch_denied_logs(tmp_path):
         audit_privkey=priv_bytes,
     )
 
-    path = tmp_path / "file.py"
+    path = tmp_path / "file.py"  # path-ignore
     path.write_text("print('x')\n")
 
     with pytest.raises(PermissionError):

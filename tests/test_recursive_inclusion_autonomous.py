@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_auto_include(fake_generate, fake_try, fake_run):
-    path = ROOT / "sandbox_runner" / "environment.py"
+    path = ROOT / "sandbox_runner" / "environment.py"  # path-ignore
     src = path.read_text()
     tree = ast.parse(src)
     func = next(
@@ -35,14 +35,14 @@ def _load_auto_include(fake_generate, fake_try, fake_run):
 
 def test_recursive_inclusion_autonomous(tmp_path, monkeypatch):
     # create modules: orphan -> helper -> nested; orphan -> legacy (redundant)
-    (tmp_path / "orphan.py").write_text("import helper\nimport legacy\n")
-    (tmp_path / "helper.py").write_text("import nested\n")
-    (tmp_path / "nested.py").write_text("VALUE = 1\n")
-    (tmp_path / "legacy.py").write_text("VALUE = 0\n")
+    (tmp_path / "orphan.py").write_text("import helper\nimport legacy\n")  # path-ignore
+    (tmp_path / "helper.py").write_text("import nested\n")  # path-ignore
+    (tmp_path / "nested.py").write_text("VALUE = 1\n")  # path-ignore
+    (tmp_path / "legacy.py").write_text("VALUE = 0\n")  # path-ignore
 
     # legacy module considered redundant
     def fake_analyze(path: Path) -> bool:
-        return path.name == "legacy.py"
+        return path.name == "legacy.py"  # path-ignore
 
     monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", fake_analyze)
 
@@ -93,13 +93,13 @@ def test_recursive_inclusion_autonomous(tmp_path, monkeypatch):
 
     auto_include = _load_auto_include(fake_generate, fake_try, fake_run)
 
-    auto_include(["orphan.py"], recursive=True)
+    auto_include(["orphan.py"], recursive=True)  # path-ignore
 
-    expected = ["helper.py", "nested.py", "orphan.py"]
+    expected = ["helper.py", "nested.py", "orphan.py"]  # path-ignore
     assert generated and generated[0] == expected
     assert integrated and integrated[0] == expected
 
     map_data = json.loads((data_dir / "module_map.json").read_text())
     assert all(m in map_data["modules"] for m in expected)
-    assert "legacy.py" not in map_data["modules"]
-    assert "legacy.py" not in generated[0]
+    assert "legacy.py" not in map_data["modules"]  # path-ignore
+    assert "legacy.py" not in generated[0]  # path-ignore

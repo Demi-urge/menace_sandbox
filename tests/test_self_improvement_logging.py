@@ -160,7 +160,7 @@ sys.modules["sandbox_settings"] = sandbox_settings
 def _load_engine():
     spec = importlib.util.spec_from_file_location(
         "menace.self_improvement",
-        os.path.join(os.path.dirname(__file__), "..", "self_improvement", "__init__.py"),
+        os.path.join(os.path.dirname(__file__), "..", "self_improvement", "__init__.py"),  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
@@ -262,7 +262,7 @@ def test_flag_improvement_logs_violation(monkeypatch, tmp_path):
 
     code = "import subprocess\nsubprocess.run('ls', shell=True)"
     warnings = sie.flag_improvement(
-        workflow_changes=[{"file": "workflow.py", "code": code}],
+        workflow_changes=[{"file": "workflow.py", "code": code}],  # path-ignore
         metrics={},
         logs=[],
     )
@@ -270,7 +270,7 @@ def test_flag_improvement_logs_violation(monkeypatch, tmp_path):
     sie.SelfImprovementEngine._log_improvement_warnings(engine, warnings)
 
     data = json.loads(log_path.read_text().splitlines()[0])
-    assert data["evidence"]["file"] == "workflow.py"
+    assert data["evidence"]["file"] == "workflow.py"  # path-ignore
     assert "subprocess.run" in data["evidence"].get("snippet", "")
 
 
@@ -283,9 +283,9 @@ def test_flag_patch_alignment_logs_violation(monkeypatch, tmp_path):
     monkeypatch.setattr(vl, "LOG_PATH", str(log_path))
 
     diff = (
-        "diff --git a/foo.py b/foo.py\n"
-        "--- a/foo.py\n"
-        "+++ b/foo.py\n"
+        "diff --git a/foo.py b/foo.py\n"  # path-ignore
+        "--- a/foo.py\n"  # path-ignore
+        "+++ b/foo.py\n"  # path-ignore
         "@@ -1,2 +1 @@\n"
         "-logging.info('hi')\n"
         "+pass\n"
@@ -319,16 +319,16 @@ def test_flag_patch_alignment_logs_violation(monkeypatch, tmp_path):
     sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
 
     data = json.loads(log_path.read_text().splitlines()[0])
-    assert data["evidence"]["file"] == "foo.py"
+    assert data["evidence"]["file"] == "foo.py"  # path-ignore
     assert "Logging removed" in data["evidence"].get("snippet", "")
 
 
 def test_flag_patch_alignment_logs_event(monkeypatch, tmp_path):
     sie = _load_engine()
     diff = (
-        "diff --git a/foo.py b/foo.py\n"
-        "--- a/foo.py\n"
-        "+++ b/foo.py\n"
+        "diff --git a/foo.py b/foo.py\n"  # path-ignore
+        "--- a/foo.py\n"  # path-ignore
+        "+++ b/foo.py\n"  # path-ignore
         "@@ -1,2 +1 @@\n"
         "-logging.info('hi')\n"
         "+pass\n"
@@ -372,9 +372,9 @@ def test_flag_patch_alignment_logs_event(monkeypatch, tmp_path):
 def test_flag_patch_alignment_dispatches_warning(monkeypatch, tmp_path):
     sie = _load_engine()
     diff = (
-        "diff --git a/foo.py b/foo.py\n"
-        "--- a/foo.py\n"
-        "+++ b/foo.py\n"
+        "diff --git a/foo.py b/foo.py\n"  # path-ignore
+        "--- a/foo.py\n"  # path-ignore
+        "+++ b/foo.py\n"  # path-ignore
         "@@ -1,2 +1 @@\n"
         "-logging.info('hi')\n"
         "+pass\n"
@@ -420,9 +420,9 @@ def test_flag_patch_alignment_dispatches_warning(monkeypatch, tmp_path):
 def test_flag_patch_alignment_dispatch_failure_does_not_raise(monkeypatch, tmp_path):
     sie = _load_engine()
     diff = (
-        "diff --git a/foo.py b/foo.py\n"
-        "--- a/foo.py\n"
-        "+++ b/foo.py\n"
+        "diff --git a/foo.py b/foo.py\n"  # path-ignore
+        "--- a/foo.py\n"  # path-ignore
+        "+++ b/foo.py\n"  # path-ignore
         "@@ -1,2 +1 @@\n"
         "-logging.info('hi')\n"
         "+pass\n"
@@ -463,9 +463,9 @@ def test_flag_patch_alignment_dispatch_failure_does_not_raise(monkeypatch, tmp_p
 def test_flag_patch_alignment_escalates_high_severity(monkeypatch, tmp_path):
     sie = _load_engine()
     diff = (
-        "diff --git a/foo_test.py b/foo_test.py\n"
-        "--- a/foo_test.py\n"
-        "+++ b/foo_test.py\n"
+        "diff --git a/foo_test.py b/foo_test.py\n"  # path-ignore
+        "--- a/foo_test.py\n"  # path-ignore
+        "+++ b/foo_test.py\n"  # path-ignore
         "@@ -1,5 +1 @@\n"
         "-\"\"\"Doc\"\"\"\n"
         "-import logging\n"
@@ -518,9 +518,9 @@ def test_flag_patch_alignment_escalates_high_severity(monkeypatch, tmp_path):
 def test_flag_patch_alignment_disabled(monkeypatch, tmp_path):
     sie = _load_engine()
     diff = (
-        "diff --git a/foo.py b/foo.py\n"
-        "--- a/foo.py\n"
-        "+++ b/foo.py\n"
+        "diff --git a/foo.py b/foo.py\n"  # path-ignore
+        "--- a/foo.py\n"  # path-ignore
+        "+++ b/foo.py\n"  # path-ignore
         "@@ -1,2 +1 @@\n"
         "-logging.info('hi')\n"
         "+pass\n"
@@ -568,9 +568,9 @@ def test_flag_patch_alignment_disabled(monkeypatch, tmp_path):
 def test_flag_patch_alignment_threshold_escalation(monkeypatch, tmp_path):
     sie = _load_engine()
     diff = (
-        "diff --git a/foo.py b/foo.py\n"
-        "--- a/foo.py\n"
-        "+++ b/foo.py\n"
+        "diff --git a/foo.py b/foo.py\n"  # path-ignore
+        "--- a/foo.py\n"  # path-ignore
+        "+++ b/foo.py\n"  # path-ignore
         "@@ -1,2 +1 @@\n"
         "-logging.info('hi')\n"
         "+pass\n"
@@ -648,7 +648,7 @@ def test_alignment_review_agent_dispatches_quick_fix_warnings(monkeypatch, tmp_p
 
     monkeypatch.setattr(quick_fix_engine, "generate_patch", gen_patch)
 
-    quick_fix_engine.generate_patch("foo.py")
+    quick_fix_engine.generate_patch("foo.py")  # path-ignore
 
     dispatched: list = []
     monkeypatch.setattr(

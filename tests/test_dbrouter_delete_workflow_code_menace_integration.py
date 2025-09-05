@@ -16,28 +16,28 @@ sys.modules["menace"] = pkg
 sys.modules.setdefault("pandas", types.ModuleType("pandas"))
 
 spec = importlib.util.spec_from_file_location(
-    "menace.databases", ROOT / "databases.py", submodule_search_locations=[str(ROOT)]
+    "menace.databases", ROOT / "databases.py", submodule_search_locations=[str(ROOT)]  # path-ignore
 )
 mn = importlib.util.module_from_spec(spec)
 sys.modules["menace.databases"] = mn
 spec.loader.exec_module(mn)
 
 spec = importlib.util.spec_from_file_location(
-    "menace.db_router", ROOT / "db_router.py", submodule_search_locations=[str(ROOT)]
+    "menace.db_router", ROOT / "db_router.py", submodule_search_locations=[str(ROOT)]  # path-ignore
 )
 dr = importlib.util.module_from_spec(spec)
 sys.modules["menace.db_router"] = dr
 spec.loader.exec_module(dr)
 
 spec = importlib.util.spec_from_file_location(
-    "menace.task_handoff_bot", ROOT / "task_handoff_bot.py", submodule_search_locations=[str(ROOT)]
+    "menace.task_handoff_bot", ROOT / "task_handoff_bot.py", submodule_search_locations=[str(ROOT)]  # path-ignore
 )
 thb = importlib.util.module_from_spec(spec)
 sys.modules["menace.task_handoff_bot"] = thb
 spec.loader.exec_module(thb)
 
 spec = importlib.util.spec_from_file_location(
-    "menace.code_database", ROOT / "code_database.py", submodule_search_locations=[str(ROOT)]
+    "menace.code_database", ROOT / "code_database.py", submodule_search_locations=[str(ROOT)]  # path-ignore
 )
 cdm = importlib.util.module_from_spec(spec)
 sys.modules["menace.code_database"] = cdm

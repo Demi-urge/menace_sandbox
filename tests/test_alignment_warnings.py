@@ -43,7 +43,7 @@ def test_self_debugger_preemptive_patch_logs_warning(tmp_path, monkeypatch):
     def stub_generate_patch(module: str, engine):
         path = Path(module)
         if path.suffix == "":
-            path = path.with_suffix(".py")
+            path = path.with_suffix(".py")  # path-ignore
         text = path.read_text() + "\n" + "eval('2+2')\n"
         path.write_text(text)
         return 1

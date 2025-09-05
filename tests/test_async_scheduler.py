@@ -22,8 +22,8 @@ def load_mod(name, file):
     spec.loader.exec_module(mod)
     return mod
 
-cms = load_mod('cross_model_scheduler', resolve_path('cross_model_scheduler.py'))
-sts = load_mod('self_test_service', resolve_path('self_test_service.py'))
+cms = load_mod('cross_model_scheduler', resolve_path('cross_model_scheduler.py'))  # path-ignore
+sts = load_mod('self_test_service', resolve_path('self_test_service.py'))  # path-ignore
 
 class DummyThread:
     def __init__(self, target=None, daemon=None):

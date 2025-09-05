@@ -44,14 +44,14 @@ git_mod = types.ModuleType("git")
 git_mod.Repo = object
 sys.modules.setdefault("git", git_mod)
 sys.modules.setdefault("matplotlib", types.ModuleType("matplotlib"))
-sys.modules.setdefault("matplotlib.pyplot", types.ModuleType("pyplot"))
+sys.modules.setdefault("matplotlib.pyplot", types.ModuleType("pyplot"))  # path-ignore
 
 import importlib.util
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
     "menace.menace_orchestrator",
-    Path(__file__).resolve().parents[1] / "menace_orchestrator.py",
+    Path(__file__).resolve().parents[1] / "menace_orchestrator.py",  # path-ignore
 )
 mo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mo)

@@ -407,7 +407,7 @@ def test_forecaster_patch_rollback(tmp_path, monkeypatch):
     fc = DummyForecaster()
     engine = DummyEngine()
     err_db = eb.ErrorDB(tmp_path / "e.db")
-    bot_file = tmp_path / "Z.py"
+    bot_file = tmp_path / "Z.py"  # path-ignore
     bot_file.write_text("def z():\n    pass\n")
     monkeypatch.chdir(tmp_path)
 

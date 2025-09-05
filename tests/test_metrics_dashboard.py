@@ -10,7 +10,7 @@ pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
 pkg.RAISE_ERRORS = False
 spec_me = importlib.util.spec_from_file_location(
     "menace.metrics_exporter",
-    Path(__file__).resolve().parents[1] / "metrics_exporter.py",
+    Path(__file__).resolve().parents[1] / "metrics_exporter.py",  # path-ignore
     submodule_search_locations=pkg.__path__,
 )
 me = importlib.util.module_from_spec(spec_me)
@@ -20,7 +20,7 @@ spec_me.loader.exec_module(me)
 
 spec_md = importlib.util.spec_from_file_location(
     "menace.metrics_dashboard",
-    Path(__file__).resolve().parents[1] / "metrics_dashboard.py",
+    Path(__file__).resolve().parents[1] / "metrics_dashboard.py",  # path-ignore
     submodule_search_locations=pkg.__path__,
 )
 md = importlib.util.module_from_spec(spec_md)

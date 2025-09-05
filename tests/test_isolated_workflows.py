@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _load_thb():
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        ROOT / "task_handoff_bot.py",
+        ROOT / "task_handoff_bot.py",  # path-ignore
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -80,8 +80,8 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "iso.py").write_text("import dep\n")
-    (repo / "dep.py").write_text("x = 1\n")
+    (repo / "iso.py").write_text("import dep\n")  # path-ignore
+    (repo / "dep.py").write_text("x = 1\n")  # path-ignore
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
@@ -94,7 +94,7 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
 
     def discover(path, *, recursive=True):
         assert Path(path) == repo
-        return ["iso.py", "dep.py"]
+        return ["iso.py", "dep.py"]  # path-ignore
 
     mod = _types.ModuleType("scripts.discover_isolated_modules")
     mod.discover_isolated_modules = discover
@@ -128,7 +128,7 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
     spec = importlib.util.spec_from_file_location(
-        "menace.self_test_service", ROOT / "self_test_service.py"
+        "menace.self_test_service", ROOT / "self_test_service.py"  # path-ignore
     )
     if "menace.self_test_service" in sys.modules:
         sts = sys.modules["menace.self_test_service"]
@@ -151,7 +151,7 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
     )
     svc.run_once()
     passed = svc.results.get("orphan_passed") or []
-    assert sorted(passed) == ["dep.py", "iso.py"]
+    assert sorted(passed) == ["dep.py", "iso.py"]  # path-ignore
 
     wf_db = thb.WorkflowDB(wf_db_path)
     recs = wf_db.fetch(limit=10)
@@ -159,5 +159,5 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
     assert "iso" in names
     assert "dep" in names
     data = json.loads(map_path.read_text())
-    assert "iso.py" in data.get("modules", {})
-    assert "dep.py" in data.get("modules", {})
+    assert "iso.py" in data.get("modules", {})  # path-ignore
+    assert "dep.py" in data.get("modules", {})  # path-ignore

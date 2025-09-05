@@ -7,16 +7,16 @@ def test_upsert_and_fetch(tmp_path):
 
     Suggestion = types.SimpleNamespace
     suggs = [
-        Suggestion(path="mod1.py", score=1.0, rationale="r1"),
-        Suggestion(path="mod1.py", score=2.0, rationale="r1"),
-        Suggestion(path="mod2.py", score=3.0, rationale="r2"),
+        Suggestion(path="mod1.py", score=1.0, rationale="r1"),  # path-ignore
+        Suggestion(path="mod1.py", score=2.0, rationale="r1"),  # path-ignore
+        Suggestion(path="mod2.py", score=3.0, rationale="r2"),  # path-ignore
     ]
     db.queue_enhancement_suggestions(suggs)
 
     rows = db.fetch_top_enhancement_suggestions(5)
     by_module = {r.module: r for r in rows}
-    assert by_module["mod1.py"].occurrences == 2
-    assert by_module["mod1.py"].score == 2.0
-    assert by_module["mod2.py"].occurrences == 1
+    assert by_module["mod1.py"].occurrences == 2  # path-ignore
+    assert by_module["mod1.py"].score == 2.0  # path-ignore
+    assert by_module["mod2.py"].occurrences == 1  # path-ignore
     # After fetching they should be removed
     assert db.fetch_top_enhancement_suggestions(5) == []

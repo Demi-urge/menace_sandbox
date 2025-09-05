@@ -89,7 +89,7 @@ def _load_run_autonomous(monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_stub)
 
     cli_spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.cli", str(resolve_path("sandbox_runner/cli.py"))
+        "sandbox_runner.cli", str(resolve_path("sandbox_runner/cli.py"))  # path-ignore
     )
     cli_mod = importlib.util.module_from_spec(cli_spec)
     sys.modules["sandbox_runner.cli"] = cli_mod
@@ -105,7 +105,7 @@ def _load_run_autonomous(monkeypatch):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: types.SimpleNamespace())
 
     spec = importlib.util.spec_from_file_location(
-        "run_autonomous", str(resolve_path("run_autonomous.py"))
+        "run_autonomous", str(resolve_path("run_autonomous.py"))  # path-ignore
     )
     mod = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = mod

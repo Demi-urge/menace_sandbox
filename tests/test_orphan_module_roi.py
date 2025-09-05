@@ -27,7 +27,7 @@ def test_orphan_module_positive_roi(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     eng = _make_engine()
-    assert eng._test_orphan_modules(["foo.py"]) == {"foo.py"}
+    assert eng._test_orphan_modules(["foo.py"]) == {"foo.py"}  # path-ignore
 
 
 def test_orphan_module_negative_roi(monkeypatch, tmp_path):
@@ -44,7 +44,7 @@ def test_orphan_module_negative_roi(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     eng = _make_engine()
-    assert eng._test_orphan_modules(["foo.py"]) == set()
+    assert eng._test_orphan_modules(["foo.py"]) == set()  # path-ignore
 
 
 def test_orphan_module_reuse_threshold(monkeypatch, tmp_path):
@@ -85,7 +85,7 @@ def test_orphan_module_reuse_threshold(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("ORPHAN_REUSE_THRESHOLD", "0.5")
     eng = _make_engine()
-    res = eng._test_orphan_modules(["foo.py"])
+    res = eng._test_orphan_modules(["foo.py"])  # path-ignore
     assert res == set()
-    assert eng.orphan_traces["foo.py"]["reuse_score"] == 0.0
+    assert eng.orphan_traces["foo.py"]["reuse_score"] == 0.0  # path-ignore
 

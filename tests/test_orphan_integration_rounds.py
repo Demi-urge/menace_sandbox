@@ -11,7 +11,7 @@ from dynamic_path_router import resolve_path
 
 def _copy_modules(tmp_path: Path) -> None:
     """Copy fixture workflow modules into *tmp_path* for testing."""
-    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):
+    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):  # path-ignore
         shutil.copy(mod, tmp_path / mod.name)
 
 
@@ -132,10 +132,10 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
     qfe = _load_qfe(monkeypatch)
 
     # Prepare repo with a module to patch and an orphan module
-    (tmp_path / "foo.py").write_text("VALUE = 1\n")
+    (tmp_path / "foo.py").write_text("VALUE = 1\n")  # path-ignore
     extra_dir = tmp_path / "extra"
     extra_dir.mkdir()
-    (extra_dir / "mod.py").write_text("VALUE = 1\n")
+    (extra_dir / "mod.py").write_text("VALUE = 1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
@@ -193,13 +193,13 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
             try_integrate_into_workflows,
         )
 
-        auto_include_modules(["extra/mod.py"], recursive=True, router=router)
+        auto_include_modules(["extra/mod.py"], recursive=True, router=router)  # path-ignore
         from module_synergy_grapher import ModuleSynergyGrapher
         ModuleSynergyGrapher(repo).update_graph(["extra.mod"])
         from intent_clusterer import IntentClusterer
-        IntentClusterer(None, None).index_modules([Path(repo) / "extra/mod.py"])
-        try_integrate_into_workflows(["extra/mod.py"], router=router)
-        return ["extra/mod.py"], True, True
+        IntentClusterer(None, None).index_modules([Path(repo) / "extra/mod.py"])  # path-ignore
+        try_integrate_into_workflows(["extra/mod.py"], router=router)  # path-ignore
+        return ["extra/mod.py"], True, True  # path-ignore
 
     pkg = types.ModuleType("sandbox_runner")
     pkg.__path__ = []
@@ -231,9 +231,9 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
             p.write_text(p.read_text() + "# patched\n")
             return 1, "", ""
 
-    qfe.generate_patch("foo.py", engine=Engine(), patch_logger=types.SimpleNamespace(track_contributors=lambda *a, **k: None))
+    qfe.generate_patch("foo.py", engine=Engine(), patch_logger=types.SimpleNamespace(track_contributors=lambda *a, **k: None))  # path-ignore
 
-    assert auto_called["mods"] == ["extra/mod.py"]
+    assert auto_called["mods"] == ["extra/mod.py"]  # path-ignore
     assert synergy_called["names"] == ["extra.mod"]
-    assert intent_called["paths"] == [tmp_path / "extra/mod.py"]
-    assert auto_called["workflow"] == ["extra/mod.py"]
+    assert intent_called["paths"] == [tmp_path / "extra/mod.py"]  # path-ignore
+    assert auto_called["workflow"] == ["extra/mod.py"]  # path-ignore

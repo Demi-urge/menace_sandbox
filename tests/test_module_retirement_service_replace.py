@@ -14,7 +14,7 @@ def _stub_build_graph(root):
 
 
 def test_replace_module(monkeypatch, tmp_path):
-    module = tmp_path / "demo.py"
+    module = tmp_path / "demo.py"  # path-ignore
     module.write_text("print('hi')")
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)
@@ -44,7 +44,7 @@ def test_replace_module(monkeypatch, tmp_path):
 
 
 def test_process_flags_replace(monkeypatch, tmp_path):
-    module = tmp_path / "demo.py"
+    module = tmp_path / "demo.py"  # path-ignore
     module.write_text("print('hi')")
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)
@@ -83,7 +83,7 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
 
 def test_process_flags_replace_skipped(monkeypatch, tmp_path, caplog):
-    module = tmp_path / "demo.py"
+    module = tmp_path / "demo.py"  # path-ignore
     module.write_text("print('hi')")
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)

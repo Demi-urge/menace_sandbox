@@ -65,7 +65,7 @@ sys.modules[
 def _copy_fixture_modules(tmp_path: Path) -> None:
     """Copy minimal workflow modules into ``tmp_path``."""
 
-    for name in ("mod_a.py", "mod_b.py", "mod_c.py"):
+    for name in ("mod_a.py", "mod_b.py", "mod_c.py"):  # path-ignore
         shutil.copy(
             resolve_path(f"tests/fixtures/workflow_modules/{name}"),
             tmp_path / name,

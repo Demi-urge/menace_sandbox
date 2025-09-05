@@ -47,7 +47,7 @@ def test_scan_repo_generates_suggestions() -> None:
         """
     )
     patch_conn.executemany(
-        "INSERT INTO patch_history VALUES (1, 'mod.py', ?, ?, ?, ?)",
+        "INSERT INTO patch_history VALUES (1, 'mod.py', ?, ?, ?, ?)",  # path-ignore
         [
             (-0.1, 1, 3, 0.5),
             (-0.2, 2, 5, 0.3),
@@ -66,10 +66,10 @@ def test_scan_repo_generates_suggestions() -> None:
     assert len(suggestions) == 1
     sugg = suggestions[0]
     assert isinstance(sugg, EnhancementSuggestion)
-    assert sugg.path == "mod.py"
+    assert sugg.path == "mod.py"  # path-ignore
     # Frequency=3, ROI=-0.116..., errors=2, complexity=0.4 -> score ~5.52
     assert sugg.score > 5.5
-    assert "module mod.py refactored 3 times" in sugg.rationale
+    assert "module mod.py refactored 3 times" in sugg.rationale  # path-ignore
     assert "ROI dropped 0.12%" in sugg.rationale
     assert "errors increased by 2.00" in sugg.rationale
     assert classifier.thresholds["min_patches"] == 3
@@ -111,7 +111,7 @@ def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
         """
     )
     patch_conn.executemany(
-        "INSERT INTO patch_history VALUES (1, 'mod.py', ?, ?, ?, ?)",
+        "INSERT INTO patch_history VALUES (1, 'mod.py', ?, ?, ?, ?)",  # path-ignore
         [(-1.0, 0, 1, 0.5), (-1.0, 0, 1, 0.5), (-1.0, 0, 1, 0.5)],
     )
 
@@ -147,14 +147,14 @@ def test_ast_metrics_and_scoring(tmp_path: Path) -> None:
         roi_volatility,
         raroi,
     ) = metrics
-    assert filename == "mod.py"
+    assert filename == "mod.py"  # path-ignore
     assert dup_ratio == pytest.approx(1 / 3)
     assert long_funcs == 1
     assert avg_cc > 1.0
     assert notes
 
     suggestions = list(classifier.scan_repo())
-    assert suggestions and suggestions[0].path == "mod.py"
+    assert suggestions and suggestions[0].path == "mod.py"  # path-ignore
     assert classifier.thresholds["min_patches"] == 5
     expected = (
         classifier.weights["frequency"] * patches

@@ -10,10 +10,10 @@ def test_cli_purge_stale(tmp_path):
     pkg = tmp_path / "pkg"
     sr = pkg / "sandbox_runner"
     sr.mkdir(parents=True)
-    (sr / "__init__.py").write_text("")
-    cli_src = ROOT / "sandbox_runner" / "cli.py"
-    (sr / "cli.py").write_text(cli_src.read_text())
-    (sr / "environment.py").write_text(
+    (sr / "__init__.py").write_text("")  # path-ignore
+    cli_src = ROOT / "sandbox_runner" / "cli.py"  # path-ignore
+    (sr / "cli.py").write_text(cli_src.read_text())  # path-ignore
+    (sr / "environment.py").write_text(  # path-ignore
         """
 import os
 from pathlib import Path
@@ -32,15 +32,15 @@ def purge_leftovers():
     # menace stubs
     mn = pkg / "menace"
     mn.mkdir()
-    (mn / "__init__.py").write_text("")
-    (mn / "metrics_dashboard.py").write_text(
+    (mn / "__init__.py").write_text("")  # path-ignore
+    (mn / "metrics_dashboard.py").write_text(  # path-ignore
         """
 class MetricsDashboard:
     def __init__(self, *a, **k):
         pass
 """
     )
-    (mn / "environment_generator.py").write_text(
+    (mn / "environment_generator.py").write_text(  # path-ignore
         """
 def generate_presets(n=None):
     return [{}]

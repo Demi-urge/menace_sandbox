@@ -57,7 +57,7 @@ sys.modules.setdefault("neurosales", neurosales_mod)
 
 # use real neuroplasticity module so PathwayDB is available
 np_spec = importlib.util.spec_from_file_location(
-    "menace.neuroplasticity", os.path.join(os.path.dirname(__file__), "..", "neuroplasticity.py")
+    "menace.neuroplasticity", os.path.join(os.path.dirname(__file__), "..", "neuroplasticity.py")  # path-ignore
 )
 np_mod = importlib.util.module_from_spec(np_spec)
 sys.modules["menace.neuroplasticity"] = np_mod

@@ -48,7 +48,7 @@ def test_worst_bot(tmp_path):
 def test_collect_logs_extra_metrics(tmp_path):
     mdb = db.MetricsDB(tmp_path / "m.db")
     patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
-    patch_db.add(cd.PatchRecord("a.py", "desc", 1.0, 2.0))
+    patch_db.add(cd.PatchRecord("a.py", "desc", 1.0, 2.0))  # path-ignore
     cap = cmb.CapitalManagementBot(data_bot=db.DataBot(mdb))
     bot = db.DataBot(mdb, capital_bot=cap, patch_db=patch_db)
     bot.collect("bot")

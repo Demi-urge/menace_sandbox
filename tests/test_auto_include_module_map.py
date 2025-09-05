@@ -8,7 +8,7 @@ import pytest
 import sandbox_runner.environment as env
 from dynamic_path_router import resolve_path
 
-MOD = resolve_path("mod.py").as_posix()
+MOD = resolve_path("mod.py").as_posix()  # path-ignore
 
 
 class DummyTracker:

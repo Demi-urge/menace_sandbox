@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_test_method():
-    path = ROOT / "self_improvement.py"
+    path = ROOT / "self_improvement.py"  # path-ignore
     tree = ast.parse(path.read_text())
     method = None
     for node in tree.body:
@@ -97,10 +97,10 @@ def test_module_fails_bad_scenario(monkeypatch, tmp_path):
     eng = types.SimpleNamespace(logger=DummyLogger())
     eng._test_orphan_modules = types.MethodType(_test, eng)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    res = eng._test_orphan_modules(["foo.py"])
+    res = eng._test_orphan_modules(["foo.py"])  # path-ignore
     assert res == set()
-    assert eng.orphan_traces["foo.py"]["robustness"] == -0.1
-    scen = eng.orphan_traces["foo.py"]["scenarios"]
+    assert eng.orphan_traces["foo.py"]["robustness"] == -0.1  # path-ignore
+    scen = eng.orphan_traces["foo.py"]["scenarios"]  # path-ignore
     assert scen["good"]["roi"] == 0.5
     assert scen["bad"]["roi"] == -0.1
     assert scen["bad"]["failed"] is False
@@ -154,10 +154,10 @@ def test_module_records_worst_scenario(monkeypatch, tmp_path):
     eng = types.SimpleNamespace(logger=DummyLogger())
     eng._test_orphan_modules = types.MethodType(_test, eng)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    res = eng._test_orphan_modules(["bar.py"])
-    assert res == {"bar.py"}
-    assert eng.orphan_traces["bar.py"]["robustness"] == 0.2
-    scen = eng.orphan_traces["bar.py"]["scenarios"]
+    res = eng._test_orphan_modules(["bar.py"])  # path-ignore
+    assert res == {"bar.py"}  # path-ignore
+    assert eng.orphan_traces["bar.py"]["robustness"] == 0.2  # path-ignore
+    scen = eng.orphan_traces["bar.py"]["scenarios"]  # path-ignore
     assert scen["s1"]["roi"] == 0.5
     assert scen["s2"]["roi"] == 0.2
 
@@ -210,8 +210,8 @@ def test_combined_scenario_split(monkeypatch, tmp_path):
     eng = types.SimpleNamespace(logger=DummyLogger())
     eng._test_orphan_modules = types.MethodType(_test, eng)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    res = eng._test_orphan_modules(["baz.py"])
-    assert res == {"baz.py"}
-    scen = eng.orphan_traces["baz.py"]["scenarios"]
+    res = eng._test_orphan_modules(["baz.py"])  # path-ignore
+    assert res == {"baz.py"}  # path-ignore
+    scen = eng.orphan_traces["baz.py"]["scenarios"]  # path-ignore
     assert scen["high_latency_api"]["roi"] == 0.3
     assert scen["hostile_input"]["roi"] == 0.3

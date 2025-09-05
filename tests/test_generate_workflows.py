@@ -12,7 +12,7 @@ def _load_env():
     pkg = sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
     pkg.__path__ = [str(ROOT / "sandbox_runner")]
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.environment", ROOT / "sandbox_runner" / "environment.py"
+        "sandbox_runner.environment", ROOT / "sandbox_runner" / "environment.py"  # path-ignore
     )
     env = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner.environment"] = env
@@ -63,7 +63,7 @@ def test_generate_workflows(tmp_path):
     db_path = tmp_path / "wf.db"
     # avoid expensive orphan integration
     env.integrate_new_orphans = lambda repo, router=None: []
-    ids = env.generate_workflows_for_modules(["foo.py"], workflows_db=db_path)
+    ids = env.generate_workflows_for_modules(["foo.py"], workflows_db=db_path)  # path-ignore
     recs = thb.WorkflowDB(db_path).fetch()
     assert ids and ids[0] == recs[0].wid
     assert recs[0].workflow == ["foo"]
@@ -111,7 +111,7 @@ def test_generate_workflows_with_dependencies(tmp_path, monkeypatch):
     env = _load_env()
     db_path = tmp_path / "wf.db"
     monkeypatch.setattr(env, "integrate_new_orphans", lambda repo, router=None: [])
-    ids = env.generate_workflows_for_modules(["b.py"], workflows_db=db_path)
+    ids = env.generate_workflows_for_modules(["b.py"], workflows_db=db_path)  # path-ignore
     rec = thb.WorkflowDB(db_path).fetch()[0]
     assert rec.workflow == ["a", "b"]
     assert rec.dependencies == ["a"]

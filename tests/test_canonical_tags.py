@@ -28,7 +28,7 @@ def test_memory_logging_tags(monkeypatch):
     coder = coder_mod.SelfCodingEngine.__new__(coder_mod.SelfCodingEngine)
     coder.gpt_memory = mem2
     coder.logger = types.SimpleNamespace(exception=lambda *a, **k: None)
-    coder_mod.SelfCodingEngine._store_patch_memory(coder, Path("x.py"), "desc", "code", True, 0.5)
+    coder_mod.SelfCodingEngine._store_patch_memory(coder, Path("x.py"), "desc", "code", True, 0.5)  # path-ignore
     rows2 = mem2.conn.execute("SELECT response, tags FROM interactions").fetchall()
     tag_str = ",".join(r[1] for r in rows2)
     assert "error_fix" in tag_str

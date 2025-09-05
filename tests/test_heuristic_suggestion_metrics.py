@@ -59,7 +59,7 @@ def _ctx(tmp_path, **kwargs):
     return types.SimpleNamespace(**base)
 
 
-def _write_module(tmp_path, name="mod.py"):
+def _write_module(tmp_path, name="mod.py"):  # path-ignore
     p = tmp_path / name
     p.write_text("def foo():\n    return 1\n")
     return p
@@ -70,11 +70,11 @@ def test_complexity_metric_influences_suggestion(monkeypatch, tmp_path):
     ctx = _ctx(tmp_path)
 
     monkeypatch.setattr(cycle, "mi_visit", lambda code, _: 40.0)
-    low = cycle._heuristic_suggestion(ctx, "mod.py")
+    low = cycle._heuristic_suggestion(ctx, "mod.py")  # path-ignore
     assert "maintainability" in low
 
     monkeypatch.setattr(cycle, "mi_visit", lambda code, _: 90.0)
-    high = cycle._heuristic_suggestion(ctx, "mod.py")
+    high = cycle._heuristic_suggestion(ctx, "mod.py")  # path-ignore
     assert "consider simplifying" in high
     assert low != high
 
@@ -88,12 +88,12 @@ def test_failure_data_influences_suggestion(monkeypatch, tmp_path):
     )
     conn.execute(
         "INSERT INTO failures VALUES(?,?,?,?,?,?,?,?,datetime('now'))",
-        ("mod.py", "", "", "", 0.0, 0.0, 0.0, 0.0),
+        ("mod.py", "", "", "", 0.0, 0.0, 0.0, 0.0),  # path-ignore
     )
     conn.commit()
     conn.close()
 
     monkeypatch.setattr(cycle, "mi_visit", lambda code, _: 90.0)
     ctx = _ctx(tmp_path)
-    suggestion = cycle._heuristic_suggestion(ctx, "mod.py")
+    suggestion = cycle._heuristic_suggestion(ctx, "mod.py")  # path-ignore
     assert "recent failures" in suggestion

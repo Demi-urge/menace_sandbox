@@ -15,7 +15,7 @@ snapshot_tracker = importlib.import_module(
 
 
 def test_save_checkpoint_creates_file(tmp_path):
-    module = tmp_path / Path("mod").with_suffix(".py")
+    module = tmp_path / Path("mod").with_suffix(".py")  # path-ignore
     module.write_text("print('hi')\n")
 
     dest = snapshot_tracker.save_checkpoint(module, "cycle1")
@@ -23,7 +23,7 @@ def test_save_checkpoint_creates_file(tmp_path):
         Path(resolve_path("sandbox_data"))
         / "checkpoints"
         / "mod"
-        / Path("cycle1").with_suffix(".py")
+        / Path("cycle1").with_suffix(".py")  # path-ignore
     )
     assert dest == expected
     assert dest.exists()

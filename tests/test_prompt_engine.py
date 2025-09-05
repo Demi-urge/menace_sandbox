@@ -434,7 +434,7 @@ def test_prompt_engine_includes_target_region_metadata(tmp_path):
         "# end",
     ]
     context = "\n".join(lines)
-    mod_path = tmp_path / "mod.py"
+    mod_path = tmp_path / "mod.py"  # path-ignore
     mod_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     region = TargetRegion(start_line=3, end_line=5, function="func", filename=str(mod_path))
     region.func_signature = "def func(a, b):"
@@ -459,7 +459,7 @@ def test_prompt_engine_includes_target_region_metadata(tmp_path):
 
 def test_diff_within_target_region_out_of_bounds(tmp_path):
     lines = ["one", "two", "three", "four"]
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     region = TargetRegion(start_line=2, end_line=3, function="f", filename=str(path))
     modified = lines[:]
@@ -469,7 +469,7 @@ def test_diff_within_target_region_out_of_bounds(tmp_path):
 
 def test_diff_within_target_region_within_bounds(tmp_path):
     lines = ["one", "two", "three", "four"]
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     region = TargetRegion(start_line=2, end_line=3, function="f", filename=str(path))
     modified = lines[:]

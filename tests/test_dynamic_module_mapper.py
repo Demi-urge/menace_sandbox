@@ -17,15 +17,15 @@ def _read_map(path: Path) -> dict:
 
 
 def test_mutual_imports_grouped(tmp_path):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import a\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import a\n")  # path-ignore
     mapping = dmm.build_module_map(tmp_path)
     assert mapping["a"] == mapping["b"]
 
 
 def test_cli_writes_map(tmp_path, monkeypatch):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import a\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import a\n")  # path-ignore
     out = tmp_path / "sandbox_data" / "module_map.json"
     dmm.main([str(tmp_path)])
     data = _read_map(out)
@@ -34,10 +34,10 @@ def test_cli_writes_map(tmp_path, monkeypatch):
 
 def test_semantic_group_without_static_import(tmp_path):
     doc = "\"\"\"Perform operations with the same semantic meaning\"\"\""
-    (tmp_path / "a.py").write_text(
+    (tmp_path / "a.py").write_text(  # path-ignore
         doc + "\n\n" "def a_func():\n    __import__('b').b_func()\n"
     )
-    (tmp_path / "b.py").write_text(
+    (tmp_path / "b.py").write_text(  # path-ignore
         doc + "\n\n" "def b_func():\n    __import__('a').a_func()\n"
     )
 
@@ -51,10 +51,10 @@ def test_semantic_group_without_static_import(tmp_path):
 def test_call_links_modules(tmp_path):
     pkg = tmp_path / "b"
     pkg.mkdir()
-    (pkg / "__init__.py").write_text("")
-    (pkg / "c.py").write_text("def foo():\n    pass\n")
+    (pkg / "__init__.py").write_text("")  # path-ignore
+    (pkg / "c.py").write_text("def foo():\n    pass\n")  # path-ignore
 
-    (tmp_path / "a.py").write_text(
+    (tmp_path / "a.py").write_text(  # path-ignore
         "from b import c\n\n" "def run():\n    c.foo()\n"
     )
 
@@ -65,8 +65,8 @@ def test_call_links_modules(tmp_path):
 def test_exclude_patterns(tmp_path):
     skip = tmp_path / "skip"
     skip.mkdir()
-    (skip / "x.py").write_text("pass\n")
-    (tmp_path / "a.py").write_text("pass\n")
+    (skip / "x.py").write_text("pass\n")  # path-ignore
+    (tmp_path / "a.py").write_text("pass\n")  # path-ignore
 
     mapping = dmm.build_module_map(tmp_path, ignore=["skip"])
     assert "a" in mapping
@@ -74,10 +74,10 @@ def test_exclude_patterns(tmp_path):
 
 
 def test_semantic_group_no_imports(tmp_path):
-    (tmp_path / "a.py").write_text(
+    (tmp_path / "a.py").write_text(  # path-ignore
         '"""Database utilities."""\n\ndef a():\n    pass\n'
     )
-    (tmp_path / "b.py").write_text(
+    (tmp_path / "b.py").write_text(  # path-ignore
         '"""Database utilities."""\n\ndef b():\n    pass\n'
     )
 
@@ -104,8 +104,8 @@ def test_semantic_fixture_grouping(tmp_path):
 
 
 def test_semantic_tfidf_similarity(tmp_path):
-    (tmp_path / "a.py").write_text('"""Database helper utilities."""\n')
-    (tmp_path / "b.py").write_text('"""Utilities for working with database"""\n')
+    (tmp_path / "a.py").write_text('"""Database helper utilities."""\n')  # path-ignore
+    (tmp_path / "b.py").write_text('"""Utilities for working with database"""\n')  # path-ignore
 
     plain = dmm.build_module_map(tmp_path, algorithm="label", threshold=0.2)
     assert plain["a"] != plain["b"]
@@ -117,9 +117,9 @@ def test_semantic_tfidf_similarity(tmp_path):
 
 
 def test_redundant_module_excluded(tmp_path):
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import a\n")
-    (tmp_path / "c.py").write_text("pass\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import a\n")  # path-ignore
+    (tmp_path / "c.py").write_text("pass\n")  # path-ignore
 
     mapping = dmm.build_module_map(tmp_path)
     assert "c" not in mapping
@@ -163,17 +163,17 @@ def _write_cluster_project(path: Path, heavy: bool) -> None:
     """Create four modules with optional repeated calls."""
     path.mkdir(parents=True, exist_ok=True)
     calls = "".join("    b.x()\n" for _ in range(9)) if heavy else ""
-    (path / "a.py").write_text(
+    (path / "a.py").write_text(  # path-ignore
         "import b\nimport c\nimport d\n\n" f"def go():\n{calls}"
     )
-    (path / "b.py").write_text(
+    (path / "b.py").write_text(  # path-ignore
         "import a\nimport c\nimport d\n\n" "def x():\n    pass\n"
     )
     calls_cd = "".join("    d.y()\n" for _ in range(9)) if heavy else ""
-    (path / "c.py").write_text(
+    (path / "c.py").write_text(  # path-ignore
         "import a\nimport b\nimport d\n\n" f"def go():\n{calls_cd}"
     )
-    (path / "d.py").write_text(
+    (path / "d.py").write_text(  # path-ignore
         "import a\nimport b\nimport c\n\n" "def y():\n    pass\n"
     )
 
@@ -197,9 +197,9 @@ def test_repeated_calls_strengthen_clustering(tmp_path):
 
 def test_hdbscan_algorithm(tmp_path):
     pytest.importorskip("hdbscan")
-    (tmp_path / "a.py").write_text("import b\n")
-    (tmp_path / "b.py").write_text("import a\n")
-    (tmp_path / "c.py").write_text("pass\n")
+    (tmp_path / "a.py").write_text("import b\n")  # path-ignore
+    (tmp_path / "b.py").write_text("import a\n")  # path-ignore
+    (tmp_path / "c.py").write_text("pass\n")  # path-ignore
 
     mapping = dmm.build_module_map(tmp_path, algorithm="hdbscan")
     assert mapping["a"] == mapping["b"]

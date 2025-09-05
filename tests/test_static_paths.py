@@ -10,8 +10,8 @@ FILES = sorted(
     {
         f
         for target in TARGETS
-        for f in ([target] if target.is_file() else target.rglob("*.py"))
-        if f.suffix == ".py"
+        for f in ([target] if target.is_file() else target.rglob("*.py"))  # path-ignore
+        if f.suffix == ".py"  # path-ignore
     }
 )
 

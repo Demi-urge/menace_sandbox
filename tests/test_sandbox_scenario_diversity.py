@@ -168,14 +168,14 @@ def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
         return {'exit_code': 0}, [(0.0, roi, metrics)]
 
     def fake_scan_repo_sections(repo_path, modules=None):
-        mod_file = Path(repo_path) / 'mod.py'
-        return {'mod.py': {'sec': mod_file.read_text().splitlines()}}
+        mod_file = Path(repo_path) / 'mod.py'  # path-ignore
+        return {'mod.py': {'sec': mod_file.read_text().splitlines()}}  # path-ignore
 
     monkeypatch.setattr(sandbox_runner, 'scan_repo_sections', fake_scan_repo_sections, raising=False)
     monkeypatch.setattr(env, 'simulate_execution_environment', lambda *a, **k: {})
     monkeypatch.setattr(env, '_section_worker', fake_worker)
 
-    mod = tmp_path / 'mod.py'
+    mod = tmp_path / 'mod.py'  # path-ignore
     mod.write_text('def foo():\n    return 1\n')
 
     presets = [

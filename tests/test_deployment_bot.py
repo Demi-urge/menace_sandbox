@@ -4,10 +4,10 @@ import menace.deployment_bot as db
 
 
 def test_deploy(tmp_path):
-    p = tmp_path / "a.py"
+    p = tmp_path / "a.py"  # path-ignore
     p.write_text("def run():\n    pass\n")
     import shutil, os
-    shutil.copy(p, "a.py")
+    shutil.copy(p, "a.py")  # path-ignore
     bot = db.DeploymentBot(
         db.DeploymentDB(tmp_path / "dep.db"),
         code_db=db.CodeDB(tmp_path / "code.db"),
@@ -15,7 +15,7 @@ def test_deploy(tmp_path):
     spec = db.DeploymentSpec(name="test", resources={}, env={})
     dep_id = bot.deploy("run", ["a"], spec)
     rec = bot.db.get(dep_id)
-    os.remove("a.py")
+    os.remove("a.py")  # path-ignore
     assert rec["status"] == "success"
     assert bot.code_db.fetch_all()
 

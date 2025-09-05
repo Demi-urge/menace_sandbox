@@ -10,7 +10,7 @@ stub_run.LOCAL_KNOWLEDGE_MODULE = None
 sys.modules.setdefault("run_autonomous", stub_run)
 
 spec = importlib.util.spec_from_file_location(
-    "meta_workflow_planner", Path(__file__).resolve().parent.parent / "meta_workflow_planner.py"
+    "meta_workflow_planner", Path(__file__).resolve().parent.parent / "meta_workflow_planner.py"  # path-ignore
 )
 mwp = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
 assert spec.loader is not None

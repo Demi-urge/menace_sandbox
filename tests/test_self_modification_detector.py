@@ -78,12 +78,12 @@ def _run_once(monkeypatch, remote, current, tmp_path: Path):
 
 
 def test_lockdown_trigger_on_mismatch(monkeypatch, tmp_path):
-    called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "2"}, tmp_path)
-    assert called == [["a.py"]]
+    called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "2"}, tmp_path)  # path-ignore
+    assert called == [["a.py"]]  # path-ignore
 
 
 def test_no_lockdown_on_match(monkeypatch, tmp_path):
-    called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "1"}, tmp_path)
+    called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "1"}, tmp_path)  # path-ignore
     assert called == []
 
 
@@ -97,14 +97,14 @@ def test_save_reference_hashes_logs_and_raises(tmp_path, caplog):
 
 def test_generate_code_hashes(tmp_path):
     root = tmp_path
-    (root / "a.py").write_text("print('a')", encoding="utf-8")
+    (root / "a.py").write_text("print('a')", encoding="utf-8")  # path-ignore
     (root / "b.txt").write_text("nope", encoding="utf-8")
     log_dir = root / "logs"
     log_dir.mkdir()
-    (log_dir / "c.py").write_text("print('c')", encoding="utf-8")
+    (log_dir / "c.py").write_text("print('c')", encoding="utf-8")  # path-ignore
     hashes = smd.generate_code_hashes(str(root))
-    assert set(hashes) == {"a.py"}
-    assert hashes["a.py"] == hashlib.sha256(b"print('a')").hexdigest()
+    assert set(hashes) == {"a.py"}  # path-ignore
+    assert hashes["a.py"] == hashlib.sha256(b"print('a')").hexdigest()  # path-ignore
 
 
 def test_thread_start_and_cleanup(monkeypatch, tmp_path):

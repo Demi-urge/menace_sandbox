@@ -72,7 +72,7 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
 
     tracker = st.SnapshotTracker()
     manager = PSM()
-    module = tmp_path / "mod.py"
+    module = tmp_path / "mod.py"  # path-ignore
     module.write_text("a = 1\n", encoding="utf-8")
 
     before = st.Snapshot(1.0, 0.0, 0.5, 0.0, 0.0)
@@ -159,8 +159,8 @@ def test_tracker_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
-    (repo / "b.py").write_text("b = 2\n", encoding="utf-8")
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")  # path-ignore
+    (repo / "b.py").write_text("b = 2\n", encoding="utf-8")  # path-ignore
     data_dir = tmp_path / "data"
 
     class Settings:
@@ -178,4 +178,4 @@ def test_tracker_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
 
     assert snap.entropy == 2.0
     assert snap.token_diversity == 2.0
-    assert set(captured["files"]) == {repo / "a.py", repo / "b.py"}
+    assert set(captured["files"]) == {repo / "a.py", repo / "b.py"}  # path-ignore

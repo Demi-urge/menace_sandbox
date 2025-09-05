@@ -88,7 +88,7 @@ def test_pipeline_runs(tmp_path):
     assert "\"capabilities\": [\"network\"]" in plan_str
     assert "\"level\": \"L2\"" in plan_str
     assert "\"io\": \"json\"" in plan_str
-    built = tmp_path / "BotX" / "BotX.py"
+    built = tmp_path / "BotX" / "BotX.py"  # path-ignore
     assert built.exists()
 
 
@@ -102,7 +102,7 @@ def test_prompt_contains_docstrings(tmp_path):
             prompt = self._build_prompt(spec)
             self.prompts.append(prompt)
             repo_dir = self.create_env(spec)
-            file_path = repo_dir / f"{spec.name}.py"
+            file_path = repo_dir / f"{spec.name}.py"  # path-ignore
             file_path.write_text("pass")
             self._write_meta(repo_dir, spec)
             return file_path
@@ -165,7 +165,7 @@ def test_prompt_includes_guideline_sections(tmp_path):
         def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
             self.prompt = self._build_prompt(spec)
             repo_dir = self.create_env(spec)
-            file_path = repo_dir / f"{spec.name}.py"
+            file_path = repo_dir / f"{spec.name}.py"  # path-ignore
             file_path.write_text("pass")
             self._write_meta(repo_dir, spec)
             return file_path
@@ -307,7 +307,7 @@ def test_researcher_invoked_for_missing_info(tmp_path):
     class MiniDev(bdb.BotDevelopmentBot):
         def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
             repo_dir = self.create_env(spec)
-            file_path = repo_dir / f"{spec.name}.py"
+            file_path = repo_dir / f"{spec.name}.py"  # path-ignore
             file_path.write_text("pass")
             self._write_meta(repo_dir, spec)
             return file_path
@@ -450,7 +450,7 @@ def test_ipo_plan_fills_metadata_and_pipeline_runs(tmp_path):
     class MiniDev(bdb.BotDevelopmentBot):
         def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
             repo_dir = self.create_env(spec)
-            file_path = repo_dir / f"{spec.name}.py"
+            file_path = repo_dir / f"{spec.name}.py"  # path-ignore
             file_path.write_text("pass")
             self._write_meta(repo_dir, spec)
             return file_path
@@ -481,7 +481,7 @@ def test_ipo_plan_fills_metadata_and_pipeline_runs(tmp_path):
     final_meta = result.package.tasks[0].metadata
     assert final_meta["purpose"] == "scan"
     assert final_meta["functions"] == ["run"]
-    built = tmp_path / "PlanBot" / "PlanBot.py"
+    built = tmp_path / "PlanBot" / "PlanBot.py"  # path-ignore
     assert built.exists()
 
 

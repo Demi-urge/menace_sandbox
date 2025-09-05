@@ -19,7 +19,7 @@ def _load_router(path: Path):
 
 def test_resolve_path_finds_jsonl():
     project_root = Path(__file__).resolve().parents[1]
-    dpr = _load_router(project_root / "dynamic_path_router.py")
+    dpr = _load_router(project_root / "dynamic_path_router.py")  # path-ignore
     dpr.clear_cache()
     path = dpr.resolve_path("patch_outcomes.jsonl")
     assert path.name == "patch_outcomes.jsonl"
@@ -32,13 +32,13 @@ def test_resolve_path_with_env_override(monkeypatch, env_var):
     with TemporaryDirectory() as td:
         repo = Path(td) / "relocated"
         (repo / ".git").mkdir(parents=True)
-        shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")
+        shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")  # path-ignore
         shutil.copy(
             resolve_path("tests/fixtures/patch_outcomes.jsonl"),
             repo / "patch_outcomes.jsonl",
         )
 
-        dpr_tmp = _load_router(repo / "dynamic_path_router.py")
+        dpr_tmp = _load_router(repo / "dynamic_path_router.py")  # path-ignore
 
         # ensure only the selected env var is set
         for var in {"MENACE_ROOT", "SANDBOX_REPO_PATH"}:
@@ -60,13 +60,13 @@ def test_resolve_path_jsonl_in_nested_repo(monkeypatch):
         nested = repo / "nested" / "deep"
         nested.mkdir(parents=True)
 
-        shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")
+        shutil.copy(project_root / "dynamic_path_router.py", repo / "dynamic_path_router.py")  # path-ignore
         shutil.copy(
             resolve_path("tests/fixtures/patch_outcomes.jsonl"),
             repo / "patch_outcomes.jsonl",
         )
 
-        dpr_tmp = _load_router(repo / "dynamic_path_router.py")
+        dpr_tmp = _load_router(repo / "dynamic_path_router.py")  # path-ignore
 
         monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
         dpr_tmp.clear_cache()

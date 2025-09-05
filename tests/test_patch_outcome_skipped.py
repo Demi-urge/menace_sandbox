@@ -53,7 +53,7 @@ def test_skipped_enhancement_logs_negative_outcome(tmp_path, monkeypatch):
     monkeypatch.setattr(engine.data_bot, "roi", lambda *a, **k: 0.0)
     monkeypatch.setattr(engine.data_bot, "complexity_score", lambda *a, **k: 0.0)
     monkeypatch.setattr(engine, "_current_errors", lambda: 0)
-    path = tmp_path / "bot.py"
+    path = tmp_path / "bot.py"  # path-ignore
     path.write_text("def z():\n    pass\n")
     context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1", 0.0)]}
     patch_id, reverted, _ = engine.apply_patch(path, "test", context_meta=context)

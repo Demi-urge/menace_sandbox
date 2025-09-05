@@ -134,7 +134,7 @@ _setmod(
     types.SimpleNamespace(log_prompt_attempt=lambda *a, **k: None),
 )
 _spec_tr = importlib.util.spec_from_file_location(
-    "self_improvement.target_region", ROOT / "self_improvement" / "target_region.py"
+    "self_improvement.target_region", ROOT / "self_improvement" / "target_region.py"  # path-ignore
 )
 tr_module = importlib.util.module_from_spec(_spec_tr)
 sys.modules.setdefault("self_improvement.target_region", tr_module)
@@ -248,7 +248,7 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
     monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
     monkeypatch.setattr(engine, "_get_repo_layout", lambda lines: "")
 
-    target = tmp_path / "big.py"
+    target = tmp_path / "big.py"  # path-ignore
     target.write_text("print('hi')\n")
 
     engine.generate_helper("do something", path=target)
@@ -308,7 +308,7 @@ def test_generate_helper_uses_cached_chunk_summaries(monkeypatch, tmp_path):
     monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
     monkeypatch.setattr(engine, "_get_repo_layout", lambda lines: "")
 
-    target = tmp_path / "big.py"
+    target = tmp_path / "big.py"  # path-ignore
     target.write_text("print('hi')\n")
 
     engine.generate_helper("do something", path=target)
@@ -363,7 +363,7 @@ def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
     monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
     monkeypatch.setattr(engine, "_get_repo_layout", lambda lines: "")
 
-    target = tmp_path / "mod.py"
+    target = tmp_path / "mod.py"  # path-ignore
     target.write_text("a=1\nb=2\nc=3\n")
     region = sce.TargetRegion(start_line=2, end_line=2, function="f")
 
@@ -418,7 +418,7 @@ def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
 
     monkeypatch.setattr(engine.prompt_engine, "build_prompt", fake_build_prompt)
 
-    target = tmp_path / "big.py"
+    target = tmp_path / "big.py"  # path-ignore
     target.write_text("a\nb\n")
 
     engine.patch_file(target, "desc")
@@ -444,7 +444,7 @@ def test_patch_file_rejects_scope_violation(tmp_path):
     )
     engine.generate_helper = lambda desc, **_: "print('x')\nprint('y')\nprint('z')\n"
 
-    target = tmp_path / "mod.py"
+    target = tmp_path / "mod.py"  # path-ignore
     target.write_text("print('a')\nprint('b')\nprint('c')\n")
     region = sce.TargetRegion(start_line=2, end_line=2, function="f")
 
@@ -469,7 +469,7 @@ def test_build_file_context_stitches_target_region(tmp_path, monkeypatch):
         chunk_summary_cache_dir=tmp_path,
     )
 
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text(
         "\n".join(
             [

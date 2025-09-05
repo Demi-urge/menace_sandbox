@@ -19,7 +19,7 @@ def _write_non_trivial(path: Path) -> None:
 
 
 def test_trivial_isolated_module_redundant(tmp_path):
-    mod = tmp_path / "trivial.py"
+    mod = tmp_path / "trivial.py"  # path-ignore
     mod.write_text("def foo():\n    pass\n")
     cls, meta = orphan_analyzer.classify_module(mod, include_meta=True)
     assert cls == "redundant"
@@ -27,7 +27,7 @@ def test_trivial_isolated_module_redundant(tmp_path):
 
 
 def test_non_trivial_module_candidate(tmp_path):
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     _write_non_trivial(mod)
     cls, meta = orphan_analyzer.classify_module(mod, include_meta=True)
     assert cls == "candidate"
@@ -42,7 +42,7 @@ def test_non_trivial_module_candidate(tmp_path):
 
 
 def test_orphan_discovery_records_metrics(tmp_path):
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     _write_non_trivial(mod)
     mapping = discover_recursive_orphans(str(tmp_path))
     info = mapping["mod"]
@@ -68,7 +68,7 @@ def test_orphan_discovery_records_metrics(tmp_path):
 
 
 def test_custom_classifier_override(tmp_path):
-    mod = tmp_path / "foo.py"
+    mod = tmp_path / "foo.py"  # path-ignore
     mod.write_text("pass\n")
 
     def force_legacy(path: Path, metrics: dict) -> str:

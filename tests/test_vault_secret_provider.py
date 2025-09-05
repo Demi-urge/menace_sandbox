@@ -7,7 +7,7 @@ ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
 
 spec = importlib.util.spec_from_file_location(
     "menace.vault_secret_provider",
-    resolve_path("vault_secret_provider.py"),
+    resolve_path("vault_secret_provider.py"),  # path-ignore
     submodule_search_locations=[str(ROOT)],
 )
 mod = importlib.util.module_from_spec(spec)

@@ -28,7 +28,7 @@ import ast
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-ENG_PATH = Path(__file__).resolve().parents[1] / "self_improvement" / "engine.py"
+ENG_PATH = Path(__file__).resolve().parents[1] / "self_improvement" / "engine.py"  # path-ignore
 src = ENG_PATH.read_text()
 tree = ast.parse(src)
 future = ast.ImportFrom(module="__future__", names=[ast.alias("annotations", None)], level=0)

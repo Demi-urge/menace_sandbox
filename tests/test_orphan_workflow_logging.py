@@ -36,12 +36,12 @@ def test_workflow_ids_logged_and_stored(monkeypatch, tmp_path, caplog):
     )
 
     monkeypatch.setenv('SANDBOX_REPO_PATH', str(tmp_path))
-    (tmp_path / 'mod.py').write_text('x = 1\n')
+    (tmp_path / 'mod.py').write_text('x = 1\n')  # path-ignore
 
     with caplog.at_level(logging.INFO):
-        mods = _integrate_orphans(engine, [str(tmp_path / 'mod.py')])
+        mods = _integrate_orphans(engine, [str(tmp_path / 'mod.py')])  # path-ignore
 
-    assert mods == {'mod.py'}
-    assert engine.orphan_traces['mod.py']['workflows'] == [11, 22]
+    assert mods == {'mod.py'}  # path-ignore
+    assert engine.orphan_traces['mod.py']['workflows'] == [11, 22]  # path-ignore
     assert engine._last_orphan_counts['workflows_updated'] == 2
     assert any(getattr(record, 'workflows', None) == [11, 22] for record in caplog.records)

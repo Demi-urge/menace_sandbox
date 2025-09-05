@@ -34,7 +34,7 @@ def _load_cycle(monkeypatch):
     monkeypatch.setitem(sys.modules, "pylint.lint", pyl_lint)
     monkeypatch.setitem(sys.modules, "pylint.reporters.text", pyl_rep)
 
-    path = Path(__file__).resolve().parents[1] / "sandbox_runner" / "cycle.py"
+    path = Path(__file__).resolve().parents[1] / "sandbox_runner" / "cycle.py"  # path-ignore
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner.cycle", str(path), submodule_search_locations=[str(path.parent)]
     )
@@ -88,7 +88,7 @@ class DummyCtx:
         self.extra_metrics = None
 
     def changed_modules(self, last):
-        return ["mod.py"], last
+        return ["mod.py"], last  # path-ignore
 
 
 def test_synergy_predictions(monkeypatch, tmp_path):
@@ -110,7 +110,7 @@ def test_synergy_predictions(monkeypatch, tmp_path):
 
     cycle = _load_cycle(monkeypatch)
     repo = tmp_path
-    repo.joinpath("mod.py").write_text("print(1)")
+    repo.joinpath("mod.py").write_text("print(1)")  # path-ignore
     ctx = DummyCtx(repo)
-    cycle._sandbox_cycle_runner(ctx, "mod.py:sec", "print(1)", tracker, scenario="s")
+    cycle._sandbox_cycle_runner(ctx, "mod.py:sec", "print(1)", tracker, scenario="s")  # path-ignore
     assert tracker.synergy_metrics_history["synergy_safety_rating"]

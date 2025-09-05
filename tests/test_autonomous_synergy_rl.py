@@ -91,7 +91,7 @@ def test_full_autonomous_synergy_rl(monkeypatch, tmp_path):
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.environment_generator",
-        str(Path(__file__).resolve().parents[1] / "environment_generator.py"),
+        str(Path(__file__).resolve().parents[1] / "environment_generator.py"),  # path-ignore
     )
     eg = importlib.util.module_from_spec(spec)
     sys.modules["menace_sandbox.environment_generator"] = eg

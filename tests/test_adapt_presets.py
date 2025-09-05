@@ -238,7 +238,7 @@ def test_generate_presets_from_history_missing(monkeypatch, tmp_path):
 
 
 def test_generate_presets_from_history_resolves_data_dir(monkeypatch, tmp_path):
-    dpr.resolve_path("environment_generator.py")
+    dpr.resolve_path("environment_generator.py")  # path-ignore
     alt_root = tmp_path / "relocated"
     data_dir = alt_root / "nested" / "sandbox_data"
     data_dir.mkdir(parents=True)

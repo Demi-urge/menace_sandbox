@@ -65,35 +65,35 @@ def fake_embeddings(monkeypatch) -> None:
 def sample_repo(tmp_path: Path) -> Path:
     """Create a temporary repository with several modules.
 
-    Two modules relate to authentication while ``payment.py`` handles payments.
-    ``authpay.py`` mixes both intents.  A ``module_map.json`` file places
-    ``auth.py`` and ``helper.py`` into the same synthetic synergy cluster so the
+    Two modules relate to authentication while ``payment.py`` handles payments.  # path-ignore
+    ``authpay.py`` mixes both intents.  A ``module_map.json`` file places  # path-ignore
+    ``auth.py`` and ``helper.py`` into the same synthetic synergy cluster so the  # path-ignore
     cluster search API can be exercised.
     """
 
     files = {
-        "auth.py": (
+        "auth.py": (  # path-ignore
             '"""Authentication module"""\n'
             "# handles login\n\n"
             "def login():\n"
             '    """login user"""\n'
             "    pass\n"
         ),
-        "helper.py": (
+        "helper.py": (  # path-ignore
             '"""Authentication helper"""\n'
             "# provides help\n\n"
             "def assist():\n"
             '    """assist auth"""\n'
             "    pass\n"
         ),
-        "authpay.py": (
+        "authpay.py": (  # path-ignore
             '"""Authentication and payment handler"""\n'
             "# handles auth and pay\n\n"
             "def authpay():\n"
             '    """auth pay"""\n'
             "    pass\n"
         ),
-        "payment.py": (
+        "payment.py": (  # path-ignore
             '"""Payment processor"""\n'
             "# handles payments\n\n"
             "def pay():\n"
@@ -106,7 +106,7 @@ def sample_repo(tmp_path: Path) -> Path:
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    # Map auth.py and helper.py into the same cluster (id 1); payment.py is
+    # Map auth.py and helper.py into the same cluster (id 1); payment.py is  # path-ignore
     # assigned to a different cluster to make the distinction clear.
     (data_dir / "module_map.json").write_text(
         json.dumps({"auth": 1, "helper": 1, "payment": 2})
@@ -208,7 +208,7 @@ def clustered_clusterer(sample_repo: Path, tmp_path: Path) -> ic.IntentClusterer
     )
     clusterer = ic.IntentClusterer(db=db, retriever=DummyRetriever())
     # ``index_modules`` avoids loading synergy groups so KMeans clustering is used
-    clusterer.index_modules(list(sample_repo.glob("*.py")))
+    clusterer.index_modules(list(sample_repo.glob("*.py")))  # path-ignore
     # ``threshold=0`` ensures each module belongs to all clusters
     clusterer.cluster_intents(2, threshold=0.0)
     return clusterer
@@ -224,9 +224,9 @@ def test_index_repository_stores_embeddings(
     rows = cur.fetchall()
     paths = {row[0] for row in rows}
     expected = {
-        str(sample_repo / "auth.py"),
-        str(sample_repo / "helper.py"),
-        str(sample_repo / "payment.py"),
+        str(sample_repo / "auth.py"),  # path-ignore
+        str(sample_repo / "helper.py"),  # path-ignore
+        str(sample_repo / "payment.py"),  # path-ignore
     }
     assert expected.issubset(paths)
     assert all(row[1] for row in rows)  # vectors are persisted
@@ -238,10 +238,10 @@ def test_find_modules_related_to_prompts(clusterer: ic.IntentClusterer, sample_r
     clusterer.index_repository(sample_repo)
 
     res = clusterer.find_modules_related_to("authentication help", top_k=2)
-    assert any(Path(r.path).name == "helper.py" for r in res if r.path)
+    assert any(Path(r.path).name == "helper.py" for r in res if r.path)  # path-ignore
 
     res = clusterer.find_modules_related_to("process payment", top_k=2)
-    assert any(Path(r.path).name == "payment.py" for r in res if r.path)
+    assert any(Path(r.path).name == "payment.py" for r in res if r.path)  # path-ignore
 
 
 def test_vector_service_storage_and_query(sample_repo: Path, tmp_path: Path) -> None:
@@ -263,7 +263,7 @@ def test_vector_service_storage_and_query(sample_repo: Path, tmp_path: Path) -> 
 
     res = clusterer.find_modules_related_to("auth help", top_k=2)
     assert vs.search_called
-    assert any(Path(r.path).name == "helper.py" for r in res if r.path)
+    assert any(Path(r.path).name == "helper.py" for r in res if r.path)  # path-ignore
 
 
 def test_cluster_lookup_uses_synergy_groups(
@@ -357,8 +357,8 @@ def test_cluster_intents_adds_cluster_metadata(
         if item["metadata"].get("kind") == "cluster"
     ]
     assert cluster_items
-    auth = str(sample_repo / "auth.py")
-    helper = str(sample_repo / "helper.py")
+    auth = str(sample_repo / "auth.py")  # path-ignore
+    helper = str(sample_repo / "helper.py")  # path-ignore
     assert any(
         auth in ci["metadata"]["members"] and helper in ci["metadata"]["members"]
         for ci in cluster_items
@@ -435,14 +435,14 @@ def test_mixed_intent_module_gets_multiple_cluster_ids(
         index_path=tmp_path / "mix.ann", metadata_path=tmp_path / "mix.json"
     )
     clusterer = ic.IntentClusterer(db=db, retriever=DummyRetriever())
-    clusterer.index_modules(list(sample_repo.glob("*.py")))
+    clusterer.index_modules(list(sample_repo.glob("*.py")))  # path-ignore
     clusterer.cluster_intents(2, threshold=0.0)
 
-    mixed_path = str(sample_repo / "authpay.py")
+    mixed_path = str(sample_repo / "authpay.py")  # path-ignore
     assert len(clusterer.clusters[mixed_path]) > 1
 
     res = clusterer.query("auth pay", top_k=5, include_clusters=False)
-    match = next(m for m in res if m.path and Path(m.path).name == "authpay.py")
+    match = next(m for m in res if m.path and Path(m.path).name == "authpay.py")  # path-ignore
     assert len(match.cluster_ids) > 1
 
 
@@ -459,9 +459,9 @@ def test_index_repository_updates_cluster_membership(
                 return list(item["metadata"].get("members", []))
         return []
 
-    auth = str(sample_repo / "auth.py")
-    helper = str(sample_repo / "helper.py")
-    pay = str(sample_repo / "payment.py")
+    auth = str(sample_repo / "auth.py")  # path-ignore
+    helper = str(sample_repo / "helper.py")  # path-ignore
+    pay = str(sample_repo / "payment.py")  # path-ignore
     assert set(members(1)) == {auth, helper}
     assert set(members(2)) == {pay}
 
@@ -491,9 +491,9 @@ def test_incremental_update_and_prune(
 ) -> None:
     clusterer.index_repository(sample_repo)
 
-    auth_path = sample_repo / "auth.py"
-    helper_path = sample_repo / "helper.py"
-    pay_path = sample_repo / "payment.py"
+    auth_path = sample_repo / "auth.py"  # path-ignore
+    helper_path = sample_repo / "helper.py"  # path-ignore
+    pay_path = sample_repo / "payment.py"  # path-ignore
 
     auth_vec1, auth_meta1 = _fetch_entry(clusterer, auth_path)
     helper_vec1, helper_meta1 = _fetch_entry(clusterer, helper_path)
@@ -528,7 +528,7 @@ def test_index_modules_records_vectors(
 ) -> None:
     """``index_modules`` should store vectors and register paths."""
 
-    paths = list(sample_repo.glob("*.py"))
+    paths = list(sample_repo.glob("*.py"))  # path-ignore
     clusterer.index_modules(paths)
 
     for path in paths:
@@ -545,7 +545,7 @@ def test_cluster_intents_dynamic_count(
 ) -> None:
     """When ``n_clusters`` is ``None`` the optimal count is used."""
 
-    clusterer.index_modules(list(sample_repo.glob("*.py")))
+    clusterer.index_modules(list(sample_repo.glob("*.py")))  # path-ignore
 
     called: dict[str, bool] = {}
 
@@ -566,11 +566,11 @@ def test_search_related_returns_modules_and_clusters(
 ) -> None:
     """``_search_related`` should surface both module and cluster entries."""
 
-    clusterer.index_modules(list(sample_repo.glob("*.py")))
+    clusterer.index_modules(list(sample_repo.glob("*.py")))  # path-ignore
     clusterer.cluster_intents(2, threshold=0.0)
     results = clusterer._search_related("authentication help", top_k=5)
 
-    assert any(Path(r.path).name == "auth.py" for r in results if r.path)
+    assert any(Path(r.path).name == "auth.py" for r in results if r.path)  # path-ignore
     assert any(r.origin == "cluster" for r in results)
 
 
@@ -613,7 +613,7 @@ def test_fresh_instance_queries_clusters(sample_repo: Path, tmp_path: Path) -> N
 def test_extract_intent_text_parses_docstrings_and_comments(tmp_path: Path) -> None:
     """Ensure ``extract_intent_text`` collects docs, names and comments."""
 
-    module = tmp_path / "sample.py"
+    module = tmp_path / "sample.py"  # path-ignore
     module.write_text(
         '"""Top level doc"""\n'
         "# pre foo\n\n"
@@ -641,7 +641,7 @@ def test_index_modules_and_repository_populate_ids_vectors_db(
 ) -> None:
     """``index_modules`` and ``index_repository`` should populate mappings."""
 
-    paths = list(sample_repo.glob("*.py"))
+    paths = list(sample_repo.glob("*.py"))  # path-ignore
     expected = {str(p) for p in paths}
 
     # ``index_modules`` populates in-memory maps
@@ -672,10 +672,10 @@ def test_index_clusters_creates_metadata_and_embeddings(
 ) -> None:
     """``_index_clusters`` should aggregate vectors and persist metadata."""
 
-    paths = list(sample_repo.glob("*.py"))
+    paths = list(sample_repo.glob("*.py"))  # path-ignore
     clusterer.index_modules(paths)
 
-    members = [str(sample_repo / "auth.py"), str(sample_repo / "helper.py")]
+    members = [str(sample_repo / "auth.py"), str(sample_repo / "helper.py")]  # path-ignore
     clusterer._index_clusters({"1": members})
 
     row = clusterer.conn.execute(
@@ -703,11 +703,11 @@ def test_search_helpers_return_expected_matches(
 
     query = "auth help help help help"
     results = clusterer._search_related(query, top_k=5)
-    assert results and results[0].path.endswith("helper.py")
+    assert results and results[0].path.endswith("helper.py")  # path-ignore
     assert any(r.origin == "cluster" for r in results)
 
     mods = clusterer.find_modules_related_to(query, top_k=2)
-    assert mods and mods[0].path.endswith("helper.py")
+    assert mods and mods[0].path.endswith("helper.py")  # path-ignore
     assert all(m.origin != "cluster" for m in mods)
 
     clusters = clusterer.find_clusters_related_to("auth help", top_k=2)

@@ -33,11 +33,11 @@ def test_include_orphan_module_integration(monkeypatch, tmp_path):
     cycle = importlib.import_module("sandbox_runner.cycle")
 
     repo = tmp_path
-    (repo / "dummy_orphan.py").write_text("VALUE = 1\n")
+    (repo / "dummy_orphan.py").write_text("VALUE = 1\n")  # path-ignore
     data_dir = repo / "sandbox_data"
     data_dir.mkdir()
     orphan_file = data_dir / "orphan_modules.json"
-    orphan_file.write_text(json.dumps({"dummy_orphan.py": {"classification": "candidate"}}))
+    orphan_file.write_text(json.dumps({"dummy_orphan.py": {"classification": "candidate"}}))  # path-ignore
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
 
     class Settings:
@@ -74,11 +74,11 @@ def test_include_orphan_module_integration(monkeypatch, tmp_path):
 
     cycle.include_orphan_modules(ctx)
 
-    assert "dummy_orphan.py" in ctx.module_map
+    assert "dummy_orphan.py" in ctx.module_map  # path-ignore
     cache_data = json.loads(orphan_file.read_text())
-    assert "dummy_orphan.py" not in cache_data
+    assert "dummy_orphan.py" not in cache_data  # path-ignore
 
     traces_path = data_dir / "orphan_traces.json"
     traces = json.loads(traces_path.read_text())
-    assert traces["dummy_orphan.py"]["classification_history"][-1] == "candidate"
-    assert traces["dummy_orphan.py"]["roi_history"] == [0.5]
+    assert traces["dummy_orphan.py"]["classification_history"][-1] == "candidate"  # path-ignore
+    assert traces["dummy_orphan.py"]["roi_history"] == [0.5]  # path-ignore

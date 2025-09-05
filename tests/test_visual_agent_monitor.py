@@ -7,7 +7,7 @@ import pytest
 
 
 def _load_monitor():
-    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
+    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"  # path-ignore
     text = path.read_text().splitlines()
     def _extract(name):
         start = next(i for i,l in enumerate(text) if l.startswith(name))

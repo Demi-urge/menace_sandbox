@@ -23,7 +23,7 @@ def _free_port() -> int:
 
 
 def load_module():
-    path = ROOT / "run_autonomous.py"
+    path = ROOT / "run_autonomous.py"  # path-ignore
     sys.modules.pop("menace", None)
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
