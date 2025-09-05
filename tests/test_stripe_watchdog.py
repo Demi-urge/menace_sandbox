@@ -271,3 +271,24 @@ def test_anomaly_log_rotation(monkeypatch, tmp_path):
     assert log_path.exists()
     assert log_path.with_name(log_path.name + ".1").exists()
     assert log_path.with_name(log_path.name + ".2").exists()
+
+
+def test_emit_anomaly_triggers_sanity_layer(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(
+        sw.menace_sanity_layer,
+        "record_payment_anomaly",
+        lambda *a, **k: calls.append(a),
+    )
+    monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(
+        sw,
+        "ANOMALY_TRAIL",
+        SimpleNamespace(record=lambda entry: None),
+    )
+
+    sw._emit_anomaly({"type": "missing_charge", "id": "ch_test"}, False, False)
+
+    assert calls and calls[0][0] == "missing_charge"
+    assert calls[0][1]["charge_id"] == "ch_test"

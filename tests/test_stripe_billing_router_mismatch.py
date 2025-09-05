@@ -35,7 +35,9 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
 
     billing_event_data = {}
     monkeypatch.setattr(
-        sbr, "log_billing_event", lambda action, **kw: billing_event_data.update({"action": action, **kw})
+        sbr,
+        "log_billing_event",
+        lambda action, **kw: billing_event_data.update({"action": action, **kw}),
     )
     import evolution_lock_flag
 
@@ -44,6 +46,13 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
         evolution_lock_flag,
         "trigger_lock",
         lambda reason, severity: lock_calls.append((reason, severity)),
+    )
+
+    recorded: list[tuple[str, dict, str]] = []
+    monkeypatch.setattr(
+        sbr,
+        "record_payment_anomaly",
+        lambda et, md, instr, **kw: recorded.append((et, md, instr)),
     )
 
     sbr._alert_mismatch("bot123", "acct_bad", amount=7.5)
@@ -61,4 +70,7 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
         "amount": 7.5,
         "destination_account": "acct_bad",
     }
+    assert recorded and recorded[0][0] == "stripe_account_mismatch"
+    assert recorded[0][1]["bot_id"] == "bot123"
+    assert recorded[0][1]["account_id"] == "acct_bad"
     assert sbr.sandbox_review.is_paused("bot123")
