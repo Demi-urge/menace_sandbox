@@ -76,6 +76,18 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("STRIPE_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
+    fake_stripe = types.SimpleNamespace(
+        StripeClient=lambda api_key: types.SimpleNamespace(
+            Account=types.SimpleNamespace(
+                retrieve=lambda: {"id": "acct_1H123456789ABCDEF"}
+            )
+        ),
+        Account=types.SimpleNamespace(
+            retrieve=lambda api_key: {"id": "acct_1H123456789ABCDEF"}
+        ),
+    )
+    sys.modules["stripe"] = fake_stripe
+    sys.modules["sbrpkg.stripe"] = fake_stripe
     # Stub db_router to avoid filesystem interactions during import
     class _StubRouter:
         def get_connection(self, name: str, mode: str | None = None):  # pragma: no cover - simple stub

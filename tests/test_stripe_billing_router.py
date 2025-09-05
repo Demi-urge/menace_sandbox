@@ -82,6 +82,18 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     # environment does not leak an alternative value into tests.
     monkeypatch.delenv("STRIPE_MASTER_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
+    fake_stripe = types.SimpleNamespace(
+        StripeClient=lambda api_key: types.SimpleNamespace(
+            Account=types.SimpleNamespace(
+                retrieve=lambda: {"id": "acct_1H123456789ABCDEF"}
+            )
+        ),
+        Account=types.SimpleNamespace(
+            retrieve=lambda api_key: {"id": "acct_1H123456789ABCDEF"}
+        ),
+    )
+    sys.modules["stripe"] = fake_stripe
+    sys.modules["sbrpkg.stripe"] = fake_stripe
     sbr = _load("stripe_billing_router")
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: None)
     monkeypatch.setattr(sbr, "log_billing_event", lambda *a, **k: None)
