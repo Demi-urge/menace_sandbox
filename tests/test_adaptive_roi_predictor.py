@@ -329,6 +329,11 @@ def test_evaluate_model_retrains(monkeypatch, tmp_path):
         DummyPredictor,
     )
 
+    db_router.init_db_router(
+        "roi_tracker", local_db_path=str(db_path), shared_db_path=str(tmp_path / "shared.db")
+    )
+    roi_mod.router = db_router.GLOBAL_ROUTER
+
     acc, mae = tracker.evaluate_model(
         window=2,
         mae_threshold=0.1,
@@ -383,6 +388,11 @@ def test_evaluate_model_drift_retrains(monkeypatch, tmp_path):
         "menace_sandbox.adaptive_roi_predictor.AdaptiveROIPredictor",
         DummyPredictor,
     )
+
+    db_router.init_db_router(
+        "roi_tracker2", local_db_path=str(db_path), shared_db_path=str(tmp_path / "shared.db")
+    )
+    roi_mod.router = db_router.GLOBAL_ROUTER
 
     acc, mae = tracker.evaluate_model(
         window=10,
