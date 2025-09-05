@@ -561,18 +561,23 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
     engine._last_retry_trace = None
     engine.simplify_prompt = sce.simplify_prompt
 
-    calls: list[str] = []
+    calls: list[Path] = []
 
-    def handle(prompt, reason, **_):
-        calls.append(reason)
+    def handle(prompt, reason, *, queue_path=None, **_):
+        calls.append(queue_path)
         return LLMResult(text="def good():\n    pass\n")
 
     monkeypatch.setattr(sce.codex_fallback_handler, "handle", handle)
 
-    monkeypatch.setattr(sce, "_settings", types.SimpleNamespace(codex_retry_delays=[2, 5, 10]))
+    qpath = tmp_path / "queue.jsonl"
+    monkeypatch.setattr(
+        sce,
+        "_settings",
+        types.SimpleNamespace(codex_retry_delays=[2, 5, 10], codex_retry_queue_path=str(qpath)),
+    )
     code = engine.generate_helper("demo")
     assert "def good" in code
-    assert len(calls) == 1
+    assert calls == [qpath]
 
 
 def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
