@@ -25,6 +25,10 @@ feeds them back into future generations of bots.
   `MenaceMemoryManager`, allowing behaviour to be refined over time.
 * Optional `GPT_MEMORY_MANAGER` and `DiscrepancyDB` integrations provide
   additional audit trails when available.
+* `record_billing_event` captures general billing issues, storing a
+  `DiscrepancyRecord` and logging feedback to `GPTMemoryManager`.
+* `fetch_recent_billing_issues` returns recent feedback snippets that can be
+  used to bias future prompts or code generation.
 
 ## Improving Future Generations
 

@@ -1,6 +1,10 @@
 import json
+import os
 import sys
 import types
+from typing import Any
+
+from dynamic_path_router import resolve_path
 
 sys.modules.setdefault(
     "vector_service", types.SimpleNamespace(CognitionLayer=lambda: None)
@@ -93,3 +97,62 @@ def test_watchdog_anomaly_updates_db_memory_and_event_bus(monkeypatch, tmp_path)
     assert anomalies and anomalies[0]["event_type"] == "overcharge"
     assert mm.stored and mm.stored[0][0] == "billing:overcharge"
     assert events and events[0]["event_type"] == "overcharge"
+
+
+def test_record_billing_event_persists_and_logs(monkeypatch, tmp_path):
+    calls: dict[str, Any] = {}
+
+    class DummyDB:
+        def add(self, rec):  # noqa: D401
+            calls["rec"] = rec
+
+    class DummyMemory:
+        def log_interaction(self, prompt, response, *, tags=None):
+            calls["mem"] = (prompt, json.loads(response), tags or [])
+
+        def retrieve(self, *_args, **_kwargs):  # pragma: no cover - unused
+            return []
+
+    class DummyEngine:
+        def __init__(self) -> None:
+            self.updated: dict | None = None
+
+        def update_generation_params(self, meta):
+            self.updated = meta
+
+    resolve_path("cfg.json")
+    cfg = tmp_path / f"cfg{os.extsep}json"
+    cfg.write_text("{}")
+
+    monkeypatch.setattr(msl, "_BILLING_EVENT_DB", DummyDB())
+    monkeypatch.setattr(msl, "_get_gpt_memory", lambda: DummyMemory())
+    monkeypatch.setattr(msl, "DiscrepancyRecord", lambda **kw: types.SimpleNamespace(**kw))
+
+    engine = DummyEngine()
+
+    msl.record_billing_event(
+        "overcharge",
+        {"amount": 7, "config_updates": {"threshold": 2}},
+        "Avoid duplicate charges",
+        config_path=cfg,
+        self_coding_engine=engine,
+    )
+
+    assert calls["rec"].message == "overcharge"
+    assert calls["mem"][0] == "Avoid duplicate charges"
+    assert msl.FEEDBACK in calls["mem"][2]
+    assert json.loads(cfg.read_text())["threshold"] == 2
+    assert engine.updated and engine.updated["amount"] == 7
+
+
+def test_fetch_recent_billing_issues(monkeypatch):
+    class DummyRecord:
+        def __init__(self, prompt):
+            self.prompt = prompt
+
+    class DummyMemory:
+        def retrieve(self, *_args, **_kwargs):
+            return [DummyRecord("A"), DummyRecord("B")]
+
+    monkeypatch.setattr(msl, "_get_gpt_memory", lambda: DummyMemory())
+    assert msl.fetch_recent_billing_issues(2) == ["A", "B"]

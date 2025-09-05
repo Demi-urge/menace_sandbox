@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict, List
 
 import audit_logger
@@ -43,6 +44,21 @@ try:  # Optional dependency – discrepancy database
 except Exception:  # pragma: no cover - best effort
     DiscrepancyDB = None  # type: ignore
 
+# Dedicated discrepancy DB for billing events
+try:  # pragma: no cover - optional
+    from discrepancy_db import (
+        DiscrepancyDB as BillingDiscrepancyDB,
+        DiscrepancyRecord,
+    )
+except Exception:  # pragma: no cover - best effort
+    BillingDiscrepancyDB = None  # type: ignore
+    DiscrepancyRecord = None  # type: ignore
+
+try:  # Optional dependency – GPT memory manager
+    from gpt_memory import GPTMemoryManager
+except Exception:  # pragma: no cover - best effort
+    GPTMemoryManager = None  # type: ignore
+
 try:  # Optional dependency – shared GPT memory
     from shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - best effort
@@ -54,6 +70,13 @@ logger = logging.getLogger(__name__)
 
 # Reuse a single DiscrepancyDB instance when available
 _DISCREPANCY_DB = DiscrepancyDB() if DiscrepancyDB is not None else None
+
+# Billing events leverage a dedicated DiscrepancyDB when available
+_BILLING_EVENT_DB = (
+    BillingDiscrepancyDB() if BillingDiscrepancyDB is not None else None
+)
+
+_GPT_MEMORY: GPTMemoryManager | None = None
 
 # ---------------------------------------------------------------------------
 # Billing anomaly utilities
@@ -85,6 +108,19 @@ def _get_memory_manager() -> MenaceMemoryManager | None:
             logger.exception("failed to initialise MenaceMemoryManager")
             _MEMORY_MANAGER = None
     return _MEMORY_MANAGER
+
+
+def _get_gpt_memory() -> GPTMemoryManager | None:
+    """Lazily construct :class:`GPTMemoryManager` for feedback logging."""
+
+    global _GPT_MEMORY
+    if _GPT_MEMORY is None and GPTMemoryManager is not None:
+        try:  # pragma: no cover - avoid heavy init in tests
+            _GPT_MEMORY = GPTMemoryManager()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to initialise GPTMemoryManager")
+            _GPT_MEMORY = None
+    return _GPT_MEMORY
 
 
 def _anomaly_instruction(
@@ -293,9 +329,95 @@ def record_payment_anomaly(
         logger.exception("audit logging failed")
 
 
+def record_billing_event(
+    event_type: str,
+    metadata: Dict[str, Any],
+    instruction: str,
+    *,
+    config_path: str | Path | None = None,
+    self_coding_engine: Any | None = None,
+) -> None:
+    """Persist a billing event and capture corrective guidance.
+
+    The event is stored in :class:`discrepancy_db.DiscrepancyDB` when available
+    and the ``instruction`` is logged to :class:`gpt_memory.GPTMemoryManager`
+    with the :data:`~log_tags.FEEDBACK` tag.  Optional ``config_path`` and
+    ``self_coding_engine`` hooks allow callers to adjust code-generation
+    parameters based on the event details.
+    """
+
+    if _BILLING_EVENT_DB is not None and DiscrepancyRecord is not None:
+        try:
+            rec = DiscrepancyRecord(
+                message=event_type,
+                metadata={"instruction": instruction, **metadata},
+            )
+            _BILLING_EVENT_DB.add(rec)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "failed to persist billing event",
+                extra={"event_type": event_type, "metadata": metadata},
+            )
+
+    mgr = _get_gpt_memory()
+    if mgr is not None:
+        try:
+            mgr.log_interaction(
+                instruction,
+                json.dumps(
+                    {"event_type": event_type, "metadata": metadata},
+                    sort_keys=True,
+                ),
+                tags=[FEEDBACK, "billing"],
+            )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "GPT memory logging failed", extra={"instruction": instruction}
+            )
+
+    if config_path:
+        try:
+            path = Path(config_path)
+            existing: Dict[str, Any] = {}
+            if path.exists():
+                existing = json.loads(path.read_text() or "{}")
+            updates = metadata.get("config_updates", {})
+            if isinstance(updates, dict):
+                existing.update(updates)
+            path.write_text(json.dumps(existing, indent=2, sort_keys=True))
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "failed to update config file", extra={"path": str(config_path)}
+            )
+
+    if self_coding_engine is not None:
+        try:
+            update_fn = getattr(self_coding_engine, "update_generation_params", None)
+            if callable(update_fn):
+                update_fn(metadata)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("self_coding_engine update failed")
+
+
+def fetch_recent_billing_issues(limit: int = 5) -> List[str]:
+    """Return recent billing-related feedback snippets."""
+
+    mgr = _get_gpt_memory()
+    if mgr is None:
+        return []
+    try:
+        records = mgr.retrieve("billing", limit=limit, tags=[FEEDBACK, "billing"])
+        return [r.prompt for r in records if getattr(r, "prompt", None)]
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to fetch billing issues")
+        return []
+
+
 __all__ = [
     "record_payment_anomaly",
     "record_billing_anomaly",
+    "record_billing_event",
+    "fetch_recent_billing_issues",
     "publish_anomaly",
     "list_anomalies",
 ]
