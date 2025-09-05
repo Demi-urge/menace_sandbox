@@ -72,7 +72,8 @@ def make_engine(mock_llm, fallback_model: str = "gpt-3.5-turbo"):
     engine._last_retry_trace = None
     self_coding_engine._settings = types.SimpleNamespace(codex_retry_delays=[2, 5, 10])
     self_coding_engine.codex_fallback_handler._settings = types.SimpleNamespace(
-        codex_fallback_model=fallback_model
+        codex_fallback_model=fallback_model,
+        codex_fallback_strategy="reroute",
     )
     return engine
 

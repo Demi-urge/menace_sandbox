@@ -756,6 +756,11 @@ class SandboxSettings(BaseSettings):
         env="CODEX_FALLBACK_MODEL",
         description="Fallback model to use when Codex requests fail.",
     )
+    codex_fallback_strategy: str = Field(
+        "queue",
+        env="CODEX_FALLBACK_STRATEGY",
+        description="Fallback handling strategy: 'queue' or 'reroute'.",
+    )
     codex_retry_queue_path: str = Field(
         "codex_retry_queue.jsonl",
         env="CODEX_RETRY_QUEUE",
@@ -774,6 +779,12 @@ class SandboxSettings(BaseSettings):
             "0 drops all examples; None keeps all."
         ),
     )
+    @field_validator("codex_fallback_strategy")
+    def _codex_strategy_valid(cls, v: str) -> str:
+        if v not in {"queue", "reroute"}:
+            raise ValueError("codex_fallback_strategy must be 'queue' or 'reroute'")
+        return v
+
     if PYDANTIC_V2:
 
         @field_validator("codex_retry_delays", mode="before")
