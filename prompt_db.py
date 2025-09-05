@@ -4,9 +4,9 @@ import json
 import os
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List
 
+from dynamic_path_router import resolve_path
 from db_router import DBRouter, LOCAL_TABLES
 from llm_interface import Completion, Prompt
 
@@ -17,8 +17,7 @@ from llm_interface import Completion, Prompt
 # Ensure the prompts table is treated as local by DBRouter
 LOCAL_TABLES.add("prompts")
 
-
-DB_PATH = Path(os.getenv("PROMPT_DB_PATH", "prompts.db"))
+DB_PATH = resolve_path(os.environ.get("PROMPT_DB_PATH", "prompts.db"))
 _CONN: sqlite3.Connection | None = None
 
 
@@ -236,7 +235,7 @@ class PromptDB:
         self, model: str, path: str | None = None, router: DBRouter | None = None
     ) -> None:
         self.model = model
-        db_path = Path(path or os.getenv("PROMPT_DB_PATH", "prompts.db"))
+        db_path = resolve_path(path or os.environ.get("PROMPT_DB_PATH", "prompts.db"))
         self.router = router or DBRouter("prompts", str(db_path), str(db_path))
         self.conn = self.router.get_connection("prompts", operation="write")
         # Ensure schema exists for this connection as well
