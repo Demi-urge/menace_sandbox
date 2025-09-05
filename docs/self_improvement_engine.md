@@ -33,7 +33,12 @@ print(resolve_path('sandbox_runner.py', repo_hint='/repo/alt'))
 PY
 ```
 
-When a `SelfCodingEngine` is supplied, the engine may patch helper code before running the automation pipeline. See [self_coding_engine.md](self_coding_engine.md) for more information.
+When a `SelfCodingEngine` is supplied, the engine may patch helper code before
+running the automation pipeline.  The helper generator retries requests using
+`CODEX_RETRY_DELAYS`, simplifies prompts when failures persist and falls back to
+queueing or rerouting requests to `CODEX_FALLBACK_MODEL` depending on
+`CODEX_FALLBACK_STRATEGY`.  Even in this degraded mode the cycle continues.  See
+[self_coding_engine.md](self_coding_engine.md) for more information.
 
 Persisting cycle data across runs is possible by providing `state_path` when creating the engine. ROI deltas, an exponential moving average of those deltas (`roi_delta_ema`) and the timestamp of the last cycle are written to this JSON file and reloaded on startup. The smoothing factor for the EMA can be set with `roi_ema_alpha` (default `0.1`). Recent cycle outcomes are also stored in `success_history` to derive a momentum coefficient that influences future scheduling.
 

@@ -91,4 +91,23 @@ configurable through `SandboxSettings` or environment variables
 (`PROMPT_CHUNK_TOKEN_THRESHOLD` and `CHUNK_SUMMARY_CACHE_DIR`, with
 `PROMPT_CHUNK_CACHE_DIR` accepted for backward compatibility).
 
+## Retry and fallback
+
+LLM calls are retried with backoff.  The delay between attempts is controlled by
+`SandboxSettings.codex_retry_delays` (environment variable
+`CODEX_RETRY_DELAYS`) and defaults to `[2, 5, 10]` seconds.  When all retries
+fail the prompt is simplified – examples are trimmed and system text is removed
+– before one final attempt.
+
+If no code is produced, `codex_fallback_handler` either queues the prompt or
+reroutes it to a lower‑cost model.  Select the behaviour via
+`CODEX_FALLBACK_STRATEGY` (`"queue"` or `"reroute"`; default) and specify the
+alternate model with `CODEX_FALLBACK_MODEL` (defaults to `gpt-3.5-turbo`).
+Queued prompts are written to `CODEX_RETRY_QUEUE` (`codex_retry_queue_path`).
+
+Queued requests return a minimal stub so the patch loop carries on, while
+rerouted completions are marked as degraded but still allow the cycle to
+proceed.  These fallbacks keep the self‑coding loop running even when the
+primary model is unavailable.
+
 
