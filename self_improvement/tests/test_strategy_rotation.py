@@ -1,4 +1,5 @@
 import importlib
+import json
 import logging
 import sys
 import types
@@ -68,3 +69,32 @@ def test_rotation_and_pending_strategy():
     choice = eng.next_prompt_strategy()
     assert choice == "delete_rebuild"
     assert eng.pending_strategy is None
+
+
+def _reload(monkeypatch, tmp_path, **env):
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return importlib.reload(strategy_rotator)
+
+
+def test_keyword_override(tmp_path, monkeypatch):
+    sr = _reload(monkeypatch, tmp_path)
+    nxt = sr.next_strategy("strict_fix", "tests_failed in module")
+    assert nxt == "unit_test_rewrite"
+
+
+def test_failure_counts_persist(tmp_path, monkeypatch):
+    sr = _reload(monkeypatch, tmp_path)
+    sr.next_strategy("strict_fix", "regression")
+    assert sr.manager.failure_counts["strict_fix"] == 1
+    sr = importlib.reload(sr)
+    assert sr.manager.failure_counts["strict_fix"] == 1
+
+
+def test_failure_limit_from_settings(tmp_path, monkeypatch):
+    limits = json.dumps({"strict_fix": 1})
+    sr = _reload(monkeypatch, tmp_path, STRATEGY_FAILURE_LIMITS=limits)
+    current = "strict_fix"
+    nxt = sr.next_strategy(current, "failure")
+    assert nxt == "delete_rebuild"
