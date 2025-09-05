@@ -29,7 +29,6 @@ from discrepancy_db import DiscrepancyDB
 from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
 import rollback_manager
-from advanced_error_management import AutomatedRollbackManager
 
 try:  # optional dependency
     import stripe  # type: ignore
@@ -83,6 +82,27 @@ def log_critical_discrepancy(message: str, bot_id: str) -> None:
         logger.exception("rollback failed for bot '%s'", bot_id)
 
 
+def _alert_mismatch(bot_id: str, account_id: str, message: str = "Stripe account mismatch") -> None:
+    """Dispatch alerts, record discrepancy and log rollback action."""
+
+    try:  # pragma: no cover - external side effects
+        alert_dispatcher.dispatch_alert(
+            "critical_discrepancy", 5, message, {"bot": bot_id, "account": account_id}
+        )
+    except Exception:
+        logger.exception("alert dispatch failed for bot '%s'", bot_id)
+    try:
+        DiscrepancyDB().add({"message": "stripe_account_mismatch", "bot_id": bot_id})
+    except Exception:
+        logger.exception("failed to record discrepancy for bot '%s'", bot_id)
+    try:  # pragma: no cover - rollback side effects
+        rollback_manager.RollbackManager().log_healing_action(
+            bot_id, "stripe_account_mismatch"
+        )
+    except Exception:
+        logger.exception("rollback logging failed for bot '%s'", bot_id)
+
+
 def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:
     """Ensure a route mapping does not attempt to override Stripe keys."""
 
@@ -100,19 +120,25 @@ def _load_key(name: str, prefix: str) -> str:
     key = os.getenv(name.upper()) or provider.get(name)
     if not key:
         logger.error("Stripe API keys must be configured and non-empty")
+        _alert_mismatch("unknown", "", "Stripe key misconfiguration")
         raise RuntimeError("Stripe API keys must be configured and non-empty")
     if not key.startswith(prefix):
         logger.error("Invalid Stripe API key format for %s", name)
+        _alert_mismatch("unknown", "", "Stripe key misconfiguration")
         raise RuntimeError("Invalid Stripe API key format")
     if key.startswith(f"{prefix}test"):
         logger.error("Test mode Stripe API keys are not permitted for %s", name)
+        _alert_mismatch("unknown", "", "Stripe key misconfiguration")
         raise RuntimeError("Test mode Stripe API keys are not permitted")
     return key
 
 
 STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
 STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
-STRIPE_MASTER_ACCOUNT = _load_key("stripe_account_id", "acct_")
+STRIPE_MASTER_ACCOUNT_ID = os.getenv("STRIPE_MASTER_ACCOUNT_ID") or _load_key(
+    "stripe_account_id", "acct_"
+)
+STRIPE_MASTER_ACCOUNT = STRIPE_MASTER_ACCOUNT_ID
 
 
 def _load_allowed_keys() -> set[str]:
@@ -347,40 +373,17 @@ def _client(api_key: str):
     return None
 
 
-def _handle_critical_discrepancy(bot_id: str, message: str) -> None:
-    """Record, alert and rollback on a critical billing discrepancy."""
-
-    try:
-        DiscrepancyDB().log(message, {"bot_id": bot_id})
-    except Exception:  # pragma: no cover - best effort logging
-        logger.exception("failed to log discrepancy for bot '%s'", bot_id)
-    try:  # pragma: no cover - external side effects
-        alert_dispatcher.dispatch_alert(
-            "critical_discrepancy", severity=10, message=message, context={"bot_id": bot_id}
-        )
-    except Exception:  # pragma: no cover - best effort
-        logger.exception("alert dispatch failed for bot '%s'", bot_id)
-    try:  # pragma: no cover - rollback side effects
-        AutomatedRollbackManager().auto_rollback("latest", [bot_id])
-    except Exception:  # pragma: no cover - best effort
-        logger.exception("rollback failed for bot '%s'", bot_id)
-    raise RuntimeError("critical_discrepancy")
-
-
 def _verify_route(bot_id: str, route: Mapping[str, str]) -> None:
     """Validate the resolved route before executing payment actions."""
 
     key = route.get("secret_key")
     if not key or key not in ALLOWED_SECRET_KEYS:
-        _handle_critical_discrepancy(
-            bot_id, f"Secret key '{key}' not in allowed list"
-        )
-    account_id = route.get("account_id", STRIPE_MASTER_ACCOUNT)
-    if account_id != STRIPE_MASTER_ACCOUNT:
-        _handle_critical_discrepancy(
-            bot_id,
-            f"Account '{account_id}' does not match master account",
-        )
+        _alert_mismatch(bot_id, route.get("account_id", ""))
+        raise RuntimeError("Stripe account mismatch")
+    account_id = route.get("account_id", STRIPE_MASTER_ACCOUNT_ID)
+    if account_id != STRIPE_MASTER_ACCOUNT_ID:
+        _alert_mismatch(bot_id, account_id)
+        raise RuntimeError("Stripe account mismatch")
 
 
 def _parse_bot_id(bot_id: str) -> tuple[str, str, str]:
@@ -456,22 +459,25 @@ def _resolve_route(
     _validate_no_api_keys(route)
     route.setdefault("secret_key", STRIPE_SECRET_KEY)
     route.setdefault("public_key", STRIPE_PUBLIC_KEY)
-    route.setdefault("account_id", STRIPE_MASTER_ACCOUNT)
+    route.setdefault("account_id", STRIPE_MASTER_ACCOUNT_ID)
     route.setdefault("currency", "usd")
     for strategy in _STRATEGIES:
         route = strategy.apply(bot_id, dict(route))
-    route.setdefault("account_id", STRIPE_MASTER_ACCOUNT)
+    route.setdefault("account_id", STRIPE_MASTER_ACCOUNT_ID)
     route.setdefault("currency", "usd")
     secret = route.get("secret_key", "")
     public = route.get("public_key", "")
     if not secret or not public:
         logger.error("Resolved route missing Stripe keys for bot '%s'", bot_id)
+        _alert_mismatch(bot_id, route.get("account_id", ""), "Stripe key misconfiguration")
         raise RuntimeError("Stripe keys are not configured for the resolved route")
     if secret.startswith("sk_test") or public.startswith("pk_test"):
         logger.error("Test mode Stripe API keys are not permitted for bot '%s'", bot_id)
+        _alert_mismatch(bot_id, route.get("account_id", ""), "Stripe key misconfiguration")
         raise RuntimeError("Test mode Stripe API keys are not permitted")
     if not secret.startswith("sk_") or not public.startswith("pk_"):
         logger.error("Invalid Stripe API key format for bot '%s'", bot_id)
+        _alert_mismatch(bot_id, route.get("account_id", ""), "Stripe key misconfiguration")
         raise RuntimeError("Invalid Stripe API key format")
     return route
 
@@ -504,6 +510,9 @@ def charge(
             account_id = str(acct.get("id") or "")
     except Exception:  # pragma: no cover - best effort
         account_id = ""
+    if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
+        _alert_mismatch(bot_id, account_id)
+        raise RuntimeError("Stripe account mismatch")
 
     price = price_id or route.get("price_id")
     customer = route.get("customer_id")
@@ -748,6 +757,9 @@ def create_subscription(
             account_id = str(acct.get("id") or "")
     except Exception:  # pragma: no cover - best effort
         account_id = ""
+    if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
+        _alert_mismatch(bot_id, account_id)
+        raise RuntimeError("Stripe account mismatch")
     price = price_id or route.get("price_id")
     customer = customer_id or route.get("customer_id")
     email = route.get("user_email")
@@ -870,6 +882,9 @@ def refund(
             account_id = str(acct.get("id") or "")
     except Exception:  # pragma: no cover - best effort
         account_id = ""
+    if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
+        _alert_mismatch(bot_id, account_id)
+        raise RuntimeError("Stripe account mismatch")
     refund_params: dict[str, Any] = {"payment_intent": payment_intent_id, **params}
     if amount is not None:
         try:
@@ -988,6 +1003,9 @@ def create_checkout_session(
             account_id = str(acct.get("id") or "")
     except Exception:  # pragma: no cover - best effort
         account_id = ""
+    if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
+        _alert_mismatch(bot_id, account_id)
+        raise RuntimeError("Stripe account mismatch")
     final_params: dict[str, Any] = {"line_items": list(line_items), **params}
     if "customer" not in final_params and route.get("customer_id"):
         final_params["customer"] = route["customer_id"]
