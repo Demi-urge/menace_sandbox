@@ -109,6 +109,11 @@ def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):
     assert {
         json.loads(s["content"])["type"] for s in samples
     } == {"unknown_webhook"}
+    with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
+        line = fh.readline()
+        logged = json.loads(line.split(" ", 1)[1])
+    assert logged["type"] == "unknown_webhook"
+    assert logged["metadata"]["id"] == "we_evil"
 
 
 def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
@@ -138,6 +143,11 @@ def test_disabled_webhook_endpoint(monkeypatch, capture_anomalies):
     assert {
         json.loads(s["content"])["type"] for s in samples
     } == {"disabled_webhook"}
+    with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
+        line = fh.readline()
+        logged = json.loads(line.split(" ", 1)[1])
+    assert logged["type"] == "disabled_webhook"
+    assert logged["metadata"]["id"] == "we_disabled"
 
 
 def test_env_allowed_webhook(monkeypatch):
@@ -171,6 +181,11 @@ def test_unexpected_refund(capture_anomalies):
     assert anomalies and anomalies[0]["refund_id"] == "rf_1"
     assert events and events[0][1]["type"] == "missing_refund"
     assert samples and json.loads(samples[0]["content"])["refund_id"] == "rf_1"
+    with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
+        line = fh.readline()
+        logged = json.loads(line.split(" ", 1)[1])
+    assert logged["type"] == "missing_refund"
+    assert logged["metadata"]["refund_id"] == "rf_1"
 
 
 def test_revenue_mismatch(monkeypatch, capture_anomalies):
@@ -190,6 +205,11 @@ def test_revenue_mismatch(monkeypatch, capture_anomalies):
     assert summary["charge_total"] == 100.0
     assert events and events[0][1]["type"] == "revenue_mismatch"
     assert samples and json.loads(samples[0]["content"])["type"] == "revenue_mismatch"
+    with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
+        line = fh.readline()
+        logged = json.loads(line.split(" ", 1)[1])
+    assert logged["type"] == "revenue_mismatch"
+    assert logged["metadata"]["net_revenue"] == summary["net_revenue"]
 
 
 def test_logged_charge_not_flagged(monkeypatch, capture_anomalies):
