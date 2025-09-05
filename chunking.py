@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, TYPE_CHECKING, Dict
+from typing import Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
@@ -24,6 +24,7 @@ try:  # pragma: no cover - optional settings dependency
 except Exception:  # pragma: no cover - allow running without settings
     SandboxSettings = None  # type: ignore
 
+from dynamic_path_router import resolve_path
 from chunk_summary_cache import ChunkSummaryCache
 
 _ENCODER = None
@@ -36,7 +37,7 @@ if tiktoken is not None:  # pragma: no branch - simple import logic
 # Directory used for caching summaries of individual code snippets.  Sharing the
 # directory with :class:`ChunkSummaryCache` keeps cache files in one place and
 # mirrors the behaviour of the removed ``chunk_summarizer`` module.
-SNIPPET_CACHE_DIR = Path(__file__).resolve().parent / "chunk_summary_cache"
+SNIPPET_CACHE_DIR = resolve_path("chunk_summary_cache")
 
 
 def _ensure_snippet_cache_dir() -> None:
