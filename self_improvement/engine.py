@@ -164,7 +164,6 @@ from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt
 from .prompt_strategies import PromptStrategy
 from .prompt_strategy_manager import PromptStrategyManager
-from . import strategy_rotator
 from .snapshot_tracker import (
     capture as capture_snapshot,
     compute_delta as snapshot_delta,
@@ -6567,13 +6566,6 @@ class SelfImprovementEngine:
             metadata = getattr(prompt, "metadata", {})
             if isinstance(metadata, dict):
                 strategy = metadata.get("strategy") or metadata.get("prompt_id")
-                if strategy:
-                    try:
-                        next_template = strategy_rotator.next_strategy(
-                            str(strategy), failure_reason or "regression"
-                        )
-                    except Exception:
-                        self.logger.exception("strategy rotation failed")
 
         success = failure_reason is None
         log_prompt_attempt(
@@ -6609,20 +6601,32 @@ class SelfImprovementEngine:
                     snapshot_tracker.record_downgrade(str(strategy))
                 except Exception:
                     pass
+                try:
+                    next_template = self.strategy_manager.record_failure(
+                        str(strategy),
+                        failure_reason,
+                        float(delta.get("roi", 0.0)),
+                    )
+                except Exception:
+                    self.logger.exception("strategy rotation failed")
+                    next_template = None
+                if not next_template:
+                    fallback_map = {
+                        "score_drop": "strict_fix",
+                        "test_failed": "delete_rebuild",
+                        "entropy_regression": "comment_refactor",
+                    }
+                    key = "test_failed" if failure_reason == "tests_failed" else failure_reason
+                    next_template = fallback_map.get(key)
                 self.pending_strategy = next_template
 
-        if strategy and hasattr(self, "strategy_manager"):
+        if success and strategy and hasattr(self, "strategy_manager"):
             try:
                 self.strategy_manager.update(
-                    str(strategy), float(delta.get("roi", 0.0)), success
+                    str(strategy), float(delta.get("roi", 0.0)), True
                 )
             except Exception:
                 self.logger.exception("strategy metrics update failed")
-
-    def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
-        """Pick the best prompt strategy via the strategy manager."""
-
-        return self.strategy_manager.best_strategy(strategies)
 
     def next_prompt_strategy(self) -> str | None:
         """Return the next prompt strategy based on historical performance."""
@@ -6631,18 +6635,10 @@ class SelfImprovementEngine:
         if pending and pending in self.strategy_manager.strategies:
             self.pending_strategy = None
             return pending
-        strategies = getattr(self.strategy_manager, "strategies", [])
         try:
-            best = self.strategy_manager.best_strategy(strategies)
+            return self.strategy_manager.next()
         except Exception:
-            best = None
-        if best is not None:
-            return best
-
-        def selector(seq: Sequence[str]) -> str | None:
-            return self._select_prompt_strategy(seq)
-
-        return self.strategy_manager.select(selector)
+            return None
 
     @radar.track
     def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:
