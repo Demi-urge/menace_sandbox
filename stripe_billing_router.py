@@ -852,6 +852,7 @@ def charge(
                 user_email=email,
                 destination_account=destination,
                 key_hash=key_hash,
+                stripe_id=event_id,
                 ts=datetime.utcnow().isoformat(),
             )
         _log_payment(
@@ -1047,6 +1048,7 @@ def create_subscription(
                 user_email=email,
                 destination_account=destination,
                 key_hash=key_hash,
+                stripe_id=event_id,
                 ts=datetime.utcnow().isoformat(),
             )
         _log_payment(
@@ -1193,6 +1195,7 @@ def refund(
             user_email=email,
             destination_account=destination,
             key_hash=key_hash,
+            stripe_id=event_id,
             ts=datetime.utcnow().isoformat(),
         )
         _log_payment(
@@ -1331,6 +1334,7 @@ def create_checkout_session(
             user_email=email,
             destination_account=destination,
             key_hash=key_hash,
+            stripe_id=event_id,
             ts=datetime.utcnow().isoformat(),
         )
         _log_payment(

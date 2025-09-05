@@ -109,3 +109,42 @@ def test_main_updates_last_run(monkeypatch, tmp_path):
 
     assert int(last_run.read_text()) >= 100
 
+
+def test_detect_missing_charges_id_matching():
+    charges = [
+        {"id": "ch1", "created": 1, "amount": 1000},
+        {"id": "ch2", "created": 2, "amount": 2000},
+        {"id": "ch3", "created": 3, "amount": 3000},
+    ]
+    ledger = [{"id": "ch1"}]
+    billing_logs = [{"stripe_id": "ch2"}]
+
+    anomalies = sw.detect_missing_charges(charges, ledger, billing_logs)
+    assert len(anomalies) == 1 and anomalies[0]["id"] == "ch3"
+
+
+def test_detect_missing_refunds_id_matching():
+    refunds = [
+        {"id": "re1", "amount": 100, "charge": "c1"},
+        {"id": "re2", "amount": 200, "charge": "c2"},
+        {"id": "re3", "amount": 300, "charge": "c3"},
+    ]
+    ledger = [{"id": "re1", "action_type": "refund"}]
+    billing_logs = [{"stripe_id": "re2"}]
+
+    anomalies = sw.detect_missing_refunds(refunds, ledger, billing_logs)
+    assert len(anomalies) == 1 and anomalies[0]["refund_id"] == "re3"
+
+
+def test_detect_failed_events_id_matching():
+    events = [
+        {"id": "ev1", "type": "charge.failed"},
+        {"id": "ev2", "type": "charge.failed"},
+        {"id": "ev3", "type": "charge.failed"},
+    ]
+    ledger = [{"id": "ev1", "action_type": "failed"}]
+    billing_logs = [{"stripe_id": "ev2"}]
+
+    anomalies = sw.detect_failed_events(events, ledger, billing_logs)
+    assert len(anomalies) == 1 and anomalies[0]["event_id"] == "ev3"
+
