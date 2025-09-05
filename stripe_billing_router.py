@@ -721,7 +721,6 @@ def charge(
                 event = stripe.Invoice.pay(
                     invoice["id"], api_key=api_key, idempotency_key=idempotency_key
                 )
-            return event
 
         if amt is None:
             logger.error(
@@ -742,7 +741,6 @@ def charge(
             event = client.PaymentIntent.create(**params)
         else:
             event = stripe.PaymentIntent.create(api_key=api_key, **params)
-        return event
     except Exception:
         had_error = True
         raise
@@ -765,12 +763,6 @@ def charge(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
-        mismatch_error: Exception | None = None
-        try:
-            _ensure_destination_account(bot_id, destination, logged_amount)
-        except RuntimeError as err:
-            had_error = True
-            mismatch_error = err
 
         raw_json = None
         if isinstance(event, Mapping):
@@ -780,6 +772,23 @@ def charge(
                 raw_json = None
 
         email = user_email
+
+        if destination and destination != STRIPE_MASTER_ACCOUNT_ID:
+            billing_logger.log_event(
+                id=event.get("id") if isinstance(event, Mapping) else None,
+                action_type="charge",
+                amount=logged_amount,
+                currency=currency,
+                timestamp_ms=timestamp_ms,
+                user_email=email,
+                bot_id=bot_id,
+                destination_account=destination,
+                raw_event_json=raw_json,
+                error=True,
+            )
+            _alert_mismatch(bot_id, destination, amount=logged_amount)
+            raise RuntimeError("Stripe account mismatch")
+
         if event is not None and customer:
             try:
                 cust = (
@@ -835,8 +844,7 @@ def charge(
             account_id,
             timestamp_ms,
         )
-        if mismatch_error:
-            raise mismatch_error
+    return event
 
 
 # Backward compatibility
@@ -933,7 +941,6 @@ def create_subscription(
             event = client.Subscription.create(**sub_params)
         else:
             event = stripe.Subscription.create(api_key=api_key, **sub_params)
-        return event
     except Exception:
         had_error = True
         raise
@@ -949,18 +956,29 @@ def create_subscription(
                 or (event.get("transfer_data") or {}).get("destination")
                 or destination
             )
-        mismatch_error: Exception | None = None
-        try:
-            _ensure_destination_account(bot_id, destination, None)
-        except RuntimeError as err:
-            had_error = True
-            mismatch_error = err
         raw_json = None
         if isinstance(event, Mapping):
             try:
                 raw_json = json.dumps(event)
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
+
+        if destination and destination != STRIPE_MASTER_ACCOUNT_ID:
+            billing_logger.log_event(
+                id=event.get("id") if isinstance(event, Mapping) else None,
+                action_type="subscription",
+                amount=None,
+                currency=currency,
+                timestamp_ms=timestamp_ms,
+                user_email=email,
+                bot_id=bot_id,
+                destination_account=destination,
+                raw_event_json=raw_json,
+                error=True,
+            )
+            _alert_mismatch(bot_id, destination)
+            raise RuntimeError("Stripe account mismatch")
+
         billing_logger.log_event(
             id=event.get("id") if isinstance(event, Mapping) else None,
             action_type="subscription",
@@ -1016,8 +1034,7 @@ def create_subscription(
             account_id,
             timestamp_ms,
         )
-        if mismatch_error:
-            raise mismatch_error
+    return event
 
 
 def refund(
@@ -1072,7 +1089,6 @@ def refund(
             event = client.Refund.create(**refund_params)
         else:
             event = stripe.Refund.create(api_key=api_key, **refund_params)
-        return event
     except Exception:
         had_error = True
         raise
@@ -1095,18 +1111,30 @@ def refund(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
-        mismatch_error: Exception | None = None
-        try:
-            _ensure_destination_account(bot_id, destination, logged_amount)
-        except RuntimeError as err:
-            had_error = True
-            mismatch_error = err
+
         raw_json = None
         if isinstance(event, Mapping):
             try:
                 raw_json = json.dumps(event)
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
+
+        if destination and destination != STRIPE_MASTER_ACCOUNT_ID:
+            billing_logger.log_event(
+                id=event.get("id") if isinstance(event, Mapping) else None,
+                action_type="refund",
+                amount=logged_amount,
+                currency=currency,
+                timestamp_ms=timestamp_ms,
+                user_email=email,
+                bot_id=bot_id,
+                destination_account=destination,
+                raw_event_json=raw_json,
+                error=True,
+            )
+            _alert_mismatch(bot_id, destination, amount=logged_amount)
+            raise RuntimeError("Stripe account mismatch")
+
         billing_logger.log_event(
             id=event.get("id") if isinstance(event, Mapping) else None,
             action_type="refund",
@@ -1146,8 +1174,7 @@ def refund(
             account_id,
             timestamp_ms,
         )
-        if mismatch_error:
-            raise mismatch_error
+    return event
 
 
 def create_checkout_session(
@@ -1190,7 +1217,6 @@ def create_checkout_session(
             event = client.checkout.Session.create(**final_params)
         else:
             event = stripe.checkout.Session.create(api_key=api_key, **final_params)
-        return event
     except Exception:
         had_error = True
         raise
@@ -1217,18 +1243,30 @@ def create_checkout_session(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
-        mismatch_error: Exception | None = None
-        try:
-            _ensure_destination_account(bot_id, destination, logged_amount)
-        except RuntimeError as err:
-            had_error = True
-            mismatch_error = err
+
         raw_json = None
         if isinstance(event, Mapping):
             try:
                 raw_json = json.dumps(event)
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
+
+        if destination and destination != STRIPE_MASTER_ACCOUNT_ID:
+            billing_logger.log_event(
+                id=event.get("id") if isinstance(event, Mapping) else None,
+                action_type="checkout_session",
+                amount=logged_amount,
+                currency=currency,
+                timestamp_ms=timestamp_ms,
+                user_email=email,
+                bot_id=bot_id,
+                destination_account=destination,
+                raw_event_json=raw_json,
+                error=True,
+            )
+            _alert_mismatch(bot_id, destination, amount=logged_amount)
+            raise RuntimeError("Stripe account mismatch")
+
         billing_logger.log_event(
             id=event.get("id") if isinstance(event, Mapping) else None,
             action_type="checkout_session",
@@ -1268,8 +1306,7 @@ def create_checkout_session(
             account_id,
             timestamp_ms,
         )
-        if mismatch_error:
-            raise mismatch_error
+    return event
 
 
 __all__ = [

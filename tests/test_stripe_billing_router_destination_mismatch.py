@@ -9,9 +9,20 @@ from .test_stripe_billing_router_logging import _import_module
 def sbr(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
     monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID)
-    monkeypatch.setattr(sbr, "record_payment", lambda *a, **k: None)
-    monkeypatch.setattr(sbr, "_log_payment", lambda *a, **k: None)
-    monkeypatch.setattr(sbr, "log_billing_event", lambda *a, **k: None)
+    sbr.record_calls = []
+    monkeypatch.setattr(
+        sbr, "record_payment", lambda *a, **k: sbr.record_calls.append((a, k))
+    )
+    sbr.log_payment_calls = []
+    monkeypatch.setattr(
+        sbr, "_log_payment", lambda *a, **k: sbr.log_payment_calls.append((a, k))
+    )
+    sbr.billing_event_calls = []
+    monkeypatch.setattr(
+        sbr,
+        "log_billing_event",
+        lambda *a, **k: sbr.billing_event_calls.append((a, k)),
+    )
     monkeypatch.setattr(sbr, "_client", lambda api_key: None)
     return sbr
 
@@ -48,6 +59,9 @@ def test_charge_blocks_on_mismatch(monkeypatch, sbr):
     assert alerts == [("finance:finance_router_bot", "acct_bad", 5.0)]
     log = _get_action_log(logs, "charge")
     assert log["error"] is True and log["destination_account"] == "acct_bad"
+    assert not sbr.record_calls
+    assert not sbr.billing_event_calls
+    assert not sbr.log_payment_calls
 
 
 def test_subscription_blocks_on_mismatch(monkeypatch, sbr):
@@ -72,6 +86,9 @@ def test_subscription_blocks_on_mismatch(monkeypatch, sbr):
     assert alerts == [("finance:finance_router_bot", "acct_bad")]
     log = _get_action_log(logs, "subscription")
     assert log["error"] is True and log["destination_account"] == "acct_bad"
+    assert not sbr.record_calls
+    assert not sbr.billing_event_calls
+    assert not sbr.log_payment_calls
 
 
 def test_refund_blocks_on_mismatch(monkeypatch, sbr):
@@ -96,6 +113,9 @@ def test_refund_blocks_on_mismatch(monkeypatch, sbr):
     assert alerts == [("finance:finance_router_bot", "acct_bad", 5.0)]
     log = _get_action_log(logs, "refund")
     assert log["error"] is True and log["destination_account"] == "acct_bad"
+    assert not sbr.record_calls
+    assert not sbr.billing_event_calls
+    assert not sbr.log_payment_calls
 
 
 def test_checkout_session_blocks_on_mismatch(monkeypatch, sbr):
@@ -129,3 +149,6 @@ def test_checkout_session_blocks_on_mismatch(monkeypatch, sbr):
     assert alerts == [("finance:finance_router_bot", "acct_bad", 5.0)]
     log = _get_action_log(logs, "checkout_session")
     assert log["error"] is True and log["destination_account"] == "acct_bad"
+    assert not sbr.record_calls
+    assert not sbr.billing_event_calls
+    assert not sbr.log_payment_calls
