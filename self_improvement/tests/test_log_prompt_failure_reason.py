@@ -57,3 +57,35 @@ def test_log_prompt_attempt_records_failure_reason(tmp_path, monkeypatch):
     assert entry["m"] == 1
     # No success log should be written
     assert not (tmp_path / "success.jsonl").exists()
+
+
+def test_uuid_and_strategy_and_raw_logged(tmp_path, monkeypatch):
+    def _mock_log_path(success: bool) -> Path:
+        return tmp_path / ("success.jsonl" if success else "failure.jsonl")
+
+    monkeypatch.setattr(prompt_memory, "_log_path", _mock_log_path)
+
+    prompt = types.SimpleNamespace(
+        system="sys",
+        user="usr",
+        examples=["ex"],
+        metadata={"strategy": "alpha"},
+    )
+    prompt_memory.log_prompt_attempt(
+        prompt,
+        success=False,
+        exec_result={},
+        failure_reason="oops",
+    )
+
+    entry = json.loads((tmp_path / "failure.jsonl").read_text().splitlines()[0])
+    from uuid import UUID
+
+    UUID(entry["prompt_id"])
+    assert entry["strategy"] == "alpha"
+    assert entry["failure_reason"] == "oops"
+    assert entry["sandbox_metrics"] is None
+    assert "sys" in entry["raw_prompt"]
+
+    logs = list(prompt_memory.load_failures())
+    assert logs[0]["prompt_id"] == entry["prompt_id"]

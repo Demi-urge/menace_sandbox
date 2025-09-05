@@ -9,17 +9,18 @@ prompt executions to newline-delimited JSON files under the repository root.
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterator
+from uuid import uuid4
 
 from filelock import FileLock
+from dynamic_path_router import resolve_path
 
 from sandbox_settings import SandboxSettings
-from .init import _repo_path
 from .prompt_strategy_manager import PromptStrategyManager
 
 _settings = SandboxSettings()
 
-_strategy_stats_path = _repo_path() / "_strategy_stats.json"
+_strategy_stats_path = Path(resolve_path("_strategy_stats.json"))
 _strategy_lock = FileLock(str(_strategy_stats_path) + ".lock")
 
 
@@ -94,7 +95,7 @@ def _log_path(success: bool) -> Path:
         if success
         else _settings.prompt_failure_log_path
     )
-    return _repo_path() / filename
+    return Path(resolve_path(filename))
 
 
 def log_prompt_attempt(
@@ -136,11 +137,25 @@ def log_prompt_attempt(
     metadata = getattr(prompt, "metadata", {}) if prompt is not None else {}
     target_module = None
     patch_id = None
+    strategy = None
     if isinstance(metadata, dict):
         target_module = metadata.get("target_module") or metadata.get("module")
         patch_id = metadata.get("patch_id")
+        strategy = metadata.get("strategy")
         if not prompt_id:
-            prompt_id = metadata.get("prompt_id") or metadata.get("strategy")
+            prompt_id = metadata.get("prompt_id")
+
+    if not prompt_id:
+        prompt_id = str(uuid4())
+
+    parts: list[str] = []
+    for attr in ("system", "user"):
+        val = getattr(prompt, attr, None)
+        if val:
+            parts.append(str(val))
+    examples = list(getattr(prompt, "examples", []))
+    parts.extend(str(e) for e in examples)
+    raw_prompt = "\n".join(parts) if parts else (str(prompt) if prompt is not None else "")
 
     entry = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -148,9 +163,14 @@ def log_prompt_attempt(
         "patch_id": patch_id,
         "prompt_system": getattr(prompt, "system", ""),
         "prompt_user": getattr(prompt, "user", ""),
-        "examples": list(getattr(prompt, "examples", [])),
+        "examples": examples,
         "metadata": metadata,
         "exec_result": exec_result,
+        "prompt_id": prompt_id,
+        "strategy": strategy,
+        "failure_reason": failure_reason,
+        "sandbox_metrics": sandbox_metrics,
+        "raw_prompt": raw_prompt,
     }
     roi_delta: float | None = None
     if failure_reason is not None:
@@ -158,10 +178,8 @@ def log_prompt_attempt(
         # if ``success`` was erroneously marked True by the caller.
         success = False
 
-    if prompt_id:
-        entry["prompt_id"] = prompt_id
-        if not success:
-            record_regression(prompt_id)
+    if prompt_id and not success:
+        record_regression(prompt_id)
 
     if roi_meta is not None:
         entry["roi_meta"] = roi_meta
@@ -170,8 +188,6 @@ def log_prompt_attempt(
         if roi_delta is None and isinstance(roi_meta, dict):
             roi_delta = roi_meta.get("roi")
     if not success:
-        entry["failure_reason"] = failure_reason
-        entry["sandbox_metrics"] = sandbox_metrics
         if sandbox_metrics:
             score = sandbox_metrics.get("sandbox_score")
             if score is not None:
@@ -201,3 +217,24 @@ def log_prompt_attempt(
     with lock:
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, default=str) + "\n")
+
+
+def load_failures() -> Iterator[Dict[str, Any]]:
+    """Stream records from the prompt failure log."""
+
+    path = _log_path(False)
+    if not path.exists():
+        return iter(())
+
+    def _iter() -> Iterator[Dict[str, Any]]:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except Exception:
+                    continue
+
+    return _iter()
