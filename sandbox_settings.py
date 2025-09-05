@@ -746,6 +746,11 @@ class SandboxSettings(BaseSettings):
         env="CODEX_RETRY_DELAYS",
         description="Retry delays in seconds for Codex API calls.",
     )
+    codex_timeout: float = Field(
+        30.0,
+        env="CODEX_TIMEOUT",
+        description="Timeout in seconds for Codex API calls.",
+    )
     codex_fallback_model: str = Field(
         "gpt-3.5-turbo",
         env="CODEX_FALLBACK_MODEL",

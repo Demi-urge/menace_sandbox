@@ -13,8 +13,6 @@ import tempfile
 import py_compile
 import re
 import traceback
-import inspect
-import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -237,7 +235,7 @@ def call_codex_with_backoff(
     prompt: Prompt,
     *,
     logger: logging.Logger | None = None,
-    timeout: float = 30.0,
+    timeout: float | None = None,
 ) -> LLMResult:
     """Invoke ``llm_client.generate`` with retries and fixed backoff delays.
 
@@ -248,27 +246,18 @@ def call_codex_with_backoff(
 
     delays = _settings.codex_retry_delays
     log = logger or logging.getLogger(__name__)
+    timeout_val = timeout if timeout is not None else getattr(
+        _settings, "codex_timeout", 30.0
+    )
 
     def _attempt() -> LLMResult:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(llm_client.generate, prompt)
-            return future.result(timeout=timeout)
+            return future.result(timeout=timeout_val)
 
-    if "delays" in inspect.signature(retry_with_backoff).parameters:
-        return retry_with_backoff(
-            _attempt, attempts=len(delays), delays=delays, logger=log
-        )
-
-    last_exc: Exception | None = None
-    for idx, delay in enumerate(delays):
-        try:
-            return _attempt()
-        except Exception as exc:  # pragma: no cover - best effort logging
-            log.exception("codex call attempt %s failed", idx + 1)
-            last_exc = exc
-            if idx < len(delays) - 1:
-                time.sleep(delay)
-    raise RetryError(str(last_exc)) from last_exc
+    return retry_with_backoff(
+        _attempt, attempts=len(delays), delays=delays, logger=log
+    )
 
 
 def simplify_prompt(prompt_obj: Prompt) -> Prompt:
@@ -1326,7 +1315,6 @@ class SelfCodingEngine:
                 self.llm_client,
                 prompt_obj,
                 logger=self.logger,
-                timeout=getattr(_settings, "codex_timeout", 30.0),
             )
         except RetryError as exc:
             self._last_retry_trace = str(exc)
@@ -1340,7 +1328,6 @@ class SelfCodingEngine:
                     self.llm_client,
                     prompt_obj,
                     logger=self.logger,
-                    timeout=getattr(_settings, "codex_timeout", 30.0),
                 )
             except RetryError as exc:
                 self._last_retry_trace = str(exc)
