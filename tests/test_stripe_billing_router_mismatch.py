@@ -1,7 +1,26 @@
 from .test_stripe_billing_router_logging import _import_module
 
 
+def _stub_unified_event_bus(monkeypatch, tmp_path):
+    import dynamic_path_router
+    from dynamic_path_router import resolve_path as _orig_resolve
+
+    stub_path = tmp_path / "unified_event_bus.py"  # path-ignore
+    stub_path.write_text("class UnifiedEventBus:\n    pass\n")
+
+    def fake_resolve(name, root=None):
+        if name == "unified_event_bus.py":  # path-ignore
+            return stub_path
+        try:
+            return _orig_resolve(name, root)
+        except TypeError:
+            return _orig_resolve(name)
+
+    monkeypatch.setattr(dynamic_path_router, "resolve_path", fake_resolve)
+
+
 def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
+    _stub_unified_event_bus(monkeypatch, tmp_path)
     sbr = _import_module(monkeypatch, tmp_path)
     # Prevent any environment-derived account identifiers from influencing the
     # module under test and force ``_get_account_id`` to return the hardcoded
@@ -54,6 +73,12 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
         "record_payment_anomaly",
         lambda et, md, instr, **kw: recorded.append((et, md, instr)),
     )
+    billing_events: list[tuple[str, dict, str]] = []
+    monkeypatch.setattr(
+        sbr,
+        "record_billing_event",
+        lambda et, md, instr, **kw: billing_events.append((et, md, instr)),
+    )
 
     sbr._alert_mismatch("bot123", "acct_bad", amount=7.5)
 
@@ -73,4 +98,7 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
     assert recorded and recorded[0][0] == "stripe_account_mismatch"
     assert recorded[0][1]["bot_id"] == "bot123"
     assert recorded[0][1]["account_id"] == "acct_bad"
+    assert billing_events and billing_events[0][0] == "stripe_account_mismatch"
+    assert billing_events[0][1]["bot_id"] == "bot123"
+    assert billing_events[0][1]["account_id"] == "acct_bad"
     assert sbr.sandbox_review.is_paused("bot123")
