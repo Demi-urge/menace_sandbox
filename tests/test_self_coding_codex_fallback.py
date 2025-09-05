@@ -66,6 +66,7 @@ def make_engine(mock_llm):
     engine.knowledge_service = None
     engine.prompt_tone = "neutral"
     engine.logger = MagicMock()
+    engine.simplify_prompt = lambda p: p
     engine._last_prompt_metadata = {}
     engine._last_prompt = None
     engine._last_retry_trace = None
@@ -116,7 +117,7 @@ def test_empty_output_triggers_fallback(monkeypatch):
 
     result = engine.generate_helper("do something")
 
-    assert seen_delays == [[2, 5, 10]]
+    assert seen_delays == [[2, 5, 10], [2, 5, 10]]
     assert sleeps == [2, 5]
     assert mock_llm.generate.call_count == 4
     simple_prompt = mock_llm.generate.call_args_list[-1].args[0]
@@ -161,7 +162,7 @@ def test_malformed_output_triggers_fallback(monkeypatch):
 
     result = engine.generate_helper("do something")
 
-    assert seen_delays == [[2, 5, 10]]
+    assert seen_delays == [[2, 5, 10], [2, 5, 10]]
     assert sleeps == [2, 5]
     handle_mock.assert_called_once()
     assert result == "print('fixed')\n"

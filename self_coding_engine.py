@@ -38,6 +38,10 @@ try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .completion_validator import ValidationResult, validate_completion
+except Exception:  # pragma: no cover - fallback for flat layout
+    from completion_validator import ValidationResult, validate_completion  # type: ignore
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1341,32 +1345,37 @@ class SelfCodingEngine:
             except RetryError as exc:
                 self._last_retry_trace = str(exc)
                 result = LLMResult(raw=str(exc))
-        def _validate(output: str) -> tuple[bool, str]:
-            text = output.strip()
-            if not text:
-                return False, "empty result"
-            try:
-                ast.parse(text)
-            except Exception as exc:  # pragma: no cover - syntax error branch
-                return False, f"syntax error: {exc}"
-            return True, text
-
-        ok, checked = _validate(result.text)
-        if not ok:
-            reason = str(checked)
+        validation: ValidationResult = validate_completion(result.text)
+        if not validation.ok:
+            reason = validation.reason or "unknown"
             self.logger.warning(
-                "codex fallback", extra={"reason": reason, "description": description, "tags": ["degraded"]}
+                "codex fallback",
+                extra={"reason": reason, "description": description, "tags": ["degraded"]},
             )
             alt = codex_fallback_handler.handle(prompt_obj, reason)
-            ok, checked = _validate(alt.text)
-            if not ok:
+            alt_validation: ValidationResult = validate_completion(alt.text)
+            if alt_validation.ok:
+                self.logger.info(
+                    "codex fallback reroute succeeded", extra={"description": description}
+                )
+                result = alt
+                validation = alt_validation
+            else:
+                event = (
+                    "codex fallback queued prompt"
+                    if not alt.text
+                    else "codex fallback invalid result"
+                )
                 self.logger.warning(
-                    "codex fallback failed",
-                    extra={"reason": str(checked), "description": description, "tags": ["degraded"]},
+                    event,
+                    extra={
+                        "reason": alt_validation.reason,
+                        "description": description,
+                        "tags": ["degraded"],
+                    },
                 )
                 return _fallback()
-            result = alt
-        text = str(checked)
+        text = validation.text
         if text:
             if self.gpt_memory:
                 try:
