@@ -13,7 +13,7 @@ import math
 import platform
 import subprocess
 from sandbox_settings import SandboxSettings, load_sandbox_settings
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 try:  # optional dependency
     from scipy.stats import pearsonr, t, levene
 except Exception:  # pragma: no cover - fallback when scipy is missing
@@ -1311,7 +1311,10 @@ def main(argv: List[str] | None = None) -> None:
         action="store_false",
         dest="include_orphans",
         default=None,
-        help="skip modules listed in sandbox_data/orphan_modules.json",
+        help=(
+            "skip modules listed in "
+            f"{path_for_prompt('sandbox_data')}/orphan_modules.json"
+        ),
     )
     parser.add_argument(
         "--offline-suggestions",

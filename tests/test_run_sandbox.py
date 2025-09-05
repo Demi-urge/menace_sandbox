@@ -4,7 +4,8 @@ import sys
 import os
 from pathlib import Path
 import asyncio
-from dynamic_path_router import resolve_dir, resolve_path
+import pytest
+from dynamic_path_router import resolve_dir, resolve_path, path_for_prompt
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import types
@@ -823,3 +824,17 @@ def test_run_sandbox_cli_recursion_default(monkeypatch):
     cli.main([])
     assert capture.get("recursive_orphans") is True
     assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
+
+
+def test_cli_help_resolves_orphan_path(monkeypatch, capsys):
+    import dynamic_path_router as dpr
+
+    dpr.clear_cache()
+    monkeypatch.delenv("MENACE_ROOTS", raising=False)
+    import sandbox_runner.cli as cli
+
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    out = capsys.readouterr().out
+    expected = f"{path_for_prompt('sandbox_data')}/orphan_modules.json"
+    assert expected in out
