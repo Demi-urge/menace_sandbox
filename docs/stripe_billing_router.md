@@ -32,6 +32,7 @@ stripe:
         product_id: prod_finance_router
         price_id: price_finance_standard
         customer_id: cus_finance_default
+        account_id: acct_master
 ```
 
 Modify the configuration file or call `register_route` at start‑up to add or
@@ -170,24 +171,24 @@ following fields:
 
 Allowed secret keys are provided via the ``STRIPE_ALLOWED_SECRET_KEYS``
 environment variable (comma separated) or the ``allowed_secret_keys`` list in
-``config/stripe_billing_router.yaml``.  When a route supplies a key outside this
-set, or when a Stripe response references an account that differs from the
-configured master account, the router:
+``config/stripe_billing_router.yaml``. Routes may also include an
+``account_id`` which is cross‑checked against the configured master account.
+Before any Stripe action is executed, the router ensures the resolved
+``secret_key`` is in the allowed list and that the route's ``account_id``
+matches the master account. If either check fails the router:
 
-1. Logs the event to ``stripe_ledger`` with ``error=1`` and the offending
-   destination.
-2. Records the discrepancy in :class:`DiscrepancyDB`.
-3. Dispatches a ``critical_discrepancy`` alert.
-4. Calls ``rollback_manager.RollbackManager.auto_rollback`` for the bot.
+1. Records the discrepancy in :class:`DiscrepancyDB`.
+2. Dispatches a ``critical_discrepancy`` alert.
+3. Calls ``AutomatedRollbackManager.auto_rollback`` for the bot.
 
-Investigate these alerts by inspecting the ledger entry and discrepancy record;
-they typically indicate a misconfigured key or a compromised account.
+Investigate these alerts by inspecting the discrepancy record; they typically
+indicate a misconfigured key or account.
 
-The master account identifier is supplied via ``STRIPE_MASTER_ACCOUNT_ID`` (or a
-matching secret).  Every Stripe event must reference this account:
+The master account identifier is supplied via ``STRIPE_ACCOUNT_ID`` (or a
+matching secret):
 
 ```bash
-export STRIPE_MASTER_ACCOUNT_ID=acct_master
+export STRIPE_ACCOUNT_ID=acct_master
 ```
 
 A ``critical_discrepancy`` alert signals the automatic rollback described

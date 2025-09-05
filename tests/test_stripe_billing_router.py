@@ -29,7 +29,7 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     secrets = secrets or {
         "stripe_secret_key": "sk_live_dummy",
         "stripe_public_key": "pk_live_dummy",
-        "stripe_master_account_id": "acct_master",
+        "stripe_account_id": "acct_master",
         "stripe_allowed_secret_keys": "sk_live_dummy",
     }
     routes = {
@@ -58,12 +58,26 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     )
     sys.modules["rollback_manager"] = rb
     sys.modules["sbrpkg.rollback_manager"] = rb
+    arm = types.SimpleNamespace(
+        AutomatedRollbackManager=lambda: type(
+            "ARM",
+            (),
+            {"auto_rollback": lambda self, tag, bots: None},
+        )()
+    )
+    sys.modules["advanced_error_management"] = arm
+    sys.modules["sbrpkg.advanced_error_management"] = arm
+    dd = types.SimpleNamespace(
+        DiscrepancyDB=lambda: types.SimpleNamespace(log=lambda *a, **k: None)
+    )
+    sys.modules["discrepancy_db"] = dd
+    sys.modules["sbrpkg.discrepancy_db"] = dd
     monkeypatch.setattr(
         vsp.VaultSecretProvider, "get", lambda self, n: secrets.get(n, "")
     )
     monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
     monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
-    monkeypatch.delenv("STRIPE_MASTER_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("STRIPE_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
     sbr = _load("stripe_billing_router")
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: None)

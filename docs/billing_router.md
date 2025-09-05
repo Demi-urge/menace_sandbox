@@ -95,21 +95,21 @@ unavailable—and **must** contain the following fields:
 
 ### Master account, allowed keys and rollback alerts
 
-Set ``STRIPE_MASTER_ACCOUNT_ID`` to the platform's Stripe master account
-identifier.  Secret keys that may be used on behalf of the platform are
-enumerated via ``STRIPE_ALLOWED_SECRET_KEYS`` (comma separated) or the
-``allowed_secret_keys`` list in the routing configuration.
+Set ``STRIPE_ACCOUNT_ID`` to the platform's Stripe master account identifier.
+Secret keys that may be used on behalf of the platform are enumerated via
+``STRIPE_ALLOWED_SECRET_KEYS`` (comma separated) or the ``allowed_secret_keys``
+list in the routing configuration.
 
 ```bash
-export STRIPE_MASTER_ACCOUNT_ID=acct_master
+export STRIPE_ACCOUNT_ID=acct_master
 export STRIPE_ALLOWED_SECRET_KEYS=sk_prod_main,sk_prod_backup
 ```
 
-If an unknown key is supplied or a Stripe response references a different
-account, the router logs the event with ``error=1``, stores a record in
-``DiscrepancyDB`` and ``alert_dispatcher`` sends a ``critical_discrepancy``
-alert.  ``rollback_manager.RollbackManager.auto_rollback`` then reverts the most
-recent sandbox changes for the offending bot.
+If an unknown key is supplied or a route's ``account_id`` differs from the
+master account, the router records the discrepancy in ``DiscrepancyDB``, sends a
+``critical_discrepancy`` alert and
+``AutomatedRollbackManager.auto_rollback`` reverts the most recent sandbox
+changes for the offending bot.
 
 ### Responding to critical discrepancy alerts
 
