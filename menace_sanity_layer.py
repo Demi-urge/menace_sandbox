@@ -114,15 +114,12 @@ EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
 _INSTRUCTION_PATH = Path(resolve_path("config/billing_instructions.yaml"))
 _INSTRUCTION_OVERRIDES: Dict[str, str] | None = None
 
-# Number of times a specific payment anomaly can occur before triggering
-# corrective action.  The threshold is intentionally low to rapidly surface
-# issues such as unlogged charges.
-PAYMENT_ANOMALY_THRESHOLD = 3
+# Default threshold and hint settings; values can be overridden via the
+# configuration file.  ``PAYMENT_ANOMALY_THRESHOLD`` acts as the global fallback
+# while ``ANOMALY_THRESHOLDS`` allows per-event overrides.
+_DEFAULT_PAYMENT_ANOMALY_THRESHOLD = 3
 
-# Mapping of anomaly types to generation parameter updates when the threshold
-# is exceeded.  Each hint guides the self-coding engine to avoid repeating the
-# problematic behaviour.
-ANOMALY_HINTS: Dict[str, Dict[str, Any]] = {
+DEFAULT_ANOMALY_HINTS: Dict[str, Dict[str, Any]] = {
     "missing_charge": {"block_unlogged_charges": True},
     "missing_refund": {"block_unlogged_refunds": True},
     "missing_failure_log": {"log_stripe_failures": True},
@@ -132,6 +129,10 @@ ANOMALY_HINTS: Dict[str, Dict[str, Any]] = {
     "revenue_mismatch": {"reconcile_revenue": True},
     "account_mismatch": {"verify_stripe_account": True},
 }
+
+PAYMENT_ANOMALY_THRESHOLD = _DEFAULT_PAYMENT_ANOMALY_THRESHOLD
+ANOMALY_HINTS: Dict[str, Dict[str, Any]] = DEFAULT_ANOMALY_HINTS.copy()
+ANOMALY_THRESHOLDS: Dict[str, int] = {}
 
 # ---------------------------------------------------------------------------
 # Billing anomaly utilities
@@ -247,29 +248,61 @@ def _get_gpt_memory() -> GPTMemoryManager | None:
 def _load_instruction_overrides() -> Dict[str, str]:
     """Return mapping of event type overrides loaded from config."""
 
-    global _INSTRUCTION_OVERRIDES
+    global _INSTRUCTION_OVERRIDES, PAYMENT_ANOMALY_THRESHOLD, ANOMALY_HINTS, ANOMALY_THRESHOLDS
     if _INSTRUCTION_OVERRIDES is None:
+        data: Dict[str, Any]
         try:
             with _INSTRUCTION_PATH.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
-            _INSTRUCTION_OVERRIDES = {str(k): str(v) for k, v in data.items()}
         except FileNotFoundError:
-            _INSTRUCTION_OVERRIDES = {}
+            data = {}
         except Exception:  # pragma: no cover - best effort
             logger.exception(
                 "failed to load billing instructions", extra={"path": str(_INSTRUCTION_PATH)}
             )
-            _INSTRUCTION_OVERRIDES = {}
+            data = {}
+
+        instructions = data.get("instructions")
+        if instructions is None:
+            instructions = {k: v for k, v in data.items() if isinstance(v, str)}
+        _INSTRUCTION_OVERRIDES = {str(k): str(v) for k, v in (instructions or {}).items()}
+
+        try:
+            PAYMENT_ANOMALY_THRESHOLD = int(
+                data.get("payment_anomaly_threshold", PAYMENT_ANOMALY_THRESHOLD)
+            )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("invalid payment anomaly threshold", exc_info=True)
+
+        ANOMALY_HINTS.update(
+            {
+                str(k): dict(v)
+                for k, v in (data.get("anomaly_hints", {}) or {}).items()
+                if isinstance(v, dict)
+            }
+        )
+
+        ANOMALY_THRESHOLDS.clear()
+        for k, v in (data.get("anomaly_thresholds", {}) or {}).items():
+            try:
+                ANOMALY_THRESHOLDS[str(k)] = int(v)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("invalid anomaly threshold", extra={"event_type": k})
+
     return _INSTRUCTION_OVERRIDES
 
 
 def refresh_billing_instructions(path: Path | str | None = None) -> None:
     """Clear cached instruction overrides so they're reloaded on next use."""
 
-    global _INSTRUCTION_OVERRIDES, _INSTRUCTION_PATH
+    global _INSTRUCTION_OVERRIDES, _INSTRUCTION_PATH, PAYMENT_ANOMALY_THRESHOLD
+    global ANOMALY_HINTS, ANOMALY_THRESHOLDS
     if path is not None:
         _INSTRUCTION_PATH = Path(path)
     _INSTRUCTION_OVERRIDES = None
+    PAYMENT_ANOMALY_THRESHOLD = _DEFAULT_PAYMENT_ANOMALY_THRESHOLD
+    ANOMALY_HINTS = DEFAULT_ANOMALY_HINTS.copy()
+    ANOMALY_THRESHOLDS = {}
 
 
 def _anomaly_instruction(
@@ -552,10 +585,8 @@ def record_payment_anomaly(
                     )
             data["count"] = prev_count + 1
             mm.store(key, data, tags="billing,anomaly")
-            if (
-                data["count"] >= PAYMENT_ANOMALY_THRESHOLD
-                and prev_count < PAYMENT_ANOMALY_THRESHOLD
-            ):
+            threshold = ANOMALY_THRESHOLDS.get(event_type, PAYMENT_ANOMALY_THRESHOLD)
+            if data["count"] >= threshold and prev_count < threshold:
                 trigger_correction = True
         except Exception:  # pragma: no cover - best effort
             logger.exception("MenaceMemoryManager logging failed")
