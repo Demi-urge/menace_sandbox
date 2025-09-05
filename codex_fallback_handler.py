@@ -1,140 +1,69 @@
-"""Fallback handling for Codex operations.
+"""Simple fallback handler for Codex prompts.
 
-This module provides helper utilities to either queue failed prompts for
-later retry or reroute them to a lower cost model.  The behaviour is controlled
-via the ``CODEX_FALLBACK_STRATEGY`` environment variable which accepts either
-``"queue"`` or ``"reroute"``.  Individual calls to :func:`handle_failure` may
-override this by passing ``strategy`` as a keyword argument.
+This module provides minimal helpers used when Codex fails to produce a
+response.  Failed prompts are persisted to a JSONL file so they can be replayed
+later and, when possible, execution is rerouted to ``gpt-3.5-turbo``.
 """
 
 from __future__ import annotations
 
 import json
-import logging
-import os
 from pathlib import Path
-from typing import Any
-
-from dynamic_path_router import resolve_path
-from llm_interface import LLMResult, OpenAIProvider, Prompt
+from typing import Optional
 
 try:  # pragma: no cover - allow flat imports
-    from .sandbox_settings import SandboxSettings
+    from .llm_interface import LLMClient, Prompt
 except Exception:  # pragma: no cover - fallback for direct execution
-    from sandbox_settings import SandboxSettings  # type: ignore
-
-_settings = SandboxSettings()
-
-try:  # pragma: no cover - metrics are optional
-    from .metrics_exporter import Gauge  # type: ignore
-except Exception:  # pragma: no cover - fallback when executed directly
-    try:
-        from metrics_exporter import Gauge  # type: ignore
-    except Exception:  # pragma: no cover - metrics unavailable
-        Gauge = None  # type: ignore
+    from llm_interface import LLMClient, Prompt  # type: ignore
 
 
-logger = logging.getLogger(__name__)
-
-# Default location for the retry queue stored as JSONL
-_QUEUE_FILE = resolve_path(_settings.codex_retry_queue_path)
-# Default strategy for handling failures: "queue" or "reroute"
-_DEFAULT_STRATEGY = os.getenv("CODEX_FALLBACK_STRATEGY", "reroute").lower()
-
-# Default model for rerouted prompts
-_FALLBACK_MODEL = _settings.codex_fallback_model
-
-# Optional gauges for tracking behaviour
-_QUEUE_COUNT = (
-    Gauge("codex_retry_queue_total", "Prompts queued for Codex retry")
-    if Gauge
-    else None
-)
-_REROUTE_COUNT = (
-    Gauge("codex_reroute_total", "Prompts rerouted to alternate model")
-    if Gauge
-    else None
-)
-_REROUTE_FAILURES = (
-    Gauge("codex_reroute_failures_total", "Reroute attempts that failed")
-    if Gauge
-    else None
-)
+# Location where failed prompts are stored for later replay
+_QUEUE_FILE = Path("codex_fallback_queue.jsonl")
 
 
-def queue_for_retry(prompt: str | Prompt, *, path: Path = _QUEUE_FILE) -> None:
-    """Append *prompt* to a disk-backed retry queue."""
+def queue_failed(prompt: Prompt, reason: str, *, path: Path = _QUEUE_FILE) -> None:
+    """Persist ``prompt`` and ``reason`` as a JSONL record.
 
-    text = prompt.user if isinstance(prompt, Prompt) else str(prompt)
-    record = {"prompt": text}
+    Parameters
+    ----------
+    prompt:
+        Prompt that triggered the failure.
+    reason:
+        Explanation of why the prompt could not be processed.
+    path:
+        Optional override for the queue location, mainly used in tests.
+    """
+
+    record = {"prompt": prompt.user, "reason": reason}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
-    logger.info("queued prompt for retry", extra={"prompt": text, "queue": str(path)})
-    if _QUEUE_COUNT:
-        _QUEUE_COUNT.inc()
 
 
-def route_to_alt_model(prompt: str | Prompt, model: str = _FALLBACK_MODEL) -> LLMResult:
-    """Rerun *prompt* using an alternate model."""
+def reroute_to_gpt35(prompt: Prompt) -> str:
+    """Retry ``prompt`` using ``gpt-3.5-turbo``.
 
-    p = prompt if isinstance(prompt, Prompt) else Prompt(str(prompt))
-    try:  # Prefer router configuration if available
-        from llm_router import client_from_settings
-
-        client = client_from_settings()
-    except Exception:  # Fall back to direct OpenAI access
-        client = OpenAIProvider(model=model)
-    logger.info(
-        "rerouting prompt to alternate model",
-        extra={"model": getattr(client, "model", model)},
-    )
-    if _REROUTE_COUNT:
-        _REROUTE_COUNT.inc()
-    return client.generate(p)
-
-
-def handle_failure(
-    prompt: str | Prompt,
-    exc: Any | None = None,
-    result: LLMResult | None = None,
-    *,
-    strategy: str | None = None,
-) -> LLMResult | None:
-    """Handle a Codex failure for *prompt*.
-
-    If ``strategy`` (or ``CODEX_FALLBACK_STRATEGY``) is ``"queue"`` the prompt is
-    appended to the retry queue.  Otherwise the prompt is rerouted to an
-    alternate model.  Should rerouting fail the prompt is queued.
+    The helper returns the raw text produced by the model.
     """
 
-    logger.warning(
-        "codex failure", extra={"exception": exc, "result": getattr(result, "raw", result)}
-    )
-    mode = (strategy or _DEFAULT_STRATEGY).lower()
-    if mode == "queue":
-        queue_for_retry(prompt)
-        return None
+    client = LLMClient(model="gpt-3.5-turbo")
+    result = client.generate(prompt)
+    return result.text
+
+
+def handle(prompt: Prompt, reason: str, *, queue_path: Optional[Path] = None) -> str:
+    """Attempt to reroute ``prompt`` and queue it on persistent failure.
+
+    If rerouting raises an exception the prompt and failure ``reason`` are
+    written to the queue and an empty string is returned.
+    """
+
     try:
-        return route_to_alt_model(prompt)
-    except Exception as reroute_exc:  # pragma: no cover - network failure
-        logger.error("reroute failed; queueing prompt", exc_info=reroute_exc)
-        if _REROUTE_FAILURES:
-            _REROUTE_FAILURES.inc()
-        queue_for_retry(prompt)
-        return None
+        return reroute_to_gpt35(prompt)
+    except Exception:
+        queue_failed(prompt, reason, path=queue_path or _QUEUE_FILE)
+        return ""
 
 
-def handle(prompt: str | Prompt, reason: str, *, strategy: str | None = None) -> LLMResult | None:
-    """Queue or reroute *prompt* because of *reason*.
+__all__ = ["queue_failed", "reroute_to_gpt35", "handle"]
 
-    This wrapper emits a log entry so upstream components can detect when the
-    system is operating in a degraded state.  It then delegates to
-    :func:`handle_failure` for the actual queue or reroute behaviour.
-    """
-
-    logger.warning("codex fallback engaged", extra={"reason": reason})
-    return handle_failure(prompt, exc=reason, strategy=strategy)
-
-
-__all__ = ["handle_failure", "queue_for_retry", "route_to_alt_model", "handle"]
