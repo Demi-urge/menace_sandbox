@@ -51,6 +51,9 @@ def capture_anomalies(monkeypatch, tmp_path):
     monkeypatch.setattr(sw, "ANOMALY_TRAIL", AuditTrail(str(log_path), handler=handler))
     resolve_path("config/stripe_watchdog.yaml")
     monkeypatch.setattr(sw.alert_dispatcher, "dispatch_alert", lambda *a, **k: None)
+    monkeypatch.setattr(
+        sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None
+    )
 
     return events, samples
 
