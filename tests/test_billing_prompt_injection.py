@@ -62,8 +62,9 @@ def test_billing_instructions_in_prompt(monkeypatch):
     engine._extract_statements = lambda *a, **k: []
     engine._apply_prompt_style = lambda *a, **k: None
     engine._fetch_retry_trace = lambda meta: ""
+    engine.simplify_prompt = sce.simplify_prompt
 
-    monkeypatch.setattr(sce, "call_codex_with_backoff", lambda *a, **k: LLMResult())
+    monkeypatch.setattr(sce, "call_codex_with_backoff", lambda *a, **k: LLMResult(text="pass"))
     monkeypatch.setattr(sce, "get_feedback", lambda *a, **k: [])
     monkeypatch.setattr(sce, "get_error_fixes", lambda *a, **k: [])
     monkeypatch.setattr(sce, "recent_feedback", lambda *a, **k: "")
