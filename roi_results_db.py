@@ -29,6 +29,7 @@ try:  # pragma: no cover - compute default ROI results DB path
 except FileNotFoundError:  # pragma: no cover - file may not exist yet
     _ROI_RESULTS_DB_PATH = resolve_path(".") / "roi_results.db"
 
+
 @dataclass
 class ROIResult:
     """Aggregate ROI metrics for a workflow evaluation."""
@@ -309,7 +310,8 @@ class ROIResultsDB:
 
         cur = self.conn.cursor()
         cur.execute(
-            "SELECT moving_avg_roi, last_roi, non_positive_streak FROM workflow_chain_stats WHERE workflow_id=?",
+            "SELECT moving_avg_roi, last_roi, non_positive_streak "
+            "FROM workflow_chain_stats WHERE workflow_id=?",
             (workflow_id,),
         )
         row = cur.fetchone()
@@ -334,10 +336,24 @@ class ROIResultsDB:
 
         cur = self.conn.cursor()
         cur.execute(
-            "SELECT workflow_id, non_positive_streak FROM workflow_chain_stats WHERE non_positive_streak >= ?",
+            "SELECT workflow_id, non_positive_streak "
+            "FROM workflow_chain_stats WHERE non_positive_streak >= ?",
             (min_streak,),
         )
         return {str(w): int(s) for w, s in cur.fetchall()}
+
+    # ------------------------------------------------------------------
+    def projected_revenue(self) -> float:
+        """Return total projected revenue recorded in the ROI results table."""
+
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='roi_results'",
+        )
+        table = "roi_results" if cur.fetchone() else "workflow_results"
+        cur.execute(f"SELECT SUM(roi_gain) FROM {table}")
+        row = cur.fetchone()
+        return float(row[0] or 0.0)
 
     # ------------------------------------------------------------------
     def log_module_delta(

@@ -10,7 +10,7 @@ class _StubDBRouter:
         self.path = local_path
 
     def get_connection(self, _name, operation: str | None = None):
-        return sqlite3.connect(self.path)
+        return sqlite3.connect(self.path)  # noqa: SQL001
 
 
 sys.modules.setdefault(
@@ -23,8 +23,8 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault("db_router", sys.modules["menace_sandbox.db_router"])
 
-from menace_sandbox.db_router import init_db_router
-from menace_sandbox.roi_results_db import ROIResultsDB, module_impact_report
+from menace_sandbox.db_router import init_db_router  # noqa: E402
+from menace_sandbox.roi_results_db import ROIResultsDB, module_impact_report  # noqa: E402
 
 
 def test_roi_results_db_add_and_report(tmp_path):
@@ -69,7 +69,10 @@ def test_roi_results_db_add_and_report(tmp_path):
     )
 
     cur = db.conn.cursor()
-    cur.execute("SELECT workflow_id, run_id, module_deltas, failure_reason FROM workflow_results WHERE run_id='r2'")
+    cur.execute(
+        "SELECT workflow_id, run_id, module_deltas, failure_reason "
+        "FROM workflow_results WHERE run_id='r2'",
+    )
     wf, run, deltas_json, failure_reason = cur.fetchone()
     assert wf == "wf"
     assert run == "r2"
@@ -84,3 +87,4 @@ def test_roi_results_db_add_and_report(tmp_path):
     assert report["regressed"]["beta"]["roi_delta"] == pytest.approx(-0.1)
     assert report["regressed"]["beta"]["success_rate"] == pytest.approx(0.5)
 
+    assert db.projected_revenue() == pytest.approx(2.0)
