@@ -68,7 +68,7 @@ def _build_engine(monkeypatch, tmp_path, metrics_db, tracker):
     repo.mkdir()
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    mod_path = repo / "a.py"
+    mod_path = repo / resolve_path("a.py")
     mod_path.write_text("print('hi')\n")
 
     integrator = _load_integrator(repo, data_dir)
@@ -126,7 +126,10 @@ def test_metrics_db_failure(monkeypatch, tmp_path):
         integrator(eng, [str(mod)])
 
     assert "db fail" in str(exc.value)
-    assert any("metrics db logging failed" in r[1] and "a.py" in r[1] for r in logger.records)
+    assert any(
+        "metrics db logging failed" in r[1] and str(resolve_path("a.py")) in r[1]
+        for r in logger.records
+    )
 
 
 def test_tracker_failure(monkeypatch, tmp_path):
