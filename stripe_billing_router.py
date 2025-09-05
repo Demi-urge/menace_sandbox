@@ -24,6 +24,7 @@ from dynamic_path_router import resolve_path
 from billing import billing_logger
 from billing.billing_ledger import record_payment
 from billing.billing_log_db import log_billing_event
+from billing.stripe_ledger import StripeLedger
 from discrepancy_db import DiscrepancyDB
 from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
@@ -37,6 +38,25 @@ except Exception as exc:  # pragma: no cover - optional dependency
     logging.getLogger(__name__).warning("stripe library unavailable: %s", exc)
 
 logger = logging.getLogger(__name__)
+
+_STRIPE_LEDGER = StripeLedger()
+
+
+def _log_payment(
+    action: str,
+    bot_id: str,
+    amount: float,
+    currency: str,
+    email: Optional[str],
+    account_id: str,
+    ts: int,
+) -> None:
+    """Persist a payment event to the Stripe ledger."""
+
+    try:  # pragma: no cover - best effort logging
+        _STRIPE_LEDGER.log_event(action, bot_id, amount, currency, email, account_id, ts)
+    except Exception:
+        logger.exception("failed to log payment action '%s' for bot '%s'", action, bot_id)
 
 
 def log_critical_discrepancy(message: str, bot_id: str) -> None:
@@ -477,11 +497,28 @@ def charge(
     api_key = route["secret_key"]
     client = _client(api_key)
 
+    account_id = ""
+    try:  # pragma: no cover - best effort
+        acct = stripe.Account.retrieve(api_key=api_key)
+        if isinstance(acct, Mapping):
+            account_id = str(acct.get("id") or "")
+    except Exception:  # pragma: no cover - best effort
+        account_id = ""
+
     price = price_id or route.get("price_id")
     customer = route.get("customer_id")
     description = description or route.get("product_id", "")
     currency = route.get("currency", "usd")
     user_email = route.get("user_email")
+    if customer:
+        try:  # pragma: no cover - best effort
+            cust_obj = stripe.Customer.retrieve(customer, api_key=api_key)
+            if isinstance(cust_obj, Mapping):
+                possible_email = cust_obj.get("email")
+                if possible_email:
+                    user_email = str(possible_email)
+        except Exception:
+            pass
 
     timestamp_ms = int(time.time() * 1000)
     event: dict[str, Any] | None = None
@@ -631,6 +668,15 @@ def charge(
                 stripe_key=api_key,
                 ts=datetime.utcnow().isoformat(),
             )
+        _log_payment(
+            "charge",
+            bot_id,
+            amt if amt is not None else 0.0,
+            currency,
+            email,
+            account_id,
+            timestamp_ms,
+        )
 
 
 # Backward compatibility
@@ -695,8 +741,25 @@ def create_subscription(
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
+    account_id = ""
+    try:  # pragma: no cover - best effort
+        acct = stripe.Account.retrieve(api_key=api_key)
+        if isinstance(acct, Mapping):
+            account_id = str(acct.get("id") or "")
+    except Exception:  # pragma: no cover - best effort
+        account_id = ""
     price = price_id or route.get("price_id")
     customer = customer_id or route.get("customer_id")
+    email = route.get("user_email")
+    if customer:
+        try:  # pragma: no cover - best effort
+            cust_obj = stripe.Customer.retrieve(customer, api_key=api_key)
+            if isinstance(cust_obj, Mapping):
+                possible_email = cust_obj.get("email")
+                if possible_email:
+                    email = str(possible_email)
+        except Exception:
+            pass
     if not price or not customer:
         logger.error(
             "price_id and customer_id are required for subscriptions for bot '%s'",
@@ -714,7 +777,6 @@ def create_subscription(
         return event
     finally:
         currency = route.get("currency")
-        email = route.get("user_email")
         destination = None
         if isinstance(event, Mapping):
             destination = (
@@ -730,22 +792,6 @@ def create_subscription(
                 raw_json = json.dumps(event)
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
-
-        if event is not None and customer:
-            try:
-                cust = (
-                    client.Customer.retrieve(customer)
-                    if client
-                    else stripe.Customer.retrieve(customer, api_key=api_key)
-                )
-                possible_email = None
-                if isinstance(cust, Mapping):
-                    possible_email = cust.get("email")
-                if possible_email:
-                    email = possible_email
-            except Exception:  # pragma: no cover - best effort
-                pass
-
         billing_logger.log_event(
             id=event.get("id") if isinstance(event, Mapping) else None,
             action_type="subscription",
@@ -792,6 +838,15 @@ def create_subscription(
                 stripe_key=api_key,
                 ts=datetime.utcnow().isoformat(),
             )
+        _log_payment(
+            "subscription",
+            bot_id,
+            0.0,
+            currency,
+            email,
+            account_id,
+            timestamp_ms,
+        )
 
 
 def refund(
@@ -808,6 +863,13 @@ def refund(
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
+    account_id = ""
+    try:  # pragma: no cover - best effort
+        acct = stripe.Account.retrieve(api_key=api_key)
+        if isinstance(acct, Mapping):
+            account_id = str(acct.get("id") or "")
+    except Exception:  # pragma: no cover - best effort
+        account_id = ""
     refund_params: dict[str, Any] = {"payment_intent": payment_intent_id, **params}
     if amount is not None:
         try:
@@ -822,6 +884,17 @@ def refund(
                 "amount must be a positive, non-zero float for bot '%s'", bot_id
             )
             raise ValueError("amount must be a positive, non-zero float")
+    customer = route.get("customer_id")
+    email = route.get("user_email")
+    if customer:
+        try:  # pragma: no cover - best effort
+            cust_obj = stripe.Customer.retrieve(customer, api_key=api_key)
+            if isinstance(cust_obj, Mapping):
+                possible_email = cust_obj.get("email")
+                if possible_email:
+                    email = str(possible_email)
+        except Exception:
+            pass
     timestamp_ms = int(time.time() * 1000)
     event: dict[str, Any] | None = None
     try:
@@ -832,7 +905,6 @@ def refund(
         return event
     finally:
         currency = route.get("currency")
-        email = route.get("user_email")
         destination = None
         logged_amount: float | None = None
         if isinstance(event, Mapping):
@@ -885,13 +957,23 @@ def refund(
             stripe_key=api_key,
             ts=datetime.utcnow().isoformat(),
         )
+        _log_payment(
+            "refund",
+            bot_id,
+            amount if amount is not None else 0.0,
+            currency,
+            email,
+            account_id,
+            timestamp_ms,
+        )
 
 
 def create_checkout_session(
     bot_id: str,
-    session_params: Mapping[str, Any],
+    line_items: list[Mapping[str, Any]],
     *,
     overrides: Optional[Mapping[str, str]] = None,
+    **params: Any,
 ) -> dict[str, Any]:
     """Create a Stripe Checkout session for the given bot."""
 
@@ -899,20 +981,37 @@ def create_checkout_session(
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
-    params = dict(session_params)
-    if "customer" not in params and route.get("customer_id"):
-        params["customer"] = route["customer_id"]
+    account_id = ""
+    try:  # pragma: no cover - best effort
+        acct = stripe.Account.retrieve(api_key=api_key)
+        if isinstance(acct, Mapping):
+            account_id = str(acct.get("id") or "")
+    except Exception:  # pragma: no cover - best effort
+        account_id = ""
+    final_params: dict[str, Any] = {"line_items": list(line_items), **params}
+    if "customer" not in final_params and route.get("customer_id"):
+        final_params["customer"] = route["customer_id"]
+    email = route.get("user_email")
+    if final_params.get("customer"):
+        try:  # pragma: no cover - best effort
+            cust_obj = stripe.Customer.retrieve(final_params["customer"], api_key=api_key)
+            if isinstance(cust_obj, Mapping):
+                possible_email = cust_obj.get("email")
+                if possible_email:
+                    email = str(possible_email)
+        except Exception:
+            pass
+    amount_param = final_params.get("amount")
     timestamp_ms = int(time.time() * 1000)
     event: dict[str, Any] | None = None
     try:
         if client:
-            event = client.checkout.Session.create(**params)
+            event = client.checkout.Session.create(**final_params)
         else:
-            event = stripe.checkout.Session.create(api_key=api_key, **params)
+            event = stripe.checkout.Session.create(api_key=api_key, **final_params)
         return event
     finally:
         currency = route.get("currency")
-        email = route.get("user_email")
         destination = None
         logged_amount: float | None = None
         if isinstance(event, Mapping):
@@ -968,6 +1067,15 @@ def create_checkout_session(
             destination_account=destination,
             stripe_key=api_key,
             ts=datetime.utcnow().isoformat(),
+        )
+        _log_payment(
+            "checkout",
+            bot_id,
+            float(amount_param) if amount_param is not None else 0.0,
+            currency,
+            email,
+            account_id,
+            timestamp_ms,
         )
 
 
