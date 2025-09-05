@@ -117,13 +117,17 @@ def test_codex_fallback_queue_on_malformed(monkeypatch):
     engine = make_engine(mock_llm, monkeypatch)
 
     queue_mock = MagicMock()
-    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "queue_for_later", queue_mock)
+    monkeypatch.setattr(
+        self_coding_engine.codex_fallback_handler, "queue_for_retry", queue_mock
+    )
 
-    def handle_failure(prompt, result, reason):
-        self_coding_engine.codex_fallback_handler.queue_for_later(prompt)
+    def handle_failure(prompt, exc=None, result=None):
+        self_coding_engine.codex_fallback_handler.queue_for_retry(prompt)
         return None
 
-    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle_failure", handle_failure)
+    monkeypatch.setattr(
+        self_coding_engine.codex_fallback_handler, "handle_failure", handle_failure
+    )
     patch_history(monkeypatch)
 
     engine.generate_helper("do something")
