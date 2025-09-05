@@ -155,11 +155,29 @@ class PromptStrategyManager:
 
     # ------------------------------------------------------------------
     def record_failure(
-        self, strategy: str | None = None, failure_reason: str | None = None
+        self,
+        strategy: str | None = None,
+        failure_reason: str | None = None,
+        roi_delta: float | None = None,
     ) -> str | None:
-        """Backward compatible failure recording helper."""
+        """Record a failed attempt and return the next strategy.
 
-        forced = self.ingest(strategy=strategy, failure_reason=failure_reason, roi_delta=-1.0)
+        Parameters
+        ----------
+        strategy:
+            The strategy that was executed.
+        failure_reason:
+            Optional description of why the attempt failed.
+        roi_delta:
+            ROI change produced by the attempt. Defaults to ``-1.0`` when
+            ``None``.
+        """
+
+        forced = self.ingest(
+            strategy=strategy,
+            failure_reason=failure_reason,
+            roi_delta=-1.0 if roi_delta is None else roi_delta,
+        )
         if forced:
             return forced
         return self.next()
