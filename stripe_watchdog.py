@@ -12,6 +12,7 @@ import yaml
 from dynamic_path_router import resolve_path
 
 import alert_dispatcher
+from roi_results_db import ROIResultsDB
 
 try:  # pragma: no cover - optional dependency
     from vault_secret_provider import VaultSecretProvider
@@ -158,6 +159,40 @@ def _charge_email(charge: Any) -> str | None:
     return getattr(bd, "email", None)
 
 
+def _aggregate_net_revenue(api_key: str) -> float:
+    """Return total Stripe revenue net of refunds in dollars."""
+
+    if stripe is None:
+        return 0.0
+    try:  # pragma: no cover - network issues
+        charges = stripe.Charge.list(limit=100, api_key=api_key)
+        refunds = stripe.Refund.list(limit=100, api_key=api_key)
+    except Exception:
+        logger.exception("Stripe API request for revenue aggregation failed")
+        return 0.0
+
+    total = 0.0
+    for ch in _iter(charges):
+        amount = getattr(ch, "amount", None)
+        status = getattr(ch, "status", None)
+        if status is None and isinstance(ch, dict):
+            status = ch.get("status")
+        if amount is None and isinstance(ch, dict):
+            amount = ch.get("amount")
+        if status != "succeeded" or not isinstance(amount, (int, float)):
+            continue
+        total += float(amount)
+
+    for rf in _iter(refunds):
+        amount = getattr(rf, "amount", None)
+        if amount is None and isinstance(rf, dict):
+            amount = rf.get("amount")
+        if isinstance(amount, (int, float)):
+            total -= float(amount)
+
+    return total / 100.0
+
+
 def check_events() -> List[dict[str, Any]]:
     """Return anomalies for Stripe charges missing from the billing logs."""
 
@@ -205,6 +240,47 @@ def check_events() -> List[dict[str, Any]]:
     else:
         logger.info("All Stripe charges logged")
     return anomalies
+
+
+def check_revenue_projection(tolerance: float = 0.1) -> dict[str, float] | None:
+    """Compare Stripe net revenue against projected revenue.
+
+    ``tolerance`` is treated as a relative fraction; differences greater than
+    ``tolerance`` of the projected revenue are flagged as anomalies.
+    """
+
+    api_key = load_api_key()
+    if not api_key or stripe is None:
+        return None
+
+    net_revenue = _aggregate_net_revenue(api_key)
+    db = ROIResultsDB()
+    projected = db.projected_revenue()
+    if projected <= 0:
+        logger.info("No projected revenue available")
+        return None
+
+    diff = net_revenue - projected
+    if abs(diff) > tolerance * projected:
+        anomaly = {
+            "net_revenue": net_revenue,
+            "projected_revenue": projected,
+            "difference": diff,
+        }
+        logger.error("Stripe revenue mismatch: %s", anomaly)
+        try:  # pragma: no cover - best effort
+            alert_dispatcher.dispatch_alert(
+                "stripe_revenue_mismatch", 5, json.dumps(anomaly)
+            )
+        except Exception:
+            logger.exception("alert dispatch failed for revenue mismatch")
+        return anomaly
+
+    logger.info(
+        "Stripe revenue matches projections within %.0f%%",
+        tolerance * 100,
+    )
+    return None
 
 
 def main() -> None:
