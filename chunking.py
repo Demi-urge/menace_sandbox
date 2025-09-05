@@ -37,7 +37,12 @@ if tiktoken is not None:  # pragma: no branch - simple import logic
 # Directory used for caching summaries of individual code snippets.  Sharing the
 # directory with :class:`ChunkSummaryCache` keeps cache files in one place and
 # mirrors the behaviour of the removed ``chunk_summarizer`` module.
-SNIPPET_CACHE_DIR = resolve_path("chunk_summary_cache")
+try:
+    SNIPPET_CACHE_DIR = resolve_path("chunk_summary_cache")
+except FileNotFoundError:
+    from dynamic_path_router import get_project_root
+
+    SNIPPET_CACHE_DIR = get_project_root() / "chunk_summary_cache"
 
 
 def _ensure_snippet_cache_dir() -> None:
@@ -315,7 +320,7 @@ _SETTINGS = SandboxSettings() if SandboxSettings else None
 # be overridden by reassigning ``CHUNK_CACHE`` or by providing a custom cache
 # instance to :func:`get_chunk_summaries`.
 CHUNK_CACHE = ChunkSummaryCache(
-    (_SETTINGS.chunk_summary_cache_dir if _SETTINGS else Path("chunk_summary_cache"))
+    (_SETTINGS.chunk_summary_cache_dir if _SETTINGS else SNIPPET_CACHE_DIR)
 )
 
 # Per-path locks to avoid duplicate work when multiple threads request summaries
