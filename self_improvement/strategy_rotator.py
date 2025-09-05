@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
 from ..sandbox_settings import SandboxSettings
 from .prompt_strategy_manager import (
     KEYWORD_MAP as BASE_KEYWORD_MAP,
@@ -24,7 +25,11 @@ TEMPLATES = [
     "unit_test_rewrite",
 ]
 
-STATE_PATH = Path(SandboxSettings().sandbox_data_dir) / "strategy_rotator_state.json"
+STATE_PATH = Path(
+    resolve_path(
+        Path(SandboxSettings().sandbox_data_dir) / "strategy_rotator_state.json"
+    )
+)
 settings = SandboxSettings()
 manager = PromptStrategyManager(
     strategies=TEMPLATES, state_path=STATE_PATH, keyword_map=KEYWORD_MAP
