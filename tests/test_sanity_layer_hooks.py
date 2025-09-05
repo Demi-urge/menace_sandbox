@@ -105,9 +105,47 @@ def test_record_event_logs_instruction_and_tags(monkeypatch):
 
     assert calls
     instruction, payload, tags = calls[0]
-    assert "Avoid generating bots that make Stripe charges" in instruction
+    assert msl.EVENT_TYPE_INSTRUCTIONS["missing_charge"] in instruction
     assert payload == {
         "event_type": "missing_charge",
         "metadata": {"charge_id": "ch_2"},
     }
     assert msl.FEEDBACK in tags and msl.ERROR_FIX in tags and "missing_charge" in tags
+
+
+def test_repeated_anomalies_trigger_param_update(monkeypatch):
+    mm_storage = {}
+
+    class DummyMM:
+        def query(self, key, limit):
+            if key in mm_storage:
+                return [types.SimpleNamespace(data=json.dumps(mm_storage[key]))]
+            return []
+
+        def store(self, key, data, tags=""):
+            mm_storage[key] = data
+
+    class DummyEngine:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def update_generation_params(self, meta):
+            self.calls.append(meta)
+
+    monkeypatch.setattr(msl, "_get_memory_manager", lambda: DummyMM())
+    monkeypatch.setattr(msl, "_DISCREPANCY_DB", None)
+    monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
+    monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
+
+    engine = DummyEngine()
+    for _ in range(msl.PAYMENT_ANOMALY_THRESHOLD):
+        msl.record_payment_anomaly(
+            "missing_charge",
+            {"charge_id": "ch"},
+            self_coding_engine=engine,
+        )
+
+    assert mm_storage["billing:missing_charge"]["count"] == msl.PAYMENT_ANOMALY_THRESHOLD
+    assert engine.calls == [
+        {"block_unlogged_charges": True, "event_type": "missing_charge"}
+    ]
