@@ -97,7 +97,10 @@ DEFAULT_ALLOWED_WEBHOOKS = {
 
 #: Default log file for anomaly summaries.
 _LOG_DIR = resolve_path("finance_logs")
-ANOMALY_LOG = _LOG_DIR / "stripe_watchdog.log"
+#: JSON lines file used for anomaly audit records.
+ANOMALY_LOG = _LOG_DIR / "stripe_watchdog_audit.jsonl"
+#: Marker storing the last successful run timestamp.
+_LAST_RUN_FILE = _LOG_DIR / "stripe_watchdog_last_run.txt"
 _MAX_LOG_BYTES = 5 * 1024 * 1024  # 5MB threshold for rotation
 
 
@@ -115,6 +118,25 @@ def _prepare_anomaly_log() -> None:
 
 _prepare_anomaly_log()
 ANOMALY_TRAIL = AuditTrail(str(ANOMALY_LOG))
+
+
+def _read_last_run_ts() -> int:
+    """Return the timestamp of the last successful watchdog run."""
+
+    try:
+        return int(_LAST_RUN_FILE.read_text().strip())
+    except Exception:
+        return 0
+
+
+def _write_last_run_ts(ts: int) -> None:
+    """Persist the timestamp of the latest watchdog run."""
+
+    try:
+        _LAST_RUN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _LAST_RUN_FILE.write_text(str(int(ts)))
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("Failed to update last-run marker")
 
 
 def _maybe_rotate_anomaly_log() -> None:
@@ -179,17 +201,22 @@ def load_api_key() -> Optional[str]:
     """Return the Stripe API key.
 
     The key is sourced from :mod:`stripe_billing_router`'s
-    :data:`STRIPE_SECRET_KEY` constant or via ``VaultSecretProvider`` when
-    available.  This avoids relying on environment variables so the watchdog
-    can run in more restricted environments.
+    :data:`STRIPE_SECRET_KEY` constant, the ``STRIPE_SECRET_KEY`` environment
+    variable or via ``VaultSecretProvider`` when available.  When retrieved the
+    key is also assigned to ``stripe.api_key``.
     """
 
-    key = STRIPE_SECRET_KEY
+    key = STRIPE_SECRET_KEY or os.getenv("STRIPE_SECRET_KEY")
     if not key and VaultSecretProvider:
         try:  # pragma: no cover - best effort
             key = VaultSecretProvider().get("stripe_secret_key")
         except Exception:
             key = None
+    if key and stripe is not None:
+        try:  # pragma: no cover - best effort
+            stripe.api_key = key
+        except Exception:
+            logger.exception("Failed to set Stripe API key")
     if not key:
         logger.error("Stripe API key not configured")
     return key
@@ -328,8 +355,10 @@ def load_local_ledger(start_ts: int, end_ts: int) -> List[Dict[str, Any]]:
 # Billing logs --------------------------------------------------------------
 
 
-def load_billing_logs(start_ts: int, end_ts: int) -> List[Dict[str, Any]]:
-    """Return ``billing_logs`` rows between ``start_ts`` and ``end_ts``."""
+def load_billing_logs(
+    start_ts: int, end_ts: int, action: str = "charge"
+) -> List[Dict[str, Any]]:
+    """Return ``billing_logs`` rows for ``action`` between ``start_ts`` and ``end_ts``."""
 
     if BillingLogDB is None:
         return []
@@ -340,7 +369,7 @@ def load_billing_logs(start_ts: int, end_ts: int) -> List[Dict[str, Any]]:
         db = BillingLogDB()
         cur = db.conn.execute(
             "SELECT amount, ts FROM billing_logs WHERE action = ? AND ts >= ? AND ts < ?",
-            ("charge", start_iso, end_iso),
+            (action, start_iso, end_iso),
         )
         for amount, ts in cur.fetchall():
             try:
@@ -440,17 +469,40 @@ def detect_missing_charges(
 def detect_missing_refunds(
     refunds: Iterable[dict],
     ledger: List[Dict[str, Any]],
+    billing_logs: List[Dict[str, Any]] | None = None,
     *,
     write_codex: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Return Stripe refunds not present in ``ledger``."""
+    """Return Stripe refunds absent from the ledger and billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "refund"}
+    billing_index: Dict[float, List[int]] = {}
+    if billing_logs:
+        for rec in billing_logs:
+            amt = rec.get("amount")
+            ts = rec.get("timestamp")
+            if isinstance(amt, (int, float)) and isinstance(ts, (int, float)):
+                billing_index.setdefault(round(float(abs(amt)), 2), []).append(int(ts))
+
     anomalies: List[Dict[str, Any]] = []
     for refund in refunds:
         rid = str(refund.get("id"))
         if rid in ledger_ids:
             continue
+        created = refund.get("created")
+        created_sec = int(created) if isinstance(created, (int, float)) else None
+        amt = refund.get("amount")
+        amount_dollars = (
+            round(float(abs(amt)) / 100.0, 2) if isinstance(amt, (int, float)) else None
+        )
+        if (
+            created_sec is not None
+            and amount_dollars is not None
+            and amount_dollars in billing_index
+        ):
+            ts_list = billing_index[amount_dollars]
+            if any(abs(created_sec - ts) <= 300 for ts in ts_list):
+                continue
         anomaly = {
             "type": "missing_refund",
             "refund_id": rid,
@@ -465,18 +517,32 @@ def detect_missing_refunds(
 def detect_failed_events(
     events: Iterable[dict],
     ledger: List[Dict[str, Any]],
+    billing_logs: List[Dict[str, Any]] | None = None,
     *,
     write_codex: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Return failed payment events missing from the ledger."""
+    """Return failed payment events missing from the ledger and billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "failed"}
+    billing_ts: List[int] = []
+    if billing_logs:
+        for rec in billing_logs:
+            ts = rec.get("timestamp")
+            if isinstance(ts, (int, float)):
+                billing_ts.append(int(ts))
+
     anomalies: List[Dict[str, Any]] = []
     for event in events:
         if event.get("type") not in {"charge.failed", "payment_intent.payment_failed"}:
             continue
         eid = str(event.get("id"))
         if eid in ledger_ids:
+            continue
+        created = event.get("created")
+        created_sec = int(created) if isinstance(created, (int, float)) else None
+        if created_sec is not None and any(
+            abs(created_sec - ts) <= 300 for ts in billing_ts
+        ):
             continue
         anomaly = {
             "type": "missing_failure_log",
@@ -736,7 +802,7 @@ def check_events(hours: int = 1, *, write_codex: bool = False) -> List[Dict[str,
     check_webhook_endpoints(api_key, write_codex=write_codex)
     # Load the entire ledger window; many tests use historical timestamps.
     ledger = load_local_ledger(0, end_ts)
-    billing_logs = load_billing_logs(0, end_ts)
+    billing_logs = load_billing_logs(0, end_ts, action="charge")
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     anomalies = detect_missing_charges(
         charges, ledger, billing_logs, write_codex=write_codex
@@ -805,21 +871,30 @@ def main(argv: Optional[List[str]] = None) -> None:
                 logger.error("Invalid --since value: %s", args.since)
                 return
     else:
-        start_ts = end_ts - 3600
+        start_ts = _read_last_run_ts() or end_ts - 3600
 
     ANOMALY_LOG = Path(args.audit_log)
     ledger = load_local_ledger(start_ts, end_ts)
-    billing_logs = load_billing_logs(start_ts, end_ts)
+    charge_logs = load_billing_logs(start_ts, end_ts, action="charge")
+    refund_logs = load_billing_logs(start_ts, end_ts, action="refund")
+    failed_logs = load_billing_logs(start_ts, end_ts, action="failed")
 
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
     events = fetch_recent_events(api_key, start_ts, end_ts)
 
-    detect_missing_charges(charges, ledger, billing_logs, write_codex=args.write_codex)
-    detect_missing_refunds(refunds, ledger, write_codex=args.write_codex)
-    detect_failed_events(events, ledger, write_codex=args.write_codex)
+    detect_missing_charges(
+        charges, ledger, charge_logs, write_codex=args.write_codex
+    )
+    detect_missing_refunds(
+        refunds, ledger, refund_logs, write_codex=args.write_codex
+    )
+    detect_failed_events(
+        events, ledger, failed_logs, write_codex=args.write_codex
+    )
     check_webhook_endpoints(api_key, write_codex=args.write_codex)
     compare_revenue_window(start_ts, end_ts, write_codex=args.write_codex)
+    _write_last_run_ts(end_ts)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
