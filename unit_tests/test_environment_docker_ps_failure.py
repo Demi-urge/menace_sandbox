@@ -2,13 +2,12 @@ import importlib.util
 import pathlib
 import types
 import sys
-
-import pytest
+from dynamic_path_router import resolve_path
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
     "sandbox_runner.environment",
-    ROOT / "sandbox_runner" / "environment.py",
+    resolve_path("sandbox_runner/environment.py"),
 )
 env = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -64,6 +63,8 @@ def test_docker_ps_failure_logged(monkeypatch):
     env._cleanup_pools()
 
     assert any(
-        level == "error" and "failed to list stale sandbox containers" in msg and "simulated failure" in msg
+        level == "error"
+        and "failed to list stale sandbox containers" in msg
+        and "simulated failure" in msg
         for level, msg in dummy_logger.records
     )
