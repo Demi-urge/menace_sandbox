@@ -16,6 +16,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Mapping, Optional
 import hashlib
 
@@ -56,6 +57,25 @@ logger = logging.getLogger(__name__)
 
 _STRIPE_LEDGER = StripeLedger()
 
+# Billing instruction overrides used by :mod:`menace_sanity_layer`.  The
+# instructions are cached within that module so we monitor the config file and
+# trigger a refresh when it changes.
+_BILLING_INSTRUCTIONS_PATH = Path(resolve_path("config/billing_instructions.yaml"))
+_BILLING_INSTRUCTIONS_MTIME = 0.0
+
+
+def _refresh_instruction_cache() -> None:
+    """Reload cached billing instructions when the config file changes."""
+
+    global _BILLING_INSTRUCTIONS_MTIME
+    try:
+        mtime = _BILLING_INSTRUCTIONS_PATH.stat().st_mtime
+    except FileNotFoundError:
+        mtime = 0.0
+    if mtime != _BILLING_INSTRUCTIONS_MTIME:
+        menace_sanity_layer.refresh_billing_instructions(_BILLING_INSTRUCTIONS_PATH)
+        _BILLING_INSTRUCTIONS_MTIME = mtime
+
 
 def _hash_api_key(key: str) -> str:
     """Return a non-reversible identifier for a Stripe API key."""
@@ -85,6 +105,7 @@ def _log_payment(
 
 def log_critical_discrepancy(bot_id: str, message: str) -> None:
     """Record a critical discrepancy, alert, and rollback."""
+    _refresh_instruction_cache()
     record_payment_anomaly(
         "critical_discrepancy",
         {"bot_id": bot_id, "message": message},
@@ -122,6 +143,7 @@ def _alert_mismatch(
     """Backward-compatible wrapper for critical discrepancy handling."""
     from evolution_lock_flag import trigger_lock
 
+    _refresh_instruction_cache()
     record_payment_anomaly(
         "stripe_account_mismatch",
         {"bot_id": bot_id, "account_id": account_id, "amount": amount},

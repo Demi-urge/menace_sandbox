@@ -8,6 +8,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
+import yaml
+from dynamic_path_router import resolve_path
+
 import audit_logger
 from log_tags import FEEDBACK, ERROR_FIX
 import db_router
@@ -24,7 +27,6 @@ except Exception:  # pragma: no cover - fallback when not imported as package
     import importlib.util
     import sys
     from types import ModuleType
-    from dynamic_path_router import resolve_path
 
     module_path = resolve_path("unified_event_bus.py")
     spec = importlib.util.spec_from_file_location(
@@ -106,6 +108,12 @@ EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
     ),
 }
 
+# Optional overrides loaded from ``config/billing_instructions.yaml``.  The file
+# is read once and cached until :func:`refresh_billing_instructions` is invoked
+# by modules monitoring configuration changes.
+_INSTRUCTION_PATH = Path(resolve_path("config/billing_instructions.yaml"))
+_INSTRUCTION_OVERRIDES: Dict[str, str] | None = None
+
 # ---------------------------------------------------------------------------
 # Billing anomaly utilities
 
@@ -151,12 +159,47 @@ def _get_gpt_memory() -> GPTMemoryManager | None:
     return _GPT_MEMORY
 
 
+def _load_instruction_overrides() -> Dict[str, str]:
+    """Return mapping of event type overrides loaded from config."""
+
+    global _INSTRUCTION_OVERRIDES
+    if _INSTRUCTION_OVERRIDES is None:
+        try:
+            with _INSTRUCTION_PATH.open("r", encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+            _INSTRUCTION_OVERRIDES = {str(k): str(v) for k, v in data.items()}
+        except FileNotFoundError:
+            _INSTRUCTION_OVERRIDES = {}
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "failed to load billing instructions", extra={"path": str(_INSTRUCTION_PATH)}
+            )
+            _INSTRUCTION_OVERRIDES = {}
+    return _INSTRUCTION_OVERRIDES
+
+
+def refresh_billing_instructions(path: Path | str | None = None) -> None:
+    """Clear cached instruction overrides so they're reloaded on next use."""
+
+    global _INSTRUCTION_OVERRIDES, _INSTRUCTION_PATH
+    if path is not None:
+        _INSTRUCTION_PATH = Path(path)
+    _INSTRUCTION_OVERRIDES = None
+
+
 def _anomaly_instruction(
     event_type: str, metadata: Dict[str, Any], instruction: str | None
 ) -> str:
     """Generate a concise instruction string for an anomaly."""
 
-    instr = instruction or metadata.get("instruction") or metadata.get("description") or ""
+    overrides = _load_instruction_overrides()
+    instr = (
+        overrides.get(event_type)
+        or instruction
+        or metadata.get("instruction")
+        or metadata.get("description")
+        or ""
+    )
     if not instr:
         details = ", ".join(f"{k}={v}" for k, v in sorted(metadata.items()))
         instr = f"Avoid {event_type} anomalies {details}".strip()

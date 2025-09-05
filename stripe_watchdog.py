@@ -144,6 +144,24 @@ CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 #: Path used when exporting normalized anomalies for training purposes.
 TRAINING_EXPORT = resolve_path("training_data/stripe_anomalies.jsonl")
 
+# Instruction overrides for sanity layer feedback.  ``menace_sanity_layer`` caches
+# the file contents so we track the modification time and refresh when it changes.
+_BILLING_INSTRUCTIONS_PATH = Path(resolve_path("config/billing_instructions.yaml"))
+_BILLING_INSTRUCTIONS_MTIME = 0.0
+
+
+def _refresh_instruction_cache() -> None:
+    """Reload billing instruction overrides when the config file changes."""
+
+    global _BILLING_INSTRUCTIONS_MTIME
+    try:
+        mtime = _BILLING_INSTRUCTIONS_PATH.stat().st_mtime
+    except FileNotFoundError:
+        mtime = 0.0
+    if mtime != _BILLING_INSTRUCTIONS_MTIME:
+        menace_sanity_layer.refresh_billing_instructions(_BILLING_INSTRUCTIONS_PATH)
+        _BILLING_INSTRUCTIONS_MTIME = mtime
+
 
 def _sanity_feedback_enabled(path: Path | None = None) -> bool:
     """Return whether Sanity Layer feedback is enabled in config."""
@@ -166,6 +184,10 @@ SANITY_LAYER_FEEDBACK_ENABLED = _sanity_feedback_enabled()
 DEFAULT_BILLING_EVENT_INSTRUCTION = (
     "Avoid generating bots that issue Stripe charges without logging through billing_logger."
 )
+
+# Backwards compatible alias for older callers/tests expecting
+# ``BILLING_EVENT_INSTRUCTION``.
+BILLING_EVENT_INSTRUCTION = DEFAULT_BILLING_EVENT_INSTRUCTION
 
 
 def _load_log_rotation(path: Path | None = None) -> tuple[int, int]:
@@ -513,7 +535,7 @@ def _emit_anomaly(
     telemetry_feedback: Any | None = None,
 ) -> None:
     """Log *record* and optionally emit a training sample."""
-
+    _refresh_instruction_cache()
     audit_logger.log_event("stripe_anomaly", record)
     metadata = {k: v for k, v in record.items() if k != "type"}
 
