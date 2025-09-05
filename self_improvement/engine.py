@@ -1477,24 +1477,33 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "gpt suggestion failed", extra=log_record(module=module)
                 )
+        gen_kwargs: dict[str, object] = {}
+        if retries is not None:
+            gen_kwargs["retries"] = retries
+        if delay is not None:
+            gen_kwargs["delay"] = delay
+        if target_region is None:
+            target_region = getattr(self, "_cycle_target_region", None)
+        # Select the prompt strategy for this patch attempt
         try:
-            gen_kwargs: dict[str, object] = {}
-            if retries is not None:
-                gen_kwargs["retries"] = retries
-            if delay is not None:
-                gen_kwargs["delay"] = delay
-            if target_region is None:
-                target_region = getattr(self, "_cycle_target_region", None)
-            # Select the prompt strategy for this patch attempt
+            strat_name = self.next_prompt_strategy()
+        except Exception:
+            strat_name = None
+
+        def _last_prompt_with_strategy():
+            prompt_obj = getattr(self.self_coding_engine, "_last_prompt", None)
+            if prompt_obj and strat_name:
+                meta = getattr(prompt_obj, "metadata", None)
+                if isinstance(meta, dict) and "strategy" not in meta:
+                    meta["strategy"] = strat_name
+            return prompt_obj
+
+        if strat_name:
             try:
-                strat_name = self.next_prompt_strategy()
+                gen_kwargs["strategy"] = PromptStrategy(strat_name)
             except Exception:
-                strat_name = None
-            if strat_name:
-                try:
-                    gen_kwargs["strategy"] = PromptStrategy(strat_name)
-                except Exception:
-                    pass
+                pass
+        try:
             patch_id = self._patch_generator(
                 module,
                 self.self_coding_engine,
@@ -1511,7 +1520,7 @@ class SelfImprovementEngine:
             )
             failure_reason = "generation_error"
             try:
-                prompt_obj = getattr(self.self_coding_engine, "_last_prompt", None)
+                prompt_obj = _last_prompt_with_strategy()
                 log_prompt_attempt(
                     prompt_obj,
                     False,
@@ -1542,9 +1551,7 @@ class SelfImprovementEngine:
                     )
                     failure_reason = "apply_error"
                     try:
-                        prompt_obj = getattr(
-                            self.self_coding_engine, "_last_prompt", None
-                        )
+                        prompt_obj = _last_prompt_with_strategy()
                         log_prompt_attempt(
                             prompt_obj,
                             False,
@@ -1608,9 +1615,7 @@ class SelfImprovementEngine:
                             else f"{regressed_metric}_regression"
                         )
                         try:
-                            prompt_obj = getattr(
-                                self.self_coding_engine, "_last_prompt", None
-                            )
+                            prompt_obj = _last_prompt_with_strategy()
                             log_prompt_attempt(
                                 prompt_obj,
                                 False,
@@ -1703,7 +1708,7 @@ class SelfImprovementEngine:
             elif failure_reason is None and roi_meta.get("roi_delta", 0.0) < 0:
                 failure_reason = "roi_drop"
         try:
-            prompt_obj = getattr(self.self_coding_engine, "_last_prompt", None)
+            prompt_obj = _last_prompt_with_strategy()
             meta = dict(roi_meta)
             if "roi" not in meta and "roi_delta" in meta:
                 meta["roi"] = meta.get("roi_delta", 0.0)

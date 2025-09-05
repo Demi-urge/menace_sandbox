@@ -139,7 +139,7 @@ def log_prompt_attempt(
     if isinstance(metadata, dict):
         target_module = metadata.get("target_module") or metadata.get("module")
         patch_id = metadata.get("patch_id")
-        if prompt_id is None:
+        if not prompt_id:
             prompt_id = metadata.get("prompt_id") or metadata.get("strategy")
 
     entry = {
