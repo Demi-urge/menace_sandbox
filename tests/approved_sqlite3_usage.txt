@@ -63,3 +63,5 @@ tests/test_enhancement_classifier_queue.py
 tests/test_prompt_memory_trainer_incremental.py
 sandbox_runner/bootstrap.py
 tests/test_sandbox_health_databases.py
+sandbox_runner/tests/test_results_logger_sync.py
+sandbox_runner/tests/test_run_metrics_persistence.py
