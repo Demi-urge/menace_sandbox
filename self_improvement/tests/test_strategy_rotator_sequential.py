@@ -24,12 +24,16 @@ PromptStrategyManager = importlib.import_module(
 ).PromptStrategyManager
 
 
-def test_next_strategy_rotates_through_templates():
+def test_next_strategy_uses_roi_selection():
     mgr = PromptStrategyManager()
+    captured: list[list[str]] = []
+
+    def fake_best(seq):
+        captured.append(list(seq))
+        return seq[0] if seq else None
+
+    mgr.best_strategy = fake_best
     current = mgr.strategies[0]
-    sequence = []
-    for _ in range(len(mgr.strategies)):
-        nxt = mgr.record_failure(current, "fail")
-        sequence.append(nxt)
-        current = nxt
-    assert sequence == mgr.strategies[1:] + [mgr.strategies[0]]
+    nxt = mgr.record_failure(current, "fail")
+    assert captured[0] == mgr.strategies[1:]
+    assert nxt == mgr.strategies[1]

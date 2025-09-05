@@ -21,7 +21,7 @@ DEFAULT_STRATEGIES: list[str] = [
 KEYWORD_MAP: Dict[str, str] = {
     "test": "unit_test_rewrite",
     "comment": "comment_refactor",
-    "refactor": "comment_refactor",
+    "refactor": "strict_fix",
     "delete": "delete_rebuild",
     "rebuild": "delete_rebuild",
 }
@@ -75,17 +75,20 @@ class PromptStrategyManager:
         return selector(ordered)
 
     # ------------------------------------------------------------------
-    def record_failure(self, strategy: str | None = None, reason: str | None = None) -> str | None:
+    def record_failure(
+        self, strategy: str | None = None, failure_reason: str | None = None
+    ) -> str | None:
         """Record a failure and return the next strategy to try.
 
         Parameters
         ----------
         strategy:
             The strategy that failed.  Defaults to the current strategy.
-        reason:
-            Optional text describing the failure.  When a keyword from
-            :attr:`keyword_map` is found the corresponding strategy is selected
-            immediately.
+        failure_reason:
+            Optional text describing why the attempt failed.  When a keyword
+            from :attr:`keyword_map` is found the corresponding strategy is
+            selected immediately.  Otherwise the strategy with the best
+            recorded ROI is chosen.
         """
 
         if not self.strategies:
@@ -93,13 +96,26 @@ class PromptStrategyManager:
         if strategy is None:
             strategy = self.strategies[self.index]
         self.failure_counts[strategy] = self.failure_counts.get(strategy, 0) + 1
-        if reason:
-            reason_l = reason.lower()
+        if failure_reason:
+            reason_l = failure_reason.lower()
             for key, strat in self.keyword_map.items():
                 if key in reason_l and strat in self.strategies:
                     self.index = self.strategies.index(strat)
                     self._save_state()
                     return strat
+
+        # ROI-based fallback
+        pool = [s for s in self.strategies if s != strategy]
+        try:
+            best = self.best_strategy(pool) if pool else None
+        except Exception:  # pragma: no cover - guard against missing deps
+            best = None
+        if best:
+            self.index = self.strategies.index(best)
+            self._save_state()
+            return best
+
+        # Sequential rotation if ROI stats unavailable
         limit = self.failure_limits.get(strategy, 1)
         if self.failure_counts.get(strategy, 0) >= limit:
             try:
