@@ -27,7 +27,8 @@ from audit_trail import AuditTrail
 sys.modules.setdefault("vector_service", SimpleNamespace(CognitionLayer=lambda: None))
 
 _TEMP_DIR = tempfile.TemporaryDirectory()
-_STUB_UEB = Path(_TEMP_DIR.name) / "unified_event_bus.py"
+UEB_MODULE = resolve_path("unified_event_bus.py").name
+_STUB_UEB = Path(_TEMP_DIR.name) / UEB_MODULE
 _STUB_UEB.write_text("class UnifiedEventBus:\n    pass\n")
 
 import dynamic_path_router as _dpr  # noqa: E402
@@ -35,7 +36,7 @@ _orig_resolve = _dpr.resolve_path
 
 
 def _fake_resolve(name, root=None):
-    if name == "unified_event_bus.py":
+    if name == UEB_MODULE:
         return _STUB_UEB
     try:
         return _orig_resolve(name, root)
@@ -314,7 +315,7 @@ def test_anomaly_log_rotation(monkeypatch, tmp_path):
 
 
 def test_emit_anomaly_triggers_sanity_layer(monkeypatch):
-    calls: list[tuple[str, dict]] = []
+    calls: list[tuple[str, dict, str | None]] = []
 
     monkeypatch.setattr(
         sw.menace_sanity_layer,
@@ -332,6 +333,8 @@ def test_emit_anomaly_triggers_sanity_layer(monkeypatch):
 
     assert calls and calls[0][0] == "missing_charge"
     assert calls[0][1]["charge_id"] == "ch_test"
+    expected = sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS["missing_charge"]
+    assert calls[0][2] == expected
 
 
 def test_emit_anomaly_instruction_varies_by_event_type(monkeypatch):
@@ -356,3 +359,19 @@ def test_emit_anomaly_instruction_varies_by_event_type(monkeypatch):
     assert inst1 == expected1
     assert inst2 == expected2
     assert inst1 != inst2
+
+
+def test_emit_anomaly_instruction_falls_back_to_generic(monkeypatch):
+    calls: list[tuple[str, dict, str | None]] = []
+
+    monkeypatch.setattr(
+        sw.menace_sanity_layer,
+        "record_payment_anomaly",
+        lambda *a, **k: calls.append(a),
+    )
+    monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "ANOMALY_TRAIL", SimpleNamespace(record=lambda entry: None))
+
+    sw._emit_anomaly({"type": "unhandled_event", "id": "x"}, False, False)
+
+    assert calls and calls[0][2] == sw.BILLING_EVENT_INSTRUCTION

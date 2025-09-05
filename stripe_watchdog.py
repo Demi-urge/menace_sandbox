@@ -551,7 +551,9 @@ def _emit_anomaly(
             payment_meta["charge_id"] = payment_meta.pop("id")
         payment_meta.setdefault("reason", record.get("type"))
         event_type = record.get("type", "unknown")
-        instruction = menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS.get(event_type)
+        instruction = menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS.get(
+            event_type, BILLING_EVENT_INSTRUCTION
+        )
         menace_sanity_layer.record_payment_anomaly(
             event_type,
             payment_meta,
