@@ -30,7 +30,6 @@ Key features implemented according to the specification:
 import argparse
 import json
 import logging
-import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -50,6 +49,11 @@ try:  # Optional dependency – secrets from the vault
     from vault_secret_provider import VaultSecretProvider  # type: ignore
 except Exception:  # pragma: no cover - best effort
     VaultSecretProvider = None  # type: ignore
+
+try:  # Optional dependency – central Stripe routing config
+    from stripe_billing_router import STRIPE_SECRET_KEY  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    STRIPE_SECRET_KEY = None  # type: ignore
 
 try:  # Optional dependency – Codex training sample helper
     from codex_db_helpers import TrainingSample  # type: ignore
@@ -132,20 +136,18 @@ def _iter(obj: Iterable | object) -> Iterable:
 def load_api_key() -> Optional[str]:
     """Return the Stripe API key.
 
-    The key is sourced from the ``STRIPE_SECRET_KEY`` environment variable or
-    ``VaultSecretProvider`` when available.  If both lookups fail we fall back
-    to ``stripe.api_key`` which allows the global client configuration to be
-    used when present.
+    The key is sourced from :mod:`stripe_billing_router`'s
+    :data:`STRIPE_SECRET_KEY` constant or via ``VaultSecretProvider`` when
+    available.  This avoids relying on environment variables so the watchdog
+    can run in more restricted environments.
     """
 
-    key = os.getenv("STRIPE_SECRET_KEY")
+    key = STRIPE_SECRET_KEY
     if not key and VaultSecretProvider:
         try:  # pragma: no cover - best effort
             key = VaultSecretProvider().get("stripe_secret_key")
         except Exception:
             key = None
-    if not key and stripe is not None:
-        key = getattr(stripe, "api_key", None)
     if not key:
         logger.error("Stripe API key not configured")
     return key
@@ -593,12 +595,18 @@ def check_revenue_projection(
 def main(argv: Optional[List[str]] = None) -> None:
     """Entry point for command line execution."""
 
+    global ANOMALY_LOG
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--hours",
-        type=int,
-        default=1,
-        help="look-back window in hours for Stripe queries",
+        "--since",
+        type=str,
+        help="ISO timestamp or epoch seconds for start of window",
+    )
+    parser.add_argument(
+        "--audit-log",
+        type=str,
+        default=str(ANOMALY_LOG),
+        help="path to anomaly audit log",
     )
     parser.add_argument(
         "--write-codex",
@@ -613,7 +621,19 @@ def main(argv: Optional[List[str]] = None) -> None:
         return
 
     end_ts = int(time.time())
-    start_ts = end_ts - int(args.hours * 3600)
+    if args.since:
+        try:
+            start_ts = int(datetime.fromisoformat(args.since).timestamp())
+        except ValueError:
+            try:
+                start_ts = int(float(args.since))
+            except ValueError:
+                logger.error("Invalid --since value: %s", args.since)
+                return
+    else:
+        start_ts = end_ts - 3600
+
+    ANOMALY_LOG = Path(args.audit_log)
     ledger = load_local_ledger(start_ts, end_ts)
 
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
