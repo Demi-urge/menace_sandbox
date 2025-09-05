@@ -1,5 +1,4 @@
 import importlib.util
-import os
 import subprocess
 import sys
 import types
@@ -13,7 +12,7 @@ def _load_env(monkeypatch=None):
     pkg = sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
     pkg.__path__ = [str(ROOT / "sandbox_runner")]
     spec = importlib.util.spec_from_file_location(
-        "sandbox_runner.environment", ROOT / "sandbox_runner" / "environment.py"
+        "sandbox_runner.environment", resolve_path("sandbox_runner/environment.py")
     )
     env = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner.environment"] = env
@@ -33,7 +32,7 @@ def _load_env(monkeypatch=None):
 def _load_thb():
     spec = importlib.util.spec_from_file_location(
         "menace.task_handoff_bot",
-        ROOT / "task_handoff_bot.py",
+        resolve_path("task_handoff_bot.py"),
         submodule_search_locations=[str(ROOT)],
     )
     thb = importlib.util.module_from_spec(spec)
@@ -45,7 +44,7 @@ def _load_thb():
 
 class StubIndex:
     def __init__(self, *a, **k):
-        self._map = {"a.py": 1, "b.py": 1, "c.py": 2}
+        self._map = {"a.py": 1, "b.py": 1, "c.py": 2}  # path-ignore
         self.tags = {}
 
     def get(self, name):
@@ -91,16 +90,15 @@ def test_try_integrate_into_workflows(tmp_path, monkeypatch):
 
     class DummyClusterer:
         def __init__(self):
-            root = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
             self.clusters = {
-                str(root / "a.py"): [1],
-                str(root / "b.py"): [1],
+                str(resolve_path("a.py")): [1],
+                str(resolve_path("b.py")): [1],
             }
 
     clusterer = DummyClusterer()
 
     updated = env.try_integrate_into_workflows(
-        ["b.py"], workflows_db=db_path, intent_clusterer=clusterer
+        [resolve_path("b.py")], workflows_db=db_path, intent_clusterer=clusterer
     )
     recs = {r.wid: r for r in wf_db.fetch(limit=10)}
     assert wid1 in updated
@@ -136,7 +134,7 @@ def test_try_integrate_no_match(tmp_path, monkeypatch):
     sts_stub.SelfTestService = DummySTS
     monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
 
-    updated = env.try_integrate_into_workflows(["d.py"], workflows_db=db_path)
+    updated = env.try_integrate_into_workflows([resolve_path("d.py")], workflows_db=db_path)
     rec = wf_db.fetch(limit=10)[0]
     assert not updated
     assert rec.workflow == ["a"]
@@ -160,9 +158,9 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
     class StubDupIndex:
         def __init__(self, *a, **k):
             self._map = {
-                "existing.py": 1,
-                "pkg1/orphan.py": 1,
-                "pkg2/orphan.py": 1,
+                "existing.py": 1,  # path-ignore
+                "pkg1/orphan.py": 1,  # path-ignore
+                "pkg2/orphan.py": 1,  # path-ignore
             }
             self.tags = {}
 
@@ -190,11 +188,11 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
     sts_stub.SelfTestService = DummySTS
     monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
 
-    (tmp_path / "existing.py").write_text("def existing():\n    pass\n")
+    (tmp_path / "existing.py").write_text("def existing():\n    pass\n")  # path-ignore
     (tmp_path / "pkg1").mkdir()
-    (tmp_path / "pkg1" / "orphan.py").write_text("def o1():\n    pass\n")
+    (tmp_path / "pkg1" / "orphan.py").write_text("def o1():\n    pass\n")  # path-ignore
     (tmp_path / "pkg2").mkdir()
-    (tmp_path / "pkg2" / "orphan.py").write_text("def o2():\n    pass\n")
+    (tmp_path / "pkg2" / "orphan.py").write_text("def o2():\n    pass\n")  # path-ignore
     mods = [resolve_path("pkg1/orphan.py"), resolve_path("pkg2/orphan.py")]
     updated = env.try_integrate_into_workflows(mods, workflows_db=db_path)
     rec = {r.wid: r for r in wf_db.fetch(limit=10)}[wid]
@@ -217,8 +215,8 @@ def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
     wf = thb.WorkflowRecord(workflow=["a"], title="w")
     wid = wf_db.add(wf)
 
-    (tmp_path / "a.py").write_text("def a():\n    pass\n")
-    (tmp_path / "b.py").write_text("def b():\n    pass\n")
+    (tmp_path / "a.py").write_text("def a():\n    pass\n")  # path-ignore
+    (tmp_path / "b.py").write_text("def b():\n    pass\n")  # path-ignore
 
     stub = types.ModuleType("module_index_db")
     stub.ModuleIndexDB = StubIndex
@@ -258,4 +256,3 @@ def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
     recs = {r.wid: r for r in wf_db.fetch(limit=10)}
     assert wid in updated
     assert "b" in recs[wid].workflow
-

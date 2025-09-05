@@ -6,8 +6,6 @@ import subprocess
 import shutil
 from pathlib import Path
 
-import pytest
-
 import self_improvement.target_region as targeting
 from tests.self_improvement.test_patch_application import _load_patch_module
 
@@ -36,8 +34,8 @@ def _init_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "you@example.com"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "Your Name"], cwd=repo, check=True)
-    (repo / "buggy.py").write_text(BUGGY_SRC)
-    subprocess.run(["git", "add", "buggy.py"], cwd=repo, check=True)
+    (repo / "buggy.py").write_text(BUGGY_SRC)  # path-ignore
+    subprocess.run(["git", "add", "buggy.py"], cwd=repo, check=True)  # path-ignore
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
     return repo
 
@@ -62,12 +60,12 @@ def test_extract_target_region_and_patch(monkeypatch, tmp_path):
     monkeypatch.setattr(targeting, "__file__", str(repo / "__init__.py"))
     region = targeting.extract_target_region(trace)
     assert region is not None
-    assert Path(region.filename) == repo / "buggy.py"
+    assert Path(region.filename) == repo / "buggy.py"  # path-ignore
     assert region.function == "divide"
     assert region.start_line == 1
     assert region.end_line == 3
 
-    before = (repo / "buggy.py").read_text().splitlines()
+    before = (repo / "buggy.py").read_text().splitlines()  # path-ignore
     pycache = repo / "__pycache__"
     if pycache.exists():
         shutil.rmtree(pycache)
@@ -80,7 +78,7 @@ def test_extract_target_region_and_patch(monkeypatch, tmp_path):
     assert len(commit) == 40
     assert diff == PATCH
 
-    after = (repo / "buggy.py").read_text().splitlines()
+    after = (repo / "buggy.py").read_text().splitlines()  # path-ignore
     assert after[1] == "    result = a / b"
     assert before[0] == after[0]
     assert before[2] == after[2]

@@ -9,9 +9,11 @@ import menace.data_bot as db
 from menace.error_logger import TelemetryEvent
 from datetime import datetime, timedelta
 from pathlib import Path
+from dynamic_path_router import resolve_path
 
 
 def _setup_dbs(tmp_path: Path):
+    _ = resolve_path("sandbox_runner.py")
     err = eb.ErrorDB(tmp_path / "e.db")
     roi = rao.ROIDB(tmp_path / "r.db")
     metrics = db.MetricsDB(tmp_path / "m.db")
@@ -19,7 +21,7 @@ def _setup_dbs(tmp_path: Path):
 
 
 def test_formal_verifier(tmp_path, monkeypatch):
-    path = tmp_path / "mod.py"
+    path = tmp_path / "mod.py"  # path-ignore
     path.write_text("x = 1\n")
 
     calls = []
@@ -68,10 +70,10 @@ def test_playbook_generator(tmp_path):
 def test_compile_dossier_generates_playbook(tmp_path, monkeypatch):
     err_db, roi_db, metrics_db = _setup_dbs(tmp_path)
     err_db.add_telemetry(TelemetryEvent(stack_trace="boom"))
-    roi_db.add(rao.KPIRecord(bot="b", revenue=100.0, api_cost=50.0, cpu_seconds=1.0, success_rate=1.0))
-    roi_db.add(rao.KPIRecord(bot="b", revenue=80.0, api_cost=50.0, cpu_seconds=1.0, success_rate=1.0))
+    roi_db.add(rao.KPIRecord(bot="b", revenue=100.0, api_cost=50.0, cpu_seconds=1.0, success_rate=1.0))  # noqa: E501
+    roi_db.add(rao.KPIRecord(bot="b", revenue=80.0, api_cost=50.0, cpu_seconds=1.0, success_rate=1.0))  # noqa: E501
     old_ts = (datetime.utcnow() - timedelta(hours=3)).isoformat()
-    metrics_db.add(db.MetricRecord(bot="b", cpu=90.0, memory=90.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=1, ts=old_ts))
+    metrics_db.add(db.MetricRecord(bot="b", cpu=90.0, memory=90.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=1, ts=old_ts))  # noqa: E501
 
     called = []
 
@@ -92,10 +94,10 @@ def test_watchdog_notifications_include_playbook(tmp_path, monkeypatch):
     err_db, roi_db, metrics_db = _setup_dbs(tmp_path)
     for _ in range(4):
         err_db.add_telemetry(TelemetryEvent(stack_trace="boom"))
-    roi_db.add(rao.KPIRecord(bot="b", revenue=100.0, api_cost=50.0, cpu_seconds=1.0, success_rate=1.0))
-    roi_db.add(rao.KPIRecord(bot="b", revenue=80.0, api_cost=50.0, cpu_seconds=1.0, success_rate=1.0))
+    roi_db.add(rao.KPIRecord(bot="b", revenue=100.0, api_cost=50.0, cpu_seconds=1.0, success_rate=1.0))  # noqa: E501
+    roi_db.add(rao.KPIRecord(bot="b", revenue=80.0, api_cost=50.0, cpu_seconds=1.0, success_rate=1.0))  # noqa: E501
     old_ts = (datetime.utcnow() - timedelta(hours=3)).isoformat()
-    metrics_db.add(db.MetricRecord(bot="b", cpu=90.0, memory=90.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=1, ts=old_ts))
+    metrics_db.add(db.MetricRecord(bot="b", cpu=90.0, memory=90.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=1, ts=old_ts))  # noqa: E501
 
     pb = tmp_path / "pb.json"
 
@@ -119,7 +121,7 @@ def test_watchdog_notifications_include_playbook(tmp_path, monkeypatch):
 def test_formal_verifier_symbolic_detects_exception(tmp_path, monkeypatch):
     if aem.angr is None:
         pytest.skip("angr not installed")
-    mod = tmp_path / "mod.py"
+    mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text(
         "def foo(x):\n    if x:\n        raise ValueError('boom')\n    return 1\n"
     )

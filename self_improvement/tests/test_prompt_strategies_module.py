@@ -17,6 +17,6 @@ from menace_sandbox.self_improvement.prompt_strategies import (  # noqa: E402
 
 
 def test_render_prompt_includes_module_name():
-    ctx = {"module": "demo.py"}
+    ctx = {"module": "demo.py"}  # path-ignore
     out = render_prompt(PromptStrategy.STRICT_FIX, ctx)
-    assert "demo.py" in out
+    assert "demo.py" in out  # path-ignore
