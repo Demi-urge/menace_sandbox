@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover - fallback
         return logging.getLogger(name)
 
 from .data_stores import router
+from dynamic_path_router import resolve_path
 
 
 def load_synergy_history(path: str | Path) -> list[dict[str, float]]:
@@ -96,7 +97,7 @@ class SynergyDashboard:
         from flask import Flask, jsonify  # type: ignore
 
         self.logger = get_logger(self.__class__.__name__)
-        self.history_file = Path(history_file)
+        self.history_file = Path(resolve_path(history_file))
         self.ma_window = ma_window
         self.exporter_host = exporter_host
         self.exporter_port = exporter_port
