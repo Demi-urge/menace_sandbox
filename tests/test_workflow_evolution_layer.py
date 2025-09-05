@@ -3,6 +3,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from dynamic_path_router import resolve_path
 
 
 @pytest.fixture
@@ -177,7 +178,7 @@ def evolution_setup():
     # finally load workflow evolution manager --------------------------
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.workflow_evolution_manager",
-        "workflow_evolution_manager.py",
+        resolve_path("workflow_evolution_manager.py"),
     )
     wem = importlib.util.module_from_spec(spec)
     sys.modules["menace_sandbox.workflow_evolution_manager"] = wem
