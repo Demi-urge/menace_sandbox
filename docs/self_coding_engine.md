@@ -103,10 +103,10 @@ To override the schedule set `CODEX_RETRY_DELAYS` in the environment to a
 comma‑separated list or JSON array (e.g. `"1,2,4"` or `[1,2,4]`).
 
 If no code is produced, `codex_fallback_handler.handle` either queues the prompt
-or reroutes it to a lower‑cost model.  The function returns an `LLMResult` only
-when rerouting yields usable text; otherwise it returns `None` so callers can
-trigger their own fallback logic.  Inspect `result.text` for the alternate
-completion and `result.raw` for provider metadata.  Select the behaviour via
+or reroutes it to a lower‑cost model.  The function always returns an
+`LLMResult`; when rerouting fails, the result has an empty `text` field and the
+failure reason in `result.raw`.  Inspect `result.text` for alternate completions
+and `result.raw` for provider metadata.  Select the behaviour via
 `CODEX_FALLBACK_STRATEGY` (`"queue"` or `"reroute"`; default) and specify the
 alternate model with `CODEX_FALLBACK_MODEL` (defaults to `gpt-3.5-turbo`).
 Queued prompts are written to `CODEX_RETRY_QUEUE` (`codex_retry_queue_path`).

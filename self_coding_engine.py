@@ -1405,7 +1405,7 @@ class SelfCodingEngine:
         alt = codex_fallback_handler.handle(
             self.simplify_prompt(prompt), reason
         )
-        if alt is None:
+        if not getattr(alt, "text", "").strip():
             return result, None
 
         alt_validation: ValidationResult = validate_completion(alt.text)
@@ -1415,13 +1415,8 @@ class SelfCodingEngine:
             )
             return alt, alt_validation.text
 
-        event = (
-            "codex fallback queued prompt"
-            if not getattr(alt, "text", "").strip()
-            else "codex fallback invalid result"
-        )
         self.logger.warning(
-            event,
+            "codex fallback invalid result",
             extra={
                 "reason": alt_validation.reason,
                 "description": description,

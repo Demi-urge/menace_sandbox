@@ -56,7 +56,7 @@ def reroute_to_gpt35(prompt: Prompt) -> LLMResult:
 
 def handle(
     prompt: Prompt, reason: str, *, queue_path: Optional[Path] = None
-) -> Optional[LLMResult]:
+) -> LLMResult:
     """Attempt to reroute ``prompt`` and queue it on persistent failure.
 
     Parameters
@@ -70,25 +70,31 @@ def handle(
 
     Returns
     -------
-    Optional[LLMResult]
-        Result from :func:`reroute_to_gpt35`.  ``None`` is returned when the
-        rerouted call fails or does not yield a usable completion.
+    LLMResult
+        Result from :func:`reroute_to_gpt35`.  When rerouting fails or yields an
+        empty completion, an ``LLMResult`` with an empty ``text`` field and the
+        ``reason`` stored under ``raw`` is returned.
     """
 
     logger.warning("codex fallback invoked", extra={"reason": reason})
 
     try:
         result = reroute_to_gpt35(prompt)
-    except Exception as exc:
-        logger.warning("codex fallback reroute failed", exc_info=True, extra={"reason": reason})
+    except Exception:
+        logger.warning(
+            "codex fallback reroute failed", exc_info=True, extra={"reason": reason}
+        )
         queue_failed(prompt, reason, path=queue_path or _QUEUE_FILE)
-        return None
+        return LLMResult(text="", raw={"reason": reason})
 
     # Expose the routed model's text via ``result.text`` while preserving
     # provider specific metadata under ``result.raw``.
     if not getattr(result, "text", "").strip():
-        logger.warning("codex fallback produced no completion", extra={"reason": reason})
-        return None
+        logger.warning(
+            "codex fallback produced no completion", extra={"reason": reason}
+        )
+        queue_failed(prompt, reason, path=queue_path or _QUEUE_FILE)
+        return LLMResult(text="", raw={"reason": reason})
     return result
 
 
