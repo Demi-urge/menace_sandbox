@@ -161,11 +161,7 @@ from .orchestration import (
 )
 from .roi_tracking import update_alignment_baseline
 from .patch_application import generate_patch, apply_patch
-from .prompt_memory import (
-    log_prompt_attempt,
-    load_prompt_penalties,
-)
-from prompt_optimizer import load_strategy_stats
+from .prompt_memory import log_prompt_attempt
 from .prompt_strategies import PromptStrategy
 from .prompt_strategy_manager import PromptStrategyManager
 from .snapshot_tracker import (
@@ -6592,35 +6588,10 @@ class SelfImprovementEngine:
                 self.logger.exception("strategy metrics update failed")
 
     def _select_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
-        """Pick the best prompt strategy given historical ROI and penalties."""
+        """Pick the best prompt strategy via the strategy manager."""
 
-        penalties = load_prompt_penalties()
-        stats = load_strategy_stats()
-        settings = SandboxSettings()
-        threshold = settings.prompt_failure_threshold
-        mult = settings.prompt_penalty_multiplier
-        eligible: list[tuple[str, float]] = []
-        penalised: list[tuple[str, float]] = []
-        for strat in strategies:
-            if strat in self.deprioritized_strategies:
-                continue
-            count = penalties.get(str(strat), 0)
-            weight = mult if threshold and count >= threshold else 1.0
-            rec = stats.get(str(strat))
-            if rec:
-                score = rec.get("score", 0.0)
-                score = score if score > 0 else 0.1
-                weight *= score
-            target = penalised if threshold and count >= threshold else eligible
-            target.append((strat, weight))
-        pool = eligible or penalised
-        best: str | None = None
-        best_weight = -1.0
-        for strat, weight in pool:
-            if weight > best_weight:
-                best_weight = weight
-                best = strat
-        return best
+        candidates = [s for s in strategies if s not in self.deprioritized_strategies]
+        return self.strategy_manager.best_strategy(candidates)
 
     def next_prompt_strategy(self) -> str | None:
         """Return the next prompt strategy based on historical performance."""

@@ -36,7 +36,7 @@ class MiniEngine:
     def __init__(self, state_path: Path):
         self.logger = logging.getLogger("test")
         self.prompt_strategy_manager = PromptStrategyManager(
-            ["s1", "s2"], state_path=state_path
+            ["s1", "s2"], state_path=state_path, stats_path=state_path.with_name("stats.json")
         )
 
     def next_strategy(self) -> str | None:
@@ -68,7 +68,10 @@ def test_strategy_rotation_persists(tmp_path):
 
 
 def test_failure_reason_selects_keyword_strategy(tmp_path):
-    mgr = PromptStrategyManager(state_path=Path(resolve_path(tmp_path / "state.json")))
+    mgr = PromptStrategyManager(
+        state_path=Path(resolve_path(tmp_path / "state.json")),
+        stats_path=Path(resolve_path(tmp_path / "stats.json")),
+    )
     mgr.set_strategies(["strict_fix", "delete_rebuild", "unit_test_rewrite"])
     mgr.index = mgr.strategies.index("delete_rebuild")
     nxt = mgr.record_failure("delete_rebuild", "needs refactor")
@@ -79,6 +82,7 @@ def test_roi_fallback_used_when_no_keyword(tmp_path, monkeypatch):
     mgr = PromptStrategyManager(
         ["strict_fix", "delete_rebuild"],
         state_path=Path(resolve_path(tmp_path / "state.json")),
+        stats_path=Path(resolve_path(tmp_path / "stats.json")),
     )
 
     called = {}
