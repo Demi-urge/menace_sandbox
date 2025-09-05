@@ -1,10 +1,9 @@
 import importlib.util
 import sys
 import types
-from pathlib import Path
-from dynamic_path_router import path_for_prompt
+from dynamic_path_router import path_for_prompt, resolve_path
 
-PKG_DIR = Path(__file__).resolve().parents[1] / "self_improvement"
+PKG_DIR = resolve_path("self_improvement")
 
 
 def load_module(

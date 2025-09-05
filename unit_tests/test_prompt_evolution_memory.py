@@ -5,6 +5,7 @@ import pytest
 
 from llm_interface import Prompt
 from prompt_evolution_memory import PromptEvolutionMemory
+from dynamic_path_router import resolve_path
 
 
 class DummyRetriever:
@@ -28,8 +29,8 @@ def read_lines(path: Path):
 
 
 def test_log_prompt_records_success_and_failure(tmp_path: Path):
-    success = tmp_path / "success.json"
-    failure = tmp_path / "failure.json"
+    success = resolve_path("success.json", tmp_path)
+    failure = resolve_path("failure.json", tmp_path)
     logger = PromptEvolutionMemory(success_path=success, failure_path=failure)
 
     prompt = Prompt(system="sys", user="u", examples=["e"])
@@ -68,8 +69,8 @@ def test_log_prompt_records_success_and_failure(tmp_path: Path):
 
 
 def test_optimizer_ranking_influences_prompt_engine(tmp_path: Path, monkeypatch):
-    success = tmp_path / "success.json"
-    failure = tmp_path / "failure.json"
+    success = resolve_path("success.json", tmp_path)
+    failure = resolve_path("failure.json", tmp_path)
     from prompt_optimizer import PromptOptimizer
     from prompt_engine import PromptEngine
     success.write_text(json.dumps({
@@ -105,7 +106,7 @@ def test_optimizer_ranking_influences_prompt_engine(tmp_path: Path, monkeypatch)
         }
 
     monkeypatch.setattr(PromptOptimizer, "_extract_features", fake_extract)
-    opt = PromptOptimizer(success, failure, stats_path=tmp_path / "stats.json")
+    opt = PromptOptimizer(success, failure, stats_path=resolve_path("stats.json", tmp_path))
 
     import prompt_engine as pe
 
@@ -120,8 +121,8 @@ def test_optimizer_ranking_influences_prompt_engine(tmp_path: Path, monkeypatch)
 
 
 def test_optimizer_weighting_uses_roi(tmp_path: Path):
-    success = tmp_path / "success.json"
-    failure = tmp_path / "failure.json"
+    success = resolve_path("success.json", tmp_path)
+    failure = resolve_path("failure.json", tmp_path)
     from prompt_optimizer import PromptOptimizer
     entries = [
         {
@@ -146,7 +147,7 @@ def test_optimizer_weighting_uses_roi(tmp_path: Path):
     opt = PromptOptimizer(
         success,
         failure,
-        stats_path=tmp_path / "stats.json",
+        stats_path=resolve_path("stats.json", tmp_path),
         weight_by="coverage",
     )
     stat = next(iter(opt.stats.values()))
