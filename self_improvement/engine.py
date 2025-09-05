@@ -1509,6 +1509,18 @@ class SelfImprovementEngine:
             self.logger.exception(
                 "patch generation failed", extra=log_record(module=module)
             )
+            failure_reason = "generation_error"
+            try:
+                prompt_obj = getattr(self.self_coding_engine, "_last_prompt", None)
+                log_prompt_attempt(
+                    prompt_obj,
+                    False,
+                    {"error": error_trace},
+                    failure_reason=failure_reason,
+                    sandbox_metrics=sandbox_metrics,
+                )
+            except Exception:
+                self.logger.exception("log_prompt_attempt failed")
             patch_id = None
         else:
             if patch_id is not None:
@@ -1528,6 +1540,20 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "patch application failed", extra=log_record(module=module)
                     )
+                    failure_reason = "apply_error"
+                    try:
+                        prompt_obj = getattr(
+                            self.self_coding_engine, "_last_prompt", None
+                        )
+                        log_prompt_attempt(
+                            prompt_obj,
+                            False,
+                            {"patch_id": patch_id, "error": error_trace},
+                            failure_reason=failure_reason,
+                            sandbox_metrics=sandbox_metrics,
+                        )
+                    except Exception:
+                        self.logger.exception("log_prompt_attempt failed")
                     patch_id = None
                 else:
                     post_snap = capture_snapshot(
