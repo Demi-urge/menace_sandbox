@@ -5,8 +5,13 @@ import sys
 import types
 import importlib.util
 import dynamic_path_router
+import pytest
 
 from llm_interface import LLMResult
+
+menace_pkg = types.ModuleType("menace")
+menace_pkg.__path__ = [Path(__file__).resolve().parents[1].as_posix()]
+sys.modules.setdefault("menace", menace_pkg)
 
 # Lightweight stub for vector_service to avoid heavy imports
 vec_mod = types.ModuleType("vector_service")
@@ -77,7 +82,7 @@ sys.modules.setdefault("bot_database", types.SimpleNamespace(BotDB=object))
 sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
 sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
 sys.modules.setdefault("failure_learning_system", types.SimpleNamespace(DiscrepancyDB=object))
-cd_stub = types.ModuleType("code_database")
+cd_stub = types.ModuleType("menace.code_database")
 cd_stub.CodeDB = object
 cd_stub.CodeRecord = object
 cd_stub.PatchHistoryDB = object
@@ -499,3 +504,80 @@ def test_vector_service_metrics_and_fallback(tmp_path, monkeypatch):
     assert builder.calls == ["demo task"]
     assert g1.inc_calls == 1
     assert "sentinel_fallback" not in code
+
+
+def test_call_codex_with_backoff_retries(monkeypatch):
+    delays = [1, 2, 3]
+    monkeypatch.setattr(sce._settings, "codex_retry_delays", delays)
+    sleeps: list[float] = []
+    monkeypatch.setattr(sce.time, "sleep", lambda d: sleeps.append(d))
+
+    class FailClient:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, prompt):
+            self.calls += 1
+            raise Exception("boom")
+
+    client = FailClient()
+    with pytest.raises(sce.RetryError):
+        sce.call_codex_with_backoff(client, sce.Prompt("x"))
+
+    assert sleeps == delays[:-1]
+    assert client.calls == len(delays)
+
+
+def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
+    mem = mm.MenaceMemoryManager(tmp_path / "m.db")
+
+    class DummyClient:
+        def generate(self, prompt):
+            return LLMResult(text="")
+
+    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, llm_client=DummyClient())
+    monkeypatch.setattr(engine, "suggest_snippets", lambda *a, **k: [])
+    monkeypatch.setattr(engine.prompt_engine, "build_prompt", lambda *a, **k: sce.Prompt("code"))
+
+    calls: list[str] = []
+
+    def handle_failure(prompt, exc="", result=None):
+        calls.append(exc)
+        if len(calls) == 1:
+            return LLMResult(text="def bad(")
+        return LLMResult(text="def good():\n    pass\n")
+
+    monkeypatch.setattr(sce.codex_fallback_handler, "handle_failure", handle_failure)
+
+    code = engine.generate_helper("demo")
+    assert "def good" in code
+    assert len(calls) == 2
+
+
+def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(sce._settings, "codex_retry_delays", [0])
+    mem = mm.MenaceMemoryManager(tmp_path / "m.db")
+
+    calls: list[sce.Prompt] = []
+
+    def generate(prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            raise Exception("fail")
+        return LLMResult(text="def ok():\n    pass\n")
+
+    client = types.SimpleNamespace(generate=generate)
+
+    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, llm_client=client)
+    monkeypatch.setattr(engine, "suggest_snippets", lambda *a, **k: [])
+    monkeypatch.setattr(
+        engine.prompt_engine,
+        "build_prompt",
+        lambda *a, **k: sce.Prompt("code", system="orig", examples=["e1", "e2"]),
+    )
+
+    code = engine.generate_helper("demo")
+    assert "def ok" in code
+    assert len(calls) == 2
+    assert calls[0].system == "orig" and len(calls[0].examples) == 2
+    assert calls[1].system == "" and len(calls[1].examples) == 1
