@@ -183,6 +183,8 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
     )
     monkeypatch.setitem(sys.modules, "vault_secret_provider", vsp)
     monkeypatch.setenv("STRIPE_ALLOWED_SECRET_KEYS", "sk_live_dummy")
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
     cfg = tmp_path / "routes.yaml"
     cfg.write_text(yaml.safe_dump(routes))
     monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
@@ -195,7 +197,7 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     monkeypatch.setattr(
-        module, "_get_account_id", lambda api_key: module.STRIPE_MASTER_ACCOUNT_ID
+        module, "_get_account_id", lambda api_key: module.STRIPE_REGISTERED_ACCOUNT_ID
     )
     monkeypatch.setattr(module.billing_logger, "log_event", lambda **kw: None)
     monkeypatch.setattr(module, "_verify_route", lambda *a, **k: None)

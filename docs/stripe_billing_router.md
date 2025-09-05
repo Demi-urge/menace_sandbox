@@ -173,10 +173,10 @@ following fields:
 Allowed secret keys are provided via the ``STRIPE_ALLOWED_SECRET_KEYS``
 environment variable (comma separated) or the ``allowed_secret_keys`` list in
 ``config/stripe_billing_router.yaml``. Routes may also include an
-``account_id`` which is cross‑checked against the configured master account.
+``account_id`` which is cross‑checked against the registered account.
 Before any Stripe action is executed, the router ensures the resolved
 ``secret_key`` is in the allowed list and that the route's ``account_id``
-matches the master account. If either check fails the router:
+matches the registered account. If either check fails the router:
 
 1. Records the discrepancy in :class:`DiscrepancyDB`.
 2. Dispatches a ``critical_discrepancy`` alert.
@@ -185,9 +185,10 @@ matches the master account. If either check fails the router:
 Investigate these alerts by inspecting the discrepancy record; they typically
 indicate a misconfigured key or account.
 
-The platform's master account identifier is embedded in
-``stripe_billing_router.STRIPE_MASTER_ACCOUNT_ID`` and no longer sourced from
-an environment variable.
+The platform's registered account identifier is hard coded as
+``stripe_billing_router.STRIPE_REGISTERED_ACCOUNT_ID``. This value is immutable
+and must never be overridden or sourced from environment variables or secret
+storage.
 
 A ``critical_discrepancy`` alert signals the automatic rollback described
 above; resolve the configuration issue before retrying the billing operation.
