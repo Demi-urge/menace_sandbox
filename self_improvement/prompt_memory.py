@@ -14,13 +14,10 @@ from typing import Any, Dict
 from filelock import FileLock
 
 from sandbox_settings import SandboxSettings
-from dynamic_path_router import resolve_path
 from .init import _repo_path
+from .prompt_strategy_manager import PromptStrategyManager
 
 _settings = SandboxSettings()
-
-_penalty_path = Path(resolve_path(_settings.prompt_penalty_path))
-_penalty_lock = FileLock(str(_penalty_path) + ".lock")
 
 _strategy_stats_path = _repo_path() / "_strategy_stats.json"
 _strategy_lock = FileLock(str(_strategy_stats_path) + ".lock")
@@ -60,25 +57,13 @@ def update_strategy_roi(strategy: str, roi_delta: float) -> None:
 def load_prompt_penalties() -> Dict[str, int]:
     """Return mapping of prompt identifiers to downgrade counts."""
 
-    with _penalty_lock:
-        try:
-            data = json.loads(_penalty_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return {str(k): int(v) for k, v in data.items()}
-        except Exception:
-            pass
-        return {}
+    return PromptStrategyManager().load_penalties()
 
 
 def record_regression(prompt_id: str) -> int:
-    """Increment downgrade count for ``prompt_id`` and persist to disk."""
+    """Increment downgrade count for ``prompt_id`` and persist it."""
 
-    with _penalty_lock:
-        penalties = load_prompt_penalties()
-        penalties[prompt_id] = penalties.get(prompt_id, 0) + 1
-        _penalty_path.parent.mkdir(parents=True, exist_ok=True)
-        _penalty_path.write_text(json.dumps(penalties), encoding="utf-8")
-        return penalties[prompt_id]
+    return PromptStrategyManager().record_penalty(prompt_id)
 
 
 # Backwards compatible aliases for clarity ---------------------------------
@@ -98,12 +83,7 @@ def record_downgrade(prompt_id: str) -> int:
 def reset_penalty(prompt_id: str) -> None:
     """Reset regression count for ``prompt_id`` to zero."""
 
-    with _penalty_lock:
-        penalties = load_prompt_penalties()
-        if prompt_id in penalties and penalties[prompt_id] != 0:
-            penalties[prompt_id] = 0
-            _penalty_path.parent.mkdir(parents=True, exist_ok=True)
-            _penalty_path.write_text(json.dumps(penalties), encoding="utf-8")
+    PromptStrategyManager().reset_penalty(prompt_id)
 
 
 def _log_path(success: bool) -> Path:

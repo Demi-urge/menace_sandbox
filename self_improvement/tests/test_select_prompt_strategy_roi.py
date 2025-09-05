@@ -23,8 +23,6 @@ sys.modules["menace_sandbox.self_improvement"] = pkg
 from menace_sandbox.self_improvement.prompt_strategy_manager import (  # noqa: E402
     PromptStrategyManager,
 )
-from menace_sandbox.self_improvement import prompt_memory  # noqa: E402
-
 
 def test_best_strategy_prefers_high_roi(tmp_path, monkeypatch):
     stats_path = tmp_path / "stats.json"
@@ -45,7 +43,6 @@ def test_best_strategy_prefers_high_roi(tmp_path, monkeypatch):
         },
     }
     stats_path.write_text(json.dumps(data))
-    monkeypatch.setattr(prompt_memory, "load_prompt_penalties", lambda: {})
-    mgr = PromptStrategyManager(stats_path=stats_path)
+    mgr = PromptStrategyManager(stats_path=stats_path, state_path=tmp_path / "state.json")
     mgr.set_strategies(["s1", "s2"])
     assert mgr.best_strategy(["s1", "s2"]) == "s2"

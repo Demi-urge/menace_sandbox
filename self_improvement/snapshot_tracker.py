@@ -66,38 +66,11 @@ class Snapshot:
 
 _cycle_id = 0
 
-# ---------------------------------------------------------------------------
-# Persistent downgrade tracking
-
-settings = SandboxSettings()
-_downgrade_path = Path(resolve_path(settings.sandbox_data_dir)) / "prompt_downgrades.json"
-try:
-    _downgrade_counts_raw = json.loads(_downgrade_path.read_text(encoding="utf-8"))
-    downgrade_counts: Dict[str, int] = {
-        str(k): int(v) for k, v in _downgrade_counts_raw.items()
-        if isinstance(k, str)
-    }
-except Exception:
-    downgrade_counts = {}
-
-
-def _save_downgrades() -> None:
-    """Persist :data:`downgrade_counts` to disk."""
-
-    try:
-        _downgrade_path.parent.mkdir(parents=True, exist_ok=True)
-        _downgrade_path.write_text(json.dumps(downgrade_counts), encoding="utf-8")
-    except Exception:  # pragma: no cover - best effort
-        pass
-
 
 def record_downgrade(name: str) -> int:
     """Increment downgrade counter for ``name`` and persist it."""
 
-    count = downgrade_counts.get(name, 0) + 1
-    downgrade_counts[name] = count
-    _save_downgrades()
-    return count
+    return PromptStrategyManager().record_penalty(name)
 
 
 def _snapshot_path(settings: SandboxSettings, cycle_id: int, stage: str) -> Path:
@@ -393,6 +366,5 @@ __all__ = [
     "compute_delta",
     "save_checkpoint",
     "get_best_checkpoint",
-    "downgrade_counts",
     "record_downgrade",
 ]

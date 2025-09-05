@@ -25,7 +25,6 @@ import menace_sandbox.prompt_optimizer as prompt_optimizer  # noqa: E402
 from menace_sandbox.self_improvement.prompt_strategy_manager import (  # noqa: E402
     PromptStrategyManager,
 )
-from menace_sandbox.self_improvement import prompt_memory  # noqa: E402
 from dynamic_path_router import resolve_path  # noqa: E402
 
 
@@ -51,10 +50,9 @@ def test_roi_weighted_selection(tmp_path, monkeypatch):
     monkeypatch.setattr(prompt_optimizer, "DEFAULT_STRATEGY_PATH", path)
     stats = prompt_optimizer.load_strategy_stats()
     assert stats["s1"]["weighted_roi"] > 1.9
-    monkeypatch.setattr(prompt_memory, "load_prompt_penalties", lambda: {})
-    mgr = PromptStrategyManager(stats_path=path)
+    mgr = PromptStrategyManager(stats_path=path, state_path=tmp_path / "state.json")
     mgr.set_strategies(["s1", "s2"])
     assert mgr.best_strategy(["s1", "s2"]) == "s1"
-    mgr2 = PromptStrategyManager(stats_path=path)
+    mgr2 = PromptStrategyManager(stats_path=path, state_path=tmp_path / "state.json")
     mgr2.set_strategies(["s1", "s2"])
     assert mgr2.best_strategy(["s1", "s2"]) == "s1"

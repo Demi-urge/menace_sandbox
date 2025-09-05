@@ -65,8 +65,6 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
         "menace_sandbox.self_improvement.prompt_strategy_manager"
     ).PromptStrategyManager
 
-    st.prompt_memory._penalty_path = tmp_path / "penalties.json"
-    st.prompt_memory._penalty_lock = st.prompt_memory.FileLock(str(st.prompt_memory._penalty_path) + ".lock")
     st.prompt_memory.record_regression("alpha")
     assert st.prompt_memory.load_prompt_penalties().get("alpha") == 1
 
@@ -101,6 +99,7 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
 
     assert st.get_best_checkpoint(module) == ckpt_file
 
+    st.prompt_memory.reset_penalty("alpha")
     penalties = st.prompt_memory.load_prompt_penalties()
     assert penalties.get("alpha") == 0
 
@@ -112,6 +111,7 @@ def test_tracker_capture_uses_repo_when_no_files(tmp_path, monkeypatch):
         log_regression=lambda *a, **k: None,
         record_snapshot=lambda *a, **k: 1,
         record_delta=lambda *a, **k: None,
+        resolve_path=lambda p: p,
     )
     sys.modules["menace_sandbox.snapshot_history_db"] = sys.modules["snapshot_history_db"]
     sys.modules["module_index_db"] = types.SimpleNamespace(ModuleIndexDB=None)
