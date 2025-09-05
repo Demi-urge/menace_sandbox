@@ -542,6 +542,7 @@ def charge(
     timestamp_ms = int(time.time() * 1000)
     event: dict[str, Any] | None = None
     amt: float | None = None
+    had_error = False
 
     try:
         if amount is not None:
@@ -613,6 +614,9 @@ def charge(
         else:
             event = stripe.PaymentIntent.create(api_key=api_key, **params)
         return event
+    except Exception:
+        had_error = True
+        raise
     finally:
         destination = None
         if isinstance(event, Mapping):
@@ -668,7 +672,7 @@ def charge(
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
-            error=False,
+            error=had_error,
         )
         record_payment(
             "charge",
@@ -788,12 +792,16 @@ def create_subscription(
     sub_params = {"customer": customer, "items": [{"price": price}], **params}
     timestamp_ms = int(time.time() * 1000)
     event: dict[str, Any] | None = None
+    had_error = False
     try:
         if client:
             event = client.Subscription.create(**sub_params)
         else:
             event = stripe.Subscription.create(api_key=api_key, **sub_params)
         return event
+    except Exception:
+        had_error = True
+        raise
     finally:
         currency = route.get("currency")
         destination = None
@@ -823,7 +831,7 @@ def create_subscription(
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
-            error=False,
+            error=had_error,
         )
         record_payment(
             "subscription",
@@ -916,12 +924,16 @@ def refund(
             pass
     timestamp_ms = int(time.time() * 1000)
     event: dict[str, Any] | None = None
+    had_error = False
     try:
         if client:
             event = client.Refund.create(**refund_params)
         else:
             event = stripe.Refund.create(api_key=api_key, **refund_params)
         return event
+    except Exception:
+        had_error = True
+        raise
     finally:
         currency = route.get("currency")
         destination = None
@@ -958,7 +970,7 @@ def refund(
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
-            error=False,
+            error=had_error,
         )
         record_payment(
             "refund",
@@ -1023,12 +1035,16 @@ def create_checkout_session(
     amount_param = final_params.get("amount")
     timestamp_ms = int(time.time() * 1000)
     event: dict[str, Any] | None = None
+    had_error = False
     try:
         if client:
             event = client.checkout.Session.create(**final_params)
         else:
             event = stripe.checkout.Session.create(api_key=api_key, **final_params)
         return event
+    except Exception:
+        had_error = True
+        raise
     finally:
         currency = route.get("currency")
         destination = None
@@ -1069,7 +1085,7 @@ def create_checkout_session(
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
-            error=False,
+            error=had_error,
         )
         record_payment(
             "checkout_session",

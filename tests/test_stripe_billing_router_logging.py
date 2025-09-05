@@ -111,6 +111,16 @@ def sbr_file_logger(monkeypatch, tmp_path):
     return sbr, ledger_file
 
 
+@pytest.fixture
+def sbr_basic(monkeypatch, tmp_path):
+    sbr = _import_module(monkeypatch, tmp_path)
+    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_master")
+    monkeypatch.setattr(sbr, "record_payment", lambda *a, **k: None)
+    monkeypatch.setattr(sbr, "_log_payment", lambda *a, **k: None)
+    monkeypatch.setattr(sbr, "log_billing_event", lambda *a, **k: None)
+    return sbr
+
+
 def _read_records(path):
     return [json.loads(line) for line in path.read_text().splitlines()]
 
@@ -133,11 +143,21 @@ def test_charge_logs_to_file(monkeypatch, sbr_file_logger):
         Invoice=types.SimpleNamespace(create=fake_invoice_create, pay=fake_invoice_pay),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    calls = []
+    orig = sbr.billing_logger.log_event
+
+    def capture(**k):
+        calls.append(k)
+        return orig(**k)
+
+    monkeypatch.setattr(sbr.billing_logger, "log_event", capture)
+
     sbr.charge("finance:finance_router_bot", 12.5, "desc")
     records = _read_records(ledger)
     assert any(
         r.get("action") == "charge" and r.get("amount") == 12.5 for r in records
     )
+    assert calls and calls[0].get("error") is False
 
 
 def test_refund_logs_to_file(monkeypatch, sbr_file_logger):
@@ -150,11 +170,21 @@ def test_refund_logs_to_file(monkeypatch, sbr_file_logger):
         api_key="orig", Refund=types.SimpleNamespace(create=fake_create)
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    calls = []
+    orig = sbr.billing_logger.log_event
+
+    def capture(**k):
+        calls.append(k)
+        return orig(**k)
+
+    monkeypatch.setattr(sbr.billing_logger, "log_event", capture)
+
     sbr.refund("finance:finance_router_bot", "ch_test", amount=5.0)
     records = _read_records(ledger)
     assert any(
         r.get("action") == "refund" and r.get("amount") == 5.0 for r in records
     )
+    assert calls and calls[0].get("error") is False
 
 
 def test_create_subscription_logs_to_file(monkeypatch, sbr_file_logger):
@@ -167,9 +197,19 @@ def test_create_subscription_logs_to_file(monkeypatch, sbr_file_logger):
         api_key="orig", Subscription=types.SimpleNamespace(create=fake_create)
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    calls = []
+    orig = sbr.billing_logger.log_event
+
+    def capture(**k):
+        calls.append(k)
+        return orig(**k)
+
+    monkeypatch.setattr(sbr.billing_logger, "log_event", capture)
+
     sbr.create_subscription("finance:finance_router_bot", idempotency_key="sub-key")
     records = _read_records(ledger)
     assert any(r.get("action") == "subscription" for r in records)
+    assert calls and calls[0].get("error") is False
 
 
 def test_create_checkout_session_logs_to_file(monkeypatch, sbr_file_logger):
@@ -183,6 +223,15 @@ def test_create_checkout_session_logs_to_file(monkeypatch, sbr_file_logger):
         checkout=types.SimpleNamespace(Session=types.SimpleNamespace(create=fake_create)),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    calls = []
+    orig = sbr.billing_logger.log_event
+
+    def capture(**k):
+        calls.append(k)
+        return orig(**k)
+
+    monkeypatch.setattr(sbr.billing_logger, "log_event", capture)
+
     line_items = [{"price": "price_finance_standard", "quantity": 1}]
     sbr.create_checkout_session(
         "finance:finance_router_bot",
@@ -197,6 +246,96 @@ def test_create_checkout_session_logs_to_file(monkeypatch, sbr_file_logger):
         r.get("action") == "checkout_session" and r.get("amount") == 10.0
         for r in records
     )
+    assert calls and calls[0].get("error") is False
+
+
+def test_charge_logs_error_on_exception(monkeypatch, sbr_basic):
+    sbr = sbr_basic
+    calls = []
+    monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **k: calls.append(k))
+
+    def bad_item_create(*, api_key, **params):
+        raise RuntimeError("fail")
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        InvoiceItem=types.SimpleNamespace(create=bad_item_create),
+        Invoice=types.SimpleNamespace(
+            create=lambda *a, **k: {"id": "in"},
+            pay=lambda *a, **k: {"id": "in"},
+        ),
+        Customer=types.SimpleNamespace(retrieve=lambda *a, **k: {}),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    with pytest.raises(RuntimeError):
+        sbr.charge("finance:finance_router_bot", 12.5, "desc")
+    assert calls and calls[0].get("error") is True
+
+
+def test_refund_logs_error_on_exception(monkeypatch, sbr_basic):
+    sbr = sbr_basic
+    calls = []
+    monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **k: calls.append(k))
+
+    def bad_create(*, api_key, **params):
+        raise RuntimeError("fail")
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        Refund=types.SimpleNamespace(create=bad_create),
+        Customer=types.SimpleNamespace(retrieve=lambda *a, **k: {}),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    with pytest.raises(RuntimeError):
+        sbr.refund("finance:finance_router_bot", "ch_test", amount=5.0)
+    assert calls and calls[0].get("error") is True
+
+
+def test_create_subscription_logs_error_on_exception(monkeypatch, sbr_basic):
+    sbr = sbr_basic
+    calls = []
+    monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **k: calls.append(k))
+
+    def bad_create(*, api_key, **params):
+        raise RuntimeError("fail")
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        Subscription=types.SimpleNamespace(create=bad_create),
+        Customer=types.SimpleNamespace(retrieve=lambda *a, **k: {}),
+        Price=types.SimpleNamespace(retrieve=lambda *a, **k: {"unit_amount": 1000}),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    with pytest.raises(RuntimeError):
+        sbr.create_subscription("finance:finance_router_bot", idempotency_key="sub-key")
+    assert calls and calls[0].get("error") is True
+
+
+def test_create_checkout_session_logs_error_on_exception(monkeypatch, sbr_basic):
+    sbr = sbr_basic
+    calls = []
+    monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **k: calls.append(k))
+
+    def bad_create(*, api_key, **params):
+        raise RuntimeError("fail")
+
+    fake_stripe = types.SimpleNamespace(
+        api_key="orig",
+        checkout=types.SimpleNamespace(Session=types.SimpleNamespace(create=bad_create)),
+        Customer=types.SimpleNamespace(retrieve=lambda *a, **k: {}),
+    )
+    monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    line_items = [{"price": "price_finance_standard", "quantity": 1}]
+    with pytest.raises(RuntimeError):
+        sbr.create_checkout_session(
+            "finance:finance_router_bot",
+            line_items,
+            amount=10.0,
+            success_url="https://example.com/s",
+            cancel_url="https://example.com/c",
+            mode="payment",
+        )
+    assert calls and calls[0].get("error") is True
 
 
 def test_mismatched_account_triggers_alert_and_rollback(monkeypatch, sbr_file_logger):
