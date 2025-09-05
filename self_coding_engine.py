@@ -1293,7 +1293,10 @@ class SelfCodingEngine:
         result = LLMResult()
         try:
             result = call_codex_with_backoff(
-                self.llm_client, prompt_obj, logger=self.logger
+                self.llm_client,
+                prompt_obj,
+                logger=self.logger,
+                timeout=getattr(_settings, "codex_timeout", 30.0),
             )
         except RetryError as exc:
             self._last_retry_trace = str(exc)
