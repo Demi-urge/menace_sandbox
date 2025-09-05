@@ -107,6 +107,7 @@ def test_scheduler_resolves_paths_from_menace_roots(monkeypatch, tmp_path):
     dpr.clear_cache()
     resolved = dpr.resolve_path("auto_helpers.py")
     assert resolved == helper.resolve()
+    assert dpr.path_for_prompt("auto_helpers.py") == helper.resolve().as_posix()
 
     class DummyManager:
         bot_name = "bot"
