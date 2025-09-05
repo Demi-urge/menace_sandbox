@@ -21,7 +21,7 @@ from dynamic_path_router import resolve_path
 
 from billing import billing_logger
 from billing.billing_log_db import BillingLogDB
-import menace_sanity_layer
+from menace_sanity_layer import record_billing_event, record_payment_anomaly
 
 logger = logging.getLogger(__name__)
 
@@ -110,10 +110,23 @@ def detect_anomalies(
                 raw_event_json=raw_json,
                 error=1,
             )
+            record_billing_event(
+                "refund_anomaly" if action == "refund" else "payment_failure",
+                {
+                    "stripe_event_id": event.id,
+                    "stripe_object_id": obj.get("id"),
+                    "bot_id": bot_id,
+                    "reason": "unauthorized",
+                },
+                (
+                    f"{action.capitalize()} event {event.id} for bot {bot_id} was unauthorized; "
+                    "ensure all Stripe payments are authorized and logged."
+                ),
+            )
             anomalies.append(
                 {"id": event.id, "bot_id": bot_id, "reason": "unauthorized"}
             )
-            menace_sanity_layer.record_payment_anomaly(
+            record_payment_anomaly(
                 "unauthorized",
                 {
                     "stripe_event_id": event.id,
@@ -149,8 +162,21 @@ def detect_anomalies(
                 raw_event_json=raw_json,
                 error=1,
             )
+            record_billing_event(
+                "refund_anomaly" if action == "refund" else "payment_failure",
+                {
+                    "stripe_event_id": event.id,
+                    "stripe_object_id": obj.get("id"),
+                    "bot_id": bot_id,
+                    "reason": "unlogged",
+                },
+                (
+                    f"{action.capitalize()} event {event.id} for bot {bot_id} was unlogged; "
+                    "ensure all Stripe payments are authorized and logged."
+                ),
+            )
             anomalies.append({"id": event.id, "bot_id": bot_id, "reason": "unlogged"})
-            menace_sanity_layer.record_payment_anomaly(
+            record_payment_anomaly(
                 "unlogged",
                 {
                     "stripe_event_id": event.id,

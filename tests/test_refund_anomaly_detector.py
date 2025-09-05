@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
-from billing.billing_log_db import BillingLogDB, BillingEvent
-from billing import refund_anomaly_detector as rad
 from dynamic_path_router import resolve_path
 
 
@@ -32,7 +31,24 @@ def _make_event(
 
 
 def test_detects_unlogged_and_unauthorized(tmp_path, monkeypatch):
+    os.environ.setdefault("MENACE_ID", "test")
     resolve_path("billing")
+
+    import sys
+    import types
+
+    payment_calls: list[tuple[tuple, dict]] = []
+    billing_calls: list[tuple[tuple, dict]] = []
+
+    fake_layer = types.SimpleNamespace(
+        record_payment_anomaly=lambda *a, **k: payment_calls.append((a, k)),
+        record_billing_event=lambda *a, **k: billing_calls.append((a, k)),
+    )
+    sys.modules["menace_sanity_layer"] = fake_layer
+
+    from billing.billing_log_db import BillingLogDB, BillingEvent
+    from billing import refund_anomaly_detector as rad
+
     whitelist = tmp_path / "whitelist.json"
     whitelist.write_text(json.dumps(["bot-approved"]))
 
@@ -61,22 +77,31 @@ def test_detects_unlogged_and_unauthorized(tmp_path, monkeypatch):
 
     logged: list[dict] = []
     monkeypatch.setattr(rad.billing_logger, "log_event", lambda **kw: logged.append(kw))
-    recorded: list[tuple[str, dict, str]] = []
-    monkeypatch.setattr(
-        rad.menace_sanity_layer,
-        "record_payment_anomaly",
-        lambda et, md, instr, **kw: recorded.append((et, md, instr)),
-    )
 
     anomalies = rad.detect_anomalies(hours=1, whitelist_path=whitelist, db_path=db_path)
 
     assert {a["reason"] for a in anomalies} == {"unlogged", "unauthorized"}
     assert {a["id"] for a in anomalies} == {"evt_unlogged", "evt_unauth"}
     assert {e["id"] for e in logged} == {"evt_unlogged", "evt_unauth"}
-    assert {r[0] for r in recorded} == {"unlogged", "unauthorized"}
+
+    assert {a[0][0] for a in payment_calls} == {"unlogged", "unauthorized"}
     assert {
-        r[1]["stripe_event_id"] for r in recorded if r[0] == "unlogged"
+        a[0][1]["stripe_event_id"] for a in payment_calls if a[0][0] == "unlogged"
     } == {"evt_unlogged"}
     assert {
-        r[1]["stripe_event_id"] for r in recorded if r[0] == "unauthorized"
+        a[0][1]["stripe_event_id"] for a in payment_calls if a[0][0] == "unauthorized"
     } == {"evt_unauth"}
+
+    assert {a[0][0] for a in billing_calls} == {"refund_anomaly", "payment_failure"}
+    assert {
+        a[0][1]["stripe_event_id"] for a in billing_calls if a[0][0] == "refund_anomaly"
+    } == {"evt_unlogged"}
+    assert {
+        a[0][1]["stripe_event_id"] for a in billing_calls if a[0][0] == "payment_failure"
+    } == {"evt_unauth"}
+    assert {a[0][1]["reason"] for a in billing_calls if a[0][0] == "refund_anomaly"} == {
+        "unlogged"
+    }
+    assert {a[0][1]["reason"] for a in billing_calls if a[0][0] == "payment_failure"} == {
+        "unauthorized"
+    }
