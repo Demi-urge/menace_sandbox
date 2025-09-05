@@ -20,9 +20,14 @@ Set the following environment variables before execution:
 - `STRIPE\_SECRET_KEY` – Stripe API key used to fetch events.
 - `STRIPE_ALLOWED_WEBHOOKS` *(optional)* – comma-separated list of additional
   authorized webhook endpoints.
+- `GPT_MEMORY_DB` *(optional)* – path to the SQLite file where feedback
+  snippets are stored. Defaults to `gpt_memory.db`.
 
-Anomaly summaries and audit entries are written to
-`finance_logs/stripe_watchdog.log`.
+Anomaly summaries are appended to `finance_logs/stripe_watchdog.log`, while
+structured audit records are written to
+`finance_logs/stripe_watchdog_audit.jsonl`. When Sanity Layer feedback is
+enabled, corrective guidance is logged to the GPT memory database referenced by
+`GPT_MEMORY_DB`.
 
 ## Configuration
 
@@ -35,6 +40,10 @@ authorized_webhooks:
 ```
 
 Endpoints not listed here will trigger an alert.
+
+To enable the Sanity Layer feedback loop, ensure `sanity_layer_feedback` is set
+to `true` in this YAML file (the default). Setting it to `false` disables
+recording anomalies to GPT memory and the corresponding audit trail.
 
 ## Systemd timer
 
