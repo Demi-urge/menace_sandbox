@@ -23,20 +23,34 @@ This guide walks you through the common Menace workflows using the new `menace` 
    - `PROMPT_CHUNK_TOKEN_THRESHOLD` and `PROMPT_CHUNK_CACHE_DIR` control code
      chunking token limits and caching for large file summaries
 
-   Resolve paths with `dynamic_path_router.resolve_path` so configurations
-   remain portable:
+    Resolve paths with `dynamic_path_router.resolve_path` so configurations
+    remain portable and avoid embedding path literals:
 
-   ```python
-   import os
-   from dynamic_path_router import resolve_path
-   data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
-   ```
+    ```python
+    import os
+    from dynamic_path_router import resolve_path
+    data_dir = resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    ```
 
-   Setting `MENACE_ROOT` or `SANDBOX_REPO_PATH` will change the root used by
-   `resolve_path`, allowing the CLI to target alternative checkouts. For
-   multi‑repo builds, `MENACE_ROOTS` or `SANDBOX_REPO_PATHS` may specify a
-   `os.pathsep`‑separated list of roots. Pass a repository name or path via
-   `resolve_path(..., root="other_repo")` to target a specific checkout.
+    Override the repository root with `SANDBOX_REPO_PATH`:
+
+    ```bash
+    SANDBOX_REPO_PATH=/alt/clone python - <<'PY'
+    from dynamic_path_router import resolve_path
+    print(resolve_path('README.md'))
+    PY
+    ```
+
+    For multi‑repo builds, `MENACE_ROOTS` or `SANDBOX_REPO_PATHS` may specify a
+    `os.pathsep`‑separated list of roots. Pass a repository name or path via
+    `resolve_path(..., root="other_repo")` to target a specific checkout:
+
+    ```bash
+    MENACE_ROOTS="/repo/main:/repo/fork" python - <<'PY'
+    from dynamic_path_router import resolve_path
+    print(resolve_path('README.md', repo_hint='/repo/fork'))
+    PY
+    ```
 3. **Run the tests** (optional)
    ```bash
    menace test

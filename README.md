@@ -4,7 +4,8 @@ See [docs/sandbox_environment.md](docs/sandbox_environment.md) for required envi
 
 Scripts and data files are located with `dynamic_path_router.resolve_path` so
 shell commands remain portable across forked layouts or nested repositories.
-The resolver honours the `SANDBOX_REPO_PATH` environment variable when set and
+Avoid embedding path literals; always resolve file locations at runtime. The
+resolver honours the `SANDBOX_REPO_PATH` environment variable when set and
 otherwise falls back to Git metadata or a `.git` directory search.
 
 For details on runtime resolution, caching behaviour and migration tips see
@@ -25,6 +26,17 @@ Environment variables influence path resolution. Setting `MENACE_ROOT` or
 SANDBOX_REPO_PATH=/alt/clone python - <<'PY'
 from dynamic_path_router import resolve_path
 print(resolve_path('configs/foresight_templates.yaml'))
+PY
+```
+
+Multi-root configurations are supported via `MENACE_ROOTS` or
+`SANDBOX_REPO_PATHS` (use the platform path separator). Supply a hint to target a
+specific root:
+
+```bash
+MENACE_ROOTS="/repo/main:/repo/experiments" python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('sandbox_runner.py', repo_hint='/repo/experiments'))
 PY
 ```
 
