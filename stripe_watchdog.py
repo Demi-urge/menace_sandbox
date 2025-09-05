@@ -70,6 +70,11 @@ try:  # Optional dependency – structured billing ledger
 except Exception:  # pragma: no cover - best effort
     STRIPE_LEDGER = None  # type: ignore
 
+try:  # Optional dependency – billing log database
+    from billing.billing_log_db import BillingLogDB  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    BillingLogDB = None  # type: ignore
+
 try:  # Optional dependency – discrepancy logging
     from discrepancy_db import DiscrepancyDB, DiscrepancyRecord  # type: ignore
 except Exception:  # pragma: no cover - best effort
@@ -283,6 +288,39 @@ def load_local_ledger(start_ts: int, end_ts: int) -> List[Dict[str, Any]]:
     return rows
 
 
+# Billing logs --------------------------------------------------------------
+
+
+def load_billing_logs(start_ts: int, end_ts: int) -> List[Dict[str, Any]]:
+    """Return ``billing_logs`` rows between ``start_ts`` and ``end_ts``."""
+
+    if BillingLogDB is None:
+        return []
+    start_iso = datetime.utcfromtimestamp(start_ts).isoformat()
+    end_iso = datetime.utcfromtimestamp(end_ts).isoformat()
+    rows: List[Dict[str, Any]] = []
+    try:  # pragma: no cover - best effort
+        db = BillingLogDB()
+        cur = db.conn.execute(
+            "SELECT amount, ts FROM billing_logs WHERE action = ? AND ts >= ? AND ts < ?",
+            ("charge", start_iso, end_iso),
+        )
+        for amount, ts in cur.fetchall():
+            try:
+                ts_epoch = datetime.fromisoformat(ts).timestamp() if ts else None
+            except Exception:
+                ts_epoch = None
+            rows.append(
+                {
+                    "amount": float(amount) if amount is not None else None,
+                    "timestamp": ts_epoch,
+                }
+            )
+    except Exception:
+        logger.exception("BillingLogDB query failed")
+    return rows
+
+
 # Anomaly logging -----------------------------------------------------------
 
 
@@ -308,10 +346,11 @@ def _emit_anomaly(record: Dict[str, Any], write_codex: bool) -> None:
 def detect_missing_charges(
     charges: Iterable[dict],
     ledger: List[Dict[str, Any]],
+    billing_logs: List[Dict[str, Any]] | None = None,
     *,
     write_codex: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Return Stripe charges absent from ``ledger``."""
+    """Return Stripe charges absent from local billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("id")}
     ledger_ts = {
@@ -319,13 +358,31 @@ def detect_missing_charges(
         for e in ledger
         if isinstance(e.get("timestamp_ms"), (int, float))
     }
+    billing_index: Dict[float, List[int]] = {}
+    if billing_logs:
+        for rec in billing_logs:
+            amt = rec.get("amount")
+            ts = rec.get("timestamp")
+            if isinstance(amt, (int, float)) and isinstance(ts, (int, float)):
+                billing_index.setdefault(round(float(amt), 2), []).append(int(ts))
+
     anomalies: List[Dict[str, Any]] = []
     for charge in charges:
         cid = str(charge.get("id"))
         created = charge.get("created")
-        created_ms = int(created * 1000) if isinstance(created, (int, float)) else None
+        created_sec = int(created) if isinstance(created, (int, float)) else None
+        created_ms = int(created_sec * 1000) if created_sec is not None else None
         if cid in ledger_ids or (created_ms is not None and created_ms in ledger_ts):
             continue
+        if billing_index and created_sec is not None:
+            amt = charge.get("amount")
+            amount_dollars = (
+                round(float(amt) / 100.0, 2) if isinstance(amt, (int, float)) else None
+            )
+            if amount_dollars is not None:
+                ts_list = billing_index.get(amount_dollars, [])
+                if any(abs(created_sec - ts) <= 300 for ts in ts_list):
+                    continue
         anomaly = {
             "id": cid,
             "amount": charge.get("amount"),
@@ -565,8 +622,11 @@ def check_events(hours: int = 1, *, write_codex: bool = False) -> List[Dict[str,
     check_webhook_endpoints(api_key, write_codex=write_codex)
     # Load the entire ledger window; many tests use historical timestamps.
     ledger = load_local_ledger(0, end_ts)
+    billing_logs = load_billing_logs(0, end_ts)
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
-    anomalies = detect_missing_charges(charges, ledger, write_codex=write_codex)
+    anomalies = detect_missing_charges(
+        charges, ledger, billing_logs, write_codex=write_codex
+    )
     if anomalies and DiscrepancyDB and DiscrepancyRecord:
         try:  # pragma: no cover - best effort
             msg = f"{len(anomalies)} stripe anomalies detected"
@@ -635,12 +695,13 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ANOMALY_LOG = Path(args.audit_log)
     ledger = load_local_ledger(start_ts, end_ts)
+    billing_logs = load_billing_logs(start_ts, end_ts)
 
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
     events = fetch_recent_events(api_key, start_ts, end_ts)
 
-    detect_missing_charges(charges, ledger, write_codex=args.write_codex)
+    detect_missing_charges(charges, ledger, billing_logs, write_codex=args.write_codex)
     detect_missing_refunds(refunds, ledger, write_codex=args.write_codex)
     detect_failed_events(events, ledger, write_codex=args.write_codex)
     check_webhook_endpoints(api_key, write_codex=args.write_codex)
