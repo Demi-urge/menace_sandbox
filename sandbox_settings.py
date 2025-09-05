@@ -336,7 +336,12 @@ class PolicySettings(BaseModel):
 
 
 class SandboxSettings(BaseSettings):
-    """Environment configuration for sandbox runners."""
+    """Environment configuration for sandbox runners.
+
+    Provides Codex retry and fallback controls via ``codex_retry_delays`` and
+    ``codex_fallback_model`` which map to the ``CODEX_RETRY_DELAYS`` and
+    ``CODEX_FALLBACK_MODEL`` environment variables, respectively.
+    """
 
     menace_mode: str = Field("test", env="MENACE_MODE")
     database_url: str = Field("", env="DATABASE_URL")
@@ -734,6 +739,41 @@ class SandboxSettings(BaseSettings):
     openai_api_key: str | None = Field(
         None, env="OPENAI_API_KEY", description="API key for OpenAI access."
     )
+    codex_retry_delays: list[int] = Field(
+        default_factory=lambda: [2, 5, 10],
+        env="CODEX_RETRY_DELAYS",
+        description="Retry delays in seconds for Codex API calls.",
+    )
+    codex_fallback_model: str = Field(
+        "gpt-3.5-turbo",
+        env="CODEX_FALLBACK_MODEL",
+        description="Fallback model to use when Codex requests fail.",
+    )
+    if PYDANTIC_V2:
+
+        @field_validator("codex_retry_delays", mode="before")
+        def _parse_codex_retry_delays(cls, v: Any) -> Any:
+            if isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [int(i) for i in parsed]
+                except Exception:
+                    return [int(i.strip()) for i in v.split(",") if i.strip()]
+            return v
+
+    else:  # pragma: no cover - pydantic<2
+
+        @field_validator("codex_retry_delays", pre=True)
+        def _parse_codex_retry_delays(cls, v: Any) -> Any:  # type: ignore[override]
+            if isinstance(v, str):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [int(i) for i in parsed]
+                except Exception:
+                    return [int(i.strip()) for i in v.split(",") if i.strip()]
+            return v
     audit_log_path: str = Field(
         "audit.log",
         env="AUDIT_LOG_PATH",
