@@ -1,8 +1,35 @@
-missing_charge: Avoid creating Stripe charges without billing log entries or central routing.
-missing_refund: Avoid issuing refunds without corresponding ledger entries.
-missing_failure_log: Avoid handling Stripe failures without logging the event.
-unapproved_workflow: Avoid running Stripe workflows without explicit approval.
-unknown_webhook: Avoid unregistered Stripe webhooks; register endpoints before use.
-disabled_webhook: Avoid relying on disabled Stripe webhook endpoints.
-revenue_mismatch: Avoid revenue figures that diverge from ledger or ROI projections.
-account_mismatch: Avoid routing charges to unexpected Stripe accounts.
+instructions:
+  missing_charge: Avoid creating Stripe charges without billing log entries or central routing.
+  missing_refund: Avoid issuing refunds without corresponding ledger entries.
+  missing_failure_log: Avoid handling Stripe failures without logging the event.
+  unapproved_workflow: Avoid running Stripe workflows without explicit approval.
+  unknown_webhook: Avoid unregistered Stripe webhooks; register endpoints before use.
+  disabled_webhook: Avoid relying on disabled Stripe webhook endpoints.
+  revenue_mismatch: Avoid revenue figures that diverge from ledger or ROI projections.
+  account_mismatch: Avoid routing charges to unexpected Stripe accounts.
+anomaly_hints:
+  missing_charge:
+    block_unlogged_charges: true
+  missing_refund:
+    block_unlogged_refunds: true
+  missing_failure_log:
+    log_stripe_failures: true
+  unapproved_workflow:
+    enforce_workflow_approval: true
+  unknown_webhook:
+    register_stripe_webhooks: true
+  disabled_webhook:
+    reactivate_stripe_webhook: true
+  revenue_mismatch:
+    reconcile_revenue: true
+  account_mismatch:
+    verify_stripe_account: true
+severity_map:
+  missing_charge: 2.5
+  missing_refund: 2.0
+  missing_failure_log: 1.5
+  unapproved_workflow: 3.5
+  unknown_webhook: 2.0
+  disabled_webhook: 3.0
+  revenue_mismatch: 4.0
+  account_mismatch: 3.0
