@@ -21,6 +21,7 @@ from dynamic_path_router import resolve_path
 
 from billing import billing_logger
 from billing.billing_log_db import BillingLogDB
+import menace_sanity_layer
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,19 @@ def detect_anomalies(
             anomalies.append(
                 {"id": event.id, "bot_id": bot_id, "reason": "unauthorized"}
             )
+            menace_sanity_layer.record_payment_anomaly(
+                "unauthorized",
+                {
+                    "stripe_event_id": event.id,
+                    "stripe_object_id": obj.get("id"),
+                    "bot_id": bot_id,
+                    "action": action,
+                },
+                (
+                    f"{action.capitalize()} event {event.id} for bot {bot_id} was unauthorized; "
+                    "ensure all Stripe payments are authorized and logged."
+                ),
+            )
             continue
 
         event_time = datetime.utcfromtimestamp(getattr(event, "created", 0))
@@ -136,6 +150,19 @@ def detect_anomalies(
                 error=1,
             )
             anomalies.append({"id": event.id, "bot_id": bot_id, "reason": "unlogged"})
+            menace_sanity_layer.record_payment_anomaly(
+                "unlogged",
+                {
+                    "stripe_event_id": event.id,
+                    "stripe_object_id": obj.get("id"),
+                    "bot_id": bot_id,
+                    "action": action,
+                },
+                (
+                    f"{action.capitalize()} event {event.id} for bot {bot_id} was unlogged; "
+                    "ensure all Stripe payments are authorized and logged."
+                ),
+            )
 
     return anomalies
 
