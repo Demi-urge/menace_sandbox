@@ -54,7 +54,7 @@ class DummyPromptEngine:
         return Prompt(description)
 
 
-def make_engine(mock_llm):
+def make_engine(mock_llm, fallback_model: str = "gpt-3.5-turbo"):
     engine = object.__new__(SelfCodingEngine)
     engine.llm_client = mock_llm
     engine.suggest_snippets = MagicMock(return_value=[])
@@ -71,6 +71,9 @@ def make_engine(mock_llm):
     engine._last_prompt = None
     engine._last_retry_trace = None
     self_coding_engine._settings = types.SimpleNamespace(codex_retry_delays=[2, 5, 10])
+    self_coding_engine.codex_fallback_handler._settings = types.SimpleNamespace(
+        codex_fallback_model=fallback_model
+    )
     return engine
 
 
@@ -90,11 +93,23 @@ def test_empty_output_triggers_fallback(monkeypatch):
         Exception("e3"),
         LLMResult(text=""),
     ]
-    engine = make_engine(mock_llm)
+    fallback_model = "fallback-a"
+    engine = make_engine(mock_llm, fallback_model)
 
     alt_result = LLMResult(text="print('hi')")
-    handle_mock = MagicMock(return_value=alt_result)
-    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle", handle_mock)
+    model_used: dict[str, str] = {}
+
+    def fake_reroute(p: Prompt) -> LLMResult:
+        model_used["model"] = (
+            self_coding_engine.codex_fallback_handler._settings.codex_fallback_model
+        )
+        return alt_result
+
+    monkeypatch.setattr(
+        self_coding_engine.codex_fallback_handler,
+        "reroute_to_fallback_model",
+        fake_reroute,
+    )
 
     sleeps: list[float] = []
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
@@ -123,7 +138,7 @@ def test_empty_output_triggers_fallback(monkeypatch):
     simple_prompt = mock_llm.generate.call_args_list[-1].args[0]
     assert simple_prompt.system == ""
     assert simple_prompt.examples == []
-    handle_mock.assert_called_once()
+    assert model_used["model"] == fallback_model
     assert result == "print('hi')\n"
 
 
@@ -135,11 +150,23 @@ def test_malformed_output_triggers_fallback(monkeypatch):
         Exception("e3"),
         LLMResult(text="def bad:"),
     ]
-    engine = make_engine(mock_llm)
+    fallback_model = "fallback-b"
+    engine = make_engine(mock_llm, fallback_model)
 
     alt_result = LLMResult(text="print('fixed')")
-    handle_mock = MagicMock(return_value=alt_result)
-    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle", handle_mock)
+    model_used: dict[str, str] = {}
+
+    def fake_reroute(p: Prompt) -> LLMResult:
+        model_used["model"] = (
+            self_coding_engine.codex_fallback_handler._settings.codex_fallback_model
+        )
+        return alt_result
+
+    monkeypatch.setattr(
+        self_coding_engine.codex_fallback_handler,
+        "reroute_to_fallback_model",
+        fake_reroute,
+    )
 
     sleeps: list[float] = []
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
@@ -164,5 +191,5 @@ def test_malformed_output_triggers_fallback(monkeypatch):
 
     assert seen_delays == [[2, 5, 10]]
     assert sleeps == [2, 5, 10]
-    handle_mock.assert_called_once()
+    assert model_used["model"] == fallback_model
     assert result == "print('fixed')\n"

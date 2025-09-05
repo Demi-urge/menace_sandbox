@@ -2,7 +2,8 @@
 
 This module provides minimal helpers used when Codex fails to produce a
 response.  Failed prompts are persisted to a JSONL file so they can be replayed
-later and, when possible, execution is rerouted to ``gpt-3.5-turbo``.
+later and, when possible, execution is rerouted to a configurable fallback
+model (``gpt-3.5-turbo`` by default).
 """
 
 from __future__ import annotations
@@ -17,9 +18,12 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for direct execution
     from llm_interface import LLMClient, Prompt, LLMResult  # type: ignore
 
+from sandbox_settings import SandboxSettings
+
 
 # Location where failed prompts are stored for later replay
 _QUEUE_FILE = Path("codex_fallback_queue.jsonl")
+_settings = SandboxSettings()
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +47,17 @@ def queue_failed(prompt: Prompt, reason: str, *, path: Path = _QUEUE_FILE) -> No
         handle.write(json.dumps(record) + "\n")
 
 
-def reroute_to_gpt35(prompt: Prompt) -> LLMResult:
-    """Retry ``prompt`` using ``gpt-3.5-turbo``.
+def reroute_to_fallback_model(prompt: Prompt) -> LLMResult:
+    """Retry ``prompt`` using the configured fallback model.
 
-    The helper now returns the full :class:`LLMResult` object so callers can
-    inspect metadata such as token usage in addition to the generated text.
+    The model is taken from :class:`SandboxSettings` via the
+    ``codex_fallback_model`` attribute.  The helper returns the full
+    :class:`LLMResult` object so callers can inspect metadata such as token
+    usage in addition to the generated text.
     """
 
-    client = LLMClient(model="gpt-3.5-turbo")
+    model = getattr(_settings, "codex_fallback_model", "gpt-3.5-turbo")
+    client = LLMClient(model=model)
     return client.generate(prompt)
 
 
@@ -71,7 +78,7 @@ def handle(
     Returns
     -------
     LLMResult
-        Result from :func:`reroute_to_gpt35`.  When rerouting fails or yields an
+        Result from :func:`reroute_to_fallback_model`.  When rerouting fails or yields an
         empty completion, an ``LLMResult`` with an empty ``text`` field and the
         ``reason`` stored under ``raw`` is returned.
     """
@@ -79,7 +86,7 @@ def handle(
     logger.warning("codex fallback invoked", extra={"reason": reason})
 
     try:
-        result = reroute_to_gpt35(prompt)
+        result = reroute_to_fallback_model(prompt)
     except Exception:
         logger.warning(
             "codex fallback reroute failed", exc_info=True, extra={"reason": reason}
@@ -98,5 +105,4 @@ def handle(
     return result
 
 
-__all__ = ["queue_failed", "reroute_to_gpt35", "handle"]
-
+__all__ = ["queue_failed", "reroute_to_fallback_model", "handle"]
