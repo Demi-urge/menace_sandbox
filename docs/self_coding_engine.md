@@ -99,13 +99,15 @@ LLM calls are retried with backoff.  The delay between attempts is controlled by
 fail the prompt is simplified – examples are trimmed and system text is removed
 – before one final attempt.
 
-If no code is produced, `codex_fallback_handler` either queues the prompt or
-reroutes it to a lower‑cost model.  Select the behaviour via
+If no code is produced, `codex_fallback_handler.handle` either queues the prompt
+or reroutes it to a lower‑cost model.  The function now returns an
+`LLMResult`—use `result.text` to access any rerouted completion and inspect
+`result.raw` for provider metadata or failure reasons.  Select the behaviour via
 `CODEX_FALLBACK_STRATEGY` (`"queue"` or `"reroute"`; default) and specify the
 alternate model with `CODEX_FALLBACK_MODEL` (defaults to `gpt-3.5-turbo`).
 Queued prompts are written to `CODEX_RETRY_QUEUE` (`codex_retry_queue_path`).
 
-Queued requests return a minimal stub so the patch loop carries on, while
+Queued requests provide an empty `LLMResult` so the patch loop carries on, while
 rerouted completions are marked as degraded but still allow the cycle to
 proceed.  These fallbacks keep the self‑coding loop running even when the
 primary model is unavailable.
