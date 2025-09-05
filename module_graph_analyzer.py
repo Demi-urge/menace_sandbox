@@ -9,7 +9,7 @@ from typing import Dict, Iterable
 
 import networkx as nx
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, resolve_module_path
 
 try:  # optional dependency
     import hdbscan  # type: ignore
@@ -126,7 +126,7 @@ def cluster_modules(
     if use_semantic and root is not None:
         docs: Dict[str, str] = {}
         for node in graph.nodes:
-            path = Path(resolve_path(root / f"{node}.py"))
+            path = resolve_module_path(node.replace("/", "."))
             try:
                 tree = ast.parse(path.read_text())
             except Exception:

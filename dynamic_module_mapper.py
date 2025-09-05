@@ -8,7 +8,7 @@ from typing import Dict, Iterable
 from orphan_analyzer import analyze_redundancy
 
 from module_graph_analyzer import build_import_graph, cluster_modules
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, resolve_module_path
 
 
 def discover_module_groups(
@@ -29,13 +29,7 @@ def discover_module_groups(
     )
     groups: Dict[int, list[str]] = {}
     for mod, cid in mapping.items():
-        try:
-            path = Path(resolve_path(root / f"{mod}.py"))
-        except FileNotFoundError:
-            try:
-                path = Path(resolve_path(root / mod / "__init__.py"))
-            except FileNotFoundError:
-                path = Path(resolve_path(root / f"{mod}.py"))
+        path = resolve_module_path(mod.replace("/", "."))
         if "/" in mod:
             groups.setdefault(cid, []).append(mod)
             continue
@@ -73,13 +67,7 @@ def build_module_map(
     if mapping and len(mapping) > 1 and algorithm != "hdbscan":
         filtered: Dict[str, int] = {}
         for mod, grp in mapping.items():
-            try:
-                path = Path(resolve_path(root / f"{mod}.py"))
-            except FileNotFoundError:
-                try:
-                    path = Path(resolve_path(root / mod / "__init__.py"))
-                except FileNotFoundError:
-                    path = Path(resolve_path(root / f"{mod}.py"))
+            path = resolve_module_path(mod.replace("/", "."))
             if "/" in mod:
                 filtered[mod] = grp
                 continue

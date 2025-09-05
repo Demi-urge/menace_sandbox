@@ -39,6 +39,13 @@ def test_resolve_path_in_nested_clone(monkeypatch):
         assert dpr.resolve_path("prompt_engine.py") == (
             repo / "prompts" / "prompt_engine.py"
         ).resolve()
+        assert dpr.resolve_module_path("sandbox_runner") == (
+            repo / "sandbox_runner.py"
+        ).resolve()
+        assert dpr.resolve_module_path("patches.patch_provenance") == (
+            repo / "patches" / "patch_provenance.py"
+        ).resolve()
+        assert dpr.resolve_dir("prompts") == (repo / "prompts").resolve()
 
 
 def test_resolve_path_with_relocated_root(monkeypatch):
@@ -67,3 +74,10 @@ def test_resolve_path_with_relocated_root(monkeypatch):
         assert dpr.resolve_path("prompt_engine.py") == (
             repo / "prompts" / "prompt_engine.py"
         ).resolve()
+        assert dpr.resolve_module_path("sandbox_runner") == (
+            repo / "sandbox_runner.py"
+        ).resolve()
+        assert dpr.resolve_module_path("patches.patch_provenance") == (
+            repo / "patches" / "patch_provenance.py"
+        ).resolve()
+        assert dpr.resolve_dir("patches") == (repo / "patches").resolve()
