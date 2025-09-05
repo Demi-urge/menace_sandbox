@@ -104,7 +104,7 @@ EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
         "Avoid revenue figures that diverge from ledger or ROI projections."
     ),
     "account_mismatch": (
-        "Avoid routing charges to unexpected Stripe accounts."
+        "Avoid routing Stripe activity to unapproved accounts."
     ),
 }
 
