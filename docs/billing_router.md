@@ -79,27 +79,45 @@ also reference ``stripe_billing_router`` or the check fails.
 Every billing operation recorded through ``stripe_billing_router`` is persisted
 via ``billing_logger.log_event``.  Records are written to the ``stripe_ledger``
 table—falling back to ``finance_logs/stripe_ledger.jsonl`` when the database is
-unavailable—and contain the following columns:
+unavailable—and **must** contain the following fields:
 
-- ``id``
-- ``action_type``
-- ``amount``
-- ``currency``
-- ``timestamp_ms``
-- ``user_email``
-- ``bot_id``
-- ``destination_account``
-- ``raw_event_json``
-- ``error``
+- ``id`` – Stripe object identifier or generated UUID.
+- ``action_type`` – ``charge``, ``refund``, ``subscription`` or
+  ``checkout_session``.
+- ``amount`` – Numeric amount of the transaction.
+- ``currency`` – Lower‑case ISO‑4217 currency code.
+- ``timestamp_ms`` – Milliseconds since the Unix epoch.
+- ``user_email`` – Email address tied to the payment, if any.
+- ``bot_id`` – ``business_category:bot_name`` that initiated the event.
+- ``destination_account`` – Connected or on‑behalf‑of account ID.
+- ``raw_event_json`` – Raw JSON payload returned by Stripe.
+- ``error`` – ``1`` when a critical discrepancy occurs, otherwise ``0``.
 
-### Master account and rollback alerts
+### Master account, allowed keys and rollback alerts
 
 Set ``STRIPE_MASTER_ACCOUNT_ID`` to the platform's Stripe master account
-identifier.  The router verifies that each Stripe response references this
-account.  If a different account is detected the event is logged with
-``error=1``, ``alert_dispatcher`` sends a ``critical_discrepancy`` alert and
-``rollback_manager.RollbackManager.auto_rollback`` attempts to revert the
-action.
+identifier.  Secret keys that may be used on behalf of the platform are
+enumerated via ``STRIPE_ALLOWED_SECRET_KEYS`` (comma separated) or the
+``allowed_secret_keys`` list in the routing configuration.
+
+```bash
+export STRIPE_MASTER_ACCOUNT_ID=acct_master
+export STRIPE_ALLOWED_SECRET_KEYS=sk_prod_main,sk_prod_backup
+```
+
+If an unknown key is supplied or a Stripe response references a different
+account, the router logs the event with ``error=1``, stores a record in
+``DiscrepancyDB`` and ``alert_dispatcher`` sends a ``critical_discrepancy``
+alert.  ``rollback_manager.RollbackManager.auto_rollback`` then reverts the most
+recent sandbox changes for the offending bot.
+
+### Responding to critical discrepancy alerts
+
+A ``critical_discrepancy`` alert indicates a misconfigured key or account
+mismatch.  Review the corresponding entry in ``stripe_ledger`` or
+``finance_logs/stripe_ledger.jsonl`` and the details recorded in
+``DiscrepancyDB``.  Once the configuration is corrected, rerun the operation; the
+sandbox rollback occurs automatically.
 
 ### Example flows with logging
 
