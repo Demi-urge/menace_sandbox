@@ -33,8 +33,8 @@ def test_load_synergy_groups_logs_failure(tmp_path, caplog, monkeypatch):
 def test_index_clusters_logs_failures(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(ic, "governed_embed", lambda text: [0.1, 0.2])
     clusterer = _make_clusterer(tmp_path)
-    clusterer.vectors["a.py"] = [0.1, 0.2]
-    groups = {"1": ["a.py"]}
+    clusterer.vectors["a.py"] = [0.1, 0.2]  # path-ignore
+    groups = {"1": ["a.py"]}  # path-ignore
 
     class BoomConn:
         def __enter__(self):
@@ -80,7 +80,7 @@ def test_post_init_logs_registration_failure(tmp_path, caplog, monkeypatch):
 
 
 def test_index_modules_logs_retriever_failure(tmp_path, caplog, monkeypatch):
-    module = tmp_path / "m.py"
+    module = tmp_path / "m.py"  # path-ignore
     module.write_text('"""doc"""\n')
     monkeypatch.setattr(ic, "governed_embed", lambda text: [0.1, 0.2])
     clusterer = _make_clusterer(tmp_path)

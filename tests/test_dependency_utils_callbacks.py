@@ -6,8 +6,8 @@ from sandbox_runner.dependency_utils import collect_local_dependencies
 
 
 def _make_repo(tmp_path):
-    a = tmp_path / "a.py"
-    b = tmp_path / "b.py"
+    a = tmp_path / "a.py"  # path-ignore
+    b = tmp_path / "b.py"  # path-ignore
     a.write_text("import b\n")
     b.write_text("x = 1\n")
     return a, b

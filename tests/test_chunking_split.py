@@ -39,7 +39,7 @@ def test_syntax_error_fallback() -> None:
 
 
 def test_get_chunk_summaries_cache_hit(tmp_path, monkeypatch):
-    file = tmp_path / "sample.py"
+    file = tmp_path / "sample.py"  # path-ignore
     file.write_text("def a():\n    return 1\n")
 
     calls = {"n": 0}
@@ -62,7 +62,7 @@ def test_get_chunk_summaries_cache_hit(tmp_path, monkeypatch):
 
 
 def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
-    file = tmp_path / "sample.py"
+    file = tmp_path / "sample.py"  # path-ignore
     file.write_text("def a():\n    return 1\n")
 
     calls = {"n": 0}

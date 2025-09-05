@@ -20,7 +20,7 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
     class DummyIndex:
         def __init__(self, path: Path) -> None:
             self.path = path
-            self._map = {"existing.py": 1}
+            self._map = {"existing.py": 1}  # path-ignore
             self._groups = {"1": 1}
         def refresh(self, modules=None, force=False):
             for m in modules or []:
@@ -35,12 +35,12 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     map_path = data_dir / "module_map.json"
-    map_path.write_text(json.dumps({"modules": {"existing.py": 1}, "groups": {"1": 1}}))
+    map_path.write_text(json.dumps({"modules": {"existing.py": 1}, "groups": {"1": 1}}))  # path-ignore
 
     index = DummyIndex(map_path)
     engine = types.SimpleNamespace(
         module_index=index,
-        module_clusters={"existing.py": 1},
+        module_clusters={"existing.py": 1},  # path-ignore
         logger=DummyLogger(),
     )
     engine._collect_recursive_modules = lambda mods: set(mods)
@@ -71,8 +71,8 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     # create modules
-    (tmp_path / "existing.py").write_text("x = 1\n")
-    (tmp_path / "orphan.py").write_text("y = 2\n")
+    (tmp_path / "existing.py").write_text("x = 1\n")  # path-ignore
+    (tmp_path / "orphan.py").write_text("y = 2\n")  # path-ignore
 
     # simple workflow store
     workflows = {1: ["existing"]}
@@ -110,9 +110,9 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
     g["auto_include_modules"] = fake_auto
     g["analyze_redundancy"] = lambda p: False
 
-    engine._refresh_module_map(["orphan.py"])
+    engine._refresh_module_map(["orphan.py"])  # path-ignore
 
     # orphan module appended to existing workflow
     assert workflows[1] == ["existing", "orphan"]
     data = json.loads(map_path.read_text())
-    assert "orphan.py" in data["modules"]
+    assert "orphan.py" in data["modules"]  # path-ignore

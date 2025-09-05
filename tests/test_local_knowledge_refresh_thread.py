@@ -5,6 +5,8 @@ import threading
 import logging
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -100,7 +102,10 @@ def _load_run_autonomous(monkeypatch):
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
 
-    spec = importlib.util.spec_from_file_location("run_autonomous", ROOT / "run_autonomous.py")
+    spec = importlib.util.spec_from_file_location(
+        "run_autonomous",
+        resolve_path("run_autonomous.py"),
+    )
     mod = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "run_autonomous", mod)
     spec.loader.exec_module(mod)

@@ -7,6 +7,8 @@ import types
 import sys
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 # Load modules without running package __init__
 ROOT = Path(__file__).resolve().parents[1]
 pkg = types.ModuleType("menace")
@@ -15,14 +17,18 @@ sys.modules["menace"] = pkg
 sys.modules.setdefault("pandas", types.ModuleType("pandas"))
 
 spec = importlib.util.spec_from_file_location(
-    "menace.databases", ROOT / "databases.py", submodule_search_locations=[str(ROOT)]
+    "menace.databases",
+    resolve_path("databases.py"),
+    submodule_search_locations=[str(ROOT)],
 )
 mn = importlib.util.module_from_spec(spec)
 sys.modules["menace.databases"] = mn
 spec.loader.exec_module(mn)
 
 spec = importlib.util.spec_from_file_location(
-    "menace.db_router", ROOT / "db_router.py", submodule_search_locations=[str(ROOT)]
+    "menace.db_router",
+    resolve_path("db_router.py"),
+    submodule_search_locations=[str(ROOT)],
 )
 dr = importlib.util.module_from_spec(spec)
 sys.modules["menace.db_router"] = dr
