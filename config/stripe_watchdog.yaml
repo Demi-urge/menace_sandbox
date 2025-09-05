@@ -1,2 +1,2 @@
-allowed_endpoints:
+authorized_webhooks:
   - https://example.com/stripe/webhook

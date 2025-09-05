@@ -50,7 +50,7 @@ def test_check_events_detects_orphan_charge(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(sw, "stripe", fake_stripe)
     monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test_dummy")
-    monkeypatch.setattr(sw, "_load_allowed_endpoints", lambda path=sw.CONFIG_PATH: set())
+    monkeypatch.setattr(sw, "_load_authorized_webhooks", lambda path=sw.CONFIG_PATH: set())
 
     anomalies = sw.check_events()
     assert anomalies == [
@@ -75,7 +75,7 @@ def test_check_events_writes_log_and_summary(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(sw, "stripe", fake_stripe)
     monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test_dummy")
-    monkeypatch.setattr(sw, "_load_allowed_endpoints", lambda path=sw.CONFIG_PATH: set())
+    monkeypatch.setattr(sw, "_load_authorized_webhooks", lambda path=sw.CONFIG_PATH: set())
 
     records = []
 
@@ -135,7 +135,7 @@ def test_check_revenue_projection_detects_mismatch(monkeypatch):
 def test_check_webhook_endpoints_alerts_unauthorized(monkeypatch, tmp_path):
     cfg = tmp_path / "stripe_watchdog.yaml"  # path-ignore
     cfg.write_text(
-        "allowed_endpoints:\n  - https://good.example.com/webhook\n"
+        "authorized_webhooks:\n  - https://good.example.com/webhook\n"
     )
     monkeypatch.setattr(sw, "CONFIG_PATH", cfg)
 

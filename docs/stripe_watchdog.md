@@ -15,11 +15,11 @@ billing ledger and alerts on discrepancies.
 
 ## Configuration
 
-Allowed webhook endpoints are defined in
+Authorized webhook endpoints are defined in
 `config/stripe_watchdog.yaml`:
 
 ```yaml
-allowed_endpoints:
+authorized_webhooks:
   - https://example.com/stripe/webhook
 ```
 
