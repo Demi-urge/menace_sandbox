@@ -2044,7 +2044,9 @@ def main(argv: List[str] | None = None) -> None:
 
 
 
-def bootstrap(config_path: str = "config/bootstrap.yaml") -> None:
+def bootstrap(
+    config_path: str | Path = get_project_root() / "config" / "bootstrap.yaml",
+) -> None:
     """Bootstrap the autonomous sandbox using configuration from ``config_path``.
 
     The helper loads :class:`SandboxSettings`, initialises core databases and the
