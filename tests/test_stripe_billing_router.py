@@ -68,7 +68,9 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     sys.modules["advanced_error_management"] = arm
     sys.modules["sbrpkg.advanced_error_management"] = arm
     dd = types.SimpleNamespace(
-        DiscrepancyDB=lambda: types.SimpleNamespace(log=lambda *a, **k: None)
+        DiscrepancyDB=lambda: types.SimpleNamespace(
+            log=lambda *a, **k: None, add=lambda *a, **k: None
+        )
     )
     sys.modules["discrepancy_db"] = dd
     sys.modules["sbrpkg.discrepancy_db"] = dd
@@ -683,6 +685,10 @@ def test_refund_success(monkeypatch, sbr_module):
         "log_billing_event",
         lambda action, **kw: log_db.update({"action": action, **kw}),
     )
+    ledger_calls: list[tuple] = []
+    monkeypatch.setattr(
+        sbr_module, "_log_payment", lambda *a: ledger_calls.append(a)
+    )
     res = sbr_module.refund(
         "finance:finance_router_bot",
         "ch_test",
@@ -698,6 +704,7 @@ def test_refund_success(monkeypatch, sbr_module):
     assert log_record["id"] == "rf_test"
     assert log_db["action"] == "refund"
     assert log_db["bot_id"] == "finance:finance_router_bot"
+    assert ledger_calls and ledger_calls[0][0] == "refund"
 
 
 def test_create_checkout_session_success(monkeypatch, sbr_module):
@@ -725,14 +732,18 @@ def test_create_checkout_session_success(monkeypatch, sbr_module):
         "log_billing_event",
         lambda action, **kw: log_db.update({"action": action, **kw}),
     )
+    ledger_calls: list[tuple] = []
+    monkeypatch.setattr(
+        sbr_module, "_log_payment", lambda *a: ledger_calls.append(a)
+    )
     line_items = [{"price": "price_finance_standard", "quantity": 1}]
-    params = {
-        "line_items": line_items,
-        "mode": "payment",
-        "success_url": "https://example.com/s",
-        "cancel_url": "https://example.com/c",
-    }
-    res = sbr_module.create_checkout_session("finance:finance_router_bot", params)
+    res = sbr_module.create_checkout_session(
+        "finance:finance_router_bot",
+        line_items,
+        mode="payment",
+        success_url="https://example.com/s",
+        cancel_url="https://example.com/c",
+    )
     assert res["id"] == "cs_test"
     assert recorded["line_items"] == line_items
     assert recorded["customer"] == "cus_finance_default"
@@ -741,6 +752,7 @@ def test_create_checkout_session_success(monkeypatch, sbr_module):
     assert log_record["id"] == "cs_test"
     assert log_db["action"] == "checkout_session"
     assert log_db["bot_id"] == "finance:finance_router_bot"
+    assert ledger_calls and ledger_calls[0][0] == "checkout"
 
 
 def test_invalid_secret_key_triggers_alert_and_rollback(monkeypatch, sbr_module):
@@ -750,13 +762,15 @@ def test_invalid_secret_key_triggers_alert_and_rollback(monkeypatch, sbr_module)
         sbr_module.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
     )
 
-    class DummyARM:
-        def auto_rollback(self, tag, bots):
-            rollbacks.append((tag, bots))
+    class DummyRM:
+        def log_healing_action(self, bot_id, action):
+            rollbacks.append((action, [bot_id]))
 
-    monkeypatch.setattr(sbr_module, "AutomatedRollbackManager", lambda: DummyARM())
+    monkeypatch.setattr(
+        sbr_module.rollback_manager, "RollbackManager", lambda: DummyRM()
+    )
 
-    with pytest.raises(RuntimeError, match="critical_discrepancy"):
+    with pytest.raises(RuntimeError, match="Stripe account mismatch"):
         sbr_module._verify_route(
             "finance:finance_router_bot", {"secret_key": "sk_live_bad"}
         )
@@ -771,17 +785,19 @@ def test_invalid_account_triggers_alert_and_rollback(monkeypatch, sbr_module):
         sbr_module.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
     )
 
-    class DummyARM:
-        def auto_rollback(self, tag, bots):
-            rollbacks.append((tag, bots))
+    class DummyRM:
+        def log_healing_action(self, bot_id, action):
+            rollbacks.append((action, [bot_id]))
 
-    monkeypatch.setattr(sbr_module, "AutomatedRollbackManager", lambda: DummyARM())
+    monkeypatch.setattr(
+        sbr_module.rollback_manager, "RollbackManager", lambda: DummyRM()
+    )
 
     route = {
         "secret_key": sbr_module.STRIPE_SECRET_KEY,
         "account_id": "acct_bad",
     }
-    with pytest.raises(RuntimeError, match="critical_discrepancy"):
+    with pytest.raises(RuntimeError, match="Stripe account mismatch"):
         sbr_module._verify_route("finance:finance_router_bot", route)
 
     assert alerts and rollbacks

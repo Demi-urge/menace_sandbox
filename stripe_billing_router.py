@@ -503,13 +503,7 @@ def charge(
     api_key = route["secret_key"]
     client = _client(api_key)
 
-    account_id = ""
-    try:  # pragma: no cover - best effort
-        acct = stripe.Account.retrieve(api_key=api_key)
-        if isinstance(acct, Mapping):
-            account_id = str(acct.get("id") or "")
-    except Exception:  # pragma: no cover - best effort
-        account_id = ""
+    account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
         _alert_mismatch(bot_id, account_id)
         raise RuntimeError("Stripe account mismatch")
@@ -750,13 +744,7 @@ def create_subscription(
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
-    account_id = ""
-    try:  # pragma: no cover - best effort
-        acct = stripe.Account.retrieve(api_key=api_key)
-        if isinstance(acct, Mapping):
-            account_id = str(acct.get("id") or "")
-    except Exception:  # pragma: no cover - best effort
-        account_id = ""
+    account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
         _alert_mismatch(bot_id, account_id)
         raise RuntimeError("Stripe account mismatch")
@@ -875,13 +863,7 @@ def refund(
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
-    account_id = ""
-    try:  # pragma: no cover - best effort
-        acct = stripe.Account.retrieve(api_key=api_key)
-        if isinstance(acct, Mapping):
-            account_id = str(acct.get("id") or "")
-    except Exception:  # pragma: no cover - best effort
-        account_id = ""
+    account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
         _alert_mismatch(bot_id, account_id)
         raise RuntimeError("Stripe account mismatch")
@@ -996,13 +978,7 @@ def create_checkout_session(
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
-    account_id = ""
-    try:  # pragma: no cover - best effort
-        acct = stripe.Account.retrieve(api_key=api_key)
-        if isinstance(acct, Mapping):
-            account_id = str(acct.get("id") or "")
-    except Exception:  # pragma: no cover - best effort
-        account_id = ""
+    account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
         _alert_mismatch(bot_id, account_id)
         raise RuntimeError("Stripe account mismatch")
