@@ -4,6 +4,10 @@ import sys
 import types
 from typing import Any
 
+import ast
+from pathlib import Path
+
+import pytest
 from dynamic_path_router import resolve_path
 
 sys.modules.setdefault(
@@ -11,6 +15,19 @@ sys.modules.setdefault(
 )
 
 import menace_sanity_layer as msl  # noqa: E402
+
+
+def _severity_map() -> dict[str, float]:
+    path = Path(resolve_path("stripe_watchdog.py"))
+    mod = ast.parse(path.read_text())
+    for node in mod.body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "SEVERITY_MAP":
+            return ast.literal_eval(node.value)
+    return {}
+
+
+SEVERITY_MAP = _severity_map()
+SEVERITY_KEYS = sorted(SEVERITY_MAP.keys())
 
 
 def test_record_payment_anomaly_writes_db_and_memory(monkeypatch):
@@ -44,6 +61,53 @@ def test_record_payment_anomaly_writes_db_and_memory(monkeypatch):
     assert mem_calls and mem_calls[0][0] == "Avoid handle it."
     assert mem_calls[0][1]["event_type"] == "test_event"
     assert mem_calls[0][1]["metadata"]["foo"] == "bar"
+
+
+@pytest.mark.parametrize("event_type", SEVERITY_KEYS)
+def test_record_event_uses_mapped_instruction(event_type, monkeypatch):
+    calls: list[tuple[str, dict, list[str]]] = []
+
+    class DummyMemory:
+        def log_interaction(self, instruction, content, *, tags=None):
+            calls.append((instruction, json.loads(content), tags or []))
+
+    monkeypatch.setattr(msl, "_get_gpt_memory", lambda: DummyMemory())
+
+    msl.record_event(event_type, {})
+
+    assert calls, "memory logging not invoked"
+    instruction, payload, tags = calls[0]
+    assert instruction == msl.EVENT_TYPE_INSTRUCTIONS[event_type]
+    assert msl.FEEDBACK in tags and msl.ERROR_FIX in tags and event_type in tags
+
+
+@pytest.mark.parametrize("event_type", SEVERITY_KEYS)
+def test_record_payment_anomaly_uses_mapped_instruction(event_type, monkeypatch):
+    db_calls: list[tuple[str, float, dict]] = []
+    mem_calls: list[tuple[str, dict, list[str]]] = []
+
+    class DummyDB:
+        def log_detection(self, event_type, severity, payload):
+            db_calls.append((event_type, severity, json.loads(payload)))
+
+    class DummyMemory:
+        def log_interaction(self, instruction, content, *, tags=None):
+            mem_calls.append((instruction, json.loads(content), tags or []))
+
+    monkeypatch.setattr(msl, "_DISCREPANCY_DB", DummyDB())
+    monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", DummyMemory())
+    monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
+
+    instruction = msl.EVENT_TYPE_INSTRUCTIONS[event_type]
+    msl.record_payment_anomaly(
+        event_type,
+        {"foo": "bar"},
+        instruction,
+        severity=SEVERITY_MAP[event_type],
+    )
+
+    assert db_calls and db_calls[0][0] == event_type
+    assert mem_calls and mem_calls[0][0] == instruction
 
 
 def test_watchdog_anomaly_updates_db_memory_and_event_bus(monkeypatch, tmp_path):
