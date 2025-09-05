@@ -17,8 +17,6 @@ from typing import Any, Dict
 from unified_event_bus import UnifiedEventBus
 from sanity_feedback import SanityFeedback
 from self_coding_engine import SelfCodingEngine
-from code_database import CodeDB
-from menace_memory_manager import MenaceMemoryManager
 import menace_sanity_layer
 from dynamic_path_router import resolve_path
 
@@ -42,18 +40,12 @@ class SanityConsumer:
         self._engine: SelfCodingEngine | None = None
         self._feedback: SanityFeedback | None = None
         self._outcome_db = DiscrepancyDB() if DiscrepancyDB is not None else None
-        self._code_db: CodeDB | None = None
-        self._memory_mgr: MenaceMemoryManager | None = None
 
     # ------------------------------------------------------------------
     def _get_engine(self) -> SelfCodingEngine:
         if self._engine is None:
             try:
-                if self._code_db is None:
-                    self._code_db = CodeDB()
-                if self._memory_mgr is None:
-                    self._memory_mgr = MenaceMemoryManager()
-                self._engine = SelfCodingEngine(self._code_db, self._memory_mgr)
+                self._engine = SelfCodingEngine(object(), object())
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise SelfCodingEngine")
                 raise

@@ -14,7 +14,7 @@ import os
 from datetime import datetime, timedelta
 from importlib import import_module
 from pathlib import Path
-from typing import Iterable, List
+from typing import Any, Iterable, List
 
 import stripe_billing_router  # noqa: F401 - import required for safety checks
 from dynamic_path_router import resolve_path
@@ -23,10 +23,21 @@ from billing import billing_logger
 from billing.billing_log_db import BillingLogDB
 from menace_sanity_layer import record_billing_event, record_payment_anomaly
 
+try:  # Optional dependency – self-coding engine
+    from self_coding_engine import SelfCodingEngine  # type: ignore
+    from code_database import CodeDB  # type: ignore
+    from menace_memory_manager import MenaceMemoryManager  # type: ignore
+except Exception:  # pragma: no cover - best effort
+    SelfCodingEngine = None  # type: ignore
+    CodeDB = None  # type: ignore
+    MenaceMemoryManager = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 # Path to JSON file containing approved workflow/bot identifiers
 WHITELIST_PATH = resolve_path("billing/approved_workflows.json")
+# Default path used for generation parameter tuning updates
+CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 
 
 def load_whitelist(path: Path = WHITELIST_PATH) -> set[str]:
@@ -66,6 +77,8 @@ def detect_anomalies(
     *,
     whitelist_path: Path | str = WHITELIST_PATH,
     db_path: Path | str | None = None,
+    self_coding_engine: Any | None = None,
+    config_path: Path | str | None = CONFIG_PATH,
 ) -> List[dict]:
     """Return list of refund or failure anomalies.
 
@@ -76,6 +89,13 @@ def detect_anomalies(
 
     approved = load_whitelist(Path(whitelist_path))
     db = BillingLogDB(db_path) if db_path else BillingLogDB()
+
+    engine = self_coding_engine
+    if engine is None and SelfCodingEngine and CodeDB and MenaceMemoryManager:
+        try:  # pragma: no cover - best effort
+            engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to initialise SelfCodingEngine")
 
     anomalies: List[dict] = []
     for event in _iter_recent_events(hours):
@@ -122,6 +142,8 @@ def detect_anomalies(
                     f"{action.capitalize()} event {event.id} for bot {bot_id} was unauthorized; "
                     "ensure all Stripe payments are authorized and logged."
                 ),
+                config_path=config_path,
+                self_coding_engine=engine,
             )
             anomalies.append(
                 {"id": event.id, "bot_id": bot_id, "reason": "unauthorized"}
@@ -138,6 +160,7 @@ def detect_anomalies(
                     f"{action.capitalize()} event {event.id} for bot {bot_id} was unauthorized; "
                     "ensure all Stripe payments are authorized and logged."
                 ),
+                self_coding_engine=engine,
             )
             continue
 
@@ -174,6 +197,8 @@ def detect_anomalies(
                     f"{action.capitalize()} event {event.id} for bot {bot_id} was unlogged; "
                     "ensure all Stripe payments are authorized and logged."
                 ),
+                config_path=config_path,
+                self_coding_engine=engine,
             )
             anomalies.append({"id": event.id, "bot_id": bot_id, "reason": "unlogged"})
             record_payment_anomaly(
@@ -188,6 +213,7 @@ def detect_anomalies(
                     f"{action.capitalize()} event {event.id} for bot {bot_id} was unlogged; "
                     "ensure all Stripe payments are authorized and logged."
                 ),
+                self_coding_engine=engine,
             )
 
     return anomalies

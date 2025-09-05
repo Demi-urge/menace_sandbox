@@ -196,6 +196,51 @@ def test_webhook_endpoint_validation(capture, monkeypatch):
     assert events and events[0][1]["type"] == "unknown_webhook"
 
 
+def test_config_updates_written(monkeypatch, tmp_path):
+    """record_billing_event persists config updates when anomalies occur."""
+
+    import menace_sanity_layer as msl
+
+    monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+    config_file = tmp_path / "cfg.json"
+    monkeypatch.setattr(sw, "CONFIG_PATH", config_file)
+
+    # Ensure record_billing_event writes to our temp file without touching DBs
+    monkeypatch.setattr(msl, "_BILLING_EVENT_DB", None)
+    monkeypatch.setattr(msl, "_get_gpt_memory", lambda: None)
+
+    anomaly = {
+        "type": "missing_charge",
+        "id": "ch1",
+        "config_updates": {"max_retries": 5},
+    }
+    monkeypatch.setattr(sw, "detect_missing_charges", lambda *a, **k: [anomaly])
+    monkeypatch.setattr(sw, "detect_missing_refunds", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "detect_failed_events", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "load_api_key", lambda: "sk")
+    monkeypatch.setattr(sw, "fetch_recent_charges", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "fetch_recent_refunds", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "fetch_recent_events", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "load_local_ledger", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "load_billing_logs", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "check_webhook_endpoints", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "compare_revenue_window", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "DiscrepancyDB", None)
+    monkeypatch.setattr(sw, "DiscrepancyRecord", None)
+    fake_stripe = SimpleNamespace(Account=SimpleNamespace(retrieve=lambda **k: {"id": "acct"}))
+    monkeypatch.setattr(sw, "stripe", fake_stripe)
+
+    engine_updates: list = []
+    engine = SimpleNamespace(
+        update_generation_params=lambda meta: engine_updates.append(meta)
+    )
+
+    sw.check_events(self_coding_engine=engine)
+
+    assert json.loads(config_file.read_text()) == {"max_retries": 5}
+    assert engine_updates and engine_updates[0]["config_updates"]["max_retries"] == 5
+
+
 def test_main_updates_last_run(monkeypatch, tmp_path):
     last_run = tmp_path / "last.txt"
     last_run.write_text("100")
