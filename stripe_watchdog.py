@@ -45,6 +45,7 @@ from logging.handlers import RotatingFileHandler
 import gzip
 import shutil
 import menace_sanity_layer
+from menace_sanity_layer import record_billing_anomaly
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -483,6 +484,11 @@ def _emit_anomaly(
             TrainingSample(source="stripe_watchdog", content=json.dumps(record))
         except Exception:
             logger.exception("Failed to create Codex training sample")
+
+    try:
+        record_billing_anomaly(record["type"], record)
+    except Exception:
+        logger.exception("Failed to record billing anomaly", extra={"record": record})
 
     metadata = {k: v for k, v in record.items() if k != "type"}
     if "id" in metadata:
