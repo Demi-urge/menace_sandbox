@@ -14,6 +14,7 @@ from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal
 
 from db_router import DBRouter, GLOBAL_ROUTER, SHARED_TABLES, init_db_router, queue_insert
 from db_dedup import insert_if_unique
+from dynamic_path_router import resolve_path
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
@@ -43,8 +44,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     summarize = None  # type: ignore
 
-DEFAULT_DB_PATH = Path(__file__).parent / "enhancements.db"
-DB_PATH = Path(os.environ.get("ENHANCEMENT_DB_PATH", str(DEFAULT_DB_PATH)))
+DEFAULT_DB_PATH = resolve_path("enhancements.db")
+DB_PATH = Path(os.environ.get("ENHANCEMENT_DB_PATH", DEFAULT_DB_PATH))
 FEASIBLE_WORD_LIMIT = int(os.environ.get("MAX_RATIONALE_WORDS", "50"))
 DEFAULT_NUM_IDEAS = int(os.environ.get("DEFAULT_ENHANCEMENT_COUNT", "3"))
 DEFAULT_FETCH_LIMIT = int(os.environ.get("ENHANCEMENT_FETCH_LIMIT", "50"))
