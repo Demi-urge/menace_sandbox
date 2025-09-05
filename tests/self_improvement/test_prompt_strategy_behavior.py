@@ -55,12 +55,6 @@ def dummy_prompt(strategy_templates):
 
 def test_failure_reason_logged(tmp_path, monkeypatch, dummy_prompt):
     monkeypatch.setattr(prompt_memory, "_repo_path", lambda: tmp_path)
-    penalty_path = tmp_path / "penalties.json"
-    monkeypatch.setattr(prompt_memory, "_penalty_path", penalty_path)
-    from filelock import FileLock
-    monkeypatch.setattr(
-        prompt_memory, "_penalty_lock", FileLock(str(penalty_path) + ".lock")
-    )
     monkeypatch.setattr(prompt_memory._settings, "prompt_failure_log_path", "fail.json")
     monkeypatch.setattr(prompt_memory._settings, "prompt_success_log_path", "succ.json")
 
@@ -93,16 +87,11 @@ def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats, mon
     penalties = {s: 5 for s in strategy_templates}
 
     class MiniEngine:
-        def __init__(self):
-            self.deprioritized_strategies = set()
-
         def select(self, strategies, threshold=3, multiplier=0.5):
             eligible = []
             penalised = []
             stats = prompt_optimizer.load_strategy_stats()
             for strat in strategies:
-                if strat in self.deprioritized_strategies:
-                    continue
                 count = penalties.get(str(strat), 0)
                 weight = multiplier if threshold and count >= threshold else 1.0
                 rs = stats.get(str(strat))
