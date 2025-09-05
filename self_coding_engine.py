@@ -14,6 +14,7 @@ import py_compile
 import re
 import traceback
 import inspect
+import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -225,6 +226,44 @@ def _count_tokens(text: str) -> int:
             pass
     return len(text.split())
 
+
+def call_codex_with_backoff(
+    llm_client: LLMClient,
+    prompt: Prompt,
+    *,
+    logger: logging.Logger | None = None,
+    timeout: float = 30.0,
+) -> LLMResult:
+    """Invoke ``llm_client.generate`` with retries and fixed backoff delays.
+
+    Each attempt enforces a timeout and exceptions are logged before sleeping
+    for 2s → 5s → 10s between attempts.  A :class:`RetryError` is raised when
+    all retries fail.
+    """
+
+    delays = [2, 5, 10]
+    log = logger or logging.getLogger(__name__)
+
+    def _attempt() -> LLMResult:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(llm_client.generate, prompt)
+            return future.result(timeout=timeout)
+
+    if "delays" in inspect.signature(retry_with_backoff).parameters:
+        return retry_with_backoff(
+            _attempt, attempts=len(delays), delays=delays, logger=log
+        )
+
+    last_exc: Exception | None = None
+    for idx, delay in enumerate(delays):
+        try:
+            return _attempt()
+        except Exception as exc:  # pragma: no cover - best effort logging
+            log.exception("codex call attempt %s failed", idx + 1)
+            last_exc = exc
+            if idx < len(delays) - 1:
+                time.sleep(delay)
+    raise RetryError(str(last_exc)) from last_exc
 
 class SelfCodingEngine:
     """Generate new helper code based on existing snippets."""
@@ -1229,15 +1268,9 @@ class SelfCodingEngine:
             prompt_obj.text += "\n\n### Patch history\n" + combined_history
 
         result = LLMResult()
-        retry_kwargs = {"attempts": 3, "logger": self.logger}
-        if "delays" in inspect.signature(retry_with_backoff).parameters:
-            retry_kwargs["delays"] = [2, 5, 10]
-        else:  # pragma: no cover - legacy signature fallback
-            retry_kwargs["delay"] = 2
         try:
-            result = retry_with_backoff(
-                lambda: self.llm_client.generate(prompt_obj),
-                **retry_kwargs,
+            result = call_codex_with_backoff(
+                self.llm_client, prompt_obj, logger=self.logger
             )
         except RetryError as exc:
             self._last_retry_trace = str(exc)
@@ -1253,7 +1286,9 @@ class SelfCodingEngine:
             )
             prompt_obj = simple_prompt
             try:
-                result = self.llm_client.generate(simple_prompt)
+                result = call_codex_with_backoff(
+                    self.llm_client, simple_prompt, logger=self.logger
+                )
             except Exception as exc:
                 self._last_retry_trace = str(exc)
                 result = LLMResult(raw=str(exc))
