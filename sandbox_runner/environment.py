@@ -432,7 +432,7 @@ def cleanup_artifacts(extra_paths: Iterable[Path] | None = None) -> None:
             cov_files.append(_env_path(env_name, default))
         except FileNotFoundError:
             cov_files.append(_env_path(env_name, default))
-    cov_files.extend([Path(".coverage"), Path("cov.json")])
+    cov_files.extend([resolve_path(".coverage"), resolve_path("cov.json")])
     for path in cov_files:
         try:
             path.unlink(missing_ok=True)  # type: ignore[arg-type]
