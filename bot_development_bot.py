@@ -322,7 +322,7 @@ class BotDevelopmentBot:
         )
         self.prompt_templates_version = 1
         try:
-            with open(PROMPT_TEMPLATES_PATH) as fh:
+            with PROMPT_TEMPLATES_PATH.open() as fh:
                 data = json.load(fh)
             self.prompt_templates = data.get(TEMPLATE_SECTION_KEY, data)
             self.prompt_templates_version = int(data.get(TEMPLATE_VERSION_KEY, 1))
