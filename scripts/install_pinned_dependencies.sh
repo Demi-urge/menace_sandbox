@@ -1,13 +1,19 @@
 #!/bin/bash
 set -e
 
-# Install pinned Python dependencies for Menace Sandbox.
-# Execute this script from the repository root.
+# Ensure repository root on PYTHONPATH so dynamic_path_router is importable
+script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+repo_root="$(cd "$script_dir/.." && pwd -P)"
+export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 
-if [ ! -f requirements.txt ]; then
-    echo "requirements.txt not found. Run this script from the repository root." >&2
-    exit 1
-fi
+# Install pinned Python dependencies for Menace Sandbox.
+# Locate requirements.txt dynamically so the script works from any directory.
+
+req_file=$(python - <<'PY'
+from dynamic_path_router import resolve_path
+print(resolve_path('requirements.txt'))
+PY
+)
 
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r "$req_file"
