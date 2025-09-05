@@ -15,6 +15,7 @@ wsr_stub = types.ModuleType("sandbox_runner.workflow_sandbox_runner")
 class WorkflowSandboxRunner:
     def run(self, func, safe_mode=False):
         func()
+
         class Result:
             modules = []
         return Result()
@@ -84,12 +85,14 @@ sys.modules.setdefault("menace.cross_model_scheduler", cms_stub)
 
 # Load real dynamic_path_router before importing scheduler
 root_dir = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("dynamic_path_router", root_dir / "dynamic_path_router.py")
+spec = importlib.util.spec_from_file_location(
+    "dynamic_path_router", root_dir / "dynamic_path_router.py"  # path-ignore
+)
 dpr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dpr)
 sys.modules["dynamic_path_router"] = dpr
 
-from menace.self_coding_scheduler import SelfCodingScheduler
+from menace.self_coding_scheduler import SelfCodingScheduler  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +101,7 @@ def test_scheduler_resolves_paths_from_menace_roots(monkeypatch, tmp_path):
     (repo_a / ".git").mkdir(parents=True)
     repo_b = tmp_path / "repo_b"
     (repo_b / ".git").mkdir(parents=True)
-    helper = repo_b / "auto_helpers.py"
+    helper = repo_b / "auto_helpers.py"  # path-ignore
     helper.write_text("# helper\n")
     metrics = repo_b / "sandbox_metrics.yaml"
     metrics.write_text("extra_metrics: {}\n")
