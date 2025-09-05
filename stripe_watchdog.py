@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-"""Cross-check Stripe charges and refunds against the local ledger."""
+"""Cross-check recent Stripe charges against the local ledger."""
 
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, List
 
 from dynamic_path_router import resolve_path
 
@@ -50,10 +50,12 @@ def load_api_key() -> str | None:
     return key
 
 
-def _ledger_ids() -> set[str]:
-    ids: set[str] = set()
+def _ledger_entries() -> List[dict[str, Any]]:
+    """Return all records from the billing ledger."""
+
+    entries: List[dict[str, Any]] = []
     if not LEDGER_FILE.exists():
-        return ids
+        return entries
     try:
         with LEDGER_FILE.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -61,11 +63,11 @@ def _ledger_ids() -> set[str]:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if rec.get("id"):
-                    ids.add(rec["id"])
+                if isinstance(rec, dict):
+                    entries.append(rec)
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed reading %s", LEDGER_FILE)
-    return ids
+    return entries
 
 
 def _iter(obj: Iterable | object) -> Iterable:
@@ -75,8 +77,29 @@ def _iter(obj: Iterable | object) -> Iterable:
     return obj  # type: ignore[return-value]
 
 
-def check_events() -> list[str]:
-    """Return IDs of Stripe events missing from the local ledger."""
+def _charge_email(charge: Any) -> str | None:
+    """Return email associated with ``charge`` if available."""
+
+    if isinstance(charge, dict):
+        email = charge.get("receipt_email")
+        if email:
+            return email
+        bd = charge.get("billing_details")
+        if isinstance(bd, dict):
+            return bd.get("email")
+        return None
+
+    email = getattr(charge, "receipt_email", None)
+    if email:
+        return email
+    bd = getattr(charge, "billing_details", None)
+    if isinstance(bd, dict):
+        return bd.get("email")
+    return getattr(bd, "email", None)
+
+
+def check_events() -> List[dict[str, Any]]:
+    """Return anomalies for Stripe charges missing from the billing logs."""
 
     api_key = load_api_key()
     if not api_key or stripe is None:
@@ -84,33 +107,41 @@ def check_events() -> list[str]:
 
     try:
         charges = stripe.Charge.list(limit=100, api_key=api_key)
-        refunds = stripe.Refund.list(limit=100, api_key=api_key)
     except Exception:  # pragma: no cover - network issues
         logger.exception("Stripe API request failed")
         return []
 
-    logged = _ledger_ids()
-    missing: list[str] = []
+    entries = _ledger_entries()
+    ids = {e.get("id") for e in entries if e.get("id")}
+    timestamps = {e.get("timestamp_ms") for e in entries if e.get("timestamp_ms")}
 
+    anomalies: List[dict[str, Any]] = []
     for charge in _iter(charges):
         cid = getattr(charge, "id", None)
-        if not cid and isinstance(charge, dict):
+        if cid is None and isinstance(charge, dict):
             cid = charge.get("id")
-        if cid and cid not in logged:
-            missing.append(cid)
+        created = getattr(charge, "created", None)
+        if created is None and isinstance(charge, dict):
+            created = charge.get("created")
+        created_ms = int(created * 1000) if isinstance(created, (int, float)) else None
+        if cid in ids or (created_ms and created_ms in timestamps):
+            continue
+        amount = getattr(charge, "amount", None)
+        if amount is None and isinstance(charge, dict):
+            amount = charge.get("amount")
+        anomaly = {
+            "id": cid,
+            "amount": amount,
+            "email": _charge_email(charge),
+            "timestamp": created,
+        }
+        anomalies.append(anomaly)
 
-    for refund in _iter(refunds):
-        rid = getattr(refund, "id", None)
-        if not rid and isinstance(refund, dict):
-            rid = refund.get("id")
-        if rid and rid not in logged:
-            missing.append(rid)
-
-    if missing:
-        logger.warning("Missing Stripe events: %s", ", ".join(missing))
+    if anomalies:
+        logger.warning("Charges missing from billing logs: %s", anomalies)
     else:
-        logger.info("All Stripe events logged")
-    return missing
+        logger.info("All Stripe charges logged")
+    return anomalies
 
 
 def main() -> None:
