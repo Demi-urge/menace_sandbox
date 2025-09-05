@@ -1,5 +1,11 @@
 # Contributor Guidelines
 
+## Path resolution
+
+All new code should locate files through `dynamic_path_router`. Use
+`resolve_path` or `path_for_prompt` instead of hard-coded relative paths so the
+project remains portable across different checkouts.
+
 ## SQLite connections
 
 Use `DBRouter` for all database access. Direct calls to `sqlite3.connect` are not
