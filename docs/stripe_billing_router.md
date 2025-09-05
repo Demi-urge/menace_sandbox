@@ -151,28 +151,44 @@ These examples update the price while leaving the base rule unchanged.
 
 All billing helpers call ``billing_logger.log_event`` which persists a record to
 the ``stripe_ledger`` table (falling back to ``finance_logs/stripe_ledger.jsonl``
-if the database is unavailable).  The schema columns are:
+if the database is unavailable).  Each log entry **must** populate the
+following fields:
 
-- ``id``
-- ``action_type``
-- ``amount``
-- ``currency``
-- ``timestamp_ms``
-- ``user_email``
-- ``bot_id``
-- ``destination_account``
-- ``raw_event_json``
-- ``error``
+- ``id`` – Stripe object identifier or a generated UUID for the event.
+- ``action_type`` – ``charge``, ``refund``, ``subscription`` or
+  ``checkout_session``.
+- ``amount`` – Numeric amount associated with the action.
+- ``currency`` – ISO‑4217 currency code in lower case.
+- ``timestamp_ms`` – Event time in milliseconds since the Unix epoch.
+- ``user_email`` – Email address associated with the payment, when available.
+- ``bot_id`` – ``business_category:bot_name`` that initiated the event.
+- ``destination_account`` – Connected account or on‑behalf‑of account.
+- ``raw_event_json`` – Full JSON response returned by Stripe.
+- ``error`` – ``1`` when a critical discrepancy is detected, otherwise ``0``.
 
-### Master Account Verification and Rollback
+### Allowed Keys, Account Verification and Rollback
 
-The router expects a platform master account identifier supplied via the
-``STRIPE_MASTER_ACCOUNT_ID`` environment variable (or secret vault).  Each
-Stripe response must reference this account; if a mismatch is detected the
-router logs a discrepancy with ``error=1``, dispatches a
-``critical_discrepancy`` alert and triggers
-``rollback_manager.RollbackManager.auto_rollback``.
+Allowed secret keys are provided via the ``STRIPE_ALLOWED_SECRET_KEYS``
+environment variable (comma separated) or the ``allowed_secret_keys`` list in
+``config/stripe_billing_router.yaml``.  When a route supplies a key outside this
+set, or when a Stripe response references an account that differs from the
+configured master account, the router:
+
+1. Logs the event to ``stripe_ledger`` with ``error=1`` and the offending
+   destination.
+2. Records the discrepancy in :class:`DiscrepancyDB`.
+3. Dispatches a ``critical_discrepancy`` alert.
+4. Calls ``rollback_manager.RollbackManager.auto_rollback`` for the bot.
+
+Investigate these alerts by inspecting the ledger entry and discrepancy record;
+they typically indicate a misconfigured key or a compromised account.
+
+The master account identifier is supplied via ``STRIPE_MASTER_ACCOUNT_ID`` (or a
+matching secret).  Every Stripe event must reference this account:
 
 ```bash
 export STRIPE_MASTER_ACCOUNT_ID=acct_master
 ```
+
+A ``critical_discrepancy`` alert signals the automatic rollback described
+above; resolve the configuration issue before retrying the billing operation.
