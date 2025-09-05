@@ -67,12 +67,29 @@ STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
 
 
 def _load_master_account_id() -> str:
-    """Return the configured Stripe master account identifier."""
+    """Return the configured Stripe master account identifier.
+
+    The ID is resolved from, in order of precedence:
+
+    1. ``STRIPE_MASTER_ACCOUNT_ID`` environment variable.
+    2. Secret vault entry ``stripe_master_account_id``.
+    3. ``master_account_id`` field in the Stripe routing configuration file.
+    """
 
     provider = VaultSecretProvider()
     acc = os.getenv("STRIPE_MASTER_ACCOUNT_ID") or provider.get(
         "stripe_master_account_id"
     )
+    if not acc:
+        cfg_path = os.getenv("STRIPE_ROUTING_CONFIG") or resolve_path(
+            "config/stripe_billing_router.yaml"
+        ).as_posix()
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+                acc = data.get("master_account_id")
+        except FileNotFoundError:
+            acc = None
     if not acc:
         logger.error("Stripe master account ID must be configured and non-empty")
         raise RuntimeError("Stripe master account ID must be configured and non-empty")
@@ -80,12 +97,31 @@ def _load_master_account_id() -> str:
 
 
 def _load_allowed_keys() -> set[str]:
-    """Return the set of allowed Stripe secret keys."""
+    """Return the set of allowed Stripe secret keys.
+
+    Keys are resolved from, in order of precedence:
+
+    1. ``STRIPE_ALLOWED_SECRET_KEYS`` environment variable (comma separated).
+    2. Secret vault entry ``stripe_allowed_secret_keys``.
+    3. ``allowed_secret_keys`` list in the Stripe routing configuration file.
+    """
 
     provider = VaultSecretProvider()
     raw = os.getenv("STRIPE_ALLOWED_SECRET_KEYS") or provider.get(
         "stripe_allowed_secret_keys"
     )
+    if not raw:
+        cfg_path = os.getenv("STRIPE_ROUTING_CONFIG") or resolve_path(
+            "config/stripe_billing_router.yaml"
+        ).as_posix()
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+                keys = data.get("allowed_secret_keys")
+                if isinstance(keys, list):
+                    raw = ",".join(keys)
+        except FileNotFoundError:
+            raw = None
     if raw:
         return {k.strip() for k in str(raw).split(",") if k.strip()}
     return {STRIPE_SECRET_KEY}
@@ -284,6 +320,13 @@ def _client(api_key: str):
     return None
 
 
+def _validate_account(api_key: str, expected_account_id: str) -> bool:
+    """Return ``True`` if ``api_key`` belongs to ``expected_account_id``."""
+
+    account_id = _get_account_id(api_key)
+    return account_id == expected_account_id
+
+
 def _critical_discrepancy(
     bot_id: str,
     route: Mapping[str, str],
@@ -327,6 +370,14 @@ def _verify_secret_key(bot_id: str, route: Mapping[str, str]) -> None:
             route,
             f"Secret key '{key}' not in allowed list",
             destination=key,
+        )
+    if not _validate_account(key, MASTER_ACCOUNT_ID):
+        acct = _get_account_id(key)
+        _critical_discrepancy(
+            bot_id,
+            route,
+            f"Account '{acct}' does not match master account",
+            destination=acct,
         )
 
 

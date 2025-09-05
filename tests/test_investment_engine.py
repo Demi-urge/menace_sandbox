@@ -36,6 +36,8 @@ def _import_investment_engine(monkeypatch, tmp_path):
         lambda self, name: {
             "stripe_secret_key": "sk_live_dummy",
             "stripe_public_key": "pk_live_dummy",
+            "stripe_master_account_id": "acct_master",
+            "stripe_allowed_secret_keys": "sk_live_dummy",
         }.get(name, ""),
     )
     routes = {
@@ -161,11 +163,15 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
                 "get": lambda self, name: {
                     "stripe_secret_key": "sk_live_dummy",
                     "stripe_public_key": "pk_live_dummy",
+                    "stripe_master_account_id": "acct_master",
+                    "stripe_allowed_secret_keys": "sk_live_dummy",
                 }.get(name, ""),
             },
         )
     )
     monkeypatch.setitem(sys.modules, "vault_secret_provider", vsp)
+    monkeypatch.setenv("STRIPE_MASTER_ACCOUNT_ID", "acct_master")
+    monkeypatch.setenv("STRIPE_ALLOWED_SECRET_KEYS", "sk_live_dummy")
     cfg = tmp_path / "routes.yaml"
     cfg.write_text(yaml.safe_dump(routes))
     monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
@@ -177,6 +183,8 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
     sys.modules["stripe_billing_router"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "_get_account_id", lambda api_key: "acct_master")
+    monkeypatch.setattr(module.billing_logger, "log_event", lambda **kw: None)
     return module, StripeStub
 
 
@@ -185,12 +193,22 @@ def test_stripe_router_charge_and_balance(monkeypatch, tmp_path):
         "stripe": {
             "default": {
                 "finance": {
-                    "finance_router_bot": {"product_id": "prod_finance_router"}
+                    "finance_router_bot": {
+                        "product_id": "prod_finance_router",
+                        "price_id": "price_finance_standard",
+                        "customer_id": "cus_finance_default",
+                    }
                 }
             }
         }
     }
     sbr, stripe_stub = _load_stripe_router(monkeypatch, tmp_path, routes)
+    del sbr.ROUTING_TABLE[("stripe", "default", "finance", "finance_router_bot")][
+        "price_id"
+    ]
+    del sbr.ROUTING_TABLE[("stripe", "default", "finance", "finance_router_bot")][
+        "customer_id"
+    ]
     sbr.charge("stripe:finance:finance_router_bot", amount=3.0)
     params = stripe_stub.PaymentIntent.last_params
     assert params["api_key"] == "sk_live_dummy"
@@ -211,6 +229,5 @@ def test_stripe_router_missing_and_misconfigured(monkeypatch, tmp_path):
             }
         }
     }
-    sbr, _ = _load_stripe_router(monkeypatch, tmp_path, routes)
     with pytest.raises(RuntimeError):
-        sbr.charge("stripe:finance:bad_bot")
+        _load_stripe_router(monkeypatch, tmp_path, routes)

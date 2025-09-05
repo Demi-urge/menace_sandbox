@@ -51,6 +51,8 @@ def _import_finance_router(monkeypatch, tmp_path):
         lambda self, name: {
             "stripe_secret_key": "sk_live_dummy",
             "stripe_public_key": "pk_live_dummy",
+            "stripe_master_account_id": "acct_master",
+            "stripe_allowed_secret_keys": "sk_live_dummy",
         }.get(name, ""),
     )
     routes = {
@@ -197,11 +199,15 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
                 "get": lambda self, name: {
                     "stripe_secret_key": "sk_live_dummy",
                     "stripe_public_key": "pk_live_dummy",
+                    "stripe_master_account_id": "acct_master",
+                    "stripe_allowed_secret_keys": "sk_live_dummy",
                 }.get(name, ""),
             },
         )
     )
     monkeypatch.setitem(sys.modules, "vault_secret_provider", vsp)
+    monkeypatch.setenv("STRIPE_MASTER_ACCOUNT_ID", "acct_master")
+    monkeypatch.setenv("STRIPE_ALLOWED_SECRET_KEYS", "sk_live_dummy")
     cfg = tmp_path / "routes.yaml"
     cfg.write_text(yaml.safe_dump(routes))
     monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
@@ -213,6 +219,8 @@ def _load_stripe_router(monkeypatch, tmp_path, routes):
     sys.modules["stripe_billing_router"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "_get_account_id", lambda api_key: "acct_master")
+    monkeypatch.setattr(module.billing_logger, "log_event", lambda **kw: None)
     return module, StripeStub
 
 
