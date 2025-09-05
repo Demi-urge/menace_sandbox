@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -31,6 +32,12 @@ from .advanced_error_management import (
 )
 from .autoscaler import Autoscaler
 from .unified_event_bus import UnifiedEventBus
+
+try:  # pragma: no cover - optional dependency
+    from .discrepancy_db import DiscrepancyDB, DiscrepancyRecord
+except Exception:  # pragma: no cover - fallback when Codex DB is unavailable
+    DiscrepancyDB = None  # type: ignore
+    DiscrepancyRecord = None  # type: ignore
 
 
 @dataclass
@@ -133,8 +140,16 @@ class OperationalMonitoringBot(AdminBotBase):
             self.splunk.add(rec.ts, rec.__dict__)
         return rec
 
-    def detect_anomalies(self, bot: str, limit: int = 50) -> List[AnomalyRecord]:
-        """Detect anomalies using PyOD if available, fallback to simple threshold."""
+    def detect_anomalies(
+        self, bot: str, limit: int = 50, *, write_codex: bool = False
+    ) -> List[AnomalyRecord]:
+        """Detect anomalies using PyOD if available, fallback to simple threshold.
+
+        When ``write_codex`` is ``True`` and the Codex discrepancy database is
+        available, detected anomalies are also recorded as
+        :class:`DiscrepancyRecord` instances so they can be retrieved via
+        ``codex_db_helpers.fetch_discrepancies``.
+        """
         self.query(bot)
         df = self.db.fetch(limit)
         if hasattr(df, "empty"):
@@ -174,11 +189,37 @@ class OperationalMonitoringBot(AdminBotBase):
                     ts=row["ts"],
                 )
                 anomalies.append(rec)
+        codex_db = None
+        if write_codex and DiscrepancyDB and DiscrepancyRecord:
+            try:  # pragma: no cover - best effort
+                codex_db = DiscrepancyDB()
+            except Exception:
+                codex_db = None
+                self.logger.exception("failed to initialise DiscrepancyDB")
         for a in anomalies:
             self.anomaly_db.add(a)
             self.es.add(a.ts, a.__dict__)
             if self.splunk:
                 self.splunk.add(a.ts, a.__dict__)
+            if codex_db:
+                try:  # pragma: no cover - best effort
+                    msg = (
+                        f"{a.bot} {a.metric} anomaly: value={a.value} severity={a.severity}"
+                    )
+                    codex_db.add(
+                        DiscrepancyRecord(
+                            message=msg,
+                            metadata={
+                                "bot": a.bot,
+                                "metric": a.metric,
+                                "value": a.value,
+                                "severity": a.severity,
+                            },
+                            ts=a.ts,
+                        )
+                    )
+                except Exception:
+                    self.logger.exception("failed to record discrepancy")
         severe = [a for a in anomalies if a.severity >= self.severity_threshold]
         if severe:
             if self.autoscaler:
@@ -218,6 +259,26 @@ class OperationalMonitoringBot(AdminBotBase):
             ReportOptions(metrics=["value", "severity"], title="Anomaly Report"),
             limit=len(df),
         )
+
+
+def main(argv: list[str] | None = None) -> None:  # pragma: no cover - CLI entry
+    """Run anomaly detection from the command line."""
+    parser = argparse.ArgumentParser(description=__doc__ or "")
+    parser.add_argument("bot", help="Bot name to inspect")
+    parser.add_argument("--limit", type=int, default=50, help="number of records to use")
+    parser.add_argument(
+        "--codex",
+        action="store_true",
+        help="store anomalies in the Codex discrepancy database",
+    )
+    args = parser.parse_args(argv)
+
+    monitor = OperationalMonitoringBot()
+    monitor.detect_anomalies(args.bot, limit=args.limit, write_codex=args.codex)
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI use
+    main()
 
 
 __all__ = ["AnomalyRecord", "AnomalyDB", "OperationalMonitoringBot"]
