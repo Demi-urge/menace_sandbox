@@ -149,7 +149,7 @@ def _verify_required_dependencies(settings: "SandboxSettings | None" = None) -> 
 
     if messages:
         messages.append(
-            "Refer to docs/autonomous_sandbox.md for manual setup instructions."
+            f"Refer to {path_for_prompt('docs/autonomous_sandbox.md')} for manual setup instructions."
         )
         msg = "\n".join(messages)
         logging.error(msg)
