@@ -56,7 +56,7 @@ from stripe_billing_router import (
 )
 
 # Each helper automatically logs to the ``stripe_ledger`` table
-# via ``billing_logger.log_event``.
+# via the internal ``_log_payment`` helper backed by ``StripeLedger``.
 
 # One‑off payment via PaymentIntent
 charge("finance:finance_router_bot", amount=10.0)
@@ -150,9 +150,10 @@ These examples update the price while leaving the base rule unchanged.
 
 ## Ledger Schema and Automatic Logging
 
-All billing helpers call ``billing_logger.log_event`` which persists a record to
-the ``stripe_ledger`` table (falling back to ``finance_logs/stripe_ledger.jsonl``
-if the database is unavailable).  Each log entry **must** populate the
+All billing helpers use the private ``_log_payment`` helper which records
+events via :class:`StripeLedger` to the ``stripe_ledger`` table (falling back to
+``finance_logs/stripe_ledger.jsonl`` if the database is unavailable).  Each log
+entry **must** populate the
 following fields:
 
 - ``id`` – Stripe object identifier or a generated UUID for the event.
