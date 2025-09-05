@@ -2,6 +2,9 @@ import json
 from types import SimpleNamespace
 
 import stripe_watchdog as sw
+from dynamic_path_router import resolve_path
+
+resolve_path("docs")  # path-ignore
 
 
 def _fake_list(items):
@@ -11,7 +14,7 @@ def _fake_list(items):
     return FakeList(items)
 
 
-def test_check_events_detects_missing(monkeypatch, tmp_path):
+def test_check_events_detects_orphan_charge(monkeypatch, tmp_path):
     ledger = tmp_path / sw.LEDGER_FILE.name  # path-ignore
     ledger.write_text(
         json.dumps({"id": "ch_logged", "timestamp_ms": 123000}) + "\n"
@@ -93,7 +96,43 @@ def test_check_events_writes_log_and_summary(monkeypatch, tmp_path):
     assert records and str(len(anomalies)) in records[0].message
 
 
-def test_check_webhook_endpoints_alerts_unknown(monkeypatch, tmp_path):
+def test_check_revenue_projection_detects_mismatch(monkeypatch):
+    charges = _fake_list([
+        {"amount": 10000, "status": "succeeded"},
+    ])
+    refunds = _fake_list([
+        {"amount": 2000},
+    ])
+    fake_stripe = SimpleNamespace(
+        Charge=SimpleNamespace(list=lambda limit, api_key: charges),
+        Refund=SimpleNamespace(list=lambda limit, api_key: refunds),
+    )
+    monkeypatch.setattr(sw, "stripe", fake_stripe)
+    monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test_dummy")
+
+    class DummyDB:
+        def projected_revenue(self):
+            return 120.0
+
+    monkeypatch.setattr(sw, "ROIResultsDB", lambda: DummyDB())
+
+    calls = []
+
+    def fake_alert(alert_type, severity, message, context=None):
+        calls.append((alert_type, severity, json.loads(message)))
+
+    monkeypatch.setattr(sw.alert_dispatcher, "dispatch_alert", fake_alert)
+
+    anomaly = sw.check_revenue_projection(tolerance=0.1)
+    assert anomaly == {
+        "net_revenue": 80.0,
+        "projected_revenue": 120.0,
+        "difference": -40.0,
+    }
+    assert calls and calls[0][0] == "stripe_revenue_mismatch"
+
+
+def test_check_webhook_endpoints_alerts_unauthorized(monkeypatch, tmp_path):
     cfg = tmp_path / "stripe_watchdog.yaml"  # path-ignore
     cfg.write_text(
         "allowed_endpoints:\n  - https://good.example.com/webhook\n"
