@@ -42,6 +42,10 @@ from ..self_improvement_policy import (
     SelfImprovementPolicy,
     torch as sip_torch,
 )
+try:  # pragma: no cover - simplified environments
+    from ..dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback when helper missing
+    from dynamic_path_router import resolve_path  # type: ignore
 
 
 logger = get_logger(__name__)
@@ -124,15 +128,16 @@ class TorchReplayStrategy:
 
     def save(self, base: str) -> bool:
         try:
+            base_path = Path(resolve_path(base)).with_suffix("")
             buf = io.BytesIO()
             sip_torch.save(self.model.state_dict(), buf)
-            _atomic_write(Path(base + ".model.pt"), buf.getvalue(), binary=True)
+            _atomic_write(base_path.with_suffix(".model.pt"), buf.getvalue(), binary=True)
             buf = io.BytesIO()
             sip_torch.save(self.target_model.state_dict(), buf)
-            _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
+            _atomic_write(base_path.with_suffix(".target.pt"), buf.getvalue(), binary=True)
             buf = io.BytesIO()
             sip_torch.save(self.optimizer.state_dict(), buf)
-            _atomic_write(Path(base + ".optim.pt"), buf.getvalue(), binary=True)
+            _atomic_write(base_path.with_suffix(".optim.pt"), buf.getvalue(), binary=True)
             data = [
                 {
                     "state": s.tolist(),
@@ -143,15 +148,15 @@ class TorchReplayStrategy:
                 for s, r, n, d in self.buffer
             ]
             _atomic_write(
-                Path(base + ".replay.json"),
+                base_path.with_suffix(".replay.json"),
                 json.dumps(data),
             )
         except Exception as exc:  # pragma: no cover - disk errors
             logger.exception("failed to save strategy state: %s", exc)
             return False
         try:
-            sip_torch.load(base + ".model.pt")
-            sip_torch.load(base + ".optim.pt")
+            sip_torch.load(base_path.with_suffix(".model.pt"))
+            sip_torch.load(base_path.with_suffix(".optim.pt"))
         except Exception as exc:
             logger.warning("failed to validate strategy save: %s", exc)
             return False
@@ -159,9 +164,10 @@ class TorchReplayStrategy:
 
     def load(self, base: str) -> None:
         try:
-            model_file = Path(base + ".model.pt")
-            target_file = Path(base + ".target.pt")
-            optim_file = Path(base + ".optim.pt")
+            base_path = Path(resolve_path(base)).with_suffix("")
+            model_file = base_path.with_suffix(".model.pt")
+            target_file = base_path.with_suffix(".target.pt")
+            optim_file = base_path.with_suffix(".optim.pt")
             if model_file.exists():
                 state = sip_torch.load(model_file)
                 try:
@@ -181,7 +187,7 @@ class TorchReplayStrategy:
                     self.optimizer.load_state_dict(sip_torch.load(optim_file))
                 except Exception as exc:
                     logger.warning("skipping optimizer checkpoint: %s", exc)
-            replay_file = Path(base + ".replay.json")
+            replay_file = base_path.with_suffix(".replay.json")
             if replay_file.exists():
                 try:
                     items = json.loads(replay_file.read_text("utf-8"))
@@ -375,24 +381,24 @@ class SynergyWeightLearner:
                 _atomic_write(self.checkpoint_path, json.dumps(self.weights))
         except Exception as exc:  # pragma: no cover - disk errors
             logger.warning("failed to save synergy weights %s: %s", self.path, exc)
-        base = os.path.splitext(self.path)[0]
+        base_path = Path(resolve_path(str(self.path))).with_suffix("")
         if sip_torch is not None:
             try:
                 if hasattr(self.strategy, "model") and self.strategy.model is not None:
                     buf = io.BytesIO()
                     sip_torch.save(self.strategy.model.state_dict(), buf)
-                    _atomic_write(Path(base + ".pt"), buf.getvalue(), binary=True)
+                    _atomic_write(base_path.with_suffix(".pt"), buf.getvalue(), binary=True)
                 if (
                     hasattr(self.strategy, "target_model")
                     and self.strategy.target_model is not None
                 ):
                     buf = io.BytesIO()
                     sip_torch.save(self.strategy.target_model.state_dict(), buf)
-                    _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
+                    _atomic_write(base_path.with_suffix(".target.pt"), buf.getvalue(), binary=True)
             except Exception as exc:  # pragma: no cover - disk errors
                 logger.exception("failed to save DQN models: %s", exc)
             try:
-                pkl = Path(base + ".policy.pkl")
+                pkl = base_path.with_suffix(".policy.pkl")
                 _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
             except Exception as exc:  # pragma: no cover - disk errors
                 logger.exception("failed to save strategy pickle: %s", exc)
@@ -716,21 +722,21 @@ class SACSynergyLearner(_BaseRLSynergyLearner):
         self._load_networks()
 
     def _save_networks(self) -> None:
-        base = os.path.splitext(self.path)[0]
+        base_path = Path(resolve_path(str(self.path))).with_suffix("")
         try:
             buf = io.BytesIO()
             sip_torch.save(self.actor.state_dict(), buf)
-            _atomic_write(Path(base + ".policy.pkl"), buf.getvalue(), binary=True)
+            _atomic_write(base_path.with_suffix(".policy.pkl"), buf.getvalue(), binary=True)
             buf = io.BytesIO()
             sip_torch.save(self.target_critic.state_dict(), buf)
-            _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
+            _atomic_write(base_path.with_suffix(".target.pt"), buf.getvalue(), binary=True)
         except Exception as exc:  # pragma: no cover - disk errors
             logger.exception("failed to save SAC models: %s", exc)
 
     def _load_networks(self) -> None:
-        base = os.path.splitext(self.path)[0]
-        pol = Path(base + ".policy.pkl")
-        tgt = Path(base + ".target.pt")
+        base_path = Path(resolve_path(str(self.path))).with_suffix("")
+        pol = base_path.with_suffix(".policy.pkl")
+        tgt = base_path.with_suffix(".target.pt")
         try:
             if pol.exists():
                 state = sip_torch.load(pol)
@@ -872,21 +878,21 @@ class TD3SynergyLearner(_BaseRLSynergyLearner):
         self._load_networks()
 
     def _save_networks(self) -> None:
-        base = os.path.splitext(self.path)[0]
+        base_path = Path(resolve_path(str(self.path))).with_suffix("")
         try:
             buf = io.BytesIO()
             sip_torch.save(self.actor.state_dict(), buf)
-            _atomic_write(Path(base + ".policy.pkl"), buf.getvalue(), binary=True)
+            _atomic_write(base_path.with_suffix(".policy.pkl"), buf.getvalue(), binary=True)
             buf = io.BytesIO()
             sip_torch.save(self.target_actor.state_dict(), buf)
-            _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
+            _atomic_write(base_path.with_suffix(".target.pt"), buf.getvalue(), binary=True)
         except Exception as exc:  # pragma: no cover - disk errors
             logger.exception("failed to save TD3 models: %s", exc)
 
     def _load_networks(self) -> None:
-        base = os.path.splitext(self.path)[0]
-        pol = Path(base + ".policy.pkl")
-        tgt = Path(base + ".target.pt")
+        base_path = Path(resolve_path(str(self.path))).with_suffix("")
+        pol = base_path.with_suffix(".policy.pkl")
+        tgt = base_path.with_suffix(".target.pt")
         try:
             if pol.exists():
                 state = sip_torch.load(pol)

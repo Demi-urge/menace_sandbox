@@ -16,8 +16,10 @@ import warnings
 import logging
 from typing import List
 from dataclasses import dataclass, asdict
+from pathlib import Path
 from sandbox_settings import SandboxSettings
 from self_improvement.prompt_memory import load_prompt_penalties
+from dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -1080,11 +1082,14 @@ class SelfImprovementPolicy:
 
     # ------------------------------------------------------------------
     def save_q_table(self, fp: str) -> None:
-        with open(fp, "wb") as fh:
+        path = Path(fp)
+        full = Path(resolve_path(path.parent)).joinpath(path.name)
+        with full.open("wb") as fh:
             pickle.dump(self.values, fh)
 
     def load_q_table(self, fp: str) -> None:
-        with open(fp, "rb") as fh:
+        path = Path(resolve_path(fp))
+        with path.open("rb") as fh:
             data = pickle.load(fh)
         if isinstance(data, dict):
             new_table: Dict[Tuple[int, ...], Dict[int, float]] = {}
@@ -1099,11 +1104,13 @@ class SelfImprovementPolicy:
 
     def save_model(self, path: str) -> None:
         """Save policy and strategy weights to ``path`` as JSON."""
-        with open(path, "w", encoding="utf-8") as fh:
+        path_obj = Path(path)
+        with path_obj.open("w", encoding="utf-8") as fh:
             fh.write(self.to_json())
-        base = os.path.splitext(path)[0]
-        self.save_dqn_weights(base)
-        checksums: Dict[str, str] = {os.path.basename(path): _compute_checksum(path)}
+        resolved = Path(resolve_path(str(path_obj)))
+        self.save_dqn_weights(str(resolved))
+        base_path = resolved.with_suffix("")
+        checksums: Dict[str, str] = {resolved.name: _compute_checksum(str(resolved))}
         for ext in [
             ".pt",
             ".target.pt",
@@ -1114,63 +1121,65 @@ class SelfImprovementPolicy:
             ".critic.opt.pt",
             ".replay.json",
         ]:
-            fp = base + ext
-            if os.path.exists(fp):
-                checksums[os.path.basename(fp)] = _compute_checksum(fp)
-        with open(base + ".checksum", "w", encoding="utf-8") as fh:
+            fp = base_path.with_suffix(ext)
+            if fp.exists():
+                checksums[fp.name] = _compute_checksum(str(fp))
+        with base_path.with_suffix(".checksum").open("w", encoding="utf-8") as fh:
             json.dump({"version": 1, "files": checksums}, fh)
 
     @classmethod
     def load_model(cls, path: str) -> "SelfImprovementPolicy":
         """Load policy and associated weights from ``path``."""
 
-        with open(path, "r", encoding="utf-8") as fh:
+        path_obj = Path(resolve_path(path))
+        with path_obj.open("r", encoding="utf-8") as fh:
             data = fh.read()
         policy = cls.from_json(data)
-        policy.path = path
-        base = os.path.splitext(path)[0]
-        checksum_path = base + ".checksum"
-        if os.path.exists(checksum_path):
-            with open(checksum_path, "r", encoding="utf-8") as fh:
+        policy.path = str(path_obj)
+        base_path = path_obj.with_suffix("")
+        checksum_path = base_path.with_suffix(".checksum")
+        if checksum_path.exists():
+            with checksum_path.open("r", encoding="utf-8") as fh:
                 info = json.load(fh)
             files = info.get("files", {})
-            expected = files.get(os.path.basename(path))
-            if expected and expected != _compute_checksum(path):
+            expected = files.get(path_obj.name)
+            if expected and expected != _compute_checksum(str(path_obj)):
                 raise ValueError("Checksum mismatch for policy file")
-            for ext, fp in files.items():
-                if ext == os.path.basename(path):
+            for filename, fp in files.items():
+                if filename == path_obj.name:
                     continue
-                full = os.path.join(os.path.dirname(path), ext)
-                if os.path.exists(full) and fp != _compute_checksum(full):
-                    raise ValueError(f"Checksum mismatch for {ext}")
-        policy.load_dqn_weights(base)
+                full = path_obj.with_name(filename)
+                if full.exists() and fp != _compute_checksum(str(full)):
+                    raise ValueError(f"Checksum mismatch for {filename}")
+        policy.load_dqn_weights(str(path_obj))
         return policy
 
     def save_dqn_weights(self, base: str) -> None:
         if torch is None:
             return
         strat = self.strategy
+        base_path = Path(resolve_path(base)).with_suffix("")
         model = getattr(strat, "model", None)
         if model is not None:
-            torch.save(model.state_dict(), base + ".pt")
+            torch.save(model.state_dict(), base_path.with_suffix(".pt"))
         target = getattr(strat, "target_model", None)
         if target is not None:
-            torch.save(target.state_dict(), base + ".target.pt")
+            torch.save(target.state_dict(), base_path.with_suffix(".target.pt"))
         optimizer = getattr(strat, "optimizer", None)
         if optimizer is not None:
-            torch.save(optimizer.state_dict(), base + ".opt.pt")
+            torch.save(optimizer.state_dict(), base_path.with_suffix(".opt.pt"))
         actor = getattr(strat, "actor", None)
         if actor is not None:
-            torch.save(actor.state_dict(), base + ".actor.pt")
+            torch.save(actor.state_dict(), base_path.with_suffix(".actor.pt"))
         critic = getattr(strat, "critic", None)
         if critic is not None:
-            torch.save(critic.state_dict(), base + ".critic.pt")
+            torch.save(critic.state_dict(), base_path.with_suffix(".critic.pt"))
         actor_opt = getattr(strat, "actor_opt", None)
         if actor_opt is not None:
-            torch.save(actor_opt.state_dict(), base + ".actor.opt.pt")
+            torch.save(actor_opt.state_dict(), base_path.with_suffix(".actor.opt.pt"))
         critic_opt = getattr(strat, "critic_opt", None)
         if critic_opt is not None:
-            torch.save(critic_opt.state_dict(), base + ".critic.opt.pt")
+            torch.save(critic_opt.state_dict(), base_path.with_suffix(".critic.opt.pt"))
         memory = getattr(strat, "memory", None)
         if memory is not None:
             data = []
@@ -1184,7 +1193,7 @@ class SelfImprovementPolicy:
                         "done": bool(done),
                     }
                 )
-            with open(base + ".replay.json", "w", encoding="utf-8") as fh:
+            with base_path.with_suffix(".replay.json").open("w", encoding="utf-8") as fh:
                 json.dump(data, fh)
 
     def load_dqn_weights(self, base: str) -> None:
@@ -1200,8 +1209,9 @@ class SelfImprovementPolicy:
             first = next(iter(state_dict.values()))
             return int(first.shape[1]) if first.ndim > 1 else int(first.shape[0])
 
-        model_path = base + ".pt"
-        if os.path.exists(model_path):
+        base_path = Path(resolve_path(base)).with_suffix("")
+        model_path = base_path.with_suffix(".pt")
+        if model_path.exists():
             state_dict = torch.load(model_path, map_location="cpu")
             if getattr(strat, "config", None) and getattr(strat.config, "state_dim", None) is None:
                 dim = infer_dim(state_dict)
@@ -1211,8 +1221,8 @@ class SelfImprovementPolicy:
             model = getattr(strat, "model", None)
             if model is not None:
                 model.load_state_dict(state_dict)
-        target_path = base + ".target.pt"
-        if os.path.exists(target_path) and hasattr(strat, "target_model"):
+        target_path = base_path.with_suffix(".target.pt")
+        if target_path.exists() and hasattr(strat, "target_model"):
             target_state = torch.load(target_path, map_location="cpu")
             if getattr(strat, "config", None) and getattr(strat.config, "state_dim", None) is None:
                 dim = infer_dim(target_state)
@@ -1222,14 +1232,14 @@ class SelfImprovementPolicy:
             target = getattr(strat, "target_model", None)
             if target is not None:
                 target.load_state_dict(target_state)
-        opt_path = base + ".opt.pt"
-        if os.path.exists(opt_path) and hasattr(strat, "optimizer"):
+        opt_path = base_path.with_suffix(".opt.pt")
+        if opt_path.exists() and hasattr(strat, "optimizer"):
             opt_state = torch.load(opt_path, map_location="cpu")
             optimizer = getattr(strat, "optimizer", None)
             if optimizer is not None:
                 optimizer.load_state_dict(opt_state)
-        actor_path = base + ".actor.pt"
-        if os.path.exists(actor_path):
+        actor_path = base_path.with_suffix(".actor.pt")
+        if actor_path.exists():
             state_dict = torch.load(actor_path, map_location="cpu")
             if getattr(strat, "config", None) and getattr(strat.config, "state_dim", None) is None:
                 dim = infer_dim(state_dict)
@@ -1239,8 +1249,8 @@ class SelfImprovementPolicy:
             actor = getattr(strat, "actor", None)
             if actor is not None:
                 actor.load_state_dict(state_dict)
-        critic_path = base + ".critic.pt"
-        if os.path.exists(critic_path):
+        critic_path = base_path.with_suffix(".critic.pt")
+        if critic_path.exists():
             state_dict = torch.load(critic_path, map_location="cpu")
             if getattr(strat, "config", None) and getattr(strat.config, "state_dim", None) is None:
                 dim = infer_dim(state_dict)
@@ -1250,22 +1260,22 @@ class SelfImprovementPolicy:
             critic = getattr(strat, "critic", None)
             if critic is not None:
                 critic.load_state_dict(state_dict)
-        actor_opt_path = base + ".actor.opt.pt"
-        if os.path.exists(actor_opt_path) and hasattr(strat, "actor_opt"):
+        actor_opt_path = base_path.with_suffix(".actor.opt.pt")
+        if actor_opt_path.exists() and hasattr(strat, "actor_opt"):
             actor_opt_state = torch.load(actor_opt_path, map_location="cpu")
             actor_opt = getattr(strat, "actor_opt", None)
             if actor_opt is not None:
                 actor_opt.load_state_dict(actor_opt_state)
-        critic_opt_path = base + ".critic.opt.pt"
-        if os.path.exists(critic_opt_path) and hasattr(strat, "critic_opt"):
+        critic_opt_path = base_path.with_suffix(".critic.opt.pt")
+        if critic_opt_path.exists() and hasattr(strat, "critic_opt"):
             critic_opt_state = torch.load(critic_opt_path, map_location="cpu")
             critic_opt = getattr(strat, "critic_opt", None)
             if critic_opt is not None:
                 critic_opt.load_state_dict(critic_opt_state)
-        replay_path = base + ".replay.json"
-        if os.path.exists(replay_path) and hasattr(strat, "memory"):
+        replay_path = base_path.with_suffix(".replay.json")
+        if replay_path.exists() and hasattr(strat, "memory"):
             try:
-                with open(replay_path, "r", encoding="utf-8") as fh:
+                with replay_path.open("r", encoding="utf-8") as fh:
                     entries = json.load(fh)
                 if not isinstance(entries, list):
                     raise ValueError("invalid replay data")
@@ -1301,10 +1311,11 @@ class SelfImprovementPolicy:
         fp = path or self.path
         if not fp:
             return
+        path_obj = Path(fp)
         try:
-            self.save_q_table(fp)
-            base = os.path.splitext(fp)[0]
-            self.save_dqn_weights(base)
+            self.save_q_table(str(path_obj))
+            resolved = Path(resolve_path(str(path_obj)))
+            self.save_dqn_weights(str(resolved))
         except Exception:
             raise
 
@@ -1312,11 +1323,11 @@ class SelfImprovementPolicy:
         fp = path or self.path
         if not fp:
             return
+        path_obj = Path(resolve_path(fp))
         try:
-            if os.path.exists(fp):
-                self.load_q_table(fp)
-            base = os.path.splitext(fp)[0]
-            self.load_dqn_weights(base)
+            if path_obj.exists():
+                self.load_q_table(str(path_obj))
+            self.load_dqn_weights(str(path_obj))
         except Exception:
             raise
 
