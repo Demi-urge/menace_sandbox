@@ -69,7 +69,7 @@ def _setup(tmp_path, monkeypatch):
     )
     logger = elog.ErrorLogger(db)
     engine = DummyEngine()
-    mod = tmp_path / "bot.py"
+    mod = tmp_path / "bot.py"  # path-ignore
     mod.write_text("def x():\n    pass\n")
     return db, logger, engine, mod
 

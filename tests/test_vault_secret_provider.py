@@ -1,11 +1,13 @@
 import types
 import importlib.util
 
+from dynamic_path_router import resolve_path
+
 ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
 
 spec = importlib.util.spec_from_file_location(
     "menace.vault_secret_provider",
-    ROOT / "vault_secret_provider.py",
+    resolve_path("vault_secret_provider.py"),
     submodule_search_locations=[str(ROOT)],
 )
 mod = importlib.util.module_from_spec(spec)

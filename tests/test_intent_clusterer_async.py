@@ -39,10 +39,10 @@ async def test_query_async_normalizes_vectors(monkeypatch):
     retr = DummyRetriever()
     clusterer = ic.IntentClusterer(retr)
     clusterer.cluster_map["a"] = [1]
-    retr.add_vector([0.1, 0.0], {"path": "a.py", "cluster_ids": [1]})
+    retr.add_vector([0.1, 0.0], {"path": "a.py", "cluster_ids": [1]})  # path-ignore
     monkeypatch.setattr(ic, "governed_embed", lambda text: [1.0, 1.0])
     res = await clusterer.query_async("anything", threshold=0.5)
-    assert res and res[0].path == "a.py" and res[0].similarity > 0.6
+    assert res and res[0].path == "a.py" and res[0].similarity > 0.6  # path-ignore
 
 
 @pytest.mark.asyncio
@@ -50,17 +50,17 @@ async def test_find_modules_related_to_async(monkeypatch):
     retr = DummyRetriever()
     clusterer = ic.IntentClusterer(retr)
     clusterer.cluster_map["a"] = [1]
-    retr.add_vector([0.1, 0.0], {"path": "a.py", "cluster_ids": [1]})
+    retr.add_vector([0.1, 0.0], {"path": "a.py", "cluster_ids": [1]})  # path-ignore
     monkeypatch.setattr(ic, "governed_embed", lambda text: [1.0, 1.0])
     res = await clusterer.find_modules_related_to_async("anything", top_k=1)
-    assert res and res[0].path == "a.py"
+    assert res and res[0].path == "a.py"  # path-ignore
 
 
 @pytest.mark.asyncio
 async def test_find_clusters_related_to_async_from_existing_store(monkeypatch, tmp_path: Path):
     retr = DummyRetriever()
     clusterer = ic.IntentClusterer(retr)
-    member = tmp_path / "m.py"
+    member = tmp_path / "m.py"  # path-ignore
     member.write_text('"""cluster helper"""')
     monkeypatch.setattr(
         ic,

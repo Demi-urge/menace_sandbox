@@ -33,7 +33,7 @@ def test_audit_and_dedup(tmp_path: Path):
 
 
 def test_error_bot_fix(tmp_path: Path):
-    admin = tmp_path / "admin.py"
+    admin = tmp_path / "admin.py"  # path-ignore
     admin.write_text("print('x')\n")
     err = eb.ErrorDB(tmp_path / "e.db")
     ebot = eb.ErrorBot(err)
