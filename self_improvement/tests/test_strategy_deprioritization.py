@@ -1,6 +1,5 @@
-import logging
-import logging
 import importlib
+import logging
 import types
 import sys
 from pathlib import Path
@@ -10,9 +9,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 sys.modules.setdefault("dynamic_path_router", types.SimpleNamespace(resolve_path=lambda p: p))
-import sandbox_settings
-from menace_sandbox.sandbox_settings import SandboxSettings
-from menace_sandbox.dynamic_path_router import resolve_path
+import sandbox_settings  # noqa: E402
+from menace_sandbox.sandbox_settings import SandboxSettings  # noqa: E402
+from menace_sandbox.dynamic_path_router import resolve_path  # noqa: E402
 
 pkg = types.ModuleType("menace_sandbox.self_improvement")
 pkg.__path__ = [str(Path(resolve_path("self_improvement")))]
@@ -24,6 +23,9 @@ prompt_memory = importlib.import_module("menace_sandbox.self_improvement.prompt_
 snapshot_tracker = importlib.import_module(
     "menace_sandbox.self_improvement.snapshot_tracker"
 )
+PromptStrategyManager = importlib.import_module(
+    "menace_sandbox.self_improvement.prompt_strategy_manager"
+).PromptStrategyManager
 if "snapshot_history_db" in sys.modules:
     del sys.modules["snapshot_history_db"]
 snapshot_history_db = importlib.import_module("menace_sandbox.snapshot_history_db")
@@ -37,7 +39,7 @@ class MiniEngine:
     def __init__(self):
         self.deprioritized_strategies = set()
         self.logger = logging.getLogger("test")
-        self.strategy_manager = snapshot_tracker.StrategyManager()
+        self.strategy_manager = PromptStrategyManager()
 
     def _record_snapshot_delta(self, prompt, delta):
         success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)

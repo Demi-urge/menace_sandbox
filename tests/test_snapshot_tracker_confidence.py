@@ -61,6 +61,10 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     st = importlib.import_module("menace_sandbox.self_improvement.snapshot_tracker")
     monkeypatch.setattr(st, "resolve_path", lambda p: p)
 
+    PSM = importlib.import_module(
+        "menace_sandbox.self_improvement.prompt_strategy_manager"
+    ).PromptStrategyManager
+
     st.prompt_memory._penalty_path = tmp_path / "penalties.json"
     st.prompt_memory._penalty_lock = st.prompt_memory.FileLock(str(st.prompt_memory._penalty_path) + ".lock")
     st.prompt_memory.record_regression("alpha")
@@ -69,7 +73,7 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "SandboxSettings", lambda: Settings())
 
     tracker = st.SnapshotTracker()
-    manager = st.StrategyManager()
+    manager = PSM()
     module = tmp_path / "mod.py"
     module.write_text("a = 1\n", encoding="utf-8")
 
@@ -89,8 +93,8 @@ def test_confidence_and_best_checkpoint(tmp_path, monkeypatch):
     ckpt_file = dirs[0] / module.name
     assert ckpt_file.exists()
 
-    conf = json.loads((tmp_path / "strategy_confidence.json").read_text())
-    rec = conf["alpha"]
+    conf = json.loads((tmp_path / "prompt_strategy_state.json").read_text())
+    rec = conf["metrics"]["alpha"]
     assert rec["attempts"] == 1
     assert rec["successes"] == 1
     assert rec["roi"] == delta.get("roi", 0.0)
