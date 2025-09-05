@@ -6,7 +6,13 @@ from dataclasses import dataclass
 import time
 import threading
 import logging
+import asyncio
 from typing import Callable, Iterable, Type, TypeVar
+
+try:  # pragma: no cover - requests may not be installed
+    import requests
+except Exception:  # pragma: no cover
+    requests = None  # type: ignore
 
 
 class ResilienceError(Exception):
@@ -43,10 +49,14 @@ def retry_with_backoff(
     When ``delays`` is provided it specifies the exact sleep durations between
     attempts.  Otherwise exponential backoff starting at ``delay`` is used.
     """
+    timeout_excs: tuple[Type[BaseException], ...] = (asyncio.TimeoutError,)
+    if requests is not None:  # pragma: no branch - exercised in tests
+        timeout_excs += (requests.Timeout,)
+
     if isinstance(exceptions, type):
-        exc_types: tuple[Type[BaseException], ...] = (exceptions,)
+        exc_types: tuple[Type[BaseException], ...] = (exceptions,) + timeout_excs
     else:
-        exc_types = tuple(exceptions)
+        exc_types = tuple(exceptions) + timeout_excs
 
     if delays is not None:
         schedule = list(delays)
@@ -62,7 +72,12 @@ def retry_with_backoff(
             if i == attempts - 1:
                 raise RetryError(str(exc)) from exc
             log = logger or logging
-            log.warning("retry %s/%s after error: %s", i + 1, attempts, exc)
+            if isinstance(exc, timeout_excs):
+                log.warning(
+                    "timeout on attempt %s/%s: %s", i + 1, attempts, exc
+                )
+            else:
+                log.warning("retry %s/%s after error: %s", i + 1, attempts, exc)
             if delays is not None:
                 time.sleep(schedule[i])
             else:
