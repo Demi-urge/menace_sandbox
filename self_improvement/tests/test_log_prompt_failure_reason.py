@@ -39,6 +39,7 @@ def test_log_prompt_attempt_records_failure_reason(tmp_path, monkeypatch):
         exec_result={"detail": "x"},
         failure_reason="bad_result",
         sandbox_metrics={"m": 1, "sandbox_score": 0.2, "tests_passed": False, "entropy": 0.3},
+        commit_hash="deadbeef",
     )
 
     failure_log = tmp_path / "failure.jsonl"
@@ -55,6 +56,7 @@ def test_log_prompt_attempt_records_failure_reason(tmp_path, monkeypatch):
     assert entry["test_status"] is False
     assert entry["entropy_delta"] == 0.3
     assert entry["m"] == 1
+    assert entry["commit_hash"] == "deadbeef"
     # No success log should be written
     assert not (tmp_path / "success.jsonl").exists()
 

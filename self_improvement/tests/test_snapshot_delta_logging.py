@@ -26,6 +26,7 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
         prompt_id=None,
         failure_reason=None,
         sandbox_metrics=None,
+        commit_hash=None,
     ):  # pragma: no cover
         log_entries.append(
             {
@@ -35,6 +36,7 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
                 "roi_meta": roi_meta,
                 "failure_reason": failure_reason,
                 "sandbox_metrics": sandbox_metrics,
+                "commit_hash": commit_hash,
             }
         )
 

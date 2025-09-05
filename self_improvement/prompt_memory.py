@@ -106,6 +106,7 @@ def log_prompt_attempt(
     prompt_id: str | None = None,
     failure_reason: str | None = None,
     sandbox_metrics: Dict[str, Any] | None = None,
+    commit_hash: str | None = None,
 ) -> None:
     """Record a prompt attempt outcome.
 
@@ -132,6 +133,8 @@ def log_prompt_attempt(
         mirrored to top-level ``score_delta``, ``entropy_delta`` and
         ``test_status`` fields respectively in failure records. Any additional
         metrics are also copied to top-level keys for convenience.
+    commit_hash:
+        Optional commit hash associated with this prompt attempt.
     """
 
     metadata = getattr(prompt, "metadata", {}) if prompt is not None else {}
@@ -172,6 +175,8 @@ def log_prompt_attempt(
         "sandbox_metrics": sandbox_metrics,
         "raw_prompt": raw_prompt,
     }
+    if commit_hash is not None:
+        entry["commit_hash"] = commit_hash
     roi_delta: float | None = None
     if failure_reason is not None:
         # Treat the presence of a failure reason as an unsuccessful attempt even
