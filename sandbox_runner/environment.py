@@ -568,9 +568,7 @@ def record_module_usage(module_name: str) -> None:
             )
 
 # path to cleanup log file
-_CLEANUP_LOG_PATH = Path(os.getenv("SANDBOX_CLEANUP_LOG", "sandbox_data/cleanup.log"))
-if not _CLEANUP_LOG_PATH.is_absolute():
-    _CLEANUP_LOG_PATH = repo_root() / _CLEANUP_LOG_PATH
+_CLEANUP_LOG_PATH = _env_path("SANDBOX_CLEANUP_LOG", "sandbox_data/cleanup.log")
 _CLEANUP_LOG_LOCK = threading.Lock()
 POOL_LOCK_FILE = _env_path("SANDBOX_POOL_LOCK", "sandbox_data/pool.lock")
 
