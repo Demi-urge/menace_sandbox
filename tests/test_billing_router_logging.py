@@ -284,6 +284,8 @@ def test_alert_mismatch_invalid_key(monkeypatch):
             rollback_called(*a, **kw)
 
     monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", lambda: DummyRollback())
+    pause = MagicMock()
+    monkeypatch.setattr(sbr.sandbox_review, "pause_bot", pause)
     monkeypatch.setattr(sbr.billing_logger, "log_event", MagicMock())
     monkeypatch.setattr(sbr, "log_billing_event", MagicMock())
 
@@ -296,6 +298,7 @@ def test_alert_mismatch_invalid_key(monkeypatch):
         "critical_discrepancy", 5, "Stripe key misconfiguration", {"bot": "stripe:cat:bot"}
     )
     rollback_called.assert_called_once_with("latest", requesting_bot="stripe:cat:bot")
+    pause.assert_called_once_with("stripe:cat:bot")
 
 
 def test_alert_mismatch_account_mismatch(monkeypatch):
@@ -310,6 +313,8 @@ def test_alert_mismatch_account_mismatch(monkeypatch):
             rollback_called(*a, **kw)
 
     monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", lambda: DummyRollback())
+    pause = MagicMock()
+    monkeypatch.setattr(sbr.sandbox_review, "pause_bot", pause)
     monkeypatch.setattr(sbr.billing_logger, "log_event", MagicMock())
     monkeypatch.setattr(sbr, "log_billing_event", MagicMock())
 
@@ -320,4 +325,5 @@ def test_alert_mismatch_account_mismatch(monkeypatch):
         "critical_discrepancy", 5, "Stripe account mismatch", {"bot": "stripe:cat:bot"}
     )
     rollback_called.assert_called_once_with("latest", requesting_bot="stripe:cat:bot")
+    pause.assert_called_once_with("stripe:cat:bot")
 
