@@ -192,3 +192,24 @@ overridden or sourced from environment variables or secret storage.
 
 A ``critical_discrepancy`` alert signals the automatic rollback described
 above; resolve the configuration issue before retrying the billing operation.
+
+## Webhook Account Validation
+
+Stripe webhooks should also be verified to ensure events originate from the
+registered platform account.  The helper
+``stripe_billing_router.validate_webhook_account`` inspects an incoming webhook
+payload and returns ``False`` when the embedded account identifier does not
+match :data:`STRIPE_MASTER_ACCOUNT_ID`:
+
+```python
+from stripe_billing_router import validate_webhook_account
+
+event = json.loads(request.data)
+if not validate_webhook_account(event):
+    # Pause or reject processing until the mismatch is reviewed
+    return "account mismatch", 400
+```
+
+When a mismatch is detected the router dispatches the standard alert via
+``_alert_mismatch`` allowing callers to pause the bot or trigger additional
+review steps.

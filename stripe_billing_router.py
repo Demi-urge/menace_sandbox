@@ -178,6 +178,67 @@ def _ensure_destination_account(
         raise RuntimeError("Stripe account mismatch")
 
 
+def validate_webhook_account(event: Mapping[str, Any]) -> bool:
+    """Validate that a Stripe webhook belongs to the master account.
+
+    The webhook payload may indicate the originating account in a number of
+    fields.  This helper extracts the account identifier from common locations
+    and ensures it matches :data:`STRIPE_MASTER_ACCOUNT_ID`.  If the extracted
+    account differs, a mismatch alert is triggered and ``False`` is returned so
+    callers can halt further processing.
+
+    Parameters
+    ----------
+    event:
+        The deserialised webhook event payload.
+
+    Returns
+    -------
+    bool
+        ``True`` when the account matches the registered master account or no
+        account information is present.  ``False`` when a mismatch is detected.
+    """
+
+    obj = {}
+    try:
+        obj = (event.get("data") or {}).get("object") or {}
+    except Exception:
+        obj = {}
+
+    account_id = (
+        event.get("account")
+        or obj.get("on_behalf_of")
+        or (obj.get("transfer_data") or {}).get("destination")
+    )
+
+    if not account_id:
+        transfer = obj.get("transfer")
+        if isinstance(transfer, Mapping):
+            account_id = transfer.get("destination") or (
+                (transfer.get("metadata") or {}).get("destination_account")
+            )
+        metadata = obj.get("metadata")
+        if not account_id and isinstance(metadata, Mapping):
+            account_id = (
+                metadata.get("destination_account")
+                or metadata.get("account")
+                or metadata.get("stripe_account")
+            )
+
+    account_id = str(account_id) if account_id else ""
+    if account_id and account_id != STRIPE_MASTER_ACCOUNT_ID:
+        metadata = obj.get("metadata")
+        bot_id = "unknown"
+        if isinstance(metadata, Mapping):
+            bot_id = str(
+                metadata.get("bot_id") or metadata.get("bot") or "unknown"
+            )
+        _alert_mismatch(bot_id, account_id)
+        return False
+
+    return True
+
+
 def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:
     """Ensure a route mapping does not attempt to override Stripe keys."""
 
