@@ -10,6 +10,8 @@ It allows passing a custom ``openai_client`` for easy testing.
 
 from typing import Any, Dict, List, Optional
 
+from resilience import retry_with_backoff
+from sandbox_settings import SandboxSettings
 from .prompt_notice import prepend_payment_notice
 
 try:  # pragma: no cover - optional dependency
@@ -30,7 +32,13 @@ def chat_completion_create(
     if client is None:  # pragma: no cover - import guard
         raise RuntimeError("openai library not available")
     msgs = prepend_payment_notice(messages)
-    return client.ChatCompletion.create(messages=msgs, **kwargs)
+    _settings = SandboxSettings()
+    delays = list(getattr(_settings, "codex_retry_delays", [2, 5, 10]))
+    return retry_with_backoff(
+        lambda: client.ChatCompletion.create(messages=msgs, **kwargs),
+        attempts=len(delays),
+        delays=delays,
+    )
 
 
 __all__ = ["chat_completion_create"]

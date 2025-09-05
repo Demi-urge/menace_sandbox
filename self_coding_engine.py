@@ -244,7 +244,7 @@ def call_codex_with_backoff(
     :class:`RetryError` is raised when all retries fail.
     """
 
-    delays = _settings.codex_retry_delays
+    delays = list(getattr(_settings, "codex_retry_delays", [2, 5, 10]))
     log = logger or logging.getLogger(__name__)
     timeout_val = timeout if timeout is not None else getattr(
         _settings, "codex_timeout", 30.0

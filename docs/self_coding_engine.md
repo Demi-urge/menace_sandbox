@@ -99,6 +99,9 @@ LLM calls are retried with backoff.  The delay between attempts is controlled by
 fail the prompt is simplified – examples are trimmed and system text is removed
 – before one final attempt.
 
+To override the schedule set `CODEX_RETRY_DELAYS` in the environment to a
+comma‑separated list or JSON array (e.g. `"1,2,4"` or `[1,2,4]`).
+
 If no code is produced, `codex_fallback_handler.handle` either queues the prompt
 or reroutes it to a lower‑cost model.  The function returns an `LLMResult` only
 when rerouting yields usable text; otherwise it returns `None` so callers can
