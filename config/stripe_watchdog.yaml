@@ -7,3 +7,7 @@ log_rotation:
   maxBytes: 5242880
   backupCount: 5
 sanity_layer_feedback: true
+anomaly_suppression:
+  window_seconds: 60
+  max_occurrences: 1
+  severity_threshold: 0.0

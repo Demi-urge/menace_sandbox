@@ -241,3 +241,29 @@ def test_fetch_recent_billing_issues(monkeypatch):
 
     monkeypatch.setattr(msl, "_get_gpt_memory", lambda: DummyMemory())
     assert msl.fetch_recent_billing_issues(2) == ["A", "B"]
+
+
+def test_anomaly_deduplication(monkeypatch):
+    """Rapid duplicate anomalies are forwarded only once per window."""
+
+    events: list[dict] = []
+
+    class DummyBus:
+        def publish(self, _topic, event):
+            events.append(event)
+
+    monkeypatch.setattr(msl, "_EVENT_BUS", DummyBus())
+    monkeypatch.setattr(
+        msl.db_router,
+        "GLOBAL_ROUTER",
+        types.SimpleNamespace(execute_and_log=lambda *a, **k: []),
+    )
+    msl._ANOMALY_CACHE.clear()
+    msl._SUPPRESSION_SETTINGS.update(
+        {"window_seconds": 60.0, "max_occurrences": 1.0, "severity_threshold": 0.0}
+    )
+
+    for _ in range(3):
+        msl.record_billing_anomaly("dup_event", {"id": 1}, severity=1.0)
+
+    assert len(events) == 1
