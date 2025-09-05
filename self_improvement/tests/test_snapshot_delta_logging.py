@@ -62,15 +62,20 @@ def _load_record_snapshot_delta(tmp_path, log_entries, updates):
 
 
 @pytest.mark.parametrize(
-    "delta,reason",
+    "delta,failed,reason",
     [
-        ({"roi": -1.0}, "roi_drop"),
-        ({"sandbox_score": -0.1}, "score_drop"),
-        ({"entropy": 0.1}, "entropy_regression"),
-        ({"tests_passed": False}, "tests_failed"),
+        ({"roi": -1.0}, ["roi"], "roi_drop"),
+        ({"sandbox_score": -0.1}, ["sandbox_score"], "score_drop"),
+        ({"entropy": 0.1}, ["entropy"], "entropy_regression"),
+        ({"tests_passed": False}, ["tests_failed"], "tests_failed"),
+        (
+            {"roi": -1.0, "sandbox_score": -0.2},
+            ["roi", "sandbox_score"],
+            "roi_drop",
+        ),
     ],
 )
-def test_record_snapshot_delta_failures(tmp_path, delta, reason):
+def test_record_snapshot_delta_failures(tmp_path, delta, failed, reason):
     logs: list[dict] = []
     updates: list[dict] = []
     func, eng = _load_record_snapshot_delta(tmp_path, logs, updates)
@@ -79,7 +84,9 @@ def test_record_snapshot_delta_failures(tmp_path, delta, reason):
     assert json.loads(path.read_text().strip()) == delta
     assert logs and not logs[0]["success"]
     assert logs[0]["failure_reason"] == reason
-    assert logs[0]["sandbox_metrics"] == delta
+    assert logs[0]["sandbox_metrics"]["failed_metrics"] == failed
+    for k, v in delta.items():
+        assert logs[0]["sandbox_metrics"][k] == v
     assert not updates
 
 

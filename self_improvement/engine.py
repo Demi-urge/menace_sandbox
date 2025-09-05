@@ -6552,17 +6552,30 @@ class SelfImprovementEngine:
 
         # Determine whether the snapshot delta represents a regression.  Any
         # negative ROI or sandbox score, entropy increase or failed tests are
-        # considered failures and logged with an explicit reason.
+        # considered failures and logged with explicit reasons.  When multiple
+        # metrics regress we record all of them so downstream analysis can make
+        # better decisions about severity.
         failure_reason = None
+        failed_metrics: list[str] = []
         tests_passed = delta.get("tests_passed")
         if tests_passed is False or delta.get("tests_failed", 0) > 0:
-            failure_reason = "tests_failed"
-        elif delta.get("roi", 0.0) < 0:
-            failure_reason = "roi_drop"
-        elif delta.get("sandbox_score", 0.0) < 0:
-            failure_reason = "score_drop"
-        elif delta.get("entropy", 0.0) > 0:
-            failure_reason = "entropy_regression"
+            failed_metrics.append("tests_failed")
+        if delta.get("roi", 0.0) < 0:
+            failed_metrics.append("roi")
+        if delta.get("sandbox_score", 0.0) < 0:
+            failed_metrics.append("sandbox_score")
+        if delta.get("entropy", 0.0) > 0:
+            failed_metrics.append("entropy")
+
+        if failed_metrics:
+            priority = ["tests_failed", "roi", "sandbox_score", "entropy"]
+            severe = next((m for m in priority if m in failed_metrics), failed_metrics[0])
+            failure_reason = {
+                "tests_failed": "tests_failed",
+                "roi": "roi_drop",
+                "sandbox_score": "score_drop",
+                "entropy": "entropy_regression",
+            }.get(severe, severe)
 
         strategy = None
         next_template = None
@@ -6571,14 +6584,17 @@ class SelfImprovementEngine:
             if isinstance(metadata, dict):
                 strategy = metadata.get("strategy") or metadata.get("prompt_id")
 
-        success = failure_reason is None
+        success = not failed_metrics
+        metrics_payload = dict(delta)
+        if not success:
+            metrics_payload["failed_metrics"] = failed_metrics
         log_prompt_attempt(
             prompt,
             success=success,
             exec_result={"diff": diff},
             roi_meta=delta,
             failure_reason=failure_reason,
-            sandbox_metrics=delta if not success else None,
+            sandbox_metrics=metrics_payload if not success else None,
         )
         if success:
             for f in files or []:
