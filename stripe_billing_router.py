@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover - simplified stubs
 from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
 import rollback_manager
+import sandbox_review
 
 try:  # optional dependency
     import stripe  # type: ignore
@@ -111,6 +112,11 @@ def _alert_mismatch(
     """Backward-compatible wrapper for critical discrepancy handling."""
 
     log_critical_discrepancy(bot_id, message)
+    # Pause the bot in the sandbox so further actions require review.
+    try:
+        sandbox_review.pause_bot(bot_id)
+    except Exception:  # pragma: no cover - pause is best effort
+        logger.exception("failed to pause bot '%s' for review", bot_id)
     timestamp_ms = int(time.time() * 1000)
     billing_logger.log_event(
         error=True,

@@ -4,6 +4,7 @@ from .test_stripe_billing_router_logging import _import_module
 def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
 
+    sbr.sandbox_review.reset()
     rollback_calls = []
 
     class DummyRM:
@@ -45,3 +46,4 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
         "amount": 7.5,
         "destination_account": "acct_bad",
     }
+    assert sbr.sandbox_review.is_paused("bot123")
