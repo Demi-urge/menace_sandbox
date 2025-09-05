@@ -185,12 +185,9 @@ matches the master account. If either check fails the router:
 Investigate these alerts by inspecting the discrepancy record; they typically
 indicate a misconfigured key or account.
 
-The master account identifier is supplied via ``STRIPE_ACCOUNT_ID`` (or a
-matching secret):
-
-```bash
-export STRIPE_ACCOUNT_ID=acct_master
-```
+The platform's master account identifier is embedded in
+``stripe_billing_router.STRIPE_MASTER_ACCOUNT_ID`` and no longer sourced from
+an environment variable.
 
 A ``critical_discrepancy`` alert signals the automatic rollback described
 above; resolve the configuration issue before retrying the billing operation.

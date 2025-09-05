@@ -29,7 +29,6 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     secrets = secrets or {
         "stripe_secret_key": "sk_live_dummy",
         "stripe_public_key": "pk_live_dummy",
-        "stripe_account_id": "acct_master",
         "stripe_allowed_secret_keys": "sk_live_dummy",
     }
     routes = {
@@ -84,7 +83,9 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     sbr = _load("stripe_billing_router")
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: None)
     monkeypatch.setattr(sbr, "log_billing_event", lambda *a, **k: None)
-    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_master")
+    monkeypatch.setattr(
+        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID
+    )
     return sbr
 
 

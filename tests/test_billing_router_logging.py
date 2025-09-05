@@ -5,7 +5,6 @@ import pytest
 # Ensure Stripe keys exist before importing module
 os.environ.setdefault("STRIPE_SECRET_KEY", "sk_live_default")
 os.environ.setdefault("STRIPE_PUBLIC_KEY", "pk_live_default")
-os.environ.setdefault("STRIPE_ACCOUNT_ID", "acct_master")
 
 
 
@@ -54,7 +53,7 @@ import menace_sandbox.stripe_billing_router as sbr
 
 SECRET = "sk_live_123"
 PUBLIC = "pk_live_123"
-ACCOUNT = "acct_master"
+ACCOUNT = sbr.STRIPE_MASTER_ACCOUNT_ID
 
 def test_charge_logs_events(monkeypatch):
     bot_id = "stripe:cat:bot"

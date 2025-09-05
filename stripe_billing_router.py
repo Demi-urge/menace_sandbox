@@ -161,9 +161,11 @@ def _load_key(name: str, prefix: str) -> str:
 
 STRIPE_SECRET_KEY = _load_key("stripe_secret_key", "sk_")
 STRIPE_PUBLIC_KEY = _load_key("stripe_public_key", "pk_")
-STRIPE_MASTER_ACCOUNT_ID = os.getenv("STRIPE_MASTER_ACCOUNT_ID") or _load_key(
-    "stripe_account_id", "acct_"
-)
+
+# The identifier for the platform's primary Stripe account. All billing
+# operations are performed on behalf of this account, so the value is hard coded
+# rather than loaded from the environment or secret storage.
+STRIPE_MASTER_ACCOUNT_ID = "acct_1H123456789ABCDEF"
 STRIPE_MASTER_ACCOUNT = STRIPE_MASTER_ACCOUNT_ID
 
 

@@ -30,7 +30,6 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     secrets = secrets or {
         "stripe_secret_key": "sk_live_dummy",
         "stripe_public_key": "pk_live_dummy",
-        "stripe_account_id": "acct_master",
         "stripe_allowed_secret_keys": "sk_live_dummy",
     }
     routes = {
@@ -77,8 +76,11 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
     # Stub db_router to avoid filesystem interactions during import
     class _StubRouter:
-        def get_connection(self, name: str):  # pragma: no cover - simple stub
-            return None
+        def get_connection(self, name: str, mode: str | None = None):  # pragma: no cover - simple stub
+            return types.SimpleNamespace(
+                execute=lambda *a, **k: None,
+                commit=lambda: None,
+            )
 
     dr = types.SimpleNamespace(
         GLOBAL_ROUTER=None,
@@ -96,7 +98,9 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     sys.modules["sbrpkg.discrepancy_db"] = disc
 
     sbr = _load("stripe_billing_router")
-    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_master")
+    monkeypatch.setattr(
+        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID
+    )
     return sbr
 
 
@@ -127,7 +131,11 @@ def test_charge_writes_ledger(monkeypatch, sbr_with_db):
         return {"id": "in_test", **params}
 
     def fake_invoice_pay(invoice_id, *, api_key, **params):
-        return {"id": invoice_id, "amount_paid": 1250, "on_behalf_of": "acct_master"}
+        return {
+            "id": invoice_id,
+            "amount_paid": 1250,
+            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
+        }
 
     def fake_customer_retrieve(customer_id, *, api_key=None, **_):
         return {"email": "cust@example.com"}
@@ -153,14 +161,14 @@ def test_charge_writes_ledger(monkeypatch, sbr_with_db):
     assert events and events[0][0] == ("charge",)
     assert events[0][1]["amount"] == 12.5
     assert events[0][1]["user_email"] == "cust@example.com"
-    assert events[0][1]["destination_account"] == "acct_master"
+    assert events[0][1]["destination_account"] == sbr.STRIPE_MASTER_ACCOUNT_ID
 
 
 def test_create_subscription_writes_ledger(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
 
     def fake_create(*, api_key, **params):
-        return {"id": "sub_test", "on_behalf_of": "acct_master"}
+        return {"id": "sub_test", "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID}
 
     def fake_customer_retrieve(customer_id, *, api_key=None, **_):
         return {"email": "cust@example.com"}
@@ -189,14 +197,18 @@ def test_create_subscription_writes_ledger(monkeypatch, sbr_with_db):
     assert events and events[0][0] == ("subscription",)
     assert events[0][1]["amount"] == 12.5
     assert events[0][1]["user_email"] == "cust@example.com"
-    assert events[0][1]["destination_account"] == "acct_master"
+    assert events[0][1]["destination_account"] == sbr.STRIPE_MASTER_ACCOUNT_ID
 
 
 def test_refund_writes_ledger(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
 
     def fake_create(*, api_key, **params):
-        return {"id": "rf_test", "amount": 500, "on_behalf_of": "acct_master"}
+        return {
+            "id": "rf_test",
+            "amount": 500,
+            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
+        }
 
     fake_stripe = types.SimpleNamespace(
         api_key="orig", Refund=types.SimpleNamespace(create=fake_create)
@@ -213,7 +225,11 @@ def test_create_checkout_session_writes_ledger(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
 
     def fake_create(*, api_key, **params):
-        return {"id": "cs_test", "amount_total": 1000, "on_behalf_of": "acct_master"}
+        return {
+            "id": "cs_test",
+            "amount_total": 1000,
+            "on_behalf_of": sbr.STRIPE_MASTER_ACCOUNT_ID,
+        }
 
     fake_stripe = types.SimpleNamespace(
         api_key="orig",
@@ -248,6 +264,9 @@ def test_mismatched_account_dispatches_alert_and_rollbacks(monkeypatch, sbr_with
         def auto_rollback(self, tag, nodes):
             rollbacks.append((tag, nodes))
 
+        def rollback(self, *a, **k):  # pragma: no cover - simple stub
+            rollbacks.append((a[0] if a else "", k.get("requesting_bot")))
+
     monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", RB)
 
     def fake_item_create(*, api_key, **params):
@@ -265,6 +284,7 @@ def test_mismatched_account_dispatches_alert_and_rollbacks(monkeypatch, sbr_with
         Invoice=types.SimpleNamespace(create=fake_invoice_create, pay=fake_invoice_pay),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_bad")
     with pytest.raises(RuntimeError):
         sbr.charge("finance:finance_router_bot", 12.5, "desc")
     assert alerts and rollbacks
@@ -291,4 +311,4 @@ def test_charge_logs_on_api_exception(monkeypatch, sbr_with_db):
     row = conn.execute(
         "SELECT action_type, error FROM stripe_ledger"
     ).fetchone()
-    assert row == ("charge", 0)
+    assert row == ("charge", 1)
