@@ -769,6 +769,11 @@ class SandboxSettings(BaseSettings):
         env="PROMPT_PENALTY_MULTIPLIER",
         description="Multiplier applied to value estimates of penalised prompts.",
     )
+    prompt_roi_decay_rate: float = Field(
+        0.0,
+        env="PROMPT_ROI_DECAY_RATE",
+        description="Exponential decay rate applied to prompt ROI history.",
+    )
     strategy_failure_limits: dict[str, int] = Field(
         default_factory=dict,
         env="STRATEGY_FAILURE_LIMITS",
@@ -782,6 +787,12 @@ class SandboxSettings(BaseSettings):
                 return json.loads(v)
             except Exception:
                 return {}
+        return v
+
+    @field_validator("prompt_roi_decay_rate")
+    def _check_non_negative_decay(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("prompt_roi_decay_rate must be non-negative")
         return v
     failure_fingerprint_path: str = Field(
         "failure_fingerprints.jsonl",

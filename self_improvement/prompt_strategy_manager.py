@@ -6,7 +6,9 @@ from pathlib import Path
 import json
 import os
 import tempfile
-from typing import Callable, Dict, Sequence
+import time
+import math
+from typing import Any, Callable, Dict, Sequence
 
 from filelock import FileLock
 
@@ -71,7 +73,7 @@ class PromptStrategyManager:
         self.failure_limits: Dict[str, int] = {s: 1 for s in self.strategies}
         self.penalties: Dict[str, int] = {}
         self.metrics: Dict[str, Dict[str, float]] = {}
-        self.stats: Dict[str, Dict[str, float]] = {}
+        self.stats: Dict[str, Dict[str, Any]] = {}
         self._load_state()
         self._load_stats()
 
@@ -211,8 +213,10 @@ class PromptStrategyManager:
                 "roi_sum": 0.0,
                 "weighted_roi_sum": 0.0,
                 "weight_sum": 0.0,
+                "records": [],
             },
         )
+        ts = time.time()
         rec["total"] += 1
         if success:
             rec["success"] += 1
@@ -220,6 +224,9 @@ class PromptStrategyManager:
         rec["roi_sum"] += float(roi)
         rec["weighted_roi_sum"] += float(roi) * float(weight)
         rec["weight_sum"] += float(weight)
+        rec.setdefault("records", []).append(
+            {"ts": ts, "roi": float(roi), "success": bool(success)}
+        )
         mrec = self.metrics.setdefault(
             str(strategy), {"attempts": 0, "successes": 0, "roi": 0.0}
         )
@@ -242,24 +249,46 @@ class PromptStrategyManager:
         settings = SandboxSettings()
         threshold = settings.prompt_failure_threshold
         mult = settings.prompt_penalty_multiplier
+        decay = getattr(settings, "prompt_roi_decay_rate", 0.0)
+        now = time.time()
         eligible: list[tuple[str, float]] = []
         penalised: list[tuple[str, float]] = []
         for strat in strategies:
             count = penalties.get(str(strat), 0)
             rec = self.stats.get(str(strat), {})
-            total = int(rec.get("total", 0))
-            success = int(rec.get("success", 0))
-            roi_sum = float(rec.get("roi_sum", 0.0))
-            weighted_roi_sum = float(rec.get("weighted_roi_sum", 0.0))
-            weight_sum = float(rec.get("weight_sum", 0.0))
+            records = rec.get("records") or []
             score = 0.0
-            if total:
-                success_rate = success / total
-                if weight_sum:
-                    weighted_roi = weighted_roi_sum / weight_sum
-                else:
-                    weighted_roi = roi_sum / total
-                score = success_rate * max(weighted_roi, 0.0)
+            if records:
+                total_w = 0.0
+                success_w = 0.0
+                roi_w = 0.0
+                for r in records:
+                    ts = float(r.get("ts", now))
+                    roi = float(r.get("roi", 0.0))
+                    succ = bool(r.get("success"))
+                    weight = math.exp(-decay * max(now - ts, 0.0)) if decay else 1.0
+                    total_w += weight
+                    roi_w += roi * weight
+                    if succ:
+                        success_w += weight
+                if total_w:
+                    success_rate = success_w / total_w
+                    weighted_roi = roi_w / total_w
+                    avg_weight = total_w / len(records)
+                    score = success_rate * max(weighted_roi, 0.0) * avg_weight
+            else:
+                total = int(rec.get("total", 0))
+                success = int(rec.get("success", 0))
+                roi_sum = float(rec.get("roi_sum", 0.0))
+                weighted_roi_sum = float(rec.get("weighted_roi_sum", 0.0))
+                weight_sum = float(rec.get("weight_sum", 0.0))
+                if total:
+                    success_rate = success / total
+                    if weight_sum:
+                        weighted_roi = weighted_roi_sum / weight_sum
+                    else:
+                        weighted_roi = roi_sum / total
+                    score = success_rate * max(weighted_roi, 0.0)
             score = score if score > 0 else 0.1
             weight = score * (mult if threshold and count >= threshold else 1.0)
             target = penalised if threshold and count >= threshold else eligible
@@ -359,6 +388,15 @@ class PromptStrategyManager:
                     "roi_sum": float(v.get("roi_sum", 0.0)),
                     "weighted_roi_sum": float(v.get("weighted_roi_sum", 0.0)),
                     "weight_sum": float(v.get("weight_sum", 0.0)),
+                    "records": [
+                        {
+                            "ts": float(r.get("ts", 0.0)),
+                            "roi": float(r.get("roi", 0.0)),
+                            "success": bool(r.get("success", False)),
+                        }
+                        for r in v.get("records", [])
+                        if isinstance(r, dict)
+                    ],
                 }
                 for k, v in data.items()
                 if isinstance(v, dict)
