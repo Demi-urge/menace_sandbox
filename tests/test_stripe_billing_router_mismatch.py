@@ -3,6 +3,12 @@ from .test_stripe_billing_router_logging import _import_module
 
 def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
+    # Prevent any environment-derived account identifiers from influencing the
+    # module under test and force ``_get_account_id`` to return the hardcoded
+    # master account.
+    monkeypatch.setattr(
+        sbr, "_get_account_id", lambda api_key: sbr.STRIPE_MASTER_ACCOUNT_ID
+    )
 
     sbr.sandbox_review.reset()
     rollback_calls = []
