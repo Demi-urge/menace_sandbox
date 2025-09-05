@@ -260,6 +260,17 @@ def call_codex_with_backoff(
     )
 
 
+def build_simplified_prompt(prompt_obj: Prompt) -> Prompt:
+    """Return a copy of *prompt_obj* without system or example context."""
+
+    return Prompt(
+        prompt_obj.text,
+        system="",
+        examples=[],
+        metadata=getattr(prompt_obj, "metadata", {}),
+    )
+
+
 def simplify_prompt(prompt_obj: Prompt) -> Prompt:
     """Simplify a prompt based on sandbox configuration.
 
@@ -270,6 +281,9 @@ def simplify_prompt(prompt_obj: Prompt) -> Prompt:
 
     drop_system = getattr(_settings, "simplify_prompt_drop_system", True)
     example_limit = getattr(_settings, "simplify_prompt_example_limit", 0)
+
+    if drop_system and (example_limit is None or example_limit <= 0):
+        return build_simplified_prompt(prompt_obj)
 
     system = "" if drop_system else prompt_obj.system
     examples = prompt_obj.examples
@@ -361,7 +375,7 @@ class SelfCodingEngine:
         self.chunk_summary_cache_dir = resolve_path(cache_dir)
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
-        self.simplify_prompt = prompt_simplifier or simplify_prompt
+        self.simplify_prompt = prompt_simplifier or build_simplified_prompt
         self._failure_similarity_threshold = failure_similarity_threshold
         self.failure_similarity_limit = failure_similarity_limit
         self.failure_similarity_k = failure_similarity_k
@@ -1388,7 +1402,9 @@ class SelfCodingEngine:
             extra={"reason": reason, "description": description, "tags": ["degraded"]},
         )
 
-        alt = codex_fallback_handler.handle(prompt, reason)
+        alt = codex_fallback_handler.handle(
+            self.simplify_prompt(prompt), reason
+        )
         if alt is None:
             return result, None
 
