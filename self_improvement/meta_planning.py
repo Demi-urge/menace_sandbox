@@ -11,11 +11,24 @@ from statistics import fmean
 import asyncio
 import json
 import os
+import sys
 import time
 import threading
 import queue
 from pathlib import Path
 from contextlib import contextmanager, nullcontext
+
+try:  # pragma: no cover - optional dependency location
+    from .. import dynamic_path_router as _dynamic_path_router
+except Exception:  # pragma: no cover
+    import dynamic_path_router as _dynamic_path_router  # type: ignore
+resolve_path = _dynamic_path_router.resolve_path  # type: ignore
+sys.modules.setdefault("menace.dynamic_path_router", _dynamic_path_router)
+
+if "menace.logging_utils" in sys.modules and not hasattr(
+    sys.modules["menace.logging_utils"], "setup_logging"
+):  # pragma: no cover - test stub fallback
+    sys.modules["menace.logging_utils"].setup_logging = lambda *a, **k: None
 
 from ..logging_utils import get_logger, log_record
 from ..sandbox_settings import SandboxSettings, DEFAULT_SEVERITY_SCORE_MAP
@@ -25,8 +38,6 @@ from ..roi_results_db import ROIResultsDB
 from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 from ..error_logger import TelemetryEvent
-from .metrics import compute_call_graph_complexity, compute_entropy_metrics
-from .snapshot_tracker import SnapshotTracker
 from .sandbox_score import get_latest_sandbox_score
 
 
@@ -46,7 +57,7 @@ except ImportError as exc:  # pragma: no cover - fallback when event bus missing
 
 try:  # pragma: no cover - optional dependency
     from ..meta_workflow_planner import MetaWorkflowPlanner
-except ImportError as exc:  # pragma: no cover - gracefully degrade
+except Exception as exc:  # pragma: no cover - gracefully degrade
     get_logger(__name__).warning(
         "meta_workflow_planner import failed",  # noqa: TRY300
         extra=log_record(component=__name__, dependency="meta_workflow_planner"),
@@ -54,7 +65,7 @@ except ImportError as exc:  # pragma: no cover - gracefully degrade
     )
     try:
         from meta_workflow_planner import MetaWorkflowPlanner  # type: ignore
-    except ImportError as exc2:  # pragma: no cover - best effort fallback
+    except Exception as exc2:  # pragma: no cover - best effort fallback
         get_logger(__name__).warning(
             "local meta_workflow_planner import failed",  # noqa: TRY300
             extra=log_record(component=__name__, dependency="meta_workflow_planner"),
@@ -96,8 +107,8 @@ class _FallbackPlanner:
             self.stability_db = None
 
         self.logger = get_logger("FallbackPlanner")
-        data_dir = Path(SandboxSettings().sandbox_data_dir)
-        self.state_path = data_dir / "fallback_planner.json"
+        data_dir = Path(resolve_path(SandboxSettings().sandbox_data_dir))
+        self.state_path = Path(resolve_path(data_dir / "fallback_planner.json"))
         self.state_lock = SandboxLock(
             str(self.state_path.with_suffix(self.state_path.suffix + ".lock"))
         )
@@ -943,8 +954,13 @@ async def self_improvement_cycle(
 
     stability_db = get_stable_workflows()
     setattr(planner, "entropy_threshold", _get_entropy_threshold(cfg, BASELINE_TRACKER))
-    repo_path = Path(_init._repo_path())
-    snapshot_tracker = SnapshotTracker()
+    repo_root_fn = getattr(_init, "_repo_path", lambda: Path("."))
+    repo_path = Path(resolve_path(repo_root_fn()))
+    try:  # pragma: no cover - optional snapshot dependencies
+        from .snapshot_tracker import SnapshotTracker  # local import to avoid heavy deps
+        snapshot_tracker = SnapshotTracker()
+    except Exception:  # pragma: no cover - best effort fallback
+        snapshot_tracker = None
 
     async def _log(record: Mapping[str, Any]) -> None:
         chain = record.get("chain", [])
@@ -1100,17 +1116,18 @@ async def self_improvement_cycle(
                     _debug_cycle("skipped", reason=info.get("reason"))
                     continue
 
-            snapshot_tracker.capture(
-                "before",
-                {
-                    "files": list(repo_path.rglob("*.py")),
-                    "roi": BASELINE_TRACKER.current("roi"),
-                    "sandbox_score": get_latest_sandbox_score(
-                        SandboxSettings().sandbox_score_db
-                    ),
-                },
-                repo_path=repo_path,
-            )
+            if snapshot_tracker is not None:
+                snapshot_tracker.capture(
+                    "before",
+                    {
+                        "files": list(repo_path.rglob("*.py")),
+                        "roi": BASELINE_TRACKER.current("roi"),
+                        "sandbox_score": get_latest_sandbox_score(
+                            SandboxSettings().sandbox_score_db
+                        ),
+                    },
+                    repo_path=repo_path,
+                )
             records = planner.discover_and_persist(workflows)
             active: list[list[str]] = []
             outcome_logged = False
@@ -1122,10 +1139,12 @@ async def self_improvement_cycle(
                 pass_rate = float(rec.get("pass_rate", 1.0 if failures == 0 else 0.0))
                 repo = _init._repo_path()
                 try:
+                    from .metrics import compute_call_graph_complexity
                     call_complexity = compute_call_graph_complexity(repo)
                 except Exception:
                     call_complexity = 0.0
                 try:
+                    from .metrics import compute_entropy_metrics
                     _, _, token_div = compute_entropy_metrics(
                         list(repo.rglob("*.py")), settings=cfg
                     )
@@ -1203,23 +1222,24 @@ async def self_improvement_cycle(
             for chain in list(active):
                 planner.cluster_map.pop(tuple(chain), None)
 
-            snapshot_tracker.capture(
-                "after",
-                {
-                    "files": list(repo_path.rglob("*.py")),
-                    "roi": BASELINE_TRACKER.current("roi"),
-                    "sandbox_score": get_latest_sandbox_score(
-                        SandboxSettings().sandbox_score_db
-                    ),
-                },
-                repo_path=repo_path,
-            )
-            delta = snapshot_tracker.delta()
-            _debug_cycle(
-                "snapshot",
-                roi_delta=delta.get("roi", 0.0),
-                entropy_delta=delta.get("entropy", 0.0),
-            )
+            if snapshot_tracker is not None:
+                snapshot_tracker.capture(
+                    "after",
+                    {
+                        "files": list(repo_path.rglob("*.py")),
+                        "roi": BASELINE_TRACKER.current("roi"),
+                        "sandbox_score": get_latest_sandbox_score(
+                            SandboxSettings().sandbox_score_db
+                        ),
+                    },
+                    repo_path=repo_path,
+                )
+                delta = snapshot_tracker.delta()
+                _debug_cycle(
+                    "snapshot",
+                    roi_delta=delta.get("roi", 0.0),
+                    entropy_delta=delta.get("entropy", 0.0),
+                )
 
         except Exception as exc:  # pragma: no cover - planner is best effort
             _debug_cycle("error", reason=str(exc))
