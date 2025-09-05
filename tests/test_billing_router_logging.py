@@ -289,6 +289,11 @@ def test_alert_mismatch_invalid_key(monkeypatch):
     monkeypatch.setattr(sbr.billing_logger, "log_event", MagicMock())
     monkeypatch.setattr(sbr, "log_billing_event", MagicMock())
 
+    import evolution_lock_flag
+
+    lock = MagicMock()
+    monkeypatch.setattr(evolution_lock_flag, "trigger_lock", lock)
+
     sbr._alert_mismatch(
         "stripe:cat:bot", "acct_wrong", message="Stripe key misconfiguration", amount=10.0
     )
@@ -297,6 +302,7 @@ def test_alert_mismatch_invalid_key(monkeypatch):
     dispatch.assert_called_once_with(
         "critical_discrepancy", 5, "Stripe key misconfiguration", {"bot": "stripe:cat:bot"}
     )
+    lock.assert_called_once_with("Stripe account mismatch for stripe:cat:bot", severity=5)
     rollback_called.assert_called_once_with("latest", requesting_bot="stripe:cat:bot")
     pause.assert_called_once_with("stripe:cat:bot")
 
@@ -318,12 +324,18 @@ def test_alert_mismatch_account_mismatch(monkeypatch):
     monkeypatch.setattr(sbr.billing_logger, "log_event", MagicMock())
     monkeypatch.setattr(sbr, "log_billing_event", MagicMock())
 
+    import evolution_lock_flag
+
+    lock = MagicMock()
+    monkeypatch.setattr(evolution_lock_flag, "trigger_lock", lock)
+
     sbr._alert_mismatch("stripe:cat:bot", "acct_mismatch", amount=5.0)
 
     log_crit.assert_called_once_with("stripe:cat:bot", "Stripe account mismatch")
     dispatch.assert_called_once_with(
         "critical_discrepancy", 5, "Stripe account mismatch", {"bot": "stripe:cat:bot"}
     )
+    lock.assert_called_once_with("Stripe account mismatch for stripe:cat:bot", severity=5)
     rollback_called.assert_called_once_with("latest", requesting_bot="stripe:cat:bot")
     pause.assert_called_once_with("stripe:cat:bot")
 

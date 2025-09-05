@@ -31,11 +31,20 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sbr, "log_billing_event", lambda action, **kw: billing_event_data.update({"action": action, **kw})
     )
+    import evolution_lock_flag
+
+    lock_calls = []
+    monkeypatch.setattr(
+        evolution_lock_flag,
+        "trigger_lock",
+        lambda reason, severity: lock_calls.append((reason, severity)),
+    )
 
     sbr._alert_mismatch("bot123", "acct_bad", amount=7.5)
 
     assert rollback_calls == [("latest", "bot123")]
     assert log_calls == [("bot123", "Stripe account mismatch")]
+    assert lock_calls == [("Stripe account mismatch for bot123", 5)]
     assert log_event_data["error"] is True
     assert log_event_data["bot_id"] == "bot123"
     assert log_event_data["destination_account"] == "acct_bad"
