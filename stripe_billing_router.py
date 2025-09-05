@@ -868,20 +868,19 @@ def create_subscription(
 
 def refund(
     bot_id: str,
-    charge_id: str,
+    payment_intent_id: str,
     *,
     amount: float | None = None,
-    user_email: str | None = None,
     overrides: Optional[Mapping[str, str]] = None,
     **params: Any,
 ) -> dict[str, Any]:
-    """Refund a payment for the given bot using ``charge_id``."""
+    """Refund a payment for the given bot using ``payment_intent_id``."""
 
     route = _resolve_route(bot_id, overrides)
     _verify_secret_key(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
-    refund_params: dict[str, Any] = {"charge": charge_id, **params}
+    refund_params: dict[str, Any] = {"payment_intent": payment_intent_id, **params}
     if amount is not None:
         try:
             refund_params["amount"] = int(float(amount) * 100)
@@ -906,7 +905,7 @@ def refund(
         return event
     finally:
         currency = route.get("currency")
-        email = user_email or route.get("user_email")
+        email = route.get("user_email")
         destination = None
         logged_amount: float | None = None
         if isinstance(event, Mapping):
@@ -949,16 +948,23 @@ def refund(
             email=email,
             ts=timestamp_ms,
         )
+        log_billing_event(
+            "refund",
+            bot_id=bot_id,
+            amount=logged_amount,
+            currency=currency,
+            user_email=email,
+            destination_account=destination,
+            stripe_key=api_key,
+            ts=datetime.utcnow().isoformat(),
+        )
 
 
 def create_checkout_session(
     bot_id: str,
-    line_items: list[Mapping[str, Any]],
+    session_params: Mapping[str, Any],
     *,
-    amount: float | None = None,
-    user_email: str | None = None,
     overrides: Optional[Mapping[str, str]] = None,
-    **params: Any,
 ) -> dict[str, Any]:
     """Create a Stripe Checkout session for the given bot."""
 
@@ -966,40 +972,39 @@ def create_checkout_session(
     _verify_secret_key(bot_id, route)
     api_key = route["secret_key"]
     client = _client(api_key)
-    session_params = {"line_items": list(line_items), **params}
-    if "customer" not in session_params and route.get("customer_id"):
-        session_params["customer"] = route["customer_id"]
+    params = dict(session_params)
+    if "customer" not in params and route.get("customer_id"):
+        params["customer"] = route["customer_id"]
     timestamp_ms = int(time.time() * 1000)
     event: dict[str, Any] | None = None
     try:
         if client:
-            event = client.checkout.Session.create(**session_params)
+            event = client.checkout.Session.create(**params)
         else:
-            event = stripe.checkout.Session.create(api_key=api_key, **session_params)
+            event = stripe.checkout.Session.create(api_key=api_key, **params)
         _verify_master_account(bot_id, route, event, api_key)
         return event
     finally:
         currency = route.get("currency")
-        email = user_email or route.get("user_email")
+        email = route.get("user_email")
         destination = None
-        logged_amount: float | None = amount
+        logged_amount: float | None = None
         if isinstance(event, Mapping):
             destination = (
                 event.get("on_behalf_of")
                 or event.get("account")
                 or (event.get("transfer_data") or {}).get("destination")
             )
-            if logged_amount is None:
-                possible = (
-                    event.get("amount_total")
-                    or event.get("amount")
-                    or event.get("amount_subtotal")
-                )
-                if possible is not None:
-                    try:
-                        logged_amount = float(possible) / 100.0
-                    except (TypeError, ValueError):
-                        logged_amount = None
+            possible = (
+                event.get("amount_total")
+                or event.get("amount")
+                or event.get("amount_subtotal")
+            )
+            if possible is not None:
+                try:
+                    logged_amount = float(possible) / 100.0
+                except (TypeError, ValueError):
+                    logged_amount = None
         if destination is None:
             destination = route.get("secret_key")
         raw_json = None
@@ -1027,6 +1032,16 @@ def create_checkout_session(
             destination,
             email=email,
             ts=timestamp_ms,
+        )
+        log_billing_event(
+            "checkout_session",
+            bot_id=bot_id,
+            amount=logged_amount,
+            currency=currency,
+            user_email=email,
+            destination_account=destination,
+            stripe_key=api_key,
+            ts=datetime.utcnow().isoformat(),
         )
 
 
