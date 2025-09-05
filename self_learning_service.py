@@ -21,6 +21,7 @@ from .unified_learning_engine import UnifiedLearningEngine
 from .action_learning_engine import ActionLearningEngine
 from .self_learning_coordinator import SelfLearningCoordinator
 from .local_knowledge_module import init_local_knowledge
+from .dynamic_path_router import resolve_path
 from .self_services_config import SelfLearningConfig
 
 logger = logging.getLogger(__name__)
@@ -68,9 +69,13 @@ def main(
     code_db = CodeDB(event_bus=bus)
     roi_db = ROIDB()
 
-    gpt_mem = init_local_knowledge(
-        os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
-    ).memory
+    default_mem_path = "gpt_memory.db"
+    try:
+        default_mem_path = resolve_path("gpt_memory.db").as_posix()
+    except FileNotFoundError:  # pragma: no cover - default to relative path
+        pass
+    gpt_mem_db = os.getenv("GPT_MEMORY_DB", default_mem_path)
+    gpt_mem = init_local_knowledge(gpt_mem_db).memory
 
     le = LearningEngine(pdb, mm)
     ule = UnifiedLearningEngine(pdb, mm, code_db, roi_db)
