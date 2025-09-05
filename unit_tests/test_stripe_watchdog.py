@@ -49,6 +49,14 @@ def capture(monkeypatch, tmp_path):
 def test_orphan_charge_logged(capture, monkeypatch):
     events = capture
 
+    record_calls: list = []
+
+    def fake_record_event(event_type, metadata, **kwargs):
+        record_calls.append((event_type, metadata, kwargs))
+
+    monkeypatch.setattr(sw, "record_event", fake_record_event)
+    monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+
     charges = [
         {"id": "ch_known", "created": 1, "amount": 1000, "status": "succeeded"},
         {"id": "ch_orphan", "created": 2, "amount": 2000, "status": "succeeded"},
@@ -63,10 +71,16 @@ def test_orphan_charge_logged(capture, monkeypatch):
     monkeypatch.setattr(sw, "DiscrepancyDB", None)
     monkeypatch.setattr(sw, "DiscrepancyRecord", None)
 
-    anomalies = sw.check_events()
+    engine = object()
+    telemetry = object()
+    anomalies = sw.check_events(
+        self_coding_engine=engine, telemetry_feedback=telemetry
+    )
 
     assert anomalies and anomalies[0]["id"] == "ch_orphan"
     assert events and events[0][0] == "stripe_anomaly"
+    assert record_calls and record_calls[0][2]["self_coding_engine"] is engine
+    assert record_calls[0][2]["telemetry_feedback"] is telemetry
 
 
 def test_record_billing_event_called(capture, monkeypatch):

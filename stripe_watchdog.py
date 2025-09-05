@@ -475,7 +475,11 @@ def load_billing_logs(
 
 
 def _emit_anomaly(
-    record: Dict[str, Any], write_codex: bool, export_training: bool
+    record: Dict[str, Any],
+    write_codex: bool,
+    export_training: bool,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> None:
     """Log *record* and optionally emit a training sample."""
 
@@ -484,7 +488,12 @@ def _emit_anomaly(
 
     if SANITY_LAYER_FEEDBACK_ENABLED:
         try:
-            record_event(record.get("type", "unknown"), metadata)
+            record_event(
+                record.get("type", "unknown"),
+                metadata,
+                self_coding_engine=self_coding_engine,
+                telemetry_feedback=telemetry_feedback,
+            )
         except Exception:
             logger.exception("Failed to record sanity event", extra={"record": record})
 
@@ -546,6 +555,8 @@ def detect_missing_charges(
     *,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> List[Dict[str, Any]]:
     """Return Stripe charges absent from local billing logs."""
 
@@ -570,7 +581,13 @@ def detect_missing_charges(
                 "account_id": charge.get("account"),
             }
             anomalies.append(anomaly)
-            _emit_anomaly(anomaly, write_codex, export_training)
+            _emit_anomaly(
+                anomaly,
+                write_codex,
+                export_training,
+                self_coding_engine,
+                telemetry_feedback,
+            )
             try:  # pragma: no cover - best effort
                 alert_dispatcher.dispatch_alert(
                     "stripe_unapproved_workflow",
@@ -593,7 +610,13 @@ def detect_missing_charges(
             "account_id": charge.get("account"),
         }
         anomalies.append(anomaly)
-        _emit_anomaly(anomaly, write_codex, export_training)
+        _emit_anomaly(
+            anomaly,
+            write_codex,
+            export_training,
+            self_coding_engine,
+            telemetry_feedback,
+        )
     return anomalies
 
 
@@ -605,6 +628,8 @@ def detect_missing_refunds(
     *,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> List[Dict[str, Any]]:
     """Return Stripe refunds absent from the ledger and billing logs."""
 
@@ -629,7 +654,13 @@ def detect_missing_refunds(
                 "account_id": refund.get("account"),
             }
             anomalies.append(anomaly)
-            _emit_anomaly(anomaly, write_codex, export_training)
+            _emit_anomaly(
+                anomaly,
+                write_codex,
+                export_training,
+                self_coding_engine,
+                telemetry_feedback,
+            )
             try:  # pragma: no cover - best effort
                 alert_dispatcher.dispatch_alert(
                     "stripe_unapproved_workflow",
@@ -651,7 +682,13 @@ def detect_missing_refunds(
             "account_id": refund.get("account"),
         }
         anomalies.append(anomaly)
-        _emit_anomaly(anomaly, write_codex, export_training)
+        _emit_anomaly(
+            anomaly,
+            write_codex,
+            export_training,
+            self_coding_engine,
+            telemetry_feedback,
+        )
     return anomalies
 
 
@@ -663,6 +700,8 @@ def detect_failed_events(
     *,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> List[Dict[str, Any]]:
     """Return failed payment events missing from the ledger and billing logs."""
 
@@ -689,7 +728,13 @@ def detect_failed_events(
                 "account_id": event.get("account"),
             }
             anomalies.append(anomaly)
-            _emit_anomaly(anomaly, write_codex, export_training)
+            _emit_anomaly(
+                anomaly,
+                write_codex,
+                export_training,
+                self_coding_engine,
+                telemetry_feedback,
+            )
             try:  # pragma: no cover - best effort
                 alert_dispatcher.dispatch_alert(
                     "stripe_unapproved_workflow",
@@ -710,7 +755,13 @@ def detect_failed_events(
             "account_id": event.get("account"),
         }
         anomalies.append(anomaly)
-        _emit_anomaly(anomaly, write_codex, export_training)
+        _emit_anomaly(
+            anomaly,
+            write_codex,
+            export_training,
+            self_coding_engine,
+            telemetry_feedback,
+        )
     return anomalies
 
 
@@ -720,6 +771,8 @@ def check_webhook_endpoints(
     *,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> List[str]:
     """Return webhook identifiers failing the allowed or enabled checks."""
 
@@ -759,7 +812,13 @@ def check_webhook_endpoints(
                 "status": status,
                 "account_id": ep_dict.get("account"),
             }
-            _emit_anomaly(record, write_codex, export_training)
+            _emit_anomaly(
+                record,
+                write_codex,
+                export_training,
+                self_coding_engine,
+                telemetry_feedback,
+            )
             try:  # pragma: no cover - best effort
                 alert_type = (
                     "stripe_disabled_endpoint"
@@ -811,6 +870,8 @@ def compare_revenue(
     tolerance: float = 0.1,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> Optional[Dict[str, float]]:
     """Compare Stripe net revenue with projected revenue from ROI logs."""
 
@@ -849,7 +910,13 @@ def compare_revenue(
             "account_ids": account_ids,
         }
         record = {"type": "revenue_mismatch", **details}
-        _emit_anomaly(record, write_codex, export_training)
+        _emit_anomaly(
+            record,
+            write_codex,
+            export_training,
+            self_coding_engine,
+            telemetry_feedback,
+        )
         try:  # pragma: no cover - best effort
             alert_dispatcher.dispatch_alert(
                 "stripe_revenue_mismatch",
@@ -870,6 +937,8 @@ def summarize_revenue_window(
     tolerance: float = 0.1,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> Dict[str, float]:
     """Summarize Stripe revenue for ``start_ts``..``end_ts`` and compare to projections.
 
@@ -924,7 +993,13 @@ def summarize_revenue_window(
             "end_ts": end_ts,
             **summary,
         }
-        _emit_anomaly(record, write_codex, export_training)
+        _emit_anomaly(
+            record,
+            write_codex,
+            export_training,
+            self_coding_engine,
+            telemetry_feedback,
+        )
         try:  # pragma: no cover - best effort
             alert_dispatcher.dispatch_alert(
                 "stripe_revenue_mismatch",
@@ -948,6 +1023,8 @@ def compare_revenue_window(
     tolerance: float = 0.1,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> Optional[Dict[str, float]]:
     """Compare Stripe revenue and ROI projections for a time window.
 
@@ -961,6 +1038,8 @@ def compare_revenue_window(
         tolerance=tolerance,
         write_codex=write_codex,
         export_training=export_training,
+        self_coding_engine=self_coding_engine,
+        telemetry_feedback=telemetry_feedback,
     )
     projected = summary.get("projected_revenue", 0.0)
     difference = summary.get("difference", 0.0)
@@ -977,7 +1056,12 @@ def compare_revenue_window(
 
 
 def check_events(
-    hours: int = 1, *, write_codex: bool = False, export_training: bool = False
+    hours: int = 1,
+    *,
+    write_codex: bool = False,
+    export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> List[Dict[str, Any]]:
     """Check for missing charges within the last ``hours``."""
 
@@ -987,7 +1071,11 @@ def check_events(
     end_ts = int(time.time())
     start_ts = end_ts - int(hours * 3600)
     check_webhook_endpoints(
-        api_key, write_codex=write_codex, export_training=export_training
+        api_key,
+        write_codex=write_codex,
+        export_training=export_training,
+        self_coding_engine=self_coding_engine,
+        telemetry_feedback=telemetry_feedback,
     )
     # Load the entire ledger window; many tests use historical timestamps.
     ledger = load_local_ledger(0, end_ts)
@@ -1000,6 +1088,8 @@ def check_events(
         load_approved_workflows(),
         write_codex=write_codex,
         export_training=export_training,
+        self_coding_engine=self_coding_engine,
+        telemetry_feedback=telemetry_feedback,
     )
     if anomalies:
         account_id = None
@@ -1043,6 +1133,8 @@ def check_revenue_projection(
     tolerance: float = 0.1,
     write_codex: bool = False,
     export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
 ) -> Optional[Dict[str, float]]:
     """Compare revenue for the last ``hours`` against projections."""
     end_ts = int(time.time())
@@ -1053,6 +1145,8 @@ def check_revenue_projection(
         tolerance=tolerance,
         write_codex=write_codex,
         export_training=export_training,
+        self_coding_engine=self_coding_engine,
+        telemetry_feedback=telemetry_feedback,
     )
 
 
