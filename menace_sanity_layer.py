@@ -86,6 +86,7 @@ EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
     ),
     "unapproved_workflow": "Ensure all workflows are approved before execution.",
     "unknown_webhook": "Register webhooks explicitly or flag them for review.",
+    "account_mismatch": "Stripe destination mismatch detected—centralize charge routing.",
 }
 
 # ---------------------------------------------------------------------------

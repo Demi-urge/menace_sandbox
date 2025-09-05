@@ -79,6 +79,12 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
         "record_billing_event",
         lambda et, md, instr, **kw: billing_events.append((et, md, instr)),
     )
+    sanity_events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        sbr.menace_sanity_layer,
+        "record_event",
+        lambda et, md: sanity_events.append((et, md)),
+    )
 
     sbr._alert_mismatch("bot123", "acct_bad", amount=7.5)
 
@@ -101,4 +107,10 @@ def test_alert_mismatch_logs_error_and_rolls_back(monkeypatch, tmp_path):
     assert billing_events and billing_events[0][0] == "stripe_account_mismatch"
     assert billing_events[0][1]["bot_id"] == "bot123"
     assert billing_events[0][1]["account_id"] == "acct_bad"
+    assert sanity_events == [
+        (
+            "account_mismatch",
+            {"bot_id": "bot123", "destination_account": "acct_bad", "amount": 7.5},
+        )
+    ]
     assert sbr.sandbox_review.is_paused("bot123")

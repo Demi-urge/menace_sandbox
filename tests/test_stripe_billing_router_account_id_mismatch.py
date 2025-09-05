@@ -51,6 +51,7 @@ def _setup_alert(monkeypatch, sbr):
     monkeypatch.setattr(sbr, "log_critical_discrepancy", lambda *a, **k: None)
     monkeypatch.setattr(sbr.sandbox_review, "pause_bot", lambda *a, **k: None)
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: logs.append(kw))
+    monkeypatch.setattr(sbr.menace_sanity_layer, "record_event", lambda *a, **k: None)
     monkeypatch.setattr(
         evolution_lock_flag,
         "trigger_lock",
