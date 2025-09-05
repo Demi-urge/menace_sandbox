@@ -319,6 +319,40 @@ def load_approved_workflows(path: Path | None = None) -> set[str]:
         return {str(w) for w in workflows if isinstance(w, str)}
     return set()
 
+
+def _expected_account_id(api_key: str, path: Path | None = None) -> Optional[str]:
+    """Return the expected Stripe account identifier.
+
+    The ID is sourced from ``path``/``CONFIG_PATH`` when present; otherwise
+    ``stripe.Account.retrieve`` is invoked using ``api_key``.  Any errors result
+    in ``None`` being returned.
+    """
+
+    cfg = path or CONFIG_PATH
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        account_id = (
+            data.get("expected_account_id")
+            or data.get("stripe_account_id")
+            or data.get("account_id")
+        )
+        if account_id:
+            return str(account_id)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
+    if stripe is not None:
+        try:  # pragma: no cover - network disabled in tests
+            acct = stripe.Account.retrieve(api_key=api_key)
+            if isinstance(acct, dict):
+                return acct.get("id")
+            return getattr(acct, "id", None)
+        except Exception:
+            logger.exception("failed to fetch Stripe account identifier")
+    return None
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -617,6 +651,7 @@ def detect_missing_charges(
     billing_logs: List[Dict[str, Any]] | None = None,
     approved_workflows: Iterable[str] | None = None,
     *,
+    expected_account_id: str | None = None,
     write_codex: bool = False,
     export_training: bool = False,
     self_coding_engine: Any | None = None,
@@ -635,6 +670,27 @@ def detect_missing_charges(
     anomalies: List[Dict[str, Any]] = []
     for charge in charges:
         cid = str(charge.get("id"))
+        acct = charge.get("account")
+        if (
+            expected_account_id
+            and acct
+            and str(acct) != str(expected_account_id)
+        ):
+            anomaly = {
+                "type": "account_mismatch",
+                "id": cid,
+                "account_id": acct,
+                "expected_account_id": expected_account_id,
+                "module": BILLING_ROUTER_MODULE,
+            }
+            anomalies.append(anomaly)
+            _emit_anomaly(
+                anomaly,
+                write_codex,
+                export_training,
+                self_coding_engine,
+                telemetry_feedback,
+            )
         log = billing_map.get(cid)
         bot_id = log.get("bot_id") if log else None
         if bot_id and approved and bot_id not in approved:
@@ -692,6 +748,7 @@ def detect_missing_refunds(
     billing_logs: List[Dict[str, Any]] | None = None,
     approved_workflows: Iterable[str] | None = None,
     *,
+    expected_account_id: str | None = None,
     write_codex: bool = False,
     export_training: bool = False,
     self_coding_engine: Any | None = None,
@@ -710,6 +767,27 @@ def detect_missing_refunds(
     anomalies: List[Dict[str, Any]] = []
     for refund in refunds:
         rid = str(refund.get("id"))
+        acct = refund.get("account")
+        if (
+            expected_account_id
+            and acct
+            and str(acct) != str(expected_account_id)
+        ):
+            anomaly = {
+                "type": "account_mismatch",
+                "refund_id": rid,
+                "account_id": acct,
+                "expected_account_id": expected_account_id,
+                "module": BILLING_ROUTER_MODULE,
+            }
+            anomalies.append(anomaly)
+            _emit_anomaly(
+                anomaly,
+                write_codex,
+                export_training,
+                self_coding_engine,
+                telemetry_feedback,
+            )
         log = billing_map.get(rid)
         bot_id = log.get("bot_id") if log else None
         if bot_id and approved and bot_id not in approved:
@@ -766,6 +844,7 @@ def detect_failed_events(
     billing_logs: List[Dict[str, Any]] | None = None,
     approved_workflows: Iterable[str] | None = None,
     *,
+    expected_account_id: str | None = None,
     write_codex: bool = False,
     export_training: bool = False,
     self_coding_engine: Any | None = None,
@@ -786,6 +865,27 @@ def detect_failed_events(
         if event.get("type") not in {"charge.failed", "payment_intent.payment_failed"}:
             continue
         eid = str(event.get("id"))
+        acct = event.get("account")
+        if (
+            expected_account_id
+            and acct
+            and str(acct) != str(expected_account_id)
+        ):
+            anomaly = {
+                "type": "account_mismatch",
+                "event_id": eid,
+                "account_id": acct,
+                "expected_account_id": expected_account_id,
+                "module": BILLING_ROUTER_MODULE,
+            }
+            anomalies.append(anomaly)
+            _emit_anomaly(
+                anomaly,
+                write_codex,
+                export_training,
+                self_coding_engine,
+                telemetry_feedback,
+            )
         log = billing_map.get(eid)
         bot_id = log.get("bot_id") if log else None
         if bot_id and approved and bot_id not in approved:
@@ -1151,27 +1251,21 @@ def check_events(
     # Load the entire ledger window; many tests use historical timestamps.
     ledger = load_local_ledger(0, end_ts)
     billing_logs = load_billing_logs(0, end_ts)
+    expected_account_id = _expected_account_id(api_key)
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     anomalies = detect_missing_charges(
         charges,
         ledger,
         billing_logs,
         load_approved_workflows(),
+        expected_account_id=expected_account_id,
         write_codex=write_codex,
         export_training=export_training,
         self_coding_engine=self_coding_engine,
         telemetry_feedback=telemetry_feedback,
     )
     if anomalies:
-        account_id = None
-        if stripe is not None:
-            try:  # pragma: no cover - network disabled in tests
-                acct = stripe.Account.retrieve(api_key=api_key)
-                account_id = (
-                    acct.get("id") if isinstance(acct, dict) else getattr(acct, "id", None)
-                )
-            except Exception:
-                logger.exception("failed to fetch Stripe account identifier")
+        account_id = expected_account_id
         for anomaly in anomalies:
             metadata = dict(anomaly)
             metadata["timestamp"] = datetime.utcnow().isoformat()
@@ -1262,6 +1356,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     if not api_key:
         logger.error("Cannot run watchdog without Stripe API key")
         return
+    expected_account_id = _expected_account_id(api_key)
 
     end_ts = int(time.time())
     if args.since:
@@ -1306,6 +1401,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         ledger,
         charge_logs,
         approved,
+        expected_account_id=expected_account_id,
         write_codex=args.write_codex,
         export_training=args.export_training,
         self_coding_engine=engine,
@@ -1316,6 +1412,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         ledger,
         refund_logs,
         approved,
+        expected_account_id=expected_account_id,
         write_codex=args.write_codex,
         export_training=args.export_training,
         self_coding_engine=engine,
@@ -1326,6 +1423,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         ledger,
         failed_logs,
         approved,
+        expected_account_id=expected_account_id,
         write_codex=args.write_codex,
         export_training=args.export_training,
         self_coding_engine=engine,
