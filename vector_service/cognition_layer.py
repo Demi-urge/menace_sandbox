@@ -30,9 +30,11 @@ from typing import Any, Dict, List, Mapping, Tuple
 import time
 import asyncio
 import json
-from pathlib import Path
 import logging
 import os
+from pathlib import Path
+
+from dynamic_path_router import resolve_path
 
 from .retriever import Retriever, PatchRetriever
 from .context_builder import ContextBuilder
@@ -186,7 +188,7 @@ class CognitionLayer:
 
         if not model_path:
             try:
-                cfg = json.loads(Path("retrieval_ranker.json").read_text())
+                cfg = json.loads(resolve_path("retrieval_ranker.json").read_text())
                 if isinstance(cfg, dict):
                     model_path = cfg.get("current")
             except Exception:
@@ -196,18 +198,22 @@ class CognitionLayer:
             return
 
         try:
+            model_path = resolve_path(str(model_path))
+        except Exception:
+            logger.exception("Failed to resolve model path %s", model_path)
+            return
+
+        try:
             self.retriever.reload_ranker_model(model_path)  # type: ignore[arg-type]
         except Exception:
             logger.exception("Failed to reload ranker model on retriever")
         try:
-            from pathlib import Path
-
             try:  # pragma: no cover - package relative import
                 from .. import retrieval_ranker as _rr  # type: ignore
             except Exception:  # pragma: no cover - fallback
                 import retrieval_ranker as _rr  # type: ignore
 
-            self.context_builder.ranking_model = _rr.load_model(Path(model_path))
+            self.context_builder.ranking_model = _rr.load_model(model_path)
         except Exception:
             logger.exception("Failed to load ranking model from %s", model_path)
 
@@ -217,7 +223,7 @@ class CognitionLayer:
                 weights = self.vector_metrics.get_db_weights()
             except Exception:
                 weights = {}
-        cfg = Path("retrieval_ranker.json")
+        cfg = resolve_path("retrieval_ranker.json")
         try:
             data = {"current": str(model_path), "weights": {}}
             if cfg.exists():
@@ -378,7 +384,7 @@ class CognitionLayer:
                 # restarts.  We merge into ``retrieval_ranker.json`` which already
                 # tracks the current ranking model path.
                 try:
-                    cfg = Path("retrieval_ranker.json")
+                    cfg = resolve_path("retrieval_ranker.json")
                     data = {"weights": {}}
                     if cfg.exists():
                         try:
@@ -944,7 +950,6 @@ class CognitionLayer:
                 self.context_builder.refresh_db_weights()
             except Exception:
                 logger.exception("Failed to refresh context builder weights")
-
 
         if not success or roi_drop:
             try:
