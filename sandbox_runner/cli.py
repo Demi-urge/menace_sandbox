@@ -169,7 +169,7 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
     sandbox_main(preset, args)
     if _SandboxMetaLogger is not None:
         try:
-            data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            data_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
             meta = _SandboxMetaLogger(data_dir / "sandbox_meta.log")
             for cyc, roi, succ, fail, dur, cov in meta.rankings():
                 total = succ + fail
