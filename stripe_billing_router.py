@@ -107,7 +107,15 @@ def _alert_mismatch(
 ) -> None:
     """Backward-compatible wrapper for critical discrepancy handling."""
 
-    log_critical_discrepancy(bot_id, message)
+    log_critical_discrepancy(message, bot_id)
+    billing_logger.log_event(
+        error=True,
+        action_type="mismatch",
+        bot_id=bot_id,
+        destination_account=account_id,
+        timestamp_ms=int(time.time() * 1000),
+    )
+    return
 
 
 def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:

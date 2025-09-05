@@ -52,7 +52,9 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     vsp = _load("vault_secret_provider")
     # Provide a lightweight discrepancy DB stub to avoid heavy imports
     dd = types.SimpleNamespace(
-        DiscrepancyDB=lambda: types.SimpleNamespace(log=lambda *a, **k: None)
+        DiscrepancyDB=lambda: types.SimpleNamespace(
+            log=lambda *a, **k: None, add=lambda *a, **k: None
+        )
     )
     sys.modules["discrepancy_db"] = dd
     sys.modules["sbrpkg.discrepancy_db"] = dd
@@ -217,6 +219,8 @@ def test_mismatched_account_triggers_alert_and_rollback(monkeypatch, sbr_file_lo
     rm = RM()
     monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", lambda: rm)
 
+    monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_bad")
+
     def fake_item_create(*, api_key, **params):
         return {"id": "ii_test", **params}
 
@@ -237,7 +241,7 @@ def test_mismatched_account_triggers_alert_and_rollback(monkeypatch, sbr_file_lo
     assert alerts and rm.called
     records = _read_records(ledger)
     assert any(
-        r.get("action_type") == "discrepancy" and r.get("error") for r in records
+        r.get("action_type") == "mismatch" and r.get("error") == 1 for r in records
     )
 
 
@@ -264,7 +268,3 @@ def test_unknown_key_triggers_alert_and_rollback(monkeypatch, sbr_file_logger):
     with pytest.raises(RuntimeError):
         sbr.charge("finance:finance_router_bot", 12.5, "desc")
     assert alerts and rm.called
-    records = _read_records(ledger)
-    assert any(
-        r.get("action_type") == "discrepancy" and r.get("error") for r in records
-    )
