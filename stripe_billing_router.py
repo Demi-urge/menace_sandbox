@@ -17,6 +17,7 @@ import os
 import time
 from datetime import datetime
 from typing import Any, Mapping, Optional
+import hashlib
 
 import yaml
 from dynamic_path_router import resolve_path
@@ -51,6 +52,12 @@ except Exception as exc:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 
 _STRIPE_LEDGER = StripeLedger()
+
+
+def _hash_api_key(key: str) -> str:
+    """Return a non-reversible identifier for a Stripe API key."""
+
+    return hashlib.sha256(key.encode()).hexdigest()
 
 
 def _log_payment(
@@ -501,6 +508,7 @@ def charge(
     route = _resolve_route(bot_id, overrides)
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
+    key_hash = _hash_api_key(api_key)
     client = _client(api_key)
 
     account_id = _get_account_id(api_key) or ""
@@ -670,7 +678,7 @@ def charge(
                 currency=currency,
                 user_email=email,
                 destination_account=destination,
-                stripe_key=api_key,
+                key_hash=key_hash,
                 ts=datetime.utcnow().isoformat(),
             )
         _log_payment(
@@ -745,6 +753,7 @@ def create_subscription(
     route = _resolve_route(bot_id, overrides)
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
+    key_hash = _hash_api_key(api_key)
     client = _client(api_key)
     account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
@@ -839,7 +848,7 @@ def create_subscription(
                 currency=currency,
                 user_email=email,
                 destination_account=destination,
-                stripe_key=api_key,
+                key_hash=key_hash,
                 ts=datetime.utcnow().isoformat(),
             )
         _log_payment(
@@ -866,6 +875,7 @@ def refund(
     route = _resolve_route(bot_id, overrides)
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
+    key_hash = _hash_api_key(api_key)
     client = _client(api_key)
     account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
@@ -957,7 +967,7 @@ def refund(
             currency=currency,
             user_email=email,
             destination_account=destination,
-            stripe_key=api_key,
+            key_hash=key_hash,
             ts=datetime.utcnow().isoformat(),
         )
         _log_payment(
@@ -983,6 +993,7 @@ def create_checkout_session(
     route = _resolve_route(bot_id, overrides)
     _verify_route(bot_id, route)
     api_key = route["secret_key"]
+    key_hash = _hash_api_key(api_key)
     client = _client(api_key)
     account_id = _get_account_id(api_key) or ""
     if account_id != STRIPE_MASTER_ACCOUNT_ID or not route.get("secret_key"):
@@ -1067,7 +1078,7 @@ def create_checkout_session(
             currency=currency,
             user_email=email,
             destination_account=destination,
-            stripe_key=api_key,
+            key_hash=key_hash,
             ts=datetime.utcnow().isoformat(),
         )
         _log_payment(
