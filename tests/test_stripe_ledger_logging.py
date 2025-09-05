@@ -66,6 +66,26 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     monkeypatch.delenv("STRIPE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("STRIPE_MASTER_ACCOUNT_ID", raising=False)
     monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
+    # Stub db_router to avoid filesystem interactions during import
+    class _StubRouter:
+        def get_connection(self, name: str):  # pragma: no cover - simple stub
+            return None
+
+    dr = types.SimpleNamespace(
+        GLOBAL_ROUTER=None,
+        LOCAL_TABLES={},
+        DBRouter=lambda *a, **k: _StubRouter(),
+        init_db_router=lambda *a, **k: _StubRouter(),
+    )
+    sys.modules["db_router"] = dr
+    sys.modules["sbrpkg.db_router"] = dr
+
+    disc = types.SimpleNamespace(
+        DiscrepancyDB=type("DiscrepancyDB", (), {"log": lambda self, msg, ctx=None: None})
+    )
+    sys.modules["discrepancy_db"] = disc
+    sys.modules["sbrpkg.discrepancy_db"] = disc
+
     sbr = _load("stripe_billing_router")
     monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_master")
     return sbr
@@ -100,17 +120,31 @@ def test_charge_writes_ledger(monkeypatch, sbr_with_db):
     def fake_invoice_pay(invoice_id, *, api_key, **params):
         return {"id": invoice_id, "amount_paid": 1250, "on_behalf_of": "acct_master"}
 
+    def fake_customer_retrieve(customer_id, *, api_key=None, **_):
+        return {"email": "cust@example.com"}
+
     fake_stripe = types.SimpleNamespace(
         api_key="orig",
         InvoiceItem=types.SimpleNamespace(create=fake_item_create),
         Invoice=types.SimpleNamespace(create=fake_invoice_create, pay=fake_invoice_pay),
+        Customer=types.SimpleNamespace(retrieve=fake_customer_retrieve),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    events: list[tuple] = []
+    monkeypatch.setattr(
+        sbr,
+        "log_billing_event",
+        lambda *a, **k: events.append((a, k)),
+    )
     sbr.charge("finance:finance_router_bot", 12.5, "desc")
     row = conn.execute(
-        "SELECT id, action_type, amount, bot_id, error FROM stripe_ledger"
+        "SELECT id, action_type, amount, bot_id, error FROM stripe_ledger",
     ).fetchone()
     assert row == ("in_test", "charge", 12.5, "finance:finance_router_bot", 0)
+    assert events and events[0][0] == ("charge",)
+    assert events[0][1]["amount"] == 12.5
+    assert events[0][1]["user_email"] == "cust@example.com"
+    assert events[0][1]["destination_account"] == "acct_master"
 
 
 def test_create_subscription_writes_ledger(monkeypatch, sbr_with_db):
@@ -119,15 +153,34 @@ def test_create_subscription_writes_ledger(monkeypatch, sbr_with_db):
     def fake_create(*, api_key, **params):
         return {"id": "sub_test", "on_behalf_of": "acct_master"}
 
+    def fake_customer_retrieve(customer_id, *, api_key=None, **_):
+        return {"email": "cust@example.com"}
+
+    def fake_price_retrieve(price_id, *, api_key=None, **_):
+        return {"unit_amount": 1250}
+
     fake_stripe = types.SimpleNamespace(
-        api_key="orig", Subscription=types.SimpleNamespace(create=fake_create)
+        api_key="orig",
+        Subscription=types.SimpleNamespace(create=fake_create),
+        Customer=types.SimpleNamespace(retrieve=fake_customer_retrieve),
+        Price=types.SimpleNamespace(retrieve=fake_price_retrieve),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    events: list[tuple] = []
+    monkeypatch.setattr(
+        sbr,
+        "log_billing_event",
+        lambda *a, **k: events.append((a, k)),
+    )
     sbr.create_subscription("finance:finance_router_bot", idempotency_key="sub-key")
     row = conn.execute(
-        "SELECT id, action_type, amount, bot_id, error FROM stripe_ledger"
+        "SELECT id, action_type, amount, bot_id, error FROM stripe_ledger",
     ).fetchone()
     assert row == ("sub_test", "subscription", None, "finance:finance_router_bot", 0)
+    assert events and events[0][0] == ("subscription",)
+    assert events[0][1]["amount"] == 12.5
+    assert events[0][1]["user_email"] == "cust@example.com"
+    assert events[0][1]["destination_account"] == "acct_master"
 
 
 def test_refund_writes_ledger(monkeypatch, sbr_with_db):

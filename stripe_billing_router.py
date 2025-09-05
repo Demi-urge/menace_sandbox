@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Any, Mapping, Optional
 
 import yaml
@@ -22,6 +23,7 @@ from dynamic_path_router import resolve_path
 
 from billing import billing_logger
 from billing.billing_ledger import record_payment
+from billing.billing_log_db import log_billing_event
 from discrepancy_db import DiscrepancyDB
 from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
@@ -651,13 +653,29 @@ def charge(
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
 
+        email = user_email
+        if event is not None and customer:
+            try:
+                cust = (
+                    client.Customer.retrieve(customer)
+                    if client
+                    else stripe.Customer.retrieve(customer, api_key=api_key)
+                )
+                possible_email = None
+                if isinstance(cust, Mapping):
+                    possible_email = cust.get("email")
+                if possible_email:
+                    email = possible_email
+            except Exception:  # pragma: no cover - best effort
+                pass
+
         billing_logger.log_event(
             id=event.get("id") if isinstance(event, Mapping) else None,
             action_type="charge",
             amount=logged_amount,
             currency=currency,
             timestamp_ms=timestamp_ms,
-            user_email=user_email,
+            user_email=email,
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
@@ -668,9 +686,20 @@ def charge(
             logged_amount,
             bot_id,
             destination,
-            email=user_email,
+            email=email,
             ts=timestamp_ms,
         )
+        if event is not None:
+            log_billing_event(
+                "charge",
+                bot_id=bot_id,
+                amount=logged_amount,
+                currency=currency,
+                user_email=email,
+                destination_account=destination,
+                stripe_key=api_key,
+                ts=datetime.utcnow().isoformat(),
+            )
 
 
 # Backward compatibility
@@ -757,7 +786,7 @@ def create_subscription(
         return event
     finally:
         currency = route.get("currency")
-        user_email = route.get("user_email")
+        email = route.get("user_email")
         destination = None
         if isinstance(event, Mapping):
             destination = (
@@ -773,13 +802,29 @@ def create_subscription(
                 raw_json = json.dumps(event)
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
+
+        if event is not None and customer:
+            try:
+                cust = (
+                    client.Customer.retrieve(customer)
+                    if client
+                    else stripe.Customer.retrieve(customer, api_key=api_key)
+                )
+                possible_email = None
+                if isinstance(cust, Mapping):
+                    possible_email = cust.get("email")
+                if possible_email:
+                    email = possible_email
+            except Exception:  # pragma: no cover - best effort
+                pass
+
         billing_logger.log_event(
             id=event.get("id") if isinstance(event, Mapping) else None,
             action_type="subscription",
             amount=None,
             currency=currency,
             timestamp_ms=timestamp_ms,
-            user_email=user_email,
+            user_email=email,
             bot_id=bot_id,
             destination_account=destination,
             raw_event_json=raw_json,
@@ -790,9 +835,35 @@ def create_subscription(
             None,
             bot_id,
             destination,
-            email=user_email,
+            email=email,
             ts=timestamp_ms,
         )
+        if event is not None:
+            sub_amount = None
+            if price:
+                try:
+                    price_obj = (
+                        client.Price.retrieve(price)
+                        if client
+                        else stripe.Price.retrieve(price, api_key=api_key)
+                    )
+                    unit = None
+                    if isinstance(price_obj, Mapping):
+                        unit = price_obj.get("unit_amount")
+                    if unit is not None:
+                        sub_amount = float(unit) / 100.0
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            log_billing_event(
+                "subscription",
+                bot_id=bot_id,
+                amount=sub_amount,
+                currency=currency,
+                user_email=email,
+                destination_account=destination,
+                stripe_key=api_key,
+                ts=datetime.utcnow().isoformat(),
+            )
 
 
 def refund(
