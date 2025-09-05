@@ -25,7 +25,19 @@ from billing import billing_logger
 from billing.billing_ledger import record_payment
 from billing.billing_log_db import log_billing_event
 from billing.stripe_ledger import StripeLedger
-from discrepancy_db import DiscrepancyDB
+try:  # pragma: no cover - fallback for tests or missing deps
+    from discrepancy_db import DiscrepancyDB, DiscrepancyRecord
+except Exception:  # pragma: no cover - simplified stubs
+    from discrepancy_db import DiscrepancyDB  # type: ignore
+    from dataclasses import dataclass, field
+    from typing import Dict
+
+    @dataclass
+    class DiscrepancyRecord:  # type: ignore[override]
+        message: str
+        metadata: Dict[str, Any] = field(default_factory=dict)
+        ts: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+        id: int = 0
 from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
 import rollback_manager
@@ -61,13 +73,9 @@ def _log_payment(
 def record_critical_discrepancy(bot_id: str, message: str) -> None:
     """Record a critical discrepancy, alert, and rollback."""
 
+    rec = DiscrepancyRecord(message=message, metadata={"bot_id": bot_id})
     try:
-        from discrepancy_db import DiscrepancyRecord
-        rec: object = DiscrepancyRecord(message=message, metadata={"bot_id": bot_id})
-    except Exception:  # pragma: no cover - fallback for tests
-        rec = {"message": message, "metadata": {"bot_id": bot_id}}
-    try:
-        DiscrepancyDB().add(rec)  # type: ignore[arg-type]
+        DiscrepancyDB().add(rec)
     except Exception:
         logger.exception("failed to record discrepancy for bot '%s'", bot_id)
     try:  # pragma: no cover - external side effects
