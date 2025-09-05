@@ -5,8 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dynamic_path_router import resolve_path
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURES = REPO_ROOT / "tests" / "fixtures" / "workflow_modules"
 
 STUB_MODULE = """
 from dataclasses import dataclass
@@ -56,7 +57,10 @@ class WorkflowSynthesizer:
 
 def _prepare(tmp_path: Path):
     for name in ("mod_a.py", "mod_b.py", "mod_c.py"):
-        shutil.copy(FIXTURES / name, tmp_path / name)
+        shutil.copy(
+            resolve_path(f"tests/fixtures/workflow_modules/{name}"),
+            tmp_path / name,
+        )
     (tmp_path / "workflow_synthesizer.py").write_text(STUB_MODULE)
     (tmp_path / "sitecustomize.py").write_text(
         "import sys\n" "sys.stdin.isatty=lambda: True\n"

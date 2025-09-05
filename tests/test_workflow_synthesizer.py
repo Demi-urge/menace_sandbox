@@ -18,11 +18,9 @@ sys.modules["intent_db"] = SimpleNamespace(IntentDB=None)
 
 import workflow_synthesizer as ws  # noqa: E402
 
-FIXTURES = Path(__file__).parent / "fixtures" / "workflow_modules"
-
 
 def _copy_modules(tmp_path: Path) -> None:
-    for mod in FIXTURES.glob("*.py"):
+    for mod in resolve_path("tests/fixtures/workflow_modules").glob("*.py"):
         shutil.copy(mod, tmp_path / mod.name)
 
 

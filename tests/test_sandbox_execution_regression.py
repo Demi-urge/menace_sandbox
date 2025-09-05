@@ -7,7 +7,7 @@ import sys
 import types
 from pathlib import Path
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures" / "regression"
+from dynamic_path_router import resolve_path
 
 
 def _load_runner():
@@ -37,5 +37,7 @@ def test_sandbox_execution_matches_fixture():
         "modules": [{"name": m.name, "success": m.success} for m in metrics.modules],
     }
 
-    expected = json.loads((FIXTURES / "sandbox_metrics.json").read_text())
+    expected = json.loads(
+        resolve_path("tests/fixtures/regression/sandbox_metrics.json").read_text()
+    )
     assert result == expected

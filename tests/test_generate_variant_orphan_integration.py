@@ -5,13 +5,15 @@ import shutil
 from pathlib import Path
 
 from workflow_synthesizer import generate_variants
-
-FIXTURES = Path(__file__).parent / "fixtures" / "workflow_modules"
+from dynamic_path_router import resolve_path
 
 
 def _copy_modules(tmp_path: Path) -> None:
     for name in ("mod_a.py", "mod_b.py"):
-        shutil.copy(FIXTURES / name, tmp_path / name)
+        shutil.copy(
+            resolve_path(f"tests/fixtures/workflow_modules/{name}"),
+            tmp_path / name,
+        )
 
 
 def test_generate_variants_integrates_orphans(monkeypatch, tmp_path):

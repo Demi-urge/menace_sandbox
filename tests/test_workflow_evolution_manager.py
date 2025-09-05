@@ -4,6 +4,8 @@ from pathlib import Path
 import types
 import json
 
+from dynamic_path_router import resolve_path
+
 # Ensure package context and stub heavy dependencies before import
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
@@ -11,11 +13,9 @@ pkg = types.ModuleType("menace_sandbox")
 pkg.__path__ = [str(ROOT / "menace_sandbox")]
 sys.modules.setdefault("menace_sandbox", pkg)
 
-FIX_DIR = Path(__file__).resolve().parent / "fixtures" / "workflows"
-
-
 def _load_steps(name: str) -> list[dict]:
-    return json.loads((FIX_DIR / name).read_text()).get("steps", [])
+    path = resolve_path(f"tests/fixtures/workflows/{name}")
+    return json.loads(path.read_text()).get("steps", [])
 
 
 def _stub(name, **attrs):

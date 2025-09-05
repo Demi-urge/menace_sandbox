@@ -1,8 +1,7 @@
-from pathlib import Path
-
+from dynamic_path_router import resolve_path
 from redaction_utils import redact_text
 
-FIXTURE_DIR = Path("tests/fixtures/semantic")
+FIXTURE_DIR = resolve_path("tests/fixtures/semantic")
 
 
 def test_redact_text_on_fixtures():

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import types
 
@@ -10,9 +9,7 @@ th_stub.run_tests = lambda *a, **k: None
 th_stub.TestHarnessResult = object
 sys.modules.setdefault("sandbox_runner.test_harness", th_stub)
 import sandbox_runner.generative_stub_provider as gsp
-
-
-FIXTURES = Path(__file__).resolve().parent / "fixtures" / "regression"
+from dynamic_path_router import resolve_path
 
 
 def sample_func(name: str, count: int, active: bool) -> None:
@@ -32,5 +29,7 @@ def test_stub_generation_matches_fixture(monkeypatch):
 
     stubs = gsp.generate_stubs([{}], {"target": sample_func})[0]
 
-    expected = json.loads((FIXTURES / "stub_generation.json").read_text())
+    expected = json.loads(
+        resolve_path("tests/fixtures/regression/stub_generation.json").read_text()
+    )
     assert stubs == expected
