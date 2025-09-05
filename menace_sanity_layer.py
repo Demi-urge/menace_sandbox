@@ -12,15 +12,20 @@ from log_tags import FEEDBACK
 import db_router
 from db_router import LOCAL_TABLES
 
+try:  # Optional dependency – required for payment safety checks
+    import stripe_billing_router  # noqa: F401
+except Exception:  # pragma: no cover - best effort
+    stripe_billing_router = None  # type: ignore
+
 try:  # pragma: no cover - prefer package import
     from .unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - fallback when not imported as package
     import importlib.util
     import sys
     from types import ModuleType
-    from pathlib import Path
+    from dynamic_path_router import resolve_path
 
-    module_path = Path(__file__).with_name("unified_event_bus.py")
+    module_path = resolve_path("unified_event_bus.py")
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.unified_event_bus", module_path
     )
@@ -43,6 +48,8 @@ try:  # Optional dependency – shared GPT memory
 except Exception:  # pragma: no cover - best effort
     GPT_MEMORY_MANAGER = None  # type: ignore
 
+MenaceMemoryManager = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 # Reuse a single DiscrepancyDB instance when available
@@ -55,6 +62,46 @@ _DISCREPANCY_DB = DiscrepancyDB() if DiscrepancyDB is not None else None
 LOCAL_TABLES.add("billing_anomalies")
 
 _EVENT_BUS = UnifiedEventBus()
+
+
+_MEMORY_MANAGER: MenaceMemoryManager | None = None
+
+
+def _get_memory_manager() -> MenaceMemoryManager | None:
+    """Lazily construct the shared :class:`MenaceMemoryManager`."""
+    global _MEMORY_MANAGER, MenaceMemoryManager
+    if _MEMORY_MANAGER is None:
+        if MenaceMemoryManager is None:
+            try:  # pragma: no cover - import lazily to avoid heavy deps at import time
+                from menace_memory_manager import MenaceMemoryManager as _MMM
+
+                MenaceMemoryManager = _MMM
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to import MenaceMemoryManager")
+                return None
+        try:
+            _MEMORY_MANAGER = MenaceMemoryManager()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to initialise MenaceMemoryManager")
+            _MEMORY_MANAGER = None
+    return _MEMORY_MANAGER
+
+
+def _anomaly_instruction(
+    event_type: str, metadata: Dict[str, Any], instruction: str | None
+) -> str:
+    """Generate a concise instruction string for an anomaly."""
+
+    instr = instruction or metadata.get("instruction") or metadata.get("description") or ""
+    if not instr:
+        details = ", ".join(f"{k}={v}" for k, v in sorted(metadata.items()))
+        instr = f"Avoid {event_type} anomalies {details}".strip()
+    instr = instr.strip()
+    if not instr.lower().startswith("avoid"):
+        instr = "Avoid " + instr
+    if not instr.endswith("."):
+        instr += "."
+    return instr
 
 
 def publish_anomaly(event: dict) -> None:
@@ -155,7 +202,7 @@ def list_anomalies(limit: int = 20) -> List[dict]:
 def record_payment_anomaly(
     event_type: str,
     metadata: Dict[str, Any],
-    instruction: str,
+    instruction: str | None = None,
     *,
     severity: float = 1.0,
     write_codex: bool = False,
@@ -170,7 +217,8 @@ def record_payment_anomaly(
     metadata:
         Additional details describing the event.
     instruction:
-        Guidance or remediation note associated with the anomaly.
+        Optional guidance associated with the anomaly.  If omitted a
+        concise instruction is generated automatically.
     severity:
         Importance level of the anomaly; defaults to ``1.0``.
     write_codex:
@@ -179,6 +227,7 @@ def record_payment_anomaly(
         Whether the anomaly should be exported for training datasets.
     """
 
+    instruction = _anomaly_instruction(event_type, metadata, instruction)
     meta = {
         **metadata,
         "write_codex": write_codex,
@@ -210,6 +259,23 @@ def record_payment_anomaly(
             )
         except Exception:
             logger.exception("memory logging failed", extra={"instruction": instruction})
+
+    mm = _get_memory_manager()
+    if mm is not None:
+        try:
+            key = f"billing:{event_type}"
+            data = {"instruction": instruction, "count": 1}
+            existing = mm.query(key, 1)
+            if existing:
+                try:
+                    existing_data = json.loads(existing[0].data)
+                    if existing_data.get("instruction") == instruction:
+                        data["count"] = existing_data.get("count", 1) + 1
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed to parse existing memory entry", extra={"key": key})
+            mm.store(key, data, tags="billing,anomaly")
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("MenaceMemoryManager logging failed")
 
     try:
         audit_logger.log_event(
