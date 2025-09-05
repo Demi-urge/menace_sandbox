@@ -10,7 +10,7 @@ which is then able to select the most promising strategy via its
 """
 
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 import json
 import time
 
@@ -52,7 +52,7 @@ class StrategyAnalytics:
     def refresh(self) -> None:
         """Read logs, compute ROI stats and update ``manager``."""
 
-        stats: Dict[str, Dict[str, float]] = {}
+        stats: Dict[str, Dict[str, Any]] = {}
         for path, success in ((self.success_log, True), (self.failure_log, False)):
             if not path.exists():
                 continue
@@ -83,6 +83,11 @@ class StrategyAnalytics:
                             roi = float(data.get("roi", 0.0))
                         except Exception:
                             roi = 0.0
+                    ts = data.get("timestamp") or data.get("time") or time.time()
+                    try:
+                        ts = float(ts)
+                    except Exception:
+                        ts = time.time()
                     rec = stats.setdefault(
                         str(strat),
                         {
@@ -91,6 +96,7 @@ class StrategyAnalytics:
                             "roi_sum": 0.0,
                             "weighted_roi_sum": 0.0,
                             "weight_sum": 0.0,
+                            "records": [],
                         },
                     )
                     rec["total"] += 1
@@ -99,6 +105,9 @@ class StrategyAnalytics:
                     rec["roi_sum"] += roi
                     rec["weighted_roi_sum"] += roi
                     rec["weight_sum"] += 1.0
+                    rec.setdefault("records", []).append(
+                        {"ts": ts, "roi": roi, "success": success}
+                    )
         self.manager.stats = stats
         try:
             self.manager._save_stats()
