@@ -124,6 +124,13 @@ PAYMENT_ANOMALY_THRESHOLD = 3
 # problematic behaviour.
 ANOMALY_HINTS: Dict[str, Dict[str, Any]] = {
     "missing_charge": {"block_unlogged_charges": True},
+    "missing_refund": {"block_unlogged_refunds": True},
+    "missing_failure_log": {"log_stripe_failures": True},
+    "unapproved_workflow": {"enforce_workflow_approval": True},
+    "unknown_webhook": {"register_stripe_webhooks": True},
+    "disabled_webhook": {"reactivate_stripe_webhook": True},
+    "revenue_mismatch": {"reconcile_revenue": True},
+    "account_mismatch": {"verify_stripe_account": True},
 }
 
 # ---------------------------------------------------------------------------
