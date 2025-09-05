@@ -581,6 +581,83 @@ def compare_revenue(
     return None
 
 
+def summarize_revenue_window(
+    start_ts: int,
+    end_ts: int,
+    *,
+    tolerance: float = 0.1,
+    write_codex: bool = False,
+) -> Dict[str, float]:
+    """Summarize Stripe revenue for ``start_ts``..``end_ts`` and compare to projections.
+
+    Returns a dictionary with charge, refund and projected totals.  When the
+    absolute difference between net and projected revenue exceeds ``tolerance``
+    times the projection an anomaly is logged via :func:`_emit_anomaly`.
+    """
+
+    api_key = load_api_key()
+    if not api_key:
+        return {
+            "charge_total": 0.0,
+            "refund_total": 0.0,
+            "net_revenue": 0.0,
+            "projected_revenue": 0.0,
+            "difference": 0.0,
+        }
+
+    charges = fetch_recent_charges(api_key, start_ts, end_ts)
+    refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
+
+    charge_cents = sum(
+        float(ch["amount"])
+        for ch in charges
+        if ch.get("status") == "succeeded" and isinstance(ch.get("amount"), (int, float))
+    )
+    refund_cents = sum(
+        float(rf.get("amount", 0.0))
+        for rf in refunds
+        if isinstance(rf.get("amount"), (int, float))
+    )
+
+    charge_total = charge_cents / 100.0
+    refund_total = refund_cents / 100.0
+    net_revenue = (charge_cents - refund_cents) / 100.0
+
+    projected = _projected_revenue_between(start_ts, end_ts)
+    difference = net_revenue - projected
+
+    summary = {
+        "charge_total": charge_total,
+        "refund_total": refund_total,
+        "net_revenue": net_revenue,
+        "projected_revenue": projected,
+        "difference": difference,
+    }
+
+    if projected and abs(difference) > tolerance * projected:
+        record = {
+            "type": "revenue_mismatch",
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            **summary,
+        }
+        _emit_anomaly(record, write_codex)
+        try:  # pragma: no cover - best effort
+            alert_dispatcher.dispatch_alert(
+                "stripe_revenue_mismatch",
+                4,
+                json.dumps(summary),
+                summary,
+            )
+        except Exception:
+            logger.exception("alert dispatch failed", extra=summary)
+        logger.warning("stripe revenue mismatch", extra=record)
+    else:
+        logger.info("stripe revenue summary", extra=summary)
+
+    return summary
+
+
 def compare_revenue_window(
     start_ts: int,
     end_ts: int,
@@ -588,49 +665,23 @@ def compare_revenue_window(
     tolerance: float = 0.1,
     write_codex: bool = False,
 ) -> Optional[Dict[str, float]]:
-    """Compare Stripe revenue and ROI projections for a time window."""
+    """Compare Stripe revenue and ROI projections for a time window.
 
-    api_key = load_api_key()
-    if not api_key:
-        return None
-    charges = fetch_recent_charges(api_key, start_ts, end_ts)
-    refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
+    This function is retained for backwards compatibility and returns details
+    only when a mismatch is detected.
+    """
 
-    total = 0.0
-    for ch in charges:
-        if ch.get("status") == "succeeded" and isinstance(ch.get("amount"), (int, float)):
-            total += float(ch["amount"])
-    for rf in refunds:
-        amt = rf.get("amount")
-        if isinstance(amt, (int, float)):
-            total -= float(amt)
-    net_revenue = total / 100.0
-
-    projected = _projected_revenue_between(start_ts, end_ts)
-
-    if projected and abs(net_revenue - projected) > tolerance * projected:
-        details = {
-            "net_revenue": net_revenue,
+    summary = summarize_revenue_window(
+        start_ts, end_ts, tolerance=tolerance, write_codex=write_codex
+    )
+    projected = summary.get("projected_revenue", 0.0)
+    difference = summary.get("difference", 0.0)
+    if projected and abs(difference) > tolerance * projected:
+        return {
+            "net_revenue": summary["net_revenue"],
             "projected_revenue": projected,
-            "difference": net_revenue - projected,
+            "difference": difference,
         }
-        record = {
-            "type": "revenue_mismatch",
-            "start_ts": start_ts,
-            "end_ts": end_ts,
-            **details,
-        }
-        _emit_anomaly(record, write_codex)
-        try:  # pragma: no cover - best effort
-            alert_dispatcher.dispatch_alert(
-                "stripe_revenue_mismatch",
-                4,
-                json.dumps(details),
-                details,
-            )
-        except Exception:
-            logger.exception("alert dispatch failed", extra=details)
-        return details
     return None
 
 

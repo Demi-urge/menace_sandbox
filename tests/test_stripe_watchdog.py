@@ -176,9 +176,10 @@ def test_revenue_mismatch(monkeypatch, capture_anomalies):
     monkeypatch.setattr(sw, "fetch_recent_refunds", lambda api_key, s, e: refunds)
     monkeypatch.setattr(sw, "_projected_revenue_between", lambda s, e: 200.0)
 
-    anomaly = sw.compare_revenue_window(0, 10, tolerance=0.1, write_codex=True)
+    summary = sw.summarize_revenue_window(0, 10, tolerance=0.1, write_codex=True)
 
-    assert anomaly and anomaly["projected_revenue"] == 200.0
+    assert summary["projected_revenue"] == 200.0
+    assert summary["charge_total"] == 100.0
     assert events and events[0][1]["type"] == "revenue_mismatch"
     assert samples and json.loads(samples[0]["content"])["type"] == "revenue_mismatch"
 
