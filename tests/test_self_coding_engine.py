@@ -568,6 +568,7 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sce.codex_fallback_handler, "handle", handle)
 
+    monkeypatch.setattr(sce, "_settings", types.SimpleNamespace(codex_retry_delays=[2, 5, 10]))
     code = engine.generate_helper("demo")
     assert "def good" in code
     assert len(calls) == 1

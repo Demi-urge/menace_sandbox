@@ -61,6 +61,9 @@ def make_engine(mock_llm, monkeypatch):
     engine._last_prompt_metadata = {}
     engine._last_prompt = None
     engine._last_retry_trace = None
+    monkeypatch.setattr(
+        self_coding_engine, "_settings", types.SimpleNamespace(codex_retry_delays=[2, 5, 10])
+    )
     return engine
 
 
@@ -127,7 +130,7 @@ def test_codex_fallback_queue_on_malformed(monkeypatch):
 
     def handle(prompt, reason, **_):
         self_coding_engine.codex_fallback_handler.queue_for_retry(prompt)
-        return None
+        return LLMResult(text="")
 
     monkeypatch.setattr(
         self_coding_engine.codex_fallback_handler, "handle", handle
