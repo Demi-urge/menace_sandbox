@@ -129,6 +129,7 @@ SEVERITY_MAP = {
     "unknown_webhook": 2.0,
     "disabled_webhook": 3.0,
     "revenue_mismatch": 4.0,
+    "account_mismatch": 3.0,
 }
 
 # Module identifiers used for targeted remediation by downstream consumers.
@@ -352,6 +353,29 @@ def _expected_account_id(api_key: str, path: Path | None = None) -> Optional[str
         except Exception:
             logger.exception("failed to fetch Stripe account identifier")
     return None
+
+
+def _allowed_account_ids(path: Path | None = None) -> set[str]:
+    """Return the set of allowed Stripe account identifiers from config."""
+
+    cfg = path or CONFIG_PATH
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        accounts = (
+            data.get("allowed_accounts")
+            or data.get("allowed_account_ids")
+            or data.get("allowed_account")
+            or []
+        )
+        if isinstance(accounts, (str, int)):
+            accounts = [accounts]
+        return {str(a) for a in accounts if a}
+    except FileNotFoundError:
+        return set()
+    except Exception:
+        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
+        return set()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -643,6 +667,56 @@ def _emit_anomaly(
 
 
 # Detection routines -------------------------------------------------------
+
+
+def detect_account_mismatches(
+    charges: Iterable[dict] | None,
+    refunds: Iterable[dict] | None,
+    events: Iterable[dict] | None,
+    allowed_accounts: Iterable[str],
+    *,
+    write_codex: bool = False,
+    export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
+) -> List[Dict[str, Any]]:
+    """Return Stripe objects whose account is not in ``allowed_accounts``."""
+
+    allowed = {str(a) for a in allowed_accounts if a}
+    anomalies: List[Dict[str, Any]] = []
+
+    def _check(obj: dict, obj_id: str) -> None:
+        acct = obj.get("account")
+        if acct and allowed and str(acct) not in allowed:
+            anomaly = {
+                "type": "account_mismatch",
+                "id": obj_id,
+                "account_id": acct,
+                "allowed_accounts": sorted(allowed),
+                "module": BILLING_ROUTER_MODULE,
+            }
+            anomalies.append(anomaly)
+            _emit_anomaly(
+                anomaly,
+                write_codex,
+                export_training,
+                self_coding_engine,
+                telemetry_feedback,
+            )
+
+    for ch in charges or []:
+        cid = ch.get("id")
+        if cid:
+            _check(ch, str(cid))
+    for rf in refunds or []:
+        rid = rf.get("id")
+        if rid:
+            _check(rf, str(rid))
+    for ev in events or []:
+        eid = ev.get("id")
+        if eid:
+            _check(ev, str(eid))
+    return anomalies
 
 
 def detect_missing_charges(
@@ -1251,25 +1325,38 @@ def check_events(
     # Load the entire ledger window; many tests use historical timestamps.
     ledger = load_local_ledger(0, end_ts)
     billing_logs = load_billing_logs(0, end_ts)
+    allowed_accounts = _allowed_account_ids()
     expected_account_id = _expected_account_id(api_key)
+    if expected_account_id:
+        allowed_accounts.add(expected_account_id)
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
-    anomalies = detect_missing_charges(
+    anomalies = detect_account_mismatches(
         charges,
-        ledger,
-        billing_logs,
-        load_approved_workflows(),
-        expected_account_id=expected_account_id,
+        [],
+        [],
+        allowed_accounts,
         write_codex=write_codex,
         export_training=export_training,
         self_coding_engine=self_coding_engine,
         telemetry_feedback=telemetry_feedback,
     )
+    anomalies.extend(
+        detect_missing_charges(
+            charges,
+            ledger,
+            billing_logs,
+            load_approved_workflows(),
+            write_codex=write_codex,
+            export_training=export_training,
+            self_coding_engine=self_coding_engine,
+            telemetry_feedback=telemetry_feedback,
+        )
+    )
     if anomalies:
-        account_id = expected_account_id
         for anomaly in anomalies:
             metadata = dict(anomaly)
             metadata["timestamp"] = datetime.utcnow().isoformat()
-            metadata["stripe_account"] = account_id
+            metadata["stripe_account"] = anomaly.get("account_id")
             if SANITY_LAYER_FEEDBACK_ENABLED:
                 try:
                     event_type = anomaly.get("type", "unknown")
@@ -1377,6 +1464,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     refund_logs = load_billing_logs(start_ts, end_ts, action="refund")
     failed_logs = load_billing_logs(start_ts, end_ts, action="failed")
     approved = load_approved_workflows()
+    allowed_accounts = _allowed_account_ids()
+    if expected_account_id:
+        allowed_accounts.add(expected_account_id)
 
     engine = None
     telemetry = None
@@ -1396,12 +1486,21 @@ def main(argv: Optional[List[str]] = None) -> None:
     refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
     events = fetch_recent_events(api_key, start_ts, end_ts)
 
+    detect_account_mismatches(
+        charges,
+        refunds,
+        events,
+        allowed_accounts,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
+    )
     detect_missing_charges(
         charges,
         ledger,
         charge_logs,
         approved,
-        expected_account_id=expected_account_id,
         write_codex=args.write_codex,
         export_training=args.export_training,
         self_coding_engine=engine,
@@ -1412,7 +1511,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         ledger,
         refund_logs,
         approved,
-        expected_account_id=expected_account_id,
         write_codex=args.write_codex,
         export_training=args.export_training,
         self_coding_engine=engine,
@@ -1423,7 +1521,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         ledger,
         failed_logs,
         approved,
-        expected_account_id=expected_account_id,
         write_codex=args.write_codex,
         export_training=args.export_training,
         self_coding_engine=engine,

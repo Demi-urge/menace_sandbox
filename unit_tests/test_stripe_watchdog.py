@@ -389,38 +389,36 @@ def test_charge_account_mismatch_triggers_anomaly(capture, monkeypatch):
     events = capture
     calls = _capture_record_event(monkeypatch)
     charges = [{"id": "ch1", "account": "acct_actual"}]
-    ledger = [{"id": "ch1"}]
-    anomalies = sw.detect_missing_charges(
+    anomalies = sw.detect_account_mismatches(
         charges,
-        ledger,
         [],
-        expected_account_id="acct_expected",
+        [],
+        ["acct_expected"],
     )
     assert anomalies and anomalies[0]["type"] == "account_mismatch"
     assert events and events[0][1]["type"] == "account_mismatch"
     assert calls and calls[0][0] == "account_mismatch"
     meta = calls[0][1]
     assert meta["account_id"] == "acct_actual"
-    assert meta["expected_account_id"] == "acct_expected"
+    assert "acct_expected" in meta["allowed_accounts"]
 
 
 def test_refund_account_mismatch_triggers_anomaly(capture, monkeypatch):
     events = capture
     calls = _capture_record_event(monkeypatch)
     refunds = [{"id": "re1", "amount": 100, "charge": "c1", "account": "acct_actual"}]
-    ledger = [{"id": "re1", "action_type": "refund"}]
-    anomalies = sw.detect_missing_refunds(
-        refunds,
-        ledger,
+    anomalies = sw.detect_account_mismatches(
         [],
-        expected_account_id="acct_expected",
+        refunds,
+        [],
+        ["acct_expected"],
     )
     assert anomalies and anomalies[0]["type"] == "account_mismatch"
     assert events and events[0][1]["type"] == "account_mismatch"
     assert calls and calls[0][0] == "account_mismatch"
     meta = calls[0][1]
     assert meta["account_id"] == "acct_actual"
-    assert meta["expected_account_id"] == "acct_expected"
+    assert "acct_expected" in meta["allowed_accounts"]
 
 
 def test_event_account_mismatch_triggers_anomaly(capture, monkeypatch):
@@ -429,16 +427,15 @@ def test_event_account_mismatch_triggers_anomaly(capture, monkeypatch):
     failed_events = [
         {"id": "ev1", "type": "charge.failed", "account": "acct_actual"}
     ]
-    ledger = [{"id": "ev1", "action_type": "failed"}]
-    anomalies = sw.detect_failed_events(
-        failed_events,
-        ledger,
+    anomalies = sw.detect_account_mismatches(
         [],
-        expected_account_id="acct_expected",
+        [],
+        failed_events,
+        ["acct_expected"],
     )
     assert anomalies and anomalies[0]["type"] == "account_mismatch"
     assert events and events[0][1]["type"] == "account_mismatch"
     assert calls and calls[0][0] == "account_mismatch"
     meta = calls[0][1]
     assert meta["account_id"] == "acct_actual"
-    assert meta["expected_account_id"] == "acct_expected"
+    assert "acct_expected" in meta["allowed_accounts"]
