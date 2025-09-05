@@ -370,10 +370,10 @@ def load_billing_logs(
     try:  # pragma: no cover - best effort
         db = BillingLogDB()
         cur = db.conn.execute(
-            "SELECT amount, ts FROM billing_logs WHERE action = ? AND ts >= ? AND ts < ?",
+            "SELECT amount, ts, stripe_id FROM billing_logs WHERE action = ? AND ts >= ? AND ts < ?",
             (action, start_iso, end_iso),
         )
-        for amount, ts in cur.fetchall():
+        for amount, ts, sid in cur.fetchall():
             try:
                 ts_epoch = datetime.fromisoformat(ts).timestamp() if ts else None
             except Exception:
@@ -382,6 +382,7 @@ def load_billing_logs(
                 {
                     "amount": float(amount) if amount is not None else None,
                     "timestamp": ts_epoch,
+                    "stripe_id": str(sid) if sid is not None else None,
                 }
             )
     except Exception:
@@ -441,42 +442,23 @@ def detect_missing_charges(
     """Return Stripe charges absent from local billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("id")}
-    ledger_ts = {
-        int(e.get("timestamp_ms"))
-        for e in ledger
-        if isinstance(e.get("timestamp_ms"), (int, float))
+    billing_ids = {
+        str(rec.get("stripe_id"))
+        for rec in (billing_logs or [])
+        if rec.get("stripe_id")
     }
-    billing_index: Dict[float, List[int]] = {}
-    if billing_logs:
-        for rec in billing_logs:
-            amt = rec.get("amount")
-            ts = rec.get("timestamp")
-            if isinstance(amt, (int, float)) and isinstance(ts, (int, float)):
-                billing_index.setdefault(round(float(amt), 2), []).append(int(ts))
 
     anomalies: List[Dict[str, Any]] = []
     for charge in charges:
         cid = str(charge.get("id"))
-        created = charge.get("created")
-        created_sec = int(created) if isinstance(created, (int, float)) else None
-        created_ms = int(created_sec * 1000) if created_sec is not None else None
-        if cid in ledger_ids or (created_ms is not None and created_ms in ledger_ts):
+        if cid in ledger_ids or cid in billing_ids:
             continue
-        if billing_index and created_sec is not None:
-            amt = charge.get("amount")
-            amount_dollars = (
-                round(float(amt) / 100.0, 2) if isinstance(amt, (int, float)) else None
-            )
-            if amount_dollars is not None:
-                ts_list = billing_index.get(amount_dollars, [])
-                if any(abs(created_sec - ts) <= 300 for ts in ts_list):
-                    continue
         anomaly = {
             "type": "missing_charge",
             "id": cid,
             "amount": charge.get("amount"),
             "email": charge.get("receipt_email"),
-            "timestamp": created,
+            "timestamp": charge.get("created"),
         }
         anomalies.append(anomaly)
         _emit_anomaly(anomaly, write_codex, export_training)
@@ -494,33 +476,17 @@ def detect_missing_refunds(
     """Return Stripe refunds absent from the ledger and billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "refund"}
-    billing_index: Dict[float, List[int]] = {}
-    if billing_logs:
-        for rec in billing_logs:
-            amt = rec.get("amount")
-            ts = rec.get("timestamp")
-            if isinstance(amt, (int, float)) and isinstance(ts, (int, float)):
-                billing_index.setdefault(round(float(abs(amt)), 2), []).append(int(ts))
+    billing_ids = {
+        str(rec.get("stripe_id"))
+        for rec in (billing_logs or [])
+        if rec.get("stripe_id")
+    }
 
     anomalies: List[Dict[str, Any]] = []
     for refund in refunds:
         rid = str(refund.get("id"))
-        if rid in ledger_ids:
+        if rid in ledger_ids or rid in billing_ids:
             continue
-        created = refund.get("created")
-        created_sec = int(created) if isinstance(created, (int, float)) else None
-        amt = refund.get("amount")
-        amount_dollars = (
-            round(float(abs(amt)) / 100.0, 2) if isinstance(amt, (int, float)) else None
-        )
-        if (
-            created_sec is not None
-            and amount_dollars is not None
-            and amount_dollars in billing_index
-        ):
-            ts_list = billing_index[amount_dollars]
-            if any(abs(created_sec - ts) <= 300 for ts in ts_list):
-                continue
         anomaly = {
             "type": "missing_refund",
             "refund_id": rid,
@@ -543,25 +509,18 @@ def detect_failed_events(
     """Return failed payment events missing from the ledger and billing logs."""
 
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "failed"}
-    billing_ts: List[int] = []
-    if billing_logs:
-        for rec in billing_logs:
-            ts = rec.get("timestamp")
-            if isinstance(ts, (int, float)):
-                billing_ts.append(int(ts))
+    billing_ids = {
+        str(rec.get("stripe_id"))
+        for rec in (billing_logs or [])
+        if rec.get("stripe_id")
+    }
 
     anomalies: List[Dict[str, Any]] = []
     for event in events:
         if event.get("type") not in {"charge.failed", "payment_intent.payment_failed"}:
             continue
         eid = str(event.get("id"))
-        if eid in ledger_ids:
-            continue
-        created = event.get("created")
-        created_sec = int(created) if isinstance(created, (int, float)) else None
-        if created_sec is not None and any(
-            abs(created_sec - ts) <= 300 for ts in billing_ts
-        ):
+        if eid in ledger_ids or eid in billing_ids:
             continue
         anomaly = {
             "type": "missing_failure_log",

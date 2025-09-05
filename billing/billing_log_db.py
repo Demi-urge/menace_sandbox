@@ -31,6 +31,7 @@ class BillingEvent:
     user_email: str | None = None
     destination_account: str | None = None
     key_hash: str | None = None
+    stripe_id: str | None = None
     ts: str | None = None  # ISO timestamp; defaults to CURRENT_TIMESTAMP
 
 
@@ -56,6 +57,7 @@ class BillingLogDB:
                 user_email TEXT,
                 destination_account TEXT,
                 key_hash TEXT,
+                stripe_id TEXT,
                 ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
@@ -67,6 +69,12 @@ class BillingLogDB:
         if "stripe_key" in cols and "key_hash" not in cols:
             cur.execute("ALTER TABLE billing_logs RENAME COLUMN stripe_key TO key_hash")
             self.conn.commit()
+        # Migration: add stripe_id column if missing
+        cur.execute("PRAGMA table_info(billing_logs)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "stripe_id" not in cols:
+            cur.execute("ALTER TABLE billing_logs ADD COLUMN stripe_id TEXT")
+            self.conn.commit()
 
     # ------------------------------------------------------------------
     def log(self, event: BillingEvent) -> int:
@@ -77,8 +85,8 @@ class BillingLogDB:
             """
             INSERT INTO billing_logs(
                 action, bot_id, amount, currency, user_email,
-                destination_account, key_hash, ts
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                destination_account, key_hash, stripe_id, ts
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
             """,
             (
                 event.action,
@@ -88,6 +96,7 @@ class BillingLogDB:
                 event.user_email,
                 event.destination_account,
                 event.key_hash,
+                event.stripe_id,
                 event.ts,
             ),
         )
@@ -108,6 +117,7 @@ def log_billing_event(
     user_email: str | None = None,
     destination_account: str | None = None,
     key_hash: str | None = None,
+    stripe_id: str | None = None,
     ts: str | None = None,
 ) -> int:
     """Insert a billing event into the ``billing_logs`` table."""
@@ -120,6 +130,7 @@ def log_billing_event(
         user_email=user_email,
         destination_account=destination_account,
         key_hash=key_hash,
+        stripe_id=stripe_id,
         ts=ts,
     )
     return _DEFAULT_DB.log(event)
