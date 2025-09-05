@@ -14,11 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import subprocess
+import threading
 from typing import Dict, Optional
 
 # Cache of discovered paths keyed by normalised POSIX style names
 _PATH_CACHE: Dict[str, Path] = {}
 _PROJECT_ROOT: Optional[Path] = None
+_CACHE_LOCK = threading.Lock()
 
 
 def _normalize(name: str | Path) -> str:
@@ -39,37 +41,45 @@ def get_project_root() -> Path:
     """
 
     global _PROJECT_ROOT
-    if _PROJECT_ROOT is not None:
-        return _PROJECT_ROOT
+    with _CACHE_LOCK:
+        if _PROJECT_ROOT is not None:
+            return _PROJECT_ROOT
+
+    root: Optional[Path] = None
 
     for env_var in ("MENACE_ROOT", "SANDBOX_REPO_PATH"):
         env_path = os.environ.get(env_var)
         if env_path:
             path = Path(env_path).expanduser().resolve()
             if path.exists():
-                _PROJECT_ROOT = path
-                return path
+                root = path
+                break
 
-    try:
-        top_level = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        if top_level:
-            _PROJECT_ROOT = Path(top_level).resolve()
-            return _PROJECT_ROOT
-    except Exception:
-        pass
+    if root is None:
+        try:
+            top_level = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+            if top_level:
+                root = Path(top_level).resolve()
+        except Exception:
+            pass
 
-    current = Path(__file__).resolve().parent
-    for parent in [current] + list(current.parents):
-        if (parent / ".git").exists():
-            _PROJECT_ROOT = parent
-            return parent
+    if root is None:
+        current = Path(__file__).resolve().parent
+        for parent in [current] + list(current.parents):
+            if (parent / ".git").exists():
+                root = parent
+                break
+        if root is None:
+            root = current
 
-    _PROJECT_ROOT = current
-    return _PROJECT_ROOT
+    with _CACHE_LOCK:
+        if _PROJECT_ROOT is None:
+            _PROJECT_ROOT = root
+        return _PROJECT_ROOT
 
 
 # Backwards compatible aliases
@@ -81,14 +91,17 @@ def resolve_path(name: str) -> Path:
     """Resolve *name* to an absolute :class:`Path` within the repository."""
 
     key = _normalize(name)
-    if key in _PATH_CACHE:
-        return _PATH_CACHE[key]
+    with _CACHE_LOCK:
+        cached = _PATH_CACHE.get(key)
+    if cached is not None:
+        return cached
 
     path = Path(name)
     if path.is_absolute():
         if path.exists():
             resolved = path.resolve()
-            _PATH_CACHE[key] = resolved
+            with _CACHE_LOCK:
+                _PATH_CACHE[key] = resolved
             return resolved
         raise FileNotFoundError(f"{name!r} does not exist")
 
@@ -96,7 +109,8 @@ def resolve_path(name: str) -> Path:
     candidate = root / path
     if candidate.exists():
         resolved = candidate.resolve()
-        _PATH_CACHE[key] = resolved
+        with _CACHE_LOCK:
+            _PATH_CACHE[key] = resolved
         return resolved
 
     target = Path(key)
@@ -109,7 +123,8 @@ def resolve_path(name: str) -> Path:
             rel = match.relative_to(root).as_posix()
             if rel.endswith(key):
                 resolved = match.resolve()
-                _PATH_CACHE[key] = resolved
+                with _CACHE_LOCK:
+                    _PATH_CACHE[key] = resolved
                 return resolved
 
     raise FileNotFoundError(f"{name!r} not found under {root}")
@@ -143,15 +158,17 @@ def path_for_prompt(name: str) -> str:
 def clear_cache() -> None:
     """Clear internal caches used by this module."""
 
-    _PATH_CACHE.clear()
     global _PROJECT_ROOT
-    _PROJECT_ROOT = None
+    with _CACHE_LOCK:
+        _PATH_CACHE.clear()
+        _PROJECT_ROOT = None
 
 
 def list_files() -> Dict[str, Path]:
     """Return a copy of the internal cache mapping."""
 
-    return dict(_PATH_CACHE)
+    with _CACHE_LOCK:
+        return dict(_PATH_CACHE)
 
 
 __all__ = [
