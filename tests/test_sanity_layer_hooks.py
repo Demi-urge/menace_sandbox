@@ -15,8 +15,8 @@ def test_emit_anomaly_triggers_record_event(monkeypatch):
 
     calls = []
 
-    def fake_record_event(event_type, metadata):
-        calls.append((event_type, metadata))
+    def fake_record_event(event_type, metadata, **kwargs):
+        calls.append((event_type, metadata, kwargs))
 
     monkeypatch.setattr(msl, "record_event", fake_record_event)
     monkeypatch.setattr(sw, "record_event", fake_record_event)
@@ -24,9 +24,20 @@ def test_emit_anomaly_triggers_record_event(monkeypatch):
     monkeypatch.setattr(sw.ANOMALY_TRAIL, "record", lambda *a, **k: None)
     monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
 
-    sw._emit_anomaly({"type": "missing_charge", "charge_id": "ch_1"}, False, False)
+    engine = object()
+    telemetry = object()
+    sw._emit_anomaly(
+        {"type": "missing_charge", "charge_id": "ch_1"},
+        False,
+        False,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
+    )
 
-    assert calls == [("missing_charge", {"charge_id": "ch_1"})]
+    assert calls and calls[0][0] == "missing_charge"
+    assert calls[0][1] == {"charge_id": "ch_1"}
+    assert calls[0][2]["self_coding_engine"] is engine
+    assert calls[0][2]["telemetry_feedback"] is telemetry
 
 
 def _stub_unified_event_bus(monkeypatch, tmp_path):
@@ -55,7 +66,7 @@ def test_alert_mismatch_invokes_record_event(monkeypatch, tmp_path):
 
     calls: list[tuple[str, dict]] = []
 
-    def fake_record_event(event_type, metadata):
+    def fake_record_event(event_type, metadata, **kwargs):
         calls.append((event_type, metadata))
 
     monkeypatch.setattr(msl, "record_event", fake_record_event)
