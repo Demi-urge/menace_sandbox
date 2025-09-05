@@ -23,11 +23,13 @@ sys.modules.setdefault("sandbox_runner.bootstrap", boot)
 
 settings_mod = ModuleType("sandbox_settings")
 
+from dynamic_path_router import resolve_path
+
 class DummySettings:
     def __init__(self):
-        self.prompt_penalty_path = "penalties.json"
-        self.prompt_success_log_path = "success.log"
-        self.prompt_failure_log_path = "failure.log"
+        self.prompt_penalty_path = resolve_path("penalties.json")
+        self.prompt_success_log_path = resolve_path("success.log")
+        self.prompt_failure_log_path = resolve_path("failure.log")
         self.sandbox_repo_path = "."
         self.sandbox_data_dir = os.getenv("SANDBOX_DATA_DIR", ".")
         self.prompt_failure_threshold = 3

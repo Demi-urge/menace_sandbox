@@ -12,6 +12,8 @@ router.resolve_path = lambda p: p
 router.repo_root = lambda: ROOT
 sys.modules.setdefault("dynamic_path_router", router)
 
+from dynamic_path_router import resolve_path
+
 boot = types.ModuleType("sandbox_runner.bootstrap")
 boot.initialize_autonomous_sandbox = lambda *a, **k: None
 sys.modules.setdefault("sandbox_runner.bootstrap", boot)
@@ -25,7 +27,7 @@ from menace_sandbox.self_improvement.prompt_strategy_manager import (  # noqa: E
 )
 
 def test_best_strategy_prefers_high_roi(tmp_path, monkeypatch):
-    stats_path = tmp_path / "stats.json"
+    stats_path = tmp_path / "stats.json"  # path-ignore
     data = {
         "s1": {
             "success": 1,
@@ -43,6 +45,6 @@ def test_best_strategy_prefers_high_roi(tmp_path, monkeypatch):
         },
     }
     stats_path.write_text(json.dumps(data))
-    mgr = PromptStrategyManager(stats_path=stats_path, state_path=tmp_path / "state.json")
+    mgr = PromptStrategyManager(stats_path=stats_path, state_path=tmp_path / "state.json")  # path-ignore
     mgr.set_strategies(["s1", "s2"])
     assert mgr.best_strategy(["s1", "s2"]) == "s2"

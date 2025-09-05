@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 sys.modules.setdefault("dynamic_path_router", types.SimpleNamespace(resolve_path=lambda p: p))
+from dynamic_path_router import resolve_path
 pkg = types.ModuleType("menace_sandbox.self_improvement")
 pkg.__path__ = [str(ROOT / "self_improvement")]
 sys.modules["menace_sandbox.self_improvement"] = pkg
@@ -78,7 +79,7 @@ def _reload(monkeypatch, tmp_path, **env):
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     sr = importlib.reload(strategy_rotator)
-    sr.manager.stats_path = Path(tmp_path) / "_strategy_stats.json"
+    sr.manager.stats_path = Path(tmp_path) / "_strategy_stats.json"  # path-ignore
     sr.manager._stats_lock = FileLock(str(sr.manager.stats_path) + ".lock")
     return sr
 

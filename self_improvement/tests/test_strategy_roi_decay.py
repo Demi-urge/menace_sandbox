@@ -1,5 +1,4 @@
 import sys
-import sys
 import types
 import time
 import math
@@ -13,6 +12,8 @@ sys.modules.setdefault(
     "dynamic_path_router",
     types.SimpleNamespace(resolve_path=lambda p: p, repo_root=lambda: ROOT),
 )
+
+from dynamic_path_router import resolve_path
 
 boot = types.ModuleType("sandbox_runner.bootstrap")
 boot.initialize_autonomous_sandbox = lambda *a, **k: None
@@ -37,7 +38,7 @@ class DummySettings:
 
 def test_recent_success_outweighs_old(monkeypatch, tmp_path):
     monkeypatch.setattr(settings_mod, "SandboxSettings", DummySettings)
-    mgr = PromptStrategyManager(stats_path=tmp_path / "stats.json", state_path=tmp_path / "state.json")
+    mgr = PromptStrategyManager(stats_path=tmp_path / "stats.json", state_path=tmp_path / "state.json")  # path-ignore
     mgr.set_strategies(["s1", "s2"])
     now = time.time()
     mgr.stats = {
