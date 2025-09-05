@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, Optional, List, Dict, TYPE_CHECKING
 
 import yaml
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path, path_for_prompt
 
 from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
@@ -114,7 +114,11 @@ class SelfCodingScheduler:
             if path.exists():
                 data = yaml.safe_load(path.read_text()) or {}
         except Exception:  # pragma: no cover - best effort
-            self.logger.warning("failed to load sandbox metrics", exc_info=True)
+            self.logger.warning(
+                "failed to load sandbox metrics from %s",
+                path_for_prompt(path),
+                exc_info=True,
+            )
             data = {}
 
         extra = data.setdefault("extra_metrics", {})
@@ -124,7 +128,11 @@ class SelfCodingScheduler:
         try:
             path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         except Exception:  # pragma: no cover - best effort
-            self.logger.warning("failed to record sandbox metrics", exc_info=True)
+            self.logger.warning(
+                "failed to record sandbox metrics at %s",
+                path_for_prompt(path),
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     def _scan_job(self) -> None:

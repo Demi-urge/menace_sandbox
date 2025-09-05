@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 try:  # pragma: no cover - allow flat imports
-    from .dynamic_path_router import resolve_path
+    from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
-    from dynamic_path_router import resolve_path  # type: ignore
+    from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 import logging
 import subprocess
 import tempfile
@@ -86,7 +86,7 @@ class PatchApprovalPolicy:
         if ok and self.rollback_mgr:
             try:
                 self.rollback_mgr.log_healing_action(
-                    self.bot_name, "patch_checks", str(path)
+                    self.bot_name, "patch_checks", path_for_prompt(path)
                 )
             except Exception as exc:  # pragma: no cover - audit logging issues
                 self.logger.exception("failed to log healing action: %s", exc)
@@ -226,6 +226,7 @@ class SelfCodingManager:
             subprocess.run(["git", "clone", str(repo_root), tmp], check=True)
             clone_root = resolve_path(tmp)
             cloned_path = clone_root / path.resolve().relative_to(repo_root)
+            prompt_path = path_for_prompt(path)
             attempt = 0
             patch_id: int | None = None
             reverted = False
@@ -275,13 +276,13 @@ class SelfCodingManager:
                     try:
                         latest_fp: FailureFingerprint | None = None
                         for fp in getattr(self.failure_store, "_cache", {}).values():
-                            if fp.filename != path.name:
+                            if fp.filename != prompt_path:
                                 continue
                             if latest_fp is None or fp.timestamp > latest_fp.timestamp:
                                 latest_fp = fp
                         if latest_fp is not None:
                             provisional_fp = FailureFingerprint.from_failure(
-                                path.name,
+                                prompt_path,
                                 getattr(latest_fp, "function_name", getattr(latest_fp, "function", "")),
                                 latest_fp.stack_trace,
                                 latest_fp.error_message,
@@ -295,7 +296,7 @@ class SelfCodingManager:
                                 check=False,
                             ).stdout
                             provisional_fp = FailureFingerprint.from_failure(
-                                path.name,
+                                prompt_path,
                                 "",
                                 diff,
                                 "",
@@ -336,7 +337,7 @@ class SelfCodingManager:
                                     conn = pdb.router.get_connection("patch_history")
                                     conn.execute(
                                         "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
-                                        (str(path), json.dumps(details), "retry_skipped"),
+                                        (prompt_path, json.dumps(details), "retry_skipped"),
                                     )
                                     conn.commit()
                                 except Exception:
@@ -389,7 +390,7 @@ class SelfCodingManager:
                                 conn = pdb.router.get_connection("patch_history")
                                 conn.execute(
                                     "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
-                                    (str(path), json.dumps(details), "retry_skipped"),
+                                    (prompt_path, json.dumps(details), "retry_skipped"),
                                 )
                                 conn.commit()
                             except Exception:
@@ -415,7 +416,7 @@ class SelfCodingManager:
                     desc,
                     parent_patch_id=self._last_patch_id,
                     reason=desc,
-                    trigger=path.name,
+                    trigger=prompt_path,
                     context_meta=ctx_meta,
                     baseline_coverage=coverage_before,
                     baseline_runtime=runtime_before,
@@ -489,7 +490,7 @@ class SelfCodingManager:
                 if m_err:
                     error_msg = m_err[-1]
                 fingerprint = FailureFingerprint.from_failure(
-                    path.name,
+                    prompt_path,
                     function_name,
                     stack_trace,
                     error_msg,
@@ -625,7 +626,7 @@ class SelfCodingManager:
                 MutationLogger.log_mutation(
                     change="patch_branch",
                     reason=description,
-                    trigger=path.name,
+                    trigger=prompt_path,
                     performance=0.0,
                     workflow_id=0,
                     parent_id=self._last_event_id,
@@ -666,7 +667,7 @@ class SelfCodingManager:
                     MutationLogger.log_mutation(
                         change="patch_merge",
                         reason=description,
-                        trigger=path.name,
+                        trigger=prompt_path,
                         performance=roi_delta,
                         workflow_id=0,
                         parent_id=self._last_event_id,
@@ -686,7 +687,7 @@ class SelfCodingManager:
         event_id = MutationLogger.log_mutation(
             change=f"self_coding_patch_{patch_id}",
             reason=description,
-            trigger=path.name,
+            trigger=prompt_path,
             performance=roi_delta,
             workflow_id=0,
             parent_id=self._last_event_id,
@@ -723,7 +724,7 @@ class SelfCodingManager:
                     patch_id=patch_id,
                     reverted=reverted,
                     reason=description,
-                    trigger=path.name,
+                    trigger=prompt_path,
                     parent_event_id=self._last_event_id,
                 )
             except Exception as exc:
@@ -751,6 +752,7 @@ class SelfCodingManager:
             return
         for sid, module, description in rows:
             path = resolve_path(module)
+            prompt_module = path_for_prompt(module)
             try:
                 if getattr(self.engine, "audit_trail", None):
                     try:
@@ -763,16 +765,16 @@ class SelfCodingManager:
                         self.engine.audit_trail.record(
                             {
                                 "event": "queued_enhancement",
-                                "module": module,
+                                "module": prompt_module,
                                 "score": round(score, 2),
                                 "rationale": rationale,
                             }
                         )
                     except Exception:  # pragma: no cover - best effort
-                        self.logger.exception("failed to record audit log for %s", module)
+                        self.logger.exception("failed to record audit log for %s", prompt_module)
                 self.run_patch(path, description)
             except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to apply suggestion for %s", module)
+                self.logger.exception("failed to apply suggestion for %s", prompt_module)
             finally:
                 try:
                     self.suggestion_db.conn.execute(
