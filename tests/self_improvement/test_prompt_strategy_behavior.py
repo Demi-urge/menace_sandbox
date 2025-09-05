@@ -22,7 +22,6 @@ sys.modules.setdefault("sandbox_runner.bootstrap", boot)
 prompt_memory = importlib.import_module(
     "menace_sandbox.self_improvement.prompt_memory"
 )
-import menace_sandbox.prompt_optimizer as prompt_optimizer  # noqa: E402
 PromptStrategyManager = importlib.import_module(
     "menace_sandbox.self_improvement.prompt_strategy_manager"
 ).PromptStrategyManager
@@ -83,38 +82,26 @@ def test_strategies_rotate_after_failure(tmp_path, strategy_templates):
     assert second == strategy_templates[1]
 
 
-def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats, monkeypatch):
+def test_high_roi_favored_over_penalized(strategy_templates, mock_roi_stats, tmp_path):
     penalties = {s: 5 for s in strategy_templates}
 
-    class MiniEngine:
-        def select(self, strategies, threshold=3, multiplier=0.5):
-            eligible = []
-            penalised = []
-            stats = prompt_optimizer.load_strategy_stats()
-            for strat in strategies:
-                count = penalties.get(str(strat), 0)
-                weight = multiplier if threshold and count >= threshold else 1.0
-                rs = stats.get(str(strat))
-                if rs:
-                    score = rs.get("score", 0.0)
-                    score = score if score > 0 else 0.1
-                    weight *= score
-                target = penalised if threshold and count >= threshold else eligible
-                target.append((strat, weight))
-            pool = eligible or penalised
-            best = None
-            best_weight = -1.0
-            for strat, weight in pool:
-                if weight > best_weight:
-                    best_weight = weight
-                    best = strat
-            return best
-
-    monkeypatch.setattr(
-        prompt_optimizer, "load_strategy_stats", lambda: mock_roi_stats
+    mgr = PromptStrategyManager(
+        strategy_templates,
+        stats_path=tmp_path / "stats.json",
+        state_path=tmp_path / "state.json",
     )
-    eng = MiniEngine()
-    selected = eng.select(strategy_templates)
+    mgr.penalties.update(penalties)
+    for name, rec in mock_roi_stats.items():
+        mgr.stats[name] = {
+            "total": 1,
+            "success": 1,
+            "roi_sum": rec["score"],
+            "weighted_roi_sum": rec["score"],
+            "weight_sum": 1.0,
+        }
+    mgr._save_stats()
+    mgr._save_state()
+    selected = mgr.best_strategy(strategy_templates)
     assert selected == "beta"
 
 

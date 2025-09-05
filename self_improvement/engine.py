@@ -164,6 +164,7 @@ from .patch_application import generate_patch, apply_patch
 from .prompt_memory import log_prompt_attempt
 from .prompt_strategies import PromptStrategy
 from .prompt_strategy_manager import PromptStrategyManager
+from .strategy_analytics import StrategyAnalytics
 from .snapshot_tracker import (
     capture as capture_snapshot,
     compute_delta as snapshot_delta,
@@ -901,6 +902,7 @@ class SelfImprovementEngine:
         self.strategy_confidence: Dict[str, int] = {}
         self.pending_strategy: str | None = None
         self.strategy_manager = PromptStrategyManager()
+        self.strategy_analytics = StrategyAnalytics(manager=self.strategy_manager)
         self._snapshot_tracker = SnapshotTracker()
         self._last_delta: dict[str, float] | None = None
         self.logger = get_logger("SelfImprovementEngine")
@@ -6630,6 +6632,12 @@ class SelfImprovementEngine:
 
     def next_prompt_strategy(self) -> str | None:
         """Return the next prompt strategy based on historical performance."""
+
+        if hasattr(self, "strategy_analytics"):
+            try:
+                self.strategy_analytics.refresh_if_stale()
+            except Exception:
+                self.logger.exception("strategy analytics refresh failed")
 
         pending = getattr(self, "pending_strategy", None)
         if pending and pending in self.strategy_manager.strategies:

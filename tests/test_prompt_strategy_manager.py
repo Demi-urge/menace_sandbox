@@ -43,7 +43,8 @@ class MiniEngine:
         return self.prompt_strategy_manager.select(self._select_prompt_strategy)
 
     def _select_prompt_strategy(self, strategies):
-        return strategies[0] if strategies else None
+        best = self.prompt_strategy_manager.best_strategy(strategies)
+        return best if best else (strategies[0] if strategies else None)
 
     def _record_snapshot_delta(self, prompt, delta):
         success = not (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0)
