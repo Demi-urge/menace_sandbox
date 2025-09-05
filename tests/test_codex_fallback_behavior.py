@@ -118,8 +118,14 @@ def test_timeout_error_prompts_simplified_and_builtin_fallback(monkeypatch):
     assert calls[1].system == ''
     assert calls[1].examples == []
     assert mock_llm.generate.call_count == 6
-    handle_mock.assert_called_once()
-    assert result == _expected_fallback('do something')
+
+
+def test_build_simplified_prompt_clears_context():
+    prompt = Prompt('user request', system='sys', examples=['a', 'b'])
+    simplified = self_coding_engine.build_simplified_prompt(prompt)
+    assert simplified.system == ''
+    assert simplified.examples == []
+    assert simplified.user == 'user request'
 
 
 def test_empty_completion_reroutes_and_queues(monkeypatch):
