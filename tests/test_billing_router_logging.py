@@ -107,6 +107,7 @@ def test_charge_logs_events(monkeypatch):
     assert ledger_args[4] == "user@example.com"
     assert ledger_args[5] == ACCOUNT
     assert ledger_args[6] == 1_700_000_000_000
+    assert ledger_args[7] == "pi_1"
 
 def test_subscription_logs_events(monkeypatch):
     bot_id = "stripe:cat:bot"
@@ -166,6 +167,7 @@ def test_subscription_logs_events(monkeypatch):
     assert ledger_args[4] == "user@example.com"
     assert ledger_args[5] == ACCOUNT
     assert ledger_args[6] == 1_700_000_000_000
+    assert ledger_args[7] == "sub_1"
 
 def test_refund_logs_events(monkeypatch):
     bot_id = "stripe:cat:bot"
@@ -217,6 +219,7 @@ def test_refund_logs_events(monkeypatch):
     assert ledger_args[4] == "user@example.com"
     assert ledger_args[5] == ACCOUNT
     assert ledger_args[6] == 1_700_000_000_000
+    assert ledger_args[7] == "re_1"
 
 def test_checkout_session_logs_events(monkeypatch):
     bot_id = "stripe:cat:bot"
@@ -272,6 +275,7 @@ def test_checkout_session_logs_events(monkeypatch):
     assert ledger_args[4] == "user@example.com"
     assert ledger_args[5] == ACCOUNT
     assert ledger_args[6] == 1_700_000_000_000
+    assert ledger_args[7] == "cs_1"
 
 def test_alert_mismatch_invalid_key(monkeypatch):
     log_crit = MagicMock(wraps=sbr.log_critical_discrepancy)

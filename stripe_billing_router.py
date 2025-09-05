@@ -69,11 +69,14 @@ def _log_payment(
     email: Optional[str],
     account_id: str,
     ts: int,
+    charge_id: str | None = None,
 ) -> None:
     """Persist a payment event to the Stripe ledger."""
 
     try:  # pragma: no cover - best effort logging
-        _STRIPE_LEDGER.log_event(action, bot_id, amount, currency, email, account_id, ts)
+        _STRIPE_LEDGER.log_event(
+            action, bot_id, amount, currency, email, account_id, ts, charge_id
+        )
     except Exception:
         logger.exception("failed to log payment action '%s' for bot '%s'", action, bot_id)
 
@@ -783,12 +786,12 @@ def charge(
                 raw_json = json.dumps(event)
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
-
+        event_id = event.get("id") if isinstance(event, Mapping) else None
         email = user_email
 
         if destination and destination != STRIPE_MASTER_ACCOUNT_ID:
             billing_logger.log_event(
-                id=event.get("id") if isinstance(event, Mapping) else None,
+                id=event_id,
                 action_type="charge",
                 amount=logged_amount,
                 currency=currency,
@@ -796,6 +799,7 @@ def charge(
                 user_email=email,
                 bot_id=bot_id,
                 destination_account=destination,
+                charge_id=event_id,
                 raw_event_json=raw_json,
                 error=True,
             )
@@ -818,7 +822,7 @@ def charge(
                 pass
 
         billing_logger.log_event(
-            id=event.get("id") if isinstance(event, Mapping) else None,
+            id=event_id,
             action_type="charge",
             amount=logged_amount,
             currency=currency,
@@ -826,6 +830,7 @@ def charge(
             user_email=email,
             bot_id=bot_id,
             destination_account=destination,
+            charge_id=event_id,
             raw_event_json=raw_json,
             error=had_error,
         )
@@ -836,6 +841,7 @@ def charge(
             destination,
             email=email,
             ts=timestamp_ms,
+            charge_id=event_id,
         )
         if event is not None:
             log_billing_event(
@@ -856,6 +862,7 @@ def charge(
             email,
             account_id,
             timestamp_ms,
+            event_id,
         )
     return event
 
@@ -975,10 +982,11 @@ def create_subscription(
                 raw_json = json.dumps(event)
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
+        event_id = event.get("id") if isinstance(event, Mapping) else None
 
         if destination and destination != STRIPE_MASTER_ACCOUNT_ID:
             billing_logger.log_event(
-                id=event.get("id") if isinstance(event, Mapping) else None,
+                id=event_id,
                 action_type="subscription",
                 amount=None,
                 currency=currency,
@@ -986,6 +994,7 @@ def create_subscription(
                 user_email=email,
                 bot_id=bot_id,
                 destination_account=destination,
+                charge_id=event_id,
                 raw_event_json=raw_json,
                 error=True,
             )
@@ -993,7 +1002,7 @@ def create_subscription(
             raise RuntimeError("Stripe account mismatch")
 
         billing_logger.log_event(
-            id=event.get("id") if isinstance(event, Mapping) else None,
+            id=event_id,
             action_type="subscription",
             amount=None,
             currency=currency,
@@ -1001,6 +1010,7 @@ def create_subscription(
             user_email=email,
             bot_id=bot_id,
             destination_account=destination,
+            charge_id=event_id,
             raw_event_json=raw_json,
             error=had_error,
         )
@@ -1011,6 +1021,7 @@ def create_subscription(
             destination,
             email=email,
             ts=timestamp_ms,
+            charge_id=event_id,
         )
         if event is not None:
             sub_amount = None
@@ -1046,6 +1057,7 @@ def create_subscription(
             email,
             account_id,
             timestamp_ms,
+            event_id,
         )
     return event
 
@@ -1132,9 +1144,11 @@ def refund(
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
 
+        event_id = event.get("id") if isinstance(event, Mapping) else None
+
         if destination and destination != STRIPE_MASTER_ACCOUNT_ID:
             billing_logger.log_event(
-                id=event.get("id") if isinstance(event, Mapping) else None,
+                id=event_id,
                 action_type="refund",
                 amount=logged_amount,
                 currency=currency,
@@ -1142,6 +1156,7 @@ def refund(
                 user_email=email,
                 bot_id=bot_id,
                 destination_account=destination,
+                charge_id=event_id,
                 raw_event_json=raw_json,
                 error=True,
             )
@@ -1149,7 +1164,7 @@ def refund(
             raise RuntimeError("Stripe account mismatch")
 
         billing_logger.log_event(
-            id=event.get("id") if isinstance(event, Mapping) else None,
+            id=event_id,
             action_type="refund",
             amount=logged_amount,
             currency=currency,
@@ -1157,6 +1172,7 @@ def refund(
             user_email=email,
             bot_id=bot_id,
             destination_account=destination,
+            charge_id=event_id,
             raw_event_json=raw_json,
             error=had_error,
         )
@@ -1167,6 +1183,7 @@ def refund(
             destination,
             email=email,
             ts=timestamp_ms,
+            charge_id=event_id,
         )
         log_billing_event(
             "refund",
@@ -1186,6 +1203,7 @@ def refund(
             email,
             account_id,
             timestamp_ms,
+            event_id,
         )
     return event
 
@@ -1264,9 +1282,11 @@ def create_checkout_session(
             except Exception:  # pragma: no cover - serialization issues
                 raw_json = None
 
+        event_id = event.get("id") if isinstance(event, Mapping) else None
+
         if destination and destination != STRIPE_MASTER_ACCOUNT_ID:
             billing_logger.log_event(
-                id=event.get("id") if isinstance(event, Mapping) else None,
+                id=event_id,
                 action_type="checkout_session",
                 amount=logged_amount,
                 currency=currency,
@@ -1274,6 +1294,7 @@ def create_checkout_session(
                 user_email=email,
                 bot_id=bot_id,
                 destination_account=destination,
+                charge_id=event_id,
                 raw_event_json=raw_json,
                 error=True,
             )
@@ -1281,7 +1302,7 @@ def create_checkout_session(
             raise RuntimeError("Stripe account mismatch")
 
         billing_logger.log_event(
-            id=event.get("id") if isinstance(event, Mapping) else None,
+            id=event_id,
             action_type="checkout_session",
             amount=logged_amount,
             currency=currency,
@@ -1289,6 +1310,7 @@ def create_checkout_session(
             user_email=email,
             bot_id=bot_id,
             destination_account=destination,
+            charge_id=event_id,
             raw_event_json=raw_json,
             error=had_error,
         )
@@ -1299,6 +1321,7 @@ def create_checkout_session(
             destination,
             email=email,
             ts=timestamp_ms,
+            charge_id=event_id,
         )
         log_billing_event(
             "checkout_session",
@@ -1318,6 +1341,7 @@ def create_checkout_session(
             email,
             account_id,
             timestamp_ms,
+            event_id,
         )
     return event
 

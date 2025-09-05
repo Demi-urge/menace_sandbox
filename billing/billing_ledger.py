@@ -42,6 +42,7 @@ def log_action(
     account_id: str,
     email: Optional[str] = None,
     ts: Optional[int] = None,
+    charge_id: Optional[str] = None,
     **extra: Any,
 ) -> None:
     """Append a log entry describing a billing ``action``.
@@ -58,6 +59,7 @@ def log_action(
         "bot_id": bot_id,
         "account_id": account_id,
         "email": email,
+        "charge_id": charge_id,
     }
     record.update(extra)
 
@@ -75,11 +77,21 @@ def record_payment(
     *,
     email: Optional[str] = None,
     ts: Optional[int] = None,
+    charge_id: Optional[str] = None,
     **extra: Any,
 ) -> None:
     """Public helper to record a payment related ``action``."""
 
-    log_action(action, amount, bot_id, account_id, email=email, ts=ts, **extra)
+    log_action(
+        action,
+        amount,
+        bot_id,
+        account_id,
+        email=email,
+        ts=ts,
+        charge_id=charge_id,
+        **extra,
+    )
 
 
 __all__ = ["log_action", "record_payment"]

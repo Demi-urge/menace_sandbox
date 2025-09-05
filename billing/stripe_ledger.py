@@ -66,9 +66,20 @@ class StripeLedger:
                 currency TEXT,
                 user_email TEXT,
                 account_id TEXT,
+                charge_id TEXT,
                 timestamp INTEGER
             )
             """
+        )
+        conn.commit()
+
+        # migration for pre-existing tables missing charge_id
+        cur = conn.execute("PRAGMA table_info(stripe_ledger)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "charge_id" not in cols:
+            conn.execute("ALTER TABLE stripe_ledger ADD COLUMN charge_id TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stripe_ledger_charge_id ON stripe_ledger(charge_id)"
         )
         conn.commit()
 
@@ -91,6 +102,7 @@ class StripeLedger:
         email: Optional[str],
         account_id: str,
         ts: int,
+        charge_id: Optional[str] = None,
     ) -> int:
         """Insert a billing event and return the new row id."""
 
@@ -98,10 +110,10 @@ class StripeLedger:
         cursor = conn.execute(
             """
             INSERT INTO stripe_ledger (
-                action, bot_id, amount, currency, user_email, account_id, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                action, bot_id, amount, currency, user_email, account_id, charge_id, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (action, bot_id, amount, currency, email, account_id, ts),
+            (action, bot_id, amount, currency, email, account_id, charge_id, ts),
         )
         conn.commit()
         self._maybe_compact()
@@ -125,7 +137,7 @@ class StripeLedger:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 """
-                SELECT id, action, bot_id, amount, currency, user_email, account_id, timestamp
+                SELECT id, action, bot_id, amount, currency, user_email, account_id, charge_id, timestamp
                 FROM stripe_ledger
                 WHERE timestamp BETWEEN ? AND ?
                 ORDER BY timestamp
@@ -150,10 +162,13 @@ def log_event(
     email: Optional[str],
     account_id: str,
     ts: int,
+    charge_id: Optional[str] = None,
 ) -> int:
     """Convenience wrapper around :class:`StripeLedger.log_event`."""
 
-    return STRIPE_LEDGER.log_event(action, bot_id, amount, currency, email, account_id, ts)
+    return STRIPE_LEDGER.log_event(
+        action, bot_id, amount, currency, email, account_id, ts, charge_id
+    )
 
 
 def get_events(start_ts: int, end_ts: int) -> List[dict]:
