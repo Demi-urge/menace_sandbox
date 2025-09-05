@@ -2,9 +2,25 @@ from __future__ import annotations
 
 """Helper for prompt strategy rotation."""
 
-from .prompt_strategy_manager import PromptStrategyManager
+from pathlib import Path
 
-manager = PromptStrategyManager()
+from ..sandbox_settings import SandboxSettings
+from .prompt_strategy_manager import (
+    KEYWORD_MAP as BASE_KEYWORD_MAP,
+    PromptStrategyManager,
+)
+
+
+KEYWORD_MAP = dict(BASE_KEYWORD_MAP)
+KEYWORD_MAP.update({
+    "tests_failed": "unit_test_rewrite",
+    "comment": "comment_refactor",
+})
+
+STATE_PATH = Path(SandboxSettings().sandbox_data_dir) / "strategy_rotator_state.json"
+settings = SandboxSettings()
+manager = PromptStrategyManager(state_path=STATE_PATH, keyword_map=KEYWORD_MAP)
+manager.failure_limits.update(settings.strategy_failure_limits)
 
 
 def next_strategy(strategy: str | None, failure_reason: str | None = None) -> str | None:

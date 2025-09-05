@@ -769,6 +769,20 @@ class SandboxSettings(BaseSettings):
         env="PROMPT_PENALTY_MULTIPLIER",
         description="Multiplier applied to value estimates of penalised prompts.",
     )
+    strategy_failure_limits: dict[str, int] = Field(
+        default_factory=dict,
+        env="STRATEGY_FAILURE_LIMITS",
+        description="Consecutive failure limits per strategy before rotation.",
+    )
+
+    @field_validator("strategy_failure_limits", mode="before")
+    def _parse_strategy_failure_limits(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return {}
+        return v
     failure_fingerprint_path: str = Field(
         "failure_fingerprints.jsonl",
         env="FAILURE_FINGERPRINT_PATH",
