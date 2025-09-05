@@ -8,6 +8,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+sys.modules.setdefault("vector_service", SimpleNamespace(CognitionLayer=lambda: None))
 
 import pytest  # noqa: E402
 
@@ -131,8 +132,50 @@ def test_record_billing_event_called(capture, monkeypatch):
     assert "timestamp" in metadata
     assert (
         instruction
-        == "Avoid generating bots that issue Stripe charges without logging through billing_logger."
+        == sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS["missing_charge"]
     )
+
+
+def test_distinct_instructions_per_anomaly_type(capture, monkeypatch):
+    monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test")
+    monkeypatch.setattr(sw, "fetch_recent_charges", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "fetch_recent_refunds", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "fetch_recent_events", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "load_local_ledger", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "load_billing_logs", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "check_webhook_endpoints", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "compare_revenue_window", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "stripe", None)
+    monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+    monkeypatch.setattr(sw, "DiscrepancyDB", None)
+    monkeypatch.setattr(sw, "DiscrepancyRecord", None)
+    monkeypatch.setattr(sw, "load_approved_workflows", lambda: set())
+
+    monkeypatch.setattr(
+        sw,
+        "detect_missing_charges",
+        lambda *a, **k: [
+            {"type": "missing_charge", "id": "ch"},
+            {"type": "missing_refund", "id": "rf"},
+        ],
+    )
+    monkeypatch.setattr(sw, "detect_failed_events", lambda *a, **k: [])
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_record(event_type, metadata, instruction):
+        calls.append((event_type, instruction))
+
+    monkeypatch.setattr(sw, "record_billing_event", fake_record)
+
+    sw.check_events()
+
+    assert len(calls) == 2
+    instr1 = sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS["missing_charge"]
+    instr2 = sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS["missing_refund"]
+    assert calls[0] == ("missing_charge", instr1)
+    assert calls[1] == ("missing_refund", instr2)
+    assert instr1 != instr2
 
 
 def test_webhook_endpoint_validation(capture, monkeypatch):
