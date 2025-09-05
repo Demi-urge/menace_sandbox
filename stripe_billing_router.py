@@ -58,49 +58,45 @@ def _log_payment(
         logger.exception("failed to log payment action '%s' for bot '%s'", action, bot_id)
 
 
-def log_critical_discrepancy(message: str, bot_id: str) -> None:
-    """Log a critical discrepancy, alert, and rollback.
-
-    The discrepancy *message* is stored in :class:`DiscrepancyDB` with the
-    associated *bot_id*. An alert is dispatched and the latest sandbox changes
-    from that bot are rolled back.
-    """
+def record_critical_discrepancy(bot_id: str, message: str) -> None:
+    """Record a critical discrepancy, alert, and rollback."""
 
     try:
-        DiscrepancyDB().log(message, {"bot_id": bot_id})
-    except Exception:
-        logger.exception("failed to log discrepancy for bot '%s'", bot_id)
-    try:  # pragma: no cover - external side effects
-        alert_dispatcher.dispatch_alert(
-            "critical_discrepancy", severity=5, message=message
-        )
-    except Exception:
-        logger.exception("alert dispatch failed for bot '%s'", bot_id)
-    try:  # pragma: no cover - rollback side effects
-        rollback_manager.RollbackManager().rollback("latest", requesting_bot=bot_id)
-    except Exception:
-        logger.exception("rollback failed for bot '%s'", bot_id)
-
-
-def _alert_mismatch(bot_id: str, account_id: str, message: str = "Stripe account mismatch") -> None:
-    """Dispatch alerts, record discrepancy and log rollback action."""
-
-    try:  # pragma: no cover - external side effects
-        alert_dispatcher.dispatch_alert(
-            "critical_discrepancy", 5, message, {"bot": bot_id, "account": account_id}
-        )
-    except Exception:
-        logger.exception("alert dispatch failed for bot '%s'", bot_id)
+        from discrepancy_db import DiscrepancyRecord
+        rec: object = DiscrepancyRecord(message=message, metadata={"bot_id": bot_id})
+    except Exception:  # pragma: no cover - fallback for tests
+        rec = {"message": message, "metadata": {"bot_id": bot_id}}
     try:
-        DiscrepancyDB().add({"message": "stripe_account_mismatch", "bot_id": bot_id})
+        DiscrepancyDB().add(rec)  # type: ignore[arg-type]
     except Exception:
         logger.exception("failed to record discrepancy for bot '%s'", bot_id)
-    try:  # pragma: no cover - rollback side effects
-        rollback_manager.RollbackManager().log_healing_action(
-            bot_id, "stripe_account_mismatch"
+    try:  # pragma: no cover - external side effects
+        alert_dispatcher.dispatch_alert(
+            "critical_discrepancy", 5, message, {"bot": bot_id}
         )
     except Exception:
-        logger.exception("rollback logging failed for bot '%s'", bot_id)
+        logger.exception("alert dispatch failed for bot '%s'", bot_id)
+    try:  # pragma: no cover - rollback side effects
+        rm = rollback_manager.RollbackManager()
+    except Exception:
+        logger.exception("rollback manager init failed for bot '%s'", bot_id)
+    else:
+        try:
+            rm.rollback("latest", requesting_bot=bot_id)
+        except Exception:
+            logger.exception("rollback failed for bot '%s'", bot_id)
+        try:
+            rm.log_healing_action(bot_id, message.replace(" ", "_"))
+        except Exception:
+            logger.exception("rollback logging failed for bot '%s'", bot_id)
+
+
+def _alert_mismatch(
+    bot_id: str, account_id: str, message: str = "Stripe account mismatch"
+) -> None:
+    """Backward-compatible wrapper for critical discrepancy handling."""
+
+    record_critical_discrepancy(bot_id, message)
 
 
 def _validate_no_api_keys(mapping: Mapping[str, str]) -> None:
@@ -120,15 +116,15 @@ def _load_key(name: str, prefix: str) -> str:
     key = os.getenv(name.upper()) or provider.get(name)
     if not key:
         logger.error("Stripe API keys must be configured and non-empty")
-        _alert_mismatch("unknown", "", "Stripe key misconfiguration")
+        record_critical_discrepancy("unknown", "Stripe key misconfiguration")
         raise RuntimeError("Stripe API keys must be configured and non-empty")
     if not key.startswith(prefix):
         logger.error("Invalid Stripe API key format for %s", name)
-        _alert_mismatch("unknown", "", "Stripe key misconfiguration")
+        record_critical_discrepancy("unknown", "Stripe key misconfiguration")
         raise RuntimeError("Invalid Stripe API key format")
     if key.startswith(f"{prefix}test"):
         logger.error("Test mode Stripe API keys are not permitted for %s", name)
-        _alert_mismatch("unknown", "", "Stripe key misconfiguration")
+        record_critical_discrepancy("unknown", "Stripe key misconfiguration")
         raise RuntimeError("Test mode Stripe API keys are not permitted")
     return key
 
@@ -378,11 +374,11 @@ def _verify_route(bot_id: str, route: Mapping[str, str]) -> None:
 
     key = route.get("secret_key")
     if not key or key not in ALLOWED_SECRET_KEYS:
-        _alert_mismatch(bot_id, route.get("account_id", ""))
+        record_critical_discrepancy(bot_id, "Stripe account mismatch")
         raise RuntimeError("Stripe account mismatch")
     account_id = route.get("account_id", STRIPE_MASTER_ACCOUNT_ID)
     if account_id != STRIPE_MASTER_ACCOUNT_ID:
-        _alert_mismatch(bot_id, account_id)
+        record_critical_discrepancy(bot_id, "Stripe account mismatch")
         raise RuntimeError("Stripe account mismatch")
 
 
