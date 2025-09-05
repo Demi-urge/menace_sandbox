@@ -6626,6 +6626,13 @@ class SelfImprovementEngine:
         if pending and pending in self.strategy_manager.strategies:
             self.pending_strategy = None
             return pending
+        strategies = getattr(self.strategy_manager, "strategies", [])
+        try:
+            best = self.strategy_manager.best_strategy(strategies)
+        except Exception:
+            best = None
+        if best is not None:
+            return best
 
         def selector(seq: Sequence[str]) -> str | None:
             return self._select_prompt_strategy(seq)
