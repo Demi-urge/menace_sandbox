@@ -55,3 +55,27 @@ bash scripts/install_stripe_watchdog_cron.sh
 ```
 
 The script registers an hourly cron entry running `stripe_watchdog.py`.
+
+## Sanity layer integration
+
+Detected discrepancies are forwarded to the Menace Sanity Layer which records
+them in SQLite and logs corrective guidance to GPT memory.  A minimal example
+invocation looks like:
+
+```python
+from db_router import init_db_router
+from stripe_watchdog import detect_missing_charges
+
+init_db_router("ba", "local.db", "shared.db")
+charges = [{"id": "ch_1", "amount": 5}]
+detect_missing_charges(charges, [], write_codex=True, export_training=False)
+```
+
+Each anomaly is logged with the instruction:
+
+```
+Avoid generating bots that make Stripe charges without proper logging or central routing.
+```
+
+Use the `write_codex` and `export_training` flags to control whether anomalies
+are exported as Codex samples or appended to the training dataset.

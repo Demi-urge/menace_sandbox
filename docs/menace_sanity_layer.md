@@ -29,6 +29,31 @@ feeds them back into future generations of bots.
   `DiscrepancyRecord` and logging feedback to `GPTMemoryManager`.
 * `fetch_recent_billing_issues` returns recent feedback snippets that can be
   used to bias future prompts or code generation.
+* The ``write_codex`` and ``export_training`` flags determine whether anomalies
+  are exported as Codex samples or appended to the training dataset.
+* Supplying ``config_path`` to :func:`record_billing_event` merges suggested
+  configuration updates into the referenced JSON file.
+
+## Usage
+
+```python
+from menace_sanity_layer import record_payment_anomaly, list_anomalies
+
+record_payment_anomaly(
+    "missing_charge",
+    {"id": "ch_1", "amount": 5},
+    "Avoid generating bots that make Stripe charges without proper logging or central routing.",
+    write_codex=True,
+    export_training=False,
+)
+
+print(list_anomalies(1))
+```
+
+The ``instruction`` field provides a short guideline describing how to prevent
+similar issues in the future.  These snippets are stored in GPT memory and can
+be retrieved via :func:`fetch_recent_billing_issues` to bias subsequent code
+generation.
 
 ## Improving Future Generations
 
