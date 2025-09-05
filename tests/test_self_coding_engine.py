@@ -534,8 +534,8 @@ def test_call_codex_with_backoff_retries(monkeypatch):
     with pytest.raises(sce.RetryError):
         sce.call_codex_with_backoff(client, sce.Prompt("x"))
 
-    assert sleeps == delays[:-1]
-    assert client.calls == len(delays)
+    assert sleeps == delays
+    assert client.calls == len(delays) + 1
 
 
 def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
