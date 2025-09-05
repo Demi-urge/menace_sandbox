@@ -749,6 +749,11 @@ class SandboxSettings(BaseSettings):
         env="CODEX_FALLBACK_MODEL",
         description="Fallback model to use when Codex requests fail.",
     )
+    codex_retry_queue_path: str = Field(
+        "codex_retry_queue.jsonl",
+        env="CODEX_RETRY_QUEUE",
+        description="Path for the Codex retry queue file.",
+    )
     if PYDANTIC_V2:
 
         @field_validator("codex_retry_delays", mode="before")

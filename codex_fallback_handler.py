@@ -18,6 +18,13 @@ from typing import Any
 from dynamic_path_router import resolve_path
 from llm_interface import LLMResult, OpenAIProvider, Prompt
 
+try:  # pragma: no cover - allow flat imports
+    from .sandbox_settings import SandboxSettings
+except Exception:  # pragma: no cover - fallback for direct execution
+    from sandbox_settings import SandboxSettings  # type: ignore
+
+_settings = SandboxSettings()
+
 try:  # pragma: no cover - metrics are optional
     from .metrics_exporter import Gauge  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
@@ -30,9 +37,12 @@ except Exception:  # pragma: no cover - fallback when executed directly
 logger = logging.getLogger(__name__)
 
 # Default location for the retry queue stored as JSONL
-_QUEUE_FILE = resolve_path(os.getenv("CODEX_RETRY_QUEUE", "codex_retry_queue.jsonl"))
+_QUEUE_FILE = resolve_path(_settings.codex_retry_queue_path)
 # Default strategy for handling failures: "queue" or "reroute"
 _DEFAULT_STRATEGY = os.getenv("CODEX_FALLBACK_STRATEGY", "reroute").lower()
+
+# Default model for rerouted prompts
+_FALLBACK_MODEL = _settings.codex_fallback_model
 
 # Optional gauges for tracking behaviour
 _QUEUE_COUNT = (
@@ -65,7 +75,7 @@ def queue_for_retry(prompt: str | Prompt, *, path: Path = _QUEUE_FILE) -> None:
         _QUEUE_COUNT.inc()
 
 
-def route_to_alt_model(prompt: str | Prompt, model: str = "gpt-3.5-turbo") -> LLMResult:
+def route_to_alt_model(prompt: str | Prompt, model: str = _FALLBACK_MODEL) -> LLMResult:
     """Rerun *prompt* using an alternate model."""
 
     p = prompt if isinstance(prompt, Prompt) else Prompt(str(prompt))
