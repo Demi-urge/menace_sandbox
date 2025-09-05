@@ -633,17 +633,16 @@ def charge(
         had_error = True
         raise
     finally:
-        destination = None
+        destination = route.get("account_id") or account_id
+        if not destination:
+            destination = _get_account_id(api_key)
         if isinstance(event, Mapping):
             destination = (
                 event.get("on_behalf_of")
                 or event.get("account")
                 or (event.get("transfer_data") or {}).get("destination")
+                or destination
             )
-        if destination is None:
-            destination = route.get("account_id")
-            if destination is None:
-                destination = _get_account_id(api_key)
 
         logged_amount = amt
         if logged_amount is None and isinstance(event, Mapping):
@@ -819,17 +818,16 @@ def create_subscription(
         raise
     finally:
         currency = route.get("currency")
-        destination = None
+        destination = route.get("account_id") or account_id
+        if not destination:
+            destination = _get_account_id(api_key)
         if isinstance(event, Mapping):
             destination = (
                 event.get("on_behalf_of")
                 or event.get("account")
                 or (event.get("transfer_data") or {}).get("destination")
+                or destination
             )
-        if destination is None:
-            destination = route.get("account_id")
-            if destination is None:
-                destination = _get_account_id(api_key)
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -951,13 +949,16 @@ def refund(
         raise
     finally:
         currency = route.get("currency")
-        destination = None
+        destination = route.get("account_id") or account_id
+        if not destination:
+            destination = _get_account_id(api_key)
         logged_amount: float | None = None
         if isinstance(event, Mapping):
             destination = (
                 event.get("on_behalf_of")
                 or event.get("account")
                 or (event.get("transfer_data") or {}).get("destination")
+                or destination
             )
             possible = event.get("amount")
             if possible is not None:
@@ -965,10 +966,6 @@ def refund(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
-        if destination is None:
-            destination = route.get("account_id")
-            if destination is None:
-                destination = _get_account_id(api_key)
         raw_json = None
         if isinstance(event, Mapping):
             try:
@@ -1062,13 +1059,16 @@ def create_checkout_session(
         raise
     finally:
         currency = route.get("currency")
-        destination = None
+        destination = route.get("account_id") or account_id
+        if not destination:
+            destination = _get_account_id(api_key)
         logged_amount: float | None = None
         if isinstance(event, Mapping):
             destination = (
                 event.get("on_behalf_of")
                 or event.get("account")
                 or (event.get("transfer_data") or {}).get("destination")
+                or destination
             )
             possible = (
                 event.get("amount_total")
@@ -1080,10 +1080,6 @@ def create_checkout_session(
                     logged_amount = float(possible) / 100.0
                 except (TypeError, ValueError):
                     logged_amount = None
-        if destination is None:
-            destination = route.get("account_id")
-            if destination is None:
-                destination = _get_account_id(api_key)
         raw_json = None
         if isinstance(event, Mapping):
             try:
