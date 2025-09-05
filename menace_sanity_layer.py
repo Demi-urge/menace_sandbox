@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import audit_logger
-from log_tags import FEEDBACK
+from log_tags import FEEDBACK, ERROR_FIX
 import db_router
 from db_router import LOCAL_TABLES
 
@@ -78,6 +78,16 @@ _BILLING_EVENT_DB = (
 
 _GPT_MEMORY: GPTMemoryManager | None = None
 
+# Mapping of event types to corrective instructions.
+EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
+    "missing_charge": (
+        "Avoid generating bots that make Stripe charges without proper logging or "
+        "central routing."
+    ),
+    "unapproved_workflow": "Ensure all workflows are approved before execution.",
+    "unknown_webhook": "Register webhooks explicitly or flag them for review.",
+}
+
 # ---------------------------------------------------------------------------
 # Billing anomaly utilities
 
@@ -138,6 +148,71 @@ def _anomaly_instruction(
     if not instr.endswith("."):
         instr += "."
     return instr
+
+
+def record_event(
+    event_type: str,
+    metadata: Dict[str, Any],
+    *,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
+) -> None:
+    """Record a generic anomaly event and log corrective guidance.
+
+    The ``event_type`` is mapped to a human-readable instruction which, along with
+    the provided ``metadata``, is persisted to :class:`gpt_memory.GPTMemoryManager`
+    using the :data:`~log_tags.FEEDBACK` and :data:`~log_tags.ERROR_FIX` tags.  When
+    supplied, ``self_coding_engine`` and ``telemetry_feedback`` hooks allow repeated
+    anomalies to influence future code-generation or architectural decisions.
+    """
+
+    instruction = _anomaly_instruction(
+        event_type, metadata, EVENT_TYPE_INSTRUCTIONS.get(event_type)
+    )
+
+    mgr = _get_gpt_memory()
+    if mgr is not None:
+        try:  # pragma: no cover - best effort
+            mgr.log_interaction(
+                instruction,
+                json.dumps(
+                    {"event_type": event_type, "metadata": metadata},
+                    sort_keys=True,
+                ),
+                tags=[FEEDBACK, ERROR_FIX, event_type],
+            )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "GPT memory logging failed", extra={"event_type": event_type}
+            )
+
+    if self_coding_engine is not None:
+        try:  # pragma: no cover - best effort
+            update_fn = getattr(
+                self_coding_engine, "update_generation_params", None
+            )
+            if callable(update_fn):
+                update_fn(metadata)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "self_coding_engine hook failed", extra={"event_type": event_type}
+            )
+
+    if telemetry_feedback is not None:
+        try:  # pragma: no cover - best effort
+            feedback_fn = getattr(
+                telemetry_feedback, "record_event", None
+            ) or getattr(telemetry_feedback, "log_event", None)
+            if callable(feedback_fn):
+                feedback_fn(event_type, metadata)
+            check_fn = getattr(telemetry_feedback, "check", None)
+            if callable(check_fn):
+                check_fn()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "telemetry_feedback hook failed",
+                extra={"event_type": event_type},
+            )
 
 
 def publish_anomaly(event: dict) -> None:
@@ -414,6 +489,7 @@ def fetch_recent_billing_issues(limit: int = 5) -> List[str]:
 
 
 __all__ = [
+    "record_event",
     "record_payment_anomaly",
     "record_billing_anomaly",
     "record_billing_event",
