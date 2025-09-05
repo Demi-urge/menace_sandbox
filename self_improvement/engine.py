@@ -1623,6 +1623,7 @@ class SelfImprovementEngine:
                                 {"delta": delta_vals, "patch_diff": patch_diff},
                                 failure_reason=failure_reason,
                                 sandbox_metrics=sandbox_metrics,
+                                commit_hash=commit_hash or None,
                             )
                         except Exception:
                             self.logger.exception("log_prompt_attempt failed")
@@ -1726,6 +1727,7 @@ class SelfImprovementEngine:
                 roi_meta,
                 failure_reason=None if log_success else failure_reason,
                 sandbox_metrics=metrics_to_log,
+                commit_hash=commit_hash or None,
             )
         except Exception:
             self.logger.exception("log_prompt_attempt failed")
