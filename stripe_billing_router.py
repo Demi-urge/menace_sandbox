@@ -111,6 +111,9 @@ def _alert_mismatch(
 ) -> None:
     """Backward-compatible wrapper for critical discrepancy handling."""
 
+    from evolution_lock_flag import trigger_lock
+
+    trigger_lock(f"Stripe account mismatch for {bot_id}", severity=5)
     log_critical_discrepancy(bot_id, message)
     # Pause the bot in the sandbox so further actions require review.
     try:
