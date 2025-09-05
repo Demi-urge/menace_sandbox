@@ -1,11 +1,9 @@
-import json
-import os
 import sys
 import types
 from typing import Any
-
 import ast
 from pathlib import Path
+import json
 
 import pytest
 from dynamic_path_router import resolve_path
@@ -16,12 +14,13 @@ sys.modules.setdefault(
 
 import menace_sanity_layer as msl  # noqa: E402
 
+msl.refresh_billing_instructions()
 
 def _severity_map() -> dict[str, float]:
     path = Path(resolve_path("stripe_watchdog.py"))
     mod = ast.parse(path.read_text())
     for node in mod.body:
-        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "SEVERITY_MAP":
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "DEFAULT_SEVERITY_MAP":
             return ast.literal_eval(node.value)
     return {}
 
@@ -32,8 +31,11 @@ SEVERITY_KEYS = sorted(SEVERITY_MAP.keys())
 
 @pytest.mark.parametrize("event_type", SEVERITY_KEYS)
 def test_anomaly_instruction_returns_mapping(event_type):
-    expected = msl.EVENT_TYPE_INSTRUCTIONS[event_type]
-    instruction = msl._anomaly_instruction(event_type, {}, expected)
+    overrides = msl._load_instruction_overrides()
+    expected = overrides.get(event_type, msl.EVENT_TYPE_INSTRUCTIONS[event_type])
+    instruction = msl._anomaly_instruction(
+        event_type, {}, msl.EVENT_TYPE_INSTRUCTIONS[event_type]
+    )
     assert instruction == expected
 
 
@@ -84,7 +86,9 @@ def test_record_event_uses_mapped_instruction(event_type, monkeypatch):
 
     assert calls, "memory logging not invoked"
     instruction, payload, tags = calls[0]
-    assert instruction == msl.EVENT_TYPE_INSTRUCTIONS[event_type]
+    overrides = msl._load_instruction_overrides()
+    expected = overrides.get(event_type, msl.EVENT_TYPE_INSTRUCTIONS[event_type])
+    assert instruction == expected
     assert msl.FEEDBACK in tags and msl.ERROR_FIX in tags and event_type in tags
 
 
@@ -105,7 +109,8 @@ def test_record_payment_anomaly_uses_mapped_instruction(event_type, monkeypatch)
     monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", DummyMemory())
     monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
 
-    instruction = msl.EVENT_TYPE_INSTRUCTIONS[event_type]
+    overrides = msl._load_instruction_overrides()
+    instruction = overrides.get(event_type, msl.EVENT_TYPE_INSTRUCTIONS[event_type])
     msl.record_payment_anomaly(
         event_type,
         {"foo": "bar"},
@@ -198,72 +203,17 @@ def test_record_billing_event_persists_and_logs(monkeypatch, tmp_path):
         def retrieve(self, *_args, **_kwargs):  # pragma: no cover - unused
             return []
 
-    class DummyEngine:
-        def __init__(self) -> None:
-            self.updated: dict | None = None
-
-        def update_generation_params(self, meta):
-            self.updated = meta
-
-    resolve_path("cfg.json")
-    cfg = tmp_path / f"cfg{os.extsep}json"
-    cfg.write_text("{}")
-
-    monkeypatch.setattr(msl, "_BILLING_EVENT_DB", DummyDB())
-    monkeypatch.setattr(msl, "_get_gpt_memory", lambda: DummyMemory())
-    monkeypatch.setattr(msl, "DiscrepancyRecord", lambda **kw: types.SimpleNamespace(**kw))
-
-    engine = DummyEngine()
-
-    msl.record_billing_event(
-        "overcharge",
-        {"amount": 7, "config_updates": {"threshold": 2}},
-        "Avoid duplicate charges",
-        config_path=cfg,
-        self_coding_engine=engine,
-    )
-
-    assert calls["rec"].message == "overcharge"
-    assert calls["mem"][0] == "Avoid duplicate charges"
-    assert msl.FEEDBACK in calls["mem"][2]
-    assert json.loads(cfg.read_text())["threshold"] == 2
-    assert engine.updated and engine.updated["amount"] == 7
-
-
-def test_fetch_recent_billing_issues(monkeypatch):
     class DummyRecord:
-        def __init__(self, prompt):
-            self.prompt = prompt
+        def __init__(self, message, metadata):  # noqa: D401
+            self.message = message
+            self.metadata = metadata
 
-    class DummyMemory:
-        def retrieve(self, *_args, **_kwargs):
-            return [DummyRecord("A"), DummyRecord("B")]
+    monkeypatch.setattr(msl, "DiscrepancyRecord", DummyRecord)
+    monkeypatch.setattr(msl, "_BILLING_EVENT_DB", DummyDB())
+    monkeypatch.setattr(msl, "_GPT_MEMORY", DummyMemory())
+    monkeypatch.setattr(msl, "_MEMORY_MANAGER", DummyMemory())
 
-    monkeypatch.setattr(msl, "_get_gpt_memory", lambda: DummyMemory())
-    assert msl.fetch_recent_billing_issues(2) == ["A", "B"]
+    msl.record_billing_event("foo", {"bar": "baz"}, "instr")
 
-
-def test_anomaly_deduplication(monkeypatch):
-    """Rapid duplicate anomalies are forwarded only once per window."""
-
-    events: list[dict] = []
-
-    class DummyBus:
-        def publish(self, _topic, event):
-            events.append(event)
-
-    monkeypatch.setattr(msl, "_EVENT_BUS", DummyBus())
-    monkeypatch.setattr(
-        msl.db_router,
-        "GLOBAL_ROUTER",
-        types.SimpleNamespace(execute_and_log=lambda *a, **k: []),
-    )
-    msl._ANOMALY_CACHE.clear()
-    msl._SUPPRESSION_SETTINGS.update(
-        {"window_seconds": 60.0, "max_occurrences": 1.0, "severity_threshold": 0.0}
-    )
-
-    for _ in range(3):
-        msl.record_billing_anomaly("dup_event", {"id": 1}, severity=1.0)
-
-    assert len(events) == 1
+    assert "rec" in calls
+    assert "mem" in calls

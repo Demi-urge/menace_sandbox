@@ -24,6 +24,8 @@ Key features implemented according to the specification:
   ``stripe_anomaly`` event type.  When ``--write-codex`` is supplied the
   anomaly is also emitted as a ``TrainingSample`` for downstream Codex
   ingestion.
+* Allowed webhook endpoints, anomaly hints and severities are sourced from
+  YAML configuration files so updates can take effect without code changes.
 * :func:`main` exposes a CLI so the watchdog can be run by ``cron``.
 """
 
@@ -114,14 +116,17 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-#: Default set of allowed webhook IDs or URLs. Any endpoint returned by Stripe
-#: outside this set (and the configured list) is flagged as an anomaly.
-DEFAULT_ALLOWED_WEBHOOKS = {
+#: Fallback set of allowed webhook IDs or URLs. Any endpoint returned by Stripe
+#: outside the configured list is flagged as an anomaly when it doesn't appear
+#: in the YAML configuration or ``STRIPE_ALLOWED_WEBHOOKS`` environment variable.
+_DEFAULT_ALLOWED_WEBHOOKS = {
     "https://menace.example.com/stripe/webhook",
 }
 
-#: Per-anomaly severity used when logging events to the sanity layer.
-SEVERITY_MAP = {
+#: Default per-anomaly severities used when logging events to the sanity layer.
+#: These values can be overridden via ``config/billing_instructions.yaml`` which
+#: is monitored by :func:`_refresh_instruction_cache`.
+DEFAULT_SEVERITY_MAP = {
     "missing_charge": 2.5,
     "missing_refund": 2.0,
     "missing_failure_log": 1.5,
@@ -131,6 +136,7 @@ SEVERITY_MAP = {
     "revenue_mismatch": 4.0,
     "account_mismatch": 3.0,
 }
+SEVERITY_MAP = DEFAULT_SEVERITY_MAP.copy()
 
 # Module identifiers used for targeted remediation by downstream consumers.
 BILLING_ROUTER_MODULE = "stripe_billing_router"
@@ -149,22 +155,47 @@ CONFIG_PATH = resolve_path("config/stripe_watchdog.yaml")
 #: Path used when exporting normalized anomalies for training purposes.
 TRAINING_EXPORT = resolve_path("training_data/stripe_anomalies.jsonl")
 
-# Instruction overrides for sanity layer feedback.  ``menace_sanity_layer`` caches
-# the file contents so we track the modification time and refresh when it changes.
+# Instruction and severity overrides for sanity layer feedback. ``menace_sanity_layer``
+# caches the file contents so we track the modification time and refresh when it
+# changes.
 _BILLING_INSTRUCTIONS_PATH = Path(resolve_path("config/billing_instructions.yaml"))
 _BILLING_INSTRUCTIONS_MTIME = 0.0
 
 
-def _refresh_instruction_cache() -> None:
-    """Reload billing instruction overrides when the config file changes."""
+def _load_severity_map(path: Path | None = None) -> Dict[str, float]:
+    """Return per-anomaly severities from ``path`` or defaults."""
 
-    global _BILLING_INSTRUCTIONS_MTIME
+    cfg = path or _BILLING_INSTRUCTIONS_PATH
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        sev = data.get("severity_map", {})
+        if isinstance(sev, dict):
+            return {
+                str(k): float(v)
+                for k, v in sev.items()
+                if isinstance(v, (int, float))
+            }
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logger.exception(
+            "Failed to load billing instructions", extra={"path": str(cfg)}
+        )
+    return DEFAULT_SEVERITY_MAP.copy()
+
+
+def _refresh_instruction_cache() -> None:
+    """Reload billing instructions and severity map when the config file changes."""
+
+    global _BILLING_INSTRUCTIONS_MTIME, SEVERITY_MAP
     try:
         mtime = _BILLING_INSTRUCTIONS_PATH.stat().st_mtime
     except FileNotFoundError:
         mtime = 0.0
     if mtime != _BILLING_INSTRUCTIONS_MTIME:
         menace_sanity_layer.refresh_billing_instructions(_BILLING_INSTRUCTIONS_PATH)
+        SEVERITY_MAP = _load_severity_map(_BILLING_INSTRUCTIONS_PATH)
         _BILLING_INSTRUCTIONS_MTIME = mtime
 
 
@@ -184,6 +215,9 @@ def _sanity_feedback_enabled(path: Path | None = None) -> bool:
 
 
 SANITY_LAYER_FEEDBACK_ENABLED = _sanity_feedback_enabled()
+
+# Load billing instructions and severity map at module import.
+_refresh_instruction_cache()
 
 # Generic instruction used when no specific guidance exists for an event type.
 DEFAULT_BILLING_EVENT_INSTRUCTION = (
@@ -267,28 +301,28 @@ LEDGER_FILE = resolve_path("finance_logs/stripe_ledger.jsonl")
 
 
 def _load_allowed_webhooks(path: Path | None = None) -> set[str]:
-    """Return allowed webhook identifiers from environment or ``path``."""
+    """Return allowed webhook identifiers from environment or YAML config."""
 
-    allowed = set(DEFAULT_ALLOWED_WEBHOOKS)
+    cfg = path or CONFIG_PATH
+    allowed: set[str] = set()
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        endpoints = data.get("allowed_webhooks") or data.get("authorized_webhooks")
+        if isinstance(endpoints, list):
+            allowed.update(str(url) for url in endpoints if isinstance(url, str))
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
 
     env_val = os.getenv("STRIPE_ALLOWED_WEBHOOKS")
     if env_val:
         allowed.update(x.strip() for x in env_val.split(",") if x.strip())
-        return allowed
 
-    cfg = path or CONFIG_PATH
-    try:
-        with cfg.open("r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-    except FileNotFoundError:
-        return allowed
-    except Exception:
-        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
-        return allowed
+    if not allowed:
+        allowed.update(_DEFAULT_ALLOWED_WEBHOOKS)
 
-    endpoints = data.get("allowed_webhooks") or data.get("authorized_webhooks")
-    if isinstance(endpoints, list):
-        allowed.update(str(url) for url in endpoints if isinstance(url, str))
     return allowed
 
 
@@ -1357,7 +1391,7 @@ def check_events(
         for anomaly in anomalies:
             metadata = dict(anomaly)
             metadata["timestamp"] = datetime.utcnow().isoformat()
-            metadata["stripe_account"] = anomaly.get("account_id")
+            metadata["stripe_account"] = anomaly.get("account_id") or expected_account_id
             if SANITY_LAYER_FEEDBACK_ENABLED:
                 try:
                     event_type = anomaly.get("type", "unknown")
