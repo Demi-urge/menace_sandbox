@@ -3,6 +3,7 @@ import sys
 import types
 
 import pytest
+import yaml
 
 
 sys.modules.setdefault(
@@ -187,6 +188,54 @@ def test_repeated_anomalies_trigger_param_update(event_type, metadata, hint, mon
     key = f"billing:{event_type}"
     assert mm_storage[key]["count"] == msl.PAYMENT_ANOMALY_THRESHOLD
     assert engine.calls == [{**hint, "event_type": event_type}]
+
+
+def test_custom_threshold_and_hint_override(monkeypatch, tmp_path):
+    mm_storage: dict[str, dict] = {}
+
+    class DummyMM:
+        def query(self, key, limit):
+            if key in mm_storage:
+                return [types.SimpleNamespace(data=json.dumps(mm_storage[key]))]
+            return []
+
+        def store(self, key, data, tags=""):
+            mm_storage[key] = data
+
+    class DummyEngine:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        def update_generation_params(self, meta):
+            self.calls.append(meta)
+
+    cfg = {
+        "payment_anomaly_threshold": 5,
+        "anomaly_thresholds": {"missing_charge": 2},
+        "anomaly_hints": {"missing_charge": {"custom_hint": True}},
+    }
+    cfg_path = tmp_path / "billing.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    original = msl._INSTRUCTION_PATH
+    msl.refresh_billing_instructions(cfg_path)
+
+    monkeypatch.setattr(msl, "_get_memory_manager", lambda: DummyMM())
+    monkeypatch.setattr(msl, "_DISCREPANCY_DB", None)
+    monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
+    monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
+
+    engine = DummyEngine()
+    for _ in range(2):
+        msl.record_payment_anomaly(
+            "missing_charge",
+            {"charge_id": "c"},
+            self_coding_engine=engine,
+        )
+
+    key = "billing:missing_charge"
+    assert mm_storage[key]["count"] == 2
+    assert engine.calls == [{"custom_hint": True, "event_type": "missing_charge"}]
+    msl.refresh_billing_instructions(original)
 
 
 @pytest.mark.parametrize(
