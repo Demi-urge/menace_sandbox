@@ -1,3 +1,7 @@
+# Routing rules for ``stripe_billing_router``. Each route includes an
+# ``account_id`` indicating which Stripe account should receive the charge.
+# If omitted, the master account is assumed.  All actions are logged via the
+# billing log database.
 allowed_secret_keys:
   - sk_live_dummy
 stripe:

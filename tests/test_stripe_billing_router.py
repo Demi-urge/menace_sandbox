@@ -81,6 +81,7 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     monkeypatch.delenv("STRIPE_ALLOWED_SECRET_KEYS", raising=False)
     sbr = _load("stripe_billing_router")
     monkeypatch.setattr(sbr.billing_logger, "log_event", lambda **kw: None)
+    monkeypatch.setattr(sbr, "log_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(sbr, "_get_account_id", lambda api_key: "acct_master")
     return sbr
 
@@ -155,6 +156,10 @@ def test_successful_route_and_charge(monkeypatch, tmp_path):
         Invoice=types.SimpleNamespace(create=fake_invoice_create, pay=fake_invoice_pay),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
+    log_record: dict[str, object] = {}
+    monkeypatch.setattr(
+        sbr, "log_billing_event", lambda action, **kw: log_record.update({"action": action, **kw})
+    )
 
     route = sbr._resolve_route("finance:finance_router_bot")
     assert route["product_id"] == "prod_finance_router"
@@ -173,6 +178,8 @@ def test_successful_route_and_charge(monkeypatch, tmp_path):
     assert invoice_create["idempotency_key"] == expected_key
     assert invoice_pay["idempotency_key"] == expected_key
     assert fake_stripe.api_key == "original"
+    assert log_record["action"] == "charge"
+    assert log_record["bot_id"] == "finance:finance_router_bot"
 
 
 def test_charge_uses_payment_intent_when_no_price(monkeypatch, tmp_path):
@@ -638,12 +645,20 @@ def test_create_subscription_logs_event(sbr_module, mock_subscription_api, monke
     monkeypatch.setattr(
         sbr_module.billing_logger, "log_event", lambda **kw: log_record.update(kw)
     )
+    log_db: dict[str, object] = {}
+    monkeypatch.setattr(
+        sbr_module,
+        "log_billing_event",
+        lambda action, **kw: log_db.update({"action": action, **kw}),
+    )
     res = sbr_module.create_subscription(
         "finance:finance_router_bot", idempotency_key="sub-key"
     )
     assert res["id"] == "sub_test"
     assert log_record["action_type"] == "subscription"
     assert log_record["id"] == "sub_test"
+    assert log_db["action"] == "subscription"
+    assert log_db["bot_id"] == "finance:finance_router_bot"
 
 
 def test_refund_success(monkeypatch, sbr_module):
@@ -662,6 +677,12 @@ def test_refund_success(monkeypatch, sbr_module):
     monkeypatch.setattr(
         sbr_module.billing_logger, "log_event", lambda **kw: log_record.update(kw)
     )
+    log_db: dict[str, object] = {}
+    monkeypatch.setattr(
+        sbr_module,
+        "log_billing_event",
+        lambda action, **kw: log_db.update({"action": action, **kw}),
+    )
     res = sbr_module.refund(
         "finance:finance_router_bot",
         "ch_test",
@@ -670,11 +691,13 @@ def test_refund_success(monkeypatch, sbr_module):
         reason="requested_by_customer",
     )
     assert res["id"] == "rf_test"
-    assert recorded["charge"] == "ch_test"
+    assert recorded["payment_intent"] == "ch_test"
     assert recorded["amount"] == 500
     assert recorded["api_key"] == "sk_live_dummy"
     assert log_record["action_type"] == "refund"
     assert log_record["id"] == "rf_test"
+    assert log_db["action"] == "refund"
+    assert log_db["bot_id"] == "finance:finance_router_bot"
 
 
 def test_create_checkout_session_success(monkeypatch, sbr_module):
@@ -696,19 +719,69 @@ def test_create_checkout_session_success(monkeypatch, sbr_module):
     monkeypatch.setattr(
         sbr_module.billing_logger, "log_event", lambda **kw: log_record.update(kw)
     )
-    line_items = [{"price": "price_finance_standard", "quantity": 1}]
-    res = sbr_module.create_checkout_session(
-        "finance:finance_router_bot",
-        line_items,
-        amount=10.0,
-        user_email="user@example.com",
-        success_url="https://example.com/s",
-        cancel_url="https://example.com/c",
-        mode="payment",
+    log_db: dict[str, object] = {}
+    monkeypatch.setattr(
+        sbr_module,
+        "log_billing_event",
+        lambda action, **kw: log_db.update({"action": action, **kw}),
     )
+    line_items = [{"price": "price_finance_standard", "quantity": 1}]
+    params = {
+        "line_items": line_items,
+        "mode": "payment",
+        "success_url": "https://example.com/s",
+        "cancel_url": "https://example.com/c",
+    }
+    res = sbr_module.create_checkout_session("finance:finance_router_bot", params)
     assert res["id"] == "cs_test"
     assert recorded["line_items"] == line_items
     assert recorded["customer"] == "cus_finance_default"
     assert recorded["api_key"] == "sk_live_dummy"
     assert log_record["action_type"] == "checkout_session"
     assert log_record["id"] == "cs_test"
+    assert log_db["action"] == "checkout_session"
+    assert log_db["bot_id"] == "finance:finance_router_bot"
+
+
+def test_invalid_secret_key_triggers_alert_and_rollback(monkeypatch, sbr_module):
+    alerts: list[tuple[tuple, dict]] = []
+    rollbacks: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        sbr_module.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
+    )
+
+    class DummyARM:
+        def auto_rollback(self, tag, bots):
+            rollbacks.append((tag, bots))
+
+    monkeypatch.setattr(sbr_module, "AutomatedRollbackManager", lambda: DummyARM())
+
+    with pytest.raises(RuntimeError, match="critical_discrepancy"):
+        sbr_module._verify_route(
+            "finance:finance_router_bot", {"secret_key": "sk_live_bad"}
+        )
+
+    assert alerts and rollbacks
+
+
+def test_invalid_account_triggers_alert_and_rollback(monkeypatch, sbr_module):
+    alerts: list[tuple[tuple, dict]] = []
+    rollbacks: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        sbr_module.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
+    )
+
+    class DummyARM:
+        def auto_rollback(self, tag, bots):
+            rollbacks.append((tag, bots))
+
+    monkeypatch.setattr(sbr_module, "AutomatedRollbackManager", lambda: DummyARM())
+
+    route = {
+        "secret_key": sbr_module.STRIPE_SECRET_KEY,
+        "account_id": "acct_bad",
+    }
+    with pytest.raises(RuntimeError, match="critical_discrepancy"):
+        sbr_module._verify_route("finance:finance_router_bot", route)
+
+    assert alerts and rollbacks
