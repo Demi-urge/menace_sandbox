@@ -110,11 +110,7 @@ def _alert_mismatch(
 ) -> None:
     """Backward-compatible wrapper for critical discrepancy handling."""
 
-    log_critical_discrepancy(message, bot_id)
-    try:  # pragma: no cover - rollback side effects
-        rollback_manager.RollbackManager().rollback("latest", requesting_bot=bot_id)
-    except Exception:
-        logger.exception("rollback failed for bot '%s'", bot_id)
+    log_critical_discrepancy(bot_id, message)
     timestamp_ms = int(time.time() * 1000)
     billing_logger.log_event(
         error=True,
