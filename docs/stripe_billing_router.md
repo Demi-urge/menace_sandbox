@@ -193,6 +193,15 @@ overridden or sourced from environment variables or secret storage.
 A ``critical_discrepancy`` alert signals the automatic rollback described
 above; resolve the configuration issue before retrying the billing operation.
 
+### Central Anomaly Routing
+
+Any detected discrepancy or account mismatch **must** be routed through
+``menace_sanity_layer.record_payment_anomaly`` with a severity of ``5.0``.
+This central handler records the event in the shared ledger and ensures audit
+consistency.  Bypassing the router or logging anomalies elsewhere is
+prohibited; always forward full details so investigations have a single source
+of truth.
+
 ## Webhook Account Validation
 
 Stripe webhooks should also be verified to ensure events originate from the
