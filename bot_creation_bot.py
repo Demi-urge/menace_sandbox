@@ -36,6 +36,7 @@ from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
 from .roi_tracker import ROITracker
+from .menace_sanity_layer import fetch_recent_billing_issues
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -443,7 +444,15 @@ class BotCreationBot(AdminBotBase):
                 _ctx, session_id = self.cognition_layer.query(
                     f"self coding patch for {prompt_module}"
                 )
-                self.self_coding_engine.patch_file(file_path, "helper")
+                billing_instructions = fetch_recent_billing_issues()
+                context_meta = (
+                    {"billing_instructions": billing_instructions}
+                    if billing_instructions
+                    else None
+                )
+                self.self_coding_engine.patch_file(
+                    file_path, "helper", context_meta=context_meta
+                )
                 self.cognition_layer.record_patch_outcome(session_id, True, contribution=1.0)
             except Exception as exc:
                 self.cognition_layer.record_patch_outcome(session_id, False, contribution=0.0)

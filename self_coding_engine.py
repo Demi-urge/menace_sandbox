@@ -62,6 +62,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
         recent_error_fix,
         recent_improvement_path,
     )
+from .menace_sanity_layer import fetch_recent_billing_issues
 try:  # pragma: no cover - optional rollback support
     from .rollback_manager import RollbackManager
 except Exception:  # pragma: no cover - degrade gracefully when missing
@@ -1190,6 +1191,23 @@ class SelfCodingEngine:
             else:
                 rc_text = rc
             prompt_obj.text += "\n\n### Retrieval context\n" + rc_text
+
+        billing_notes = (
+            metadata.get("billing_instructions")
+            if metadata and metadata.get("billing_instructions")
+            else fetch_recent_billing_issues()
+        )
+        if billing_notes:
+            billing_text = (
+                "\n".join(billing_notes)
+                if isinstance(billing_notes, list)
+                else str(billing_notes)
+            )
+            try:
+                prompt_obj.text += "\n\n### Billing issues\n" + billing_text
+            except Exception:
+                if hasattr(prompt_obj, "user"):
+                    prompt_obj.user += "\n\n### Billing issues\n" + billing_text
 
         # Incorporate past patch outcomes from memory
         history = ""
