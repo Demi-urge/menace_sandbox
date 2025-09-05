@@ -6,6 +6,7 @@ import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from collections import OrderedDict
+from dynamic_path_router import resolve_path
 
 root_path = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_path))
@@ -14,7 +15,8 @@ sandbox_runner_pkg = types.ModuleType("sandbox_runner")
 sandbox_runner_pkg.__path__ = [str(pkg_path)]
 sys.modules["sandbox_runner"] = sandbox_runner_pkg
 spec = importlib.util.spec_from_file_location(
-    "sandbox_runner.generative_stub_provider", pkg_path / "generative_stub_provider.py"
+    "sandbox_runner.generative_stub_provider",
+    resolve_path("sandbox_runner/generative_stub_provider.py"),
 )
 gsp = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
