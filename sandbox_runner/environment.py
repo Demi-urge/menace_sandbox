@@ -7624,7 +7624,7 @@ def generate_workflows_for_modules(
     wf_db = WorkflowDB(Path(workflows_db), router=router)
     ids: list[int] = []
 
-    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+    repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
     graph = None
     if build_import_graph and nx:
         try:
@@ -7735,7 +7735,7 @@ def try_integrate_into_workflows(
     import ast
     import asyncio
 
-    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+    repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
 
     side_effects = side_effects or {}
     try:
@@ -8005,7 +8005,7 @@ def append_orphan_modules_to_workflows(
     from menace.task_handoff_bot import WorkflowDB
     from db_router import GLOBAL_ROUTER
 
-    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+    repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
     steps: list[str] = []
     for m in modules:
         p = Path(m)
@@ -8577,7 +8577,7 @@ def auto_include_modules(
     settings = SandboxSettings()
     min_roi = getattr(settings, "min_integration_roi", 0.0)
 
-    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+    repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
 
     recursive_orphans = recursive or os.getenv("SANDBOX_RECURSIVE_ORPHANS", "1") not in {"0", "false", "False"}
 
