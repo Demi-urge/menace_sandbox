@@ -30,6 +30,7 @@ def capture(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None
     )
+    monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
 
     class DummyTrail:
         def __init__(self, path):
@@ -66,6 +67,47 @@ def test_orphan_charge_logged(capture, monkeypatch):
 
     assert anomalies and anomalies[0]["id"] == "ch_orphan"
     assert events and events[0][0] == "stripe_anomaly"
+
+
+def test_record_billing_event_called(capture, monkeypatch):
+    events = capture
+
+    charges = [
+        {"id": "ch_new", "created": 1, "amount": 1000, "status": "succeeded"}
+    ]
+    ledger: list[dict] = []
+
+    monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test")
+    monkeypatch.setattr(sw, "fetch_recent_charges", lambda api_key, s, e: charges)
+    monkeypatch.setattr(sw, "load_local_ledger", lambda s, e: ledger)
+    monkeypatch.setattr(sw, "load_billing_logs", lambda s, e, action="charge": [])
+    monkeypatch.setattr(sw, "check_webhook_endpoints", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "DiscrepancyDB", None)
+    monkeypatch.setattr(sw, "DiscrepancyRecord", None)
+
+    fake_stripe = SimpleNamespace(
+        Account=SimpleNamespace(retrieve=lambda api_key=None: {"id": "acct_test"})
+    )
+    monkeypatch.setattr(sw, "stripe", fake_stripe)
+
+    calls: list = []
+
+    def fake_record(event_type, metadata, instruction, **kwargs):
+        calls.append((event_type, metadata, instruction))
+
+    monkeypatch.setattr(sw, "record_billing_event", fake_record)
+
+    sw.check_events()
+
+    assert calls, "record_billing_event was not called"
+    event_type, metadata, instruction = calls[0]
+    assert event_type == "missing_charge"
+    assert metadata.get("stripe_account") == "acct_test"
+    assert "timestamp" in metadata
+    assert (
+        instruction
+        == "Avoid generating bots that issue Stripe charges without logging through billing_logger."
+    )
 
 
 def test_webhook_endpoint_validation(capture, monkeypatch):
