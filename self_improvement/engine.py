@@ -6612,14 +6612,6 @@ class SelfImprovementEngine:
                 except Exception:
                     self.logger.exception("strategy rotation failed")
                     next_template = None
-                if not next_template:
-                    fallback_map = {
-                        "score_drop": "strict_fix",
-                        "test_failed": "delete_rebuild",
-                        "entropy_regression": "comment_refactor",
-                    }
-                    key = "test_failed" if failure_reason == "tests_failed" else failure_reason
-                    next_template = fallback_map.get(key)
                 self.pending_strategy = next_template
 
         if success and strategy and hasattr(self, "strategy_manager"):
