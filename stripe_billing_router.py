@@ -21,6 +21,7 @@ import yaml
 from dynamic_path_router import resolve_path
 
 from billing import billing_logger
+from billing.billing_ledger import record_payment
 from vault_secret_provider import VaultSecretProvider
 import alert_dispatcher
 import rollback_manager
@@ -586,6 +587,14 @@ def charge(
             raw_event_json=raw_json,
             error=False,
         )
+        record_payment(
+            "charge",
+            logged_amount,
+            bot_id,
+            destination,
+            email=user_email,
+            ts=timestamp_ms,
+        )
 
 
 # Backward compatibility
@@ -700,6 +709,14 @@ def create_subscription(
             raw_event_json=raw_json,
             error=False,
         )
+        record_payment(
+            "subscription",
+            None,
+            bot_id,
+            destination,
+            email=user_email,
+            ts=timestamp_ms,
+        )
 
 
 def refund(
@@ -776,6 +793,14 @@ def refund(
             raw_event_json=raw_json,
             error=False,
         )
+        record_payment(
+            "refund",
+            logged_amount,
+            bot_id,
+            destination,
+            email=user_email,
+            ts=timestamp_ms,
+        )
 
 
 def create_checkout_session(
@@ -844,6 +869,14 @@ def create_checkout_session(
             destination_account=destination,
             raw_event_json=raw_json,
             error=False,
+        )
+        record_payment(
+            "checkout",
+            logged_amount,
+            bot_id,
+            destination,
+            email=user_email,
+            ts=timestamp_ms,
         )
 
 
