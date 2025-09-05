@@ -51,7 +51,11 @@ def _import_module(monkeypatch, tmp_path, secrets=None):
     monkeypatch.setenv("STRIPE_ROUTING_CONFIG", str(cfg))
     vsp = _load("vault_secret_provider")
     rb = types.SimpleNamespace(
-        RollbackManager=type("RollbackManager", (), {"auto_rollback": lambda self, tag, nodes: None})
+        RollbackManager=type(
+            "RollbackManager",
+            (),
+            {"auto_rollback": lambda self, tag, nodes: None},
+        )
     )
     sys.modules["rollback_manager"] = rb
     sys.modules["sbrpkg.rollback_manager"] = rb
@@ -72,10 +76,12 @@ def sbr_with_db(monkeypatch, tmp_path):
     sbr = _import_module(monkeypatch, tmp_path)
     bl = importlib.reload(sys.modules["billing.billing_logger"])
     monkeypatch.setattr(sbr, "billing_logger", bl)
-    conn = sqlite3.connect(":memory:")
+    conn = sqlite3.connect(":memory:")  # noqa: SQL001
+
     class Router:
         def get_connection(self, name: str):
             return conn
+
     router = Router()
     monkeypatch.setattr(sbr.billing_logger, "GLOBAL_ROUTER", router)
     monkeypatch.setattr(sbr.billing_logger, "init_db_router", lambda name: router)
@@ -84,12 +90,16 @@ def sbr_with_db(monkeypatch, tmp_path):
 
 def test_charge_writes_ledger(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
+
     def fake_item_create(*, api_key, **params):
         return {"id": "ii_test", **params}
+
     def fake_invoice_create(*, api_key, **params):
         return {"id": "in_test", **params}
+
     def fake_invoice_pay(invoice_id, *, api_key, **params):
         return {"id": invoice_id, "amount_paid": 1250, "on_behalf_of": "acct_master"}
+
     fake_stripe = types.SimpleNamespace(
         api_key="orig",
         InvoiceItem=types.SimpleNamespace(create=fake_item_create),
@@ -105,8 +115,10 @@ def test_charge_writes_ledger(monkeypatch, sbr_with_db):
 
 def test_create_subscription_writes_ledger(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
+
     def fake_create(*, api_key, **params):
         return {"id": "sub_test", "on_behalf_of": "acct_master"}
+
     fake_stripe = types.SimpleNamespace(
         api_key="orig", Subscription=types.SimpleNamespace(create=fake_create)
     )
@@ -120,13 +132,15 @@ def test_create_subscription_writes_ledger(monkeypatch, sbr_with_db):
 
 def test_refund_writes_ledger(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
+
     def fake_create(*, api_key, **params):
         return {"id": "rf_test", "amount": 500, "on_behalf_of": "acct_master"}
+
     fake_stripe = types.SimpleNamespace(
         api_key="orig", Refund=types.SimpleNamespace(create=fake_create)
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
-    sbr.refund("finance:finance_router_bot", "pi_test", amount=5.0)
+    sbr.refund("finance:finance_router_bot", "ch_test", amount=5.0)
     row = conn.execute(
         "SELECT id, action_type, amount, bot_id, error FROM stripe_ledger"
     ).fetchone()
@@ -135,42 +149,54 @@ def test_refund_writes_ledger(monkeypatch, sbr_with_db):
 
 def test_create_checkout_session_writes_ledger(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
+
     def fake_create(*, api_key, **params):
         return {"id": "cs_test", "amount_total": 1000, "on_behalf_of": "acct_master"}
+
     fake_stripe = types.SimpleNamespace(
         api_key="orig",
         checkout=types.SimpleNamespace(Session=types.SimpleNamespace(create=fake_create)),
     )
     monkeypatch.setattr(sbr, "stripe", fake_stripe)
-    params = {
-        "success_url": "https://example.com/s",
-        "cancel_url": "https://example.com/c",
-        "mode": "payment",
-    }
-    sbr.create_checkout_session("finance:finance_router_bot", params)
+    line_items = [{"price": "price_finance_standard", "quantity": 1}]
+    sbr.create_checkout_session(
+        "finance:finance_router_bot",
+        line_items,
+        amount=10.0,
+        success_url="https://example.com/s",
+        cancel_url="https://example.com/c",
+        mode="payment",
+    )
     row = conn.execute(
         "SELECT id, action_type, amount, bot_id, error FROM stripe_ledger"
     ).fetchone()
-    assert row == ("cs_test", "checkout", 10.0, "finance:finance_router_bot", 0)
+    assert row == ("cs_test", "checkout_session", 10.0, "finance:finance_router_bot", 0)
 
 
 def test_mismatched_account_dispatches_alert_and_rollbacks(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
+
     alerts = []
     rollbacks = []
     monkeypatch.setattr(
         sbr.alert_dispatcher, "dispatch_alert", lambda *a, **k: alerts.append((a, k))
     )
+
     class RB:
         def auto_rollback(self, tag, nodes):
             rollbacks.append((tag, nodes))
+
     monkeypatch.setattr(sbr.rollback_manager, "RollbackManager", RB)
+
     def fake_item_create(*, api_key, **params):
         return {"id": "ii_test", **params}
+
     def fake_invoice_create(*, api_key, **params):
         return {"id": "in_test", **params}
+
     def fake_invoice_pay(invoice_id, *, api_key, **params):
         return {"id": invoice_id, "on_behalf_of": "acct_bad"}
+
     fake_stripe = types.SimpleNamespace(
         api_key="orig",
         InvoiceItem=types.SimpleNamespace(create=fake_item_create),
@@ -188,8 +214,10 @@ def test_mismatched_account_dispatches_alert_and_rollbacks(monkeypatch, sbr_with
 
 def test_charge_logs_on_api_exception(monkeypatch, sbr_with_db):
     sbr, conn = sbr_with_db
+
     def fake_item_create(*, api_key, **params):
         raise RuntimeError("boom")
+
     fake_stripe = types.SimpleNamespace(
         api_key="orig",
         InvoiceItem=types.SimpleNamespace(create=fake_item_create),

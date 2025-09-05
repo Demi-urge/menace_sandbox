@@ -113,11 +113,14 @@ from stripe_billing_router import (
 
 # Each call below automatically appends a row to ``stripe_ledger``
 charge("finance:finance_router_bot", amount=10.0)
-refund("finance:finance_router_bot", "pi_123", amount=5.0)
+refund("finance:finance_router_bot", "ch_123", amount=5.0)
 create_subscription("finance:finance_router_bot")
 create_checkout_session(
     "finance:finance_router_bot",
-    {"success_url": "https://example.com/s", "cancel_url": "https://example.com/c", "mode": "payment"},
+    [{"price": "price_finance_standard", "quantity": 1}],
+    success_url="https://example.com/s",
+    cancel_url="https://example.com/c",
+    mode="payment",
 )
 ```
 
