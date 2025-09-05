@@ -100,9 +100,10 @@ fail the prompt is simplified – examples are trimmed and system text is remove
 – before one final attempt.
 
 If no code is produced, `codex_fallback_handler.handle` either queues the prompt
-or reroutes it to a lower‑cost model.  The function now returns an
-`LLMResult`—use `result.text` to access any rerouted completion and inspect
-`result.raw` for provider metadata or failure reasons.  Select the behaviour via
+or reroutes it to a lower‑cost model.  The function returns an `LLMResult` only
+when rerouting yields usable text; otherwise it returns `None` so callers can
+trigger their own fallback logic.  Inspect `result.text` for the alternate
+completion and `result.raw` for provider metadata.  Select the behaviour via
 `CODEX_FALLBACK_STRATEGY` (`"queue"` or `"reroute"`; default) and specify the
 alternate model with `CODEX_FALLBACK_MODEL` (defaults to `gpt-3.5-turbo`).
 Queued prompts are written to `CODEX_RETRY_QUEUE` (`codex_retry_queue_path`).
