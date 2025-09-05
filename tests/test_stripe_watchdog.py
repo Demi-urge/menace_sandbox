@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from dynamic_path_router import resolve_path
+from audit_trail import AuditTrail
 
 import stripe_watchdog as sw
 
@@ -37,6 +38,7 @@ def capture_anomalies(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sw, "TrainingSample", DummySample)
     monkeypatch.setattr(sw, "ANOMALY_LOG", tmp_path / "anomaly.log")
+    monkeypatch.setattr(sw, "ANOMALY_TRAIL", AuditTrail(str(tmp_path / "anomaly.log")))
     resolve_path("config/stripe_watchdog.yaml")
     monkeypatch.setattr(sw.alert_dispatcher, "dispatch_alert", lambda *a, **k: None)
 
@@ -67,6 +69,12 @@ def test_orphan_charge_triggers_audit_and_codex(monkeypatch, capture_anomalies):
     assert anomalies and anomalies[0]["id"] == "ch_orphan"
     assert events and events[0][0] == "stripe_anomaly" and events[0][1]["id"] == "ch_orphan"
     assert samples and json.loads(samples[0]["content"])["id"] == "ch_orphan"
+    with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
+        line = fh.readline()
+        logged = json.loads(line.split(" ", 1)[1])
+    assert logged["type"] == "missing_charge"
+    assert logged["metadata"]["id"] == "ch_orphan"
+    assert "timestamp" in logged
 
 
 def test_unknown_webhook_endpoint(monkeypatch, capture_anomalies):

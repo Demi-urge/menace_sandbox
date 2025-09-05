@@ -40,6 +40,7 @@ import audit_logger
 import yaml
 import alert_dispatcher
 from dynamic_path_router import resolve_path
+from audit_trail import AuditTrail
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -95,7 +96,37 @@ DEFAULT_ALLOWED_WEBHOOKS = {
 }
 
 #: Default log file for anomaly summaries.
-ANOMALY_LOG = resolve_path("stripe_watchdog.log")
+_LOG_DIR = resolve_path("finance_logs")
+ANOMALY_LOG = _LOG_DIR / "stripe_watchdog.log"
+_MAX_LOG_BYTES = 5 * 1024 * 1024  # 5MB threshold for rotation
+
+
+def _prepare_anomaly_log() -> None:
+    """Ensure log directory exists and rotate oversized logs."""
+
+    ANOMALY_LOG.parent.mkdir(parents=True, exist_ok=True)
+    if ANOMALY_LOG.exists() and ANOMALY_LOG.stat().st_size > _MAX_LOG_BYTES:
+        backup = ANOMALY_LOG.with_suffix(ANOMALY_LOG.suffix + ".1")
+        try:
+            ANOMALY_LOG.replace(backup)
+        except OSError:
+            pass  # best effort
+
+
+_prepare_anomaly_log()
+ANOMALY_TRAIL = AuditTrail(str(ANOMALY_LOG))
+
+
+def _maybe_rotate_anomaly_log() -> None:
+    """Rotate the anomaly log when exceeding the size threshold."""
+
+    if ANOMALY_LOG.exists() and ANOMALY_LOG.stat().st_size > _MAX_LOG_BYTES:
+        backup = ANOMALY_LOG.with_suffix(ANOMALY_LOG.suffix + ".1")
+        try:
+            ANOMALY_LOG.replace(backup)
+        except OSError:
+            pass  # best effort
+
 
 #: Fallback path used when ``StripeLedger`` is unavailable
 LEDGER_FILE = resolve_path("finance_logs/stripe_ledger.jsonl")
@@ -335,8 +366,13 @@ def _emit_anomaly(record: Dict[str, Any], write_codex: bool) -> None:
 
     audit_logger.log_event("stripe_anomaly", record)
     try:
-        with ANOMALY_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
+        entry = {
+            "type": record.get("type", "unknown"),
+            "metadata": {k: v for k, v in record.items() if k != "type"},
+            "timestamp": int(time.time()),
+        }
+        ANOMALY_TRAIL.record(entry)
+        _maybe_rotate_anomaly_log()
     except Exception:
         logger.exception("Failed to write anomaly log", extra={"record": record})
     if write_codex and TrainingSample is not None:
@@ -390,6 +426,7 @@ def detect_missing_charges(
                 if any(abs(created_sec - ts) <= 300 for ts in ts_list):
                     continue
         anomaly = {
+            "type": "missing_charge",
             "id": cid,
             "amount": charge.get("amount"),
             "email": charge.get("receipt_email"),
