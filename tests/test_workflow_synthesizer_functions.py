@@ -51,7 +51,7 @@ def test_generate_workflows_limit(tmp_path, monkeypatch):
 
 
 def test_synthesize_routing(tmp_path, monkeypatch):
-    (tmp_path / "mod_a.py").write_text("def start():\n    return 1\n")
+    (tmp_path / "mod_a.py").write_text("def start():\n    return 1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)
 
     called = {}

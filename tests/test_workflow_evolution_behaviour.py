@@ -162,7 +162,8 @@ def _load_manager(variant_rois, generate_calls=None, diminishing=0.05):
     sys.modules["menace_sandbox.evolution_history_db"] = evol_hist_mod
 
     spec = importlib.util.spec_from_file_location(
-        "menace_sandbox.workflow_evolution_manager", "workflow_evolution_manager.py"
+        "menace_sandbox.workflow_evolution_manager",
+        resolve_path("workflow_evolution_manager.py"),
     )
     wem = importlib.util.module_from_spec(spec)
     sys.modules["menace_sandbox.workflow_evolution_manager"] = wem
@@ -177,7 +178,7 @@ def _load_manager(variant_rois, generate_calls=None, diminishing=0.05):
 
 def test_variant_generation_obeys_dependencies(tmp_path, monkeypatch):
     base_src = resolve_path("tests/fixtures/workflow_modules")
-    for name in ["mod_a.py", "mod_b.py", "mod_c.py"]:
+    for name in ["mod_a.py", "mod_b.py", "mod_c.py"]:  # path-ignore
         # write modules without extension so ModuleIOAnalyzer resolves them
         (tmp_path / name[:-3]).write_text((base_src / name).read_text())
     monkeypatch.chdir(tmp_path)

@@ -56,13 +56,13 @@ class WorkflowSynthesizer:
 
 
 def _prepare(tmp_path: Path):
-    for name in ("mod_a.py", "mod_b.py", "mod_c.py"):
+    for name in ("mod_a.py", "mod_b.py", "mod_c.py"):  # path-ignore
         shutil.copy(
             resolve_path(f"tests/fixtures/workflow_modules/{name}"),
             tmp_path / name,
         )
-    (tmp_path / "workflow_synthesizer.py").write_text(STUB_MODULE)
-    (tmp_path / "sitecustomize.py").write_text(
+    (tmp_path / "workflow_synthesizer.py").write_text(STUB_MODULE)  # path-ignore
+    (tmp_path / "sitecustomize.py").write_text(  # path-ignore
         "import sys\n" "sys.stdin.isatty=lambda: True\n"
     )
     env = os.environ.copy()

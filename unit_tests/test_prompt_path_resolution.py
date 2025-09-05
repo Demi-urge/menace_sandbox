@@ -32,8 +32,8 @@ def test_error_logger_prompt_resolves_paths():
 def test_prompt_resolves_after_repo_move(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "error_logger.py").write_text("pass", encoding="utf-8")
+    (repo / "error_logger.py").write_text("pass", encoding="utf-8")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     clear_cache()
     body = _visual_agent_prompt(path_for_prompt("error_logger.py"))
-    assert str(repo / "error_logger.py") in body
+    assert str(repo / "error_logger.py") in body  # path-ignore

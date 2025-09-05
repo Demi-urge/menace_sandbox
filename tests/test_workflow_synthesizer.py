@@ -47,7 +47,7 @@ class StubIntent:
 
     def find_modules_related_to(self, _problem: str, top_k: int = 10):  # pragma: no cover - simple
         self.top_k_seen = top_k
-        return [SimpleNamespace(path=str(self.base / "mod_c.py"), score=1.0)]
+        return [SimpleNamespace(path=str(self.base / "mod_c.py"), score=1.0)]  # path-ignore
 
 
 def test_expand_cluster_merges_sources(tmp_path, monkeypatch):
@@ -318,7 +318,7 @@ class StubIntentDB:
         return [0.1]
 
     def search_by_vector(self, _vec, top_k: int = 50):  # pragma: no cover - simple
-        return [(str(self.base / "mod_b.py"), 0.1)]
+        return [(str(self.base / "mod_b.py"), 0.1)]  # path-ignore
 
 
 def test_generate_workflows_intent_db_scoring(tmp_path, monkeypatch):
@@ -353,8 +353,8 @@ def test_scoring_normalisation_and_penalty(tmp_path, monkeypatch):
 
         def find_modules_related_to(self, _problem: str, top_k: int = 10):
             return [
-                SimpleNamespace(path=str(self.base / "mod_b.py"), score=0.5),
-                SimpleNamespace(path=str(self.base / "mod_c.py"), score=1.0),
+                SimpleNamespace(path=str(self.base / "mod_b.py"), score=0.5),  # path-ignore
+                SimpleNamespace(path=str(self.base / "mod_c.py"), score=1.0),  # path-ignore
             ]
 
     intent = MultiIntent(tmp_path)
