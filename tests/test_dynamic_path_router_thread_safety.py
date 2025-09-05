@@ -37,6 +37,7 @@ def test_concurrent_resolve_path(monkeypatch, tmp_path):
     assert results.count(file_a.resolve()) == 10
     assert results.count(file_b.resolve()) == 10
     cache = dpr.list_files()
-    assert cache.get("a.txt") == file_a.resolve()
-    assert cache.get("dir/b.txt") == file_b.resolve()
+    root_key = repo.resolve().as_posix()
+    assert cache.get(f"{root_key}:a.txt") == file_a.resolve()
+    assert cache.get(f"{root_key}:dir/b.txt") == file_b.resolve()
     assert len(cache) == 2

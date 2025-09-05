@@ -33,7 +33,10 @@ This guide walks you through the common Menace workflows using the new `menace` 
    ```
 
    Setting `MENACE_ROOT` or `SANDBOX_REPO_PATH` will change the root used by
-   `resolve_path`, allowing the CLI to target alternative checkouts.
+   `resolve_path`, allowing the CLI to target alternative checkouts. For
+   multi‑repo builds, `MENACE_ROOTS` or `SANDBOX_REPO_PATHS` may specify a
+   `os.pathsep`‑separated list of roots. Pass a repository name or path via
+   `resolve_path(..., root="other_repo")` to target a specific checkout.
 3. **Run the tests** (optional)
    ```bash
    menace test

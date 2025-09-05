@@ -1,12 +1,12 @@
 """Utilities for resolving files within this repository.
 
-The module provides :func:`resolve_path` which locates files relative to the
-project root.  The root is determined by consulting an optional environment
-override (``MENACE_ROOT`` or ``SANDBOX_REPO_PATH``), falling back to
-``git rev-parse --show-toplevel`` and finally searching parent directories for
-a ``.git`` directory.  When a
-direct lookup fails a full ``os.walk`` search is used.  Successful lookups are
-cached to avoid repeated scans.
+The module provides :func:`resolve_path` which locates files relative to one or
+more project roots.  Roots are determined by consulting optional environment
+overrides (``MENACE_ROOT``/``SANDBOX_REPO_PATH`` or the multi-root variants
+``MENACE_ROOTS``/``SANDBOX_REPO_PATHS``), falling back to ``git rev-parse
+--show-toplevel`` and finally searching parent directories for a ``.git``
+directory.  When a direct lookup fails a full ``os.walk`` search is used.
+Successful lookups are cached to avoid repeated scans.
 """
 
 from __future__ import annotations
@@ -15,11 +15,12 @@ from pathlib import Path
 import os
 import subprocess
 import threading
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-# Cache of discovered paths keyed by normalised POSIX style names
+# Cache of discovered paths keyed by "root:path" identifiers
 _PATH_CACHE: Dict[str, Path] = {}
 _PROJECT_ROOT: Optional[Path] = None
+_PROJECT_ROOTS: Optional[List[Path]] = None
 _CACHE_LOCK = threading.Lock()
 
 
@@ -29,46 +30,44 @@ def _normalize(name: str | Path) -> str:
     return Path(str(name).replace("\\", "/")).as_posix().lstrip("./")
 
 
-def get_project_root() -> Path:
-    """Return the repository root directory.
+def _discover_roots(start: Optional[Path] = None) -> List[Path]:
+    """Return a list of candidate repository roots."""
 
-    Preference order:
-
-    1. ``MENACE_ROOT`` or ``SANDBOX_REPO_PATH`` environment variables.
-    2. ``git rev-parse --show-toplevel``.
-    3. Upward search from this file for a ``.git`` directory.
-    4. Directory containing this file.
-    """
-
-    global _PROJECT_ROOT
-    with _CACHE_LOCK:
-        if _PROJECT_ROOT is not None:
-            return _PROJECT_ROOT
-
-    root: Optional[Path] = None
-
-    for env_var in ("MENACE_ROOT", "SANDBOX_REPO_PATH"):
+    for env_var in (
+        "MENACE_ROOTS",
+        "SANDBOX_REPO_PATHS",
+        "MENACE_ROOT",
+        "SANDBOX_REPO_PATH",
+    ):
         env_path = os.environ.get(env_var)
         if env_path:
-            path = Path(env_path).expanduser().resolve()
-            if path.exists():
-                root = path
-                break
+            roots: List[Path] = []
+            for part in env_path.split(os.pathsep):
+                if part:
+                    path = Path(part).expanduser().resolve()
+                    if path.exists():
+                        roots.append(path)
+            if roots:
+                return roots
+
+    root: Optional[Path] = None
+    current = Path(start or __file__).resolve()
+    if current.is_file():
+        current = current.parent
+
+    try:
+        top_level = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            cwd=str(current),
+        ).strip()
+        if top_level:
+            root = Path(top_level).resolve()
+    except Exception:
+        pass
 
     if root is None:
-        try:
-            top_level = subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-            if top_level:
-                root = Path(top_level).resolve()
-        except Exception:
-            pass
-
-    if root is None:
-        current = Path(__file__).resolve().parent
         for parent in [current] + list(current.parents):
             if (parent / ".git").exists():
                 root = parent
@@ -76,10 +75,57 @@ def get_project_root() -> Path:
         if root is None:
             root = current
 
+    return [root]
+
+
+def get_project_root(
+    start: Optional[Path | str] = None, repo_hint: Optional[Path | str] = None
+) -> Path:
+    """Return a repository root directory.
+
+    ``start`` specifies a starting directory for discovery. ``repo_hint`` may be
+    a path or repository name when multiple roots are configured via the
+    ``MENACE_ROOTS`` or ``SANDBOX_REPO_PATHS`` environment variables.
+    Preference order for locating roots remains unchanged:
+
+    1. ``MENACE_ROOTS`` or ``SANDBOX_REPO_PATHS`` environment variables.
+    2. ``MENACE_ROOT`` or ``SANDBOX_REPO_PATH`` environment variables.
+    3. ``git rev-parse --show-toplevel``.
+    4. Upward search from ``start`` (or this file) for a ``.git`` directory.
+    5. Directory containing this file.
+    """
+
+    global _PROJECT_ROOT, _PROJECT_ROOTS
     with _CACHE_LOCK:
-        if _PROJECT_ROOT is None:
-            _PROJECT_ROOT = root
-        return _PROJECT_ROOT
+        if _PROJECT_ROOTS is None:
+            _PROJECT_ROOTS = _discover_roots(Path(start) if start else None)
+            _PROJECT_ROOT = _PROJECT_ROOTS[0]
+
+    roots = _PROJECT_ROOTS
+
+    hint: Optional[Path] = None
+    if repo_hint is not None:
+        hint = Path(repo_hint).expanduser().resolve()
+    elif start is not None:
+        hint = Path(start).expanduser().resolve()
+
+    if hint is not None:
+        for r in roots:
+            try:
+                if hint == r or hint.is_relative_to(r):
+                    return r
+            except AttributeError:  # Python <3.9
+                try:
+                    hint.relative_to(r)
+                    return r
+                except Exception:
+                    if r == hint:
+                        return r
+        for r in roots:
+            if r.name == str(repo_hint):
+                return r
+
+    return roots[0]
 
 
 # Backwards compatible aliases
@@ -87,47 +133,66 @@ project_root = get_project_root
 repo_root = get_project_root
 
 
-def resolve_path(name: str) -> Path:
-    """Resolve *name* to an absolute :class:`Path` within the repository."""
+def _cache_key(root: Path, name: str) -> str:
+    return f"{root.as_posix()}:{name}"
 
-    key = _normalize(name)
+
+def get_project_roots() -> List[Path]:
+    """Return the list of configured repository roots."""
+
+    global _PROJECT_ROOT, _PROJECT_ROOTS
     with _CACHE_LOCK:
-        cached = _PATH_CACHE.get(key)
-    if cached is not None:
-        return cached
+        if _PROJECT_ROOTS is None:
+            _PROJECT_ROOTS = _discover_roots()
+            _PROJECT_ROOT = _PROJECT_ROOTS[0]
+        return list(_PROJECT_ROOTS)
 
+
+def resolve_path(name: str, root: Optional[Path | str] = None) -> Path:
+    """Resolve *name* to an absolute :class:`Path` within configured roots."""
+
+    norm_name = _normalize(name)
     path = Path(name)
     if path.is_absolute():
         if path.exists():
             resolved = path.resolve()
             with _CACHE_LOCK:
-                _PATH_CACHE[key] = resolved
+                _PATH_CACHE[path.as_posix()] = resolved
             return resolved
         raise FileNotFoundError(f"{name!r} does not exist")
 
-    root = get_project_root()
-    candidate = root / path
-    if candidate.exists():
-        resolved = candidate.resolve()
+    roots = [get_project_root(repo_hint=root, start=root)] if root else get_project_roots()
+
+    for base in roots:
+        key = _cache_key(base, norm_name)
         with _CACHE_LOCK:
-            _PATH_CACHE[key] = resolved
-        return resolved
+            cached = _PATH_CACHE.get(key)
+        if cached is not None:
+            return cached
 
-    target = Path(key)
-    for base, dirs, files in os.walk(root):
-        # Skip repository metadata directories but continue into submodules.
-        if ".git" in dirs:
-            dirs.remove(".git")
-        if target.name in files or target.name in dirs:
-            match = Path(base) / target.name
-            rel = match.relative_to(root).as_posix()
-            if rel.endswith(key):
-                resolved = match.resolve()
-                with _CACHE_LOCK:
-                    _PATH_CACHE[key] = resolved
-                return resolved
+        candidate = base / path
+        if candidate.exists():
+            resolved = candidate.resolve()
+            with _CACHE_LOCK:
+                _PATH_CACHE[key] = resolved
+            return resolved
 
-    raise FileNotFoundError(f"{name!r} not found under {root}")
+    target = Path(norm_name)
+    for base in roots:
+        for dirpath, dirs, files in os.walk(base):
+            if ".git" in dirs:
+                dirs.remove(".git")
+            if target.name in files or target.name in dirs:
+                match = Path(dirpath) / target.name
+                rel = match.relative_to(base).as_posix()
+                if rel.endswith(norm_name):
+                    resolved = match.resolve()
+                    with _CACHE_LOCK:
+                        _PATH_CACHE[_cache_key(base, norm_name)] = resolved
+                    return resolved
+
+    roots_str = ", ".join(r.as_posix() for r in roots)
+    raise FileNotFoundError(f"{name!r} not found under {roots_str}")
 
 
 def resolve_module_path(module_name: str) -> Path:
@@ -158,10 +223,11 @@ def path_for_prompt(name: str) -> str:
 def clear_cache() -> None:
     """Clear internal caches used by this module."""
 
-    global _PROJECT_ROOT
+    global _PROJECT_ROOT, _PROJECT_ROOTS
     with _CACHE_LOCK:
         _PATH_CACHE.clear()
         _PROJECT_ROOT = None
+        _PROJECT_ROOTS = None
 
 
 def list_files() -> Dict[str, Path]:
@@ -173,6 +239,7 @@ def list_files() -> Dict[str, Path]:
 
 __all__ = [
     "get_project_root",
+    "get_project_roots",
     "resolve_path",
     "resolve_module_path",
     "resolve_dir",
