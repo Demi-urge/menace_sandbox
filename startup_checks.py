@@ -114,6 +114,7 @@ def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None
     any lookup fails.
     """
     repo_root = resolve_path(".")
+    scripts = resolve_path("scripts")
     try:
         files = subprocess.check_output(
             ["git", "ls-files", "*.py"],
