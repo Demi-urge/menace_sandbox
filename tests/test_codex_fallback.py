@@ -86,13 +86,23 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
     handle_mock = MagicMock(return_value=alt_result)
     monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle_failure", handle_mock)
 
-    sleeps = []
-    monkeypatch.setattr(self_coding_engine.time, "sleep", lambda d: sleeps.append(d))
+    call_delays = []
+
+    def fake_retry(func, *, attempts, delays, logger=None):
+        call_delays.append(delays)
+        for _ in range(attempts):
+            try:
+                return func()
+            except Exception:
+                continue
+        raise self_coding_engine.RetryError("boom")
+
+    monkeypatch.setattr(self_coding_engine, "retry_with_backoff", fake_retry)
     patch_history(monkeypatch)
 
     result = engine.generate_helper("do something")
 
-    assert sleeps == [2, 5, 10]
+    assert call_delays == [[2, 5, 10]]
     assert mock_llm.generate.call_count == 4
     simple_prompt = mock_llm.generate.call_args_list[-1].args[0]
     assert simple_prompt.system == ""
