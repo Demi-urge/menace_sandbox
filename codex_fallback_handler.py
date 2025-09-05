@@ -94,6 +94,11 @@ def handle(
 
     logger.warning("codex fallback invoked", extra={"reason": reason})
 
+    strategy = getattr(_settings, "codex_fallback_strategy", "queue")
+    if strategy != "reroute":
+        queue_failed(prompt, reason, path=queue_path)
+        return LLMResult(text="", raw={"reason": reason})
+
     try:
         result = reroute_to_fallback_model(prompt)
     except Exception:

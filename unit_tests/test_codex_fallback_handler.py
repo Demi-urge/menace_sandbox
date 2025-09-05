@@ -22,7 +22,9 @@ def test_handle_reroutes(monkeypatch, tmp_path):
     called = {}
 
     cf._settings = types.SimpleNamespace(
-        codex_fallback_model="alt-model", codex_retry_queue_path=str(tmp_path / "queue.jsonl")
+        codex_fallback_model="alt-model",
+        codex_retry_queue_path=str(tmp_path / "queue.jsonl"),
+        codex_fallback_strategy="reroute",
     )
 
     def fake_reroute(p: Prompt) -> LLMResult:
@@ -40,7 +42,9 @@ def test_handle_reroutes(monkeypatch, tmp_path):
 
 def test_handle_queues_on_failure(tmp_path, monkeypatch):
     queue_path = tmp_path / "queue.jsonl"
-    cf._settings = types.SimpleNamespace(codex_retry_queue_path=str(queue_path))
+    cf._settings = types.SimpleNamespace(
+        codex_retry_queue_path=str(queue_path), codex_fallback_strategy="reroute"
+    )
 
     def boom(_: Prompt) -> LLMResult:
         raise RuntimeError("fail")
@@ -60,7 +64,9 @@ def test_handle_queues_on_failure(tmp_path, monkeypatch):
 def test_handle_returns_reason_on_empty_completion(tmp_path, monkeypatch):
     queue_path = tmp_path / "queue.jsonl"
     cf._settings = types.SimpleNamespace(
-        codex_retry_queue_path=str(queue_path), codex_fallback_model="m"
+        codex_retry_queue_path=str(queue_path),
+        codex_fallback_model="m",
+        codex_fallback_strategy="reroute",
     )
 
     def empty(_: Prompt) -> LLMResult:
@@ -76,6 +82,27 @@ def test_handle_returns_reason_on_empty_completion(tmp_path, monkeypatch):
     record = json.loads(queue_path.read_text().strip())
     assert record["prompt"] == "zap"
     assert record["reason"] == "no text"
+
+
+def test_handle_queue_strategy(monkeypatch, tmp_path):
+    queue_path = tmp_path / "queue.jsonl"
+    called = {}
+    cf._settings = types.SimpleNamespace(
+        codex_retry_queue_path=str(queue_path), codex_fallback_strategy="queue"
+    )
+
+    def fake_reroute(p: Prompt) -> LLMResult:
+        called["prompt"] = p.user
+        return LLMResult(text="ok")
+
+    monkeypatch.setattr(cf, "reroute_to_fallback_model", fake_reroute)
+
+    result = cf.handle(Prompt("hi"), "boom")
+    assert "prompt" not in called
+    assert result.text == ""
+    record = json.loads(queue_path.read_text().strip())
+    assert record["prompt"] == "hi"
+    assert record["reason"] == "boom"
 
 
 def test_reroute_uses_configured_model(monkeypatch, tmp_path):

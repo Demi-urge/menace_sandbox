@@ -132,6 +132,10 @@ def test_empty_completion_reroutes_and_queues(monkeypatch):
     mock_llm = MagicMock(return_value=LLMResult(text=''))
     engine = make_engine(mock_llm, monkeypatch)
 
+    self_coding_engine.codex_fallback_handler._settings = types.SimpleNamespace(
+        codex_fallback_strategy="reroute"
+    )
+
     def simple_call(client, prompt, *, logger=None, timeout=30.0):
         return client.generate(prompt)
 
@@ -146,7 +150,7 @@ def test_empty_completion_reroutes_and_queues(monkeypatch):
         raise RuntimeError('fail')
 
     monkeypatch.setattr(
-        self_coding_engine.codex_fallback_handler, 'reroute_to_gpt35', boom
+        self_coding_engine.codex_fallback_handler, 'reroute_to_fallback_model', boom
     )
 
     patch_history(monkeypatch)
