@@ -167,12 +167,11 @@ from .prompt_memory import (
 )
 from prompt_optimizer import load_strategy_stats
 from .prompt_strategies import PromptStrategy
-from . import strategy_rotator
+from .prompt_strategy_manager import PromptStrategyManager
 from .snapshot_tracker import (
     capture as capture_snapshot,
     compute_delta as snapshot_delta,
     SnapshotTracker,
-    StrategyManager,
 )
 from . import snapshot_tracker
 from .sandbox_score import get_latest_sandbox_score
@@ -906,7 +905,7 @@ class SelfImprovementEngine:
         self.strategy_confidence: Dict[str, int] = {}
         self.deprioritized_strategies: set[str] = set()
         self.pending_strategy: str | None = None
-        self.strategy_manager = StrategyManager()
+        self.strategy_manager = PromptStrategyManager()
         self._snapshot_tracker = SnapshotTracker()
         self._last_delta: dict[str, float] | None = None
         self.logger = get_logger("SelfImprovementEngine")
@@ -1492,7 +1491,7 @@ class SelfImprovementEngine:
                 target_region = getattr(self, "_cycle_target_region", None)
             # Select the prompt strategy for this patch attempt
             try:
-                strat_name = self.next_prompt_strategy(strategy_rotator.TEMPLATES)
+                strat_name = self.next_prompt_strategy()
             except Exception:
                 strat_name = None
             if strat_name:
@@ -4334,7 +4333,7 @@ class SelfImprovementEngine:
             if gen_patch:
                 kwargs: dict[str, object] = {}
                 try:
-                    strat_name = self.next_prompt_strategy(strategy_rotator.TEMPLATES)
+                    strat_name = self.next_prompt_strategy()
                 except Exception:
                     strat_name = None
                 if strat_name:
@@ -6331,7 +6330,7 @@ class SelfImprovementEngine:
                     if delay is not None:
                         gen_kwargs["delay"] = delay
                     try:
-                        strat_name = self.next_prompt_strategy(strategy_rotator.TEMPLATES)
+                        strat_name = self.next_prompt_strategy()
                     except Exception:
                         strat_name = None
                     if strat_name:
@@ -6569,18 +6568,15 @@ class SelfImprovementEngine:
                 # Mark failed strategy to avoid immediate reuse and pick a new one
                 self.deprioritized_strategies.add(str(strategy))
                 try:
-                    count = snapshot_tracker.record_downgrade(str(strategy))
-                    threshold = SandboxSettings().prompt_failure_threshold
+                    snapshot_tracker.record_downgrade(str(strategy))
                 except Exception:
-                    count = 0
-                    threshold = 0
+                    pass
                 try:
-                    remaining = [
-                        s for s in strategy_rotator.TEMPLATES if s not in self.deprioritized_strategies
-                    ]
-                    self.pending_strategy = self._select_prompt_strategy(remaining)
+                    self.pending_strategy = self.strategy_manager.record_failure(
+                        str(strategy), failure_reason
+                    )
                 except Exception:
-                    self.logger.exception("strategy selection failed")
+                    self.logger.exception("strategy rotation failed")
 
         if strategy and hasattr(self, "strategy_manager"):
             try:
@@ -6621,16 +6617,23 @@ class SelfImprovementEngine:
                 best = strat
         return best
 
-    def next_prompt_strategy(self, strategies: Sequence[str]) -> str | None:
+    def next_prompt_strategy(self) -> str | None:
         """Return the next prompt strategy based on historical performance."""
 
         pending = getattr(self, "pending_strategy", None)
-        if pending and pending in strategies and pending not in self.deprioritized_strategies:
+        if (
+            pending
+            and pending in self.strategy_manager.strategies
+            and pending not in self.deprioritized_strategies
+        ):
             self.pending_strategy = None
             return pending
 
-        candidates = [s for s in strategies if s not in self.deprioritized_strategies]
-        return self._select_prompt_strategy(candidates)
+        def selector(seq: Sequence[str]) -> str | None:
+            candidates = [s for s in seq if s not in self.deprioritized_strategies]
+            return self._select_prompt_strategy(candidates)
+
+        return self.strategy_manager.select(selector)
 
     @radar.track
     def run_cycle(self, energy: int = 1, *, target_region: "TargetRegion | None" = None) -> AutomationResult:

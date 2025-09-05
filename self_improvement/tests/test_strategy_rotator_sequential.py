@@ -19,20 +19,17 @@ sys.modules.setdefault("sandbox_runner.bootstrap", boot)
 pkg = types.ModuleType("menace_sandbox.self_improvement")
 pkg.__path__ = [str(ROOT / "self_improvement")]
 sys.modules["menace_sandbox.self_improvement"] = pkg
-
-strategy_rotator = importlib.import_module("menace_sandbox.self_improvement.strategy_rotator")
+PromptStrategyManager = importlib.import_module(
+    "menace_sandbox.self_improvement.prompt_strategy_manager"
+).PromptStrategyManager
 
 
 def test_next_strategy_rotates_through_templates():
-    for key in list(strategy_rotator.failure_counts):
-        strategy_rotator.failure_counts[key] = 0
-        strategy_rotator.failure_limits[key] = 1
-
-    current = strategy_rotator.TEMPLATES[0]
+    mgr = PromptStrategyManager()
+    current = mgr.strategies[0]
     sequence = []
-    for _ in range(len(strategy_rotator.TEMPLATES)):
-        nxt = strategy_rotator.next_strategy(current, "fail")
+    for _ in range(len(mgr.strategies)):
+        nxt = mgr.record_failure(current, "fail")
         sequence.append(nxt)
         current = nxt
-
-    assert sequence == strategy_rotator.TEMPLATES[1:] + [strategy_rotator.TEMPLATES[0]]
+    assert sequence == mgr.strategies[1:] + [mgr.strategies[0]]
