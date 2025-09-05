@@ -17,6 +17,18 @@ feeds them back into future generations of bots.
 3. Components listening for anomalies can subscribe via
    `UnifiedEventBus`.
 
+## Environment
+
+- `GPT_MEMORY_DB` *(optional)* – path to the SQLite database used for GPT memory
+  entries. Defaults to `gpt_memory.db`.
+- `GPT_MEMORY_RETENTION` and `GPT_MEMORY_MAX_ROWS` *(optional)* – retention
+  policies controlling how long feedback snippets are kept.
+
+Anomalies are persisted in the database configured through
+`init_db_router` (typically `local.db`/`shared.db`).  Feedback instructions are
+logged to the GPT memory database above, allowing subsequent runs to recall
+earlier issues.
+
 ## Configuration
 
 * `record_billing_anomaly` stores events in the `billing_anomalies`
@@ -33,6 +45,9 @@ feeds them back into future generations of bots.
   are exported as Codex samples or appended to the training dataset.
 * Supplying ``config_path`` to :func:`record_billing_event` merges suggested
   configuration updates into the referenced JSON file.
+* Watchdogs such as `stripe_watchdog` respect a `sanity_layer_feedback` setting
+  in their YAML configuration. Disabling it prevents anomalies from being logged
+  to GPT memory and omits the feedback loop.
 
 ## Usage
 
