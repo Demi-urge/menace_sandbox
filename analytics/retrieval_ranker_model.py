@@ -18,6 +18,7 @@ import pandas as pd
 
 from .retrieval_ranker_dataset import build_dataset
 from ..metrics_exporter import learning_cv_score, learning_holdout_score
+from ..dynamic_path_router import resolve_path
 
 try:  # optional dependency
     from lightgbm import LGBMRanker  # type: ignore
@@ -41,7 +42,7 @@ except Exception:  # pragma: no cover - optional dependency missing
 
 from ..learning_engine import _SimpleLogReg
 
-MODEL_DIR = Path(__file__).resolve().parent / "models"
+MODEL_DIR = resolve_path("analytics/models")
 MODEL_PATH = MODEL_DIR / "retrieval_ranker.pkl"
 
 
