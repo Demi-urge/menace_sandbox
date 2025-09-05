@@ -16,6 +16,7 @@ from .audit_trail import AuditTrail
 import tomllib
 
 from .dependency_verifier import verify_dependencies, verify_modules
+from .dynamic_path_router import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,6 @@ def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None
     any lookup fails.
     """
     repo_root = Path(__file__).resolve().parent
-    scripts = repo_root / "scripts"
     try:
         files = subprocess.check_output(
             ["git", "ls-files", "*.py"],
@@ -124,8 +124,15 @@ def verify_stripe_router(mandatory_bot_ids: Iterable[str] | None = None) -> None
         raise RuntimeError(f"git ls-files failed: {exc}") from exc
 
     checks = [
-        [sys.executable, str(scripts / "check_stripe_imports.py"), *files],
-        [sys.executable, str(scripts / "check_raw_stripe_usage.py")],
+        [
+            sys.executable,
+            str(resolve_path("scripts/check_stripe_imports.py")),
+            *files,
+        ],
+        [
+            sys.executable,
+            str(resolve_path("scripts/check_raw_stripe_usage.py")),
+        ],
     ]
     for cmd in checks:
         result = subprocess.run(
