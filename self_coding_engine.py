@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
+from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping, Callable
 import subprocess
 import json
 import base64
@@ -267,6 +267,30 @@ def call_codex_with_backoff(
     raise RetryError(str(last_exc)) from last_exc
 
 
+def simplify_prompt(prompt_obj: Prompt) -> Prompt:
+    """Simplify a prompt based on sandbox configuration.
+
+    Strategies include dropping the system message and limiting the number of
+    few-shot examples according to ``simplify_prompt_drop_system`` and
+    ``simplify_prompt_example_limit`` settings.
+    """
+
+    drop_system = getattr(_settings, "simplify_prompt_drop_system", True)
+    example_limit = getattr(_settings, "simplify_prompt_example_limit", 0)
+
+    system = "" if drop_system else prompt_obj.system
+    examples = prompt_obj.examples
+    if example_limit is not None:
+        examples = examples[: example_limit]
+
+    return Prompt(
+        prompt_obj.text,
+        system=system,
+        examples=examples,
+        metadata=getattr(prompt_obj, "metadata", {}),
+    )
+
+
 class SelfCodingEngine:
     """Generate new helper code based on existing snippets."""
 
@@ -308,6 +332,7 @@ class SelfCodingEngine:
         skip_retry_on_similarity: bool = False,
         baseline_window: int | None = None,
         delta_tracker: BaselineTracker | None = None,
+        prompt_simplifier: Callable[[Prompt], Prompt] | None = None,
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -343,6 +368,7 @@ class SelfCodingEngine:
         self.chunk_summary_cache_dir = resolve_path(cache_dir)
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
+        self.simplify_prompt = prompt_simplifier or simplify_prompt
         self._failure_similarity_threshold = failure_similarity_threshold
         self.failure_similarity_limit = failure_similarity_limit
         self.failure_similarity_k = failure_similarity_k
@@ -1304,15 +1330,15 @@ class SelfCodingEngine:
                 "llm generation failed after retries; simplifying prompt",
                 extra={"description": description},
             )
-            prompt_obj = Prompt(
-                prompt_obj.text,
-                system="",
-                examples=[],
-                metadata=getattr(prompt_obj, "metadata", {}),
-            )
+            prompt_obj = self.simplify_prompt(prompt_obj)
             try:
-                result = self.llm_client.generate(prompt_obj)
-            except Exception as exc:
+                result = call_codex_with_backoff(
+                    self.llm_client,
+                    prompt_obj,
+                    logger=self.logger,
+                    timeout=getattr(_settings, "codex_timeout", 30.0),
+                )
+            except RetryError as exc:
                 self._last_retry_trace = str(exc)
                 result = LLMResult(raw=str(exc))
         def _validate(output: str) -> tuple[bool, str]:

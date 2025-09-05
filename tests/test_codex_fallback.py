@@ -61,6 +61,7 @@ def make_engine(mock_llm, monkeypatch):
     engine._last_prompt_metadata = {}
     engine._last_prompt = None
     engine._last_retry_trace = None
+    engine.simplify_prompt = self_coding_engine.simplify_prompt
     monkeypatch.setattr(
         self_coding_engine, "_settings", types.SimpleNamespace(codex_retry_delays=[2, 5, 10])
     )
@@ -82,6 +83,8 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
         Exception("e2"),
         Exception("e3"),
         Exception("e4"),
+        Exception("e5"),
+        Exception("e6"),
     ]
     engine = make_engine(mock_llm, monkeypatch)
 
@@ -106,8 +109,8 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
 
     result = engine.generate_helper("do something")
 
-    assert call_delays == [[2, 5, 10]]
-    assert mock_llm.generate.call_count == 4
+    assert call_delays == [[2, 5, 10], [2, 5, 10]]
+    assert mock_llm.generate.call_count == 6
     simple_prompt = mock_llm.generate.call_args_list[-1].args[0]
     assert simple_prompt.system == ""
     assert simple_prompt.examples == []

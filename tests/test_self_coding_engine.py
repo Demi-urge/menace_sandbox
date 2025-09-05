@@ -559,6 +559,7 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
     engine._last_prompt_metadata = {}
     engine._last_prompt = None
     engine._last_retry_trace = None
+    engine.simplify_prompt = sce.simplify_prompt
 
     calls: list[str] = []
 
@@ -611,6 +612,7 @@ def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
     engine._last_prompt_metadata = {}
     engine._last_prompt = None
     engine._last_retry_trace = None
+    engine.simplify_prompt = sce.simplify_prompt
 
     code = engine.generate_helper("demo")
     assert "def ok" in code

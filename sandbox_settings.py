@@ -340,7 +340,9 @@ class SandboxSettings(BaseSettings):
 
     Provides Codex retry and fallback controls via ``codex_retry_delays`` and
     ``codex_fallback_model`` which map to the ``CODEX_RETRY_DELAYS`` and
-    ``CODEX_FALLBACK_MODEL`` environment variables, respectively.
+    ``CODEX_FALLBACK_MODEL`` environment variables, respectively. Prompt
+    simplification is tunable with ``simplify_prompt_drop_system`` and
+    ``simplify_prompt_example_limit``.
     """
 
     menace_mode: str = Field("test", env="MENACE_MODE")
@@ -753,6 +755,19 @@ class SandboxSettings(BaseSettings):
         "codex_retry_queue.jsonl",
         env="CODEX_RETRY_QUEUE",
         description="Path for the Codex retry queue file.",
+    )
+    simplify_prompt_drop_system: bool = Field(
+        True,
+        env="SIMPLIFY_PROMPT_DROP_SYSTEM",
+        description="Remove system message when simplifying prompts.",
+    )
+    simplify_prompt_example_limit: int | None = Field(
+        0,
+        env="SIMPLIFY_PROMPT_EXAMPLE_LIMIT",
+        description=(
+            "Maximum number of few-shot examples to retain when simplifying prompts. "
+            "0 drops all examples; None keeps all."
+        ),
     )
     if PYDANTIC_V2:
 
