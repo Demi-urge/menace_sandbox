@@ -35,7 +35,7 @@ CRITICAL_LIBS: Dict[str, str] = {
 }
 
 # Default path to the repository's ``pyproject.toml``
-PYPROJECT_PATH = Path(__file__).resolve().with_name("pyproject.toml")
+PYPROJECT_PATH = resolve_path("pyproject.toml")
 
 REQUIRED_VARS = [
     "DATABASE_URL",
