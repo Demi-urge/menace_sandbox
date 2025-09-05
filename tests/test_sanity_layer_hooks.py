@@ -42,18 +42,21 @@ def test_emit_anomaly_triggers_record_event(monkeypatch):
 
 def _stub_unified_event_bus(monkeypatch, tmp_path):
     import dynamic_path_router
-    from dynamic_path_router import resolve_path as _orig_resolve
+    from dynamic_path_router import resolve_path
 
-    stub_path = tmp_path / "unified_event_bus.py"
+    module_name = resolve_path("unified_event_bus.py").name
+    stub_path = tmp_path / module_name
     stub_path.write_text("class UnifiedEventBus:\n    pass\n")
 
+    orig_resolve = resolve_path
+
     def fake_resolve(name, root=None):
-        if name == "unified_event_bus.py":
+        if name == module_name:
             return stub_path
         try:
-            return _orig_resolve(name, root)
+            return orig_resolve(name, root)
         except TypeError:
-            return _orig_resolve(name)
+            return orig_resolve(name)
 
     monkeypatch.setattr(dynamic_path_router, "resolve_path", fake_resolve)
 
