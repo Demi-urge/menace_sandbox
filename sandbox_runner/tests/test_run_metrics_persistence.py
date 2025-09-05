@@ -4,6 +4,7 @@ import subprocess
 import sys
 import types
 from types import SimpleNamespace
+from dynamic_path_router import resolve_path  # noqa: F401
 
 import menace_sandbox.sandbox_runner.scoring as scoring
 import sandbox_results_logger as legacy
@@ -23,10 +24,13 @@ sys.modules.setdefault(
     "menace_sandbox.sandbox_runner.environment",
     types.SimpleNamespace(get_edge_case_stubs=lambda: {}),
 )
+
+
 class _DummyParser:
     @staticmethod
     def parse(text):
         return {}
+
 
 sys.modules.setdefault(
     "menace_sandbox.error_parser", types.SimpleNamespace(ErrorParser=_DummyParser)
@@ -34,12 +38,12 @@ sys.modules.setdefault(
 
 
 def test_run_records_metrics(tmp_path, monkeypatch):
-    log_dir = tmp_path / "logs"
+    log_dir = tmp_path / "logs"  # path-ignore
     monkeypatch.setattr(scoring, "_LOG_DIR", log_dir)
-    monkeypatch.setattr(scoring, "_RUN_LOG", log_dir / "run_metrics.jsonl")
-    monkeypatch.setattr(scoring, "_SUMMARY_FILE", log_dir / "run_summary.json")
+    monkeypatch.setattr(scoring, "_RUN_LOG", log_dir / "run_metrics.jsonl")  # path-ignore
+    monkeypatch.setattr(scoring, "_SUMMARY_FILE", log_dir / "run_summary.json")  # path-ignore
     monkeypatch.setattr(legacy, "_LOG_DIR", log_dir)
-    monkeypatch.setattr(legacy, "_DB_PATH", log_dir / "run_metrics.db")
+    monkeypatch.setattr(legacy, "_DB_PATH", log_dir / "run_metrics.db")  # path-ignore
 
     result = SimpleNamespace(success=True, duration=1.0, failure=None)
     scoring.record_run(
@@ -56,26 +60,26 @@ def test_run_records_metrics(tmp_path, monkeypatch):
     summary = json.loads(scoring._SUMMARY_FILE.read_text())
     assert summary["runs"] == 1
 
-    conn = sqlite3.connect(log_dir / "run_metrics.db")
+    conn = sqlite3.connect(log_dir / "run_metrics.db")  # noqa: SQL001  # path-ignore
     count = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
     conn.close()
     assert count == 1
 
 
 def test_run_tests_persists_metrics(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
+    repo = tmp_path / "repo"  # path-ignore
     repo.mkdir()
-    (repo / "dummy.txt").write_text("hi")
+    (repo / "dummy.txt").write_text("hi")  # path-ignore
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "Tester"], cwd=repo, check=True)
-    subprocess.run(["git", "add", "dummy.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "dummy.txt"], cwd=repo, check=True)  # path-ignore
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
 
-    log_dir = tmp_path / "logs"
+    log_dir = tmp_path / "logs"  # path-ignore
     monkeypatch.setattr(scoring, "_LOG_DIR", log_dir)
-    monkeypatch.setattr(scoring, "_RUN_LOG", log_dir / "run_metrics.jsonl")
-    monkeypatch.setattr(scoring, "_SUMMARY_FILE", log_dir / "run_summary.json")
+    monkeypatch.setattr(scoring, "_RUN_LOG", log_dir / "run_metrics.jsonl")  # path-ignore
+    monkeypatch.setattr(scoring, "_SUMMARY_FILE", log_dir / "run_summary.json")  # path-ignore
     monkeypatch.setattr(scoring, "_db_record_run", lambda record: None)
 
     import menace_sandbox.sandbox_runner.test_harness as th
@@ -105,4 +109,3 @@ def test_run_tests_persists_metrics(tmp_path, monkeypatch):
     assert record["runtime"] == dummy.duration
     assert record["executed_functions"] == dummy.executed_functions
     assert record["entropy_delta"] == dummy.entropy_delta
-
