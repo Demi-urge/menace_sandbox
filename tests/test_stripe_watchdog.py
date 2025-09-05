@@ -54,6 +54,7 @@ def test_orphan_charge_triggers_audit_and_codex(monkeypatch, capture_anomalies):
     monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test")
     monkeypatch.setattr(sw, "fetch_recent_charges", lambda api_key, start, end: charges)
     monkeypatch.setattr(sw, "load_local_ledger", lambda start, end: ledger)
+    monkeypatch.setattr(sw, "load_billing_logs", lambda start, end: [])
     monkeypatch.setattr(sw, "check_webhook_endpoints", lambda *a, **k: [])
     monkeypatch.setattr(sw, "DiscrepancyDB", None)
     monkeypatch.setattr(sw, "DiscrepancyRecord", None)
@@ -117,3 +118,24 @@ def test_revenue_mismatch(monkeypatch, capture_anomalies):
     assert events and events[0][1]["type"] == "revenue_mismatch"
     assert samples and json.loads(samples[0]["content"])["type"] == "revenue_mismatch"
 
+
+def test_logged_charge_not_flagged(monkeypatch, capture_anomalies):
+    events, _samples = capture_anomalies
+
+    ledger: list[dict] = []
+    billing_logs = [{"amount": 10.0, "timestamp": 2}]
+    charges = [
+        {"id": "ch_logged", "created": 2, "amount": 1000, "status": "succeeded"}
+    ]
+
+    monkeypatch.setattr(sw, "load_api_key", lambda: "sk_test")
+    monkeypatch.setattr(sw, "fetch_recent_charges", lambda api_key, start, end: charges)
+    monkeypatch.setattr(sw, "load_local_ledger", lambda start, end: ledger)
+    monkeypatch.setattr(sw, "load_billing_logs", lambda start, end: billing_logs)
+    monkeypatch.setattr(sw, "check_webhook_endpoints", lambda *a, **k: [])
+    monkeypatch.setattr(sw, "DiscrepancyDB", None)
+    monkeypatch.setattr(sw, "DiscrepancyRecord", None)
+
+    anomalies = sw.check_events()
+
+    assert anomalies == []
