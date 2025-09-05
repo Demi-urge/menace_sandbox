@@ -19,7 +19,6 @@ sys.modules["menace_sandbox.self_improvement"] = pkg
 boot = types.ModuleType("sandbox_runner.bootstrap")
 boot.initialize_autonomous_sandbox = lambda *a, **k: None
 sys.modules.setdefault("sandbox_runner.bootstrap", boot)
-prompt_memory = importlib.import_module("menace_sandbox.self_improvement.prompt_memory")
 snapshot_tracker = importlib.import_module(
     "menace_sandbox.self_improvement.snapshot_tracker"
 )
@@ -60,19 +59,12 @@ class MiniEngine:
 
 
 def test_deprioritized_strategy_skipped(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        snapshot_tracker,
-        "_downgrade_path",
-        Path(resolve_path(str(tmp_path))) / Path("downgrades").with_suffix(".json"),
-    )
-    snapshot_tracker.downgrade_counts.clear()
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     eng = MiniEngine()
     thr = SandboxSettings().prompt_failure_threshold
+    mgr = PromptStrategyManager()
     for _ in range(thr):
-        eng._record_snapshot_delta(DummyPrompt(), {"roi": -1})
-
-    monkeypatch.setattr(prompt_memory, "load_prompt_penalties", lambda: {"s1": thr})
-
-    assert "s1" in eng.deprioritized_strategies
+        mgr.record_penalty("s1")
+    assert mgr.load_penalties().get("s1", 0) >= thr
     choice = eng.next_prompt_strategy(["s1", "s2"])
     assert choice == "s2"

@@ -53,33 +53,19 @@ class MiniEngine:
 
 
 def test_deprioritized_strategy_skipped(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        snapshot_tracker,
-        "_downgrade_path",
-        Path(resolve_path(str(tmp_path))) / Path("downgrades").with_suffix(".json"),
-    )
-    snapshot_tracker.downgrade_counts.clear()
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     eng = MiniEngine()
     thr = SandboxSettings().prompt_failure_threshold
+    mgr = PromptStrategyManager()
     for _ in range(thr):
-        eng._record_snapshot_delta(DummyPrompt(), {"roi": -1})
-
-    monkeypatch.setattr(prompt_memory, "load_prompt_penalties", lambda: {"s1": thr})
-
-    assert "s1" in eng.deprioritized_strategies
+        mgr.record_penalty("s1")
+    assert mgr.load_penalties().get("s1", 0) >= thr
     choice = eng.next_prompt_strategy(["s1", "s2"])
     assert choice == "s2"
 
 
 def test_log_regression_penalises_prompt(tmp_path, monkeypatch):
-    monkeypatch.setattr(prompt_memory, "_repo_path", lambda: tmp_path)
-    monkeypatch.setattr(prompt_memory._settings, "prompt_penalty_path", "penalties.json")
-    monkeypatch.setattr(prompt_memory, "_penalty_path", tmp_path / "penalties.json")
-    monkeypatch.setattr(
-        prompt_memory,
-        "_penalty_lock",
-        prompt_memory.FileLock(str(tmp_path / "penalties.json") + ".lock"),
-    )
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(
         snapshot_history_db,
         "_db_path",

@@ -8,6 +8,8 @@ import os
 import tempfile
 from typing import Callable, Dict, Sequence
 
+from filelock import FileLock
+
 from dynamic_path_router import resolve_path
 
 
@@ -58,10 +60,14 @@ class PromptStrategyManager:
         if not isinstance(stats_path, Path):
             stats_path = resolve_path(stats_path)
         self.stats_path = stats_path
+        self._state_lock = FileLock(str(self.state_path) + ".lock")
+        self._stats_lock = FileLock(str(self.stats_path) + ".lock")
         self.keyword_map: Dict[str, str] = dict(keyword_map or KEYWORD_MAP)
         self.index: int = 0
         self.failure_counts: Dict[str, int] = {s: 0 for s in self.strategies}
         self.failure_limits: Dict[str, int] = {s: 1 for s in self.strategies}
+        self.penalties: Dict[str, int] = {}
+        self.metrics: Dict[str, Dict[str, float]] = {}
         self.stats: Dict[str, Dict[str, float]] = {}
         self._load_state()
         self._load_stats()
@@ -173,6 +179,13 @@ class PromptStrategyManager:
         rec["roi_sum"] += float(roi)
         rec["weighted_roi_sum"] += float(roi) * float(weight)
         rec["weight_sum"] += float(weight)
+        mrec = self.metrics.setdefault(
+            str(strategy), {"attempts": 0, "successes": 0, "roi": 0.0}
+        )
+        mrec["attempts"] += 1
+        if success:
+            mrec["successes"] += 1
+        mrec["roi"] = float(roi)
         self._save_stats()
         self._save_state()
 
@@ -180,11 +193,11 @@ class PromptStrategyManager:
     def best_strategy(self, strategies: Sequence[str]) -> str | None:
         """Return the strategy with the highest average ROI."""
 
-        from . import prompt_memory
         from ..sandbox_settings import SandboxSettings
 
         self._load_stats()
-        penalties = prompt_memory.load_prompt_penalties()
+        self._load_state()
+        penalties = self.penalties
         settings = SandboxSettings()
         threshold = settings.prompt_failure_threshold
         mult = settings.prompt_penalty_multiplier
@@ -216,10 +229,33 @@ class PromptStrategyManager:
         return max(pool, key=lambda x: x[1])[0]
 
     # ------------------------------------------------------------------
+    def load_penalties(self) -> Dict[str, int]:
+        """Return a copy of stored penalty counts."""
+
+        self._load_state()
+        return dict(self.penalties)
+
+    # ------------------------------------------------------------------
+    def record_penalty(self, name: str) -> int:
+        """Increment downgrade count for ``name`` and persist it."""
+        self._load_state()
+        self.penalties[name] = self.penalties.get(name, 0) + 1
+        self._save_state()
+        return self.penalties[name]
+
+    # ------------------------------------------------------------------
+    def reset_penalty(self, name: str) -> None:
+        """Reset downgrade count for ``name`` to zero."""
+        self._load_state()
+        if name in self.penalties and self.penalties[name] != 0:
+            self.penalties[name] = 0
+            self._save_state()
+
+    # ------------------------------------------------------------------
     def _load_state(self) -> None:
         try:
-            with open(self.state_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
+            with self._state_lock:
+                data = json.loads(self.state_path.read_text(encoding="utf-8"))
             if not self.strategies:
                 self.strategies = list(data.get("strategies", []))
             self.index = int(data.get("index", 0))
@@ -228,6 +264,20 @@ class PromptStrategyManager:
             })
             self.failure_limits.update({
                 str(k): int(v) for k, v in data.get("failure_limits", {}).items()
+            })
+            self.metrics.update(
+                {
+                    str(k): {
+                        "attempts": int(v.get("attempts", 0)),
+                        "successes": int(v.get("successes", 0)),
+                        "roi": float(v.get("roi", 0.0)),
+                    }
+                    for k, v in data.get("metrics", {}).items()
+                    if isinstance(v, dict)
+                }
+            )
+            self.penalties.update({
+                str(k): int(v) for k, v in data.get("penalties", {}).items()
             })
             if self.strategies:
                 self.index %= len(self.strategies)
@@ -245,21 +295,21 @@ class PromptStrategyManager:
                 "strategies": self.strategies,
                 "failure_counts": self.failure_counts,
                 "failure_limits": self.failure_limits,
+                "penalties": self.penalties,
+                "metrics": self.metrics,
             }
-            with tempfile.NamedTemporaryFile(
-                "w", delete=False, dir=self.state_path.parent, encoding="utf-8"
-            ) as fh:
-                json.dump(data, fh)
-                tmp = Path(fh.name)
-            os.replace(tmp, self.state_path)
+            with self._state_lock:
+                tmp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+                tmp.write_text(json.dumps(data), encoding="utf-8")
+                os.replace(tmp, self.state_path)
         except Exception:  # pragma: no cover - best effort persistence
             pass
 
     # ------------------------------------------------------------------
     def _load_stats(self) -> None:
         try:
-            with open(self.stats_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
+            with self._stats_lock:
+                data = json.loads(self.stats_path.read_text(encoding="utf-8"))
             self.stats = {
                 str(k): {
                     "total": int(v.get("total", 0)),
@@ -278,12 +328,10 @@ class PromptStrategyManager:
     def _save_stats(self) -> None:
         try:
             self.stats_path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                "w", delete=False, dir=self.stats_path.parent, encoding="utf-8"
-            ) as fh:
-                json.dump(self.stats, fh)
-                tmp = Path(fh.name)
-            os.replace(tmp, self.stats_path)
+            with self._stats_lock:
+                tmp = self.stats_path.with_suffix(self.stats_path.suffix + ".tmp")
+                tmp.write_text(json.dumps(self.stats), encoding="utf-8")
+                os.replace(tmp, self.stats_path)
         except Exception:  # pragma: no cover - best effort persistence
             pass
 

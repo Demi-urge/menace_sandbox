@@ -38,6 +38,11 @@ def test_delta_logs_regression(tmp_path, monkeypatch):
     )
     sys.modules["menace_sandbox.sandbox_settings"] = sys.modules["sandbox_settings"]
 
+    pkg = types.ModuleType("menace_sandbox.self_improvement")
+    pkg.__path__ = [str(Path("self_improvement"))]
+    sys.modules["menace_sandbox.self_improvement"] = pkg
+    sys.modules["self_improvement"] = pkg
+    
     from dynamic_path_router import resolve_path
     st = importlib.import_module("menace_sandbox.self_improvement.snapshot_tracker")
     sh = importlib.import_module("menace_sandbox.snapshot_history_db")
@@ -47,10 +52,6 @@ def test_delta_logs_regression(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "SandboxSettings", lambda: Settings())
     monkeypatch.setattr(sh, "SandboxSettings", lambda: Settings())
     base = Path(resolve_path(str(tmp_path)))
-    monkeypatch.setattr(pm, "_repo_path", lambda: base)
-    monkeypatch.setattr(pm._settings, "prompt_penalty_path", "penalties.json")
-    monkeypatch.setattr(pm, "_penalty_path", base / "penalties.json")
-    monkeypatch.setattr(pm, "_penalty_lock", pm.FileLock(str(base / "penalties.json") + ".lock"))
 
     events: list[tuple[str, dict]] = []
     monkeypatch.setattr(st, "audit_log_event", lambda name, payload: events.append((name, payload)))

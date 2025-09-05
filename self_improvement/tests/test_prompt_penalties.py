@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import importlib
 from pathlib import Path
@@ -23,9 +24,14 @@ sys.modules.setdefault("sandbox_runner.bootstrap", boot)
 settings_mod = ModuleType("sandbox_settings")
 
 class DummySettings:
-    prompt_penalty_path = "penalties.json"
-    prompt_success_log_path = "success.log"
-    prompt_failure_log_path = "failure.log"
+    def __init__(self):
+        self.prompt_penalty_path = "penalties.json"
+        self.prompt_success_log_path = "success.log"
+        self.prompt_failure_log_path = "failure.log"
+        self.sandbox_repo_path = "."
+        self.sandbox_data_dir = os.getenv("SANDBOX_DATA_DIR", ".")
+        self.prompt_failure_threshold = 3
+        self.prompt_penalty_multiplier = 1.0
 
 
 settings_mod.SandboxSettings = DummySettings
@@ -79,30 +85,17 @@ from self_improvement_policy import SelfImprovementPolicy, PolicyConfig
 
 
 def test_record_regression(monkeypatch, tmp_path):
-    monkeypatch.setattr(prompt_memory, "resolve_path", lambda p: tmp_path / p)
-    monkeypatch.setattr(prompt_memory._settings, "prompt_penalty_path", "penalties.json")
-    monkeypatch.setattr(
-        prompt_memory,
-        "_penalty_path",
-        Path(prompt_memory.resolve_path(prompt_memory._settings.prompt_penalty_path)),
-    )
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     assert record_regression("p1") == 1
     assert record_regression("p1") == 2
-    data = json.loads((tmp_path / "penalties.json").read_text())
-    assert data["p1"] == 2
+    assert load_prompt_penalties()["p1"] == 2
 
 
 def test_reset_penalty(monkeypatch, tmp_path):
-    monkeypatch.setattr(prompt_memory, "resolve_path", lambda p: tmp_path / p)
-    monkeypatch.setattr(prompt_memory._settings, "prompt_penalty_path", "penalties.json")
-    monkeypatch.setattr(
-        prompt_memory,
-        "_penalty_path",
-        Path(prompt_memory.resolve_path(prompt_memory._settings.prompt_penalty_path)),
-    )
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     record_regression("p1")
     reset_penalty("p1")
-    assert load_prompt_penalties()["p1"] == 0
+    assert load_prompt_penalties().get("p1", 0) == 0
 
 
 def test_policy_respects_penalties(monkeypatch):
