@@ -21,6 +21,9 @@ DEFAULT_STRATEGIES: list[str] = [
 ]
 
 KEYWORD_MAP: Dict[str, str] = {
+    "score_drop": "strict_fix",
+    "tests_failed": "unit_test_rewrite",
+    "entropy_regression": "comment_refactor",
     "test": "unit_test_rewrite",
     "comment": "comment_refactor",
     "refactor": "strict_fix",

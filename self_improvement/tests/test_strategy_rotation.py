@@ -32,10 +32,11 @@ class MiniEngine:
 
     def _record_snapshot_delta(self, prompt, delta):
         strategy = getattr(prompt, "metadata", {}).get("strategy")
-        if strategy:
-            nxt = strategy_rotator.next_strategy(str(strategy), "regression")
-            if delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0:
-                self.pending_strategy = nxt
+        if strategy and (delta.get("roi", 0.0) < 0 or delta.get("entropy", 0.0) < 0):
+            nxt = self.strategy_manager.record_failure(
+                str(strategy), "regression", float(delta.get("roi", 0.0))
+            )
+            self.pending_strategy = nxt
 
     def next_prompt_strategy(self):
         pending = self.pending_strategy
@@ -49,22 +50,22 @@ def test_rotation_and_pending_strategy():
     eng = MiniEngine()
     prompt = DummyPrompt("strict_fix")
 
-    called: dict[str, tuple[str, str]] = {}
+    called: dict[str, tuple[str, str, float]] = {}
 
-    def fake_next_strategy(current, reason):
-        called["args"] = (current, reason)
+    def fake_record_failure(current, reason, roi):
+        called["args"] = (current, reason, roi)
         return "delete_rebuild"
 
     import menace_sandbox.self_improvement.strategy_rotator as sr
 
-    original = sr.next_strategy
+    original = sr.manager.record_failure
     try:
-        sr.next_strategy = fake_next_strategy  # type: ignore
+        sr.manager.record_failure = fake_record_failure  # type: ignore
         eng._record_snapshot_delta(prompt, {"roi": -1})
     finally:
-        sr.next_strategy = original  # type: ignore
+        sr.manager.record_failure = original  # type: ignore
 
-    assert called["args"] == ("strict_fix", "regression")
+    assert called["args"] == ("strict_fix", "regression", -1)
     assert eng.pending_strategy == "delete_rebuild"
 
     choice = eng.next_prompt_strategy()
@@ -84,13 +85,13 @@ def _reload(monkeypatch, tmp_path, **env):
 
 def test_keyword_override(tmp_path, monkeypatch):
     sr = _reload(monkeypatch, tmp_path)
-    nxt = sr.next_strategy("strict_fix", "tests_failed in module")
+    nxt = sr.manager.record_failure("strict_fix", "tests_failed in module")
     assert nxt == "unit_test_rewrite"
 
 
 def test_failure_counts_persist(tmp_path, monkeypatch):
     sr = _reload(monkeypatch, tmp_path)
-    sr.next_strategy("strict_fix", "regression")
+    sr.manager.record_failure("strict_fix", "regression")
     assert sr.manager.failure_counts["strict_fix"] == 1
     sr = importlib.reload(sr)
     assert sr.manager.failure_counts["strict_fix"] == 1
@@ -100,7 +101,7 @@ def test_failure_limit_from_settings(tmp_path, monkeypatch):
     limits = json.dumps({"strict_fix": 1})
     sr = _reload(monkeypatch, tmp_path, STRATEGY_FAILURE_LIMITS=limits)
     current = "strict_fix"
-    nxt = sr.next_strategy(current, "failure")
+    nxt = sr.manager.record_failure(current, "failure")
     assert nxt == "delete_rebuild"
 
 
