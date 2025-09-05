@@ -1286,9 +1286,9 @@ class SelfCodingEngine:
             )
             prompt_obj = simple_prompt
             try:
-                result = call_codex_with_backoff(
-                    self.llm_client, simple_prompt, logger=self.logger
-                )
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(self.llm_client.generate, simple_prompt)
+                    result = future.result(timeout=30.0)
             except Exception as exc:
                 self._last_retry_trace = str(exc)
                 result = LLMResult(raw=str(exc))
