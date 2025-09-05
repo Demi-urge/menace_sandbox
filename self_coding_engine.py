@@ -1259,7 +1259,7 @@ class SelfCodingEngine:
                 result = LLMResult(raw=str(exc))
         if not result.text.strip():
             alt = codex_fallback_handler.handle_failure(
-                prompt_obj, result, str(result.raw)
+                prompt_obj, exc=str(result.raw), result=result
             )
             if alt is None or not alt.text.strip():
                 return _fallback()
@@ -1269,7 +1269,7 @@ class SelfCodingEngine:
             ast.parse(text)
         except Exception as exc:
             alt = codex_fallback_handler.handle_failure(
-                prompt_obj, result, f"syntax error: {exc}"
+                prompt_obj, exc=f"syntax error: {exc}", result=result
             )
             if alt is None or not alt.text.strip():
                 return _fallback()
