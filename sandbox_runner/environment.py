@@ -980,8 +980,8 @@ def save_coverage_data() -> None:
 
 def _scenario_summary_path() -> Path:
     data_dir = _env_path("SANDBOX_DATA_DIR", "sandbox_data")
-    default = data_dir / "scenario_summary.json"
-    return Path(os.getenv("SANDBOX_SCENARIO_SUMMARY", str(default)))
+    default = str(data_dir / "scenario_summary.json")
+    return _env_path("SANDBOX_SCENARIO_SUMMARY", default)
 
 
 def save_scenario_summary(
