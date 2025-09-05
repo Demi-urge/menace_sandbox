@@ -1,3 +1,7 @@
+"""Tests for payment notice injection logic."""
+
+# flake8: noqa
+
 import sys
 import types
 from pathlib import Path
@@ -102,6 +106,13 @@ from menace_sandbox.chatgpt_idea_bot import ChatGPTClient
 from menace_sandbox.bot_development_bot import BotDevelopmentBot
 
 
+def test_payment_router_notice_mentions_central_routing_and_logging():
+    phrase = (
+        "Every Stripe charge must use central routing and log via billing_logger/stripe_ledger."
+    )
+    assert phrase in PAYMENT_ROUTER_NOTICE
+
+
 def test_prepend_payment_notice_helper():
     msgs = [{"role": "user", "content": "hello"}]
     new_msgs = prepend_payment_notice(msgs)
@@ -203,6 +214,9 @@ def test_gpt4client_injects_notice(monkeypatch):
     monkeypatch.syspath_prepend(
         str(Path(__file__).resolve().parents[1] / "neurosales")
     )
+    import importlib
+    ext = importlib.import_module("neurosales.external_integrations")
+    importlib.reload(ext)
     from neurosales.external_integrations import GPT4Client
 
     client = GPT4Client(api_key="k")
