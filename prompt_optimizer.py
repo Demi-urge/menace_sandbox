@@ -186,9 +186,9 @@ class PromptOptimizer:
 
         def _resolve(p: str | Path) -> Path:
             try:
-                return Path(resolve_path(p))
+                return resolve_path(str(p))
             except FileNotFoundError:
-                return Path(root) / Path(p)
+                return root / Path(p)
 
         self.log_paths = [_resolve(success_log), _resolve(failure_log)]
         if failure_fingerprints_path:

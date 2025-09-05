@@ -87,7 +87,7 @@ DEFAULT_TEMPLATE = "No relevant patches were found. Proceed with a fresh impleme
 
 # Strategy templates live in ``templates/prompt_strategies.yaml``.  The helper
 # falls back to an empty mapping when the file is missing or cannot be parsed.
-_STRATEGY_TEMPLATE_PATH = Path(resolve_path("templates/prompt_strategies.yaml"))
+_STRATEGY_TEMPLATE_PATH = resolve_path("templates/prompt_strategies.yaml")
 _STRATEGY_TEMPLATES: Dict[str, str] | None = None
 
 
@@ -253,10 +253,10 @@ class PromptEngine:
             getattr(RoiTag.BLOCKED, "value", RoiTag.BLOCKED): -1.0,
         }
     )
-    template_path: Path = Path(
+    template_path: Path = resolve_path(
         os.getenv(
             "PROMPT_TEMPLATES_PATH",
-            str(resolve_path("config/prompt_templates.v2.json")),
+            "config/prompt_templates.v2.json",
         )
     )
     template_sections: List[str] = field(
@@ -265,10 +265,10 @@ class PromptEngine:
             "coding_standards;repository_layout;metadata;version_control;testing",
         ).split(";"),
     )
-    weights_path: Path = Path(
+    weights_path: Path = resolve_path(
         os.getenv(
             "PROMPT_STYLE_WEIGHTS_PATH",
-            str(resolve_path("prompt_style_weights.json")),
+            "prompt_style_weights.json",
         )
     )
     trainer: PromptMemoryTrainer | None = None
@@ -876,7 +876,7 @@ class PromptEngine:
             original_lines = list(getattr(target_region, "original_lines", []) or [])
             if not original_lines and raw_filename:
                 try:
-                    resolved = Path(resolve_path(raw_filename))
+                    resolved = resolve_path(raw_filename)
                 except Exception:
                     resolved = None
                 if resolved and resolved.exists():
