@@ -1310,29 +1310,34 @@ class SelfCodingEngine:
             except Exception as exc:
                 self._last_retry_trace = str(exc)
                 result = LLMResult(raw=str(exc))
-        if not result.text.strip():
-            alt = codex_fallback_handler.handle_failure(
-                prompt_obj, exc=str(result.raw), result=result
-            )
-            if alt is None or not alt.text.strip():
-                return _fallback()
-            result = alt
-        text = result.text
-        try:
-            ast.parse(text)
-        except Exception as exc:
-            alt = codex_fallback_handler.handle_failure(
-                prompt_obj, exc=f"syntax error: {exc}", result=result
-            )
-            if alt is None or not alt.text.strip():
-                return _fallback()
-            result = alt
+        def _validate(output: str) -> tuple[bool, str]:
+            text = output.strip()
+            if not text:
+                return False, "empty result"
             try:
-                ast.parse(result.text)
-            except Exception:
+                ast.parse(text)
+            except Exception as exc:  # pragma: no cover - syntax error branch
+                return False, f"syntax error: {exc}"
+            return True, text
+
+        ok, checked = _validate(result.text)
+        if not ok:
+            reason = str(checked)
+            self.logger.warning(
+                "codex fallback", extra={"reason": reason, "description": description, "tags": ["degraded"]}
+            )
+            alt = codex_fallback_handler.handle(prompt_obj, reason)
+            if alt is None:
                 return _fallback()
-            text = result.text
-        text = text.strip()
+            ok, checked = _validate(alt.text)
+            if not ok:
+                self.logger.warning(
+                    "codex fallback failed",
+                    extra={"reason": str(checked), "description": description, "tags": ["degraded"]},
+                )
+                return _fallback()
+            result = alt
+        text = str(checked)
         if text:
             if self.gpt_memory:
                 try:

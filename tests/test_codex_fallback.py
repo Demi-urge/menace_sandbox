@@ -84,7 +84,7 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
 
     alt_result = LLMResult(text="print('hi')")
     handle_mock = MagicMock(return_value=alt_result)
-    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle_failure", handle_mock)
+    monkeypatch.setattr(self_coding_engine.codex_fallback_handler, "handle", handle_mock)
 
     call_delays = []
 
@@ -122,12 +122,12 @@ def test_codex_fallback_queue_on_malformed(monkeypatch):
         self_coding_engine.codex_fallback_handler, "queue_for_retry", queue_mock
     )
 
-    def handle_failure(prompt, exc=None, result=None):
+    def handle(prompt, reason, **_):
         self_coding_engine.codex_fallback_handler.queue_for_retry(prompt)
         return None
 
     monkeypatch.setattr(
-        self_coding_engine.codex_fallback_handler, "handle_failure", handle_failure
+        self_coding_engine.codex_fallback_handler, "handle", handle
     )
     patch_history(monkeypatch)
 
