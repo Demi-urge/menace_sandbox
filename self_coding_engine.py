@@ -13,6 +13,7 @@ import tempfile
 import py_compile
 import re
 import traceback
+import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -163,6 +164,10 @@ try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me
 except Exception:  # pragma: no cover - fallback when executed directly
     import metrics_exporter as _me  # type: ignore
+try:  # pragma: no cover - optional codex fallback handler
+    from . import codex_fallback_handler
+except Exception:  # pragma: no cover - fallback for flat layout
+    import codex_fallback_handler  # type: ignore
 
 _PATCH_ATTEMPTS = _me.Gauge(
     "patch_attempts_total",
@@ -1222,11 +1227,39 @@ class SelfCodingEngine:
             )
             prompt_obj.text += "\n\n### Patch history\n" + combined_history
 
-        try:
-            result = self.llm_client.generate(prompt_obj)
-        except Exception as exc:
-            self._last_retry_trace = str(exc)
-            result = LLMResult()
+        result = LLMResult()
+        for delay in (2, 5, 10):
+            try:
+                result = self.llm_client.generate(prompt_obj)
+                break
+            except Exception as exc:
+                self._last_retry_trace = str(exc)
+                time.sleep(delay)
+        else:
+            simple_prompt = Prompt(
+                prompt_obj.text,
+                system="",
+                examples=[],
+                metadata=getattr(prompt_obj, "metadata", {}),
+            )
+            prompt_obj = simple_prompt
+            try:
+                result = self.llm_client.generate(simple_prompt)
+            except Exception as exc:
+                self._last_retry_trace = str(exc)
+                alt = codex_fallback_handler.handle_failure(
+                    simple_prompt, None, str(exc)
+                )
+                if alt is None or not alt.text.strip():
+                    return _fallback()
+                result = alt
+            if not result.text.strip():
+                alt = codex_fallback_handler.handle_failure(
+                    simple_prompt, result, "empty completion"
+                )
+                if alt is None or not alt.text.strip():
+                    return _fallback()
+                result = alt
         text = result.text.strip()
         if text:
             if self.gpt_memory:
