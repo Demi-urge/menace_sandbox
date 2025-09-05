@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 import pytest
+from dynamic_path_router import resolve_path
 
 # ---------------------------------------------------------------------------
 # Stub heavy dependencies before importing target modules
@@ -22,6 +23,7 @@ class _EmbeddableDBMixin:
     def backfill_embeddings(self, *a, **k):
         pass
 vec_mod.EmbeddableDBMixin = _EmbeddableDBMixin
+vec_mod.SharedVectorService = object
 sys.modules.setdefault("vector_service", vec_mod)
 
 # Minimal menace package to avoid executing heavy __init__
@@ -103,13 +105,14 @@ from menace.sandbox_runner.test_harness import TestHarnessResult as HarnessResul
 # ---------------------------------------------------------------------------
 
 def test_failed_tags_recorded(monkeypatch, tmp_path):
-    file_path = tmp_path / "sample.py"
+    file_path = tmp_path / resolve_path("sample.py")
     file_path.write_text("def x():\n    pass\n")
 
     class Engine:
         def __init__(self):
             self.patch_suggestion_db = PatchSuggestionDB(tmp_path / "s.db")
             self.cognition_layer = types.SimpleNamespace(context_builder=None)
+            self.last_prompt_text = ""
 
         def apply_patch(self, path: Path, desc: str, **kwargs):
             with open(path, "a", encoding="utf-8") as fh:
