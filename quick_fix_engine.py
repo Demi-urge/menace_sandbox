@@ -138,11 +138,13 @@ def generate_patch(
     context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
     if context:
         context_meta.update(context)
-    try:
-        builder = context_builder if context_builder is not None else ContextBuilder()
-    except Exception as exc:  # pragma: no cover - instantiation issues
-        logger.debug("ContextBuilder instantiation failed: %s", exc)
-        builder = None
+    if context_builder is None:
+        try:
+            context_builder = ContextBuilder()
+        except Exception as exc:  # pragma: no cover - instantiation issues
+            logger.debug("ContextBuilder instantiation failed: %s", exc)
+            context_builder = None
+    builder = context_builder
     context_block = ""
     cb_session = ""
     vectors: List[Tuple[str, str, float]] = []
@@ -190,6 +192,15 @@ def generate_patch(
         except Exception as exc:  # pragma: no cover - optional deps
             logger.error("self coding engine unavailable: %s", exc)
             return None
+
+    if builder is not None and engine is not None:
+        try:
+            setattr(engine, "context_builder", builder)
+            cl = getattr(engine, "cognition_layer", None)
+            if cl is not None:
+                cl.context_builder = builder  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - best effort
+            logger.debug("failed to attach context builder to engine", exc_info=True)
 
     try:
         patch_id: int | None
