@@ -46,7 +46,7 @@ class DummyEngine:
 
 
 class DummyTelem:
-    def __init__(self, log: str):
+    def __init__(self, log: str = ""):
         self.log = log
 
     def recent_errors(self, limit: int = 5):

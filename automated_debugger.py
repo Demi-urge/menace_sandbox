@@ -8,7 +8,7 @@ import re
 import subprocess
 import tempfile
 import traceback
-from typing import Iterable
+from typing import Any, Iterable
 
 from .self_coding_engine import SelfCodingEngine
 from .retry_utils import retry
@@ -22,9 +22,15 @@ _FRAME_RE = re.compile(r"File \"([^\"]+)\", line (\d+), in ([^\n]+)")
 class AutomatedDebugger:
     """Analyse telemetry logs and trigger self-coding fixes."""
 
-    def __init__(self, telemetry_db: object, engine: SelfCodingEngine) -> None:
+    def __init__(
+        self,
+        telemetry_db: object,
+        engine: SelfCodingEngine,
+        context_builder: Any | None = None,
+    ) -> None:
         self.telemetry_db = telemetry_db
         self.engine = engine
+        self.context_builder = context_builder
         self.logger = logging.getLogger("AutomatedDebugger")
         self._tracker = PatchAttemptTracker()
 
