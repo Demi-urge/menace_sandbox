@@ -79,7 +79,19 @@ def test_quick_fix_engine_uses_vector_service_retriever():
         def search(self, query, top_k, session_id):
             self.calls.append((query, top_k, session_id))
             return FallbackResult("no results", [], 0.0)
-    engine = QuickFixEngine(error_db=object(), manager=object(), retriever=SpyRetriever())
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            return None
+
+        def build(self, query, session_id=None, include_vectors=False):
+            return ""
+
+    engine = QuickFixEngine(
+        error_db=object(),
+        manager=object(),
+        retriever=SpyRetriever(),
+        context_builder=DummyBuilder(),
+    )
     hits, sid, vectors = engine._redundant_retrieve("m", 1)
     assert hits == [] and sid == "" and vectors == []
     assert engine.retriever.calls

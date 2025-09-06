@@ -34,6 +34,9 @@ class _DummyContextBuilder:
     def build(self, *a, **k):
         return ""
 
+    def refresh_db_weights(self):
+        return None
+
 
 class _DummyBackfill:
     def __init__(self, *a, **k):
