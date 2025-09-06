@@ -67,6 +67,10 @@ def _stub_vector_service(monkeypatch):
     class ContextBuilder:
         calls: list[str] = []
 
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
         def build_context(self, prompt, **_):
             self.__class__.calls.append(prompt)
             return "ctx"
@@ -88,7 +92,15 @@ def test_escalation_on_critical(monkeypatch):
 
     esc = DummyEscalation()
     db = DummyDB()
-    reviewer = ar.AutomatedReviewer(bot_db=db, escalation_manager=esc)
+    builder = vector_service.ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
+    reviewer = ar.AutomatedReviewer(
+        bot_db=db, escalation_manager=esc, context_builder=builder
+    )
     reviewer.handle({"bot_id": "7", "severity": "critical"})
     assert vector_service.ContextBuilder.calls
     assert db.updated and db.updated[0][0] == 7
@@ -121,14 +133,20 @@ def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
             raise ValueError("context build failed")
 
     class DummyBuilder:
-        def __init__(self):
+        def __init__(self, *args, **kwargs):
             self.calls = []
             self.retriever = DummyRetriever()
+
         def build_context(self, query, **_):
             self.calls.append(query)
             return self.retriever.search(query, session_id="s")
 
-    builder = DummyBuilder()
+    builder = DummyBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
 
     attachments_list: list[str] = []
     class Escalator:

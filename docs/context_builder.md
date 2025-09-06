@@ -95,7 +95,8 @@ summariser also operates offline, so even without the optional memory manager
 
 ## Integration
 
-`SelfCodingEngine`, `QuickFixEngine`, `BotDevelopmentBot` and
-`AutomatedReviewer` instantiate `ContextBuilder` automatically when available to
-enrich their prompts with historical context.
+`SelfCodingEngine`, `QuickFixEngine` and `BotDevelopmentBot` instantiate
+`ContextBuilder` automatically when available to enrich their prompts with
+historical context. `AutomatedReviewer` now requires an explicit
+`ContextBuilder` instance to provide similar context during reviews.
 
