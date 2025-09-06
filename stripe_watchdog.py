@@ -1206,6 +1206,60 @@ def detect_missing_refunds(
     return anomalies
 
 
+def detect_unauthorized_failures(
+    events: Iterable[dict],
+    ledger: List[Dict[str, Any]],
+    billing_logs: List[Dict[str, Any]] | None = None,
+    approved_workflows: Iterable[str] | None = None,
+    *,
+    write_codex: bool = False,
+    export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
+) -> List[Dict[str, Any]]:
+    """Return failed events present in logs but missing authorization."""
+
+    ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "failed"}
+    billing_map = {
+        str(rec.get("stripe_id")): rec
+        for rec in (billing_logs or [])
+        if rec.get("stripe_id")
+    }
+    approved = {str(w) for w in (approved_workflows or [])}
+
+    anomalies: List[Dict[str, Any]] = []
+    for event in events:
+        if event.get("type") not in {"charge.failed", "payment_intent.payment_failed"}:
+            continue
+        eid = str(event.get("id"))
+        log = billing_map.get(eid)
+        if not log:
+            continue
+        bot_id = log.get("bot_id")
+        unauthorized = eid not in ledger_ids or (
+            bot_id and approved and bot_id not in approved
+        )
+        if not unauthorized:
+            continue
+        anomaly = {
+            "type": "unauthorized_failure",
+            "event_id": eid,
+            "event_type": event.get("type"),
+            "bot_id": bot_id,
+            "account_id": event.get("account"),
+            "module": BILLING_ROUTER_MODULE,
+        }
+        anomalies.append(anomaly)
+        _emit_anomaly(
+            anomaly,
+            write_codex,
+            export_training,
+            self_coding_engine,
+            telemetry_feedback,
+        )
+    return anomalies
+
+
 def detect_failed_events(
     events: Iterable[dict],
     ledger: List[Dict[str, Any]],
@@ -1818,6 +1872,16 @@ def main(argv: Optional[List[str]] = None) -> None:
         refunds,
         ledger,
         refund_logs,
+        approved,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
+    )
+    detect_unauthorized_failures(
+        events,
+        ledger,
+        failed_logs,
         approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
