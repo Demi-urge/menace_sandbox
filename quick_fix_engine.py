@@ -26,15 +26,16 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-try:  # pragma: no cover - optional dependency
+try:  # pragma: no cover - fail fast if vector service missing
     from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
-except Exception as exc:  # pragma: no cover - fallback when vector service is missing
-    logging.getLogger(__name__).warning("vector_service unavailable: %s", exc)
-    ContextBuilder = object  # type: ignore
-    Retriever = object  # type: ignore
-    FallbackResult = object  # type: ignore
-    EmbeddingBackfill = object  # type: ignore
-from patch_provenance import PatchLogger
+except Exception as exc:  # pragma: no cover - provide actionable error
+    raise RuntimeError(
+        "vector_service is required for quick_fix_engine. Install it via `pip install vector_service`."
+    ) from exc
+try:  # pragma: no cover - optional dependency
+    from patch_provenance import PatchLogger
+except Exception:  # pragma: no cover - fallback when unavailable
+    PatchLogger = object  # type: ignore
 try:  # pragma: no cover - optional dependency
     from chunking import get_chunk_summaries
 except Exception:  # pragma: no cover - chunking unavailable
@@ -91,6 +92,9 @@ def generate_patch(
 ) -> int | None:
     """Attempt a quick patch for *module* and return the patch id.
 
+    A :class:`vector_service.ContextBuilder` is always used to gather context
+    for the patch.
+
     Parameters
     ----------
     module:
@@ -100,8 +104,9 @@ def generate_patch(
         provided, a minimal engine is instantiated on demand.  The function
         tolerates missing dependencies and simply returns ``None`` on failure.
     context_builder:
-        Optional :class:`vector_service.ContextBuilder` used to build context and
-        retrieve contributing vectors.
+        Optional pre-existing :class:`vector_service.ContextBuilder`.  When
+        omitted, a new :class:`~vector_service.ContextBuilder` is instantiated so
+        that context is always built using a builder.
     description:
         Optional patch description.  When omitted, a generic description is
         used.
@@ -133,7 +138,11 @@ def generate_patch(
     context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
     if context:
         context_meta.update(context)
-    builder = context_builder
+    try:
+        builder = context_builder if context_builder is not None else ContextBuilder()
+    except Exception as exc:  # pragma: no cover - instantiation issues
+        logger.debug("ContextBuilder instantiation failed: %s", exc)
+        builder = None
     context_block = ""
     cb_session = ""
     vectors: List[Tuple[str, str, float]] = []
