@@ -135,6 +135,9 @@ def test_watchdog_anomaly_reaches_consumer(monkeypatch, tmp_path):
 
     # Emit anomaly
     record = {"type": "missing_charge", "id": "ch_1", "amount": 5}
+    monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "load_api_key", lambda: None)
     sw._emit_anomaly(record, False, False)
 
     # Sanity layer persisted and published event

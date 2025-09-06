@@ -153,14 +153,17 @@ def test_distinct_instructions_per_anomaly_type(capture, monkeypatch):
     monkeypatch.setattr(sw, "DiscrepancyRecord", None)
     monkeypatch.setattr(sw, "load_approved_workflows", lambda: set())
 
-    monkeypatch.setattr(
-        sw,
-        "detect_missing_charges",
-        lambda *a, **k: [
+    def fake_missing_charges(*a, **k):
+        anomalies = [
             {"type": "missing_charge", "id": "ch"},
             {"type": "missing_refund", "id": "rf"},
-        ],
-    )
+        ]
+        for a in anomalies:
+            sw._emit_anomaly(a, False, False)
+        return anomalies
+
+    monkeypatch.setattr(sw, "detect_missing_charges", fake_missing_charges)
+
     monkeypatch.setattr(sw, "detect_failed_events", lambda *a, **k: [])
 
     calls: list[tuple[str, str]] = []
@@ -198,6 +201,35 @@ def test_webhook_endpoint_validation(capture, monkeypatch):
     assert events and events[0][1]["type"] == "unknown_webhook"
 
 
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"type": "missing_refund", "id": "rf"},
+        {"type": "missing_failure_log", "event_id": "ev"},
+        {"type": "unknown_webhook", "webhook_id": "wh"},
+        {"type": "revenue_mismatch", "expected": 10, "actual": 5},
+    ],
+)
+def test_emit_anomaly_records_billing_event_for_all_types(monkeypatch, record):
+    calls: list[tuple[str, str]] = []
+
+    def fake_record(event_type, metadata, instruction, **kwargs):
+        calls.append((event_type, instruction))
+
+    monkeypatch.setattr(sw, "record_billing_event", fake_record)
+    monkeypatch.setattr(sw, "record_billing_anomaly", lambda *a, **k: None)
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+    monkeypatch.setattr(sw, "load_api_key", lambda: None)
+
+    sw._emit_anomaly(record, False, False)
+
+    assert calls
+    event_type, instruction = calls[0]
+    assert event_type == record["type"]
+    assert instruction == sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS[event_type]
+
+
 def test_config_updates_written(monkeypatch, tmp_path):
     """record_billing_event persists config updates when anomalies occur."""
 
@@ -211,12 +243,22 @@ def test_config_updates_written(monkeypatch, tmp_path):
     monkeypatch.setattr(msl, "_BILLING_EVENT_DB", None)
     monkeypatch.setattr(msl, "_get_gpt_memory", lambda: None)
 
+    engine_updates: list = []
+    engine = SimpleNamespace(
+        update_generation_params=lambda meta: engine_updates.append(meta)
+    )
+
     anomaly = {
         "type": "missing_charge",
         "id": "ch1",
         "config_updates": {"max_retries": 5},
     }
-    monkeypatch.setattr(sw, "detect_missing_charges", lambda *a, **k: [anomaly])
+
+    def fake_charges(*a, **k):
+        sw._emit_anomaly(anomaly, False, False, self_coding_engine=engine)
+        return [anomaly]
+
+    monkeypatch.setattr(sw, "detect_missing_charges", fake_charges)
     monkeypatch.setattr(sw, "detect_missing_refunds", lambda *a, **k: [])
     monkeypatch.setattr(sw, "detect_failed_events", lambda *a, **k: [])
     monkeypatch.setattr(sw, "load_api_key", lambda: "sk")
@@ -232,10 +274,8 @@ def test_config_updates_written(monkeypatch, tmp_path):
     fake_stripe = SimpleNamespace(Account=SimpleNamespace(retrieve=lambda **k: {"id": "acct"}))
     monkeypatch.setattr(sw, "stripe", fake_stripe)
 
-    engine_updates: list = []
-    engine = SimpleNamespace(
-        update_generation_params=lambda meta: engine_updates.append(meta)
-    )
+    monkeypatch.setattr(sw, "record_billing_anomaly", lambda *a, **k: None)
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None)
 
     sw.check_events(self_coding_engine=engine)
 

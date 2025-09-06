@@ -103,6 +103,8 @@ def test_anomaly_threshold_triggers_engine(monkeypatch, tmp_path):
 
     record = {"type": "missing_charge", "id": "ch_1"}
     threshold = msl.PAYMENT_ANOMALY_THRESHOLD
+    monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "load_api_key", lambda: None)
 
     for _ in range(threshold + 1):
         sw._emit_anomaly(record, False, False, self_coding_engine=engine)

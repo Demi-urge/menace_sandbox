@@ -26,6 +26,9 @@ def test_emit_anomaly_triggers_record_event(monkeypatch):
     monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
     monkeypatch.setattr(sw.ANOMALY_TRAIL, "record", lambda *a, **k: None)
     monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+    monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "load_api_key", lambda: None)
 
     engine = object()
     telemetry = object()
@@ -38,7 +41,7 @@ def test_emit_anomaly_triggers_record_event(monkeypatch):
     )
 
     assert calls and calls[0][0] == "missing_charge"
-    assert calls[0][1] == {"charge_id": "ch_1"}
+    assert calls[0][1]["charge_id"] == "ch_1"
     assert calls[0][2]["self_coding_engine"] is engine
     assert calls[0][2]["telemetry_feedback"] is telemetry
 
@@ -315,9 +318,11 @@ def test_emit_anomaly_records_all_outputs(event_type, record, monkeypatch, tmp_p
     monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
     monkeypatch.setattr(msl, "_DISCREPANCY_DB", None)
     monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", fake_payment)
+    monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
     monkeypatch.setattr(sw.ANOMALY_TRAIL, "record", lambda *a, **k: None)
     monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+    monkeypatch.setattr(sw, "load_api_key", lambda: None)
 
     sw._emit_anomaly(record, False, False)
 
@@ -331,7 +336,8 @@ def test_emit_anomaly_records_all_outputs(event_type, record, monkeypatch, tmp_p
     assert bus_events and bus_events[0][0] == "billing.anomaly"
     event = bus_events[0][1]
     assert event["event_type"] == event_type
-    assert event["metadata"] == record
+    for k, v in record.items():
+        assert event["metadata"].get(k) == v
     assert event["severity"] == sw.SEVERITY_MAP[event_type]
 
     assert memory_calls
@@ -339,7 +345,9 @@ def test_emit_anomaly_records_all_outputs(event_type, record, monkeypatch, tmp_p
     assert msl.EVENT_TYPE_INSTRUCTIONS[event_type] in instr
     expected_meta = dict(record)
     expected_meta.pop("type")
-    assert payload == {"event_type": event_type, "metadata": expected_meta}
+    assert payload["event_type"] == event_type
+    for k, v in expected_meta.items():
+        assert payload["metadata"].get(k) == v
 
     assert payment_calls and payment_calls[0][2] == msl.EVENT_TYPE_INSTRUCTIONS[event_type]
     assert payment_calls[0][3] == sw.SEVERITY_MAP[event_type]

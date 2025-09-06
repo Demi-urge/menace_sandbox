@@ -89,6 +89,7 @@ def capture_anomalies(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sw, "record_billing_anomaly", fake_billing)
     monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", fake_payment)
+    monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
 
     return events, samples, billing_calls, payment_calls
 
