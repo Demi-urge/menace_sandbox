@@ -330,7 +330,7 @@ class SelfCodingEngine:
         enhancement_classifier: "EnhancementClassifier" | None = None,
         patch_logger: PatchLogger | None = None,
         cognition_layer: CognitionLayer | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         bot_roles: Optional[Dict[str, str]] = None,
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
@@ -457,23 +457,17 @@ class SelfCodingEngine:
         self.patch_suggestion_db = patch_suggestion_db
         self.enhancement_classifier = enhancement_classifier
         tracker = ROITracker()
-        # Ensure a context builder is available for downstream components
+        # Attach ROI tracker to provided context builder when missing
         builder = context_builder
-        if builder is None:
+        if getattr(builder, "roi_tracker", None) is None:
             try:
-                builder = ContextBuilder(roi_tracker=tracker)
+                builder.roi_tracker = tracker  # type: ignore[attr-defined]
             except Exception:
-                builder = None
-        else:
-            if getattr(builder, "roi_tracker", None) is None:
-                try:
-                    builder.roi_tracker = tracker  # type: ignore[attr-defined]
-                except Exception:
-                    self.logger.warning(
-                        "failed to attach ROI tracker to context_builder",
-                        exc_info=True,
-                        extra={"context_builder": type(builder).__name__},
-                    )
+                self.logger.warning(
+                    "failed to attach ROI tracker to context_builder",
+                    exc_info=True,
+                    extra={"context_builder": type(builder).__name__},
+                )
         self.context_builder = builder
         if patch_logger is not None and getattr(patch_logger, "roi_tracker", None) is None:
             try:
