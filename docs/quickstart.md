@@ -105,10 +105,12 @@ When building prompts the self‑coding engine loads these summaries and passes
 them to the prompt engine:
 
 ```python
+from pathlib import Path
 from chunking import get_chunk_summaries
 from prompt_engine import PromptEngine
+from vector_service.context_builder import ContextBuilder
 
-engine = PromptEngine()
+engine = PromptEngine(context_builder=ContextBuilder())
 chunks = get_chunk_summaries(Path("bots/example.py"), 800)
 prompt = engine.build_prompt(
     "refactor helper",
