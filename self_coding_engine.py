@@ -540,9 +540,8 @@ class SelfCodingEngine:
         self.prompt_optimizer = prompt_optimizer
         # expose ROI tracker to the prompt engine so retrieved examples can
         # carry risk-adjusted ROI hints when available
-        builder = self.context_builder
         self.prompt_engine = PromptEngine(
-            context_builder=builder,
+            context_builder=self.context_builder,
             roi_tracker=tracker,
             tone=prompt_tone,
             trainer=self.prompt_memory,

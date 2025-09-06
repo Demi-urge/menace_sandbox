@@ -26,9 +26,122 @@ sys.modules.setdefault(
     ),
 )
 sys.modules.setdefault(
+    "gpt_memory_interface", types.SimpleNamespace(GPTMemoryInterface=object)
+)
+sys.modules.setdefault(
     "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None, DBRouter=object, init_db_router=lambda *a, **k: None)
 )
-sys.modules.setdefault("vector_service", types.SimpleNamespace(CognitionLayer=object))
+sys.modules.setdefault(
+    "vector_service", types.SimpleNamespace(CognitionLayer=object, SharedVectorService=object)
+)
+sys.modules.setdefault(
+    "menace.trend_predictor", types.SimpleNamespace(TrendPredictor=object)
+)
+sys.modules.setdefault("trend_predictor", sys.modules["menace.trend_predictor"])
+sys.modules.setdefault(
+    "menace.safety_monitor", types.SimpleNamespace(SafetyMonitor=object)
+)
+sys.modules.setdefault("safety_monitor", sys.modules["menace.safety_monitor"])
+sys.modules.setdefault(
+    "llm_interface", types.SimpleNamespace(Prompt=str, LLMResult=object, LLMClient=object)
+)
+sys.modules.setdefault(
+    "llm_registry",
+    types.SimpleNamespace(create_backend=lambda *a, **k: None, register_backend_from_path=lambda *a, **k: None),
+)
+sys.modules.setdefault(
+    "sandbox_settings", types.SimpleNamespace(SandboxSettings=object)
+)
+sys.modules.setdefault(
+    "rate_limit", types.SimpleNamespace(estimate_tokens=lambda *a, **k: 0)
+)
+sys.modules.setdefault(
+    "menace.llm_router", types.SimpleNamespace(client_from_settings=lambda *a, **k: None)
+)
+sys.modules.setdefault("llm_router", sys.modules["menace.llm_router"])
+sys.modules.setdefault(
+    "shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
+)
+sys.modules.setdefault(
+    "shared_knowledge_module", types.SimpleNamespace(LOCAL_KNOWLEDGE_MODULE=None)
+)
+sys.modules.setdefault(
+    "menace.gpt_knowledge_service", types.SimpleNamespace(GPTKnowledgeService=object)
+)
+sys.modules.setdefault(
+    "gpt_knowledge_service", sys.modules["menace.gpt_knowledge_service"]
+)
+sys.modules.setdefault(
+    "governed_retrieval", types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x)
+)
+sys.modules.setdefault(
+    "knowledge_retriever",
+    types.SimpleNamespace(
+        get_feedback=lambda *a, **k: [],
+        get_error_fixes=lambda *a, **k: [],
+        recent_feedback=lambda *a, **k: "",
+        recent_error_fix=lambda *a, **k: "",
+        recent_improvement_path=lambda *a, **k: "",
+    ),
+)
+sys.modules.setdefault(
+    "menace.menace_sanity_layer", types.SimpleNamespace(fetch_recent_billing_issues=lambda: "")
+)
+sys.modules.setdefault("menace_sanity_layer", sys.modules["menace.menace_sanity_layer"])
+sys.modules.setdefault(
+    "menace.patch_suggestion_db", types.SimpleNamespace(PatchSuggestionDB=object, SuggestionRecord=object)
+)
+sys.modules.setdefault("patch_suggestion_db", sys.modules["menace.patch_suggestion_db"])
+
+
+class _PromptEngine:
+    def __init__(self, *a, **k):
+        self.context_builder = k.get("context_builder")
+        self.last_metadata = {}
+
+    def build_prompt(self, task, *, context=None, retrieval_context=None, **_):
+        parts = []
+        if retrieval_context:
+            parts.append(retrieval_context)
+        if context:
+            parts.append(context)
+        parts.append(task)
+        text = "\n".join(parts)
+        return types.SimpleNamespace(text=text)
+
+
+sys.modules.setdefault(
+    "prompt_engine",
+    types.SimpleNamespace(PromptEngine=_PromptEngine, _ENCODER=None, diff_within_target_region=lambda *a, **k: False),
+)
+sys.modules.setdefault("menace.prompt_engine", sys.modules["prompt_engine"])
+sys.modules.setdefault(
+    "chunking",
+    types.SimpleNamespace(
+        split_into_chunks=lambda *a, **k: [],
+        get_chunk_summaries=lambda *a, **k: [],
+        summarize_code=lambda *a, **k: "",
+    ),
+)
+sys.modules.setdefault(
+    "menace.failure_retry_utils",
+    types.SimpleNamespace(check_similarity_and_warn=lambda *a, **k: None, record_failure=lambda *a, **k: None),
+)
+sys.modules.setdefault("failure_retry_utils", sys.modules["menace.failure_retry_utils"])
+sys.modules.setdefault(
+    "menace.failure_fingerprint_store", types.SimpleNamespace(FailureFingerprintStore=object)
+)
+sys.modules.setdefault("failure_fingerprint_store", sys.modules["menace.failure_fingerprint_store"])
+sys.modules.setdefault(
+    "menace.failure_fingerprint",
+    types.SimpleNamespace(
+        FailureFingerprint=object,
+        find_similar=lambda *a, **k: [],
+        log_fingerprint=lambda *a, **k: None,
+    ),
+)
+sys.modules.setdefault("failure_fingerprint", sys.modules["menace.failure_fingerprint"])
+sys.modules.setdefault("error_vectorizer", types.SimpleNamespace(ErrorVectorizer=object))
 
 spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
 menace_pkg = importlib.util.module_from_spec(spec)
@@ -42,6 +155,14 @@ spec = importlib.util.spec_from_file_location(
 sce = importlib.util.module_from_spec(spec)
 sys.modules.setdefault("menace.self_coding_engine", sce)
 spec.loader.exec_module(sce)
+sce._settings.prompt_chunk_token_threshold = 4000
+sce._settings.chunk_summary_cache_dir = "."
+sce._settings.prompt_success_log_path = "s.log"
+sce._settings.prompt_failure_log_path = "f.log"
+sce._settings.audit_log_path = "audit.log"
+sce._settings.audit_privkey = None
+sce._settings.codex_retry_delays = []
+sce.time = types.SimpleNamespace(sleep=lambda _: None)
 
 
 def _build_check_permission():
@@ -122,7 +243,17 @@ def test_call_codex_with_backoff_retries(monkeypatch):
     delays = [2, 5, 10]
     monkeypatch.setattr(sce._settings, "codex_retry_delays", delays)
     sleeps: list[float] = []
-    monkeypatch.setattr(sce.time, "sleep", lambda d: sleeps.append(d))
+
+    def fake_retry(func, attempts, delays, logger):
+        for _ in range(attempts):
+            try:
+                func()
+            except Exception:
+                pass
+        sleeps.extend(delays)
+        raise sce.RetryError("boom")
+
+    monkeypatch.setattr(sce, "retry_with_backoff", fake_retry)
 
     class FailClient:
         def __init__(self):
@@ -138,4 +269,48 @@ def test_call_codex_with_backoff_retries(monkeypatch):
 
     assert sleeps == delays
     assert client.calls == len(delays) + 1
+
+
+def test_context_builder_shared(monkeypatch):
+    class DummyBuilder:
+        def __init__(self, *_, **kwargs):
+            self.roi_tracker = kwargs.get("roi_tracker")
+
+        def build_context(self, query, **__):
+            return f"ctx:{query}"
+
+    class DummyLayer:
+        def __init__(self, *_, **kwargs):
+            self.context_builder = kwargs.get("context_builder")
+
+    monkeypatch.setattr(sce, "ContextBuilder", DummyBuilder)
+    monkeypatch.setattr(sce, "CognitionLayer", DummyLayer)
+
+    code_db = types.SimpleNamespace(search=lambda q: [])
+    gpt_mem = types.SimpleNamespace(
+        search_context=lambda *a, **k: [], log_interaction=lambda *a, **k: None
+    )
+    class DummyClient:
+        def __init__(self):
+            self.last_prompt = ""
+
+        def generate(self, prompt):
+            self.last_prompt = getattr(prompt, "text", str(prompt))
+            return types.SimpleNamespace(text="ok")
+
+    client = DummyClient()
+    engine = sce.SelfCodingEngine(
+        code_db,
+        object(),
+        llm_client=client,
+        gpt_memory=gpt_mem,
+    )
+
+    builder = engine.context_builder
+    assert builder is engine.prompt_engine.context_builder
+    assert builder is engine.cognition_layer.context_builder
+
+    engine.generate_helper("alpha issue")
+    assert "### Retrieval context" in client.last_prompt
+    assert "ctx:alpha issue" in client.last_prompt
 
