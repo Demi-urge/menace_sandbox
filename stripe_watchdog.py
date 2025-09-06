@@ -958,6 +958,61 @@ def detect_unauthorized_charges(
     return anomalies
 
 
+def detect_unauthorized_refunds(
+    refunds: Iterable[dict],
+    ledger: List[Dict[str, Any]],
+    billing_logs: List[Dict[str, Any]] | None = None,
+    approved_workflows: Iterable[str] | None = None,
+    *,
+    write_codex: bool = False,
+    export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
+) -> List[Dict[str, Any]]:
+    """Return refunds that bypassed central routing or lack approval."""
+
+    ledger_ids = {
+        str(e.get("id")) for e in ledger if e.get("action_type") == "refund"
+    }
+    billing_map = {
+        str(rec.get("stripe_id")): rec
+        for rec in (billing_logs or [])
+        if rec.get("stripe_id")
+    }
+    approved = {str(w) for w in (approved_workflows or [])}
+
+    anomalies: List[Dict[str, Any]] = []
+    for refund in refunds:
+        rid = str(refund.get("id"))
+        log = billing_map.get(rid)
+        if not log:
+            continue
+        bot_id = log.get("bot_id")
+        unauthorized = rid not in ledger_ids or (
+            bot_id and approved and bot_id not in approved
+        )
+        if not unauthorized:
+            continue
+        anomaly = {
+            "type": "unauthorized_refund",
+            "refund_id": rid,
+            "amount": refund.get("amount"),
+            "charge": refund.get("charge"),
+            "bot_id": bot_id,
+            "account_id": refund.get("account"),
+            "module": BILLING_ROUTER_MODULE,
+        }
+        anomalies.append(anomaly)
+        _emit_anomaly(
+            anomaly,
+            write_codex,
+            export_training,
+            self_coding_engine,
+            telemetry_feedback,
+        )
+    return anomalies
+
+
 def detect_missing_charges(
     charges: Iterable[dict],
     ledger: List[Dict[str, Any]],
@@ -1743,6 +1798,16 @@ def main(argv: Optional[List[str]] = None) -> None:
         charges,
         ledger,
         charge_logs,
+        approved,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
+    )
+    detect_unauthorized_refunds(
+        refunds,
+        ledger,
+        refund_logs,
         approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
