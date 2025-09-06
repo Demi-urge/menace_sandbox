@@ -259,9 +259,11 @@ message if installation fails.
   ranking with ROI feedback – is available in
   [docs/vectorized_cognition.md](docs/vectorized_cognition.md).
 - Compact, offline context assembly via `ContextBuilder` which summarises error,
-  bot, workflow and code records for code-generation modules. Enable it in the
-  self-improving sandbox by passing `context_builder=ContextBuilder()` to
-  `SelfCodingEngine` or `QuickFixEngine`
+  bot, workflow and code records for code-generation modules. Prompt‑constructing
+  bots must be supplied a builder configured for the standard local databases,
+  e.g. `ContextBuilder(bot_db="bots.db", code_db="code.db", error_db="errors.db",
+  workflow_db="workflows.db")` or the `get_default_context_builder()` helper, and
+  passed to `SelfCodingEngine` or `QuickFixEngine`
   ([docs/context_builder.md](docs/context_builder.md))
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic

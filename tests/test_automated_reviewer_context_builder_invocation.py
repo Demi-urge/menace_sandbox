@@ -17,6 +17,14 @@ class DummyCognitionLayer:
         self.context_builder = context_builder
 
 
+class RecordingEscalator:
+    def __init__(self) -> None:
+        self.attachments = None
+
+    def handle(self, *_a, attachments=None, **_k):
+        self.attachments = attachments
+
+
 sys.modules["vector_service"] = types.SimpleNamespace(
     CognitionLayer=DummyCognitionLayer, ContextBuilder=RecordingBuilder
 )
@@ -26,12 +34,13 @@ importlib.reload(ar)
 
 def test_reviewer_uses_context_builder():
     builder = RecordingBuilder(
-        bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+        bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db",
     )
     db = types.SimpleNamespace(update_bot=lambda *a, **k: None)
-    esc = types.SimpleNamespace(handle=lambda *a, **k: None)
+    esc = RecordingEscalator()
 
     reviewer = ar.AutomatedReviewer(context_builder=builder, bot_db=db, escalation_manager=esc)
     reviewer.handle({"bot_id": "99", "severity": "critical"})
 
     assert builder.calls, "context_builder.build was not invoked"
+    assert esc.attachments and "ctx" in esc.attachments[0]

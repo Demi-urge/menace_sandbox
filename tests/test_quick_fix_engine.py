@@ -442,7 +442,8 @@ def test_generate_patch_uses_context_builder(tmp_path, monkeypatch):
     )
     assert patch_id == 1
     build_args = captured.get("build_args")
-    assert build_args[0] == "fix bug"
+    assert build_args and build_args[0] == "fix bug"
+    assert build_args[2] is True
     assert "snippet" in captured.get("patched_desc", "")
 
 
