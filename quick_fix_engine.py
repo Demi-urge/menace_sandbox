@@ -28,7 +28,8 @@ from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
 try:  # pragma: no cover - optional dependency
     from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
-except Exception:  # pragma: no cover - fallback when vector service is missing
+except Exception as exc:  # pragma: no cover - fallback when vector service is missing
+    logging.getLogger(__name__).warning("vector_service unavailable: %s", exc)
     ContextBuilder = object  # type: ignore
     Retriever = object  # type: ignore
     FallbackResult = object  # type: ignore
@@ -338,6 +339,16 @@ class QuickFixEngine:
         self.risk_threshold = risk_threshold
         self.predictor = predictor
         self.retriever = retriever
+        logger = logging.getLogger(self.__class__.__name__)
+        if context_builder is None:
+            if retriever is not None:
+                try:
+                    context_builder = ContextBuilder(retriever=retriever)
+                except Exception as exc:
+                    logger.warning("context builder instantiation failed: %s", exc)
+                    context_builder = None
+            else:
+                logger.warning("vector_service retriever unavailable; context builder disabled")
         self.context_builder = context_builder
         if patch_logger is None:
             try:
@@ -347,7 +358,7 @@ class QuickFixEngine:
             except Exception:
                 patch_logger = None
         self.patch_logger = patch_logger
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = logger
         env_min_rel = float(os.getenv("DB_MIN_RELIABILITY", "0.0"))
         env_red = int(os.getenv("DB_REDUNDANCY_LIMIT", "1"))
         self.min_reliability = (
