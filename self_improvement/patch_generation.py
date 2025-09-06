@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
     from .target_region import TargetRegion
+    from vector_service import ContextBuilder
 
 try:  # pragma: no cover - simplified environments
     from ..logging_utils import log_record
@@ -29,6 +30,7 @@ _settings = SandboxSettings()
 
 def generate_patch(
     *args: object,
+    context_builder: "ContextBuilder",
     target_region: "TargetRegion" | None = None,
     retries: int = _settings.patch_retries,
     delay: float = _settings.patch_retry_delay,
@@ -57,6 +59,7 @@ def generate_patch(
         patch_id = _call_with_retries(
             func,
             *args,
+            context_builder=context_builder,
             retries=retries,
             delay=delay,
             target_region=target_region,

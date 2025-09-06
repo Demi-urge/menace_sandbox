@@ -38,6 +38,9 @@ def _setup_base_packages():
         setup_logging=lambda: None,
     )
     sys.modules["menace.logging_utils"] = logging_utils
+    sys.modules["menace.error_logger"] = types.SimpleNamespace(
+        TelemetryEvent=object
+    )
 
 
 class InMemoryROIResultsDB:
@@ -156,7 +159,9 @@ def test_cycle_generates_patch_and_metrics(tmp_path, monkeypatch):
             self._called = False
 
         def discover_and_persist(self, workflows):
-            self.patches.append(patch_generation.generate_patch())
+            self.patches.append(
+                patch_generation.generate_patch(context_builder=object())
+            )
             if self._called:
                 return []
             self._called = True
