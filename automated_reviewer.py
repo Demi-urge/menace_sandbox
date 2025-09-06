@@ -41,8 +41,9 @@ class AutomatedReviewer:
         self.logger = logging.getLogger(self.__class__.__name__)
         if CognitionLayer is not None and ContextBuilder is not None:
             try:
-                builder = context_builder or ContextBuilder()
-                self.cognition_layer = CognitionLayer(context_builder=builder)
+                self.cognition_layer = CognitionLayer(
+                    context_builder=context_builder or ContextBuilder()
+                )
             except Exception:  # pragma: no cover - optional dependency failed
                 self.cognition_layer = None
                 self.logger.warning("failed to initialise CognitionLayer", exc_info=True)
