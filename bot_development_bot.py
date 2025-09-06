@@ -330,14 +330,14 @@ class BotDevelopmentBot:
             self.logger.warning("failed to load prompt templates: %s", exc)
             self.prompt_templates = {}
         self.template_engine = PromptTemplateEngine(self.prompt_templates)
-        self.context_builder = context_builder
-        if self.context_builder is None:
-            msg = "ContextBuilder is required"
+        if not isinstance(context_builder, ContextBuilder):
+            msg = "ContextBuilder instance is required"
             try:
                 self._escalate(msg)
             except Exception:
                 self.logger.error(msg)
-            raise RuntimeError(msg)
+            raise ValueError(msg)
+        self.context_builder = context_builder
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
@@ -1023,13 +1023,9 @@ class BotDevelopmentBot:
         sample_with_vectors:
             Whether to request embedding vectors for the training examples.
         """
-        retrieval_context: str | Dict[str, Any] = ""
-        try:
-            query = spec.description or spec.purpose or spec.name
-            retrieval_context = self.context_builder.build(query)
-            if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
-                retrieval_context = ""
-        except Exception:
+        query = spec.description or spec.purpose or spec.name
+        retrieval_context: str | Dict[str, Any] = self.context_builder.build(query)
+        if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
             retrieval_context = ""
 
         predicted_tool = ""

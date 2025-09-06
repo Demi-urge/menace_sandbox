@@ -90,8 +90,9 @@ class BotCreationBot(AdminBotBase):
         super().__init__(db_router=db_router)
         self.metrics_db = metrics_db or MetricsDB()
         self.planner = planner or BotPlanningBot()
+        builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
         self.developer = developer or BotDevelopmentBot(
-            context_builder=ContextBuilder(), db_steward=self.db_router
+            context_builder=builder, db_steward=self.db_router
         )
         self.tester = tester or BotTestingBot()
         self.deployer = deployer or DeploymentBot()
