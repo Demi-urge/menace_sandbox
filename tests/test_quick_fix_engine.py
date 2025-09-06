@@ -75,6 +75,9 @@ class _DummyContextBuilder:
     def build(self, *a, **k):
         return ""
 
+    def refresh_db_weights(self):
+        return None
+
 
 vec = types.SimpleNamespace(
     ContextBuilder=_DummyContextBuilder,
@@ -116,6 +119,7 @@ def test_telemetry_error_logged(monkeypatch, tmp_path, caplog):
         manager=DummyManager(),
         threshold=1,
         graph=FailingGraph(),
+        context_builder=quick_fix.ContextBuilder(),
     )
     (tmp_path / "bot.py").write_text("x = 1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
@@ -152,6 +156,7 @@ def test_run_targets_frequent_module(tmp_path, monkeypatch):
         manager=DummyManager(),
         threshold=2,
         graph=DummyGraph(),
+        context_builder=quick_fix.ContextBuilder(),
     )
     (tmp_path / "b.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
@@ -193,7 +198,13 @@ class DummyManager2:
 def test_preemptive_patch_modules(tmp_path, monkeypatch):
     db = DummyPreemptiveDB()
     mgr = DummyManager2()
-    engine = QuickFixEngine(error_db=db, manager=mgr, threshold=0, graph=None)
+    engine = QuickFixEngine(
+        error_db=db,
+        manager=mgr,
+        threshold=0,
+        graph=None,
+        context_builder=quick_fix.ContextBuilder(),
+    )
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
@@ -209,7 +220,13 @@ def test_preemptive_patch_modules(tmp_path, monkeypatch):
 def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
     db = DummyPreemptiveDB()
     mgr = DummyManager2(fail=True)
-    engine = QuickFixEngine(error_db=db, manager=mgr, threshold=0, graph=None)
+    engine = QuickFixEngine(
+        error_db=db,
+        manager=mgr,
+        threshold=0,
+        graph=None,
+        context_builder=quick_fix.ContextBuilder(),
+    )
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
@@ -234,7 +251,9 @@ def test_generate_patch_blocks_risky(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
-    res = quick_fix.generate_patch(str(path), engine=DummyEngine())
+    res = quick_fix.generate_patch(
+        str(path), engine=DummyEngine(), context_builder=quick_fix.ContextBuilder()
+    )
     assert res is None
     assert path.read_text() == "x=1\n"
 
@@ -272,6 +291,7 @@ def test_run_records_retrieval_metadata(tmp_path, monkeypatch):
         graph=DummyGraph(),
         retriever=Retriever(),
         patch_logger=PatchLogger(patch_db=db),
+        context_builder=quick_fix.ContextBuilder(),
     )
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
@@ -311,6 +331,7 @@ def test_run_records_ancestry_without_logger(tmp_path, monkeypatch):
         threshold=1,
         graph=DummyGraph(),
         retriever=Retriever(),
+        context_builder=quick_fix.ContextBuilder(),
     )
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
@@ -365,7 +386,9 @@ def test_generate_patch_resolves_module_path(tmp_path, monkeypatch):
     )
 
     engine = DummyEngine()
-    patch_id = quick_fix.generate_patch("pkg/mod", engine=engine, context_builder=None)
+    patch_id = quick_fix.generate_patch(
+        "pkg/mod", engine=engine, context_builder=quick_fix.ContextBuilder()
+    )
     assert patch_id == 1
     assert engine.calls and engine.calls[0] == mod
 
@@ -383,9 +406,13 @@ def test_generate_patch_builds_context_when_builder_none(tmp_path, monkeypatch):
 
     class DummyBuilder:
         def __init__(self, **kwargs):
-            captured["init_kwargs"] = kwargs
+            pass
+
+        def refresh_db_weights(self):
+            return None
 
         def build(self, desc, session_id=None, include_vectors=False):
+            captured["desc"] = desc
             return (
                 "bots_ctx\ncode_ctx\nerrors_ctx\nworkflows_ctx",
                 session_id or "",
@@ -396,8 +423,6 @@ def test_generate_patch_builds_context_when_builder_none(tmp_path, monkeypatch):
                     ("workflows", "w1", 0.4),
                 ],
             )
-
-    monkeypatch.setattr(quick_fix, "ContextBuilder", DummyBuilder)
 
     class DummyEngine:
         def apply_patch(self, path, desc, **kw):
@@ -423,14 +448,9 @@ def test_generate_patch_builds_context_when_builder_none(tmp_path, monkeypatch):
     )
 
     engine = DummyEngine()
-    patch_id = quick_fix.generate_patch("mod", engine=engine, context_builder=None)
+    builder = DummyBuilder()
+    patch_id = quick_fix.generate_patch("mod", engine=engine, context_builder=builder)
     assert patch_id == 1
-    assert {
-        "bot_db": "bots.db",
-        "code_db": "code.db",
-        "error_db": "errors.db",
-        "workflow_db": "workflows.db",
-    } == captured.get("init_kwargs")
     desc = captured.get("desc", "")
     for lbl in ["bots_ctx", "code_ctx", "errors_ctx", "workflows_ctx"]:
         assert lbl in desc
@@ -446,21 +466,20 @@ def test_init_auto_builds_context_builder(tmp_path, monkeypatch):
             self.calls.append((query, session_id))
             return ""
 
-    monkeypatch.setattr(quick_fix, "ContextBuilder", BuildCapturingBuilder)
-
     class Retriever:
         pass
 
     retriever = Retriever()
+    builder = BuildCapturingBuilder(retriever=retriever)
     engine = QuickFixEngine(
         error_db=DummyErrorDB(),
         manager=DummyManager(),
         threshold=1,
         graph=DummyGraph(),
         retriever=retriever,
+        context_builder=builder,
     )
-    assert isinstance(engine.context_builder, BuildCapturingBuilder)
-    assert engine.context_builder.retriever is retriever
+    assert engine.context_builder is builder
 
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))

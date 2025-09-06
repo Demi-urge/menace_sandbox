@@ -16,7 +16,7 @@ def test_memory_logging_tags(monkeypatch):
     engine.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     engine._memory_summaries = lambda module: ""
     engine.self_coding_engine = None
-    monkeypatch.setattr(sie, "generate_patch", lambda m, e: 1)
+    monkeypatch.setattr(sie, "generate_patch", lambda m, e, **kw: 1)
     sie.SelfImprovementEngine._generate_patch_with_memory(engine, "mod", "act")
     rows = mem.conn.execute("SELECT tags FROM interactions").fetchall()
     all_tags = ",".join(r[0] for r in rows)

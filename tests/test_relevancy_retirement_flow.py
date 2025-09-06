@@ -43,7 +43,7 @@ def test_relevancy_retirement_flow(tmp_path, monkeypatch):
     assert flags == {"orphan": "retire"}
 
     fake_qfe = types.ModuleType("quick_fix_engine")
-    fake_qfe.generate_patch = lambda path: 1
+fake_qfe.generate_patch = lambda path, **kwargs: 1
     monkeypatch.setitem(sys.modules, "quick_fix_engine", fake_qfe)
 
     import module_retirement_service

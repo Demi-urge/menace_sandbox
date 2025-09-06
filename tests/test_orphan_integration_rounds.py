@@ -41,11 +41,21 @@ def _load_qfe(monkeypatch):
         "menace_sandbox.knowledge_graph",
         types.SimpleNamespace(KnowledgeGraph=object),
     )
+    class DummyBuilder:
+        def __init__(self, *a, **k):
+            pass
+
+        def refresh_db_weights(self):
+            return None
+
+        def build(self, *a, **k):
+            return ""
+
     monkeypatch.setitem(
         sys.modules,
         "vector_service",
         types.SimpleNamespace(
-            ContextBuilder=object,
+            ContextBuilder=DummyBuilder,
             Retriever=object,
             FallbackResult=object,
             EmbeddingBackfill=object,
@@ -231,7 +241,12 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
             p.write_text(p.read_text() + "# patched\n")
             return 1, "", ""
 
-    qfe.generate_patch("foo.py", engine=Engine(), patch_logger=types.SimpleNamespace(track_contributors=lambda *a, **k: None))  # path-ignore
+    qfe.generate_patch(
+        "foo.py",
+        engine=Engine(),
+        context_builder=qfe.ContextBuilder(),
+        patch_logger=types.SimpleNamespace(track_contributors=lambda *a, **k: None),
+    )  # path-ignore
 
     assert auto_called["mods"] == ["extra/mod.py"]  # path-ignore
     assert synergy_called["names"] == ["extra.mod"]

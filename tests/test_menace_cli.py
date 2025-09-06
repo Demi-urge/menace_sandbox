@@ -21,8 +21,11 @@ def cli_env(tmp_path: Path):
     modules = {
         "vector_service/__init__.py": """  # path-ignore
 class ContextBuilder:
-    def __init__(self, retriever=None):
+    def __init__(self, retriever=None, **kwargs):
         self.retriever = retriever
+
+    def refresh_db_weights(self):
+        return None
 """,
         "vector_service/retriever.py": """  # path-ignore
 import os, types
@@ -65,7 +68,7 @@ class UniversalRetriever:
         "quick_fix_engine.py": """  # path-ignore
 import os
 
-def generate_patch(module, context_builder=None, engine=None, description=None, patch_logger=None, context=None):
+def generate_patch(module, *, context_builder, engine=None, description=None, patch_logger=None, context=None):
     if os.environ.get('TEST_PATCH_FAIL') == '1':
         return None
     return 7

@@ -47,7 +47,7 @@ def test_memory_driven_improvement(monkeypatch):
     engine.self_coding_engine = object()
     engine.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
 
-    monkeypatch.setattr(sie, "generate_patch", lambda module, coder: 1)
+    monkeypatch.setattr(sie, "generate_patch", lambda module, coder, **kw: 1)
 
     captured: list[str] = []
     orig_log = mem.log_interaction
