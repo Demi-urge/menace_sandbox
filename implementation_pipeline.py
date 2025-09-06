@@ -70,13 +70,14 @@ class ImplementationPipeline:
         """
         self.handoff = handoff or TaskHandoffBot()
         self.optimiser = optimiser or ImplementationOptimiserBot()
-        self.context_builder = context_builder
+        self.context_builder = context_builder or ContextBuilder(
+            "bots.db", "code.db", "errors.db", "workflows.db"
+        )
         if developer is not None:
-            if context_builder is not None:
-                developer.context_builder = context_builder
+            developer.context_builder = self.context_builder
             self.developer = developer
         else:
-            self.developer = BotDevelopmentBot(context_builder=context_builder or ContextBuilder())
+            self.developer = BotDevelopmentBot(context_builder=self.context_builder)
         self.logger = logging.getLogger(self.__class__.__name__)
         if researcher is not None:
             self.researcher = researcher

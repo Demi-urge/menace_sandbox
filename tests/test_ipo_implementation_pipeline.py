@@ -23,10 +23,16 @@ def _make_db(path: Path) -> Path:
     return path
 
 
+def _ctx_builder():
+    return bdb.ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+
+
 def test_full_pipeline(tmp_path: Path):
     db_path = _make_db(tmp_path / "models.db")
     ipo = ipb.IPOBot(db_path=str(db_path), enhancements_db=tmp_path / "enh.db")
-    developer = bdb.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bdb.BotDevelopmentBot(
+        repo_base=tmp_path / "repos", context_builder=_ctx_builder()
+    )
     tester = btb.BotTestingBot()
     scaler = sab.ScalabilityAssessmentBot()
     deployer = dep.DeploymentBot(dep.DeploymentDB(tmp_path / "dep.db"))

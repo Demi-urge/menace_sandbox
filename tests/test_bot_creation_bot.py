@@ -39,6 +39,10 @@ def _metrics(tmp_path):
     return mdb
 
 
+def _ctx_builder():
+    return bd.ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+
+
 def test_needs_new_bot(tmp_path):
     bot = bcb.BotCreationBot(metrics_db=_metrics(tmp_path))
     assert bot.needs_new_bot()
@@ -72,7 +76,7 @@ def test_needs_new_bot_with_prediction(tmp_path):
 def test_create_bots(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
     router = init_db_router("tcb", str(tmp_path / "l.db"), str(tmp_path / "s.db"))
     bdb.router = router
@@ -129,7 +133,7 @@ def test_duplicate_bot_insert(tmp_path, caplog, monkeypatch):
 def test_trending_scraper_receives_energy(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
     deployer = dep.DeploymentBot(dep.DeploymentDB(tmp_path / "d.db"))
 
@@ -169,7 +173,7 @@ def test_trending_scraper_receives_energy(tmp_path):
 def test_create_bots_logs_errors(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
     err_db = eb.ErrorDB(tmp_path / "e.db")
     deployer = dep.DeploymentBot(
@@ -209,7 +213,7 @@ def test_create_bots_logs_errors(tmp_path):
 def test_create_bots_records_workflows(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
     wf_db = thb.WorkflowDB(tmp_path / "wf.db")
     info_db = rab.InfoDB(tmp_path / "info.db")
@@ -256,7 +260,7 @@ def test_create_bots_records_workflows(tmp_path):
 def test_code_db_updates_on_creation(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
     code_db = dep.CodeDB(tmp_path / "code.db")
     err_db = eb.ErrorDB(tmp_path / "err.db")
@@ -304,7 +308,7 @@ def test_code_db_updates_on_creation(tmp_path):
 def test_creation_updates_status_and_enh_links(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
 
     enh_db = ceb.EnhancementDB(tmp_path / "e.db")
@@ -357,7 +361,7 @@ def test_creation_updates_status_and_enh_links(tmp_path):
 def test_higher_order_contrarian_timestamp(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
 
     contr_db = cdb.ContrarianDB(tmp_path / "c.db")
@@ -403,7 +407,7 @@ def test_higher_order_contrarian_timestamp(tmp_path):
 def test_higher_order_contrarian_new_links(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
 
     contr_db = cdb.ContrarianDB(tmp_path / "c.db")
@@ -459,7 +463,7 @@ def test_higher_order_contrarian_new_links(tmp_path):
 def test_workflow_bot_links(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
 
     menace = mn.MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}")
@@ -496,7 +500,7 @@ def test_workflow_bot_links(tmp_path):
 def test_trending_order(tmp_path):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
     deployer = dep.DeploymentBot(dep.DeploymentDB(tmp_path / "d.db"))
     deployer.build_containers = lambda bots, model_id=None: ([], [])
@@ -545,7 +549,7 @@ class FailingEnhDB(ceb.EnhancementDB):
 def test_enhancement_link_error_logged(tmp_path, caplog):
     metrics = _metrics(tmp_path)
     planner = bp.BotPlanningBot()
-    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos")
+    developer = bd.BotDevelopmentBot(repo_base=tmp_path / "repos", context_builder=_ctx_builder())
     tester = bt.BotTestingBot()
     enh_db = FailingEnhDB(tmp_path / "e.db")
     deployer = dep.DeploymentBot(
