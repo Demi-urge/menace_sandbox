@@ -2,7 +2,7 @@ import sys
 import types
 
 fake_qfe = types.ModuleType("quick_fix_engine")
-fake_qfe.generate_patch = lambda path: 1
+fake_qfe.generate_patch = lambda path, context_builder=None: 1
 sys.modules["quick_fix_engine"] = fake_qfe
 
 import module_retirement_service
@@ -21,7 +21,7 @@ def test_replace_module(monkeypatch, tmp_path):
 
     called = {}
 
-    def fake_generate_patch(path):
+    def fake_generate_patch(path, context_builder=None):
         called["path"] = path
         return 1
 
@@ -51,7 +51,7 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
     called = {}
 
-    def fake_generate_patch(path):
+    def fake_generate_patch(path, context_builder=None):
         called["path"] = path
         return 1
 
@@ -88,7 +88,7 @@ def test_process_flags_replace_skipped(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)
 
-    def fake_generate_patch(path):
+    def fake_generate_patch(path, context_builder=None):
         return None
 
     monkeypatch.setattr(module_retirement_service, "generate_patch", fake_generate_patch)
