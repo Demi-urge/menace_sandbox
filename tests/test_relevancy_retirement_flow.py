@@ -43,8 +43,16 @@ def test_relevancy_retirement_flow(tmp_path, monkeypatch):
     assert flags == {"orphan": "retire"}
 
     fake_qfe = types.ModuleType("quick_fix_engine")
-fake_qfe.generate_patch = lambda path, **kwargs: 1
+    fake_qfe.generate_patch = lambda path, **kwargs: 1
     monkeypatch.setitem(sys.modules, "quick_fix_engine", fake_qfe)
+
+    class _DummyBuilder:
+        def refresh_db_weights(self):
+            return None
+
+    monkeypatch.setitem(
+        sys.modules, "vector_service", types.SimpleNamespace(ContextBuilder=_DummyBuilder)
+    )
 
     import module_retirement_service
 
@@ -63,7 +71,9 @@ fake_qfe.generate_patch = lambda path, **kwargs: 1
     monkeypatch.setattr(module_retirement_service, "retired_modules_total", dummy_counter)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-    service = module_retirement_service.ModuleRetirementService(repo)
+    service = module_retirement_service.ModuleRetirementService(
+        repo, context_builder=_DummyBuilder()
+    )
     service.process_flags(flags)
 
     archive = repo / "sandbox_data" / "retired_modules" / "orphan.py"  # path-ignore
@@ -72,4 +82,5 @@ fake_qfe.generate_patch = lambda path, **kwargs: 1
     # non-flagged modules remain
     assert (repo / "used_module.py").exists()  # path-ignore
     assert (repo / "main.py").exists()  # path-ignore
-    assert not (repo / "sandbox_data" / "retired_modules" / "used_module.py").exists()  # path-ignore
+    retired_path = repo / "sandbox_data" / "retired_modules" / "used_module.py"  # path-ignore
+    assert not retired_path.exists()

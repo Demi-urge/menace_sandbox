@@ -5,8 +5,16 @@ fake_qfe = types.ModuleType("quick_fix_engine")
 fake_qfe.generate_patch = lambda path, context_builder=None: 1
 sys.modules["quick_fix_engine"] = fake_qfe
 
-import module_retirement_service
-from module_retirement_service import ModuleRetirementService
+
+class _DummyBuilder:
+    def refresh_db_weights(self):
+        return None
+
+
+sys.modules.setdefault("vector_service", types.SimpleNamespace(ContextBuilder=_DummyBuilder))
+
+import module_retirement_service  # noqa: E402
+from module_retirement_service import ModuleRetirementService  # noqa: E402
 
 
 def _stub_build_graph(root):
@@ -18,9 +26,6 @@ def test_retire_module_zero_impact(monkeypatch, tmp_path):
     module.write_text("print('hi')")
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)
-
-    import types
-    import sys
 
     sandbox_stub = types.SimpleNamespace(
         SandboxSettings=lambda: types.SimpleNamespace(
@@ -57,7 +62,7 @@ def test_retire_module_zero_impact(monkeypatch, tmp_path):
     gauge = DummyGauge()
     monkeypatch.setattr(module_retirement_service, "retired_modules_total", gauge)
 
-    service = ModuleRetirementService(tmp_path)
+    service = ModuleRetirementService(tmp_path, context_builder=_DummyBuilder())
     res = service.process_flags(flags)
 
     retired = tmp_path / "sandbox_data" / "retired_modules" / "demo.py"  # path-ignore

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable
 
 from .bot_development_bot import BotDevelopmentBot, BotSpec
 from .bot_testing_bot import BotTestingBot
@@ -26,13 +26,17 @@ class ScalabilityPipeline:
 
     def __init__(
         self,
+        *,
+        context_builder: ContextBuilder,
         developer: BotDevelopmentBot | None = None,
         tester: BotTestingBot | None = None,
         scaler: ScalabilityAssessmentBot | None = None,
         deployer: DeploymentBot | None = None,
         max_iters: int = 3,
     ) -> None:
-        self.context_builder = ContextBuilder()
+        if context_builder is None:
+            raise ValueError("ContextBuilder is required")
+        self.context_builder = context_builder
         self.developer = developer or BotDevelopmentBot(
             context_builder=self.context_builder
         )
