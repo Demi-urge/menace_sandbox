@@ -65,6 +65,13 @@ def test_quick_fix_records_license_and_alerts(tmp_path, monkeypatch):
                 }
             ]
 
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            return None
+
+        def build(self, query, session_id=None, include_vectors=False):
+            return ""
+
     engine = QuickFixEngine(
         error_db=None,
         manager=Manager(),
@@ -72,6 +79,7 @@ def test_quick_fix_records_license_and_alerts(tmp_path, monkeypatch):
         graph=DummyGraph(),
         retriever=Retriever(),
         patch_logger=PatchLogger(patch_db=db),
+        context_builder=DummyBuilder(),
     )
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)

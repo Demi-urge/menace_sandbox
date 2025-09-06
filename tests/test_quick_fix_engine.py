@@ -393,7 +393,7 @@ def test_generate_patch_resolves_module_path(tmp_path, monkeypatch):
     assert engine.calls and engine.calls[0] == mod
 
 
-def test_generate_patch_builds_context_when_builder_none(tmp_path, monkeypatch):
+def test_generate_patch_uses_context_builder(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
@@ -405,28 +405,16 @@ def test_generate_patch_builds_context_when_builder_none(tmp_path, monkeypatch):
     captured: dict[str, object] = {}
 
     class DummyBuilder:
-        def __init__(self, **kwargs):
-            pass
-
         def refresh_db_weights(self):
             return None
 
         def build(self, desc, session_id=None, include_vectors=False):
-            captured["desc"] = desc
-            return (
-                "bots_ctx\ncode_ctx\nerrors_ctx\nworkflows_ctx",
-                session_id or "",
-                [
-                    ("bots", "b1", 0.1),
-                    ("code", "c1", 0.2),
-                    ("errors", "e1", 0.3),
-                    ("workflows", "w1", 0.4),
-                ],
-            )
+            captured["build_args"] = (desc, session_id, include_vectors)
+            return "snippet"
 
     class DummyEngine:
         def apply_patch(self, path, desc, **kw):
-            captured["desc"] = desc
+            captured["patched_desc"] = desc
             return 1, "", 0.0
 
     monkeypatch.setattr(quick_fix, "generate_code_diff", lambda a, b: {})
@@ -449,11 +437,13 @@ def test_generate_patch_builds_context_when_builder_none(tmp_path, monkeypatch):
 
     engine = DummyEngine()
     builder = DummyBuilder()
-    patch_id = quick_fix.generate_patch("mod", engine=engine, context_builder=builder)
+    patch_id = quick_fix.generate_patch(
+        "mod", engine=engine, context_builder=builder, description="fix bug"
+    )
     assert patch_id == 1
-    desc = captured.get("desc", "")
-    for lbl in ["bots_ctx", "code_ctx", "errors_ctx", "workflows_ctx"]:
-        assert lbl in desc
+    build_args = captured.get("build_args")
+    assert build_args[0] == "fix bug"
+    assert "snippet" in captured.get("patched_desc", "")
 
 
 def test_init_auto_builds_context_builder(tmp_path, monkeypatch):
