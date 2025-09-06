@@ -260,7 +260,7 @@ def _get_gpt_memory() -> GPTMemoryManager | None:
 def _load_instruction_overrides() -> Dict[str, str]:
     """Return mapping of event type overrides loaded from config."""
 
-    global _INSTRUCTION_OVERRIDES, PAYMENT_ANOMALY_THRESHOLD, ANOMALY_HINTS, ANOMALY_THRESHOLDS
+    global _INSTRUCTION_OVERRIDES, PAYMENT_ANOMALY_THRESHOLD
     if _INSTRUCTION_OVERRIDES is None:
         data: Dict[str, Any]
         try:
@@ -383,7 +383,11 @@ def record_event(
                 self_coding_engine, "update_generation_params", None
             )
             if callable(update_fn):
-                update_fn(metadata)
+                changes = update_fn(metadata) or {}
+                if changes:
+                    logger.info(
+                        "generation params updated", extra={"changes": changes}
+                    )
         except Exception:  # pragma: no cover - best effort
             logger.exception(
                 "self_coding_engine hook failed", extra={"event_type": event_type}
@@ -716,7 +720,11 @@ def record_billing_event(
         try:
             update_fn = getattr(self_coding_engine, "update_generation_params", None)
             if callable(update_fn):
-                update_fn(metadata)
+                changes = update_fn(metadata) or {}
+                if changes:
+                    logger.info(
+                        "generation params updated", extra={"changes": changes}
+                    )
         except Exception:  # pragma: no cover - best effort
             logger.exception("self_coding_engine update failed")
 
