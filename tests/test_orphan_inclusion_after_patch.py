@@ -5,6 +5,9 @@ from pathlib import Path
 
 
 class SelfCodingEngine:
+    def __init__(self, context_builder=None):
+        self.context_builder = context_builder
+
     def patch_file(self, path: Path, description: str) -> None:  # pragma: no cover - stub
         raise NotImplementedError
 
@@ -50,7 +53,8 @@ def test_orphan_inclusion_after_patch(monkeypatch, tmp_path):
     oi_mod.integrate_orphans = integrate_orphans
     monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", oi_mod)
 
-    engine = SelfCodingEngine()
+    builder = object()
+    engine = SelfCodingEngine(builder)
 
     def fake_patch_file(path: Path, description: str) -> None:
         path.write_text("import orphan\n")

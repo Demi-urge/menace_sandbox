@@ -32,7 +32,8 @@ sys.modules.setdefault(
     "db_router", types.SimpleNamespace(GLOBAL_ROUTER=None, DBRouter=object, init_db_router=lambda *a, **k: None)
 )
 sys.modules.setdefault(
-    "vector_service", types.SimpleNamespace(CognitionLayer=object, SharedVectorService=object)
+    "vector_service",
+    types.SimpleNamespace(CognitionLayer=object, SharedVectorService=object, ContextBuilder=object),
 )
 sys.modules.setdefault(
     "menace.trend_predictor", types.SimpleNamespace(TrendPredictor=object)
@@ -54,6 +55,9 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault(
     "rate_limit", types.SimpleNamespace(estimate_tokens=lambda *a, **k: 0)
+)
+sys.modules.setdefault(
+    "menace.rate_limit", types.SimpleNamespace(estimate_tokens=lambda *a, **k: 0)
 )
 sys.modules.setdefault(
     "menace.llm_router", types.SimpleNamespace(client_from_settings=lambda *a, **k: None)
@@ -299,11 +303,13 @@ def test_context_builder_shared(monkeypatch):
             return types.SimpleNamespace(text="ok")
 
     client = DummyClient()
+    builder = DummyBuilder()
     engine = sce.SelfCodingEngine(
         code_db,
         object(),
         llm_client=client,
         gpt_memory=gpt_mem,
+        context_builder=builder,
     )
 
     builder = engine.context_builder
