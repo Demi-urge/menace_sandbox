@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, TYPE_CHECKING
 import subprocess
 import json
 import logging
@@ -13,12 +13,7 @@ from .bot_development_bot import BotDevelopmentBot, BotSpec
 from contextlib import nullcontext
 from .models_repo import clone_to_new_repo, model_build_lock
 from dynamic_path_router import resolve_path
-from typing import TYPE_CHECKING
-
-try:  # pragma: no cover - optional dependency
-    from vector_service import ContextBuilder
-except Exception:  # pragma: no cover - fallback when vector service missing
-    ContextBuilder = None  # type: ignore
+from vector_service import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - optional heavy deps
     from .research_aggregator_bot import ResearchAggregatorBot
@@ -52,7 +47,7 @@ class ImplementationPipeline:
         developer: Optional[BotDevelopmentBot] = None,
         researcher: Optional[ResearchAggregatorBot] = None,
         ipo: Optional[IPOBot] = None,
-        context_builder: "ContextBuilder" | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         """Initialize the pipeline.
 
@@ -75,13 +70,11 @@ class ImplementationPipeline:
         """
         self.handoff = handoff or TaskHandoffBot()
         self.optimiser = optimiser or ImplementationOptimiserBot()
-        self.context_builder = context_builder or (
-            ContextBuilder() if ContextBuilder is not None else None
-        )
+        self.context_builder = context_builder
         if developer is not None:
             self.developer = developer
         else:
-            self.developer = BotDevelopmentBot(context_builder=self.context_builder)
+            self.developer = BotDevelopmentBot(context_builder=ContextBuilder())
         self.logger = logging.getLogger(self.__class__.__name__)
         if researcher is not None:
             self.researcher = researcher
