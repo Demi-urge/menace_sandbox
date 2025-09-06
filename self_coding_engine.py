@@ -524,6 +524,7 @@ class SelfCodingEngine:
         # store tracebacks from failed attempts for retry prompts
         self._last_retry_trace: str | None = None
         self._failure_cache = FailureCache()
+        self._generation_params: Dict[str, Any] = {}
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -537,6 +538,7 @@ class SelfCodingEngine:
                     self.failure_similarity_tracker.update(similarity=float(v))
                 except Exception:
                     continue
+            self._generation_params.update(data.get("generation_params", {}))
         except FileNotFoundError:
             self._save_state()
         except Exception:
@@ -548,11 +550,55 @@ class SelfCodingEngine:
             payload = {
                 "similarity": self.failure_similarity_tracker.to_dict().get(
                     "similarity", []
-                )
+                ),
+                "generation_params": self._generation_params,
             }
             _atomic_write(self._state_path, json.dumps(payload), lock=lock)
         except Exception:
             self.logger.warning("failed to persist self-coding engine state")
+
+    # ------------------------------------------------------------------
+    def update_generation_params(self, metadata: dict) -> Dict[str, Any]:
+        """Update internal generation parameters based on *metadata* hints.
+
+        Parameters like ``block_unlogged_charges`` or ``verify_stripe_account``
+        toggle safety features that influence how future prompts are generated.
+        The new values are persisted via :func:`_save_state`.
+
+        The method returns a dictionary of the applied changes to aid callers in
+        logging behaviour.  Older settings are preserved and only modified when
+        a hint explicitly requests a different value.
+        """
+
+        applied: Dict[str, Any] = {}
+        if not isinstance(metadata, dict):
+            return applied
+
+        for key, value in metadata.items():
+            if key in {
+                "block_unlogged_charges",
+                "block_unlogged_refunds",
+                "log_stripe_failures",
+                "enforce_workflow_approval",
+                "register_stripe_webhooks",
+                "reactivate_stripe_webhook",
+                "reconcile_revenue",
+                "verify_stripe_account",
+                "block_unauthorized_charges",
+                "block_unauthorized_refunds",
+                "block_unauthorized_failures",
+            }:
+                if self._generation_params.get(key) != value:
+                    self._generation_params[key] = value
+                    applied[key] = value
+
+        if applied:
+            try:
+                self._save_state()
+            except Exception:  # pragma: no cover - best effort
+                self.logger.warning("failed to persist generation params")
+
+        return applied
 
     @property
     def failure_similarity_threshold(self) -> float:

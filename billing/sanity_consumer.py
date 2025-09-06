@@ -115,7 +115,11 @@ class SanityConsumer:
                 update_fn = getattr(engine, "update_generation_params", None)
                 if update_fn is not None:
                     try:
-                        update_fn(meta)
+                        changes = update_fn(meta) or {}
+                        if changes:
+                            logger.info(
+                                "generation params updated", extra={"changes": changes}
+                            )
                     except Exception:  # pragma: no cover - best effort
                         logger.exception("generation parameter update failed")
         finally:

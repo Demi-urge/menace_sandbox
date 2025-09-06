@@ -1,5 +1,13 @@
 
 def test_anomaly_triggers_self_coding_update(monkeypatch):
+    import types
+    import sys
+    sys.modules.setdefault(
+        "vector_service",
+        types.SimpleNamespace(
+            CognitionLayer=object, PatchLogger=object, VectorServiceError=Exception
+        ),
+    )
     import stripe_watchdog as sw
     import menace_sanity_layer as msl
 
@@ -43,3 +51,47 @@ def test_anomaly_triggers_self_coding_update(monkeypatch):
 
     assert calls, "SelfCodingEngine was not updated"
     assert telemetry.events and telemetry.checked
+
+
+def test_generation_param_persistence(monkeypatch, tmp_path):
+    import types
+    import sys
+    import json
+    sys.modules.setdefault(
+        "vector_service",
+        types.SimpleNamespace(
+            CognitionLayer=object, PatchLogger=object, VectorServiceError=Exception
+        ),
+    )
+    import menace_sanity_layer as msl
+
+    # Stub memory and auditing to avoid side effects
+    mm = types.SimpleNamespace(query=lambda *a, **k: [], store=lambda *a, **k: None)
+    monkeypatch.setattr(msl, "_get_memory_manager", lambda: mm)
+    monkeypatch.setattr(msl, "_DISCREPANCY_DB", None)
+    monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
+    monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
+
+    state_file = tmp_path / "state.json"
+
+    class DummyEngine:
+        def __init__(self):
+            self.params: dict[str, object] = {}
+
+        def update_generation_params(self, meta):
+            self.params.update(meta)
+            state_file.write_text(json.dumps(self.params))
+            return meta
+
+    engine = DummyEngine()
+    # Trigger correction on first anomaly
+    msl.ANOMALY_THRESHOLDS["missing_charge"] = 1
+    msl.ANOMALY_HINTS["missing_charge"] = {"block_unlogged_charges": True}
+
+    msl.record_payment_anomaly(
+        "missing_charge", {"charge_id": "c1"}, self_coding_engine=engine
+    )
+
+    data = json.loads(state_file.read_text())
+    assert engine.params.get("block_unlogged_charges") is True
+    assert data.get("block_unlogged_charges") is True
