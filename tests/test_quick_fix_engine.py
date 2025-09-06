@@ -7,6 +7,18 @@ from pathlib import Path
 import pytest
 import dynamic_path_router
 
+if not hasattr(dynamic_path_router, "clear_cache"):
+    def _resolve_path(p: str) -> Path:
+        root = Path(os.environ.get("SANDBOX_REPO_PATH", "."))
+        cand = root / p
+        if not cand.exists():
+            raise FileNotFoundError(p)
+        return cand
+
+    dynamic_path_router.resolve_path = _resolve_path  # type: ignore[attr-defined]
+    dynamic_path_router.path_for_prompt = lambda p: Path(p).as_posix()  # type: ignore[attr-defined]
+    dynamic_path_router.clear_cache = lambda: None  # type: ignore[attr-defined]
+
 # Avoid heavy imports from the real package
 package = types.ModuleType("menace")
 sys.modules["menace"] = package
@@ -21,20 +33,32 @@ scm.SelfCodingManager = object
 sys.modules["menace.self_coding_manager"] = scm
 
 # Stubs for modules imported by patch_provenance/code_database
+
+
 def _auto_link(*a, **k):
     def decorator(func):
         return func
+
     return decorator
+
 
 sys.modules.setdefault("auto_link", types.SimpleNamespace(auto_link=_auto_link))
 sys.modules.setdefault(
     "unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object)
 )
 sys.modules.setdefault(
-    "retry_utils", types.SimpleNamespace(publish_with_retry=lambda *a, **k: None, with_retry=lambda *a, **k: None)
+    "retry_utils",
+    types.SimpleNamespace(
+        publish_with_retry=lambda *a, **k: None,
+        with_retry=lambda *a, **k: None,
+    ),
 )
 sys.modules.setdefault(
-    "alert_dispatcher", types.SimpleNamespace(send_discord_alert=lambda *a, **k: None, CONFIG={})
+    "alert_dispatcher",
+    types.SimpleNamespace(
+        send_discord_alert=lambda *a, **k: None,
+        CONFIG={},
+    ),
 )
 
 kg = types.ModuleType("menace.knowledge_graph")
@@ -166,7 +190,9 @@ def test_preemptive_patch_modules(tmp_path, monkeypatch):
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     modules = [("mod", 0.9), ("low", 0.1)]
     engine.preemptive_patch_modules(modules, risk_threshold=0.5)
-    assert mgr.calls == [(dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")]  # path-ignore
+    assert mgr.calls == [
+        (dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")
+    ]  # path-ignore
     assert db.records == [("mod", 0.9, 123)]
 
 
@@ -180,7 +206,9 @@ def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.setattr(quick_fix, "generate_patch", lambda m, engine=None: 999)
     engine.preemptive_patch_modules([("mod", 0.8)], risk_threshold=0.5)
-    assert mgr.calls == [(dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")]  # path-ignore
+    assert mgr.calls == [
+        (dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")
+    ]  # path-ignore
     assert db.records == [("mod", 0.8, 999)]
 
 
@@ -311,12 +339,88 @@ def test_generate_patch_resolves_module_path(tmp_path, monkeypatch):
     monkeypatch.setattr(quick_fix, "generate_code_diff", lambda a, b: {})
     monkeypatch.setattr(quick_fix, "flag_risky_changes", lambda d: {})
     monkeypatch.setattr(quick_fix, "_collect_diff_data", lambda a, b: {})
-    monkeypatch.setattr(quick_fix, "HumanAlignmentAgent", lambda: types.SimpleNamespace(evaluate_changes=lambda *a, **k: {}))
+    monkeypatch.setattr(
+        quick_fix,
+        "HumanAlignmentAgent",
+        lambda: types.SimpleNamespace(evaluate_changes=lambda *a, **k: {}),
+    )
     monkeypatch.setattr(quick_fix, "log_violation", lambda *a, **k: None)
-    monkeypatch.setattr(quick_fix, "EmbeddingBackfill", lambda: types.SimpleNamespace(run=lambda *a, **k: None))
-    sys.modules.setdefault("sandbox_runner", types.SimpleNamespace(post_round_orphan_scan=lambda p: None))
+    monkeypatch.setattr(
+        quick_fix,
+        "EmbeddingBackfill",
+        lambda: types.SimpleNamespace(run=lambda *a, **k: None),
+    )
+    sys.modules.setdefault(
+        "sandbox_runner", types.SimpleNamespace(post_round_orphan_scan=lambda p: None)
+    )
 
     engine = DummyEngine()
     patch_id = quick_fix.generate_patch("pkg/mod", engine=engine, context_builder=None)
     assert patch_id == 1
     assert engine.calls and engine.calls[0] == mod
+
+
+def test_generate_patch_builds_context_when_builder_none(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    mod = repo / "mod.py"  # path-ignore
+    mod.write_text("x=1\n")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    dynamic_path_router.clear_cache()
+
+    captured: dict[str, object] = {}
+
+    class DummyBuilder:
+        def __init__(self, **kwargs):
+            captured["init_kwargs"] = kwargs
+
+        def build(self, desc, session_id=None, include_vectors=False):
+            return (
+                "bots_ctx\ncode_ctx\nerrors_ctx\nworkflows_ctx",
+                session_id or "",
+                [
+                    ("bots", "b1", 0.1),
+                    ("code", "c1", 0.2),
+                    ("errors", "e1", 0.3),
+                    ("workflows", "w1", 0.4),
+                ],
+            )
+
+    monkeypatch.setattr(quick_fix, "ContextBuilder", DummyBuilder)
+
+    class DummyEngine:
+        def apply_patch(self, path, desc, **kw):
+            captured["desc"] = desc
+            return 1, "", 0.0
+
+    monkeypatch.setattr(quick_fix, "generate_code_diff", lambda a, b: {})
+    monkeypatch.setattr(quick_fix, "flag_risky_changes", lambda d: {})
+    monkeypatch.setattr(quick_fix, "_collect_diff_data", lambda a, b: {})
+    monkeypatch.setattr(
+        quick_fix,
+        "HumanAlignmentAgent",
+        lambda: types.SimpleNamespace(evaluate_changes=lambda *a, **k: {}),
+    )
+    monkeypatch.setattr(quick_fix, "log_violation", lambda *a, **k: None)
+    monkeypatch.setattr(
+        quick_fix,
+        "EmbeddingBackfill",
+        lambda: types.SimpleNamespace(run=lambda *a, **k: None),
+    )
+    sys.modules.setdefault(
+        "sandbox_runner", types.SimpleNamespace(post_round_orphan_scan=lambda p: None)
+    )
+
+    engine = DummyEngine()
+    patch_id = quick_fix.generate_patch("mod", engine=engine, context_builder=None)
+    assert patch_id == 1
+    assert {
+        "bot_db": "bots.db",
+        "code_db": "code.db",
+        "error_db": "errors.db",
+        "workflow_db": "workflows.db",
+    } == captured.get("init_kwargs")
+    desc = captured.get("desc", "")
+    for lbl in ["bots_ctx", "code_ctx", "errors_ctx", "workflows_ctx"]:
+        assert lbl in desc
