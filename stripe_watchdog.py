@@ -135,6 +135,7 @@ DEFAULT_SEVERITY_MAP = {
     "disabled_webhook": 3.0,
     "revenue_mismatch": 4.0,
     "account_mismatch": 3.0,
+    "unauthorized_charge": 3.5,
 }
 SEVERITY_MAP = DEFAULT_SEVERITY_MAP.copy()
 

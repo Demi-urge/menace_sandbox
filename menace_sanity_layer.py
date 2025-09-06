@@ -106,6 +106,9 @@ EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
     "account_mismatch": (
         "Avoid routing Stripe activity to unapproved accounts."
     ),
+    "unauthorized_charge": (
+        "Avoid processing Stripe charges without explicit authorization."
+    ),
 }
 
 # Optional overrides loaded from ``config/billing_instructions.yaml``.  The file
@@ -128,6 +131,7 @@ DEFAULT_ANOMALY_HINTS: Dict[str, Dict[str, Any]] = {
     "disabled_webhook": {"reactivate_stripe_webhook": True},
     "revenue_mismatch": {"reconcile_revenue": True},
     "account_mismatch": {"verify_stripe_account": True},
+    "unauthorized_charge": {"block_unauthorized_charges": True},
 }
 
 PAYMENT_ANOMALY_THRESHOLD = _DEFAULT_PAYMENT_ANOMALY_THRESHOLD

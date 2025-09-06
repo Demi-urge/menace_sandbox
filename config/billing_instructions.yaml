@@ -7,6 +7,7 @@ instructions:
   disabled_webhook: Avoid relying on disabled Stripe webhook endpoints.
   revenue_mismatch: Avoid revenue figures that diverge from ledger or ROI projections.
   account_mismatch: Avoid routing charges to unexpected Stripe accounts.
+  unauthorized_charge: Avoid processing Stripe charges without explicit authorization.
 anomaly_hints:
   missing_charge:
     block_unlogged_charges: true
@@ -24,6 +25,8 @@ anomaly_hints:
     reconcile_revenue: true
   account_mismatch:
     verify_stripe_account: true
+  unauthorized_charge:
+    block_unauthorized_charges: true
 severity_map:
   missing_charge: 2.5
   missing_refund: 2.0
@@ -33,3 +36,7 @@ severity_map:
   disabled_webhook: 3.0
   revenue_mismatch: 4.0
   account_mismatch: 3.0
+  unauthorized_charge: 3.5
+anomaly_thresholds:
+  account_mismatch: 3
+  unauthorized_charge: 5

@@ -184,6 +184,11 @@ def test_record_event_logs_instruction_and_tags(monkeypatch):
             {"account_id": "acct"},
             {"verify_stripe_account": True},
         ),
+        (
+            "unauthorized_charge",
+            {"charge_id": "ch_unauth"},
+            {"block_unauthorized_charges": True},
+        ),
     ],
 )
 def test_repeated_anomalies_trigger_param_update(event_type, metadata, hint, monkeypatch):
@@ -210,8 +215,14 @@ def test_repeated_anomalies_trigger_param_update(event_type, metadata, hint, mon
     monkeypatch.setattr(msl, "GPT_MEMORY_MANAGER", None)
     monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
 
+    msl.refresh_billing_instructions()
+    msl._load_instruction_overrides()
+
     engine = DummyEngine()
-    for _ in range(msl.PAYMENT_ANOMALY_THRESHOLD):
+    threshold = msl.ANOMALY_THRESHOLDS.get(
+        event_type, msl.PAYMENT_ANOMALY_THRESHOLD
+    )
+    for _ in range(threshold):
         msl.record_payment_anomaly(
             event_type,
             metadata,
@@ -219,7 +230,7 @@ def test_repeated_anomalies_trigger_param_update(event_type, metadata, hint, mon
         )
 
     key = f"billing:{event_type}"
-    assert mm_storage[key]["count"] == msl.PAYMENT_ANOMALY_THRESHOLD
+    assert mm_storage[key]["count"] == threshold
     assert engine.calls == [{**hint, "event_type": event_type}]
 
 
