@@ -59,6 +59,7 @@ from .code_database import CodeDB  # noqa: E402
 from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
 from .quick_fix_engine import QuickFixEngine  # noqa: E402
+from vector_service import ContextBuilder  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -365,7 +366,10 @@ class ServiceSupervisor:
             rollback_mgr=self.rollback_mgr, bot_name="menace"
         )
         self.auto_mgr = AutoEscalationManager()
-        engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+        self.context_builder = ContextBuilder()
+        engine = SelfCodingEngine(
+            CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
+        )
         manager = SelfCodingManager(
             engine,
             ModelAutomationPipeline(),
@@ -374,7 +378,10 @@ class ServiceSupervisor:
         )
         self.error_db = ErrorDB()
         self.fix_engine = QuickFixEngine(
-            self.error_db, manager, graph=self.healer.graph
+            self.error_db,
+            manager,
+            graph=self.healer.graph,
+            context_builder=self.context_builder,
         )
 
     def _record_failure(self, etype: str) -> None:
