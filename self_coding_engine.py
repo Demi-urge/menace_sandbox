@@ -457,22 +457,24 @@ class SelfCodingEngine:
         self.patch_suggestion_db = patch_suggestion_db
         self.enhancement_classifier = enhancement_classifier
         tracker = ROITracker()
-        if context_builder is None:
+        # Ensure a context builder is available for downstream components
+        builder = context_builder
+        if builder is None:
             try:
-                context_builder = ContextBuilder(roi_tracker=tracker)
+                builder = ContextBuilder(roi_tracker=tracker)
             except Exception:
-                context_builder = None
+                builder = None
         else:
-            if getattr(context_builder, "roi_tracker", None) is None:
+            if getattr(builder, "roi_tracker", None) is None:
                 try:
-                    context_builder.roi_tracker = tracker  # type: ignore[attr-defined]
+                    builder.roi_tracker = tracker  # type: ignore[attr-defined]
                 except Exception:
                     self.logger.warning(
                         "failed to attach ROI tracker to context_builder",
                         exc_info=True,
-                        extra={"context_builder": type(context_builder).__name__},
+                        extra={"context_builder": type(builder).__name__},
                     )
-        self.context_builder = context_builder
+        self.context_builder = builder
         if patch_logger is not None and getattr(patch_logger, "roi_tracker", None) is None:
             try:
                 patch_logger.roi_tracker = tracker  # type: ignore[attr-defined]
@@ -487,7 +489,7 @@ class SelfCodingEngine:
                 cognition_layer = CognitionLayer(
                     patch_logger=patch_logger,
                     roi_tracker=tracker,
-                    context_builder=self.context_builder,
+                    context_builder=builder,
                 )
             except VectorServiceError as exc:
                 self.logger.warning(
@@ -508,7 +510,7 @@ class SelfCodingEngine:
                     )
             if getattr(cognition_layer, "context_builder", None) is None:
                 try:
-                    cognition_layer.context_builder = self.context_builder  # type: ignore[attr-defined]
+                    cognition_layer.context_builder = builder  # type: ignore[attr-defined]
                 except Exception:
                     self.logger.warning(
                         "failed to attach context builder to cognition_layer",
@@ -538,8 +540,9 @@ class SelfCodingEngine:
         self.prompt_optimizer = prompt_optimizer
         # expose ROI tracker to the prompt engine so retrieved examples can
         # carry risk-adjusted ROI hints when available
+        builder = self.context_builder
         self.prompt_engine = PromptEngine(
-            context_builder=self.context_builder,
+            context_builder=builder,
             roi_tracker=tracker,
             tone=prompt_tone,
             trainer=self.prompt_memory,
