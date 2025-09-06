@@ -47,7 +47,7 @@ class AutoEscalationManager:
             engine = SelfCodingEngine(
                 CodeDB(), gpt_mem, event_bus=event_bus, context_builder=builder
             )
-            debugger = AutomatedDebugger(ErrorDB(), engine)
+            debugger = AutomatedDebugger(ErrorDB(), engine, context_builder=builder)
         self.debugger = debugger
         self.rollback_mgr = rollback_mgr
         self.event_bus = event_bus

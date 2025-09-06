@@ -432,7 +432,9 @@ class Watchdog:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=builder
             )
-            dbg = AutomatedDebugger(_Proxy(self.error_db), engine)
+            dbg = AutomatedDebugger(
+                _Proxy(self.error_db), engine, context_builder=builder
+            )
             dbg.analyse_and_fix()
             if self.event_bus:
                 try:
