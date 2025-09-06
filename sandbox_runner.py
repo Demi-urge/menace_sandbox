@@ -42,7 +42,7 @@ router = GLOBAL_ROUTER
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
-from vector_service import FallbackResult
+from vector_service import FallbackResult, ContextBuilder
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback
@@ -703,6 +703,7 @@ class SandboxContext:
     data_bot: DataBot
     pathway_db: PathwayDB
     telem_db: ErrorDB
+    context_builder: ContextBuilder | None = None
     plugins: list
     extra_metrics: Dict[str, float]
     cycles: int
@@ -946,7 +947,10 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     from menace.model_automation_pipeline import ModelAutomationPipeline
 
     quick_manager = SelfCodingManager(engine, ModelAutomationPipeline(), bot_name="menace")
-    quick_fix_engine = QuickFixEngine(telem_db, quick_manager, graph=graph)
+    context_builder = ContextBuilder()
+    quick_fix_engine = QuickFixEngine(
+        telem_db, quick_manager, graph=graph, context_builder=context_builder
+    )
 
     gpt_client = None
     if os.getenv("OPENAI_API_KEY"):
@@ -1218,6 +1222,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         data_bot=data_bot,
         pathway_db=pathway_db,
         telem_db=telem_db,
+        context_builder=context_builder,
         plugins=plugins,
         extra_metrics=extra_metrics,
         cycles=cycles,
@@ -1273,6 +1278,14 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
         ctx.telem_db.conn.commit()
     except Exception:
         logger.exception("telemetry db commit failed")
+    builder = getattr(ctx, "context_builder", None)
+    if builder is not None:
+        try:
+            close = getattr(builder, "close", None)
+            if callable(close):
+                close()
+        except Exception:
+            logger.exception("context builder close failed")
     ctx.event_bus.close()
     shutil.rmtree(ctx.tmp)
     logger.info(
