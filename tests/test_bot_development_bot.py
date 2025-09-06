@@ -121,7 +121,7 @@ def test_build_prompt_with_docs(tmp_path):
         functions=["run_task", "helper"],
         function_docs={"run_task": "Run tasks", "helper": "Assist"},
     )
-    prompt = bot._build_prompt(spec)
+    prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert "INSTRUCTION MODE" in prompt
     assert "Module desc" in prompt
     assert "Level: L2" in prompt
@@ -133,7 +133,7 @@ def test_build_prompt_with_docs(tmp_path):
 def test_prompt_includes_standards(tmp_path):
     bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
     spec = bdb.BotSpec(name="std_bot", purpose="demo")
-    prompt = bot._build_prompt(spec)
+    prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert "INSTRUCTION MODE" in prompt
     assert "Coding Standards:" in prompt
     assert "PEP8" in prompt
@@ -148,10 +148,25 @@ def test_prompt_includes_standards(tmp_path):
 def test_prompt_includes_function_guidance(tmp_path):
     bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
     spec = bdb.BotSpec(name="guide_bot", purpose="demo", functions=["click_target", "ocr_image"])
-    prompt = bot._build_prompt(spec)
+    prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert "Function Guidance:" in prompt
     assert "click_target:" in prompt
     assert "ocr_image:" in prompt
+
+
+def test_prompt_includes_vector_context(tmp_path):
+    class DummyBuilder(bdb.ContextBuilder):
+        def __init__(self):
+            pass
+
+        def build(self, query):  # type: ignore[override]
+            return "retrieved context"
+
+    builder = DummyBuilder()
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
+    spec = bdb.BotSpec(name="ctx_bot", purpose="demo", description="demo")
+    prompt = bot._build_prompt(spec, context_builder=builder)
+    assert "retrieved context" in prompt
 
 
 def test_visual_and_openai_failure_fallback(tmp_path, monkeypatch, caplog):
@@ -175,7 +190,7 @@ def test_visual_and_openai_failure_fallback(tmp_path, monkeypatch, caplog):
     dev = FailVisual(repo_base=tmp_path)
     spec = bdb.BotSpec(name="fallback_bot", purpose="demo", functions=["run"])
     caplog.set_level(logging.ERROR)
-    path = dev.build_bot(spec)
+    path = dev.build_bot(spec, context_builder=dev.context_builder)
     assert path.exists()
     assert "openai fallback failed" in caplog.text
 
@@ -282,7 +297,7 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
     builder = DummyBuilder()
     bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     spec = bdb.BotSpec(name="demo", purpose="demo", description="demo")
-    prompt = bot._build_prompt(spec)
+    prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert builder.calls == ["demo"]
     assert g1.inc_calls == 1
     assert "sentinel_fallback" not in prompt

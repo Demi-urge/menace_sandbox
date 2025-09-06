@@ -1005,6 +1005,7 @@ class BotDevelopmentBot:
         self,
         spec: BotSpec,
         *,
+        context_builder: ContextBuilder,
         sample_limit: int = 5,
         sample_sort_by: str = "confidence",
         sample_with_vectors: bool = True,
@@ -1024,7 +1025,7 @@ class BotDevelopmentBot:
             Whether to request embedding vectors for the training examples.
         """
         query = spec.description or spec.purpose or spec.name
-        retrieval_context: str | Dict[str, Any] = self.context_builder.build(query)
+        retrieval_context: str | Dict[str, Any] = context_builder.build(query)
         if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
             retrieval_context = ""
 
@@ -1139,6 +1140,7 @@ class BotDevelopmentBot:
         self,
         spec: BotSpec,
         *,
+        context_builder: ContextBuilder,
         model_id: int | None = None,
         sample_limit: int = 5,
         sample_sort_by: str = "outcome_score",
@@ -1193,6 +1195,7 @@ class BotDevelopmentBot:
 
         prompt = self._build_prompt(
             spec,
+            context_builder=context_builder,
             sample_limit=sample_limit,
             sample_sort_by=sample_sort_by,
             sample_with_vectors=sample_with_vectors,
@@ -1258,12 +1261,12 @@ class BotDevelopmentBot:
                 with ThreadPoolExecutor(max_workers=self.concurrency) as ex:
                     files = list(
                         ex.map(
-                            lambda s: self.build_bot(s, model_id=model_id),
+                            lambda s: self.build_bot(s, context_builder=self.context_builder, model_id=model_id),
                             specs,
                         )
                     )
             else:
-                files = [self.build_bot(s, model_id=model_id) for s in specs]
+                files = [self.build_bot(s, context_builder=self.context_builder, model_id=model_id) for s in specs]
         except Exception as exc:
             msg = f"build_from_plan failed: {exc}"
             self.logger.exception(msg)

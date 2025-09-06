@@ -260,7 +260,7 @@ def test_bot_development_bot_includes_context(monkeypatch, tmp_path):
     ctx = builder.build_context("alpha issue")
     bot = BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     spec = BotSpec(name="demo", purpose="alpha issue")
-    prompt = bot._build_prompt(spec)
+    prompt = bot._build_prompt(spec, context_builder=builder)
     assert "\n\nContext:\n" in prompt
     assert ctx in prompt
 

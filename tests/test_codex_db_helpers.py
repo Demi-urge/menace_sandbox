@@ -360,6 +360,7 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
 
     prompt = bot._build_prompt(
         spec,
+        context_builder=builder,
         sample_limit=2,
         sample_sort_by="confidence",
         sample_with_vectors=True,
