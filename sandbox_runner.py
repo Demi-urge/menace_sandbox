@@ -43,11 +43,6 @@ from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
 from vector_service import FallbackResult, ContextBuilder
-try:  # pragma: no cover - support missing helper during tests
-    from vector_service import get_default_context_builder
-except ImportError:  # pragma: no cover - fallback
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback
@@ -941,7 +936,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 logger.info("using VisualAgentClientStub due to failure")
             except Exception:
                 va_client = None
-    context_builder = get_default_context_builder()
+    context_builder = ContextBuilder()
     context_builder.refresh_db_weights()
     engine = SelfCodingEngine(
         CodeDB(),
