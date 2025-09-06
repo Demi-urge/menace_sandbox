@@ -7,6 +7,7 @@ import sys
 import logging
 
 from .ipo_bot import IPOBot, ExecutionPlan
+from vector_service import ContextBuilder
 
 logger = logging.getLogger(__name__)
 from .bot_development_bot import BotDevelopmentBot, BotSpec
@@ -40,7 +41,9 @@ class IPOImplementationPipeline:
         max_attempts: int = 3,
     ) -> None:
         self.ipo = ipo or IPOBot()
-        self.developer = developer or BotDevelopmentBot()
+        self.developer = developer or BotDevelopmentBot(
+            context_builder=ContextBuilder()
+        )
         self.tester = tester or BotTestingBot()
         self.scaler = scaler or ScalabilityAssessmentBot()
         self.deployer = deployer or DeploymentBot()
