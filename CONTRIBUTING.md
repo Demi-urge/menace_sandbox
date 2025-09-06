@@ -73,6 +73,14 @@ def test_example():
 Run `pre-commit run check-static-paths --all-files` before committing to ensure
 no hard-coded `.py` paths slip through.
 
+## ContextBuilder dependency
+
+Bots or services that assemble prompts or invoke LLMs must take a
+`ContextBuilder` parameter. Instantiate the builder with local database paths
+at the call site and pass it explicitly rather than relying on internal
+defaults or silent fallbacks. Tests should assert that these components fail
+fast when the builder is omitted.
+
 ## Stripe integration
 
 To centralize billing logic and API configuration, the `stripe` Python package

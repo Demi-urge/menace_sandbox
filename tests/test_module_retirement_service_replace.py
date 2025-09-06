@@ -5,6 +5,7 @@ fake_qfe = types.ModuleType("quick_fix_engine")
 fake_qfe.generate_patch = lambda path, context_builder=None: 1
 sys.modules["quick_fix_engine"] = fake_qfe
 
+
 class _DummyBuilder:
     def __init__(self, *a, **k):
         pass
@@ -12,10 +13,11 @@ class _DummyBuilder:
     def refresh_db_weights(self):
         return None
 
+
 sys.modules.setdefault("vector_service", types.SimpleNamespace(ContextBuilder=_DummyBuilder))
 
-import module_retirement_service
-from module_retirement_service import ModuleRetirementService
+import module_retirement_service  # noqa: E402
+from module_retirement_service import ModuleRetirementService  # noqa: E402
 
 
 def _stub_build_graph(root):
@@ -46,7 +48,7 @@ def test_replace_module(monkeypatch, tmp_path):
     gauge = DummyGauge()
     monkeypatch.setattr(module_retirement_service, "replaced_modules_total", gauge)
 
-    service = ModuleRetirementService(tmp_path)
+    service = ModuleRetirementService(tmp_path, context_builder=_DummyBuilder())
     assert service.replace_module("demo")
     assert called["path"] == str(module)
     assert gauge.count == 1.0
@@ -83,7 +85,7 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
     monkeypatch.setattr(module_retirement_service, "update_module_retirement_metrics", fake_update)
 
-    service = ModuleRetirementService(tmp_path)
+    service = ModuleRetirementService(tmp_path, context_builder=_DummyBuilder())
     res = service.process_flags({"demo": "replace"})
     assert res == {"demo": "replaced"}
     assert called["path"] == str(module)
@@ -119,7 +121,7 @@ def test_process_flags_replace_skipped(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(module_retirement_service, "update_module_retirement_metrics", fake_update)
 
-    service = ModuleRetirementService(tmp_path)
+    service = ModuleRetirementService(tmp_path, context_builder=_DummyBuilder())
     with caplog.at_level("INFO"):
         res = service.process_flags({"demo": "replace"})
     assert res == {"demo": "skipped"}

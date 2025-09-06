@@ -11,10 +11,7 @@ from dynamic_path_router import resolve_path
 
 from module_graph_analyzer import build_import_graph
 from quick_fix_engine import generate_patch
-try:
-    from vector_service import ContextBuilder
-except Exception:  # pragma: no cover - optional dependency
-    ContextBuilder = None  # type: ignore
+from vector_service import ContextBuilder
 from metrics_exporter import (
     update_module_retirement_metrics,
     retired_modules_total,
@@ -26,7 +23,9 @@ from metrics_exporter import (
 class ModuleRetirementService:
     """Handle archival, compression, or replacement of modules based on relevancy flags."""
 
-    def __init__(self, repo_root: Path | str = ".") -> None:
+    def __init__(self, repo_root: Path | str = ".", *, context_builder: ContextBuilder) -> None:
+        if context_builder is None:
+            raise ValueError("ContextBuilder is required")
         self.root = Path(resolve_path(repo_root))
         self.logger = logging.getLogger(self.__class__.__name__)
         try:
@@ -34,25 +33,12 @@ class ModuleRetirementService:
         except Exception:  # pragma: no cover - dependency graph failures
             self._graph = None
             self.logger.exception("failed to build import graph")
-        # Reuse a single builder instance across operations for efficiency.
-        if ContextBuilder is not None:
-            try:
-                self._context_builder = ContextBuilder(
-                    bot_db="bots.db",
-                    code_db="code.db",
-                    error_db="errors.db",
-                    workflow_db="workflows.db",
-                )
-                self._context_builder.refresh_db_weights()
-            except Exception:
-                self.logger.exception("failed to initialise ContextBuilder")
-                self._context_builder = None
-        else:
-            self._context_builder = None
-        if self._context_builder is None:
-            self.logger.warning(
-                "ContextBuilder unavailable; operating without vector context"
-            )
+        self._context_builder = context_builder
+        try:
+            self._context_builder.refresh_db_weights()
+        except Exception:
+            self.logger.exception("failed to initialise ContextBuilder")
+            raise
 
     # ------------------------------------------------------------------
     def _normalise(self, module: str) -> str:
@@ -108,9 +94,6 @@ class ModuleRetirementService:
         if not path.exists():
             self.logger.error("module not found: %s", module)
             return False
-        if self._context_builder is None:
-            self.logger.error("ContextBuilder required for compression")
-            return False
         try:
             patch_id = generate_patch(str(path), context_builder=self._context_builder)
             if patch_id is not None:
@@ -139,9 +122,6 @@ class ModuleRetirementService:
         )
         if not path.exists():
             self.logger.error("module not found: %s", module)
-            return False
-        if self._context_builder is None:
-            self.logger.error("ContextBuilder required for replacement")
             return False
         try:
             patch_id = generate_patch(str(path), context_builder=self._context_builder)
