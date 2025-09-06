@@ -1258,16 +1258,34 @@ class BotDevelopmentBot:
         self.version_control(repo_dir, paths, message=f"Initial version of {spec.name}")
         return file_path
 
-    def build_from_plan(self, data: str, *, model_id: int | None = None) -> List[Path]:
+    def build_from_plan(
+        self,
+        data: str,
+        *,
+        model_id: int | None = None,
+        context_builder: ContextBuilder | None = None,
+    ) -> List[Path]:
         specs = self.parse_plan(data)
         try:
             if self.concurrency > 1:
                 from concurrent.futures import ThreadPoolExecutor
 
                 with ThreadPoolExecutor(max_workers=self.concurrency) as ex:
-                    files = list(ex.map(lambda s: self.build_bot(s, model_id=model_id), specs))
+                    files = list(
+                        ex.map(
+                            lambda s: self.build_bot(
+                                s, model_id=model_id, context_builder=context_builder
+                            ),
+                            specs,
+                        )
+                    )
             else:
-                files = [self.build_bot(s, model_id=model_id) for s in specs]
+                files = [
+                    self.build_bot(
+                        s, model_id=model_id, context_builder=context_builder
+                    )
+                    for s in specs
+                ]
         except Exception as exc:
             msg = f"build_from_plan failed: {exc}"
             self.logger.exception(msg)

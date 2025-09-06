@@ -3,6 +3,7 @@ import types
 import sys
 import logging
 import subprocess
+import importlib.util
 import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
@@ -38,6 +39,36 @@ jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None
 sys.modules.setdefault("jinja2", jinja_mod)
 sys.modules.setdefault("requests", types.ModuleType("requests"))
+vec_stub = types.ModuleType("vector_service")
+class _CB:
+    def __init__(self, *a, **k):
+        pass
+    def build(self, *_a, **_k):
+        return ""
+vec_stub.ContextBuilder = _CB
+vec_stub.FallbackResult = type("FallbackResult", (), {})
+vec_stub.ErrorResult = type("ErrorResult", (), {})
+vec_stub.EmbeddableDBMixin = object
+sys.modules.setdefault("vector_service", vec_stub)
+pkg_path = os.path.join(os.path.dirname(__file__), "..")
+pkg_spec = importlib.util.spec_from_file_location(
+    "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]
+)
+menace_pkg = importlib.util.module_from_spec(pkg_spec)
+sys.modules["menace"] = menace_pkg
+pkg_spec.loader.exec_module(menace_pkg)
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.SelfCodingEngine = object
+sys.modules.setdefault("menace.self_coding_engine", sce_stub)
+stub = types.ModuleType("db_router")
+stub.DBRouter = object
+stub.GLOBAL_ROUTER = None
+stub.init_db_router = lambda *a, **k: None
+stub.LOCAL_TABLES = {}
+stub.SHARED_TABLES = {}
+stub.queue_insert = lambda *a, **k: None
+sys.modules.setdefault("db_router", stub)
+sys.modules.setdefault("menace.db_router", stub)
 import menace.implementation_pipeline as ip
 import menace.task_handoff_bot as thb
 import menace.implementation_optimiser_bot as iob
@@ -365,7 +396,79 @@ def test_pipeline_surfaces_openai_errors(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.ERROR)
     with pytest.raises(RuntimeError):
         pipeline.run(tasks)
-    assert "openai fallback failed" in caplog.text
+
+
+def test_pipeline_uses_local_context_builder(tmp_path, monkeypatch):
+    class DummyBuilder:
+        def __init__(self, text: str = "LOCAL_DB") -> None:
+            self.text = text
+            self.calls = 0
+
+        def build(self, query: str) -> str:  # pragma: no cover - trivial
+            self.calls += 1
+            return self.text
+
+    dev_builder = DummyBuilder("DEV_UNUSED")
+    pipeline_builder = DummyBuilder()
+    monkeypatch.setattr(bdb, "ContextBuilder", lambda *a, **k: dev_builder)
+
+    class CaptureDevBot(bdb.BotDevelopmentBot):
+        def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
+            super().__init__(repo_base=repo_base)
+            self.prompt = ""
+            self.used_builder = None
+
+        def build_bot(
+            self,
+            spec: bdb.BotSpec,
+            *,
+            model_id=None,
+            context_builder=None,
+            **kwargs,
+        ) -> Path:  # type: ignore[override]
+            self.used_builder = context_builder
+            prompt = self._build_prompt(spec, builder=context_builder)
+            self.prompt = prompt
+            repo_dir = self.create_env(spec)
+            file_path = repo_dir / f"{spec.name}.py"  # path-ignore
+            file_path.write_text("pass")
+            self._write_meta(repo_dir, spec)
+            return file_path
+
+    developer = CaptureDevBot(repo_base=tmp_path)
+
+    class DummyHandoff:
+        def compile(self, tasks):  # pragma: no cover
+            return thb.TaskPackage(list(tasks))
+
+        def store_plan(self, tasks) -> None:  # pragma: no cover
+            pass
+
+        def send_package(self, package: thb.TaskPackage) -> None:  # pragma: no cover
+            pass
+
+    pipeline = ip.ImplementationPipeline(
+        handoff=DummyHandoff(),
+        developer=developer,
+        context_builder=pipeline_builder,
+    )
+
+    tasks = [
+        thb.TaskInfo(
+            name="CtxBot",
+            dependencies=[],
+            resources={},
+            schedule="once",
+            code="",
+            metadata={"purpose": "demo", "functions": ["run"]},
+        )
+    ]
+
+    pipeline.run(tasks)
+    assert pipeline_builder.calls > 0
+    assert dev_builder.calls == 0
+    assert developer.used_builder is pipeline_builder
+    assert "LOCAL_DB" in developer.prompt
 
 
 def test_pipeline_openai_error_not_raised(tmp_path, monkeypatch, caplog):

@@ -15,6 +15,11 @@ from .models_repo import clone_to_new_repo, model_build_lock
 from dynamic_path_router import resolve_path
 from typing import TYPE_CHECKING
 
+try:  # pragma: no cover - optional dependency
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - fallback when vector service missing
+    ContextBuilder = None  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover - optional heavy deps
     from .research_aggregator_bot import ResearchAggregatorBot
     from .ipo_bot import IPOBot, ExecutionPlan
@@ -47,6 +52,7 @@ class ImplementationPipeline:
         developer: Optional[BotDevelopmentBot] = None,
         researcher: Optional[ResearchAggregatorBot] = None,
         ipo: Optional[IPOBot] = None,
+        context_builder: "ContextBuilder" | None = None,
     ) -> None:
         """Initialize the pipeline.
 
@@ -63,10 +69,19 @@ class ImplementationPipeline:
             automatically.
         ipo : IPOBot, optional
             Planner used to generate IPO execution plans.
+        context_builder : ContextBuilder, optional
+            Shared :class:`vector_service.ContextBuilder` instance used to
+            assemble local vector database context for prompt generation.
         """
         self.handoff = handoff or TaskHandoffBot()
         self.optimiser = optimiser or ImplementationOptimiserBot()
-        self.developer = developer or BotDevelopmentBot()
+        self.context_builder = context_builder or (
+            ContextBuilder() if ContextBuilder is not None else None
+        )
+        if developer is not None:
+            self.developer = developer
+        else:
+            self.developer = BotDevelopmentBot(context_builder=self.context_builder)
         self.logger = logging.getLogger(self.__class__.__name__)
         if researcher is not None:
             self.researcher = researcher
@@ -271,7 +286,11 @@ class ImplementationPipeline:
             if self._missing_info(specs):
                 raise RuntimeError("failed to resolve missing bot info")
             try:
-                paths = self.developer.build_from_plan(plan_json, model_id=model_id)
+                paths = self.developer.build_from_plan(
+                    plan_json,
+                    model_id=model_id,
+                    context_builder=self.context_builder,
+                )
             except Exception as exc:
                 self.logger.exception("developer build failed: %s", exc)
                 raise

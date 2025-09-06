@@ -12,7 +12,24 @@ import pytest
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 stub = ModuleType("db_router")
 stub.DBRouter = object
+stub.GLOBAL_ROUTER = None
+stub.init_db_router = lambda *a, **k: None
+stub.LOCAL_TABLES = {}
+stub.SHARED_TABLES = {}
+stub.queue_insert = lambda *a, **k: None
+sys.modules.setdefault("db_router", stub)
 sys.modules.setdefault("menace.db_router", stub)
+vec_stub = ModuleType("vector_service")
+class _CB:
+    def __init__(self, *a, **k):
+        pass
+    def build(self, *_a, **_k):
+        return ""
+vec_stub.ContextBuilder = _CB
+vec_stub.FallbackResult = type("FallbackResult", (), {})
+vec_stub.ErrorResult = type("ErrorResult", (), {})
+vec_stub.EmbeddableDBMixin = object
+sys.modules.setdefault("vector_service", vec_stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]  # path-ignore
@@ -265,3 +282,42 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
     assert builder.calls == ["demo"]
     assert g1.inc_calls == 1
     assert "sentinel_fallback" not in prompt
+
+
+def test_build_from_plan_passes_context_builder(tmp_path):
+    class CaptureBot(bdb.BotDevelopmentBot):
+        def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
+            super().__init__(repo_base=repo_base)
+            self.received = None
+
+        def build_bot(
+            self,
+            spec: bdb.BotSpec,
+            *,
+            model_id=None,
+            context_builder=None,
+            **kwargs,
+        ) -> Path:  # type: ignore[override]
+            self.received = context_builder
+            repo_dir = self.create_env(spec)
+            file_path = repo_dir / f"{spec.name}.py"  # path-ignore
+            file_path.write_text("pass")
+            self._write_meta(repo_dir, spec)
+            return file_path
+
+    builder = object()
+    bot = CaptureBot(repo_base=tmp_path)
+    plan = json.dumps([
+        {
+            "name": "demo",
+            "purpose": "demo",
+            "functions": ["run"],
+            "language": "python",
+            "dependencies": [],
+            "capabilities": [],
+            "level": "",
+            "io": "",
+        }
+    ])
+    bot.build_from_plan(plan, context_builder=builder)
+    assert bot.received is builder
