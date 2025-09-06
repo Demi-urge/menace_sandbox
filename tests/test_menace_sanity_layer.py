@@ -181,6 +181,8 @@ def test_watchdog_anomaly_updates_db_memory_and_event_bus(monkeypatch, tmp_path)
     msl._MEMORY_MANAGER = mm
 
     record = {"type": "overcharge", "id": "ch_1", "amount": 5}
+    monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
+    monkeypatch.setattr(sw, "load_api_key", lambda: None)
     sw._emit_anomaly(record, False, False)
 
     anomalies = msl.list_anomalies()

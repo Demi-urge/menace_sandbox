@@ -634,6 +634,19 @@ def _emit_anomaly(
     _refresh_instruction_cache()
     audit_logger.log_event("stripe_anomaly", record)
     metadata = {k: v for k, v in record.items() if k != "type"}
+    metadata.setdefault("timestamp", datetime.utcnow().isoformat())
+    if not metadata.get("stripe_account"):
+        acct = metadata.get("account_id")
+        if not acct:
+            try:
+                api_key = load_api_key()
+                acct = _expected_account_id(api_key) if api_key else None
+            except Exception:
+                logger.exception(
+                    "Failed to resolve Stripe account", extra={"record": record}
+                )
+        if acct:
+            metadata["stripe_account"] = acct
 
     if SANITY_LAYER_FEEDBACK_ENABLED:
         try:
@@ -681,14 +694,27 @@ def _emit_anomaly(
         except Exception:
             logger.exception("Failed to record billing anomaly", extra={"record": record})
 
-        payment_meta = dict(metadata)
-        if "id" in payment_meta:
-            payment_meta["charge_id"] = payment_meta.pop("id")
-        payment_meta.setdefault("reason", record.get("type"))
         event_type = record.get("type", "unknown")
         instruction = menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS.get(
             event_type, DEFAULT_BILLING_EVENT_INSTRUCTION
         )
+        try:
+            record_billing_event(
+                event_type,
+                metadata,
+                instruction,
+                config_path=CONFIG_PATH,
+                self_coding_engine=self_coding_engine,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to record billing event", extra={"record": record}
+            )
+
+        payment_meta = dict(metadata)
+        if "id" in payment_meta:
+            payment_meta["charge_id"] = payment_meta.pop("id")
+        payment_meta.setdefault("reason", record.get("type"))
         menace_sanity_layer.record_payment_anomaly(
             event_type,
             payment_meta,
@@ -1387,28 +1413,6 @@ def check_events(
             telemetry_feedback=telemetry_feedback,
         )
     )
-    if anomalies:
-        for anomaly in anomalies:
-            metadata = dict(anomaly)
-            metadata["timestamp"] = datetime.utcnow().isoformat()
-            metadata["stripe_account"] = anomaly.get("account_id") or expected_account_id
-            if SANITY_LAYER_FEEDBACK_ENABLED:
-                try:
-                    event_type = anomaly.get("type", "unknown")
-                    instruction = menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS.get(
-                        event_type, DEFAULT_BILLING_EVENT_INSTRUCTION
-                    )
-                    record_billing_event(
-                        event_type,
-                        metadata,
-                        instruction,
-                        config_path=CONFIG_PATH,
-                        self_coding_engine=self_coding_engine,
-                    )
-                except Exception:
-                    logger.exception(
-                        "failed to record billing event", extra={"anomaly": anomaly}
-                    )
     if anomalies and DiscrepancyDB and DiscrepancyRecord:
         try:  # pragma: no cover - best effort
             msg = f"{len(anomalies)} stripe anomalies detected"
