@@ -2,30 +2,41 @@ import os
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
+
 class DummyEscalation:
     def __init__(self) -> None:
         self.messages = []
+
     def handle(self, msg, attachments=None):
         self.messages.append(msg)
+
 
 class DummyDB:
     def __init__(self):
         self.updated = []
+
     def update_bot(self, bot_id, **fields):
         self.updated.append((bot_id, fields))
 
 
 def _stub_vector_service(monkeypatch):
-    import types, sys, functools, time, logging
+    import types
+    import sys
+    import functools
+    import time
+    import logging
 
     class Gauge:
         def __init__(self):
             self.inc_calls = 0
             self.set_calls: list[float] = []
+
         def labels(self, *args):
             return self
+
         def inc(self):
             self.inc_calls += 1
+
         def set(self, value):
             self.set_calls.append(value)
 
@@ -61,8 +72,9 @@ def _stub_vector_service(monkeypatch):
     class CognitionLayer:
         def __init__(self, *, context_builder=None, **_):
             self.context_builder = context_builder
+
         def query(self, prompt, **_):
-            return self.context_builder.build_context(prompt, session_id="s"), "sid"
+            return self.context_builder.build(prompt, session_id="s"), "sid"
 
     class ContextBuilder:
         calls: list[str] = []
@@ -71,9 +83,11 @@ def _stub_vector_service(monkeypatch):
             self.args = args
             self.kwargs = kwargs
 
-        def build_context(self, prompt, **_):
+        def build(self, prompt, **_):
             self.__class__.calls.append(prompt)
             return "ctx"
+
+        build_context = build
 
     vs = types.ModuleType("vector_service")
     vs.CognitionLayer = CognitionLayer
@@ -106,6 +120,7 @@ def test_escalation_on_critical(monkeypatch):
     assert db.updated and db.updated[0][0] == 7
     assert esc.messages and "review for bot 7" in esc.messages[0]
 
+
 def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
     dec = _stub_vector_service(monkeypatch)
     from vector_service.decorators import log_and_measure
@@ -115,10 +130,13 @@ def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
         def __init__(self):
             self.inc_calls = 0
             self.set_calls: list[float] = []
+
         def labels(self, *args):
             return self
+
         def inc(self):
             self.inc_calls += 1
+
         def set(self, value):
             self.set_calls.append(value)
 
@@ -127,17 +145,20 @@ def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
     monkeypatch.setattr(dec, "_LATENCY_GAUGE", g2)
     monkeypatch.setattr(dec, "_RESULT_SIZE_GAUGE", g3)
 
+    import vector_service
+
     class DummyRetriever:
         @log_and_measure
         def search(self, query, **_):
             raise ValueError("context build failed")
 
-    class DummyBuilder:
+    class DummyBuilder(vector_service.ContextBuilder):
         def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
             self.calls = []
             self.retriever = DummyRetriever()
 
-        def build_context(self, query, **_):
+        def build(self, query, **_):
             self.calls.append(query)
             return self.retriever.search(query, session_id="s")
 
@@ -149,10 +170,12 @@ def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
     )
 
     attachments_list: list[str] = []
+
     class Escalator:
         def handle(self, msg, attachments=None):
             if attachments:
                 attachments_list.extend(attachments)
+
     class DB:
         def update_bot(self, *a, **k):
             pass
