@@ -1,7 +1,14 @@
 import json
 import sys
 import types
+import json
+import sys
+import types
 from pathlib import Path
+
+
+class ContextBuilder:
+    pass
 
 
 class SelfCodingEngine:
@@ -95,7 +102,7 @@ def test_post_synthesis_orphan_inclusion(monkeypatch, tmp_path):
     oi_mod.integrate_orphans = integrate_orphans
     monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", oi_mod)
 
-    builder = object()
+    builder = ContextBuilder()
     engine = SelfCodingEngine(builder)
 
     def fake_patch_file(path: Path, description: str) -> None:

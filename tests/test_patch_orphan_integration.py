@@ -5,6 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+class ContextBuilder:
+    pass
+
+
 class SelfCodingEngine:
     def __init__(self, context_builder=None):
         self.context_builder = context_builder
@@ -82,7 +86,7 @@ def test_patch_orphan_integration(monkeypatch, tmp_path):
     oi_mod.integrate_orphans = integrate_orphans
     monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_integration", oi_mod)
 
-    builder = object()
+    builder = ContextBuilder()
     engine = SelfCodingEngine(builder)
 
     def fake_patch_file(path: Path, description: str) -> None:

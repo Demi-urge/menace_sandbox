@@ -81,7 +81,11 @@ vec_mod.__path__ = []
 vec_mod.CognitionLayer = object
 vec_mod.PatchLogger = object
 vec_mod.VectorServiceError = Exception
-vec_mod.EmbeddableDBMixin = object
+class _EmbeddableDBMixin:
+    def __init__(self, *a, **k):
+        pass
+
+vec_mod.EmbeddableDBMixin = _EmbeddableDBMixin
 vec_mod.SharedVectorService = object
 sys.modules.setdefault("vector_service", vec_mod)
 retr_mod = types.ModuleType("vector_service.retriever")
@@ -112,6 +116,13 @@ class _RoiTag:
 
 roi_mod.RoiTag = _RoiTag
 sys.modules.setdefault("vector_service.roi_tags", roi_mod)
+
+
+class ContextBuilder:
+    def build_context(self, *a, **k):
+        return {}
+
+vec_mod.ContextBuilder = ContextBuilder
 data_bot_mod = types.ModuleType("data_bot")
 data_bot_mod.MetricsDB = object
 sys.modules.setdefault("data_bot", data_bot_mod)
@@ -176,8 +187,14 @@ sys.modules.setdefault(
             va_prompt_template="",
             va_prompt_prefix="",
             va_repo_layout_lines=0,
-        )
+            chunk_summary_cache_dir="",
+            prompt_chunk_token_threshold=0,
+        ),
     ),
+)
+sys.modules.setdefault(
+    "menace.sandbox_settings",
+    sys.modules["sandbox_settings"],
 )
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
@@ -191,6 +208,17 @@ sys.modules["code_database"] = code_db_mod
 sys.modules["menace.code_database"] = code_db_mod
 
 import menace.self_coding_engine as sce  # noqa: E402
+sce._settings = types.SimpleNamespace(
+    prompt_chunk_token_threshold=1000,
+    chunk_summary_cache_dir="",
+    sandbox_data_dir="",
+    audit_log_path="",
+    audit_privkey=None,
+    prompt_success_log_path="",
+    prompt_failure_log_path="",
+    codex_retry_delays=[],
+    codex_timeout=30.0,
+)
 
 
 def test_build_visual_agent_prompt_basic(monkeypatch):
@@ -215,7 +243,7 @@ def test_build_visual_agent_prompt_basic(monkeypatch):
 
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
     helper_path = resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
-    prompt = sce.SelfCodingEngine(None, None, context_builder=object()).build_visual_agent_prompt(
+    prompt = sce.SelfCodingEngine(None, None, context_builder=ContextBuilder()).build_visual_agent_prompt(
         helper_path, "print hello", "def hello():\n    pass"
     )
     assert prompt == "PROMPT"
@@ -234,7 +262,7 @@ def test_build_visual_agent_prompt_env(monkeypatch, tmp_path):
     importlib.reload(sce)
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", lambda self, d, **k: "PROMPT")
     target_path = resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
-    prompt = sce.SelfCodingEngine(None, None, context_builder=object()).build_visual_agent_prompt(
+    prompt = sce.SelfCodingEngine(None, None, context_builder=ContextBuilder()).build_visual_agent_prompt(
         target_path, "do things", "ctx"
     )
     assert prompt.startswith("NOTE: ")
@@ -262,7 +290,7 @@ def test_build_visual_agent_prompt_layout(monkeypatch):
         return "PROMPT"
 
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
-    eng = sce.SelfCodingEngine(None, None, context_builder=object())
+    eng = sce.SelfCodingEngine(None, None, context_builder=ContextBuilder())
     expected = eng._get_repo_layout(2)
     target_path = resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
     eng.build_visual_agent_prompt(target_path, "desc", "ctx")
@@ -286,7 +314,7 @@ def test_build_visual_agent_prompt_retrieval_context(monkeypatch):
         return "PROMPT"
 
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
-    eng = sce.SelfCodingEngine(None, None, context_builder=object())
+    eng = sce.SelfCodingEngine(None, None, context_builder=ContextBuilder())
     rc = "{\"bots\": []}"
     target_path = resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
     eng.build_visual_agent_prompt(target_path, "desc", "ctx", rc)
