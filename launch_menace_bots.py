@@ -171,6 +171,7 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
 
         SelfDebuggerSandbox = _SelfDebuggerSandbox
     sandbox = SelfDebuggerSandbox(_TelemProxy(error_db), engine)
+    sandbox.context_builder = builder
     try:
         deployer = DeploymentBot(
             code_db=code_db,
