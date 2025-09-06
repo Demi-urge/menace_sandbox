@@ -90,7 +90,8 @@ def test_feedback_triggers_patch(tmp_path, monkeypatch, scope, src):
             ),
             source_menace_id=src,
         )
-    fb = tf.TelemetryFeedback(logger, engine, threshold=3)
+    monkeypatch.setattr(tf, "resolve_path", lambda _p: mod.resolve())
+    fb = tf.TelemetryFeedback(logger, engine, context_builder=object(), threshold=3)
     fb._run_cycle(scope=scope)
     assert engine.calls and engine.calls[0][0] == mod.resolve()
 
@@ -109,6 +110,6 @@ def test_feedback_threshold(tmp_path, monkeypatch):
                 module_counts={"bot": 1},
             )
         )
-    fb = tf.TelemetryFeedback(logger, engine, threshold=3)
+    fb = tf.TelemetryFeedback(logger, engine, context_builder=object(), threshold=3)
     fb._run_cycle()
     assert not engine.calls
