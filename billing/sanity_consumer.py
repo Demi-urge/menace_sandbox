@@ -21,6 +21,16 @@ import menace_sanity_layer
 from dynamic_path_router import resolve_path
 
 try:  # pragma: no cover - optional dependency
+    from code_database import CodeDB
+except Exception:  # pragma: no cover - best effort
+    CodeDB = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from menace_memory_manager import MenaceMemoryManager
+except Exception:  # pragma: no cover - best effort
+    MenaceMemoryManager = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
     from discrepancy_db import DiscrepancyDB, DiscrepancyRecord
 except Exception:  # pragma: no cover - best effort
     DiscrepancyDB = None  # type: ignore
@@ -32,12 +42,17 @@ logger = logging.getLogger(__name__)
 class SanityConsumer:
     """Subscribe to billing anomaly events and trigger self-correction."""
 
-    def __init__(self, event_bus: UnifiedEventBus | None = None) -> None:
+    def __init__(
+        self,
+        event_bus: UnifiedEventBus | None = None,
+        *,
+        engine: SelfCodingEngine | None = None,
+    ) -> None:
         self.event_bus = event_bus or getattr(
             menace_sanity_layer, "_EVENT_BUS", UnifiedEventBus()
         )
         self.event_bus.subscribe("billing.anomaly", self._handle)
-        self._engine: SelfCodingEngine | None = None
+        self._engine: SelfCodingEngine | None = engine
         self._feedback: SanityFeedback | None = None
         self._outcome_db = DiscrepancyDB() if DiscrepancyDB is not None else None
 
@@ -45,7 +60,19 @@ class SanityConsumer:
     def _get_engine(self) -> SelfCodingEngine:
         if self._engine is None:
             try:
-                self._engine = SelfCodingEngine(object(), object())
+                try:
+                    code_db = CodeDB() if CodeDB is not None else object()
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed to initialise CodeDB")
+                    code_db = object()
+                try:
+                    memory_mgr = (
+                        MenaceMemoryManager() if MenaceMemoryManager is not None else object()
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed to initialise MenaceMemoryManager")
+                    memory_mgr = object()
+                self._engine = SelfCodingEngine(code_db, memory_mgr)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise SelfCodingEngine")
                 raise
