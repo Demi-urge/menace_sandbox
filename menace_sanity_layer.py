@@ -716,15 +716,37 @@ def record_billing_event(
                 "failed to update config file", extra={"path": str(config_path)}
             )
 
-    if self_coding_engine is not None:
+    trigger_correction = False
+    mm = _get_memory_manager()
+    if mm is not None:
+        try:
+            key = f"billing:event:{event_type}"
+            data = {"instruction": instruction, "count": 1}
+            existing = mm.query(key, 1)
+            prev_count = 0
+            if existing:
+                try:
+                    existing_data = json.loads(existing[0].data)
+                    prev_count = int(existing_data.get("count", 0))
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception(
+                        "failed to parse existing memory entry", extra={"key": key}
+                    )
+            data["count"] = prev_count + 1
+            mm.store(key, data, tags="billing,event")
+            threshold = ANOMALY_THRESHOLDS.get(event_type, PAYMENT_ANOMALY_THRESHOLD)
+            if data["count"] >= threshold and prev_count < threshold:
+                trigger_correction = True
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("MenaceMemoryManager logging failed")
+
+    if trigger_correction and self_coding_engine is not None:
         try:
             update_fn = getattr(self_coding_engine, "update_generation_params", None)
             if callable(update_fn):
-                changes = update_fn(metadata) or {}
-                if changes:
-                    logger.info(
-                        "generation params updated", extra={"changes": changes}
-                    )
+                hint = ANOMALY_HINTS.get(event_type, {})
+                if hint:
+                    update_fn({**hint, "event_type": event_type})
         except Exception:  # pragma: no cover - best effort
             logger.exception("self_coding_engine update failed")
 

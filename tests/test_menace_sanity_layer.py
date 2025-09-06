@@ -198,12 +198,22 @@ def test_record_billing_event_persists_and_logs(monkeypatch, tmp_path):
         def add(self, rec):  # noqa: D401
             calls["rec"] = rec
 
-    class DummyMemory:
+    class DummyGPTMemory:
         def log_interaction(self, prompt, response, *, tags=None):
             calls["mem"] = (prompt, json.loads(response), tags or [])
 
         def retrieve(self, *_args, **_kwargs):  # pragma: no cover - unused
             return []
+
+    class DummyMM:
+        def __init__(self) -> None:
+            self.stored: list[tuple[str, dict, str]] = []
+
+        def query(self, key, limit):
+            return []
+
+        def store(self, key, data, tags=""):
+            self.stored.append((key, data, tags))
 
     class DummyRecord:
         def __init__(self, message, metadata):  # noqa: D401
@@ -212,10 +222,57 @@ def test_record_billing_event_persists_and_logs(monkeypatch, tmp_path):
 
     monkeypatch.setattr(msl, "DiscrepancyRecord", DummyRecord)
     monkeypatch.setattr(msl, "_BILLING_EVENT_DB", DummyDB())
-    monkeypatch.setattr(msl, "_GPT_MEMORY", DummyMemory())
-    monkeypatch.setattr(msl, "_MEMORY_MANAGER", DummyMemory())
+    monkeypatch.setattr(msl, "_GPT_MEMORY", DummyGPTMemory())
+    mm = DummyMM()
+    monkeypatch.setattr(msl, "_get_memory_manager", lambda: mm)
 
     msl.record_billing_event("foo", {"bar": "baz"}, "instr")
 
     assert "rec" in calls
     assert "mem" in calls
+
+
+def test_repeated_billing_event_triggers_param_update(monkeypatch):
+    mm_storage: dict[str, dict] = {}
+
+    class DummyMM:
+        def query(self, key, limit):
+            if key in mm_storage:
+                return [types.SimpleNamespace(data=json.dumps(mm_storage[key]))]
+            return []
+
+        def store(self, key, data, tags=""):
+            mm_storage[key] = data
+
+    class DummyEngine:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def update_generation_params(self, meta):
+            self.calls.append(meta)
+
+    mm = DummyMM()
+    monkeypatch.setattr(msl, "_get_memory_manager", lambda: mm)
+    monkeypatch.setattr(msl, "_BILLING_EVENT_DB", None)
+    monkeypatch.setattr(msl, "_get_gpt_memory", lambda: None)
+    monkeypatch.setattr(msl.audit_logger, "log_event", lambda *a, **k: None)
+
+    threshold = msl.ANOMALY_THRESHOLDS.get(
+        "missing_charge", msl.PAYMENT_ANOMALY_THRESHOLD
+    )
+    engine = DummyEngine()
+    for _ in range(threshold):
+        msl.record_billing_event(
+            "missing_charge",
+            {"charge_id": "c"},
+            "instr",
+            self_coding_engine=engine,
+        )
+
+    key = "billing:event:missing_charge"
+    assert mm_storage[key]["count"] == threshold
+    expected_hint = {
+        **msl.ANOMALY_HINTS.get("missing_charge", {}),
+        "event_type": "missing_charge",
+    }
+    assert engine.calls == [expected_hint]
