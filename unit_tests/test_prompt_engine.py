@@ -26,6 +26,14 @@ PromptEngine = pe.PromptEngine
 DEFAULT_TEMPLATE = pe.DEFAULT_TEMPLATE
 
 
+class DummyBuilder:
+    def __init__(self, *_, **__):
+        self.roi_tracker = None
+
+    def _count_tokens(self, text: str) -> int:
+        return len(str(text).split())
+
+
 class DummyRetriever:
     def __init__(self, records):
         self.records = records
@@ -50,7 +58,9 @@ def test_retrieval_snippets_included():
             roi_tag=RoiTag.HIGH_ROI.value,
         )
     ]
-    engine = PromptEngine(retriever=DummyRetriever(records))
+    engine = PromptEngine(
+        retriever=DummyRetriever(records), context_builder=DummyBuilder()
+    )
     prompt = engine.build_prompt("desc")
     assert "Given the following pattern, desc" in prompt.text
     assert "Given the following pattern:" in prompt.text
@@ -68,6 +78,7 @@ def test_custom_headers_codex_style():
     ]
     engine = PromptEngine(
         retriever=DummyRetriever(records),
+        context_builder=DummyBuilder(),
         confidence_threshold=0.0,
         success_header="Correct example:",
         failure_header="Incorrect example:",
@@ -96,7 +107,11 @@ def test_orders_by_roi_and_timestamp():
         _record(1.0, ts=1, summary="old fail", tests_passed=False),
         _record(1.0, ts=2, summary="new fail", tests_passed=False),
     ]
-    engine = PromptEngine(retriever=DummyRetriever(records), confidence_threshold=-1.0)
+    engine = PromptEngine(
+        retriever=DummyRetriever(records),
+        context_builder=DummyBuilder(),
+        confidence_threshold=-1.0,
+    )
     prompt = engine.build_prompt("desc")
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
@@ -121,7 +136,7 @@ def test_build_snippets_sorted_by_score():
             }
         },
     ]
-    engine = PromptEngine(confidence_threshold=-2.0)
+    engine = PromptEngine(confidence_threshold=-2.0, context_builder=DummyBuilder())
     lines = engine.build_snippets(patches)
     text = "\n".join(lines)
     assert text.index("Code summary: good") < text.index("Code summary: bad")
@@ -129,7 +144,9 @@ def test_build_snippets_sorted_by_score():
 
 def test_fallback_on_low_confidence(caplog, monkeypatch):
     records: List[Dict[str, Any]] = []
-    engine = PromptEngine(retriever=DummyRetriever(records))
+    engine = PromptEngine(
+        retriever=DummyRetriever(records), context_builder=DummyBuilder()
+    )
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     with caplog.at_level(logging.INFO):
         prompt = engine.build_prompt("desc")
@@ -139,7 +156,9 @@ def test_fallback_on_low_confidence(caplog, monkeypatch):
 
 def test_retry_trace_included():
     records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
-    engine = PromptEngine(retriever=DummyRetriever(records))
+    engine = PromptEngine(
+        retriever=DummyRetriever(records), context_builder=DummyBuilder()
+    )
     trace = "Traceback: fail"
     prompt = engine.build_prompt("desc", retry_trace=trace)
     expected = "Previous failure:\nTraceback: fail\nPlease attempt a different solution."
@@ -148,7 +167,9 @@ def test_retry_trace_included():
 
 def test_retry_trace_idempotent():
     records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
-    engine = PromptEngine(retriever=DummyRetriever(records))
+    engine = PromptEngine(
+        retriever=DummyRetriever(records), context_builder=DummyBuilder()
+    )
     trace = (
         "Previous failure:\nTraceback: boom\nPlease attempt a different solution."
     )
@@ -158,14 +179,18 @@ def test_retry_trace_idempotent():
 
 
 def test_roi_tag_positive_effect_on_score():
-    engine = PromptEngine(retriever=DummyRetriever([]))
+    engine = PromptEngine(
+        retriever=DummyRetriever([]), context_builder=DummyBuilder()
+    )
     baseline = engine._score_snippet({})
     high = engine._score_snippet({"roi_tag": RoiTag.HIGH_ROI.value})
     assert high > baseline
 
 
 def test_roi_tag_negative_effect_on_score():
-    engine = PromptEngine(retriever=DummyRetriever([]))
+    engine = PromptEngine(
+        retriever=DummyRetriever([]), context_builder=DummyBuilder()
+    )
     baseline = engine._score_snippet({})
     bad = engine._score_snippet({"roi_tag": RoiTag.BUG_INTRODUCED.value})
     assert bad < baseline

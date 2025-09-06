@@ -191,9 +191,9 @@ class PromptEngine:
         Optional :class:`vector_service.retriever.PatchRetriever` instance.
         When omitted the *retriever* is used for patch lookups.
     context_builder:
-        Optional :class:`vector_service.context_builder.ContextBuilder`
-        instance.  When supplied the engine will attempt to read the
-        ``roi_tracker`` attribute for risk adjusted ROI calculations.
+        :class:`vector_service.context_builder.ContextBuilder` instance used
+        for token counting and ROI tracking. The engine relies on this object
+        and does not create one automatically.
     roi_tracker:
         Optional ROI tracker overriding the tracker from ``context_builder``.
     template_path:
@@ -222,9 +222,9 @@ class PromptEngine:
         Refresh optimiser statistics after this many prompts when set.
     """
 
+    context_builder: ContextBuilder
     retriever: Retriever | None = None
     patch_retriever: PatchRetriever | None = None
-    context_builder: ContextBuilder | None = None
     roi_tracker: Any | None = None
     confidence_threshold: float = 0.3
     top_n: int = 5
@@ -321,12 +321,7 @@ class PromptEngine:
                     self.patch_retriever = PatchRetriever()
                 except Exception:
                     self.patch_retriever = None
-        if self.context_builder is None:
-            try:
-                self.context_builder = ContextBuilder(retriever=self.retriever)
-            except Exception:
-                self.context_builder = None
-        if self.roi_tracker is None and self.context_builder is not None:
+        if self.roi_tracker is None:
             self.roi_tracker = getattr(self.context_builder, "roi_tracker", None)
         if self.trainer is None and PromptMemoryTrainer is not None:
             try:
@@ -1077,9 +1072,7 @@ class PromptEngine:
     def _count_tokens(self, text: str) -> int:
         """Return token count for ``text`` using available tokenizers."""
 
-        counter = None
-        if self.context_builder is not None:
-            counter = getattr(self.context_builder, "_count_tokens", None)
+        counter = getattr(self.context_builder, "_count_tokens", None)
         if counter is None:
             if _ENCODER is not None:
                 def _token_counter(s: Any) -> int:
@@ -1097,9 +1090,7 @@ class PromptEngine:
     def _trim_tokens(self, text: str, limit: int) -> str:
         """Trim ``text`` to ``limit`` tokens using available tokenizers."""
 
-        counter = None
-        if self.context_builder is not None:
-            counter = getattr(self.context_builder, "_count_tokens", None)
+        counter = getattr(self.context_builder, "_count_tokens", None)
         if counter is None:
             if _ENCODER is not None:
                 def _token_counter(s: Any) -> int:
@@ -1242,7 +1233,7 @@ class PromptEngine:
         top_n: int = 5,
         confidence_threshold: float = 0.3,
         retriever: Retriever | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         roi_tracker: Any | None = None,
         success_header: str = "Given the following pattern:",
         failure_header: str = "Avoid {summary} because it caused {outcome}:",
@@ -1287,7 +1278,7 @@ def build_prompt(
     context: str | None = None,
     retrieval_context: str | None = None,
     summaries: List[str] | None = None,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     top_n: int = 5,
     success_header: str = "Given the following pattern:",
     failure_header: str = "Avoid {summary} because it caused {outcome}:",
