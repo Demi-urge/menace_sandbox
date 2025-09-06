@@ -262,7 +262,7 @@ class BotDevelopmentBot:
         *,
         config: BotDevConfig | None = None,
         openai_attempts: int | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
         self.config = config or BotDevConfig()
         if openai_attempts is not None:
@@ -330,12 +330,14 @@ class BotDevelopmentBot:
             self.logger.warning("failed to load prompt templates: %s", exc)
             self.prompt_templates = {}
         self.template_engine = PromptTemplateEngine(self.prompt_templates)
-        if context_builder is None:
-            try:
-                context_builder = ContextBuilder()
-            except Exception:  # pragma: no cover - defensive fallback
-                context_builder = None
         self.context_builder = context_builder
+        if self.context_builder is None:
+            msg = "ContextBuilder is required"
+            try:
+                self._escalate(msg)
+            except Exception:
+                self.logger.error(msg)
+            raise RuntimeError(msg)
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
@@ -1003,7 +1005,6 @@ class BotDevelopmentBot:
         self,
         spec: BotSpec,
         *,
-        builder: ContextBuilder | None = None,
         sample_limit: int = 5,
         sample_sort_by: str = "confidence",
         sample_with_vectors: bool = True,
@@ -1014,10 +1015,6 @@ class BotDevelopmentBot:
         ----------
         spec:
             Bot specification describing the desired bot.
-        builder:
-            Optional :class:`ContextBuilder` used to enrich the prompt with
-            historical context.  Falls back to ``self.context_builder`` when
-            not provided.
         sample_limit:
             Maximum number of training examples fetched via
             :func:`codex_db_helpers.aggregate_samples`.
@@ -1026,16 +1023,14 @@ class BotDevelopmentBot:
         sample_with_vectors:
             Whether to request embedding vectors for the training examples.
         """
-        builder = builder or self.context_builder
         retrieval_context: str | Dict[str, Any] = ""
-        if builder is not None:
-            try:
-                query = spec.description or spec.purpose or spec.name
-                retrieval_context = builder.build(query)
-                if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
-                    retrieval_context = ""
-            except Exception:
+        try:
+            query = spec.description or spec.purpose or spec.name
+            retrieval_context = self.context_builder.build(query)
+            if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
                 retrieval_context = ""
+        except Exception:
+            retrieval_context = ""
 
         predicted_tool = ""
         pred_conf = 0.0
@@ -1149,7 +1144,6 @@ class BotDevelopmentBot:
         spec: BotSpec,
         *,
         model_id: int | None = None,
-        context_builder: ContextBuilder | None = None,
         sample_limit: int = 5,
         sample_sort_by: str = "outcome_score",
         sample_with_vectors: bool = True,
@@ -1162,9 +1156,6 @@ class BotDevelopmentBot:
             Description of the bot to generate.
         model_id:
             Optional model selector for the visual agent.
-        context_builder:
-            Optional :class:`ContextBuilder` overriding the instance level
-            builder for this call.
         sample_limit:
             Maximum number of training samples fetched per source for prompt
             generation.
@@ -1206,7 +1197,6 @@ class BotDevelopmentBot:
 
         prompt = self._build_prompt(
             spec,
-            builder=context_builder,
             sample_limit=sample_limit,
             sample_sort_by=sample_sort_by,
             sample_with_vectors=sample_with_vectors,
@@ -1263,7 +1253,6 @@ class BotDevelopmentBot:
         data: str,
         *,
         model_id: int | None = None,
-        context_builder: ContextBuilder | None = None,
     ) -> List[Path]:
         specs = self.parse_plan(data)
         try:
@@ -1273,19 +1262,12 @@ class BotDevelopmentBot:
                 with ThreadPoolExecutor(max_workers=self.concurrency) as ex:
                     files = list(
                         ex.map(
-                            lambda s: self.build_bot(
-                                s, model_id=model_id, context_builder=context_builder
-                            ),
+                            lambda s: self.build_bot(s, model_id=model_id),
                             specs,
                         )
                     )
             else:
-                files = [
-                    self.build_bot(
-                        s, model_id=model_id, context_builder=context_builder
-                    )
-                    for s in specs
-                ]
+                files = [self.build_bot(s, model_id=model_id) for s in specs]
         except Exception as exc:
             msg = f"build_from_plan failed: {exc}"
             self.logger.exception(msg)

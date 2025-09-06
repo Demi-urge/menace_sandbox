@@ -17,7 +17,7 @@ from vector_service import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - optional heavy deps
     from .research_aggregator_bot import ResearchAggregatorBot
-    from .ipo_bot import IPOBot, ExecutionPlan
+    from .ipo_bot import IPOBot
 else:  # pragma: no cover - avoid heavy import at runtime
     ResearchAggregatorBot = object  # type: ignore
     IPOBot = object  # type: ignore
@@ -72,9 +72,11 @@ class ImplementationPipeline:
         self.optimiser = optimiser or ImplementationOptimiserBot()
         self.context_builder = context_builder
         if developer is not None:
+            if context_builder is not None:
+                developer.context_builder = context_builder
             self.developer = developer
         else:
-            self.developer = BotDevelopmentBot(context_builder=ContextBuilder())
+            self.developer = BotDevelopmentBot(context_builder=context_builder or ContextBuilder())
         self.logger = logging.getLogger(self.__class__.__name__)
         if researcher is not None:
             self.researcher = researcher
@@ -282,7 +284,6 @@ class ImplementationPipeline:
                 paths = self.developer.build_from_plan(
                     plan_json,
                     model_id=model_id,
-                    context_builder=self.context_builder,
                 )
             except Exception as exc:
                 self.logger.exception("developer build failed: %s", exc)
@@ -315,7 +316,7 @@ class ImplementationPipeline:
                         self.logger.info(test_proc.stderr)
                     if test_proc.returncode != 0:
                         raise RuntimeError(
-                            f"tests failed for {repo_dir.name}: {test_proc.stdout}{test_proc.stderr}"
+                            f"tests failed for {repo_dir.name}: {test_proc.stdout}{test_proc.stderr}"  # noqa: E501
                         )
                 except subprocess.CalledProcessError as exc:
                     self.logger.error(

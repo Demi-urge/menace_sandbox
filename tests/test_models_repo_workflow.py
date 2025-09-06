@@ -1,3 +1,4 @@
+# flake8: noqa
 import subprocess
 import types
 import threading
@@ -9,8 +10,7 @@ import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
-import types
-import sys
+import sys  # noqa: E402
 
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
 sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
@@ -41,12 +41,34 @@ ed.Ed25519PrivateKey = types.SimpleNamespace(generate=lambda: object())
 ed.Ed25519PublicKey = object
 sys.modules.setdefault("db_router", types.SimpleNamespace(DBRouter=object, DBResult=object))
 
-import menace.implementation_pipeline as ip
-import menace.bot_development_bot as bdb
-from menace.bot_development_bot import BotSpec
-import menace.task_handoff_bot as thb
-import menace.models_repo as mrepo
-from menace.models_repo import MODELS_REPO_PATH, ACTIVE_MODEL_FILE
+vec_stub = types.ModuleType("vector_service")
+
+
+class _CB:
+    def __init__(self, *a, **k):
+        pass
+
+    def build(self, *_a, **_k):
+        return ""
+
+
+vec_stub.ContextBuilder = _CB
+vec_stub.FallbackResult = type("FallbackResult", (), {})
+vec_stub.ErrorResult = type("ErrorResult", (), {})
+vec_stub.EmbeddableDBMixin = object
+sys.modules.setdefault("vector_service", vec_stub)
+
+import menace.implementation_pipeline as ip  # noqa: E402
+import menace.bot_development_bot as bdb  # noqa: E402
+from menace.bot_development_bot import BotSpec  # noqa: E402
+import menace.task_handoff_bot as thb  # noqa: E402
+import menace.models_repo as mrepo  # noqa: E402
+from menace.models_repo import ACTIVE_MODEL_FILE  # noqa: E402
+
+
+
+def _ctx_builder():
+    return bdb.ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 
 
 def _init_repo(path: Path) -> None:
@@ -85,7 +107,7 @@ def test_clone_after_completion(tmp_path, monkeypatch):
     monkeypatch.setattr(ip.subprocess, "run", fake_run)
     monkeypatch.setattr(ip.subprocess, "run", fake_run)
 
-    dev = bdb.BotDevelopmentBot(repo_base=repo)
+    dev = bdb.BotDevelopmentBot(repo_base=repo, context_builder=_ctx_builder())
     pipeline = ip.ImplementationPipeline(developer=dev)
     tasks = [
         thb.TaskInfo(
@@ -136,7 +158,7 @@ def test_edit_waits_for_active(tmp_path, monkeypatch):
     bot_dir = repo / "Bot"
     bot_dir.mkdir()
 
-    dev = bdb.BotDevelopmentBot(repo_base=repo)
+    dev = bdb.BotDevelopmentBot(repo_base=repo, context_builder=_ctx_builder())
     spec = BotSpec(name="Bot", purpose="demo", functions=["run"])
 
     ACTIVE_MODEL_FILE.write_text("busy")
@@ -188,7 +210,7 @@ def test_clone_to_new_repo_pushes(tmp_path, monkeypatch):
     dest = mrepo.clone_to_new_repo(2)
     assert dest.exists()
     expected_remote = f"{push_base.as_uri().rstrip('/')}/2"
-    assert any(c[:4] == ["git", "remote", "set-url", "origin"] and c[4] == expected_remote for c in calls)
+    assert any(c[:4] == ["git", "remote", "set-url", "origin"] and c[4] == expected_remote for c in calls)  # noqa: E501
     assert any(c[:2] == ["git", "push"] for c in calls)
 
 
@@ -232,7 +254,7 @@ def test_repeated_edits_refresh_directory(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    dev = bdb.BotDevelopmentBot(repo_base=repo)
+    dev = bdb.BotDevelopmentBot(repo_base=repo, context_builder=_ctx_builder())
     spec = BotSpec(name="Bot", purpose="demo", functions=["run"])
     path1 = dev.create_env(spec, model_id=1)
     assert (path1 / "content.txt").read_text() == "one"
@@ -287,7 +309,7 @@ def test_pipeline_lock_removed_on_failure(tmp_path, monkeypatch):
         def build_from_plan(self, data: str, model_id=None):  # type: ignore[override]
             raise RuntimeError("fail")
 
-    pipeline = ip.ImplementationPipeline(developer=FailingDev(repo_base=repo))
+    pipeline = ip.ImplementationPipeline(developer=FailingDev(repo_base=repo, context_builder=_ctx_builder()))  # noqa: E501
 
     tasks = [
         thb.TaskInfo(
@@ -328,7 +350,7 @@ def test_pipeline_waits_for_existing_marker(tmp_path, monkeypatch):
         def build_from_plan(self, data: str, model_id=None):  # type: ignore[override]
             raise RuntimeError("fail")
 
-    pipeline = ip.ImplementationPipeline(developer=FailingDev(repo_base=repo))
+    pipeline = ip.ImplementationPipeline(developer=FailingDev(repo_base=repo, context_builder=_ctx_builder()))  # noqa: E501
 
     tasks = [
         thb.TaskInfo(

@@ -1,3 +1,4 @@
+# flake8: noqa
 import importlib
 import json
 import sqlite3
@@ -312,9 +313,16 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
     top_db_router.GLOBAL_ROUTER = None
     sys.modules["db_router"] = top_db_router
     vs = ModuleType("menace_sandbox.vector_service")
-    vs.ContextBuilder = object
-    vs.FallbackResult = object
-    vs.ErrorResult = object
+
+    class _CB:
+        def __init__(self, *a, **k):
+            pass
+
+        def build(self, *_a, **_k):
+            return ""
+    vs.ContextBuilder = _CB
+    vs.FallbackResult = type("FallbackResult", (), {})
+    vs.ErrorResult = type("ErrorResult", (), {})
     sys.modules["menace_sandbox.vector_service"] = vs
     sys.modules["vector_service"] = vs
     sys.modules.setdefault(
@@ -346,7 +354,8 @@ def test_bot_development_bot_uses_codex_samples(monkeypatch, tmp_path):
 
     monkeypatch.setattr(bdb.cdh, "aggregate_samples", fake_aggregate_samples)
 
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    builder = bdb.ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     spec = bdb.BotSpec(name="demo", purpose="demo", description="desc")
 
     prompt = bot._build_prompt(

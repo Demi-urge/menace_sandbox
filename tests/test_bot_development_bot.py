@@ -1,3 +1,4 @@
+# flake8: noqa
 import json
 import os
 import importlib.util
@@ -7,7 +8,6 @@ import types
 from types import ModuleType
 from pathlib import Path
 import logging
-import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 stub = ModuleType("db_router")
@@ -41,6 +41,10 @@ bdb = importlib.import_module("menace.bot_development_bot")
 cfg_mod = importlib.import_module("menace.bot_dev_config")
 
 
+def _ctx_builder():
+    return vec_stub.ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+
+
 def _spec_dict():
     return {
         "name": "sample_bot",
@@ -67,7 +71,7 @@ def _yaml():
 
 
 def test_parse_plan_json():
-    bot = bdb.BotDevelopmentBot(repo_base="tmp")
+    bot = bdb.BotDevelopmentBot(repo_base="tmp", context_builder=_ctx_builder())
     specs = bot.parse_plan(_json())
     assert specs[0].name == "sample_bot"
     assert specs[0].level == "L1"
@@ -76,7 +80,7 @@ def test_parse_plan_json():
 
 
 def test_parse_plan_yaml():
-    bot = bdb.BotDevelopmentBot(repo_base="tmp")
+    bot = bdb.BotDevelopmentBot(repo_base="tmp", context_builder=_ctx_builder())
     specs = bot.parse_plan(_yaml())
     assert specs[0].name == "sample_bot"
     assert specs[0].level == "L1"
@@ -87,7 +91,7 @@ def test_parse_plan_yaml():
 def test_build_from_plan(tmp_path):
     cfg = cfg_mod.BotDevConfig()
     cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
     files = bot.build_from_plan(_json())
     assert (tmp_path / "sample_bot" / "sample_bot.py") in files  # path-ignore
     assert (tmp_path / "sample_bot" / "sample_bot.py").exists()  # path-ignore
@@ -100,14 +104,14 @@ def test_build_from_plan(tmp_path):
 def test_config_override(monkeypatch, tmp_path):
     monkeypatch.setenv("BOT_DEV_REPO_BASE", str(tmp_path))
     cfg = cfg_mod.BotDevConfig()
-    bot = bdb.BotDevelopmentBot(config=cfg)
+    bot = bdb.BotDevelopmentBot(config=cfg, context_builder=_ctx_builder())
     assert bot.repo_base == tmp_path
 
 
 def test_build_prompt_with_docs(tmp_path):
     cfg = cfg_mod.BotDevConfig()
     cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
     spec = bdb.BotSpec(
         name="doc_bot",
         purpose="demo",
@@ -127,7 +131,7 @@ def test_build_prompt_with_docs(tmp_path):
 
 
 def test_prompt_includes_standards(tmp_path):
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
     spec = bdb.BotSpec(name="std_bot", purpose="demo")
     prompt = bot._build_prompt(spec)
     assert "INSTRUCTION MODE" in prompt
@@ -142,7 +146,7 @@ def test_prompt_includes_standards(tmp_path):
 
 
 def test_prompt_includes_function_guidance(tmp_path):
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
     spec = bdb.BotSpec(name="guide_bot", purpose="demo", functions=["click_target", "ocr_image"])
     prompt = bot._build_prompt(spec)
     assert "Function Guidance:" in prompt
@@ -163,7 +167,7 @@ def test_visual_and_openai_failure_fallback(tmp_path, monkeypatch, caplog):
 
     class FailVisual(bdb.BotDevelopmentBot):
         def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, openai_attempts=2)
+            super().__init__(repo_base=repo_base, openai_attempts=2, context_builder=_ctx_builder())
 
         def _visual_build(self, prompt: str, name: str) -> bool:  # type: ignore[override]
             return False
@@ -198,7 +202,7 @@ def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):
     monkeypatch.setattr(bdb, "Repo", None)
 
     cfg = cfg_mod.BotDevConfig(concurrency_workers=2)
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
     spec2 = _spec_dict()
     spec2["name"] = "sample_bot2"
     plan = json.dumps([_spec_dict(), spec2])
@@ -219,7 +223,7 @@ def test_token_refresh_failure(monkeypatch, caplog, tmp_path):
     caplog.set_level("WARNING")
     cfg = cfg_mod.BotDevConfig()
     cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
     assert not bot._refresh_token()
     assert len(calls) == 3
     assert "out" in caplog.text or "err" in caplog.text
@@ -235,7 +239,7 @@ def test_token_refresh_retry_success(monkeypatch, tmp_path):
     monkeypatch.setattr(bdb.time, "sleep", lambda *a: None)
     cfg = cfg_mod.BotDevConfig()
     cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
     assert bot._refresh_token()
     assert bot.visual_token == "NEW"
 
@@ -276,9 +280,9 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
             return self.retriever.search(query, session_id="s")
 
     builder = DummyBuilder()
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     spec = bdb.BotSpec(name="demo", purpose="demo", description="demo")
-    prompt = bot._build_prompt(spec, builder=builder)
+    prompt = bot._build_prompt(spec)
     assert builder.calls == ["demo"]
     assert g1.inc_calls == 1
     assert "sentinel_fallback" not in prompt
@@ -287,7 +291,7 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
 def test_build_from_plan_passes_context_builder(tmp_path):
     class CaptureBot(bdb.BotDevelopmentBot):
         def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base)
+            super().__init__(repo_base=repo_base, context_builder=_ctx_builder())
             self.received = None
 
         def build_bot(
@@ -295,17 +299,15 @@ def test_build_from_plan_passes_context_builder(tmp_path):
             spec: bdb.BotSpec,
             *,
             model_id=None,
-            context_builder=None,
             **kwargs,
         ) -> Path:  # type: ignore[override]
-            self.received = context_builder
+            self.received = self.context_builder
             repo_dir = self.create_env(spec)
             file_path = repo_dir / f"{spec.name}.py"  # path-ignore
             file_path.write_text("pass")
             self._write_meta(repo_dir, spec)
             return file_path
 
-    builder = object()
     bot = CaptureBot(repo_base=tmp_path)
     plan = json.dumps([
         {
@@ -319,5 +321,5 @@ def test_build_from_plan_passes_context_builder(tmp_path):
             "io": "",
         }
     ])
-    bot.build_from_plan(plan, context_builder=builder)
-    assert bot.received is builder
+    bot.build_from_plan(plan)
+    assert bot.received is bot.context_builder
