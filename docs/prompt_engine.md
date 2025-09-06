@@ -8,11 +8,14 @@ formats them into reusable snippets.
 
 ```python
 from prompt_engine import PromptEngine
+from vector_service.context_builder import ContextBuilder
 
+builder = ContextBuilder()
 prompt = PromptEngine.construct_prompt(
     "Fix the failing parser",
     retry_trace="Traceback: ValueError",
     top_n=3,
+    context_builder=builder,
 )
 print(prompt)
 ```
