@@ -420,6 +420,42 @@ def test_detect_failed_events_workflow_approval(capture):
     assert not events
 
 
+def test_detect_unauthorized_charge_triggers_anomaly(monkeypatch):
+    calls_emit: list = []
+    orig_emit = sw._emit_anomaly
+
+    def wrapped(record, *a, **k):
+        calls_emit.append(record)
+        return orig_emit(record, *a, **k)
+
+    monkeypatch.setattr(sw, "_emit_anomaly", wrapped)
+    monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
+
+    billing_calls: list = []
+    payment_calls: list = []
+
+    def fake_billing(event_type, metadata, instruction, **kwargs):
+        billing_calls.append((event_type, metadata))
+
+    def fake_payment(event_type, metadata, instruction=None, *, severity=1.0, **kwargs):
+        payment_calls.append((event_type, severity))
+
+    monkeypatch.setattr(sw, "record_billing_event", fake_billing)
+    monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", fake_payment)
+    monkeypatch.setattr(sw, "record_billing_anomaly", lambda *a, **k: None)
+
+    charges = [{"id": "ch1", "amount": 1000, "account": "acct"}]
+    ledger: list[dict] = []
+    logs = [{"stripe_id": "ch1", "bot_id": "bot_a"}]
+
+    anomalies = sw.detect_unauthorized_charges(charges, ledger, logs, ["bot_a"])
+
+    assert anomalies and anomalies[0]["charge_id"] == "ch1"
+    assert calls_emit and calls_emit[0]["type"] == "unauthorized_charge"
+    assert billing_calls and billing_calls[0][0] == "unauthorized_charge"
+    assert payment_calls and payment_calls[0][0] == "unauthorized_charge"
+
+
 def _capture_record_event(monkeypatch):
     calls: list = []
     monkeypatch.setattr(sw, "record_event", lambda et, md, **kw: calls.append((et, md)))

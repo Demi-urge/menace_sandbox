@@ -781,6 +781,55 @@ def detect_account_mismatches(
     return anomalies
 
 
+def detect_unauthorized_charges(
+    charges: Iterable[dict],
+    ledger: List[Dict[str, Any]],
+    billing_logs: List[Dict[str, Any]] | None = None,
+    approved_workflows: Iterable[str] | None = None,
+    *,
+    write_codex: bool = False,
+    export_training: bool = False,
+    self_coding_engine: Any | None = None,
+    telemetry_feedback: Any | None = None,
+) -> List[Dict[str, Any]]:
+    """Return charges that bypassed central routing or lack approval."""
+
+    ledger_ids = {str(e.get("id")) for e in ledger if e.get("id")}
+    billing_map = {
+        str(rec.get("stripe_id")): rec
+        for rec in (billing_logs or [])
+        if rec.get("stripe_id")
+    }
+    approved = {str(w) for w in (approved_workflows or [])}
+
+    anomalies: List[Dict[str, Any]] = []
+    for charge in charges:
+        cid = str(charge.get("id"))
+        if cid in ledger_ids:
+            continue
+        log = billing_map.get(cid)
+        if not log:
+            continue
+        bot_id = log.get("bot_id")
+        anomaly = {
+            "type": "unauthorized_charge",
+            "charge_id": cid,
+            "amount": charge.get("amount"),
+            "bot_id": bot_id,
+            "account_id": charge.get("account"),
+            "module": BILLING_ROUTER_MODULE,
+        }
+        anomalies.append(anomaly)
+        _emit_anomaly(
+            anomaly,
+            write_codex,
+            export_training,
+            self_coding_engine,
+            telemetry_feedback,
+        )
+    return anomalies
+
+
 def detect_missing_charges(
     charges: Iterable[dict],
     ledger: List[Dict[str, Any]],
@@ -1392,6 +1441,7 @@ def check_events(
     if expected_account_id:
         allowed_accounts.add(expected_account_id)
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
+    approved = load_approved_workflows()
     anomalies = detect_account_mismatches(
         charges,
         [],
@@ -1403,11 +1453,23 @@ def check_events(
         telemetry_feedback=telemetry_feedback,
     )
     anomalies.extend(
+        detect_unauthorized_charges(
+            charges,
+            ledger,
+            billing_logs,
+            approved,
+            write_codex=write_codex,
+            export_training=export_training,
+            self_coding_engine=self_coding_engine,
+            telemetry_feedback=telemetry_feedback,
+        )
+    )
+    anomalies.extend(
         detect_missing_charges(
             charges,
             ledger,
             billing_logs,
-            load_approved_workflows(),
+            approved,
             write_codex=write_codex,
             export_training=export_training,
             self_coding_engine=self_coding_engine,
@@ -1531,6 +1593,16 @@ def main(argv: Optional[List[str]] = None) -> None:
         refunds,
         events,
         allowed_accounts,
+        write_codex=args.write_codex,
+        export_training=args.export_training,
+        self_coding_engine=engine,
+        telemetry_feedback=telemetry,
+    )
+    detect_unauthorized_charges(
+        charges,
+        ledger,
+        charge_logs,
+        approved,
         write_codex=args.write_codex,
         export_training=args.export_training,
         self_coding_engine=engine,
