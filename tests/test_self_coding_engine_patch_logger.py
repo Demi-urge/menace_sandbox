@@ -123,7 +123,12 @@ def test_track_contributors_records_roi():
     class DummyDB: pass
     class DummyMem: pass
     pl = RecordingPatchLogger()
-    engine = sce.SelfCodingEngine(DummyDB(), DummyMem(), patch_logger=pl)
+    engine = sce.SelfCodingEngine(
+        DummyDB(),
+        DummyMem(),
+        patch_logger=pl,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+    )
     vectors = [("db1", "v1", 0.1), ("db2", "v2", 0.2)]
     engine._track_contributors(
         "sess",

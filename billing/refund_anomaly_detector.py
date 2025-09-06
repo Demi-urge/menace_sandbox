@@ -24,9 +24,10 @@ from billing.billing_log_db import BillingLogDB
 from menace_sanity_layer import record_billing_event, record_payment_anomaly
 
 try:  # Optional dependency – self-coding engine
-    from self_coding_engine import SelfCodingEngine  # type: ignore
-    from code_database import CodeDB  # type: ignore
-    from menace_memory_manager import MenaceMemoryManager  # type: ignore
+from self_coding_engine import SelfCodingEngine  # type: ignore
+from code_database import CodeDB  # type: ignore
+from menace_memory_manager import MenaceMemoryManager  # type: ignore
+from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - best effort
     SelfCodingEngine = None  # type: ignore
     CodeDB = None  # type: ignore
@@ -93,7 +94,13 @@ def detect_anomalies(
     engine = self_coding_engine
     if engine is None and SelfCodingEngine and CodeDB and MenaceMemoryManager:
         try:  # pragma: no cover - best effort
-            engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+            builder = ContextBuilder(
+                bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+            )
+            builder.refresh_db_weights()
+            engine = SelfCodingEngine(
+                CodeDB(), MenaceMemoryManager(), context_builder=builder
+            )
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to initialise SelfCodingEngine")
 

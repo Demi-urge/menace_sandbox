@@ -53,7 +53,9 @@ def test_billing_instructions_in_prompt(monkeypatch):
     engine.prompt_optimizer = None
     engine.prompt_evolution_memory = None
     engine.roi_tracker = None
-    engine.context_builder = None
+    engine.context_builder = types.SimpleNamespace(
+        build_context=lambda *a, **k: {}
+    )
     engine.prompt_tone = None
     engine._last_prompt_metadata = {}
     engine._last_retry_trace = ""

@@ -457,6 +457,8 @@ class SelfCodingEngine:
         self.patch_suggestion_db = patch_suggestion_db
         self.enhancement_classifier = enhancement_classifier
         tracker = ROITracker()
+        if context_builder is None:
+            raise TypeError("context_builder is required")
         # Attach ROI tracker to provided context builder when missing
         builder = context_builder
         if getattr(builder, "roi_tracker", None) is None:
@@ -1187,6 +1189,8 @@ class SelfCodingEngine:
                 path, chunk_index, target_region
             )
         context = "\n\n".join(p for p in (file_context, snippet_context) if p)
+        if self.context_builder is None:
+            raise RuntimeError("context_builder is required for prompt generation")
 
         def _fallback() -> str:
             """Return a minimal helper implementation."""
@@ -1235,7 +1239,7 @@ class SelfCodingEngine:
 
         if not self.llm_client or not self.prompt_engine:
             return _fallback()
-        if metadata is None and self.context_builder is not None:
+        if metadata is None:
             try:
                 metadata = {
                     "retrieval_context": self.context_builder.build_context(

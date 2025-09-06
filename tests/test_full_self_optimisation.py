@@ -87,6 +87,7 @@ def test_full_self_optimisation(tmp_path, monkeypatch):
         mm.MenaceMemoryManager(tmp_path / "mem.db"),
         data_bot=data_bot,
         patch_db=patch_db,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
     )
     monkeypatch.setattr(engine, "_run_ci", lambda: True)
     monkeypatch.setattr(engine, "generate_helper", lambda d: "def auto_x():\n    pass\n")

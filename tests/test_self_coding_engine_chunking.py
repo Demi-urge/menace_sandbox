@@ -38,6 +38,8 @@ _setmod("vector_service", vec_mod)
 _setmod("vector_service.retriever", types.ModuleType("vector_service.retriever"))
 _setmod("vector_service.decorators", types.ModuleType("vector_service.decorators"))
 
+builder = types.SimpleNamespace(build_context=lambda *a, **k: {})
+
 code_db_mod = types.ModuleType("code_database")
 code_db_mod.CodeDB = object
 code_db_mod.CodeRecord = object
@@ -241,6 +243,7 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
         llm_client=DummyLLM(),
         prompt_chunk_token_threshold=50,
         chunk_summary_cache_dir=tmp_path,
+        context_builder=builder,
     )
     engine.formal_verifier = None
     engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
@@ -303,6 +306,7 @@ def test_generate_helper_uses_cached_chunk_summaries(monkeypatch, tmp_path):
         llm_client=DummyLLM(),
         prompt_chunk_token_threshold=50,
         chunk_summary_cache_dir=tmp_path,
+        context_builder=builder,
     )
 
     monkeypatch.setattr(engine, "suggest_snippets", lambda desc, limit=3: [])
@@ -356,6 +360,7 @@ def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
         llm_client=DummyLLM(),
         prompt_chunk_token_threshold=50,
         chunk_summary_cache_dir=tmp_path,
+        context_builder=builder,
     )
     engine.formal_verifier = None
     engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
@@ -407,6 +412,7 @@ def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
         llm_client=DummyLLM(),
         prompt_chunk_token_threshold=50,
         chunk_summary_cache_dir=tmp_path,
+        context_builder=builder,
     )
     engine.formal_verifier = None
     engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
@@ -436,6 +442,7 @@ def test_patch_file_rejects_scope_violation(tmp_path):
         object(),
         prompt_chunk_token_threshold=50,
         chunk_summary_cache_dir=tmp_path,
+        context_builder=builder,
     )
     engine.formal_verifier = None
     engine.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
@@ -467,6 +474,7 @@ def test_build_file_context_stitches_target_region(tmp_path, monkeypatch):
         object(),
         prompt_chunk_token_threshold=10,
         chunk_summary_cache_dir=tmp_path,
+        context_builder=builder,
     )
 
     path = tmp_path / "mod.py"  # path-ignore

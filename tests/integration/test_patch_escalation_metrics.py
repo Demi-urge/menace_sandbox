@@ -44,7 +44,11 @@ def test_escalation_metrics(monkeypatch, tmp_path):
     monkeypatch.setattr(sce, "_PATCH_ATTEMPTS", patch_attempts)
     monkeypatch.setattr(sce, "_PATCH_ESCALATIONS", patch_escalations)
 
-    engine = SelfCodingEngine(code_db=object(), memory_mgr=object())
+    engine = SelfCodingEngine(
+        code_db=object(),
+        memory_mgr=object(),
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+    )
     engine.audit_trail = types.SimpleNamespace(record=lambda payload: None)
     engine._build_retry_context = lambda desc, rep: {}
     engine._failure_cache = types.SimpleNamespace(seen=lambda trace: False, add=lambda trace: None)

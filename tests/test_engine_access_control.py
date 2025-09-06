@@ -21,6 +21,7 @@ def test_apply_patch_denied_logs(tmp_path):
         bot_roles={"reader": "read"},
         audit_trail_path=str(tmp_path / "audit.log"),
         audit_privkey=priv_bytes,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
     )
 
     path = tmp_path / "file.py"  # path-ignore

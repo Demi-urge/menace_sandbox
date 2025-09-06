@@ -407,7 +407,7 @@ class ServiceSupervisor:
             from .model_automation_pipeline import ModelAutomationPipeline
 
             engine = SelfCodingEngine(
-                CodeDB(), MenaceMemoryManager()
+                CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
             manager = SelfCodingManager(
                 engine,

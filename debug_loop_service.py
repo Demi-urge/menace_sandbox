@@ -14,6 +14,7 @@ from .self_coding_engine import SelfCodingEngine
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .knowledge_graph import KnowledgeGraph
+from vector_service.context_builder import ContextBuilder
 
 
 class DebugLoopService:
@@ -25,7 +26,13 @@ class DebugLoopService:
         self.graph = graph or KnowledgeGraph()
         if feedback is None:
             logger = ErrorLogger(knowledge_graph=self.graph)
-            engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+            builder = ContextBuilder(
+                bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+            )
+            builder.refresh_db_weights()
+            engine = SelfCodingEngine(
+                CodeDB(), MenaceMemoryManager(), context_builder=builder
+            )
             feedback = TelemetryFeedback(logger, engine)
         self.feedback = feedback
         self.logger = logging.getLogger(self.__class__.__name__)

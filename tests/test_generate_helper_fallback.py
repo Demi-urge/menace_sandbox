@@ -34,7 +34,11 @@ import menace.menace_memory_manager as mm  # noqa: E402
 
 
 def _engine(tmp_path: Path) -> sce.SelfCodingEngine:
-    return sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mm.MenaceMemoryManager(tmp_path / "m.db"))
+    return sce.SelfCodingEngine(
+        cd.CodeDB(tmp_path / "c.db"),
+        mm.MenaceMemoryManager(tmp_path / "m.db"),
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+    )
 
 
 def test_read_file_fallback(tmp_path: Path) -> None:

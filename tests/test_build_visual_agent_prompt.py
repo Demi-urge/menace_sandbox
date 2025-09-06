@@ -215,7 +215,7 @@ def test_build_visual_agent_prompt_basic(monkeypatch):
 
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
     helper_path = resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
-    prompt = sce.SelfCodingEngine(None, None).build_visual_agent_prompt(
+    prompt = sce.SelfCodingEngine(None, None, context_builder=object()).build_visual_agent_prompt(
         helper_path, "print hello", "def hello():\n    pass"
     )
     assert prompt == "PROMPT"
@@ -234,7 +234,7 @@ def test_build_visual_agent_prompt_env(monkeypatch, tmp_path):
     importlib.reload(sce)
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", lambda self, d, **k: "PROMPT")
     target_path = resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
-    prompt = sce.SelfCodingEngine(None, None).build_visual_agent_prompt(
+    prompt = sce.SelfCodingEngine(None, None, context_builder=object()).build_visual_agent_prompt(
         target_path, "do things", "ctx"
     )
     assert prompt.startswith("NOTE: ")
@@ -262,7 +262,7 @@ def test_build_visual_agent_prompt_layout(monkeypatch):
         return "PROMPT"
 
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
-    eng = sce.SelfCodingEngine(None, None)
+    eng = sce.SelfCodingEngine(None, None, context_builder=object())
     expected = eng._get_repo_layout(2)
     target_path = resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
     eng.build_visual_agent_prompt(target_path, "desc", "ctx")
@@ -286,7 +286,7 @@ def test_build_visual_agent_prompt_retrieval_context(monkeypatch):
         return "PROMPT"
 
     monkeypatch.setattr(sce.PromptEngine, "build_prompt", fake_build_prompt)
-    eng = sce.SelfCodingEngine(None, None)
+    eng = sce.SelfCodingEngine(None, None, context_builder=object())
     rc = "{\"bots\": []}"
     target_path = resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
     eng.build_visual_agent_prompt(target_path, "desc", "ctx", rc)

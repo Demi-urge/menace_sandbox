@@ -1504,11 +1504,7 @@ class SelfImprovementEngine:
                 gen_kwargs["strategy"] = PromptStrategy(strat_name)
             except Exception:
                 pass
-        builder = getattr(
-            getattr(self.self_coding_engine, "cognition_layer", None),
-            "context_builder",
-            None,
-        )
+        builder = self.self_coding_engine.context_builder
         patch_logger = (
             getattr(self.self_coding_engine, "patch_logger", None)
             or getattr(
@@ -1517,23 +1513,7 @@ class SelfImprovementEngine:
                 None,
             )
         )
-        if builder is None:
-            try:  # pragma: no cover - optional dependency
-                from vector_service import ContextBuilder
-            except Exception:  # pragma: no cover - dependency missing
-                ContextBuilder = None  # type: ignore
-            if ContextBuilder is not None:
-                retriever = getattr(
-                    getattr(self.self_coding_engine, "cognition_layer", None),
-                    "retriever",
-                    None,
-                )
-                try:  # pragma: no cover - instantiation failure
-                    builder = ContextBuilder(retriever=retriever)
-                except Exception:
-                    builder = None
-        if builder is not None:
-            gen_kwargs["context_builder"] = builder
+        gen_kwargs["context_builder"] = builder
         if patch_logger is not None:
             gen_kwargs["patch_logger"] = patch_logger
         patch_gen = getattr(self, "_patch_generator", generate_patch)
