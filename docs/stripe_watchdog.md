@@ -45,6 +45,11 @@ To enable the Sanity Layer feedback loop, ensure `sanity_layer_feedback` is set
 to `true` in this YAML file (the default). Setting it to `false` disables
 recording anomalies to GPT memory and the corresponding audit trail.
 
+When `adaptive_issue_handling` is enabled, the watchdog retrieves recent
+billing issue snippets from the Sanity Layer and uses them to lower anomaly
+severity or ignore previously acknowledged mismatches.  Set
+`adaptive_issue_handling` to `false` to disable this adaptive behaviour.
+
 ## Systemd timer
 
 The repository includes `systemd/stripe_watchdog.service` and `systemd/stripe_watchdog.timer` which execute the watchdog hourly. Install and enable the timer with:

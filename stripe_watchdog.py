@@ -26,6 +26,10 @@ Key features implemented according to the specification:
   ingestion.
 * Allowed webhook endpoints, anomaly hints and severities are sourced from
   YAML configuration files so updates can take effect without code changes.
+* Recent feedback snippets from :func:`menace_sanity_layer.fetch_recent_billing_issues`
+  are consulted before detection to lower severities or suppress acknowledged
+  false positives.  Set ``adaptive_issue_handling`` to ``false`` in
+  ``config/stripe_watchdog.yaml`` to disable this adaptive behaviour.
 * :func:`main` exposes a CLI so the watchdog can be run by ``cron``.
 """
 
@@ -33,6 +37,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +70,7 @@ except Exception:  # pragma: no cover - fallback stubs if import fails
         record_payment_anomaly=lambda *a, **k: None,
         EVENT_TYPE_INSTRUCTIONS={},
         refresh_billing_instructions=lambda *a, **k: None,
+        fetch_recent_billing_issues=lambda *a, **k: [],
     )
 
     def record_billing_anomaly(*_a, **_k):  # noqa: D401 - simple stub
@@ -255,6 +261,25 @@ def _sanity_feedback_enabled(path: Path | None = None) -> bool:
 
 SANITY_LAYER_FEEDBACK_ENABLED = _sanity_feedback_enabled()
 
+
+def _adaptive_issue_handling_enabled(path: Path | None = None) -> bool:
+    """Return whether adaptive issue handling is enabled."""
+
+    cfg = path or CONFIG_PATH
+    try:
+        with cfg.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        return bool(data.get("adaptive_issue_handling", True))
+    except FileNotFoundError:
+        return True
+    except Exception:
+        logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
+        return True
+
+
+ADAPTIVE_ISSUE_HANDLING_ENABLED = _adaptive_issue_handling_enabled()
+SKIP_ANOMALY_TYPES: set[str] = set()
+
 # Load billing instructions and severity map at module import.
 _refresh_instruction_cache()
 
@@ -287,6 +312,48 @@ def _load_log_rotation(path: Path | None = None) -> tuple[int, int]:
     except Exception:
         logger.exception("Failed to load Stripe watchdog config", extra={"path": cfg})
     return max_bytes, backup_count
+
+
+_ISSUE_LOWER_RE = re.compile(r"lower severity (?P<atype>[\w_]+)", re.I)
+_ISSUE_IGNORE_RE = re.compile(r"(?:ignore|skip) (?P<atype>[\w_]+)", re.I)
+_ACK_MISMATCH_RE = re.compile(r"acknowledged mismatch", re.I)
+
+
+def _parse_issue_snippets(
+    snippets: Iterable[str],
+) -> tuple[Dict[str, float], set[str]]:
+    """Return severity overrides and anomaly types to skip."""
+
+    overrides: Dict[str, float] = {}
+    skip: set[str] = set()
+    for sn in snippets:
+        s = sn.strip().lower()
+        match = _ISSUE_LOWER_RE.search(s)
+        if match:
+            overrides[match.group("atype")] = 0.5
+        match = _ISSUE_IGNORE_RE.search(s)
+        if match:
+            skip.add(match.group("atype"))
+        if _ACK_MISMATCH_RE.search(s):
+            overrides.setdefault("account_mismatch", 0.5)
+    return overrides, skip
+
+
+def _fetch_and_apply_recent_issues() -> None:
+    """Retrieve recent billing issues and adapt severity/skip lists."""
+
+    if not ADAPTIVE_ISSUE_HANDLING_ENABLED:
+        return
+    try:
+        snippets = menace_sanity_layer.fetch_recent_billing_issues()
+    except Exception:
+        logger.exception("Failed to fetch recent billing issues")
+        return
+    overrides, skip = _parse_issue_snippets(snippets)
+    for atype, factor in overrides.items():
+        base = SEVERITY_MAP.get(atype, DEFAULT_SEVERITY_MAP.get(atype, 1.0))
+        SEVERITY_MAP[atype] = base * factor
+    SKIP_ANOMALY_TYPES.update(skip)
 
 
 def _gzip_rotator(source: str, dest: str) -> None:
@@ -671,6 +738,9 @@ def _emit_anomaly(
 ) -> None:
     """Log *record* and optionally emit a training sample."""
     _refresh_instruction_cache()
+    if record.get("type") in SKIP_ANOMALY_TYPES:
+        logger.debug("Skipping anomaly due to adaptive hints", extra=record)
+        return
     audit_logger.log_event("stripe_anomaly", record)
     metadata = {k: v for k, v in record.items() if k != "type"}
     metadata.setdefault("timestamp", datetime.utcnow().isoformat())
@@ -1478,6 +1548,7 @@ def check_events(
         allowed_accounts.add(expected_account_id)
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     approved = load_approved_workflows()
+    _fetch_and_apply_recent_issues()
     anomalies = detect_account_mismatches(
         charges,
         [],
@@ -1520,6 +1591,8 @@ def check_events(
             )
         except Exception:
             logger.exception("Failed to record discrepancy summary")
+    if SKIP_ANOMALY_TYPES:
+        anomalies = [a for a in anomalies if a.get("type") not in SKIP_ANOMALY_TYPES]
     return anomalies
 
 
@@ -1623,7 +1696,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     charges = fetch_recent_charges(api_key, start_ts, end_ts)
     refunds = fetch_recent_refunds(api_key, start_ts, end_ts)
     events = fetch_recent_events(api_key, start_ts, end_ts)
-
+    _fetch_and_apply_recent_issues()
     detect_account_mismatches(
         charges,
         refunds,
