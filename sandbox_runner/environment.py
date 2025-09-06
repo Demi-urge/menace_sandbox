@@ -15,7 +15,13 @@ import json
 import os
 import sys
 import yaml
-from vector_service.context_builder import ContextBuilder
+try:
+    from vector_service.context_builder_utils import get_default_context_builder
+except ImportError:  # pragma: no cover - fallback when helper missing
+    from vector_service.context_builder import ContextBuilder  # type: ignore
+
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return ContextBuilder(**kwargs)
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -7139,9 +7145,7 @@ def run_repo_section_simulations(
             for module, sec_map in sections.items():
                 tmp_dir = tempfile.mkdtemp(prefix="section_")
                 shutil.copytree(repo_path, tmp_dir, dirs_exist_ok=True)
-                builder = ContextBuilder(
-                    bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
-                )
+                builder = get_default_context_builder()
                 builder.refresh_db_weights()
                 debugger = SelfDebuggerSandbox(
                     object(),
@@ -8304,9 +8308,7 @@ def run_workflow_simulations(
         for wf in workflows:
             for step in wf.workflow:
                 snippet = _wf_snippet([step])
-                builder = ContextBuilder(
-                    bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
-                )
+                builder = get_default_context_builder()
                 builder.refresh_db_weights()
                 debugger = SelfDebuggerSandbox(
                     object(),

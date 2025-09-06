@@ -16,7 +16,13 @@ from .rollback_manager import RollbackManager
 from .error_bot import ErrorDB
 from .unified_event_bus import UnifiedEventBus
 from .local_knowledge_module import init_local_knowledge
-from vector_service.context_builder import ContextBuilder
+try:
+    from vector_service.context_builder_utils import get_default_context_builder
+except ImportError:  # pragma: no cover - fallback when helper missing
+    from vector_service.context_builder import ContextBuilder  # type: ignore
+
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return ContextBuilder(**kwargs)
 
 
 class AutoEscalationManager:
@@ -36,9 +42,7 @@ class AutoEscalationManager:
             gpt_mem = init_local_knowledge(
                 os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
             ).memory
-            builder = ContextBuilder(
-                bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
-            )
+            builder = get_default_context_builder()
             builder.refresh_db_weights()
             engine = SelfCodingEngine(
                 CodeDB(), gpt_mem, event_bus=event_bus, context_builder=builder

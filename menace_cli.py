@@ -122,7 +122,13 @@ def handle_new_vector(args: argparse.Namespace) -> int:
 
 def handle_patch(args: argparse.Namespace) -> int:
     """Handle ``patch`` command."""
-    from vector_service import ContextBuilder
+    try:
+        from vector_service import ContextBuilder, get_default_context_builder
+    except ImportError:  # pragma: no cover - fallback when helper missing
+        from vector_service import ContextBuilder  # type: ignore
+
+        def get_default_context_builder(**kwargs):  # type: ignore
+            return ContextBuilder(**kwargs)
     from vector_service.retriever import Retriever
     import quick_fix_engine
 
@@ -139,13 +145,7 @@ def handle_patch(args: argparse.Namespace) -> int:
     db = PatchHistoryDB()
     patch_logger = PatchLogger(patch_db=db)
     try:
-        builder = ContextBuilder(
-            retriever=retriever,
-            bot_db="bots.db",
-            code_db="code.db",
-            error_db="errors.db",
-            workflow_db="workflows.db",
-        )
+        builder = get_default_context_builder(retriever=retriever)
         builder.refresh_db_weights()
     except Exception as exc:
         print(f"ContextBuilder initialisation failed: {exc}", file=sys.stderr)

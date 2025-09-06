@@ -27,7 +27,13 @@ try:  # Optional dependency – self-coding engine
 from self_coding_engine import SelfCodingEngine  # type: ignore
 from code_database import CodeDB  # type: ignore
 from menace_memory_manager import MenaceMemoryManager  # type: ignore
-from vector_service.context_builder import ContextBuilder
+try:
+    from vector_service.context_builder_utils import get_default_context_builder
+except ImportError:  # pragma: no cover - fallback when helper missing
+    from vector_service.context_builder import ContextBuilder  # type: ignore
+
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return ContextBuilder(**kwargs)
 except Exception:  # pragma: no cover - best effort
     SelfCodingEngine = None  # type: ignore
     CodeDB = None  # type: ignore
@@ -94,9 +100,7 @@ def detect_anomalies(
     engine = self_coding_engine
     if engine is None and SelfCodingEngine and CodeDB and MenaceMemoryManager:
         try:  # pragma: no cover - best effort
-            builder = ContextBuilder(
-                bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
-            )
+            builder = get_default_context_builder()
             builder.refresh_db_weights()
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=builder
