@@ -1504,12 +1504,54 @@ class SelfImprovementEngine:
                 gen_kwargs["strategy"] = PromptStrategy(strat_name)
             except Exception:
                 pass
+        builder = getattr(
+            getattr(self.self_coding_engine, "cognition_layer", None),
+            "context_builder",
+            None,
+        )
+        patch_logger = (
+            getattr(self.self_coding_engine, "patch_logger", None)
+            or getattr(
+                getattr(self.self_coding_engine, "cognition_layer", None),
+                "patch_logger",
+                None,
+            )
+        )
+        if builder is None:
+            try:  # pragma: no cover - optional dependency
+                from vector_service import ContextBuilder
+            except Exception:  # pragma: no cover - dependency missing
+                ContextBuilder = None  # type: ignore
+            if ContextBuilder is not None:
+                retriever = getattr(
+                    getattr(self.self_coding_engine, "cognition_layer", None),
+                    "retriever",
+                    None,
+                )
+                try:  # pragma: no cover - instantiation failure
+                    builder = ContextBuilder(retriever=retriever)
+                except Exception:
+                    builder = None
+        if builder is not None:
+            gen_kwargs["context_builder"] = builder
+        if patch_logger is not None:
+            gen_kwargs["patch_logger"] = patch_logger
+        patch_gen = getattr(self, "_patch_generator", generate_patch)
         try:
-            patch_id = self._patch_generator(
+            sig = inspect.signature(patch_gen)
+            params = sig.parameters
+            has_varkw = any(
+                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+            if not has_varkw:
+                gen_kwargs = {k: v for k, v in gen_kwargs.items() if k in params}
+            call_kwargs = dict(gen_kwargs)
+            if has_varkw or "target_region" in params:
+                call_kwargs["target_region"] = target_region
+            patch_id = patch_gen(
                 module,
                 self.self_coding_engine,
-                target_region=target_region,
-                **gen_kwargs,
+                **call_kwargs,
             )
         except RuntimeError as exc:
             self.logger.error("quick_fix_engine unavailable: %s", exc)
