@@ -30,7 +30,8 @@ try:  # pragma: no cover - fail fast if vector service missing
     from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
 except Exception as exc:  # pragma: no cover - provide actionable error
     raise RuntimeError(
-        "vector_service is required for quick_fix_engine. Install it via `pip install vector_service`."
+        "vector_service is required for quick_fix_engine. "
+        "Install it via `pip install vector_service`."
     ) from exc
 try:  # pragma: no cover - optional dependency
     from patch_provenance import PatchLogger
@@ -126,6 +127,17 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
+    if context_builder is None:
+        try:
+            context_builder = ContextBuilder(
+                bot_db="bots.db",
+                code_db="code.db",
+                error_db="errors.db",
+                workflow_db="workflows.db",
+            )
+        except Exception as exc:  # pragma: no cover - instantiation issues
+            logger.debug("ContextBuilder instantiation failed: %s", exc)
+            context_builder = None
     mod_str = module if module.endswith(".py") else f"{module}.py"
     try:
         path = resolve_path(mod_str)
@@ -138,12 +150,6 @@ def generate_patch(
     context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
     if context:
         context_meta.update(context)
-    if context_builder is None:
-        try:
-            context_builder = ContextBuilder()
-        except Exception as exc:  # pragma: no cover - instantiation issues
-            logger.debug("ContextBuilder instantiation failed: %s", exc)
-            context_builder = None
     builder = context_builder
     context_block = ""
     cb_session = ""
