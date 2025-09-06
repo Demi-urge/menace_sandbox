@@ -11,6 +11,10 @@ from dynamic_path_router import resolve_path
 
 from module_graph_analyzer import build_import_graph
 from quick_fix_engine import generate_patch
+try:
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - optional dependency
+    ContextBuilder = None  # type: ignore
 from metrics_exporter import (
     update_module_retirement_metrics,
     retired_modules_total,
@@ -86,7 +90,12 @@ class ModuleRetirementService:
             self.logger.error("module not found: %s", module)
             return False
         try:
-            patch_id = generate_patch(str(path))
+            builder = ContextBuilder() if ContextBuilder else None
+            if builder is None:
+                self.logger.warning(
+                    "ContextBuilder unavailable; compressing without vector context"
+                )
+            patch_id = generate_patch(str(path), context_builder=builder)
             if patch_id is not None:
                 compressed_modules_total.inc()
                 try:
@@ -115,7 +124,12 @@ class ModuleRetirementService:
             self.logger.error("module not found: %s", module)
             return False
         try:
-            patch_id = generate_patch(str(path))
+            builder = ContextBuilder() if ContextBuilder else None
+            if builder is None:
+                self.logger.warning(
+                    "ContextBuilder unavailable; replacing without vector context"
+                )
+            patch_id = generate_patch(str(path), context_builder=builder)
             if patch_id is not None:
                 replaced_modules_total.inc()
                 self.logger.info(
