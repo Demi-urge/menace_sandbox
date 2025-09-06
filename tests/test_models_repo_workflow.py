@@ -107,8 +107,9 @@ def test_clone_after_completion(tmp_path, monkeypatch):
     monkeypatch.setattr(ip.subprocess, "run", fake_run)
     monkeypatch.setattr(ip.subprocess, "run", fake_run)
 
-    dev = bdb.BotDevelopmentBot(repo_base=repo, context_builder=_ctx_builder())
-    pipeline = ip.ImplementationPipeline(developer=dev)
+    builder = _ctx_builder()
+    dev = bdb.BotDevelopmentBot(repo_base=repo, context_builder=builder)
+    pipeline = ip.ImplementationPipeline(builder, developer=dev)
     tasks = [
         thb.TaskInfo(
             name="Bot",
@@ -309,7 +310,11 @@ def test_pipeline_lock_removed_on_failure(tmp_path, monkeypatch):
         def build_from_plan(self, data: str, model_id=None):  # type: ignore[override]
             raise RuntimeError("fail")
 
-    pipeline = ip.ImplementationPipeline(developer=FailingDev(repo_base=repo, context_builder=_ctx_builder()))  # noqa: E501
+    builder = _ctx_builder()
+    pipeline = ip.ImplementationPipeline(
+        builder,
+        developer=FailingDev(repo_base=repo, context_builder=builder),
+    )  # noqa: E501
 
     tasks = [
         thb.TaskInfo(
@@ -350,7 +355,11 @@ def test_pipeline_waits_for_existing_marker(tmp_path, monkeypatch):
         def build_from_plan(self, data: str, model_id=None):  # type: ignore[override]
             raise RuntimeError("fail")
 
-    pipeline = ip.ImplementationPipeline(developer=FailingDev(repo_base=repo, context_builder=_ctx_builder()))  # noqa: E501
+    builder = _ctx_builder()
+    pipeline = ip.ImplementationPipeline(
+        builder,
+        developer=FailingDev(repo_base=repo, context_builder=builder),
+    )  # noqa: E501
 
     tasks = [
         thb.TaskInfo(

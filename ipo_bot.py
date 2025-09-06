@@ -10,6 +10,7 @@ from typing import Iterable, List, Optional
 
 from db_router import GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause
+from vector_service import ContextBuilder
 
 import networkx as nx
 try:
@@ -219,7 +220,13 @@ class ExecutionPlan:
 class IPOBot:
     """Main orchestrator for the IPO planning process."""
 
-    def __init__(self, db_path: str = "models.db", enhancements_db: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        db_path: str = "models.db",
+        enhancements_db: Optional[Path] = None,
+        *,
+        context_builder: ContextBuilder | None = None,
+    ) -> None:
         self.ingestor = BlueprintIngestor()
         self.searcher = BotDatabaseSearcher(db_path)
         self.decider = DecisionMaker()
@@ -227,6 +234,7 @@ class IPOBot:
         self.db = IPOEnhancementsDB(enhancements_db or Path("enhancements.db"))
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("IPO")
+        self.context_builder = context_builder
 
     def generate_plan(self, blueprint_text: str, blueprint_id: str = "bp1") -> ExecutionPlan:
         blueprint = self.ingestor.ingest(blueprint_text)

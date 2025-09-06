@@ -34,7 +34,7 @@ from .chatgpt_research_bot import ChatGPTResearchBot, Exchange, summarise_text
 from .database_manager import get_connection, DB_PATH
 from .capital_management_bot import CapitalManagementBot
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
-from vector_service import EmbeddableDBMixin
+from vector_service import EmbeddableDBMixin, ContextBuilder
 try:
     from .menace_db import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -756,6 +756,8 @@ class ResearchAggregatorBot:
         db_router: Optional[DBRouter] = None,
         enhancement_interval: float = 300.0,
         cache_ttl: float = 3600.0,
+        *,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
@@ -775,6 +777,7 @@ class ResearchAggregatorBot:
         self.sources_queried: List[str] = []
         self.cache_ttl = cache_ttl
         self.cache: dict[str, tuple[float, List[ResearchItem]]] = {}
+        self.context_builder = context_builder
 
     # ------------------------------------------------------------------
     def _increment_enh_count(self, model_id: int) -> None:

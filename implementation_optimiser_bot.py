@@ -8,6 +8,7 @@ from typing import List
 from .self_coding_engine import SelfCodingEngine
 import ast
 import logging
+from vector_service import ContextBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +32,20 @@ class ImplementationOptimiserBot:
     the body in basic ``try``/``except`` blocks and emits log messages.
     """
 
-    def __init__(self, engine: SelfCodingEngine | None = None) -> None:
+    def __init__(
+        self,
+        engine: SelfCodingEngine | None = None,
+        *,
+        context_builder: ContextBuilder | None = None,
+    ) -> None:
         self.history: List[TaskPackage] = []
         self.engine = engine
+        self.context_builder = context_builder
+        if self.engine is not None and context_builder is not None:
+            try:
+                self.engine.context_builder = context_builder  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     @staticmethod

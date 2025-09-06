@@ -13,7 +13,7 @@ import logging
 import sqlite3
 from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
-from vector_service import EmbeddableDBMixin
+from vector_service import EmbeddableDBMixin, ContextBuilder
 from db_router import (
     DBRouter,
     GLOBAL_ROUTER,
@@ -541,8 +541,10 @@ class TaskHandoffBot:
         workflow_db: Optional[WorkflowDB] = None,
         *,
         event_bus: Optional[UnifiedEventBus] = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.api_url = api_url
+        self.context_builder = context_builder
         if zmq:
             self.context = zmq.Context.instance()
             self.socket = self.context.socket(zmq.PAIR)
