@@ -322,6 +322,39 @@ def test_failed_event_missing_logs(capture_anomalies):
     assert logged["metadata"]["module"] == sw.BILLING_ROUTER_MODULE
 
 
+def test_unauthorized_failure_triggers_audit_and_codex(capture_anomalies):
+    events, samples, billing_calls, payment_calls = capture_anomalies
+
+    ledger: list[dict] = []
+    stripe_events = [
+        {"id": "evt_orphan", "type": "charge.failed", "account": "acct"}
+    ]
+    logs = [{"stripe_id": "evt_orphan", "bot_id": "bot_a"}]
+
+    anomalies = sw.detect_unauthorized_failures(
+        stripe_events, ledger, logs, ["bot_a"], write_codex=True
+    )
+
+    assert anomalies and anomalies[0]["event_id"] == "evt_orphan"
+    assert anomalies[0]["module"] == sw.BILLING_ROUTER_MODULE
+    assert events and events[0][1]["type"] == "unauthorized_failure"
+    assert events[0][1]["module"] == sw.BILLING_ROUTER_MODULE
+    assert samples and json.loads(samples[0]["content"])["event_id"] == "evt_orphan"
+    assert json.loads(samples[0]["content"])["module"] == sw.BILLING_ROUTER_MODULE
+    assert billing_calls and billing_calls[0][0] == "unauthorized_failure"
+    assert billing_calls[0][2] == sw.SEVERITY_MAP["unauthorized_failure"]
+    assert billing_calls[0][1]["module"] == sw.BILLING_ROUTER_MODULE
+    assert payment_calls and payment_calls[0][0] == "unauthorized_failure"
+    assert payment_calls[0][3] == sw.SEVERITY_MAP["unauthorized_failure"]
+    assert payment_calls[0][1]["module"] == sw.BILLING_ROUTER_MODULE
+    with sw.ANOMALY_LOG.open("r", encoding="utf-8") as fh:
+        line = fh.readline()
+        logged = json.loads(line.split(" ", 1)[1])
+    assert logged["type"] == "unauthorized_failure"
+    assert logged["metadata"]["event_id"] == "evt_orphan"
+    assert logged["metadata"]["module"] == sw.BILLING_ROUTER_MODULE
+
+
 def test_revenue_mismatch(monkeypatch, capture_anomalies):
     events, samples, _, _ = capture_anomalies
 
