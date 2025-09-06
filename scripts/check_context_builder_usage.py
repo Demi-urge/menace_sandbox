@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Static check for ContextBuilder usage.
+
+This script scans the repository for calls to ``_build_prompt`` or
+``PromptEngine`` and ensures that a ``context_builder`` keyword argument is
+supplied.  The check ignores any files located in directories named ``tests``
+or ``unit_tests``.
+"""
+from __future__ import annotations
+
+import ast
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def iter_python_files(root: Path):
+    for path in root.rglob("*.py"):
+        if any(part in {"tests", "unit_tests"} for part in path.parts):
+            continue
+        yield path
+
+
+def check_file(path: Path) -> list[tuple[int, str]]:
+    try:
+        tree = ast.parse(path.read_text())
+    except Exception as exc:  # pragma: no cover - syntax errors
+        return [(0, f"failed to parse: {exc}")]
+
+    errors: list[tuple[int, str]] = []
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
+            fn = node.func
+            name: str | None = None
+            if isinstance(fn, ast.Name):
+                name = fn.id
+            elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+                name = fn.attr if fn.attr == "PromptEngine" else None
+            # Only enforce for ``PromptEngine`` and top-level ``_build_prompt``
+            if name in {"PromptEngine", "_build_prompt"}:
+                if not any(kw.arg == "context_builder" for kw in node.keywords):
+                    errors.append((node.lineno, name))
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return errors
+
+
+def main() -> int:
+    failures: list[str] = []
+    for path in iter_python_files(ROOT):
+        for lineno, name in check_file(path):
+            failures.append(f"{path}:{lineno} -> {name} missing context_builder")
+    if failures:
+        for line in failures:
+            print(line)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
