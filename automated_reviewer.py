@@ -26,7 +26,7 @@ class AutomatedReviewer:
         self,
         bot_db: "BotDB" | None = None,
         escalation_manager: "AutoEscalationManager" | None = None,
-        context_builder: "ContextBuilder" | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         if bot_db is None:
             from .bot_database import BotDB
@@ -41,14 +41,17 @@ class AutomatedReviewer:
         self.logger = logging.getLogger(self.__class__.__name__)
         if CognitionLayer is not None and ContextBuilder is not None:
             try:
+                self.context_builder = context_builder or ContextBuilder()
                 self.cognition_layer = CognitionLayer(
-                    context_builder=context_builder or ContextBuilder()
+                    context_builder=self.context_builder
                 )
             except Exception:  # pragma: no cover - optional dependency failed
                 self.cognition_layer = None
+                self.context_builder = None
                 self.logger.warning("failed to initialise CognitionLayer", exc_info=True)
         else:  # pragma: no cover - dependency missing at import time
             self.cognition_layer = None
+            self.context_builder = None
             self.logger.warning(
                 "CognitionLayer unavailable due to missing vector_service dependency"
             )

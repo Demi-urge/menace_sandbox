@@ -65,7 +65,11 @@ def _stub_vector_service(monkeypatch):
             return self.context_builder.build_context(prompt, session_id="s"), "sid"
 
     class ContextBuilder:
-        pass
+        calls: list[str] = []
+
+        def build_context(self, prompt, **_):
+            self.__class__.calls.append(prompt)
+            return "ctx"
 
     vs = types.ModuleType("vector_service")
     vs.CognitionLayer = CognitionLayer
@@ -80,10 +84,13 @@ def _stub_vector_service(monkeypatch):
 def test_escalation_on_critical(monkeypatch):
     _stub_vector_service(monkeypatch)
     import menace.automated_reviewer as ar
+    import vector_service
+
     esc = DummyEscalation()
     db = DummyDB()
     reviewer = ar.AutomatedReviewer(bot_db=db, escalation_manager=esc)
     reviewer.handle({"bot_id": "7", "severity": "critical"})
+    assert vector_service.ContextBuilder.calls
     assert db.updated and db.updated[0][0] == 7
     assert esc.messages and "review for bot 7" in esc.messages[0]
 
