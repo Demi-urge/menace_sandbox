@@ -46,12 +46,30 @@ from audit_trail import AuditTrail
 from logging.handlers import RotatingFileHandler
 import gzip
 import shutil
-import menace_sanity_layer
-from menace_sanity_layer import (
-    record_billing_anomaly,
-    record_billing_event,
-    record_event,
-)
+import types
+
+try:  # pragma: no cover - best effort to import sanity layer
+    import menace_sanity_layer
+    from menace_sanity_layer import (
+        record_billing_anomaly,
+        record_billing_event,
+        record_event,
+    )
+except Exception:  # pragma: no cover - fallback stubs if import fails
+    menace_sanity_layer = types.SimpleNamespace(
+        record_payment_anomaly=lambda *a, **k: None,
+        EVENT_TYPE_INSTRUCTIONS={},
+        refresh_billing_instructions=lambda *a, **k: None,
+    )
+
+    def record_billing_anomaly(*_a, **_k):  # noqa: D401 - simple stub
+        """Fallback stub when menace_sanity_layer is unavailable."""
+
+    def record_billing_event(*_a, **_k):  # noqa: D401 - simple stub
+        """Fallback stub when menace_sanity_layer is unavailable."""
+
+    def record_event(*_a, **_k):  # noqa: D401 - simple stub
+        """Fallback stub when menace_sanity_layer is unavailable."""
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -136,6 +154,8 @@ DEFAULT_SEVERITY_MAP = {
     "revenue_mismatch": 4.0,
     "account_mismatch": 3.0,
     "unauthorized_charge": 3.5,
+    "unauthorized_refund": 3.5,
+    "unauthorized_failure": 3.0,
 }
 SEVERITY_MAP = DEFAULT_SEVERITY_MAP.copy()
 
@@ -800,8 +820,6 @@ def detect_unauthorized_charges(
         for rec in (billing_logs or [])
         if rec.get("stripe_id")
     }
-    approved = {str(w) for w in (approved_workflows or [])}
-
     anomalies: List[Dict[str, Any]] = []
     for charge in charges:
         cid = str(charge.get("id"))

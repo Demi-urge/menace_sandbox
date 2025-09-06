@@ -109,6 +109,12 @@ EVENT_TYPE_INSTRUCTIONS: Dict[str, str] = {
     "unauthorized_charge": (
         "Avoid processing Stripe charges without explicit authorization."
     ),
+    "unauthorized_refund": (
+        "Avoid issuing Stripe refunds without explicit authorization."
+    ),
+    "unauthorized_failure": (
+        "Avoid processing Stripe payment failures without explicit authorization."
+    ),
 }
 
 # Optional overrides loaded from ``config/billing_instructions.yaml``.  The file
@@ -132,6 +138,8 @@ DEFAULT_ANOMALY_HINTS: Dict[str, Dict[str, Any]] = {
     "revenue_mismatch": {"reconcile_revenue": True},
     "account_mismatch": {"verify_stripe_account": True},
     "unauthorized_charge": {"block_unauthorized_charges": True},
+    "unauthorized_refund": {"block_unauthorized_refunds": True},
+    "unauthorized_failure": {"block_unauthorized_failures": True},
 }
 
 PAYMENT_ANOMALY_THRESHOLD = _DEFAULT_PAYMENT_ANOMALY_THRESHOLD
