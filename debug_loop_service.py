@@ -14,13 +14,11 @@ from .self_coding_engine import SelfCodingEngine
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .knowledge_graph import KnowledgeGraph
-try:
-    from vector_service.context_builder_utils import get_default_context_builder
-except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service.context_builder import ContextBuilder  # type: ignore
 
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
+try:  # pragma: no cover - optional vector service dependency
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - fallback when dependency missing
+    from vector_service.context_builder import ContextBuilder  # type: ignore
 
 
 class DebugLoopService:
@@ -32,8 +30,11 @@ class DebugLoopService:
         self.graph = graph or KnowledgeGraph()
         if feedback is None:
             logger = ErrorLogger(knowledge_graph=self.graph)
-            builder = get_default_context_builder()
-            builder.refresh_db_weights()
+            builder = ContextBuilder()
+            try:
+                builder.refresh_db_weights()
+            except Exception:
+                pass
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=builder
             )
