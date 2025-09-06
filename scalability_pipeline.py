@@ -10,6 +10,7 @@ from .bot_development_bot import BotDevelopmentBot, BotSpec
 from .bot_testing_bot import BotTestingBot
 from .deployment_bot import DeploymentBot, DeploymentSpec
 from .scalability_assessment_bot import ScalabilityAssessmentBot, TaskInfo
+from vector_service import ContextBuilder
 
 
 @dataclass
@@ -31,7 +32,10 @@ class ScalabilityPipeline:
         deployer: DeploymentBot | None = None,
         max_iters: int = 3,
     ) -> None:
-        self.developer = developer or BotDevelopmentBot()
+        self.context_builder = ContextBuilder()
+        self.developer = developer or BotDevelopmentBot(
+            context_builder=self.context_builder
+        )
         self.tester = tester or BotTestingBot()
         self.scaler = scaler or ScalabilityAssessmentBot()
         self.deployer = deployer or DeploymentBot()
@@ -40,7 +44,7 @@ class ScalabilityPipeline:
     # ------------------------------------------------------------------
     def _build_and_test(self, name: str) -> None:
         spec = BotSpec(name=name, purpose=name, functions=["run"])
-        self.developer.build_bot(spec)
+        self.developer.build_bot(spec, context_builder=self.context_builder)
         self.tester.run_unit_tests([name])
 
     def _estimate_resources(self, tasks: Iterable[TaskInfo]) -> Dict[str, Dict[str, float]]:
