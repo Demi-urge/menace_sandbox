@@ -37,6 +37,8 @@ class AutomatedReviewer:
             escalation_manager = AutoEscalationManager()
         self.escalation_manager = escalation_manager
         self.logger = logging.getLogger(self.__class__.__name__)
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         if not hasattr(context_builder, "build"):
             raise TypeError("context_builder must implement build()")
         self.context_builder = context_builder
