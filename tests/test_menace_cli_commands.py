@@ -12,6 +12,12 @@ class _VectorServiceError(Exception):
     pass
 
 class _DummyContextBuilder:
+    def __init__(self, retriever=None, **kwargs):
+        self.retriever = retriever
+
+    def refresh_db_weights(self):
+        return None
+
     def build(self, desc, session_id=None, include_vectors=False):
         return ("ctx", session_id or "s", [("o", "v", 0.1)])
 

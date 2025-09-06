@@ -84,7 +84,9 @@ def test_chunked_patch_generation(tmp_path, monkeypatch):
 
     engine = Engine()
 
-    pid = quick_fix.generate_patch(str(path), engine)
+    pid = quick_fix.generate_patch(
+        str(path), engine, context_builder=quick_fix.ContextBuilder()
+    )
     assert len(engine.calls) > 1
     assert pid == len(engine.calls)
     lines = path.read_text().strip().splitlines()

@@ -21,7 +21,16 @@ def test_generate_patch_logs_alignment_warning(tmp_path, monkeypatch):
     monkeypatch.setattr(quick_fix_engine, "log_violation", fake_log_violation)
     monkeypatch.setattr(human_alignment_agent, "log_violation", fake_log_violation)
 
-    pid = quick_fix_engine.generate_patch(str(src), Engine())
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            return None
+
+        def build(self, *a, **k):
+            return ""
+
+    pid = quick_fix_engine.generate_patch(
+        str(src), Engine(), context_builder=DummyBuilder()
+    )
     assert pid == 1
     assert logs, "expected alignment warning logged"
 
@@ -40,7 +49,7 @@ def test_self_debugger_preemptive_patch_logs_warning(tmp_path, monkeypatch):
     monkeypatch.setattr(human_alignment_agent, "log_violation", fake_log_violation)
     monkeypatch.setattr(self_debugger_sandbox, "log_record", lambda **kw: {})
 
-    def stub_generate_patch(module: str, engine):
+    def stub_generate_patch(module: str, engine, **kwargs):
         path = Path(module)
         if path.suffix == "":
             path = path.with_suffix(".py")  # path-ignore

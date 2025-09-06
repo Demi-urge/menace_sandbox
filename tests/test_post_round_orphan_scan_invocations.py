@@ -32,11 +32,21 @@ def _load_qfe(monkeypatch):
         "menace.knowledge_graph",
         types.SimpleNamespace(KnowledgeGraph=object),
     )
+    class DummyBuilder:
+        def __init__(self, *a, **k):
+            pass
+
+        def refresh_db_weights(self):
+            return None
+
+        def build(self, *a, **k):
+            return ""
+
     monkeypatch.setitem(
         sys.modules,
         "vector_service",
         types.SimpleNamespace(
-            ContextBuilder=object,
+            ContextBuilder=DummyBuilder,
             Retriever=object,
             FallbackResult=object,
             EmbeddingBackfill=object,
@@ -99,7 +109,9 @@ def test_generate_patch_triggers_scan_once_success(monkeypatch, tmp_path):
     monkeypatch.setattr(qfe, "generate_code_diff", lambda *a, **k: [])
     monkeypatch.setattr(qfe, "flag_risky_changes", lambda *a, **k: [])
 
-    res = qfe.generate_patch(str(path), engine=Engine())
+    res = qfe.generate_patch(
+        str(path), engine=Engine(), context_builder=qfe.ContextBuilder()
+    )
     assert res == 1
     assert len(calls) == 1
 
@@ -127,7 +139,9 @@ def test_generate_patch_scan_failure_handled(monkeypatch, tmp_path):
     monkeypatch.setattr(qfe, "generate_code_diff", lambda *a, **k: [])
     monkeypatch.setattr(qfe, "flag_risky_changes", lambda *a, **k: [])
 
-    res = qfe.generate_patch(str(path), engine=Engine())
+    res = qfe.generate_patch(
+        str(path), engine=Engine(), context_builder=qfe.ContextBuilder()
+    )
     assert res == 1
     assert len(calls) == 1
 
@@ -153,7 +167,7 @@ def test_preemptive_fix_triggers_scan_once_success(monkeypatch, tmp_path):
         return [], True, True
 
     monkeypatch.setattr(sds, "post_round_orphan_scan", fake_scan)
-    monkeypatch.setattr(sds, "generate_patch", lambda m, e: 1)
+    monkeypatch.setattr(sds, "generate_patch", lambda m, e, **k: 1)
     monkeypatch.setattr(sds, "_collect_diff_data", lambda *a, **k: {})
 
     predictor = types.SimpleNamespace(
@@ -178,7 +192,7 @@ def test_preemptive_fix_scan_failure_handled(monkeypatch, tmp_path):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(sds, "post_round_orphan_scan", fake_scan)
-    monkeypatch.setattr(sds, "generate_patch", lambda m, e: 1)
+    monkeypatch.setattr(sds, "generate_patch", lambda m, e, **k: 1)
     monkeypatch.setattr(sds, "_collect_diff_data", lambda *a, **k: {})
 
     predictor = types.SimpleNamespace(

@@ -138,9 +138,21 @@ def handle_patch(args: argparse.Namespace) -> int:
 
     db = PatchHistoryDB()
     patch_logger = PatchLogger(patch_db=db)
+    try:
+        builder = ContextBuilder(
+            retriever=retriever,
+            bot_db="bots.db",
+            code_db="code.db",
+            error_db="errors.db",
+            workflow_db="workflows.db",
+        )
+        builder.refresh_db_weights()
+    except Exception as exc:
+        print(f"ContextBuilder initialisation failed: {exc}", file=sys.stderr)
+        return 1
     patch_id = quick_fix_engine.generate_patch(
         args.module,
-        context_builder=ContextBuilder(retriever=retriever),
+        context_builder=builder,
         engine=None,
         description=args.desc,
         patch_logger=patch_logger,

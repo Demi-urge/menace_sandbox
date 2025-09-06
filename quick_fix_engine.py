@@ -83,7 +83,7 @@ def generate_patch(
     module: str,
     engine: "SelfCodingEngine" | None = None,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     description: str | None = None,
     strategy: PromptStrategy | None = None,
     patch_logger: PatchLogger | None = None,
@@ -105,9 +105,8 @@ def generate_patch(
         provided, a minimal engine is instantiated on demand.  The function
         tolerates missing dependencies and simply returns ``None`` on failure.
     context_builder:
-        Optional pre-existing :class:`vector_service.ContextBuilder`.  When
-        omitted, a new :class:`~vector_service.ContextBuilder` is instantiated so
-        that context is always built using a builder.
+        Pre-existing :class:`vector_service.ContextBuilder` configured with
+        local database paths.
     description:
         Optional patch description.  When omitted, a generic description is
         used.
@@ -127,17 +126,12 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
-    if context_builder is None:
-        try:
-            context_builder = ContextBuilder(
-                bot_db="bots.db",
-                code_db="code.db",
-                error_db="errors.db",
-                workflow_db="workflows.db",
-            )
-        except Exception as exc:  # pragma: no cover - instantiation issues
-            logger.debug("ContextBuilder instantiation failed: %s", exc)
-            context_builder = None
+    try:
+        context_builder.refresh_db_weights()
+    except Exception as exc:  # pragma: no cover - validation
+        raise RuntimeError(
+            "provided ContextBuilder cannot query local databases"
+        ) from exc
     mod_str = module if module.endswith(".py") else f"{module}.py"
     try:
         path = resolve_path(mod_str)
@@ -152,26 +146,24 @@ def generate_patch(
         context_meta.update(context)
     builder = context_builder
     context_block = ""
-    cb_session = ""
+    cb_session = uuid.uuid4().hex
+    context_meta["context_session_id"] = cb_session
     vectors: List[Tuple[str, str, float]] = []
-    if builder is not None:
-        cb_session = uuid.uuid4().hex
-        context_meta["context_session_id"] = cb_session
-        try:
-            ctx_res = builder.build(
-                description, session_id=cb_session, include_vectors=True
-            )
-            if isinstance(ctx_res, tuple):
-                context_block, _, vectors = ctx_res
-            else:
-                context_block = ctx_res
-            if isinstance(context_block, (FallbackResult, ErrorResult)):
-                context_block = ""
-        except Exception:
+    try:
+        ctx_res = builder.build(
+            description, session_id=cb_session, include_vectors=True
+        )
+        if isinstance(ctx_res, tuple):
+            context_block, _, vectors = ctx_res
+        else:
+            context_block = ctx_res
+        if isinstance(context_block, (FallbackResult, ErrorResult)):
             context_block = ""
-            vectors = []
-        if context_block:
-            description += "\n\n" + context_block
+    except Exception:
+        context_block = ""
+        vectors = []
+    if context_block:
+        description += "\n\n" + context_block
     if strategy is not None:
         try:
             template = render_prompt(strategy, {"module": prompt_path})
@@ -194,12 +186,14 @@ def generate_patch(
             from .code_database import CodeDB
             from .menace_memory_manager import MenaceMemoryManager
 
-            engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+            engine = SelfCodingEngine(
+                CodeDB(), MenaceMemoryManager(), context_builder=context_builder
+            )
         except Exception as exc:  # pragma: no cover - optional deps
             logger.error("self coding engine unavailable: %s", exc)
             return None
 
-    if builder is not None and engine is not None:
+    if engine is not None:
         try:
             setattr(engine, "context_builder", builder)
             cl = getattr(engine, "cognition_layer", None)
@@ -353,7 +347,7 @@ class QuickFixEngine:
         risk_threshold: float = 0.5,
         predictor: ErrorClusterPredictor | None = None,
         retriever: Retriever | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         patch_logger: PatchLogger | None = None,
         min_reliability: float | None = None,
         redundancy_limit: int | None = None,
@@ -366,9 +360,22 @@ class QuickFixEngine:
         self.predictor = predictor
         self.retriever = retriever
         logger = logging.getLogger(self.__class__.__name__)
-        if context_builder is None:
-            context_builder = ContextBuilder(retriever=retriever)
+        try:
+            context_builder.refresh_db_weights()
+        except Exception as exc:  # pragma: no cover - validation
+            raise RuntimeError(
+                "provided ContextBuilder cannot query local databases"
+            ) from exc
         self.context_builder = context_builder
+        try:
+            eng = getattr(manager, "engine", None)
+            if eng is not None:
+                setattr(eng, "context_builder", context_builder)
+                cl = getattr(eng, "cognition_layer", None)
+                if cl is not None:
+                    cl.context_builder = context_builder  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - best effort
+            logger.debug("failed to attach context builder to manager engine", exc_info=True)
         if patch_logger is None:
             try:
                 eng = getattr(manager, "engine", None)

@@ -366,7 +366,13 @@ class ServiceSupervisor:
             rollback_mgr=self.rollback_mgr, bot_name="menace"
         )
         self.auto_mgr = AutoEscalationManager()
-        self.context_builder = ContextBuilder()
+        self.context_builder = ContextBuilder(
+            bot_db="bots.db",
+            code_db="code.db",
+            error_db="errors.db",
+            workflow_db="workflows.db",
+        )
+        self.context_builder.refresh_db_weights()
         engine = SelfCodingEngine(
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
         )

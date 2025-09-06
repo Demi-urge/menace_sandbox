@@ -35,7 +35,7 @@ def test_replace_flag_triggers_refactor_and_event(monkeypatch):
 
     calls = []
 
-    def fake_generate_patch(mod, sce):
+    def fake_generate_patch(mod, sce, **kwargs):
         calls.append((mod, sce))
         return 123
 

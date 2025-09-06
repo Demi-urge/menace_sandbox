@@ -946,8 +946,16 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     from menace.self_coding_manager import SelfCodingManager
     from menace.model_automation_pipeline import ModelAutomationPipeline
 
-    quick_manager = SelfCodingManager(engine, ModelAutomationPipeline(), bot_name="menace")
-    context_builder = ContextBuilder()
+    quick_manager = SelfCodingManager(
+        engine, ModelAutomationPipeline(), bot_name="menace"
+    )
+    context_builder = ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
+    context_builder.refresh_db_weights()
     quick_fix_engine = QuickFixEngine(
         telem_db, quick_manager, graph=graph, context_builder=context_builder
     )

@@ -636,7 +636,7 @@ def test_alignment_review_agent_dispatches_quick_fix_warnings(monkeypatch, tmp_p
         violation_logger, "LOG_PATH", str(tmp_path / "violations.jsonl")
     )
 
-    def gen_patch(module, engine=None):
+    def gen_patch(module, engine=None, **kwargs):
         violation_logger.log_violation(
             "quick_fix_1",
             "alignment_warning",
@@ -648,7 +648,7 @@ def test_alignment_review_agent_dispatches_quick_fix_warnings(monkeypatch, tmp_p
 
     monkeypatch.setattr(quick_fix_engine, "generate_patch", gen_patch)
 
-    quick_fix_engine.generate_patch("foo.py")  # path-ignore
+    quick_fix_engine.generate_patch("foo.py", context_builder=object())  # path-ignore
 
     dispatched: list = []
     monkeypatch.setattr(

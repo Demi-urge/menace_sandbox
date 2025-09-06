@@ -111,7 +111,21 @@ except Exception:  # pragma: no cover - optional dependency
         return None
 
 # Global ContextBuilder instance for reuse across patch generation calls
-CONTEXT_BUILDER = ContextBuilder() if ContextBuilder else None
+try:
+    CONTEXT_BUILDER = (
+        ContextBuilder(
+            bot_db="bots.db",
+            code_db="code.db",
+            error_db="errors.db",
+            workflow_db="workflows.db",
+        )
+        if ContextBuilder
+        else None
+    )
+    if CONTEXT_BUILDER is not None:
+        CONTEXT_BUILDER.refresh_db_weights()
+except Exception:
+    CONTEXT_BUILDER = None
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -432,11 +446,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     shutil.copy2(src, before_target)
                     if CONTEXT_BUILDER is None:
                         self.logger.warning(
-                            "ContextBuilder unavailable; proceeding without vector context"
+                            "ContextBuilder unavailable; skipping patch generation",
                         )
-                    patch_id = generate_patch(
-                        mod, self.engine, context_builder=CONTEXT_BUILDER
-                    )
+                        patch_id = None
+                    else:
+                        patch_id = generate_patch(
+                            mod, self.engine, context_builder=CONTEXT_BUILDER
+                        )
                     if patch_id is not None:
                         try:
                             post_round_orphan_scan(

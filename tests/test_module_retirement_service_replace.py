@@ -5,6 +5,15 @@ fake_qfe = types.ModuleType("quick_fix_engine")
 fake_qfe.generate_patch = lambda path, context_builder=None: 1
 sys.modules["quick_fix_engine"] = fake_qfe
 
+class _DummyBuilder:
+    def __init__(self, *a, **k):
+        pass
+
+    def refresh_db_weights(self):
+        return None
+
+sys.modules.setdefault("vector_service", types.SimpleNamespace(ContextBuilder=_DummyBuilder))
+
 import module_retirement_service
 from module_retirement_service import ModuleRetirementService
 

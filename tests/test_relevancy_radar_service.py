@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 fake_qfe = types.ModuleType("quick_fix_engine")
-fake_qfe.generate_patch = lambda path: 1
+fake_qfe.generate_patch = lambda path, **kwargs: 1
 sys.modules["quick_fix_engine"] = fake_qfe
 
 import menace_sandbox.module_retirement_service as module_retirement_service

@@ -35,7 +35,20 @@ class ModuleRetirementService:
             self._graph = None
             self.logger.exception("failed to build import graph")
         # Reuse a single builder instance across operations for efficiency.
-        self._context_builder = ContextBuilder() if ContextBuilder else None
+        if ContextBuilder is not None:
+            try:
+                self._context_builder = ContextBuilder(
+                    bot_db="bots.db",
+                    code_db="code.db",
+                    error_db="errors.db",
+                    workflow_db="workflows.db",
+                )
+                self._context_builder.refresh_db_weights()
+            except Exception:
+                self.logger.exception("failed to initialise ContextBuilder")
+                self._context_builder = None
+        else:
+            self._context_builder = None
         if self._context_builder is None:
             self.logger.warning(
                 "ContextBuilder unavailable; operating without vector context"
@@ -95,10 +108,11 @@ class ModuleRetirementService:
         if not path.exists():
             self.logger.error("module not found: %s", module)
             return False
+        if self._context_builder is None:
+            self.logger.error("ContextBuilder required for compression")
+            return False
         try:
-            patch_id = generate_patch(
-                str(path), context_builder=self._context_builder
-            )
+            patch_id = generate_patch(str(path), context_builder=self._context_builder)
             if patch_id is not None:
                 compressed_modules_total.inc()
                 try:
@@ -126,10 +140,11 @@ class ModuleRetirementService:
         if not path.exists():
             self.logger.error("module not found: %s", module)
             return False
+        if self._context_builder is None:
+            self.logger.error("ContextBuilder required for replacement")
+            return False
         try:
-            patch_id = generate_patch(
-                str(path), context_builder=self._context_builder
-            )
+            patch_id = generate_patch(str(path), context_builder=self._context_builder)
             if patch_id is not None:
                 replaced_modules_total.inc()
                 self.logger.info(
