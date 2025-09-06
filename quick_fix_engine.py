@@ -83,7 +83,7 @@ def generate_patch(
     module: str,
     engine: "SelfCodingEngine" | None = None,
     *,
-    context_builder: ContextBuilder,
+    context_builder: ContextBuilder | None = None,
     description: str | None = None,
     strategy: PromptStrategy | None = None,
     patch_logger: PatchLogger | None = None,
@@ -105,8 +105,10 @@ def generate_patch(
         provided, a minimal engine is instantiated on demand.  The function
         tolerates missing dependencies and simply returns ``None`` on failure.
     context_builder:
-        Pre-existing :class:`vector_service.ContextBuilder` configured with
-        local database paths.
+        Optional :class:`vector_service.ContextBuilder`.  When omitted the
+        function instantiates one using local databases ``bots.db``,
+        ``code.db``, ``errors.db`` and ``workflows.db``.  Failure to create
+        the builder raises ``RuntimeError``.
     description:
         Optional patch description.  When omitted, a generic description is
         used.
@@ -126,6 +128,13 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
+    if context_builder is None:
+        try:
+            context_builder = ContextBuilder(
+                "bots.db", "code.db", "errors.db", "workflows.db"
+            )
+        except Exception as exc:  # pragma: no cover - dependency issues
+            raise RuntimeError("ContextBuilder is required") from exc
     try:
         context_builder.refresh_db_weights()
     except Exception as exc:  # pragma: no cover - validation
