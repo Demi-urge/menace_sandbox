@@ -143,8 +143,8 @@ def test_prompt_contains_docstrings(tmp_path):
             super().__init__(repo_base=repo_base, context_builder=builder)
             self.prompts: list[str] = []
 
-        def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
-            prompt = self._build_prompt(spec)
+        def build_bot(self, spec: bdb.BotSpec, *, context_builder, model_id=None) -> Path:  # type: ignore[override]
+            prompt = self._build_prompt(spec, context_builder=context_builder)
             self.prompts.append(prompt)
             repo_dir = self.create_env(spec)
             file_path = repo_dir / f"{spec.name}.py"  # path-ignore
@@ -209,8 +209,8 @@ def test_prompt_includes_guideline_sections(tmp_path):
             super().__init__(repo_base=repo_base, context_builder=builder)
             self.prompt = ""
 
-        def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
-            self.prompt = self._build_prompt(spec)
+        def build_bot(self, spec: bdb.BotSpec, *, context_builder, model_id=None) -> Path:  # type: ignore[override]
+            self.prompt = self._build_prompt(spec, context_builder=context_builder)
             repo_dir = self.create_env(spec)
             file_path = repo_dir / f"{spec.name}.py"  # path-ignore
             file_path.write_text("pass")
@@ -357,7 +357,7 @@ def test_researcher_invoked_for_missing_info(tmp_path):
             self.opt.from_research = True
 
     class MiniDev(bdb.BotDevelopmentBot):
-        def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
+        def build_bot(self, spec: bdb.BotSpec, *, context_builder, model_id=None) -> Path:  # type: ignore[override]
             repo_dir = self.create_env(spec)
             file_path = repo_dir / f"{spec.name}.py"  # path-ignore
             file_path.write_text("pass")
@@ -446,11 +446,12 @@ def test_pipeline_uses_local_context_builder(tmp_path, monkeypatch):
             self,
             spec: bdb.BotSpec,
             *,
+            context_builder,
             model_id=None,
             **kwargs,
         ) -> Path:  # type: ignore[override]
-            self.used_builder = self.context_builder
-            prompt = self._build_prompt(spec)
+            self.used_builder = context_builder
+            prompt = self._build_prompt(spec, context_builder=context_builder)
             self.prompt = prompt
             repo_dir = self.create_env(spec)
             file_path = repo_dir / f"{spec.name}.py"  # path-ignore
@@ -534,7 +535,7 @@ def test_pipeline_openai_error_not_raised(tmp_path, monkeypatch, caplog):
 
 def test_pipeline_surfaces_build_errors(tmp_path, caplog):
     class FailingDev(bdb.BotDevelopmentBot):
-        def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
+        def build_bot(self, spec: bdb.BotSpec, *, context_builder, model_id=None) -> Path:  # type: ignore[override]
             raise RuntimeError("boom")
 
     builder = _ctx_builder()
@@ -576,7 +577,7 @@ def test_ipo_plan_fills_metadata_and_pipeline_runs(tmp_path):
             )
 
     class MiniDev(bdb.BotDevelopmentBot):
-        def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
+        def build_bot(self, spec: bdb.BotSpec, *, context_builder, model_id=None) -> Path:  # type: ignore[override]
             repo_dir = self.create_env(spec)
             file_path = repo_dir / f"{spec.name}.py"  # path-ignore
             file_path.write_text("pass")

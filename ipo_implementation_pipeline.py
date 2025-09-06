@@ -58,7 +58,9 @@ class IPOImplementationPipeline:
         attempts = 0
         while attempts < self.max_attempts:
             attempts += 1
-            path = self.developer.build_bot(spec)
+            path = self.developer.build_bot(
+                spec, context_builder=self.developer.context_builder
+            )
             if str(path.parent) not in sys.path:
                 sys.path.insert(0, str(path.parent))
             results = self.tester.run_unit_tests([spec.name])

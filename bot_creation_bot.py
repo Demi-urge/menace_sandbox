@@ -428,7 +428,9 @@ class BotCreationBot(AdminBotBase):
         spec.name = safe_name
         _ctx, session_id = self.cognition_layer.query(f"build bot {spec.name}")
         try:
-            file_path = self.developer.build_bot(spec)
+            file_path = self.developer.build_bot(
+                spec, context_builder=self.developer.context_builder
+            )
             self.cognition_layer.record_patch_outcome(session_id, True, contribution=1.0)
         except Exception as exc:
             self.cognition_layer.record_patch_outcome(session_id, False, contribution=0.0)

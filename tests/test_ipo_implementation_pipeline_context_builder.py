@@ -10,15 +10,16 @@ def test_context_builder_reused(tmp_path):
     builders: list[object] = []
 
     class StubContextBuilder:
-        pass
+        def __init__(self, *a, **k):
+            pass
 
     class StubDeveloper:
         def __init__(self, *a, context_builder=None, **k):
             self.context_builder = context_builder
             self.errors: list[str] = []
 
-        def build_bot(self, spec):
-            builders.append(self.context_builder)
+        def build_bot(self, spec, *, context_builder, model_id=None, **_):
+            builders.append(context_builder)
             return tmp_path / f"{spec.name}.py"
 
     @dataclass
