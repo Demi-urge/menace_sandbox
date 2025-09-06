@@ -973,6 +973,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         policy=policy,
         state_getter=improver._policy_state,
     )
+    sandbox.context_builder = context_builder
     sandbox.error_logger = error_logger
     sandbox.error_forecaster = forecaster
     sandbox.quick_fix_engine = quick_fix_engine
