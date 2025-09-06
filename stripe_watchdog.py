@@ -31,6 +31,10 @@ Key features implemented according to the specification:
   false positives.  Set ``adaptive_issue_handling`` to ``false`` in
   ``config/stripe_watchdog.yaml`` to disable this adaptive behaviour.
 * :func:`main` exposes a CLI so the watchdog can be run by ``cron``.
+* When ``menace_sanity_layer`` is unavailable, stub functions log a single
+  warning then raise :class:`SanityLayerUnavailableError` on subsequent use.
+  Set the environment variable ``MENACE_SANITY_OPTIONAL`` to bypass the raise
+  (a critical alert is logged instead).
 """
 
 import argparse
@@ -64,7 +68,7 @@ try:  # pragma: no cover - best effort to import sanity layer
     )
 except Exception:  # pragma: no cover - fallback stubs if import fails
     logger.warning(
-        "menace_sanity_layer import failed; using no-op stubs for feedback"
+        "menace_sanity_layer import failed; using no-op stubs for feedback",
     )
     menace_sanity_layer = types.SimpleNamespace(
         record_payment_anomaly=lambda *a, **k: None,
@@ -73,29 +77,47 @@ except Exception:  # pragma: no cover - fallback stubs if import fails
         fetch_recent_billing_issues=lambda *a, **k: [],
     )
 
+    _SANITY_LAYER_OPTIONAL = os.getenv("MENACE_SANITY_OPTIONAL")
+
+    class SanityLayerUnavailableError(RuntimeError):
+        """Raised when ``menace_sanity_layer`` is required but missing."""
+
+    def _escalate(msg: str) -> None:
+        """Raise or log a critical alert depending on configuration."""
+        if _SANITY_LAYER_OPTIONAL:
+            logger.critical(msg)
+        else:
+            raise SanityLayerUnavailableError(msg)
+
     def record_billing_anomaly(*_a, **_k):  # noqa: D401 - simple stub
         """Fallback stub when menace_sanity_layer is unavailable."""
         if not getattr(record_billing_anomaly, "_warned", False):
             logger.warning(
-                "record_billing_anomaly stub invoked; menace_sanity_layer missing"
+                "record_billing_anomaly stub invoked; menace_sanity_layer missing",
             )
             record_billing_anomaly._warned = True
+        else:
+            _escalate("record_billing_anomaly stub called without menace_sanity_layer")
 
     def record_billing_event(*_a, **_k):  # noqa: D401 - simple stub
         """Fallback stub when menace_sanity_layer is unavailable."""
         if not getattr(record_billing_event, "_warned", False):
             logger.warning(
-                "record_billing_event stub invoked; menace_sanity_layer missing"
+                "record_billing_event stub invoked; menace_sanity_layer missing",
             )
             record_billing_event._warned = True
+        else:
+            _escalate("record_billing_event stub called without menace_sanity_layer")
 
     def record_event(*_a, **_k):  # noqa: D401 - simple stub
         """Fallback stub when menace_sanity_layer is unavailable."""
         if not getattr(record_event, "_warned", False):
             logger.warning(
-                "record_event stub invoked; menace_sanity_layer missing"
+                "record_event stub invoked; menace_sanity_layer missing",
             )
             record_event._warned = True
+        else:
+            _escalate("record_event stub called without menace_sanity_layer")
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore

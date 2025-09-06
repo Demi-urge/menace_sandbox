@@ -104,6 +104,15 @@ Never call the Stripe SDK directly; use the helpers provided by
 `get_balance`. See [docs/billing_router.md](docs/billing_router.md) for
 extension points.
 
+### Billing monitoring
+
+`stripe_watchdog` audits recent Stripe activity against local billing logs and
+ROI projections. If the optional ``menace_sanity_layer`` dependency is missing,
+its feedback stubs emit a single warning and then raise
+``SanityLayerUnavailableError`` on further use. Set
+``MENACE_SANITY_OPTIONAL=1`` in development to log a critical alert instead of
+raising.
+
 ### Chunking pipeline
 
 Large modules are split and summarised before prompting so the LLM never sees
@@ -1778,6 +1787,9 @@ start unattended.  At minimum the following variables must be defined:
 - Stripe billing is configured via ``stripe_billing_router``, which retrieves
   the required keys from a secure vault provider or uses baked‑in production
   values. Avoid storing these keys in the repository or configuration files.
+- ``MENACE_SANITY_OPTIONAL`` – set to any value in development to allow missing
+  ``menace_sanity_layer`` modules. Without this the Stripe watchdog raises
+  ``SanityLayerUnavailableError`` when feedback hooks are invoked.
 - ``VISUAL_AGENT_TOKEN`` – shared secret used by ``menace_visual_agent_2.py`` for authentication.
 - ``SANDBOX_REPO_PATH`` – path to the local sandbox repository clone processed during self-improvement cycles.
 - ``SANDBOX_DATA_DIR`` – directory storing ROI history, presets and patch metrics.
