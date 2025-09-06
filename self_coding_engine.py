@@ -91,7 +91,12 @@ except Exception:  # pragma: no cover - graceful degradation
 from .sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - optional dependency
-    from vector_service import CognitionLayer, PatchLogger, VectorServiceError
+    from vector_service import (
+        CognitionLayer,
+        ContextBuilder,
+        PatchLogger,
+        VectorServiceError,
+    )
 except Exception:  # pragma: no cover - defensive fallback
     PatchLogger = object  # type: ignore
 
@@ -132,6 +137,12 @@ except Exception:  # pragma: no cover - defensive fallback
                 missing_dependency="vector_service",
                 suggested_fix="install the vector_service package",
             )
+
+    class ContextBuilder:  # type: ignore[override]
+        """Fallback context builder when vector service is unavailable."""
+
+        def __init__(self, *_, **__):
+            pass
 
 try:  # pragma: no cover - optional ROI tracking
     from .roi_tracker import ROITracker
@@ -319,6 +330,7 @@ class SelfCodingEngine:
         enhancement_classifier: "EnhancementClassifier" | None = None,
         patch_logger: PatchLogger | None = None,
         cognition_layer: CognitionLayer | None = None,
+        context_builder: ContextBuilder | None = None,
         bot_roles: Optional[Dict[str, str]] = None,
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
@@ -445,6 +457,22 @@ class SelfCodingEngine:
         self.patch_suggestion_db = patch_suggestion_db
         self.enhancement_classifier = enhancement_classifier
         tracker = ROITracker()
+        if context_builder is None:
+            try:
+                context_builder = ContextBuilder(roi_tracker=tracker)
+            except Exception:
+                context_builder = None
+        else:
+            if getattr(context_builder, "roi_tracker", None) is None:
+                try:
+                    context_builder.roi_tracker = tracker  # type: ignore[attr-defined]
+                except Exception:
+                    self.logger.warning(
+                        "failed to attach ROI tracker to context_builder",
+                        exc_info=True,
+                        extra={"context_builder": type(context_builder).__name__},
+                    )
+        self.context_builder = context_builder
         if patch_logger is not None and getattr(patch_logger, "roi_tracker", None) is None:
             try:
                 patch_logger.roi_tracker = tracker  # type: ignore[attr-defined]
@@ -457,7 +485,9 @@ class SelfCodingEngine:
         if cognition_layer is None:
             try:
                 cognition_layer = CognitionLayer(
-                    patch_logger=patch_logger, roi_tracker=tracker
+                    patch_logger=patch_logger,
+                    roi_tracker=tracker,
+                    context_builder=self.context_builder,
                 )
             except VectorServiceError as exc:
                 self.logger.warning(
@@ -473,6 +503,15 @@ class SelfCodingEngine:
                 except Exception:
                     self.logger.warning(
                         "failed to attach ROI tracker to cognition_layer",
+                        exc_info=True,
+                        extra={"cognition_layer": type(cognition_layer).__name__},
+                    )
+            if getattr(cognition_layer, "context_builder", None) is None:
+                try:
+                    cognition_layer.context_builder = self.context_builder  # type: ignore[attr-defined]
+                except Exception:
+                    self.logger.warning(
+                        "failed to attach context builder to cognition_layer",
                         exc_info=True,
                         extra={"cognition_layer": type(cognition_layer).__name__},
                     )
@@ -500,6 +539,7 @@ class SelfCodingEngine:
         # expose ROI tracker to the prompt engine so retrieved examples can
         # carry risk-adjusted ROI hints when available
         self.prompt_engine = PromptEngine(
+            context_builder=self.context_builder,
             roi_tracker=tracker,
             tone=prompt_tone,
             trainer=self.prompt_memory,
@@ -1199,13 +1239,15 @@ class SelfCodingEngine:
 
         if not self.llm_client or not self.prompt_engine:
             return _fallback()
-        if metadata is None:
-            builder = getattr(self, "context_builder", None)
-            if builder:
-                try:
-                    metadata = {"retrieval_context": builder.build_context(description)}
-                except Exception:
-                    metadata = None
+        if metadata is None and self.context_builder is not None:
+            try:
+                metadata = {
+                    "retrieval_context": self.context_builder.build_context(
+                        description
+                    )
+                }
+            except Exception:
+                metadata = None
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         context_block = "\n".join([p for p in (context, repo_layout) if p])
         module_name = path_for_prompt(path) if path else "generate_helper"
@@ -2777,7 +2819,7 @@ class SelfCodingEngine:
         """Return retrieval metadata incorporating failure details."""
 
         meta: Dict[str, Any] = {}
-        builder = getattr(self.cognition_layer, "context_builder", None)
+        builder = self.context_builder
         failure_obj = None
         exclude: List[str] | None = None
         if report is not None:
