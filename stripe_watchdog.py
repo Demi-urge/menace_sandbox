@@ -48,6 +48,8 @@ import gzip
 import shutil
 import types
 
+logger = logging.getLogger(__name__)
+
 try:  # pragma: no cover - best effort to import sanity layer
     import menace_sanity_layer
     from menace_sanity_layer import (
@@ -56,6 +58,9 @@ try:  # pragma: no cover - best effort to import sanity layer
         record_event,
     )
 except Exception:  # pragma: no cover - fallback stubs if import fails
+    logger.warning(
+        "menace_sanity_layer import failed; using no-op stubs for feedback"
+    )
     menace_sanity_layer = types.SimpleNamespace(
         record_payment_anomaly=lambda *a, **k: None,
         EVENT_TYPE_INSTRUCTIONS={},
@@ -64,12 +69,27 @@ except Exception:  # pragma: no cover - fallback stubs if import fails
 
     def record_billing_anomaly(*_a, **_k):  # noqa: D401 - simple stub
         """Fallback stub when menace_sanity_layer is unavailable."""
+        if not getattr(record_billing_anomaly, "_warned", False):
+            logger.warning(
+                "record_billing_anomaly stub invoked; menace_sanity_layer missing"
+            )
+            record_billing_anomaly._warned = True
 
     def record_billing_event(*_a, **_k):  # noqa: D401 - simple stub
         """Fallback stub when menace_sanity_layer is unavailable."""
+        if not getattr(record_billing_event, "_warned", False):
+            logger.warning(
+                "record_billing_event stub invoked; menace_sanity_layer missing"
+            )
+            record_billing_event._warned = True
 
     def record_event(*_a, **_k):  # noqa: D401 - simple stub
         """Fallback stub when menace_sanity_layer is unavailable."""
+        if not getattr(record_event, "_warned", False):
+            logger.warning(
+                "record_event stub invoked; menace_sanity_layer missing"
+            )
+            record_event._warned = True
 
 try:  # Optional dependency – Stripe API client
     import stripe  # type: ignore
@@ -127,8 +147,6 @@ try:  # Optional dependency – telemetry feedback loop
 except Exception:  # pragma: no cover - best effort
     TelemetryFeedback = None  # type: ignore
     ErrorLogger = None  # type: ignore
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
