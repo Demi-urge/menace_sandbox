@@ -93,6 +93,7 @@ def test_multi_node_auto_rollback(tmp_path, monkeypatch):
         bot_name="A",
         rollback_mgr=rb,
         delta_tracker=tracker_a,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
     )
     eng_b = sce.SelfCodingEngine(
         cd.CodeDB(tmp_path / "c.db"),
@@ -101,6 +102,7 @@ def test_multi_node_auto_rollback(tmp_path, monkeypatch):
         bot_name="B",
         rollback_mgr=rb,
         delta_tracker=tracker_b,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
     )
 
     for eng in (eng_a, eng_b):

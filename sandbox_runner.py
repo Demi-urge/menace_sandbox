@@ -936,19 +936,6 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 logger.info("using VisualAgentClientStub due to failure")
             except Exception:
                 va_client = None
-    engine = SelfCodingEngine(
-        CodeDB(),
-        MenaceMemoryManager(),
-        llm_client=va_client,
-        patch_suggestion_db=suggestion_db,
-        gpt_memory=gpt_memory,
-    )
-    from menace.self_coding_manager import SelfCodingManager
-    from menace.model_automation_pipeline import ModelAutomationPipeline
-
-    quick_manager = SelfCodingManager(
-        engine, ModelAutomationPipeline(), bot_name="menace"
-    )
     context_builder = ContextBuilder(
         bot_db="bots.db",
         code_db="code.db",
@@ -956,6 +943,20 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         workflow_db="workflows.db",
     )
     context_builder.refresh_db_weights()
+    engine = SelfCodingEngine(
+        CodeDB(),
+        MenaceMemoryManager(),
+        llm_client=va_client,
+        patch_suggestion_db=suggestion_db,
+        gpt_memory=gpt_memory,
+        context_builder=context_builder,
+    )
+    from menace.self_coding_manager import SelfCodingManager
+    from menace.model_automation_pipeline import ModelAutomationPipeline
+
+    quick_manager = SelfCodingManager(
+        engine, ModelAutomationPipeline(), bot_name="menace"
+    )
     quick_fix_engine = QuickFixEngine(
         telem_db, quick_manager, graph=graph, context_builder=context_builder
     )

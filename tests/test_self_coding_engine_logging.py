@@ -121,6 +121,7 @@ def test_roi_tracker_logging(caplog):
         DummyMemory(),
         patch_logger=BadPatchLogger(),
         cognition_layer=BadCognitionLayer(),
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
     )
     messages = [record.message for record in caplog.records]
     assert any("patch_logger" in m for m in messages)
@@ -134,6 +135,7 @@ def test_knowledge_service_logging(monkeypatch, caplog):
         DummyMemory(),
         knowledge_service=object(),
         llm_client=llm,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
     )
     monkeypatch.setattr(sce, "get_feedback", lambda *a, **k: [])
     monkeypatch.setattr(sce, "get_error_fixes", lambda *a, **k: [])
@@ -161,7 +163,12 @@ def test_knowledge_service_logging(monkeypatch, caplog):
 
 def test_tempfile_cleanup_logging(monkeypatch, caplog, tmp_path):
     llm = types.SimpleNamespace(gpt_memory=None)
-    engine = SelfCodingEngine(object(), DummyMemory(), llm_client=llm)
+    engine = SelfCodingEngine(
+        object(),
+        DummyMemory(),
+        llm_client=llm,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+    )
 
     class Verifier:
         def verify(self, path):

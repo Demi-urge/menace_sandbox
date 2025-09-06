@@ -76,6 +76,8 @@ dec_mod.log_and_measure = log_and_measure
 sys.modules.setdefault("vector_service.decorators", dec_mod)
 sys.modules.setdefault("vector_service", vec_mod)
 
+builder = types.SimpleNamespace(build_context=lambda *a, **k: {})
+
 from vector_service import VectorServiceError
 
 sys.modules.setdefault("bot_database", types.SimpleNamespace(BotDB=object))
@@ -265,6 +267,7 @@ def test_apply_patch_reverts_on_complexity(tmp_path, monkeypatch):
         data_bot=data_bot,
         patch_db=patch_db,
         delta_tracker=tracker,
+        context_builder=builder,
     )
 
     class OkVerifier:
@@ -319,6 +322,7 @@ def test_apply_patch_verifier_failure(tmp_path, monkeypatch):
         data_bot=data_bot,
         patch_db=patch_db,
         formal_verifier=DummyVerifier(),
+        context_builder=builder,
     )
 
     called = {}
@@ -347,7 +351,7 @@ def test_apply_patch_verifier_failure(tmp_path, monkeypatch):
 def test_sync_git_called_on_success(tmp_path, monkeypatch):
     patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
     mem = mm.MenaceMemoryManager(tmp_path / "mem.db")
-    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, patch_db=patch_db)
+    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, patch_db=patch_db, context_builder=builder)
 
     class OkVerifier:
         def verify(self, path: Path) -> bool:
@@ -382,14 +386,14 @@ def test_sync_git_called_on_success(tmp_path, monkeypatch):
 
 def test_formal_verifier_default(tmp_path):
     mem = mm.MenaceMemoryManager(tmp_path / "m.db")
-    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem)
+    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, context_builder=builder)
     assert engine.formal_verifier is not None
 
 
 def test_rollback_patch(tmp_path, monkeypatch):
     patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
     mem = mm.MenaceMemoryManager(tmp_path / "mem.db")
-    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, patch_db=patch_db)
+    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, patch_db=patch_db, context_builder=builder)
 
     class OkVerifier:
         def verify(self, path: Path) -> bool:
@@ -418,7 +422,7 @@ def test_rollback_patch(tmp_path, monkeypatch):
 
 def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     mem = mm.MenaceMemoryManager(tmp_path / "m.db")
-    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem)
+    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, context_builder=builder)
 
     context = {"errors": [{"id": 1, "snippet": "oops", "note": "test"}]}
     engine.context_builder = types.SimpleNamespace(build_context=lambda m: context)
@@ -437,6 +441,14 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     assert "def auto_test" in code
 
 
+def test_generate_helper_requires_context_builder(tmp_path):
+    mem = mm.MenaceMemoryManager(tmp_path / "m.db")
+    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, context_builder=builder)
+    engine.context_builder = None
+    with pytest.raises(RuntimeError):
+        engine.generate_helper("demo task")
+
+
 def test_patch_logger_vector_service_error(tmp_path):
     mem = mm.MenaceMemoryManager(tmp_path / "m.db")
 
@@ -448,6 +460,7 @@ def test_patch_logger_vector_service_error(tmp_path):
         cd.CodeDB(tmp_path / "c.db"),
         mem,
         patch_logger=BoomLogger(),
+        context_builder=builder,
     )
 
     # Should not raise despite logger failure

@@ -48,7 +48,11 @@ class DummyFP:
 def _build_engine(monkeypatch, tmp_path, similar_return, skip: bool = False):
     patch_db = DummyPatchDB(tmp_path / "ph.db")
     engine = sce.SelfCodingEngine(
-        code_db=object(), memory_mgr=object(), patch_db=patch_db, skip_retry_on_similarity=skip
+        code_db=object(),
+        memory_mgr=object(),
+        patch_db=patch_db,
+        skip_retry_on_similarity=skip,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
     )
     records: list[dict] = []
     engine.audit_trail = types.SimpleNamespace(record=lambda payload: records.append(payload))

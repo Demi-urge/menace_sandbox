@@ -36,6 +36,7 @@ SelfDebuggerSandbox = None  # type: ignore
 from menace.code_database import CodeDB  # noqa: E402
 from menace.menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from menace.self_coding_engine import SelfCodingEngine  # noqa: E402
+from vector_service.context_builder import ContextBuilder  # noqa: E402
 from menace.error_bot import ErrorDB  # noqa: E402
 from menace.error_logger import ErrorLogger  # noqa: E402
 from menace.knowledge_graph import KnowledgeGraph  # noqa: E402
@@ -102,7 +103,11 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
     except TypeError:
         code_db = CodeDB()
     memory_mgr = MenaceMemoryManager()
-    engine = SelfCodingEngine(code_db, memory_mgr)
+    builder = ContextBuilder(
+        bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+    )
+    builder.refresh_db_weights()
+    engine = SelfCodingEngine(code_db, memory_mgr, context_builder=builder)
     error_db = ErrorDB(router=GLOBAL_ROUTER)
     tester = BotTestingBot()
     # instantiate telemetry logger for completeness

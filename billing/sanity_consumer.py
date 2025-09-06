@@ -17,6 +17,7 @@ from typing import Any, Dict
 from unified_event_bus import UnifiedEventBus
 from sanity_feedback import SanityFeedback
 from self_coding_engine import SelfCodingEngine
+from vector_service.context_builder import ContextBuilder
 import menace_sanity_layer
 from dynamic_path_router import resolve_path
 
@@ -72,7 +73,11 @@ class SanityConsumer:
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("failed to initialise MenaceMemoryManager")
                     memory_mgr = object()
-                self._engine = SelfCodingEngine(code_db, memory_mgr)
+            builder = ContextBuilder(
+                bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+            )
+            builder.refresh_db_weights()
+            self._engine = SelfCodingEngine(code_db, memory_mgr, context_builder=builder)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise SelfCodingEngine")
                 raise

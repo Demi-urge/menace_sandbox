@@ -417,10 +417,17 @@ class Watchdog:
         try:
             from .automated_debugger import AutomatedDebugger
             from .self_coding_engine import SelfCodingEngine
+            from vector_service.context_builder import ContextBuilder
             from .code_database import CodeDB
             from .menace_memory_manager import MenaceMemoryManager
 
-            engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+            builder = ContextBuilder(
+                bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+            )
+            builder.refresh_db_weights()
+            engine = SelfCodingEngine(
+                CodeDB(), MenaceMemoryManager(), context_builder=builder
+            )
             dbg = AutomatedDebugger(_Proxy(self.error_db), engine)
             dbg.analyse_and_fix()
             if self.event_bus:

@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import yaml
+from vector_service.context_builder import ContextBuilder
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -7138,8 +7139,13 @@ def run_repo_section_simulations(
             for module, sec_map in sections.items():
                 tmp_dir = tempfile.mkdtemp(prefix="section_")
                 shutil.copytree(repo_path, tmp_dir, dirs_exist_ok=True)
+                builder = ContextBuilder(
+                    bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+                )
+                builder.refresh_db_weights()
                 debugger = SelfDebuggerSandbox(
-                    object(), SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+                    object(),
+                    SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder),
                 )
                 try:
                     for sec_name, lines in sec_map.items():
@@ -8298,8 +8304,13 @@ def run_workflow_simulations(
         for wf in workflows:
             for step in wf.workflow:
                 snippet = _wf_snippet([step])
+                builder = ContextBuilder(
+                    bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+                )
+                builder.refresh_db_weights()
                 debugger = SelfDebuggerSandbox(
-                    object(), SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+                    object(),
+                    SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder),
                 )
                 mod_name = _module_from_step(step)
                 for preset in all_presets:

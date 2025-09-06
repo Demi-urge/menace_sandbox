@@ -11,7 +11,12 @@ sce = setup.sce
 
 
 def _make_engine(tmp_path):
-    eng = sce.SelfCodingEngine(code_db=object(), memory_mgr=object(), patch_db=None)
+    eng = sce.SelfCodingEngine(
+        code_db=object(),
+        memory_mgr=object(),
+        patch_db=None,
+        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+    )
     eng._build_retry_context = lambda desc, rep: {}
     eng._run_ci = lambda path=None: None
     eng._failure_cache = types.SimpleNamespace(seen=lambda t: False, add=lambda f: None)

@@ -422,11 +422,16 @@ def deploy_patch(path: Path, description: str) -> None:
     rb = AutomatedRollbackManager()
     policy = PatchApprovalPolicy(rollback_mgr=rb)
     from menace.self_coding_engine import SelfCodingEngine
+    from vector_service.context_builder import ContextBuilder
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
     from menace.model_automation_pipeline import ModelAutomationPipeline
 
-    engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+    builder = ContextBuilder(
+        bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+    )
+    builder.refresh_db_weights()
+    engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder)
     manager = SelfCodingManager(
         engine, ModelAutomationPipeline(), approval_policy=policy
     )

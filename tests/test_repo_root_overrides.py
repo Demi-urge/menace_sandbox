@@ -84,7 +84,7 @@ def test_self_coding_engine_respects_menace_root(tmp_path, monkeypatch):
 
     class Dummy: ...
 
-    eng = sce.SelfCodingEngine(Dummy(), Dummy())
+    eng = sce.SelfCodingEngine(Dummy(), Dummy(), context_builder=types.SimpleNamespace())
     eng.failure_similarity_tracker.update(similarity=0.5)
     eng._save_state()
 
