@@ -26,6 +26,7 @@ class AutomatedReviewer:
         self,
         bot_db: "BotDB" | None = None,
         escalation_manager: "AutoEscalationManager" | None = None,
+        context_builder: "ContextBuilder" | None = None,
     ) -> None:
         if bot_db is None:
             from .bot_database import BotDB
@@ -40,7 +41,7 @@ class AutomatedReviewer:
         self.logger = logging.getLogger(self.__class__.__name__)
         if CognitionLayer is not None and ContextBuilder is not None:
             try:
-                builder = ContextBuilder()
+                builder = context_builder or ContextBuilder()
                 self.cognition_layer = CognitionLayer(context_builder=builder)
             except Exception:  # pragma: no cover - optional dependency failed
                 self.cognition_layer = None
