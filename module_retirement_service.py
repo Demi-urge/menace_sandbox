@@ -34,6 +34,12 @@ class ModuleRetirementService:
         except Exception:  # pragma: no cover - dependency graph failures
             self._graph = None
             self.logger.exception("failed to build import graph")
+        # Reuse a single builder instance across operations for efficiency.
+        self._context_builder = ContextBuilder() if ContextBuilder else None
+        if self._context_builder is None:
+            self.logger.warning(
+                "ContextBuilder unavailable; operating without vector context"
+            )
 
     # ------------------------------------------------------------------
     def _normalise(self, module: str) -> str:
@@ -90,12 +96,9 @@ class ModuleRetirementService:
             self.logger.error("module not found: %s", module)
             return False
         try:
-            builder = ContextBuilder() if ContextBuilder else None
-            if builder is None:
-                self.logger.warning(
-                    "ContextBuilder unavailable; compressing without vector context"
-                )
-            patch_id = generate_patch(str(path), context_builder=builder)
+            patch_id = generate_patch(
+                str(path), context_builder=self._context_builder
+            )
             if patch_id is not None:
                 compressed_modules_total.inc()
                 try:
@@ -124,12 +127,9 @@ class ModuleRetirementService:
             self.logger.error("module not found: %s", module)
             return False
         try:
-            builder = ContextBuilder() if ContextBuilder else None
-            if builder is None:
-                self.logger.warning(
-                    "ContextBuilder unavailable; replacing without vector context"
-                )
-            patch_id = generate_patch(str(path), context_builder=builder)
+            patch_id = generate_patch(
+                str(path), context_builder=self._context_builder
+            )
             if patch_id is not None:
                 replaced_modules_total.inc()
                 self.logger.info(

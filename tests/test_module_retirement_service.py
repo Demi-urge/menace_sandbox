@@ -2,7 +2,7 @@ import sys
 import types
 
 fake_qfe = types.ModuleType("quick_fix_engine")
-fake_qfe.generate_patch = lambda path: 1
+fake_qfe.generate_patch = lambda path, context_builder=None: 1
 sys.modules["quick_fix_engine"] = fake_qfe
 
 import module_retirement_service
