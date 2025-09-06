@@ -38,16 +38,25 @@ class AutoEscalationManager:
         publish_attempts: int = 1,
     ) -> None:
         self.healer = healer or SelfHealingOrchestrator(KnowledgeGraph())
+
+        # A context builder is created for use by the debugger and exposed so
+        # other components can reuse it if needed.
+        self.context_builder = get_default_context_builder()
+        self.context_builder.refresh_db_weights()
+
         if debugger is None:
             gpt_mem = init_local_knowledge(
                 os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
             ).memory
-            builder = get_default_context_builder()
-            builder.refresh_db_weights()
             engine = SelfCodingEngine(
-                CodeDB(), gpt_mem, event_bus=event_bus, context_builder=builder
+                CodeDB(),
+                gpt_mem,
+                event_bus=event_bus,
+                context_builder=self.context_builder,
             )
-            debugger = AutomatedDebugger(ErrorDB(), engine, context_builder=builder)
+            debugger = AutomatedDebugger(
+                ErrorDB(), engine, context_builder=self.context_builder
+            )
         self.debugger = debugger
         self.rollback_mgr = rollback_mgr
         self.event_bus = event_bus
