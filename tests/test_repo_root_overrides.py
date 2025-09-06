@@ -1,9 +1,15 @@
 import importlib
+import importlib
 import sys
 import types
 from pathlib import Path
 
 import pytest
+
+
+class ContextBuilder:
+    def build_context(self, *a, **k):
+        return {}
 
 
 def test_environment_respects_sandbox_repo_path(tmp_path, monkeypatch):
@@ -20,6 +26,7 @@ def test_environment_respects_sandbox_repo_path(tmp_path, monkeypatch):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
 
     import dynamic_path_router as dpr
+    dpr = importlib.reload(dpr)
     dpr.clear_cache()
 
     records = []
@@ -78,13 +85,14 @@ def test_self_coding_engine_respects_menace_root(tmp_path, monkeypatch):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data))
 
     import dynamic_path_router as dpr
+    dpr = importlib.reload(dpr)
     dpr.clear_cache()
 
     sce = importlib.reload(importlib.import_module("self_coding_engine"))
 
     class Dummy: ...
 
-    eng = sce.SelfCodingEngine(Dummy(), Dummy(), context_builder=types.SimpleNamespace())
+    eng = sce.SelfCodingEngine(Dummy(), Dummy(), context_builder=ContextBuilder())
     eng.failure_similarity_tracker.update(similarity=0.5)
     eng._save_state()
 
@@ -102,6 +110,7 @@ def test_cli_resolves_paths_under_repo(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
 
     import dynamic_path_router as dpr
+    dpr = importlib.reload(dpr)
     dpr.clear_cache()
 
     cli = importlib.reload(importlib.import_module("sandbox_runner.cli"))

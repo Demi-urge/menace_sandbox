@@ -303,7 +303,7 @@ def test_context_builder_shared(monkeypatch):
             return types.SimpleNamespace(text="ok")
 
     client = DummyClient()
-    builder = DummyBuilder()
+    builder = sce.ContextBuilder()
     engine = sce.SelfCodingEngine(
         code_db,
         object(),

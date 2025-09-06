@@ -9,10 +9,14 @@ from dynamic_path_router import resolve_path
 from menace.self_coding_engine import SelfCodingEngine
 from menace.code_database import CodeDB
 from menace.menace_memory_manager import MenaceMemoryManager
+from vector_service.context_builder import ContextBuilder
 
+builder = ContextBuilder()
+builder.refresh_db_weights()
 engine = SelfCodingEngine(
     CodeDB(resolve_path('code.db')),
     MenaceMemoryManager(resolve_path('mem.db')),
+    context_builder=builder,
 )
 engine.apply_patch(resolve_path('utils.py'), 'normalize text')
 ```
@@ -45,11 +49,15 @@ recorded so future patches can reuse relevant context.
 
 ```python
 from gpt_memory import GPTMemoryManager
+from vector_service.context_builder import ContextBuilder
 
+builder = ContextBuilder()
+builder.refresh_db_weights()
 engine = SelfCodingEngine(
     CodeDB("code.db"),
     MenaceMemoryManager("mem.db"),
     gpt_memory=GPTMemoryManager("helpers.db"),
+    context_builder=builder,
 )
 engine.gpt_memory.log_interaction("write sort helper", "generated code", tags=["bugfix"])
 ```
