@@ -367,14 +367,7 @@ class QuickFixEngine:
         self.retriever = retriever
         logger = logging.getLogger(self.__class__.__name__)
         if context_builder is None:
-            if retriever is not None:
-                try:
-                    context_builder = ContextBuilder(retriever=retriever)
-                except Exception as exc:
-                    logger.warning("context builder instantiation failed: %s", exc)
-                    context_builder = None
-            else:
-                logger.warning("vector_service retriever unavailable; context builder disabled")
+            context_builder = ContextBuilder(retriever=retriever)
         self.context_builder = context_builder
         if patch_logger is None:
             try:
@@ -469,16 +462,15 @@ class QuickFixEngine:
         context_meta = {"error_type": etype, "module": prompt_path, "bot": bot}
         builder = self.context_builder
         ctx_block = ""
-        if builder is not None:
-            cb_session = uuid.uuid4().hex
-            context_meta["context_session_id"] = cb_session
-            try:
-                query = f"{etype} in {prompt_path}"
-                ctx_block = builder.build(query, session_id=cb_session)
-                if isinstance(ctx_block, (FallbackResult, ErrorResult)):
-                    ctx_block = ""
-            except Exception:
+        cb_session = uuid.uuid4().hex
+        context_meta["context_session_id"] = cb_session
+        try:
+            query = f"{etype} in {prompt_path}"
+            ctx_block = builder.build(query, session_id=cb_session)
+            if isinstance(ctx_block, (FallbackResult, ErrorResult)):
                 ctx_block = ""
+        except Exception:
+            ctx_block = ""
         desc = f"quick fix {etype}"
         if ctx_block:
             desc += "\n\n" + ctx_block
@@ -572,16 +564,15 @@ class QuickFixEngine:
             meta = {"module": prompt_path, "reason": "preemptive_patch"}
             builder = self.context_builder
             ctx = ""
-            if builder is not None:
-                cb_session = uuid.uuid4().hex
-                meta["context_session_id"] = cb_session
-                try:
-                    query = f"preemptive patch {prompt_path}"
-                    ctx = builder.build(query, session_id=cb_session)
-                    if isinstance(ctx, (FallbackResult, ErrorResult)):
-                        ctx = ""
-                except Exception:
+            cb_session = uuid.uuid4().hex
+            meta["context_session_id"] = cb_session
+            try:
+                query = f"preemptive patch {prompt_path}"
+                ctx = builder.build(query, session_id=cb_session)
+                if isinstance(ctx, (FallbackResult, ErrorResult)):
                     ctx = ""
+            except Exception:
+                ctx = ""
             desc = "preemptive_patch"
             if ctx:
                 desc += "\n\n" + ctx

@@ -66,8 +66,18 @@ kg.KnowledgeGraph = object
 sys.modules["menace.knowledge_graph"] = kg
 
 # Minimal vector_service stubs
+
+
+class _DummyContextBuilder:
+    def __init__(self, *a, retriever=None, **k):
+        self.retriever = retriever
+
+    def build(self, *a, **k):
+        return ""
+
+
 vec = types.SimpleNamespace(
-    ContextBuilder=object,
+    ContextBuilder=_DummyContextBuilder,
     Retriever=object,
     FallbackResult=list,
     EmbeddingBackfill=object,
@@ -424,3 +434,39 @@ def test_generate_patch_builds_context_when_builder_none(tmp_path, monkeypatch):
     desc = captured.get("desc", "")
     for lbl in ["bots_ctx", "code_ctx", "errors_ctx", "workflows_ctx"]:
         assert lbl in desc
+
+
+def test_init_auto_builds_context_builder(tmp_path, monkeypatch):
+    class BuildCapturingBuilder:
+        def __init__(self, *a, retriever=None, **k):
+            self.retriever = retriever
+            self.calls = []
+
+        def build(self, query, session_id=None, **kw):
+            self.calls.append((query, session_id))
+            return ""
+
+    monkeypatch.setattr(quick_fix, "ContextBuilder", BuildCapturingBuilder)
+
+    class Retriever:
+        pass
+
+    retriever = Retriever()
+    engine = QuickFixEngine(
+        error_db=DummyErrorDB(),
+        manager=DummyManager(),
+        threshold=1,
+        graph=DummyGraph(),
+        retriever=retriever,
+    )
+    assert isinstance(engine.context_builder, BuildCapturingBuilder)
+    assert engine.context_builder.retriever is retriever
+
+    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
+    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
+    engine.run("bot")
+    assert engine.context_builder.calls
