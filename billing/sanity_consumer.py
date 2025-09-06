@@ -62,6 +62,7 @@ class SanityConsumer:
         self._engine: SelfCodingEngine | None = engine
         self._feedback: SanityFeedback | None = None
         self._outcome_db = DiscrepancyDB() if DiscrepancyDB is not None else None
+        self._context_builder = None
 
     # ------------------------------------------------------------------
     def _get_engine(self) -> SelfCodingEngine:
@@ -79,9 +80,12 @@ class SanityConsumer:
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("failed to initialise MenaceMemoryManager")
                     memory_mgr = object()
-            builder = get_default_context_builder()
-            builder.refresh_db_weights()
-            self._engine = SelfCodingEngine(code_db, memory_mgr, context_builder=builder)
+                builder = get_default_context_builder()
+                builder.refresh_db_weights()
+                self._context_builder = builder
+                self._engine = SelfCodingEngine(
+                    code_db, memory_mgr, context_builder=builder
+                )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise SelfCodingEngine")
                 raise
@@ -89,7 +93,12 @@ class SanityConsumer:
 
     def _get_feedback(self) -> SanityFeedback:
         if self._feedback is None:
-            self._feedback = SanityFeedback(self._get_engine(), outcome_db=self._outcome_db)
+            self._feedback = SanityFeedback(
+                self._get_engine(), outcome_db=self._outcome_db
+            )
+            if self._context_builder is not None:
+                # Share builder so feedback analysers can inspect engine context
+                setattr(self._feedback, "context_builder", self._context_builder)
         return self._feedback
 
     # ------------------------------------------------------------------
