@@ -189,6 +189,16 @@ def test_record_event_logs_instruction_and_tags(monkeypatch):
             {"charge_id": "ch_unauth"},
             {"block_unauthorized_charges": True},
         ),
+        (
+            "unauthorized_refund",
+            {"refund_id": "re_unauth"},
+            {"block_unauthorized_refunds": True},
+        ),
+        (
+            "unauthorized_failure",
+            {"event_id": "evt_unauth"},
+            {"block_unauthorized_failures": True},
+        ),
     ],
 )
 def test_repeated_anomalies_trigger_param_update(event_type, metadata, hint, monkeypatch):

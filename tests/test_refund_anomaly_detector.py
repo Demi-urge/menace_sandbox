@@ -84,12 +84,16 @@ def test_detects_unlogged_and_unauthorized(tmp_path, monkeypatch):
     assert {a["id"] for a in anomalies} == {"evt_unlogged", "evt_unauth"}
     assert {e["id"] for e in logged} == {"evt_unlogged", "evt_unauth"}
 
-    assert {a[0][0] for a in payment_calls} == {"unlogged", "unauthorized"}
+    assert {a[0][0] for a in payment_calls} == {"missing_refund", "unauthorized_failure"}
     assert {
-        a[0][1]["stripe_event_id"] for a in payment_calls if a[0][0] == "unlogged"
+        a[0][1]["stripe_event_id"]
+        for a in payment_calls
+        if a[0][0] == "missing_refund"
     } == {"evt_unlogged"}
     assert {
-        a[0][1]["stripe_event_id"] for a in payment_calls if a[0][0] == "unauthorized"
+        a[0][1]["stripe_event_id"]
+        for a in payment_calls
+        if a[0][0] == "unauthorized_failure"
     } == {"evt_unauth"}
 
     assert {a[0][0] for a in billing_calls} == {"refund_anomaly", "payment_failure"}

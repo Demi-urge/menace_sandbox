@@ -149,7 +149,7 @@ def detect_anomalies(
                 {"id": event.id, "bot_id": bot_id, "reason": "unauthorized"}
             )
             record_payment_anomaly(
-                "unauthorized",
+                f"unauthorized_{action}",
                 {
                     "stripe_event_id": event.id,
                     "stripe_object_id": obj.get("id"),
@@ -202,7 +202,7 @@ def detect_anomalies(
             )
             anomalies.append({"id": event.id, "bot_id": bot_id, "reason": "unlogged"})
             record_payment_anomaly(
-                "unlogged",
+                "missing_refund" if action == "refund" else "missing_failure_log",
                 {
                     "stripe_event_id": event.id,
                     "stripe_object_id": obj.get("id"),

@@ -72,6 +72,11 @@ similar issues in the future.  These snippets are stored in GPT memory and can
 be retrieved via :func:`fetch_recent_billing_issues` to bias subsequent code
 generation.
 
+Event types use a unified naming scheme. Unauthorized Stripe activity
+is reported as `unauthorized_charge`, `unauthorized_refund`, or
+`unauthorized_failure`. Unlogged events continue to use
+`missing_charge`, `missing_refund`, and `missing_failure_log`.
+
 ## Improving Future Generations
 
 When the Stripe watchdog or other monitors detect a billing issue they emit an

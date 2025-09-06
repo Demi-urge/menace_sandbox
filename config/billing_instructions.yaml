@@ -8,6 +8,8 @@ instructions:
   revenue_mismatch: Avoid revenue figures that diverge from ledger or ROI projections.
   account_mismatch: Avoid routing charges to unexpected Stripe accounts.
   unauthorized_charge: Avoid processing Stripe charges without explicit authorization.
+  unauthorized_refund: Avoid issuing Stripe refunds without explicit authorization.
+  unauthorized_failure: Avoid processing Stripe payment failures without explicit authorization.
 anomaly_hints:
   missing_charge:
     block_unlogged_charges: true
@@ -27,6 +29,10 @@ anomaly_hints:
     verify_stripe_account: true
   unauthorized_charge:
     block_unauthorized_charges: true
+  unauthorized_refund:
+    block_unauthorized_refunds: true
+  unauthorized_failure:
+    block_unauthorized_failures: true
 severity_map:
   missing_charge: 2.5
   missing_refund: 2.0
@@ -37,6 +43,8 @@ severity_map:
   revenue_mismatch: 4.0
   account_mismatch: 3.0
   unauthorized_charge: 3.5
+  unauthorized_refund: 3.5
+  unauthorized_failure: 3.0
 anomaly_thresholds:
   account_mismatch: 3
   unauthorized_charge: 5

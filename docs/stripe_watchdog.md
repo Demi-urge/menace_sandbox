@@ -86,5 +86,11 @@ Each anomaly is logged with the instruction:
 Avoid generating bots that make Stripe charges without proper logging or central routing.
 ```
 
+Event types follow a unified naming scheme. For example,
+unauthorized Stripe activity is recorded as `unauthorized_charge`,
+`unauthorized_refund`, or `unauthorized_failure` depending on the
+operation. Missing ledger entries continue to use `missing_charge`,
+`missing_refund`, and `missing_failure_log`.
+
 Use the `write_codex` and `export_training` flags to control whether anomalies
 are exported as Codex samples or appended to the training dataset.
