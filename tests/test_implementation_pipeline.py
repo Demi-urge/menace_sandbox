@@ -55,6 +55,7 @@ vec_stub.ContextBuilder = _CB
 vec_stub.FallbackResult = type("FallbackResult", (), {})
 vec_stub.ErrorResult = type("ErrorResult", (), {})
 vec_stub.EmbeddableDBMixin = object
+vec_stub.CognitionLayer = object
 sys.modules.setdefault("vector_service", vec_stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
@@ -98,10 +99,12 @@ def _fake_subprocess(monkeypatch):
 
 
 def test_pipeline_runs(tmp_path):
+    builder = _ctx_builder()
     handoff = thb.TaskHandoffBot()
     optimiser = iob.ImplementationOptimiserBot()
-    developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
+    developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     pipeline = ip.ImplementationPipeline(
+        builder,
         handoff=handoff,
         optimiser=optimiser,
         developer=developer,
@@ -136,8 +139,8 @@ def test_pipeline_runs(tmp_path):
 
 def test_prompt_contains_docstrings(tmp_path):
     class CaptureDevBot(bdb.BotDevelopmentBot):
-        def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, context_builder=_ctx_builder())
+        def __init__(self, repo_base: Path, builder) -> None:  # type: ignore[override]
+            super().__init__(repo_base=repo_base, context_builder=builder)
             self.prompts: list[str] = []
 
         def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
@@ -168,10 +171,12 @@ def run():
 '''
 
     desc, docs = _extract(code)
+    builder = _ctx_builder()
     handoff = thb.TaskHandoffBot()
     optimiser = iob.ImplementationOptimiserBot()
-    developer = CaptureDevBot(repo_base=tmp_path)
+    developer = CaptureDevBot(repo_base=tmp_path, builder=builder)
     pipeline = ip.ImplementationPipeline(
+        builder,
         handoff=handoff,
         optimiser=optimiser,
         developer=developer,
@@ -200,8 +205,8 @@ def run():
 
 def test_prompt_includes_guideline_sections(tmp_path):
     class CaptureDevBot(bdb.BotDevelopmentBot):
-        def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, context_builder=_ctx_builder())
+        def __init__(self, repo_base: Path, builder) -> None:  # type: ignore[override]
+            super().__init__(repo_base=repo_base, context_builder=builder)
             self.prompt = ""
 
         def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
@@ -212,8 +217,9 @@ def test_prompt_includes_guideline_sections(tmp_path):
             self._write_meta(repo_dir, spec)
             return file_path
 
-    developer = CaptureDevBot(repo_base=tmp_path)
-    pipeline = ip.ImplementationPipeline(developer=developer)
+    builder = _ctx_builder()
+    developer = CaptureDevBot(repo_base=tmp_path, builder=builder)
+    pipeline = ip.ImplementationPipeline(builder, developer=developer)
 
     tasks = [
         thb.TaskInfo(
@@ -260,11 +266,13 @@ def test_retry_handoff_and_plan_generation(tmp_path):
                 graph=types.SimpleNamespace(),
             )
 
+    builder = _ctx_builder()
     handoff = DummyHandoff()
     optimiser = iob.ImplementationOptimiserBot()
-    developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
+    developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     ipo = DummyIPO()
     pipeline = ip.ImplementationPipeline(
+        builder,
         handoff=handoff,
         optimiser=optimiser,
         developer=developer,
@@ -289,10 +297,12 @@ def test_handoff_fails_after_two_network_errors(tmp_path):
             if len(self.calls) >= 2:
                 raise RuntimeError("network down")
 
+    builder = _ctx_builder()
     handoff = FailingHandoff()
     optimiser = iob.ImplementationOptimiserBot()
-    developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
+    developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     pipeline = ip.ImplementationPipeline(
+        builder,
         handoff=handoff,
         optimiser=optimiser,
         developer=developer,
@@ -354,11 +364,13 @@ def test_researcher_invoked_for_missing_info(tmp_path):
             self._write_meta(repo_dir, spec)
             return file_path
 
+    builder = _ctx_builder()
     handoff = DummyHandoff()
     optimiser = DummyOptimiser()
     researcher = DummyResearcher(optimiser)
-    developer = MiniDev(repo_base=tmp_path, context_builder=_ctx_builder())
+    developer = MiniDev(repo_base=tmp_path, context_builder=builder)
     pipeline = ip.ImplementationPipeline(
+        builder,
         handoff=handoff,
         optimiser=optimiser,
         developer=developer,
@@ -385,14 +397,15 @@ def test_pipeline_surfaces_openai_errors(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(bdb, "Repo", None)
 
     class FallbackDev(bdb.BotDevelopmentBot):
-        def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, openai_attempts=2, context_builder=_ctx_builder())
+        def __init__(self, repo_base: Path, builder) -> None:  # type: ignore[override]
+            super().__init__(repo_base=repo_base, openai_attempts=2, context_builder=builder)
 
         def _visual_build(self, prompt: str) -> bool:  # type: ignore[override]
             return False
 
-    developer = FallbackDev(repo_base=tmp_path)
-    pipeline = ip.ImplementationPipeline(developer=developer)
+    builder = _ctx_builder()
+    developer = FallbackDev(repo_base=tmp_path, builder=builder)
+    pipeline = ip.ImplementationPipeline(builder, developer=developer)
     tasks = [
         thb.TaskInfo(
             name="FailBot",
@@ -458,9 +471,9 @@ def test_pipeline_uses_local_context_builder(tmp_path, monkeypatch):
             pass
 
     pipeline = ip.ImplementationPipeline(
+        pipeline_builder,
         handoff=DummyHandoff(),
         developer=developer,
-        context_builder=pipeline_builder,
     )
 
     tasks = [
@@ -493,14 +506,15 @@ def test_pipeline_openai_error_not_raised(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(bdb, "Repo", None)
 
     class FallbackDev(bdb.BotDevelopmentBot):
-        def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, openai_attempts=1, context_builder=_ctx_builder())
+        def __init__(self, repo_base: Path, builder) -> None:  # type: ignore[override]
+            super().__init__(repo_base=repo_base, openai_attempts=1, context_builder=builder)
 
         def _visual_build(self, prompt: str) -> bool:  # type: ignore[override]
             return False
 
-    developer = FallbackDev(repo_base=tmp_path)
-    pipeline = ip.ImplementationPipeline(developer=developer)
+    builder = _ctx_builder()
+    developer = FallbackDev(repo_base=tmp_path, builder=builder)
+    pipeline = ip.ImplementationPipeline(builder, developer=developer)
     tasks = [
         thb.TaskInfo(
             name="FailBot",
@@ -523,8 +537,9 @@ def test_pipeline_surfaces_build_errors(tmp_path, caplog):
         def build_bot(self, spec: bdb.BotSpec, model_id=None) -> Path:  # type: ignore[override]
             raise RuntimeError("boom")
 
-    developer = FailingDev(repo_base=tmp_path, context_builder=_ctx_builder())
-    pipeline = ip.ImplementationPipeline(developer=developer)
+    builder = _ctx_builder()
+    developer = FailingDev(repo_base=tmp_path, context_builder=builder)
+    pipeline = ip.ImplementationPipeline(builder, developer=developer)
     tasks = [
         thb.TaskInfo(
             name="ErrBot",
@@ -568,8 +583,10 @@ def test_ipo_plan_fills_metadata_and_pipeline_runs(tmp_path):
             self._write_meta(repo_dir, spec)
             return file_path
 
+    builder = _ctx_builder()
     pipeline = ip.ImplementationPipeline(
-        developer=MiniDev(repo_base=tmp_path),
+        builder,
+        developer=MiniDev(repo_base=tmp_path, context_builder=builder),
         ipo=DummyIPO(),
     )
     package = thb.TaskPackage(
@@ -606,8 +623,9 @@ def test_pipeline_raises_on_test_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
-    pipeline = ip.ImplementationPipeline(developer=developer)
+    builder = _ctx_builder()
+    developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
+    pipeline = ip.ImplementationPipeline(builder, developer=developer)
     tasks = [
         thb.TaskInfo(
             name="TestBot",

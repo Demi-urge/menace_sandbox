@@ -42,17 +42,21 @@ class ImplementationPipeline:
 
     def __init__(
         self,
+        context_builder: ContextBuilder,
+        *,
         handoff: Optional[TaskHandoffBot] = None,
         optimiser: Optional[ImplementationOptimiserBot] = None,
         developer: Optional[BotDevelopmentBot] = None,
         researcher: Optional[ResearchAggregatorBot] = None,
         ipo: Optional[IPOBot] = None,
-        context_builder: ContextBuilder | None = None,
     ) -> None:
         """Initialize the pipeline.
 
         Parameters
         ----------
+        context_builder : ContextBuilder
+            Shared :class:`vector_service.ContextBuilder` instance used to
+            assemble local vector database context for prompt generation.
         handoff : TaskHandoffBot, optional
             Service used to store and deliver task packages.
         optimiser : ImplementationOptimiserBot, optional
@@ -64,28 +68,50 @@ class ImplementationPipeline:
             automatically.
         ipo : IPOBot, optional
             Planner used to generate IPO execution plans.
-        context_builder : ContextBuilder, optional
-            Shared :class:`vector_service.ContextBuilder` instance used to
-            assemble local vector database context for prompt generation.
         """
-        self.handoff = handoff or TaskHandoffBot()
-        self.optimiser = optimiser or ImplementationOptimiserBot()
-        self.context_builder = context_builder or ContextBuilder(
-            "bots.db", "code.db", "errors.db", "workflows.db"
-        )
+        self.context_builder = context_builder
+        if handoff is not None:
+            try:
+                handoff.context_builder = context_builder  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            self.handoff = handoff
+        else:
+            self.handoff = TaskHandoffBot(context_builder=context_builder)
+        if optimiser is not None:
+            try:
+                optimiser.context_builder = context_builder  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            self.optimiser = optimiser
+        else:
+            self.optimiser = ImplementationOptimiserBot(context_builder=context_builder)
         if developer is not None:
-            developer.context_builder = self.context_builder
+            developer.context_builder = context_builder
             self.developer = developer
         else:
-            self.developer = BotDevelopmentBot(context_builder=self.context_builder)
+            self.developer = BotDevelopmentBot(context_builder=context_builder)
         self.logger = logging.getLogger(self.__class__.__name__)
         if researcher is not None:
+            try:
+                researcher.context_builder = context_builder  # type: ignore[attr-defined]
+            except Exception:
+                pass
             self.researcher = researcher
         elif isinstance(ResearchAggregatorBot, type) and ResearchAggregatorBot is not object:
-            self.researcher = ResearchAggregatorBot([])  # type: ignore
+            self.researcher = ResearchAggregatorBot([], context_builder=context_builder)  # type: ignore
         else:
             self.researcher = None
-        self.ipo = ipo
+        if ipo is not None:
+            try:
+                ipo.context_builder = context_builder  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            self.ipo = ipo
+        elif isinstance(IPOBot, type) and IPOBot is not object:
+            self.ipo = IPOBot(context_builder=context_builder)  # type: ignore
+        else:
+            self.ipo = None
 
     # --------------------------------------------------------------
     def _missing_info(self, specs: Iterable[BotSpec]) -> bool:
