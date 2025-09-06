@@ -110,6 +110,9 @@ except Exception:  # pragma: no cover - optional dependency
     def record_failed_tags(_tags):  # type: ignore
         return None
 
+# Global ContextBuilder instance for reuse across patch generation calls
+CONTEXT_BUILDER = ContextBuilder() if ContextBuilder else None
+
 
 class CoverageSubprocessError(RuntimeError):
     """Raised when a test subprocess exits with a non-zero code."""
@@ -427,13 +430,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     before_target = Path(before_dir) / rel
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
-                    builder = ContextBuilder() if ContextBuilder else None
-                    if builder is None:
+                    if CONTEXT_BUILDER is None:
                         self.logger.warning(
                             "ContextBuilder unavailable; proceeding without vector context"
                         )
                     patch_id = generate_patch(
-                        mod, self.engine, context_builder=builder
+                        mod, self.engine, context_builder=CONTEXT_BUILDER
                     )
                     if patch_id is not None:
                         try:
