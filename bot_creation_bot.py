@@ -35,6 +35,7 @@ from .admin_bot_base import AdminBotBase
 from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
+from vector_service import ContextBuilder
 from .roi_tracker import ROITracker
 from .menace_sanity_layer import fetch_recent_billing_issues
 try:  # pragma: no cover - allow flat imports
@@ -89,7 +90,9 @@ class BotCreationBot(AdminBotBase):
         super().__init__(db_router=db_router)
         self.metrics_db = metrics_db or MetricsDB()
         self.planner = planner or BotPlanningBot()
-        self.developer = developer or BotDevelopmentBot(db_steward=self.db_router)
+        self.developer = developer or BotDevelopmentBot(
+            context_builder=ContextBuilder(), db_steward=self.db_router
+        )
         self.tester = tester or BotTestingBot()
         self.deployer = deployer or DeploymentBot()
         self.error_bot = error_bot or ErrorBot()
