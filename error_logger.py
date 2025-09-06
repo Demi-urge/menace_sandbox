@@ -65,6 +65,10 @@ except Exception:
         from quick_fix_engine import generate_patch  # type: ignore
     except Exception:
         generate_patch = None  # type: ignore
+try:
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - optional dependency
+    ContextBuilder = None  # type: ignore
 
 from governed_embeddings import governed_embed, get_embedder
 try:  # pragma: no cover - allow flat imports
@@ -737,7 +741,14 @@ class ErrorLogger:
 
             if generate_patch is not None and resolved_module:
                 try:
-                    patch_id = generate_patch(resolved_module)
+                    builder = ContextBuilder() if ContextBuilder else None
+                    if builder is None:
+                        self.logger.warning(
+                            "ContextBuilder unavailable; quick fix without vector context"
+                        )
+                    patch_id = generate_patch(
+                        resolved_module, context_builder=builder
+                    )
                     if patch_id is not None:
                         try:
                             from sandbox_runner import integrate_new_orphans

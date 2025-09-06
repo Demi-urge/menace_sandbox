@@ -427,7 +427,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     before_target = Path(before_dir) / rel
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
-                    patch_id = generate_patch(mod, self.engine)
+                    builder = ContextBuilder() if ContextBuilder else None
+                    if builder is None:
+                        self.logger.warning(
+                            "ContextBuilder unavailable; proceeding without vector context"
+                        )
+                    patch_id = generate_patch(
+                        mod, self.engine, context_builder=builder
+                    )
                     if patch_id is not None:
                         try:
                             post_round_orphan_scan(
