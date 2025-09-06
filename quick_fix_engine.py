@@ -83,7 +83,6 @@ def generate_patch(
     module: str,
     engine: "SelfCodingEngine" | None = None,
     *,
-    context_builder: ContextBuilder,
     description: str | None = None,
     strategy: PromptStrategy | None = None,
     patch_logger: PatchLogger | None = None,
@@ -104,10 +103,6 @@ def generate_patch(
         Optional :class:`~self_coding_engine.SelfCodingEngine` instance.  If not
         provided, a minimal engine is instantiated on demand.  The function
         tolerates missing dependencies and simply returns ``None`` on failure.
-    context_builder:
-        Pre-configured :class:`vector_service.ContextBuilder` used to gather
-        contextual snippets for the patch.  Callers must provide a ready
-        instance; failure to supply a usable builder raises ``RuntimeError``.
     description:
         Optional patch description.  When omitted, a generic description is
         used.
@@ -127,8 +122,9 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
+    builder = ContextBuilder()
     try:
-        context_builder.refresh_db_weights()
+        builder.refresh_db_weights()
     except Exception as exc:  # pragma: no cover - validation
         raise RuntimeError(
             "provided ContextBuilder cannot query local databases"
@@ -145,7 +141,6 @@ def generate_patch(
     context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
     if context:
         context_meta.update(context)
-    builder = context_builder
     context_block = ""
     cb_session = uuid.uuid4().hex
     context_meta["context_session_id"] = cb_session
@@ -188,20 +183,11 @@ def generate_patch(
             from .menace_memory_manager import MenaceMemoryManager
 
             engine = SelfCodingEngine(
-                CodeDB(), MenaceMemoryManager(), context_builder=context_builder
+                CodeDB(), MenaceMemoryManager(), context_builder=builder
             )
         except Exception as exc:  # pragma: no cover - optional deps
             logger.error("self coding engine unavailable: %s", exc)
             return None
-
-    if engine is not None:
-        try:
-            setattr(engine, "context_builder", builder)
-            cl = getattr(engine, "cognition_layer", None)
-            if cl is not None:
-                cl.context_builder = builder  # type: ignore[attr-defined]
-        except Exception:  # pragma: no cover - best effort
-            logger.debug("failed to attach context builder to engine", exc_info=True)
 
     try:
         patch_id: int | None
@@ -368,15 +354,6 @@ class QuickFixEngine:
                 "provided ContextBuilder cannot query local databases"
             ) from exc
         self.context_builder = context_builder
-        try:
-            eng = getattr(manager, "engine", None)
-            if eng is not None:
-                setattr(eng, "context_builder", context_builder)
-                cl = getattr(eng, "cognition_layer", None)
-                if cl is not None:
-                    cl.context_builder = context_builder  # type: ignore[attr-defined]
-        except Exception:  # pragma: no cover - best effort
-            logger.debug("failed to attach context builder to manager engine", exc_info=True)
         if patch_logger is None:
             try:
                 eng = getattr(manager, "engine", None)
@@ -611,16 +588,9 @@ class QuickFixEngine:
             except Exception as exc:  # pragma: no cover - runtime issues
                 self.logger.error("preemptive patch failed for %s: %s", prompt_path, exc)
                 try:
-                    try:
-                        patch_id = generate_patch(
-                            prompt_path,
-                            getattr(self.manager, "engine", None),
-                            context_builder=self.context_builder,
-                        )
-                    except TypeError:
-                        patch_id = generate_patch(
-                            prompt_path, getattr(self.manager, "engine", None)
-                        )
+                    patch_id = generate_patch(
+                        prompt_path, getattr(self.manager, "engine", None)
+                    )
                 except Exception:
                     patch_id = None
             try:
