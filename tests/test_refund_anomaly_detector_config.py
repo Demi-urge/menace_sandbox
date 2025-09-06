@@ -38,6 +38,21 @@ def test_config_updates_written(tmp_path, monkeypatch):
 
     monkeypatch.setattr(msl, "_BILLING_EVENT_DB", None)
     monkeypatch.setattr(msl, "_get_gpt_memory", lambda: None)
+    mm_storage: dict[str, dict] = {}
+
+    class DummyMM:
+        def query(self, key, limit):
+            if key in mm_storage:
+                return [SimpleNamespace(data=json.dumps(mm_storage[key]))]
+            return []
+
+        def store(self, key, data, tags=""):
+            mm_storage[key] = data
+
+    mm = DummyMM()
+    monkeypatch.setattr(msl, "_get_memory_manager", lambda: mm)
+    monkeypatch.setitem(msl.ANOMALY_THRESHOLDS, "refund_anomaly", 1)
+    monkeypatch.setitem(msl.ANOMALY_HINTS, "refund_anomaly", {"custom_hint": True})
 
     event = _make_event("evt1", "charge.refunded", "bot-rogue", created=1)
     monkeypatch.setattr(rad, "_iter_recent_events", lambda hours: [event])
@@ -68,5 +83,5 @@ def test_config_updates_written(tmp_path, monkeypatch):
     )
 
     assert json.loads(config_file.read_text()) == {"block_unlogged_charges": True}
-    assert updates and updates[0]["config_updates"]["block_unlogged_charges"] is True
+    assert updates == [{"custom_hint": True, "event_type": "refund_anomaly"}]
 
