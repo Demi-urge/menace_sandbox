@@ -60,14 +60,17 @@ except Exception:  # pragma: no cover - package fallback
 
 try:  # pragma: no cover - optional dependency
     from .quick_fix_engine import generate_patch
-    from vector_service import ContextBuilder
+    from vector_service import ContextBuilder, get_default_context_builder
 except Exception:
     try:
         from quick_fix_engine import generate_patch  # type: ignore
-        from vector_service import ContextBuilder  # type: ignore
+        from vector_service import ContextBuilder, get_default_context_builder  # type: ignore
     except Exception:
         generate_patch = None  # type: ignore
         ContextBuilder = None  # type: ignore
+
+        def get_default_context_builder(**kwargs):  # type: ignore
+            return ContextBuilder(**kwargs) if ContextBuilder else None
 
 from governed_embeddings import governed_embed, get_embedder
 try:  # pragma: no cover - allow flat imports
@@ -746,13 +749,9 @@ class ErrorLogger:
                     )
                 else:
                     try:
-                        builder = ContextBuilder(
-                            bot_db="bots.db",
-                            code_db="code.db",
-                            error_db="errors.db",
-                            workflow_db="workflows.db",
-                        )
-                        builder.refresh_db_weights()
+                        builder = get_default_context_builder()
+                        if builder is not None:
+                            builder.refresh_db_weights()
                     except Exception as e:  # pragma: no cover - init issues
                         self.logger.error(
                             "ContextBuilder initialisation failed for %s: %s",

@@ -417,13 +417,17 @@ class Watchdog:
         try:
             from .automated_debugger import AutomatedDebugger
             from .self_coding_engine import SelfCodingEngine
-            from vector_service.context_builder import ContextBuilder
             from .code_database import CodeDB
             from .menace_memory_manager import MenaceMemoryManager
+            try:
+                from vector_service.context_builder_utils import get_default_context_builder
+            except ImportError:  # pragma: no cover - fallback
+                from vector_service.context_builder import ContextBuilder  # type: ignore
 
-            builder = ContextBuilder(
-                bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
-            )
+                def get_default_context_builder(**kwargs):  # type: ignore
+                    return ContextBuilder(**kwargs)
+
+            builder = get_default_context_builder()
             builder.refresh_db_weights()
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=builder

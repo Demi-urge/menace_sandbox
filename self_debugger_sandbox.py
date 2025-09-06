@@ -102,26 +102,20 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     from sandbox_runner import post_round_orphan_scan  # type: ignore
 try:
-    from vector_service import ContextBuilder
+    from vector_service import ContextBuilder, get_default_context_builder
     from vector_service.context_builder import record_failed_tags
 except Exception:  # pragma: no cover - optional dependency
     ContextBuilder = None  # type: ignore
+
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return ContextBuilder(**kwargs) if ContextBuilder else None
 
     def record_failed_tags(_tags):  # type: ignore
         return None
 
 # Global ContextBuilder instance for reuse across patch generation calls
 try:
-    CONTEXT_BUILDER = (
-        ContextBuilder(
-            bot_db="bots.db",
-            code_db="code.db",
-            error_db="errors.db",
-            workflow_db="workflows.db",
-        )
-        if ContextBuilder
-        else None
-    )
+    CONTEXT_BUILDER = get_default_context_builder() if ContextBuilder else None
     if CONTEXT_BUILDER is not None:
         CONTEXT_BUILDER.refresh_db_weights()
 except Exception:
@@ -968,7 +962,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             except Exception:
                 self.logger.exception("failed strategy tag lookup failed")
         try:
-            builder = ContextBuilder()
+            builder = get_default_context_builder()
+            if builder is None:
+                return []
             if failed_tags:
                 builder.exclude_failed_strategies(failed_tags)
         except Exception:

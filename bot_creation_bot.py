@@ -35,7 +35,13 @@ from .admin_bot_base import AdminBotBase
 from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
-from vector_service import ContextBuilder
+try:
+    from vector_service import ContextBuilder, get_default_context_builder
+except ImportError:  # pragma: no cover - fallback when helper missing
+    from vector_service import ContextBuilder  # type: ignore
+
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return ContextBuilder(**kwargs)
 from .roi_tracker import ROITracker
 from .menace_sanity_layer import fetch_recent_billing_issues
 try:  # pragma: no cover - allow flat imports
@@ -90,7 +96,7 @@ class BotCreationBot(AdminBotBase):
         super().__init__(db_router=db_router)
         self.metrics_db = metrics_db or MetricsDB()
         self.planner = planner or BotPlanningBot()
-        builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+        builder = get_default_context_builder()
         self.developer = developer or BotDevelopmentBot(
             context_builder=builder, db_steward=self.db_router
         )

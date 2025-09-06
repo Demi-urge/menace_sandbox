@@ -59,7 +59,13 @@ from .code_database import CodeDB  # noqa: E402
 from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
 from .quick_fix_engine import QuickFixEngine  # noqa: E402
-from vector_service import ContextBuilder  # noqa: E402
+try:  # noqa: E402 - optional helper for default ContextBuilder
+    from vector_service import ContextBuilder, get_default_context_builder
+except ImportError:  # pragma: no cover - fallback when helper missing
+    from vector_service import ContextBuilder  # type: ignore
+
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return ContextBuilder(**kwargs)
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -366,12 +372,7 @@ class ServiceSupervisor:
             rollback_mgr=self.rollback_mgr, bot_name="menace"
         )
         self.auto_mgr = AutoEscalationManager()
-        self.context_builder = ContextBuilder(
-            bot_db="bots.db",
-            code_db="code.db",
-            error_db="errors.db",
-            workflow_db="workflows.db",
-        )
+        self.context_builder = get_default_context_builder()
         self.context_builder.refresh_db_weights()
         engine = SelfCodingEngine(
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder

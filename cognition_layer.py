@@ -25,7 +25,13 @@ from __future__ import annotations
 
 from typing import Any, Tuple
 
-from vector_service.context_builder import ContextBuilder
+try:
+    from vector_service import ContextBuilder, get_default_context_builder
+except ImportError:  # pragma: no cover - fallback when helper missing
+    from vector_service import ContextBuilder  # type: ignore
+
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return ContextBuilder(**kwargs)
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
 from patch_safety import PatchSafety
 from roi_tracker import ROITracker
@@ -44,7 +50,9 @@ __all__ = [
 # through retrieval, ranking, patch safety and ROI tracking.
 _roi_tracker = ROITracker()
 _patch_safety = PatchSafety()
-_context_builder = ContextBuilder(roi_tracker=_roi_tracker, patch_safety=_patch_safety)
+_context_builder = get_default_context_builder(
+    roi_tracker=_roi_tracker, patch_safety=_patch_safety
+)
 _layer = _CognitionLayer(context_builder=_context_builder, roi_tracker=_roi_tracker)
 
 
