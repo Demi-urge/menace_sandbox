@@ -25,10 +25,28 @@ kg.KnowledgeGraph = object
 sys.modules["menace_sandbox.knowledge_graph"] = kg
 
 vec = types.ModuleType("vector_service")
-vec.ContextBuilder = object
+
+
+class _DummyContextBuilder:
+    def __init__(self, *a, retriever=None, **k):
+        self.retriever = retriever
+
+    def build(self, *a, **k):
+        return ""
+
+
+class _DummyBackfill:
+    def __init__(self, *a, **k):
+        pass
+
+    def run(self, *a, **k):
+        return None
+
+
+vec.ContextBuilder = _DummyContextBuilder
 vec.Retriever = object
 vec.FallbackResult = object
-vec.EmbeddingBackfill = object
+vec.EmbeddingBackfill = _DummyBackfill
 sys.modules["vector_service"] = vec
 
 pp = types.ModuleType("patch_provenance")
@@ -42,6 +60,7 @@ spec = importlib.util.spec_from_file_location(
 quick_fix = importlib.util.module_from_spec(spec)
 sys.modules["menace_sandbox.quick_fix_engine"] = quick_fix
 spec.loader.exec_module(quick_fix)
+
 
 def test_chunked_patch_generation(tmp_path, monkeypatch):
     path = tmp_path / "big.py"  # path-ignore
