@@ -157,15 +157,17 @@ def test_prompt_includes_function_guidance(tmp_path):
 def test_prompt_includes_vector_context(tmp_path):
     class DummyBuilder(bdb.ContextBuilder):
         def __init__(self):
-            pass
+            self.calls = []
 
         def build(self, query):  # type: ignore[override]
+            self.calls.append(query)
             return "retrieved context"
 
     builder = DummyBuilder()
     bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     spec = bdb.BotSpec(name="ctx_bot", purpose="demo", description="demo")
     prompt = bot._build_prompt(spec, context_builder=builder)
+    assert builder.calls, "context_builder.build was not invoked"
     assert "retrieved context" in prompt
 
 

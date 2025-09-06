@@ -26,6 +26,7 @@ vec_mod.ErrorResult = object  # type: ignore[attr-defined]
 vec_mod.PatchLogger = object  # type: ignore[attr-defined]
 vec_mod.VectorServiceError = _VSError
 vec_mod.CognitionLayer = object  # type: ignore[attr-defined]
+vec_mod.SharedVectorService = object  # type: ignore[attr-defined]
 
 
 class _EmbeddableDBMixin:
@@ -99,8 +100,13 @@ cd_stub.CodeDB = _CodeDB
 cd_stub.CodeRecord = object
 cd_stub.PatchHistoryDB = _PatchHistoryDB
 cd_stub.PatchRecord = object
-sys.modules.setdefault("code_database", cd_stub)
-sys.modules.setdefault("menace.code_database", cd_stub)
+sys.modules["code_database"] = cd_stub
+sys.modules["menace.code_database"] = cd_stub
+msl_stub = types.SimpleNamespace(fetch_recent_billing_issues=lambda *a, **k: [])
+sys.modules["menace.menace_sanity_layer"] = msl_stub
+sys.modules["sandbox_settings"] = types.SimpleNamespace(
+    SandboxSettings=lambda: types.SimpleNamespace(prompt_chunk_token_threshold=1000)
+)
 sys.modules.setdefault(
     "gpt_memory",
     types.SimpleNamespace(
@@ -425,7 +431,19 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, context_builder=builder)
 
     context = {"errors": [{"id": 1, "snippet": "oops", "note": "test"}]}
-    engine.context_builder = types.SimpleNamespace(build_context=lambda m: context)
+    context_json = json.dumps(context, indent=2)
+
+    class RecordingBuilder:
+        def __init__(self):
+            self.calls = []
+
+        def build(self, query):  # type: ignore[override]
+            self.calls.append(query)
+            return context_json
+
+        build_context = build
+
+    engine.context_builder = RecordingBuilder()
 
     class DummyClient:
         def generate(self, prompt):
@@ -436,8 +454,9 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "suggest_snippets", lambda d, limit=3: [])
 
     code = engine.generate_helper("test helper")
+    assert engine.context_builder.calls, "context_builder.build was not invoked"
     assert "### Retrieval context" in DummyClient.prompt
-    assert json.dumps(context, indent=2) in DummyClient.prompt
+    assert context_json in DummyClient.prompt
     assert "def auto_test" in code
 
 

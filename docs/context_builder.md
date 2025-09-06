@@ -98,5 +98,15 @@ summariser also operates offline, so even without the optional memory manager
 `SelfCodingEngine`, `QuickFixEngine` and `BotDevelopmentBot` instantiate
 `ContextBuilder` automatically when available to enrich their prompts with
 historical context. `AutomatedReviewer` now requires an explicit
-`ContextBuilder` instance to provide similar context during reviews.
+`ContextBuilder` instance to provide similar context during reviews. All
+prompt‑constructing bots must supply a builder configured for the standard
+local databases:
+
+```python
+from vector_service.context_builder_utils import get_default_context_builder
+
+builder = get_default_context_builder()
+# equivalent to:
+# ContextBuilder(bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db")
+```
 

@@ -8,9 +8,9 @@ formats them into reusable snippets.
 
 ```python
 from prompt_engine import PromptEngine
-from vector_service.context_builder import ContextBuilder
+from vector_service.context_builder_utils import get_default_context_builder
 
-builder = ContextBuilder()
+builder = get_default_context_builder()
 prompt = PromptEngine.construct_prompt(
     "Fix the failing parser",
     retry_trace="Traceback: ValueError",
@@ -19,6 +19,10 @@ prompt = PromptEngine.construct_prompt(
 )
 print(prompt)
 ```
+
+All prompt‑constructing bots should use this helper or instantiate
+`ContextBuilder(bot_db="bots.db", code_db="code.db", error_db="errors.db",
+workflow_db="workflows.db")` directly so prompts include vector context.
 
 A successful lookup yields a prompt such as:
 
