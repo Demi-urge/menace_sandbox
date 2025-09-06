@@ -1,7 +1,12 @@
 import importlib.util
 import sys
 import types
-from dynamic_path_router import path_for_prompt, resolve_path
+from dynamic_path_router import resolve_path
+from pathlib import Path
+
+
+def path_for_prompt(p: str) -> str:
+    return Path(p).name
 
 PKG_DIR = resolve_path("self_improvement")
 
@@ -82,9 +87,9 @@ def test_generate_patch_delegates():
             "menace_sandbox.sandbox_settings": ss_stub,
         },
     )
-    assert module.generate_patch('a', key='v') == 'patch'
+    assert module.generate_patch('a', context_builder='b', key='v') == 'patch'
     assert record['args'] == ('a',)
-    assert record['kwargs'] == {'key': 'v'}
+    assert record['kwargs'] == {'key': 'v', 'context_builder': 'b'}
     sys.modules.pop("menace_sandbox.sandbox_settings", None)
 
 
