@@ -163,16 +163,17 @@ except Exception:  # pragma: no cover - best effort
 try:  # Optional dependency – self-coding feedback
     from self_coding_engine import SelfCodingEngine  # type: ignore
     try:
-        from vector_service.context_builder_utils import get_default_context_builder
-    except ImportError:  # pragma: no cover - fallback
         from vector_service.context_builder import ContextBuilder  # type: ignore
+    except ImportError:  # pragma: no cover - fallback
+        from vector_service.context_builder_utils import get_default_context_builder  # type: ignore
 
-        def get_default_context_builder(**kwargs):  # type: ignore
-            return ContextBuilder(**kwargs)
+        def ContextBuilder(**kwargs):  # type: ignore
+            return get_default_context_builder(**kwargs)
     from code_database import CodeDB  # type: ignore
     from menace_memory_manager import MenaceMemoryManager  # type: ignore
 except Exception:  # pragma: no cover - best effort
     SelfCodingEngine = None  # type: ignore
+    ContextBuilder = None  # type: ignore
     CodeDB = None  # type: ignore
     MenaceMemoryManager = None  # type: ignore
 
@@ -1822,7 +1823,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     if SANITY_LAYER_FEEDBACK_ENABLED:
         if SelfCodingEngine and CodeDB and MenaceMemoryManager:
             try:
-                builder = get_default_context_builder()
+                builder = ContextBuilder()
                 builder.refresh_db_weights()
                 engine = SelfCodingEngine(
                     CodeDB(), MenaceMemoryManager(), context_builder=builder
@@ -1831,7 +1832,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 logger.exception("failed to initialise SelfCodingEngine")
         if TelemetryFeedback and ErrorLogger and engine is not None:
             try:
-                telemetry = TelemetryFeedback(ErrorLogger(), engine)
+                telemetry = TelemetryFeedback(
+                    ErrorLogger(), engine, context_builder=builder
+                )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise telemetry feedback")
 

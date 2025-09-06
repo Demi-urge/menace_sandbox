@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Any
 
 from .dynamic_path_router import resolve_path
 
@@ -29,6 +29,7 @@ class TelemetryFeedback:
         logger: ErrorLogger,
         engine: SelfCodingEngine,
         *,
+        context_builder: Any | None = None,
         threshold: int = 3,
         interval: int = 60,
         graph: KnowledgeGraph | None = None,
@@ -36,6 +37,7 @@ class TelemetryFeedback:
     ) -> None:
         self.logger = logger
         self.engine = engine
+        self.context_builder = context_builder
         self.threshold = threshold
         self.interval = interval
         self.graph = graph

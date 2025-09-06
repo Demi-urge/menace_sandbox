@@ -11,10 +11,18 @@ TMP = Path(tempfile.mkdtemp())
 pkg = types.ModuleType("menace")
 pkg.__path__ = [str(TMP), str(ROOT)]
 sys.modules["menace"] = pkg
+sys.modules.pop("vector_service", None)
+vs_pkg = types.ModuleType("vector_service")
+sys.modules["vector_service"] = vs_pkg
+sys.modules["vector_service.context_builder_utils"] = types.SimpleNamespace(
+    get_default_context_builder=lambda **_: types.SimpleNamespace(
+        refresh_db_weights=lambda: None
+    )
+)
 
 # write stub modules to temporary package path
 (TMP / "telemetry_feedback.py").write_text(  # path-ignore
-    """class TelemetryFeedback:\n    def __init__(self, logger=None, engine=None):\n        self.interval=0\n        self.started=False\n        self.stopped=False\n    def start(self):\n        self.started=True\n    def stop(self):\n        self.stopped=True\n"""
+    """class TelemetryFeedback:\n    def __init__(self, logger=None, engine=None, context_builder=None):\n        self.interval=0\n        self.started=False\n        self.stopped=False\n    def start(self):\n        self.started=True\n    def stop(self):\n        self.stopped=True\n"""
 )
 (TMP / "error_logger.py").write_text(  # path-ignore
     "class ErrorLogger:\n    def __init__(self, **kwargs):\n        pass\n"
