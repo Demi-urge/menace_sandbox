@@ -12,18 +12,14 @@ Results are logged via :func:`menace_sanity_layer.record_event` and recorded in
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, TYPE_CHECKING
 
 from unified_event_bus import UnifiedEventBus
 from sanity_feedback import SanityFeedback
 from self_coding_engine import SelfCodingEngine
-try:
-    from vector_service.context_builder_utils import get_default_context_builder
-except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service.context_builder import ContextBuilder  # type: ignore
 
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
+if TYPE_CHECKING:  # pragma: no cover - used for type hints only
+    from vector_service.context_builder import ContextBuilder
 import menace_sanity_layer
 from dynamic_path_router import resolve_path
 
@@ -54,6 +50,7 @@ class SanityConsumer:
         event_bus: UnifiedEventBus | None = None,
         *,
         engine: SelfCodingEngine | None = None,
+        context_builder: "ContextBuilder" | None = None,
     ) -> None:
         self.event_bus = event_bus or getattr(
             menace_sanity_layer, "_EVENT_BUS", UnifiedEventBus()
@@ -62,7 +59,7 @@ class SanityConsumer:
         self._engine: SelfCodingEngine | None = engine
         self._feedback: SanityFeedback | None = None
         self._outcome_db = DiscrepancyDB() if DiscrepancyDB is not None else None
-        self._context_builder = None
+        self._context_builder = context_builder
 
     # ------------------------------------------------------------------
     def _get_engine(self) -> SelfCodingEngine:
@@ -80,9 +77,11 @@ class SanityConsumer:
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("failed to initialise MenaceMemoryManager")
                     memory_mgr = object()
-                builder = get_default_context_builder()
+
+                builder = self._context_builder
+                if builder is None:
+                    raise RuntimeError("ContextBuilder required")
                 builder.refresh_db_weights()
-                self._context_builder = builder
                 self._engine = SelfCodingEngine(
                     code_db, memory_mgr, context_builder=builder
                 )
