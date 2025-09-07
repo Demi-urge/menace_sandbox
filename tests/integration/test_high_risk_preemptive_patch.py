@@ -1,6 +1,5 @@
 import types
 import sys
-import pytest
 
 # stubs for modules referenced during engine import
 auto_env = types.ModuleType("auto_env_setup")
@@ -27,10 +26,43 @@ mid_mod.ModuleIndexDB = type(
 sys.modules.setdefault("module_index_db", mid_mod)
 sys.modules.setdefault("menace.module_index_db", mid_mod)
 
-from tests.test_self_improvement_logging import _load_engine
+log_stub = types.ModuleType("menace_sandbox.logging_utils")
+log_stub.get_logger = lambda *a, **k: types.SimpleNamespace(
+    info=lambda *a, **k: None, warning=lambda *a, **k: None, exception=lambda *a, **k: None
+)
+log_stub.setup_logging = lambda *a, **k: None
+log_stub.log_record = lambda **kw: kw
+sys.modules.setdefault("menace_sandbox.logging_utils", log_stub)
+log_mod = sys.modules.setdefault("menace.logging_utils", types.ModuleType("menace.logging_utils"))
+log_mod.get_logger = lambda *a, **k: types.SimpleNamespace(
+    info=lambda *a, **k: None, warning=lambda *a, **k: None, exception=lambda *a, **k: None
+)
+log_mod.setup_logging = lambda *a, **k: None
+log_mod.log_record = lambda **kw: kw
+
+from tests.test_self_improvement_logging import _load_engine  # noqa: E402
 
 
 def test_high_risk_prediction_triggers_patch(monkeypatch, tmp_path):
+    # stub sandbox settings to simulate autonomous mode with auto_patch disabled
+    class DummySettings:
+        def __init__(self):
+            self.sandbox_data_dir = str(tmp_path)
+            self.sandbox_score_db = "db"
+            self.synergy_weight_roi = 1.0
+            self.synergy_weight_efficiency = 1.0
+            self.synergy_weight_resilience = 1.0
+            self.synergy_weight_antifragility = 1.0
+            self.roi_ema_alpha = 0.1
+            self.synergy_weights_lr = 0.1
+            self.auto_patch_high_risk = False
+            self.menace_mode = "autonomous"
+
+    ss_mod = sys.modules["sandbox_settings"]
+    ss_mod.SandboxSettings = DummySettings
+    ss_mod.DEFAULT_SEVERITY_SCORE_MAP = {}
+    sys.modules["menace.sandbox_settings"] = ss_mod
+
     sie = _load_engine()
 
     sie.ResearchAggregatorBot = lambda *a, **k: object()
@@ -43,20 +75,6 @@ def test_high_risk_prediction_triggers_patch(monkeypatch, tmp_path):
     )
     sie.ROIResult = lambda val=0.0: types.SimpleNamespace(roi=val)
 
-    # stub sandbox settings to simulate autonomous mode with auto_patch disabled
-    sie.SandboxSettings = lambda: types.SimpleNamespace(
-        sandbox_data_dir=str(tmp_path),
-        sandbox_score_db="db",
-        synergy_weight_roi=1.0,
-        synergy_weight_efficiency=1.0,
-        synergy_weight_resilience=1.0,
-        synergy_weight_antifragility=1.0,
-        roi_ema_alpha=0.1,
-        synergy_weights_lr=0.1,
-        auto_patch_high_risk=False,
-        menace_mode="autonomous",
-    )
-
     class DummyPipe:
         def run(self, model, energy=1):
             return sie.AutomationResult(package=None, roi=sie.ROIResult(0.0))
@@ -64,7 +82,9 @@ def test_high_risk_prediction_triggers_patch(monkeypatch, tmp_path):
     class DummyDiag:
         def __init__(self):
             self.metrics = types.SimpleNamespace(fetch=lambda *a, **k: [])
-            self.error_bot = types.SimpleNamespace(db=types.SimpleNamespace(discrepancies=lambda: []))
+            self.error_bot = types.SimpleNamespace(
+                db=types.SimpleNamespace(discrepancies=lambda: [])
+            )
 
         def diagnose(self):
             return []
@@ -140,12 +160,20 @@ def test_high_risk_prediction_triggers_patch(monkeypatch, tmp_path):
     eng.self_coding_engine = object()
 
     calls = []
-    monkeypatch.setattr(sie, "generate_patch", lambda mod, engine=None: calls.append(mod) or 7)
+    monkeypatch.setattr(
+        sie, "generate_patch", lambda mod, engine=None, **kw: calls.append(mod) or 7
+    )
 
     eng._apply_high_risk_patches()
 
     assert eng.auto_patch_high_risk is True
     assert calls == ["mod1.py"]  # path-ignore
-    assert eng.error_bot.db.telemetry and eng.error_bot.db.telemetry[0].module == "mod1.py"  # path-ignore
+    assert (
+        eng.error_bot.db.telemetry
+        and eng.error_bot.db.telemetry[0].module == "mod1.py"
+    )  # path-ignore
     assert eng.error_predictor.graph.updated
-    assert any(evt[1] == "preemptive_patch" and evt[2] == "mod1.py" for evt in eng.error_predictor.graph.events)  # path-ignore
+    assert any(
+        evt[1] == "preemptive_patch" and evt[2] == "mod1.py"
+        for evt in eng.error_predictor.graph.events
+    )  # path-ignore
