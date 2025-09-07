@@ -13,7 +13,7 @@ from .research_aggregator_bot import InfoDB, ResearchItem
 from .bot_creation_bot import BotCreationBot
 from .bot_planning_bot import PlanningTask
 from .normalize_scraped_data import load_items, normalize
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 
 class DiscoveryScheduler:

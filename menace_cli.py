@@ -126,7 +126,7 @@ def handle_new_vector(args: argparse.Namespace) -> int:
 def handle_patch(args: argparse.Namespace) -> int:
     """Handle ``patch`` command."""
     try:
-        from vector_service import ContextBuilder
+        from vector_service.context_builder import ContextBuilder
     except ImportError:
         print("ContextBuilder unavailable", file=sys.stderr)
         return 1

@@ -10,7 +10,7 @@ from typing import Iterable, List, Optional
 
 from db_router import GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 import networkx as nx
 try:

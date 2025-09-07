@@ -60,11 +60,11 @@ except Exception:  # pragma: no cover - package fallback
 
 try:  # pragma: no cover - optional dependency
     from .quick_fix_engine import generate_patch
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except Exception:
     try:
         from quick_fix_engine import generate_patch  # type: ignore
-        from vector_service import ContextBuilder  # type: ignore
+        from vector_service.context_builder import ContextBuilder  # type: ignore
     except Exception:
         generate_patch = None  # type: ignore
         ContextBuilder = None  # type: ignore

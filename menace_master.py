@@ -58,7 +58,7 @@ from menace.unified_config_store import UnifiedConfigStore  # noqa: E402
 from menace.dependency_self_check import self_check  # noqa: E402
 
 from menace.menace_orchestrator import MenaceOrchestrator  # noqa: E402
-from vector_service import ContextBuilder  # noqa: E402
+from vector_service.context_builder import ContextBuilder  # noqa: E402
 from menace.self_coding_manager import PatchApprovalPolicy, SelfCodingManager  # noqa: E402
 from menace.advanced_error_management import AutomatedRollbackManager  # noqa: E402
 from menace.environment_bootstrap import EnvironmentBootstrapper  # noqa: E402

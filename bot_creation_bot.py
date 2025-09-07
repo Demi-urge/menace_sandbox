@@ -36,9 +36,9 @@ from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
 try:
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service import ContextBuilder  # type: ignore
+    from vector_service.context_builder import ContextBuilder  # type: ignore
 from .roi_tracker import ROITracker
 from .menace_sanity_layer import fetch_recent_billing_issues
 try:  # pragma: no cover - allow flat imports

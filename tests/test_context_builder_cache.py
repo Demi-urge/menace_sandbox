@@ -1,4 +1,4 @@
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 class DummyPatchSafety:
     def __init__(self):

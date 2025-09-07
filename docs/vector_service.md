@@ -41,7 +41,7 @@ an optional `session_id` for tracing queries.
 ## ContextBuilder
 
 ```python
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 builder = ContextBuilder()
 context = builder.build("fix failing tests")

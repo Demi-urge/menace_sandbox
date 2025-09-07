@@ -17,7 +17,7 @@ from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from .neuroplasticity import PathwayDB
 from .advanced_error_management import PredictiveResourceAllocator
 from .resource_allocation_optimizer import ResourceAllocationOptimizer
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only

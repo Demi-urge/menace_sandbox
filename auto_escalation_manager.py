@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
 
 try:
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except Exception as exc:  # pragma: no cover - fail fast when dependency missing
     raise ImportError(
         "auto_escalation_manager requires vector_service.ContextBuilder; install the"

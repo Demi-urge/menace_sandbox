@@ -13,7 +13,7 @@ from .bot_development_bot import BotDevelopmentBot, BotSpec
 from contextlib import nullcontext
 from .models_repo import clone_to_new_repo, model_build_lock
 from dynamic_path_router import resolve_path
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - optional heavy deps
     from .research_aggregator_bot import ResearchAggregatorBot

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
     from .target_region import TargetRegion
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 
 try:  # pragma: no cover - simplified environments
     from ..logging_utils import log_record

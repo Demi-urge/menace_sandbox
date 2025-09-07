@@ -4,7 +4,6 @@ This package provides the canonical vector retrieval service.
 """
 
 from .retriever import Retriever, FallbackResult
-from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
 from .cognition_layer import CognitionLayer
 from .embedding_backfill import EmbeddingBackfill
@@ -30,7 +29,6 @@ except Exception:  # pragma: no cover - fallback when dependency missing
 __all__ = [
     "Retriever",
     "FallbackResult",
-    "ContextBuilder",
     "PatchLogger",
     "CognitionLayer",
     "EmbeddingBackfill",

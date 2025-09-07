@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any, Tuple
 
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
 from roi_tracker import ROITracker
 

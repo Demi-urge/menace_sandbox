@@ -18,7 +18,7 @@ from .prediction_manager_bot import PredictionManager
 from .data_bot import DataBot
 from .strategy_prediction_bot import StrategyPredictionBot, CompetitorFeatures
 from .resource_allocation_bot import ResourceAllocationBot
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 from .resource_prediction_bot import ResourceMetrics
 from .task_handoff_bot import WorkflowDB as HandoffWorkflowDB, WorkflowRecord
 from .contrarian_db import ContrarianDB, ContrarianRecord

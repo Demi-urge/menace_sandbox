@@ -126,7 +126,7 @@ tickets or feed the hints into a Codex prompt.
 
 ```python
 from menace_sandbox.error_logger import ErrorLogger
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 builder = ContextBuilder()
 elog = ErrorLogger(context_builder=builder)

@@ -371,7 +371,7 @@ from ..model_automation_pipeline import (
     ModelAutomationPipeline,
     AutomationResult,
 )
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 from ..diagnostic_manager import DiagnosticManager
 from ..error_bot import ErrorBot, ErrorDB
 from ..data_bot import MetricsDB, DataBot

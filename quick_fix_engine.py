@@ -33,7 +33,7 @@ from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
 try:  # pragma: no cover - fail fast if vector service missing
-    from vector_service import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
+    from vector_service.context_builder import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
 except Exception as exc:  # pragma: no cover - provide actionable error
     raise RuntimeError(
         "vector_service is required for quick_fix_engine. "

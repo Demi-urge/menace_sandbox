@@ -22,7 +22,7 @@ from vector_service import EmbeddableDBMixin
 from resource_vectorizer import ResourceVectorizer
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from .resource_prediction_bot import ResourceMetrics
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
 

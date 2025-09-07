@@ -36,7 +36,7 @@ from jinja2 import Template
 import yaml
 
 try:  # pragma: no cover - optional dependency for type hints
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback for flat layout
     from vector_service.context_builder import ContextBuilder  # type: ignore
 

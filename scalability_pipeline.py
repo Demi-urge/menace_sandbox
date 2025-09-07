@@ -10,7 +10,7 @@ from .bot_development_bot import BotDevelopmentBot, BotSpec
 from .bot_testing_bot import BotTestingBot
 from .deployment_bot import DeploymentBot, DeploymentSpec
 from .scalability_assessment_bot import ScalabilityAssessmentBot, TaskInfo
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 
 @dataclass

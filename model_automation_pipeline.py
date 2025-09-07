@@ -75,7 +75,7 @@ from .bot_registry import BotRegistry
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_planner import ActionPlanner
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 MENACE_ID = "model_automation_pipeline"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)

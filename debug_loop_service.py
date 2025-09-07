@@ -16,7 +16,7 @@ from .menace_memory_manager import MenaceMemoryManager
 from .knowledge_graph import KnowledgeGraph
 
 try:  # pragma: no cover - optional vector service dependency
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback when dependency missing
     from vector_service.context_builder import ContextBuilder  # type: ignore
 
