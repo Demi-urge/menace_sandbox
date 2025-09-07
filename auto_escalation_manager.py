@@ -127,7 +127,12 @@ class AutoEscalationManager:
         self.logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
-    def handle(self, message: str, attachments: Iterable[str] | None = None) -> None:
+    def handle(
+        self,
+        message: str,
+        attachments: Iterable[str] | None = None,
+        session_id: str | None = None,
+    ) -> None:
         """Attempt automated recovery actions."""
         try:
             self.debugger.analyse_and_fix()

@@ -2,14 +2,19 @@ import os
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import pytest
+import json
 
 
 class DummyEscalation:
     def __init__(self) -> None:
         self.messages = []
+        self.attachments = []
+        self.session_ids = []
 
-    def handle(self, msg, attachments=None):
+    def handle(self, msg, attachments=None, session_id=None):
         self.messages.append(msg)
+        self.attachments.append(attachments)
+        self.session_ids.append(session_id)
 
 
 class DummyDB:
@@ -86,7 +91,7 @@ def _stub_vector_service(monkeypatch):
 
         def build(self, prompt, **_):
             self.__class__.calls.append(prompt)
-            return "ctx"
+            return {"snippet": "ctx"}
 
         def refresh_db_weights(self):
              pass
@@ -123,6 +128,8 @@ def test_escalation_on_critical(monkeypatch):
     assert vector_service.ContextBuilder.calls
     assert db.updated and db.updated[0][0] == 7
     assert esc.messages and "review for bot 7" in esc.messages[0]
+    assert esc.session_ids and esc.session_ids[0]
+    assert esc.attachments and json.loads(esc.attachments[0][0])["snippet"] == "ctx"
 
 
 def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
@@ -176,7 +183,7 @@ def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
     attachments_list: list[str] = []
 
     class Escalator:
-        def handle(self, msg, attachments=None):
+        def handle(self, msg, attachments=None, session_id=None):
             if attachments:
                 attachments_list.extend(attachments)
 
