@@ -7,7 +7,7 @@ import menace.chatgpt_idea_bot as cib  # noqa: E402
 import menace.chatgpt_enhancement_bot as ceb  # noqa: E402
 import menace.chatgpt_prediction_bot as cpb  # noqa: E402
 import sqlite3  # noqa: E402
-import types
+import types  # noqa: E402
 
 
 def _builder():
@@ -108,7 +108,11 @@ def test_chatgpt_integration(monkeypatch):
 
 
 def test_enhancement_prediction(monkeypatch, tmp_path):
-    enh_bot = ceb.ChatGPTEnhancementBot(None, db=ceb.EnhancementDB(tmp_path / "e.db"))
+    enh_bot = ceb.ChatGPTEnhancementBot(
+        None,
+        db=ceb.EnhancementDB(tmp_path / "e.db"),
+        context_builder=_builder(),
+    )
     monkeypatch.setattr(
         enh_bot,
         "propose",
@@ -136,7 +140,7 @@ def test_enhancement_prediction(monkeypatch, tmp_path):
 
 def test_enhancement_links(monkeypatch, tmp_path):
     enh_db = ceb.EnhancementDB(tmp_path / "e.db")
-    enh_bot = ceb.ChatGPTEnhancementBot(None, db=enh_db)
+    enh_bot = ceb.ChatGPTEnhancementBot(None, db=enh_db, context_builder=_builder())
     monkeypatch.setattr(
         enh_bot,
         "propose",
@@ -192,7 +196,7 @@ def test_infodb_summary_and_depth(tmp_path):
 
 def test_enhancement_generates_followup_research(monkeypatch, tmp_path):
     enh_db = ceb.EnhancementDB(tmp_path / "e.db")
-    enh_bot = ceb.ChatGPTEnhancementBot(None, db=enh_db)
+    enh_bot = ceb.ChatGPTEnhancementBot(None, db=enh_db, context_builder=_builder())
     monkeypatch.setattr(
         enh_bot,
         "propose",

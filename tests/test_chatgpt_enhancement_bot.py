@@ -25,13 +25,13 @@ def test_propose(monkeypatch, tmp_path):
 
         def build(self, query, **_):
             return ""
-
-    client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
+    builder = DummyBuilder()
+    client = cib.ChatGPTClient("key", context_builder=builder)
     monkeypatch.setattr(ceb, "ask_with_memory", lambda *a, **k: resp)
     router = ceb.init_db_router("enhprop", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     db = ceb.EnhancementDB(tmp_path / "enh.db", router=router)
     db.add_embedding = lambda *a, **k: None
-    bot = ceb.ChatGPTEnhancementBot(client, db=db)
+    bot = ceb.ChatGPTEnhancementBot(client, db=db, context_builder=builder)
     monkeypatch.setattr(bot, "_feasible", lambda e: True)
     results = bot.propose("Improve", num_ideas=1, context="ctx")
     assert results and results[0].context == "ctx"

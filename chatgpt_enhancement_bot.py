@@ -24,6 +24,12 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
 from . import RAISE_ERRORS
+from snippet_compressor import compress_snippets
+from vector_service.context_builder import (
+    ContextBuilder,
+    ErrorResult,
+    FallbackResult,
+)
 try:  # canonical tag constants
     from .log_tags import IMPROVEMENT_PATH, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -400,7 +406,8 @@ class EnhancementDB(EmbeddableDBMixin):
                 conn.execute(
                     """
                     UPDATE enhancements SET
-                        idea=?, rationale=?, summary=?, score=?, confidence=?, outcome_score=?, timestamp=?, context=?,
+                        idea=?, rationale=?, summary=?, score=?, confidence=?,
+                        outcome_score=?, timestamp=?, context=?,
                         before_code=?, after_code=?, title=?, description=?, tags=?,
                         type=?, assigned_bots=?,
                         rejection_reason=?, cost_estimate=?, category=?,
@@ -1020,20 +1027,39 @@ class ChatGPTEnhancementBot:
     """Generate and store improvement ideas via ChatGPT."""
     def __init__(
         self,
-        client: ChatGPTClient,
+        client: ChatGPTClient | None,
         db: Optional[EnhancementDB] = None,
         override_manager: Optional[OverridePolicyManager] = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
+        *,
+        context_builder: ContextBuilder,
     ) -> None:
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         self.override_manager = override_manager
         self.client = client
         self.db = db or EnhancementDB(override_manager=override_manager)
         self.gpt_memory = gpt_memory
-        if getattr(self.client, "gpt_memory", None) is None:
+        self.context_builder = context_builder
+        try:
+            self.db_weights = self.context_builder.refresh_db_weights()
+        except Exception:
+            logger.exception("failed to refresh context builder weights")
+            if RAISE_ERRORS:
+                raise
+            self.db_weights = {}
+        if self.client is not None and getattr(self.client, "gpt_memory", None) is None:
             try:
                 self.client.gpt_memory = self.gpt_memory
             except Exception:
                 logger.debug("failed to attach gpt_memory to client", exc_info=True)
+        if self.client is not None and getattr(self.client, "context_builder", None) is None:
+            try:
+                self.client.context_builder = self.context_builder
+            except Exception:
+                logger.debug(
+                    "failed to attach context_builder to client", exc_info=True
+                )
 
     def _feasible(self, enh: Enhancement) -> bool:
         return len(enh.rationale.split()) < FEASIBLE_WORD_LIMIT
@@ -1047,10 +1073,25 @@ class ChatGPTEnhancementBot:
         *,
         tags: Sequence[str] | None = None,
     ) -> List[Enhancement]:
+        vec_ctx = ""
+        try:
+            query = f"{instruction} {context}".strip()
+            ctx_res = self.context_builder.build(query)
+            vec_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+            if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
+                vec_ctx = ""
+            elif vec_ctx:
+                vec_ctx = compress_snippets({"snippet": vec_ctx}).get(
+                    "snippet", vec_ctx
+                )
+        except Exception:
+            vec_ctx = ""
         prompt = (
             f"{instruction} Provide {num_ideas} enhancement ideas as a JSON list with"
             " fields idea and rationale."
         )
+        if vec_ctx:
+            prompt = f"{vec_ctx}\n\n{prompt}"
         logger.debug("sending prompt to ChatGPT: %s", prompt)
         try:
             base_tags = [IMPROVEMENT_PATH, INSIGHT]
@@ -1061,7 +1102,7 @@ class ChatGPTEnhancementBot:
                 "chatgpt_enhancement_bot.propose",
                 prompt,
                 memory=self.gpt_memory,
-                context_builder=self.client.context_builder,
+                context_builder=self.context_builder,
                 tags=base_tags,
             )
         except Exception as exc:
