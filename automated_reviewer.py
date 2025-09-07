@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import json
+import uuid
 from typing import Optional
 
 from typing import TYPE_CHECKING
@@ -15,6 +16,23 @@ try:  # pragma: no cover - optional dependency used in runtime
     from vector_service import CognitionLayer, ContextBuilder
 except Exception as exc:  # pragma: no cover - dependency missing or broken
     raise RuntimeError("vector_service import failed") from exc
+
+# ``FallbackResult`` and ``ErrorResult`` may not always be present on the
+# ``vector_service`` module.  Provide light-weight fallbacks so our type checks
+# remain functional during tests when the real classes are absent.
+try:  # pragma: no cover - optional dependency used in runtime
+    from vector_service import FallbackResult  # type: ignore
+except Exception:  # pragma: no cover - module missing the attribute
+    class FallbackResult:  # type: ignore[override]
+        pass
+
+try:  # pragma: no cover - optional dependency used in runtime
+    from vector_service import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - module missing the attribute
+    class ErrorResult(Exception):  # type: ignore[override]
+        pass
+
+from snippet_compressor import compress_snippets
 
 
 class AutomatedReviewer:
@@ -69,16 +87,27 @@ class AutomatedReviewer:
                 self.bot_db.update_bot(int(bot_id), status="disabled")
             except Exception:
                 self.logger.exception("failed disabling bot %s", bot_id)
-            ctx = ""
+
+            session_id = str(uuid.uuid4())
+            ctx: str = ""
             try:
-                ctx = self.context_builder.build(
-                    json.dumps({"bot_id": bot_id, "severity": severity})
+                result = self.context_builder.build(
+                    json.dumps({"bot_id": bot_id, "severity": severity}),
+                    session_id=session_id,
                 )
+                if isinstance(result, (FallbackResult, ErrorResult)):
+                    ctx = ""
+                elif isinstance(result, dict):
+                    ctx = json.dumps(compress_snippets(result))
+                else:
+                    ctx = result  # type: ignore[assignment]
             except Exception:
                 ctx = ""
             try:
                 self.escalation_manager.handle(
-                    f"review for bot {bot_id}", attachments=[ctx]
+                    f"review for bot {bot_id}",
+                    attachments=[ctx],
+                    session_id=session_id,
                 )
             except Exception:
                 self.logger.exception("escalation failed")

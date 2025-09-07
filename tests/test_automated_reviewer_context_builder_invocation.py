@@ -9,7 +9,7 @@ class RecordingBuilder:
 
     def build(self, payload, **_):  # pragma: no cover - simple stub
         self.calls.append(payload)
-        return "ctx"
+        return {"snippet": "ctx"}
 
     def refresh_db_weights(self):
         pass
@@ -23,9 +23,11 @@ class DummyCognitionLayer:
 class RecordingEscalator:
     def __init__(self) -> None:
         self.attachments = None
+        self.session_id = None
 
-    def handle(self, *_a, attachments=None, **_k):
+    def handle(self, *_a, attachments=None, session_id=None, **_k):
         self.attachments = attachments
+        self.session_id = session_id
 
 
 sys.modules["vector_service"] = types.SimpleNamespace(
@@ -47,3 +49,4 @@ def test_reviewer_uses_context_builder():
 
     assert builder.calls, "context_builder.build was not invoked"
     assert esc.attachments and "ctx" in esc.attachments[0]
+    assert esc.session_id
