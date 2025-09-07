@@ -35,11 +35,11 @@ import threading
 from jinja2 import Template
 import yaml
 
-try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder_utils import get_default_context_builder
-except Exception:  # pragma: no cover - fallback
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return None
+try:  # pragma: no cover - optional dependency for type hints
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - fallback for flat layout
+    from vector_service.context_builder import ContextBuilder  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -919,6 +919,7 @@ class ErrorBot(AdminBotBase):
         event_bus: Optional[EventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
         graph: KnowledgeGraph | None = None,
+        context_builder: ContextBuilder | None = None,
         forecaster: ErrorForecaster | None = None,
         self_coding_engine: "SelfCodingEngine" | None = None,
         improvement_engine: "SelfImprovementEngine" | None = None,
@@ -927,7 +928,7 @@ class ErrorBot(AdminBotBase):
         self.name = "ErrorBot"
         self.db = db or ErrorDB()
         self.graph = graph
-        builder = get_default_context_builder()
+        builder = context_builder or ContextBuilder()
         self.error_logger = ErrorLogger(
             self.db, knowledge_graph=self.graph, context_builder=builder
         )
