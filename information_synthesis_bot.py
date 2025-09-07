@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - optional
 from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
 from .task_handoff_bot import WorkflowDB
 from .unified_event_bus import UnifiedEventBus
+from vector_service import ContextBuilder
 
 try:
     import pandas as pd  # type: ignore
@@ -99,11 +100,18 @@ class InformationSynthesisBot:
         workflow_db: WorkflowDB | None = None,
         *,
         event_bus: UnifiedEventBus | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.engine = create_engine(db_url)
         self.meta = MetaData()
         self.meta.reflect(bind=self.engine)
-        self.aggregator = aggregator or ResearchAggregatorBot([])
+        builder = context_builder or ContextBuilder()
+        try:
+            builder.refresh_db_weights()
+        except Exception:
+            pass
+        self.context_builder = builder
+        self.aggregator = aggregator or ResearchAggregatorBot([], context_builder=builder)
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
         if Celery:
             self.app = Celery("synthesis", broker=broker, backend="rpc://")

@@ -155,7 +155,10 @@ class ModelAutomationPipeline:
         )
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
         self.synthesis_bot = synthesis_bot or InformationSynthesisBot(
-            aggregator=self.aggregator, workflow_db=self.workflow_db, event_bus=event_bus
+            aggregator=self.aggregator,
+            workflow_db=self.workflow_db,
+            event_bus=event_bus,
+            context_builder=self.context_builder,
         )
         self.validator = validator or TaskValidationBot([])
         self.planner = planner or BotPlanningBot()

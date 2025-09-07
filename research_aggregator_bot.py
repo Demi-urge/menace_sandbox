@@ -759,7 +759,8 @@ class ResearchAggregatorBot:
         *,
         context_builder: ContextBuilder,
     ) -> None:
-        if context_builder is None:
+        builder = context_builder
+        if builder is None:
             raise ValueError("ContextBuilder is required")
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
@@ -779,12 +780,12 @@ class ResearchAggregatorBot:
         self.sources_queried: List[str] = []
         self.cache_ttl = cache_ttl
         self.cache: dict[str, tuple[float, List[ResearchItem]]] = {}
-        self.context_builder = context_builder
         try:
-            self.context_builder.refresh_db_weights()
+            builder.refresh_db_weights()
         except Exception:
             logger.exception("Failed to initialise ContextBuilder")
             raise
+        self.context_builder = builder
 
     # ------------------------------------------------------------------
     def _increment_enh_count(self, model_id: int) -> None:
