@@ -1273,9 +1273,8 @@ class SelfCodingEngine:
                 or metadata.get("prompt_id")
                 or metadata.get("prompt_strategy")
             )
-        build = self.prompt_engine.build_prompt
         try:
-            prompt_obj = build(
+            prompt_obj = build_prompt(
                 description,
                 context=context_block,
                 retrieval_context=retrieval_context,
@@ -1284,6 +1283,7 @@ class SelfCodingEngine:
                 summaries=summaries,
                 target_region=target_region,
                 strategy=strategy,
+                context_builder=self.context_builder,
             )
         except TypeError:
             if target_region is not None:
@@ -1299,12 +1299,13 @@ class SelfCodingEngine:
                     if context_block
                     else instr
                 )
-            prompt_obj = build(
+            prompt_obj = build_prompt(
                 description,
                 context=context_block,
                 retrieval_context=retrieval_context,
                 retry_trace=retry_trace,
                 summaries=summaries,
+                context_builder=self.context_builder,
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
