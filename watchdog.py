@@ -6,7 +6,7 @@ import os
 import smtplib
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from email.message import EmailMessage
 from typing import Iterable, Callable, TYPE_CHECKING
@@ -84,7 +84,7 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
 from .retry_utils import retry
 
 try:  # pragma: no cover - optional dependency
-    from vector_service import get_default_context_builder
+    from vector_service import ContextBuilder, get_default_context_builder
 except Exception:  # pragma: no cover - fallback when helper missing
     try:
         from vector_service.context_builder import ContextBuilder  # type: ignore
@@ -92,24 +92,23 @@ except Exception:  # pragma: no cover - fallback when helper missing
         def get_default_context_builder(**kwargs):  # type: ignore
             return ContextBuilder(**kwargs)
     except Exception:  # pragma: no cover - last resort
-        def get_default_context_builder(**kwargs):  # type: ignore
-            class _Dummy:
-                def refresh_db_weights(self) -> None:
-                    pass
+        class ContextBuilder:  # type: ignore[override]
+            def refresh_db_weights(self) -> None:  # pragma: no cover - stub
+                pass
 
-            return _Dummy()
+        def get_default_context_builder(**kwargs):  # type: ignore
+            return ContextBuilder()
 
 if TYPE_CHECKING:
     from .replay_engine import ReplayValidator
     from .menace_orchestrator import MenaceOrchestrator
 
 
-def _default_auto_handler() -> AutoEscalationManager | None:
+def _default_auto_handler(builder: ContextBuilder | None) -> AutoEscalationManager | None:
     try:
-        builder = get_default_context_builder()
-        builder.refresh_db_weights()
-        if AutoEscalationManager is None:
+        if builder is None or AutoEscalationManager is None:
             return None
+        builder.refresh_db_weights()
         return AutoEscalationManager(context_builder=builder)
     except Exception:
         logging.exception("auto handler init failed")
@@ -135,9 +134,7 @@ class Notifier:
     telegram_chat_id: str | None = None
     recipients: Iterable[str] | None = None
     smtp_server: str = "localhost"
-    auto_handler: AutoEscalationManager | None = field(
-        default_factory=_default_auto_handler
-    )
+    auto_handler: AutoEscalationManager | None = None
 
     def notify(self, message: str, attachments: Iterable[str] | None = None) -> None:
         if self.slack_webhook:
@@ -240,6 +237,7 @@ class Watchdog:
         roi_db: ROIDB,
         metrics_db: MetricsDB,
         *,
+        context_builder: ContextBuilder,
         registry: BotRegistry | None = None,
         thresholds: Thresholds | None = None,
         notifier: Notifier | None = None,
@@ -251,8 +249,11 @@ class Watchdog:
         self.error_db = error_db
         self.roi_db = roi_db
         self.metrics_db = metrics_db
+        self.context_builder = context_builder
         self.thresholds = thresholds or Thresholds()
         self.notifier = notifier or Notifier()
+        if self.notifier.auto_handler is None:
+            self.notifier.auto_handler = _default_auto_handler(self.context_builder)
         self.registry = registry or BotRegistry()
         self.event_bus = event_bus
         self.restart_log = restart_log
@@ -472,21 +473,13 @@ class Watchdog:
             from .self_coding_engine import SelfCodingEngine
             from .code_database import CodeDB
             from .menace_memory_manager import MenaceMemoryManager
-            try:
-                from vector_service.context_builder_utils import get_default_context_builder
-            except ImportError:  # pragma: no cover - fallback
-                from vector_service.context_builder import ContextBuilder  # type: ignore
 
-                def get_default_context_builder(**kwargs):  # type: ignore
-                    return ContextBuilder(**kwargs)
-
-            builder = get_default_context_builder()
-            builder.refresh_db_weights()
+            self.context_builder.refresh_db_weights()
             engine = SelfCodingEngine(
-                CodeDB(), MenaceMemoryManager(), context_builder=builder
+                CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
             dbg = AutomatedDebugger(
-                _Proxy(self.error_db), engine, context_builder=builder
+                _Proxy(self.error_db), engine, context_builder=self.context_builder
             )
             dbg.analyse_and_fix()
             if self.event_bus:

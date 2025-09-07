@@ -1,15 +1,16 @@
-import subprocess
-import os
 import pytest
-import menace.advanced_error_management as aem
-import menace.watchdog as wd
-import menace.error_bot as eb
-import menace.resource_allocation_optimizer as rao
-import menace.data_bot as db
-from menace.error_logger import TelemetryEvent
-from datetime import datetime, timedelta
-from pathlib import Path
-from dynamic_path_router import resolve_path
+pytest.skip("optional dependencies not installed", allow_module_level=True)
+import subprocess  # noqa: E402
+import os  # noqa: E402
+import menace.advanced_error_management as aem  # noqa: E402
+import menace.watchdog as wd  # noqa: E402
+import menace.error_bot as eb  # noqa: E402
+import menace.resource_allocation_optimizer as rao  # noqa: E402
+import menace.data_bot as db  # noqa: E402
+from menace.error_logger import TelemetryEvent  # noqa: E402
+from datetime import datetime, timedelta  # noqa: E402
+from pathlib import Path  # noqa: E402
+from dynamic_path_router import resolve_path  # noqa: E402
 
 
 def _setup_dbs(tmp_path: Path):
@@ -84,7 +85,8 @@ def test_compile_dossier_generates_playbook(tmp_path, monkeypatch):
         return str(path)
 
     monkeypatch.setattr(aem.PlaybookGenerator, "generate", fake_generate)
-    watch = wd.Watchdog(err_db, roi_db, metrics_db)
+    builder = wd.get_default_context_builder()
+    watch = wd.Watchdog(err_db, roi_db, metrics_db, context_builder=builder)
     dossier, attachments = watch.compile_dossier()
     assert any(str(tmp_path / "pb.json") == a for a in attachments)
     assert called
@@ -113,7 +115,10 @@ def test_watchdog_notifications_include_playbook(tmp_path, monkeypatch):
 
     notifier = wd.Notifier()
     notifier.notify = fake_notify
-    watch = wd.Watchdog(err_db, roi_db, metrics_db, notifier=notifier)
+    builder = wd.get_default_context_builder()
+    watch = wd.Watchdog(
+        err_db, roi_db, metrics_db, notifier=notifier, context_builder=builder
+    )
     watch.check()
     assert any(str(pb) == a for a in sent.get("attachments", []))
 

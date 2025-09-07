@@ -91,6 +91,7 @@ def test_notifier_default_handler(monkeypatch):
         lambda: types.SimpleNamespace(refresh_db_weights=lambda: None),
     )
     n = wd.Notifier()
+    n.auto_handler = wd._default_auto_handler(wd.get_default_context_builder())
     n.escalate("boom")
     assert called == ["boom"]
 

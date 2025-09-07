@@ -7,7 +7,7 @@ import threading
 from threading import Event
 
 from .chaos_scheduler import ChaosScheduler
-from .watchdog import Watchdog
+from .watchdog import Watchdog, get_default_context_builder
 from .error_bot import ErrorDB
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
@@ -20,7 +20,8 @@ class ChaosMonitoringService:
     def __init__(self,
                  scheduler: ChaosScheduler | None = None,
                  rollback_mgr: AutomatedRollbackManager | None = None) -> None:
-        watch = Watchdog(ErrorDB(), ROIDB(), MetricsDB())
+        builder = get_default_context_builder()
+        watch = Watchdog(ErrorDB(), ROIDB(), MetricsDB(), context_builder=builder)
         self.scheduler = scheduler or ChaosScheduler(watchdog=watch)
         self.rollback_mgr = rollback_mgr or AutomatedRollbackManager()
         self.logger = logging.getLogger(self.__class__.__name__)

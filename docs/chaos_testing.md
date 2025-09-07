@@ -4,14 +4,15 @@
 
 ```python
 from menace.chaos_scheduler import ChaosScheduler
-from menace.watchdog import Watchdog
+from menace.watchdog import Watchdog, get_default_context_builder
 
+builder = get_default_context_builder()
 scheduler = ChaosScheduler(
     processes=[proc],
     bots=[bot],
     disk_paths=["/tmp/data.db"],
     hosts=["db", "cache"],
-    watchdog=Watchdog(...),
+    watchdog=Watchdog(..., context_builder=builder),
 )
 scheduler.start()
 ```
