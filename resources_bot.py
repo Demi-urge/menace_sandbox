@@ -107,12 +107,13 @@ class ResourcesBot:
         db: ROIHistoryDB | None = None,
         alloc_bot: ResourceAllocationBot | None = None,
         *,
+        context_builder: ContextBuilder,
         prediction_manager: "PredictionManager" | None = None,
         strategy_bot: "StrategyPredictionBot" | None = None,
     ) -> None:
         self.db = db or ROIHistoryDB()
         self.alloc_bot = alloc_bot or ResourceAllocationBot(
-            AllocationDB(), context_builder=ContextBuilder()
+            AllocationDB(), context_builder=context_builder
         )
         self.strategy_bot = strategy_bot
         self.prediction_manager = prediction_manager
