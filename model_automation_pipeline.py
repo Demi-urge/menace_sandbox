@@ -22,7 +22,7 @@ try:
     from marshmallow import ValidationError as MMValidationError  # type: ignore
     ValidationError = MMValidationError
 except Exception:  # pragma: no cover - optional dependency
-    from .simple_validation import (
+    from .simple_validation import (  # noqa: F401
         SimpleSchema as Schema,
         fields,
         ValidationError,
@@ -196,12 +196,7 @@ class ModelAutomationPipeline:
         self.monitor_bot = monitor_bot or OperationalMonitoringBot()
         self.db_bot = db_bot or CentralDatabaseBot(db_router=self.db_router)
         self.sentiment_bot = sentiment_bot or SentimentBot()
-        self.query_bot = query_bot or QueryBot()
-        if getattr(self.query_bot, "client", None):
-            try:
-                self.query_bot.client.context_builder = self.context_builder
-            except Exception:
-                pass
+        self.query_bot = query_bot or QueryBot(context_builder=self.context_builder)
         self.memory_bot = memory_bot or MemoryBot()
         self.comms_test_bot = comms_test_bot or CommunicationTestingBot()
         self.discrepancy_bot = discrepancy_bot or DiscrepancyDetectionBot()

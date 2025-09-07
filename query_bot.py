@@ -158,14 +158,23 @@ class QueryBot:
         nlu: SimpleNLU | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
         knowledge: LocalKnowledgeModule | None = LOCAL_KNOWLEDGE_MODULE,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         if client is None:
+            if context_builder is None:
+                raise ValueError("context_builder is required when client is None")
             api_key = get_config().api_keys.openai
-            builder = ContextBuilder()
-            builder.refresh_db_weights()
             client = ChatGPTClient(
-                api_key, gpt_memory=GPT_MEMORY_MANAGER, context_builder=builder
+                api_key, gpt_memory=GPT_MEMORY_MANAGER, context_builder=context_builder
             )
+        else:
+            if context_builder is not None and getattr(client, "context_builder", None) is None:
+                try:
+                    client.context_builder = context_builder
+                except Exception:
+                    logger.debug(
+                        "failed to attach context_builder to client", exc_info=True
+                    )
         self.client = client
         self.fetcher = fetcher or DataFetcher()
         self.store = store or ContextStore()
