@@ -15,10 +15,11 @@ class _DummyBuilder:
 def test_redistribute_records(tmp_path):
     db = resb.ROIHistoryDB(tmp_path / "roi.db")
     alloc_db = rab.AllocationDB(tmp_path / "a.db")
+    builder = _DummyBuilder()
     alloc_bot = rab.ResourceAllocationBot(
-        alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=_DummyBuilder()
+        alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=builder
     )
-    bot = resb.ResourcesBot(db, alloc_bot)
+    bot = resb.ResourcesBot(db, alloc_bot, context_builder=builder)
     metrics = {
         "b1": rpb.ResourceMetrics(cpu=1.0, memory=50.0, disk=1.0, time=1.0),
         "b2": rpb.ResourceMetrics(cpu=5.0, memory=100.0, disk=2.0, time=2.0),
@@ -59,10 +60,17 @@ def test_strategy_and_persistence(tmp_path):
     strategy = DummyStrategy()
     db = resb.ROIHistoryDB(tmp_path / "r.db")
     alloc_db = rab.AllocationDB(tmp_path / "a.db")
+    builder = _DummyBuilder()
     alloc_bot = rab.ResourceAllocationBot(
-        alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=_DummyBuilder()
+        alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=builder
     )
-    bot = resb.ResourcesBot(db, alloc_bot, prediction_manager=manager, strategy_bot=strategy)
+    bot = resb.ResourcesBot(
+        db,
+        alloc_bot,
+        context_builder=builder,
+        prediction_manager=manager,
+        strategy_bot=strategy,
+    )
     metrics = {"b": rpb.ResourceMetrics(cpu=1.0, memory=1.0, disk=1.0, time=1.0)}
     bot.redistribute(metrics)
     hist = bot.current_allocations()

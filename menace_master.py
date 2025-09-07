@@ -414,6 +414,7 @@ def _init_unused_bots() -> None:
         _wrap(
             ResourcesBot,
             alloc_bot=ResourceAllocationBot(context_builder=builder),
+            context_builder=builder,
         ),
         ScalabilityAssessmentBot,
         StrategyPredictionBot,
