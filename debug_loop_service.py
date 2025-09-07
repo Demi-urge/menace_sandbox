@@ -29,28 +29,27 @@ class DebugLoopService:
         feedback: TelemetryFeedback | None = None,
         *,
         graph: KnowledgeGraph | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
         """Create service.
 
         Parameters
         ----------
         context_builder:
-            Optional :class:`~vector_service.ContextBuilder` used when creating
+            Preconfigured :class:`~vector_service.ContextBuilder` used when creating
             telemetry and self-coding components.
         """
         self.graph = graph or KnowledgeGraph()
         if feedback is None:
-            builder = context_builder or ContextBuilder()
             try:
-                builder.refresh_db_weights()
+                context_builder.refresh_db_weights()
             except Exception:
                 pass
             logger = ErrorLogger(
-                knowledge_graph=self.graph, context_builder=builder
+                knowledge_graph=self.graph, context_builder=context_builder
             )
             engine = SelfCodingEngine(
-                CodeDB(), MenaceMemoryManager(), context_builder=builder
+                CodeDB(), MenaceMemoryManager(), context_builder=context_builder
             )
             feedback = TelemetryFeedback(logger, engine)
         self.feedback = feedback
