@@ -62,6 +62,47 @@ def test_gpt4_client_stream(monkeypatch):
     assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
 
 
+def test_gpt4_client_stream_with_context_builder(monkeypatch):
+    captured = {}
+    chunk1 = {"choices": [{"delta": {"content": "Hi"}}]}
+    chunk2 = {"choices": [{"delta": {"content": "!"}}]}
+
+    def fake_create(*args, **kwargs):
+        captured["messages"] = kwargs.get("messages")
+        return [chunk1, chunk2]
+
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(create=fake_create)
+    )
+    monkeypatch.setattr(
+        "neurosales.external_integrations.openai", fake_openai, raising=False
+    )
+
+    class DummyBuilder:
+        def build(self, query: str) -> str:
+            captured["query"] = query
+            return "CTX"
+
+    client = GPT4Client("k", context_builder=DummyBuilder())
+    out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
+    assert "".join(out) == "Hi!"
+    assert captured["query"] == "persuade"
+    assert captured["messages"][1]["content"] == "CTX"
+
+
+def test_gpt4_client_stream_warns_without_context_builder(monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(create=lambda *a, **k: [])
+    )
+    monkeypatch.setattr(
+        "neurosales.external_integrations.openai", fake_openai, raising=False
+    )
+    client = GPT4Client("k")
+    list(client.stream_chat("user", [0.1], "objective", "hi"))
+    assert any("context" in r.getMessage().lower() for r in caplog.records)
+
+
 def test_gpt4_client_env(monkeypatch, caplog):
     caplog.set_level("WARNING")
     fake_openai = types.SimpleNamespace(ChatCompletion=types.SimpleNamespace())
