@@ -435,7 +435,10 @@ class ChatGPTClient:
         system_msgs: List[Dict[str, str]] = []
         if builder is not None:
             try:
-                query = " ".join(tags)
+                query_parts = [*tags]
+                if prompt:
+                    query_parts.append(prompt)
+                query = " ".join(query_parts)
                 ctx_res = builder.build(query)
                 ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
                 if ctx:
