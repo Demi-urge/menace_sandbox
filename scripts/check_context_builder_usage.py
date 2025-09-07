@@ -10,6 +10,11 @@ of whether it is accessed as an attribute.  Additionally, direct calls to
 ``chat_completion_create`` wrapper are inspected.  Any invocation missing a
 ``context_builder`` keyword or an inline ``# nocb`` comment will be flagged.  The
 check ignores files located in directories named ``tests`` or ``unit_tests``.
+
+Furthermore, the linter searches for imports or calls to
+``get_default_context_builder`` outside of test directories.  Such usage is
+reported unless the offending line (or the one immediately above it) contains a
+``# nocb`` marker.
 """
 from __future__ import annotations
 
@@ -19,6 +24,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 NOCB_MARK = "# nocb"
+
+DEFAULT_BUILDER_NAME = "get_default_context_builder"
 REQUIRED_NAMES = {
     "PromptEngine",
     "_build_prompt",
@@ -70,20 +77,48 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
             name_full = full_name(node.func)
             name_simple = name_full.split(".")[-1] if name_full else None
-            has_kw = any(kw.arg == "context_builder" for kw in node.keywords)
 
-            target = None
-            if name_simple in REQUIRED_NAMES:
-                target = name_simple
-            elif name_full in OPENAI_NAMES:
-                target = name_full
-            if target and not has_kw:
+            if name_simple == DEFAULT_BUILDER_NAME:
                 line_no = node.lineno
                 line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                 prev = lines[line_no - 2] if line_no >= 2 else ""
                 if NOCB_MARK not in line and NOCB_MARK not in prev:
-                    errors.append((line_no, target))
+                    errors.append((line_no, DEFAULT_BUILDER_NAME))
+            else:
+                has_kw = any(kw.arg == "context_builder" for kw in node.keywords)
+                target = None
+                if name_simple in REQUIRED_NAMES:
+                    target = name_simple
+                elif name_full in OPENAI_NAMES:
+                    target = name_full
+                if target and not has_kw:
+                    line_no = node.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append((line_no, target))
 
+            self.generic_visit(node)
+
+        def visit_Import(self, node: ast.Import) -> None:  # noqa: D401
+            for alias in node.names:
+                name = alias.name.split(".")[-1]
+                if name == DEFAULT_BUILDER_NAME or alias.asname == DEFAULT_BUILDER_NAME:
+                    line_no = node.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append((line_no, DEFAULT_BUILDER_NAME))
+            self.generic_visit(node)
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # noqa: D401
+            for alias in node.names:
+                if alias.name == DEFAULT_BUILDER_NAME or alias.asname == DEFAULT_BUILDER_NAME:
+                    line_no = node.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append((line_no, DEFAULT_BUILDER_NAME))
             self.generic_visit(node)
 
     Visitor().visit(tree)
@@ -94,7 +129,7 @@ def main() -> int:
     failures: list[str] = []
     for path in iter_python_files(ROOT):
         for lineno, name in check_file(path):
-            failures.append(f"{path}:{lineno} -> {name} missing context_builder")
+            failures.append(f"{path}:{lineno} -> {name} disallowed or missing context_builder")
     if failures:
         for line in failures:
             print(line)

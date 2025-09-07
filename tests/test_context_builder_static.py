@@ -70,3 +70,24 @@ def test_allows_nocb_comment(tmp_path):
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == []
+
+
+def test_flags_default_builder_import(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = "from vector_service import get_default_context_builder\n"
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [(1, "get_default_context_builder")]
+
+
+def test_flags_default_builder_call(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo():\n"
+        "    get_default_context_builder()\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [(2, "get_default_context_builder")]
