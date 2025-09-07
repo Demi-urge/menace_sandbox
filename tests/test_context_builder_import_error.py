@@ -9,7 +9,6 @@ import pytest
     [
         "menace.auto_escalation_manager",
         "menace.watchdog",
-        "menace.chaos_monitoring_service",
         "menace.enhancement_bot",
         "menace.self_coding_engine",
     ],

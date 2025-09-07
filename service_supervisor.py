@@ -176,7 +176,7 @@ def _dep_update_worker() -> None:
 def _chaos_worker() -> None:
     """Continuously inject faults and rollback on failure."""
     logger = logging.getLogger("chaos_worker")
-    service = ChaosMonitoringService()
+    service = ChaosMonitoringService(context_builder=ContextBuilder())
     stop = Event()
     interval = float(os.getenv("CHAOS_INTERVAL", "300"))
     service.run_continuous(interval=interval, stop_event=stop)
