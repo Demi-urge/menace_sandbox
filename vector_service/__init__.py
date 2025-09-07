@@ -8,6 +8,7 @@ from .patch_logger import PatchLogger
 from .cognition_layer import CognitionLayer
 from .embedding_backfill import EmbeddingBackfill
 from .vectorizer import SharedVectorService
+from .context_builder import ContextBuilder
 from .exceptions import (
     VectorServiceError,
     RateLimitError,
@@ -33,6 +34,7 @@ __all__ = [
     "CognitionLayer",
     "EmbeddingBackfill",
     "SharedVectorService",
+    "ContextBuilder",
     "EmbeddableDBMixin",
     "VectorServiceError",
     "RateLimitError",
