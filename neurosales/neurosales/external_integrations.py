@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, TYPE_CHECKING
 import time
 from . import config
 import os
@@ -25,6 +25,9 @@ except Exception:  # pragma: no cover - optional dep
 from billing.openai_wrapper import chat_completion_create
 import stripe_billing_router  # noqa: F401
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # pragma: no cover - hints only
+    from vector_service.context_builder import ContextBuilder
 
 
 class RedditHarvester:
@@ -100,11 +103,17 @@ class TwitterTracker:
 class GPT4Client:
     """Stream GPT-4 chat completions for adaptive ranking."""
 
-    def __init__(self, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        context_builder: "ContextBuilder" | None = None,
+    ) -> None:
         if api_key is None:
             api_key = config.load_config().openai_key or os.getenv("OPENAI_API_KEY")
         self.api_key = api_key
         self.enabled = openai is not None and api_key is not None
+        self.context_builder = context_builder
         if self.enabled:
             openai.api_key = api_key  # type: ignore[arg-type]
         else:  # pragma: no cover - warning path
@@ -125,10 +134,24 @@ class GPT4Client:
         system_msg = (
             f"archetype:{archetype}; objective:{objective}; emotion:{emotion_tensor}"
         )
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": text},
-        ]
+        messages = [{"role": "system", "content": system_msg}]
+        query = objective or text
+        context: Optional[str] = None
+        if self.context_builder is not None:
+            try:
+                context = self.context_builder.build(query)
+            except Exception:  # pragma: no cover - best effort
+                logger.warning(
+                    "ContextBuilder failed; proceeding without context",
+                    exc_info=True,
+                )
+        else:  # pragma: no cover - warning path
+            logger.warning(
+                "ContextBuilder unavailable; proceeding without context"
+            )
+        if context:
+            messages.append({"role": "system", "content": context})
+        messages.append({"role": "user", "content": text})
         resp = chat_completion_create(
             messages,
             model="gpt-4",
