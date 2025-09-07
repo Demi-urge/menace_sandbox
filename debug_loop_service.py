@@ -25,11 +25,23 @@ class DebugLoopService:
     """Run :class:`TelemetryFeedback` continuously and archive crash logs."""
 
     def __init__(
-        self, feedback: TelemetryFeedback | None = None, *, graph: KnowledgeGraph | None = None
+        self,
+        feedback: TelemetryFeedback | None = None,
+        *,
+        graph: KnowledgeGraph | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
+        """Create service.
+
+        Parameters
+        ----------
+        context_builder:
+            Optional :class:`~vector_service.ContextBuilder` used when creating
+            telemetry and self-coding components.
+        """
         self.graph = graph or KnowledgeGraph()
         if feedback is None:
-            builder = ContextBuilder()
+            builder = context_builder or ContextBuilder()
             try:
                 builder.refresh_db_weights()
             except Exception:

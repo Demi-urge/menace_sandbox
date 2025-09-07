@@ -37,11 +37,10 @@ from contextlib import AsyncExitStack, contextmanager
 from db_router import init_db_router
 from dynamic_path_router import resolve_path, path_for_prompt
 
-try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder_utils import get_default_context_builder
-except Exception:  # pragma: no cover - fallback
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return None
+try:  # pragma: no cover - optional dependency for type hints
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - fallback for flat layout
+    from vector_service.context_builder import ContextBuilder  # type: ignore
 MENACE_ID = uuid.uuid4().hex
 
 try:  # pragma: no cover - compatibility with pydantic v1/v2
@@ -514,6 +513,7 @@ class SelfTestService:
         stub_scenarios: Mapping[str, Any] | None = None,
         fixture_hook: str | None = None,
         ephemeral: bool = True,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         """Create a new service instance.
 
@@ -564,11 +564,15 @@ class SelfTestService:
             When ``True`` each test batch executes in an isolated ephemeral
             environment created via
             :func:`sandbox_runner.environment.create_ephemeral_env`.
+        context_builder:
+            Optional :class:`~vector_service.ContextBuilder` instance used by the
+            internal :class:`~error_logger.ErrorLogger`. When omitted a default
+            builder is created.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.graph = graph or KnowledgeGraph()
-        builder = get_default_context_builder()
+        builder = context_builder or ContextBuilder()
         self.error_logger = ErrorLogger(
             db, knowledge_graph=self.graph, context_builder=builder
         )
