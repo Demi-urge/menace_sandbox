@@ -66,7 +66,10 @@ def test_risk_scores_penalize_and_propagate(tmp_path):
     ]
     retriever = DummyRetriever(hits)
     vec_db = VectorMetricsDB(tmp_path / "vec.db")
-    layer = CognitionLayer(retriever=retriever, vector_metrics=vec_db)
+    builder = ContextBuilder(retriever=retriever)
+    layer = CognitionLayer(
+        retriever=retriever, vector_metrics=vec_db, context_builder=builder
+    )
     ctx, sid = layer.query("q", top_k=1)
     parsed = json.loads(ctx)
     assert parsed["bots"][0]["roi"] == 1.0

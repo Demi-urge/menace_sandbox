@@ -71,8 +71,7 @@ class CognitionLayer:
         This parameter is required.
     roi_tracker:
         Optional :class:`roi_tracker.ROITracker` instance used to update
-        ROI histories when recording patch outcomes.  If not provided and
-        the tracker can be imported, a default instance is created.
+        ROI histories when recording patch outcomes.
     ranking_model:
         Optional ranking model object assigned to ``context_builder`` if
         provided.
@@ -98,7 +97,7 @@ class CognitionLayer:
             self.context_builder, "patch_retriever", PatchRetriever()
         )
         self.vector_metrics = vector_metrics or VectorMetricsDB()
-        self.roi_tracker = roi_tracker or (ROITracker() if ROITracker is not None else None)
+        self.roi_tracker = roi_tracker
         self.event_bus = event_bus or getattr(patch_logger, "event_bus", None)
         db_weights = None
         if self.vector_metrics is not None:
@@ -136,8 +135,18 @@ class CognitionLayer:
             roi_tracker=self.roi_tracker,
             event_bus=self.event_bus,
         )
-        if getattr(self.patch_logger, "roi_tracker", None) is not self.roi_tracker:
+        if self.roi_tracker is None:
+            self.roi_tracker = getattr(self.patch_logger, "roi_tracker", None)
+        elif getattr(self.patch_logger, "roi_tracker", None) is not self.roi_tracker:
             self.patch_logger.roi_tracker = self.roi_tracker
+        if (
+            self.roi_tracker is not None
+            and getattr(self.context_builder, "roi_tracker", None) is None
+        ):
+            try:
+                self.context_builder.roi_tracker = self.roi_tracker
+            except Exception:
+                pass
         if getattr(self.patch_logger, "event_bus", None) is not self.event_bus:
             try:
                 self.patch_logger.event_bus = self.event_bus
