@@ -1061,6 +1061,7 @@ class ChatGPTEnhancementBot:
                 "chatgpt_enhancement_bot.propose",
                 prompt,
                 memory=self.gpt_memory,
+                context_builder=self.client.context_builder,
                 tags=base_tags,
             )
         except Exception as exc:

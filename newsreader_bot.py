@@ -280,6 +280,7 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
         "newsreader_bot.monetise_event",
         prompt,
         memory=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
+        context_builder=client.context_builder,
         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
     )
     return data.get("choices", [{}])[0].get("message", {}).get("content", "")

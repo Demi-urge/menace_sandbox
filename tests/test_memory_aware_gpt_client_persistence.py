@@ -9,6 +9,8 @@ from knowledge_retriever import (
     recent_error_fix,
     recent_improvement_path,
 )
+from types import SimpleNamespace
+
 from memory_aware_gpt_client import ask_with_memory
 from local_knowledge_module import LocalKnowledgeModule
 from log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH
@@ -39,6 +41,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
     client = DummyClient()
     mgr = GPTMemoryManager(db_path=str(db), embedder=embedder)
     module = LocalKnowledgeModule(manager=mgr)
+    builder = SimpleNamespace(build=lambda *a, **k: "")
 
     client.next_response = "Great success"
     ask_with_memory(
@@ -46,6 +49,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
         "auth.reset_password",
         "reset my password",
         memory=module,
+        context_builder=builder,
         tags=[FEEDBACK],
     )
 
@@ -55,6 +59,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
         "auth.reset_password",
         "credential bug encountered",
         memory=module,
+        context_builder=builder,
         tags=[ERROR_FIX],
     )
 
@@ -64,6 +69,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
         "auth.reset_password",
         "any improvement suggestions?",
         memory=module,
+        context_builder=builder,
         tags=[IMPROVEMENT_PATH],
     )
     mgr.close()
@@ -93,7 +99,13 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
 
     client2 = DummyClient()
     client2.next_response = "final"
-    ask_with_memory(client2, "auth.reset_password", "what next?", memory=module2)
+    ask_with_memory(
+        client2,
+        "auth.reset_password",
+        "what next?",
+        memory=module2,
+        context_builder=builder,
+    )
     sent_prompt = client2.messages[0]["content"]
     assert "Great success" in sent_prompt
     assert "This fixes the error." in sent_prompt

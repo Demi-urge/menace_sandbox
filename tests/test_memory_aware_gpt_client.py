@@ -25,8 +25,16 @@ def test_context_injection_and_logging():
 
     client.ask = fake_ask
     knowledge = DummyKnowledge()
+    builder = SimpleNamespace(build=lambda *a, **k: "")
 
-    magc.ask_with_memory(client, "mod.act", "Do it", memory=knowledge, tags=["feedback"])
+    magc.ask_with_memory(
+        client,
+        "mod.act",
+        "Do it",
+        memory=knowledge,
+        context_builder=builder,
+        tags=["feedback"],
+    )
 
     sent_prompt = recorded["messages"][0]["content"]
     assert "fb1" in sent_prompt

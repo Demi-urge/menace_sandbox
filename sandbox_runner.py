@@ -1741,6 +1741,7 @@ def _sandbox_main(
                         "sandbox_runner.brainstorm",
                         prompt_text,
                         memory=getattr(ctx.gpt_client, "gpt_memory", None),
+                        context_builder=builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                     )
                     idea = (

@@ -189,6 +189,7 @@ class QueryBot:
             "query_bot.process",
             prompt,
             memory=self.local_knowledge,
+            context_builder=self.client.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
         text = (

@@ -616,6 +616,7 @@ def follow_up(client: ChatGPTClient, idea: Idea) -> str:
             "chatgpt_idea_bot.follow_up",
             prompt,
             memory=LOCAL_KNOWLEDGE_MODULE,
+            context_builder=client.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
         idea.insight = (
@@ -652,6 +653,7 @@ def generate_and_filter(
         "chatgpt_idea_bot.generate_and_filter",
         prompt,
         memory=LOCAL_KNOWLEDGE_MODULE,
+        context_builder=client.context_builder,
         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
     )
     ideas = parse_ideas(response)

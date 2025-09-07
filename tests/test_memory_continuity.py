@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from memory_aware_gpt_client import ask_with_memory
 from local_knowledge_module import LocalKnowledgeModule
 from gpt_memory import (
@@ -39,12 +41,14 @@ def test_memory_continuity_across_sessions(tmp_path):
         [responses[FEEDBACK], responses[ERROR_FIX], responses[IMPROVEMENT_PATH]]
     )
     module_a = LocalKnowledgeModule(db_path=db_file)
+    builder = SimpleNamespace(build=lambda *a, **k: "")
 
     ask_with_memory(
         client,
         key,
         prompts[FEEDBACK],
         memory=module_a,
+        context_builder=builder,
         tags=[FEEDBACK],
     )
     ask_with_memory(
@@ -52,6 +56,7 @@ def test_memory_continuity_across_sessions(tmp_path):
         key,
         prompts[ERROR_FIX],
         memory=module_a,
+        context_builder=builder,
         tags=[ERROR_FIX],
     )
     ask_with_memory(
@@ -59,6 +64,7 @@ def test_memory_continuity_across_sessions(tmp_path):
         key,
         prompts[IMPROVEMENT_PATH],
         memory=module_a,
+        context_builder=builder,
         tags=[IMPROVEMENT_PATH],
     )
 
