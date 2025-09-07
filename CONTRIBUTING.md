@@ -81,6 +81,10 @@ at the call site and pass it explicitly rather than relying on internal
 defaults or silent fallbacks. Tests should assert that these components fail
 fast when the builder is omitted.
 
+Run `python scripts/check_context_builder_usage.py` before committing to verify
+all relevant calls include a `context_builder` argument. Continuous integration
+runs this script and fails the build if any violations are found.
+
 ## Stripe integration
 
 To centralize billing logic and API configuration, the `stripe` Python package
@@ -89,7 +93,7 @@ on the router's helpers rather than interacting with Stripe directly. The
 `check-stripe-imports` pre-commit hook enforces this restriction. The repository
 also guards against accidental exposure of live credentials. The
 `forbid-stripe-keys` hook scans all text files for strings resembling live
-Stripe keys (e.g., `sk_live_` or `pk_live_`) or hard-coded Stripe API endpoints
+Stripe keys (for example, strings beginning with `sk` or `pk` that resemble live or test keys) or hard-coded Stripe API endpoints
 such as `api.stripe[dot]com`.
 
 Before submitting a pull request, run `pre-commit run --all-files` to execute
