@@ -9,7 +9,6 @@ from typing import List
 from pathlib import Path
 
 from .conversation_manager_bot import ConversationManagerBot, ChatGPTClient
-from vector_service.context_builder import ContextBuilder
 from .env_config import OPENAI_API_KEY
 from .menace_memory_manager import MenaceMemoryManager
 from .report_generation_bot import ReportGenerationBot
@@ -18,6 +17,7 @@ from .bot_database import BotDB
 from .resources_bot import ROIHistoryDB
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
+from vector_service import ContextBuilder
 from .scope_utils import Scope, build_scope_clause, apply_scope
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
@@ -183,7 +183,9 @@ class MenaceGUI(tk.Tk):
             bot_db = BotDB()
             roi_db = ROIHistoryDB()
             pred_bot = ResourcePredictionBot()
-            alloc_bot = ResourceAllocationBot(AllocationDB())
+            alloc_bot = ResourceAllocationBot(
+                AllocationDB(), context_builder=ContextBuilder()
+            )
 
             records = bot_db.fetch_all()
             metrics: dict[str, ResourceMetrics] = {}

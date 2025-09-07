@@ -5,10 +5,16 @@ import menace.resource_allocation_bot as rab
 import menace.resources_bot as resb
 
 
+class _DummyBuilder:
+    def build(self, *_: object, **__: object) -> str:
+        return "ctx"
+
 def test_redistribute_records(tmp_path):
     db = resb.ROIHistoryDB(tmp_path / "roi.db")
     alloc_db = rab.AllocationDB(tmp_path / "a.db")
-    alloc_bot = rab.ResourceAllocationBot(alloc_db, rpb.TemplateDB(tmp_path / "t.csv"))
+    alloc_bot = rab.ResourceAllocationBot(
+        alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=_DummyBuilder()
+    )
     bot = resb.ResourcesBot(db, alloc_bot)
     metrics = {
         "b1": rpb.ResourceMetrics(cpu=1.0, memory=50.0, disk=1.0, time=1.0),
@@ -50,7 +56,9 @@ def test_strategy_and_persistence(tmp_path):
     strategy = DummyStrategy()
     db = resb.ROIHistoryDB(tmp_path / "r.db")
     alloc_db = rab.AllocationDB(tmp_path / "a.db")
-    alloc_bot = rab.ResourceAllocationBot(alloc_db, rpb.TemplateDB(tmp_path / "t.csv"))
+    alloc_bot = rab.ResourceAllocationBot(
+        alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=_DummyBuilder()
+    )
     bot = resb.ResourcesBot(db, alloc_bot, prediction_manager=manager, strategy_bot=strategy)
     metrics = {"b": rpb.ResourceMetrics(cpu=1.0, memory=1.0, disk=1.0, time=1.0)}
     bot.redistribute(metrics)
