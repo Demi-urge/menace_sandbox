@@ -104,11 +104,11 @@ if TYPE_CHECKING:
     from .menace_orchestrator import MenaceOrchestrator
 
 
-def _default_auto_handler(builder: ContextBuilder | None) -> AutoEscalationManager | None:
+def _default_auto_handler(builder: ContextBuilder) -> AutoEscalationManager | None:
     try:
-        if builder is None or AutoEscalationManager is None:
-            return None
         builder.refresh_db_weights()
+        if AutoEscalationManager is None:
+            return None
         return AutoEscalationManager(context_builder=builder)
     except Exception:
         logging.exception("auto handler init failed")
