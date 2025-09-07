@@ -7,6 +7,7 @@ from menace.chaos_scheduler import ChaosScheduler  # noqa: E402
 from menace.chaos_tester import ChaosTester  # noqa: E402
 import menace.watchdog as wd  # noqa: E402
 import menace.error_bot as eb  # noqa: E402
+from vector_service.context_builder_utils import get_default_context_builder  # noqa: E402
 import menace.resource_allocation_optimizer as rao  # noqa: E402
 import menace.data_bot as db  # noqa: E402
 
@@ -39,7 +40,7 @@ def test_scheduler_records_fault(monkeypatch, tmp_path):
     proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
     bot = DummyBot(proc)
     err_db, roi_db, metrics_db = _setup_dbs(tmp_path)
-    builder = wd.get_default_context_builder()
+    builder = get_default_context_builder()
     watch = wd.Watchdog(err_db, roi_db, metrics_db, context_builder=builder)
     sched = ChaosScheduler(processes=[proc], bots=[bot], interval=0, watchdog=watch)
 

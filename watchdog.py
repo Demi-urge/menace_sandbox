@@ -84,20 +84,14 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
 from .retry_utils import retry
 
 try:  # pragma: no cover - optional dependency
-    from vector_service import ContextBuilder, get_default_context_builder
+    from vector_service import ContextBuilder
 except Exception:  # pragma: no cover - fallback when helper missing
     try:
         from vector_service.context_builder import ContextBuilder  # type: ignore
-
-        def get_default_context_builder(**kwargs):  # type: ignore
-            return ContextBuilder(**kwargs)
     except Exception:  # pragma: no cover - last resort
         class ContextBuilder:  # type: ignore[override]
             def refresh_db_weights(self) -> None:  # pragma: no cover - stub
                 pass
-
-        def get_default_context_builder(**kwargs):  # type: ignore
-            return ContextBuilder()
 
 if TYPE_CHECKING:
     from .replay_engine import ReplayValidator

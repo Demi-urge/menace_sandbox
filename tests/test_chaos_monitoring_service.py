@@ -3,6 +3,7 @@ import sys
 import types
 import tempfile
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP = Path(tempfile.mkdtemp())
@@ -75,3 +76,8 @@ def test_error_logged(caplog):
     caplog.set_level("ERROR")
     _run_once(svc)
     assert "auto rollback failed" in caplog.text
+
+
+def test_builder_required_when_scheduler_missing():
+    with pytest.raises(ValueError):
+        mod.ChaosMonitoringService()

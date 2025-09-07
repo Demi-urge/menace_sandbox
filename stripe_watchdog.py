@@ -164,11 +164,8 @@ try:  # Optional dependency – self-coding feedback
     from self_coding_engine import SelfCodingEngine  # type: ignore
     try:
         from vector_service.context_builder import ContextBuilder  # type: ignore
-    except ImportError:  # pragma: no cover - fallback
-        from vector_service.context_builder_utils import get_default_context_builder  # type: ignore
-
-        def ContextBuilder(**kwargs):  # type: ignore
-            return get_default_context_builder(**kwargs)
+    except Exception:  # pragma: no cover - fallback when context builder missing
+        ContextBuilder = None  # type: ignore
     from code_database import CodeDB  # type: ignore
     from menace_memory_manager import MenaceMemoryManager  # type: ignore
 except Exception:  # pragma: no cover - best effort
@@ -1761,7 +1758,7 @@ def check_revenue_projection(
 # CLI ----------------------------------------------------------------------
 
 
-def main(argv: Optional[List[str]] = None) -> None:
+def main(argv: Optional[List[str]] = None, *, context_builder: "ContextBuilder" | None = None) -> None:
     """Entry point for command line execution."""
 
     global ANOMALY_LOG
@@ -1820,17 +1817,27 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     engine = None
     telemetry = None
+    builder = context_builder
     if SANITY_LAYER_FEEDBACK_ENABLED:
-        if SelfCodingEngine and CodeDB and MenaceMemoryManager:
+        if (
+            SelfCodingEngine
+            and CodeDB
+            and MenaceMemoryManager
+            and builder is not None
+        ):
             try:
-                builder = ContextBuilder()
                 builder.refresh_db_weights()
                 engine = SelfCodingEngine(
                     CodeDB(), MenaceMemoryManager(), context_builder=builder
                 )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise SelfCodingEngine")
-        if TelemetryFeedback and ErrorLogger and engine is not None:
+        if (
+            TelemetryFeedback
+            and ErrorLogger
+            and engine is not None
+            and builder is not None
+        ):
             try:
                 telemetry = TelemetryFeedback(
                     ErrorLogger(context_builder=builder), engine
