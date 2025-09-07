@@ -119,6 +119,7 @@ class ActionPlanner:
         self,
         pathway_db: PathwayDB,
         roi_db: ROIDB,
+        context_builder: ContextBuilder,
         *,
         alpha: float = 0.5,
         epsilon: float = 0.1,
@@ -138,6 +139,7 @@ class ActionPlanner:
     ) -> None:
         self.pathway_db = pathway_db
         self.roi_db = roi_db
+        self.context_builder = context_builder
         self.model = _RLModel(alpha, epsilon=epsilon, path=model_path)
         self.state_length = max(1, int(state_length))
         self.reward_fn = reward_fn
@@ -180,8 +182,7 @@ class ActionPlanner:
         self.priority_weights: Dict[str, float] = {}
         if cognition_layer is None:
             try:
-                builder = ContextBuilder()
-                cognition_layer = CognitionLayer(context_builder=builder)
+                cognition_layer = CognitionLayer(context_builder=context_builder)
             except Exception:  # pragma: no cover - optional dependency
                 cognition_layer = None
         self.cognition_layer = cognition_layer
