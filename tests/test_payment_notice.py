@@ -11,11 +11,8 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
-from prompt_engine import PromptEngine
-
 from billing.openai_wrapper import chat_completion_create
 from llm_interface import LLMClient, LLMResult
-import model_registry
 
 # Stub heavy dependencies so chatgpt_idea_bot can be imported without side effects
 package = types.ModuleType("menace_sandbox")
@@ -46,6 +43,11 @@ sys.modules["menace_sandbox.memory_logging"] = memory_logging
 memory_client = types.SimpleNamespace(ask_with_memory=lambda *a, **k: {})
 sys.modules["menace_sandbox.memory_aware_gpt_client"] = memory_client
 
+db_router_stub = types.SimpleNamespace(DBRouter=object(), init_db_router=lambda *a, **k: None)
+sys.modules["db_router"] = db_router_stub
+sys.modules["menace_sandbox.db_router"] = db_router_stub
+sys.modules["menace_sandbox"].db_router = db_router_stub  # type: ignore[attr-defined]
+
 class _LKM:
     def __init__(self, *a, **k):
         pass
@@ -70,13 +72,24 @@ class _CB:
     def build(self, *a, **k):
         return ""
 
-vector_service = types.SimpleNamespace(
-    Retriever=None,
-    FallbackResult=list,
-    ErrorResult=Exception,
-    ContextBuilder=_CB,
-)
-sys.modules.setdefault("vector_service", vector_service)
+vector_service = types.ModuleType("vector_service")
+vector_service.Retriever = None
+vector_service.FallbackResult = list
+vector_service.ErrorResult = Exception
+vector_service.ContextBuilder = _CB
+vector_service.__path__ = []  # type: ignore[attr-defined]
+vector_service.__spec__ = types.SimpleNamespace(submodule_search_locations=[])  # type: ignore[attr-defined]
+sys.modules["vector_service"] = vector_service
+vec_cb = types.ModuleType("vector_service.context_builder")
+vec_cb.ContextBuilder = _CB
+sys.modules["vector_service.context_builder"] = vec_cb
+vec_ret = types.ModuleType("vector_service.retriever")
+vec_ret.Retriever = None
+vec_ret.FallbackResult = list
+sys.modules["vector_service.retriever"] = vec_ret
+vec_roi = types.ModuleType("vector_service.roi_tags")
+vec_roi.RoiTag = type("RoiTag", (), {})
+sys.modules["vector_service.roi_tags"] = vec_roi
 
 governed = types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x)
 sys.modules.setdefault("governed_retrieval", governed)
@@ -188,6 +201,8 @@ def test_enhancement_bot_injects_notice():
 
 
 def test_prompt_engine_build_prompt_contains_notice():
+    from prompt_engine import PromptEngine
+
     engine = PromptEngine(retriever=None, context_builder=vector_service.ContextBuilder())
     prompt = engine.build_prompt("task")
     assert prompt.system.startswith(PAYMENT_ROUTER_NOTICE)
@@ -225,6 +240,7 @@ def test_openai_wrapper_injects_notice():
         [{"role": "user", "content": "hi"}],
         model="gpt-3.5-turbo",
         openai_client=fake_openai,
+        context_builder=types.SimpleNamespace(build=lambda _: "ctx"),
     )
     assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
 
