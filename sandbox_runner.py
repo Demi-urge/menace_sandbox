@@ -703,7 +703,7 @@ class SandboxContext:
     data_bot: DataBot
     pathway_db: PathwayDB
     telem_db: ErrorDB
-    context_builder: ContextBuilder | None = None
+    context_builder: ContextBuilder
     plugins: list
     extra_metrics: Dict[str, float]
     cycles: int
@@ -732,8 +732,15 @@ class SandboxContext:
     orphan_traces: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
-def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxContext:
+def _sandbox_init(
+    preset: Dict[str, Any],
+    args: argparse.Namespace,
+    context_builder: ContextBuilder,
+) -> SandboxContext:
     import sandbox_runner.environment as env
+
+    if not isinstance(context_builder, ContextBuilder):
+        raise ValueError("context_builder must be a ContextBuilder")
 
     env._cleanup_pools()
 
@@ -936,8 +943,6 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 logger.info("using VisualAgentClientStub due to failure")
             except Exception:
                 va_client = None
-    context_builder = ContextBuilder()
-    context_builder.refresh_db_weights()
     engine = SelfCodingEngine(
         CodeDB(),
         MenaceMemoryManager(),
@@ -1317,7 +1322,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
 
     global SANDBOX_ENV_PRESETS, _local_knowledge_refresh_counter
     logger.info("starting sandbox run", extra=log_record(preset=preset))
-    ctx = _sandbox_init(preset, args)
+    context_builder = ContextBuilder()
+    context_builder.refresh_db_weights()
+    ctx = _sandbox_init(preset, args, context_builder)
     graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
     err_logger = getattr(
         ctx.sandbox, "error_logger", ErrorLogger(knowledge_graph=graph)

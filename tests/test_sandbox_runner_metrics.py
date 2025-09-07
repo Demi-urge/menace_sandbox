@@ -79,6 +79,11 @@ class DummyDataBot:
         pass
 
 
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 @pytest.fixture(autouse=True)
 def _patch_suggestion(monkeypatch):
     _stub_module(monkeypatch, "menace.patch_suggestion_db", PatchSuggestionDB=DummyBot)
@@ -421,6 +426,12 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
             str(resolve_dir("sandbox_runner"))
         ],
     )
+    _stub_module(
+        monkeypatch,
+        "vector_service",
+        ContextBuilder=DummyContextBuilder,
+        FallbackResult=None,
+    )
     sandbox_runner = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner"] = sandbox_runner
     spec.loader.exec_module(sandbox_runner)
@@ -510,6 +521,12 @@ def test_gpt_trigger_on_diminishing(monkeypatch, tmp_path):
             str(resolve_dir("sandbox_runner"))
         ],
     )
+    _stub_module(
+        monkeypatch,
+        "vector_service",
+        ContextBuilder=DummyContextBuilder,
+        FallbackResult=None,
+    )
     sandbox_runner = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner"] = sandbox_runner
     spec.loader.exec_module(sandbox_runner)
@@ -571,6 +588,12 @@ def test_section_loop_gpt_trigger(monkeypatch, tmp_path):
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
+    )
+    _stub_module(
+        monkeypatch,
+        "vector_service",
+        ContextBuilder=DummyContextBuilder,
+        FallbackResult=None,
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner"] = sandbox_runner
@@ -642,6 +665,12 @@ def test_metrics_db_records(monkeypatch, tmp_path):
         submodule_search_locations=[
             str(resolve_dir("sandbox_runner"))
         ],
+    )
+    _stub_module(
+        monkeypatch,
+        "vector_service",
+        ContextBuilder=DummyContextBuilder,
+        FallbackResult=None,
     )
     sandbox_runner = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner"] = sandbox_runner
@@ -760,7 +789,7 @@ def test_metric_predictions_recorded(monkeypatch, tmp_path):
     )
 
     ctx = sandbox_runner._sandbox_init(
-        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path))
+        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path)), sandbox_runner.ContextBuilder()
     )
     sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
     sandbox_runner._sandbox_cleanup(ctx)
@@ -1286,7 +1315,7 @@ def test_preset_adaptation(monkeypatch, tmp_path):
 
     sandbox_runner.SANDBOX_ENV_PRESETS = [{"foo": "bar"}]
     ctx = sandbox_runner._sandbox_init(
-        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path))
+        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path)), sandbox_runner.ContextBuilder()
     )
     sandbox_runner._sandbox_cycle_runner(ctx, "mod.py:sec", "pass", ctx.tracker)  # path-ignore
     sandbox_runner._sandbox_cleanup(ctx)
@@ -1626,7 +1655,7 @@ def test_brainstorm_trigger_on_low_roi(monkeypatch, tmp_path):
     )
 
     ctx = sandbox_runner._sandbox_init(
-        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path))
+        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path)), sandbox_runner.ContextBuilder()
     )
     ctx.prev_roi = 0.05
     sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
@@ -1717,7 +1746,7 @@ def test_brainstorm_trigger_on_resilience_drop(monkeypatch, tmp_path):
     )
 
     ctx = sandbox_runner._sandbox_init(
-        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path))
+        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path)), sandbox_runner.ContextBuilder()
     )
     sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
     sandbox_runner._sandbox_cleanup(ctx)
@@ -1772,6 +1801,12 @@ def test_sandbox_prediction_mae_and_reliability(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "menace.data_bot", mod)
     _stub_module(monkeypatch, "menace.pre_execution_roi_bot", PreExecutionROIBot=None)
     _stub_module(monkeypatch, "jinja2", Template=lambda *a, **k: None)
+    _stub_module(
+        monkeypatch,
+        "vector_service",
+        ContextBuilder=DummyContextBuilder,
+        FallbackResult=None,
+    )
 
     import importlib
     import sandbox_runner
@@ -1789,7 +1824,7 @@ def test_sandbox_prediction_mae_and_reliability(monkeypatch, tmp_path):
     monkeypatch.setattr(rt.ROITracker, "forecast", lambda self: (0.15, (0.0, 0.0)))
 
     ctx = sandbox_runner._sandbox_init(
-        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path))
+        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path)), sandbox_runner.ContextBuilder()
     )
 
     class SeqImprover(DummyImprover):
