@@ -7152,9 +7152,11 @@ def run_repo_section_simulations(
                 builder.refresh_db_weights()
                 debugger = SelfDebuggerSandbox(
                     object(),
-                    SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder),
+                    SelfCodingEngine(
+                        CodeDB(), MenaceMemoryManager(), context_builder=builder
+                    ),
+                    context_builder=builder,
                 )
-                debugger.context_builder = builder
                 try:
                     for sec_name, lines in sec_map.items():
                         code_str = "\n".join(lines)
@@ -8316,9 +8318,11 @@ def run_workflow_simulations(
                 builder.refresh_db_weights()
                 debugger = SelfDebuggerSandbox(
                     object(),
-                    SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder),
+                    SelfCodingEngine(
+                        CodeDB(), MenaceMemoryManager(), context_builder=builder
+                    ),
+                    context_builder=builder,
                 )
-                debugger.context_builder = builder
                 mod_name = _module_from_step(step)
                 for preset in all_presets:
                     scenario = preset.get("SCENARIO_NAME", "")

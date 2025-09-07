@@ -88,6 +88,7 @@ from tests.test_self_debugger_sandbox import (
     DummyTelem,
     DummyEngine,
     DummyTrail,
+    DummyBuilder,
 )
 from tests.test_self_debugger_patch_flow import FlowEngine
 from tests.test_self_improvement_logging import _load_engine
@@ -170,7 +171,9 @@ def test_self_improvement_integration(monkeypatch, tmp_path):
     # SelfDebuggerSandbox with dummy engine
     engine = FlowEngine()
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder(), audit_trail=trail
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n    pass\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)

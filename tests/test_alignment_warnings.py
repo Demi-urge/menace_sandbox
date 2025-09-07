@@ -1,4 +1,5 @@
 from menace import quick_fix_engine, self_debugger_sandbox, human_alignment_agent, violation_logger
+from tests.test_self_debugger_sandbox import DummyBuilder
 from pathlib import Path
 
 
@@ -64,7 +65,10 @@ def test_self_debugger_preemptive_patch_logs_warning(tmp_path, monkeypatch):
             return [str(src)]
 
     sandbox = self_debugger_sandbox.SelfDebuggerSandbox(
-        object(), object(), error_predictor=Predictor()
+        object(),
+        object(),
+        context_builder=DummyBuilder(),
+        error_predictor=Predictor(),
     )
     sandbox.preemptive_fix_high_risk_modules(limit=1)
     assert logs, "expected alignment warning logged"
