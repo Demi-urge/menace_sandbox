@@ -43,12 +43,14 @@ import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
 class DummyBuilder:
     def __init__(self):
         self.calls = []
+        self.kwargs = []
 
     def refresh_db_weights(self):
         self.refreshed = True
 
-    def build(self, query, **_):
+    def build(self, query, **kwargs):
         self.calls.append(query)
+        self.kwargs.append(kwargs)
         return "vector:" + query
 
 
@@ -59,10 +61,30 @@ def test_builder_context_included():
         ["alpha", "beta"], "hi", context_builder=builder
     )
     assert builder.calls == ["alpha beta"]
+    assert "session_id" in builder.kwargs[0]
+    assert (
+        builder.kwargs[0]["session_id"]
+        == msgs[0]["metadata"]["retrieval_session_id"]
+    )
     assert msgs[0]["role"] == "system"
     assert "vector:alpha beta" in msgs[0]["content"]
     assert msgs[-1]["role"] == "user"
     assert msgs[-1]["content"] == "hi"
+
+
+def test_fallback_result_empty_context():
+    class FB(DummyBuilder):
+        def build(self, query, **kwargs):
+            super().build(query, **kwargs)
+            return cib.FallbackResult()
+
+    builder = FB()
+    client = cib.ChatGPTClient(context_builder=builder)
+    msgs = client.build_prompt_with_memory(["alpha"], "hi", context_builder=builder)
+    assert builder.calls == ["alpha"]
+    assert "session_id" in builder.kwargs[0]
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["metadata"]["retrieval_session_id"]
 
 
 def test_requires_context_builder():

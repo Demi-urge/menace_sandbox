@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
@@ -430,7 +431,7 @@ class ChatGPTClient:
         *,
         prior: str | None = None,
         context_builder: ContextBuilder,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         """Prepend builder and memory-derived context to ``prompt``."""
 
         if context_builder is None:
@@ -438,14 +439,17 @@ class ChatGPTClient:
 
         builder = context_builder
         builder_ctx = ""
+        session_id = uuid.uuid4().hex
         try:
             query_parts = [*tags]
             if prior:
                 query_parts.append(prior)
             query = " ".join(query_parts)
-            ctx_res = builder.build(query)
+            ctx_res = builder.build(query, session_id=session_id)
             builder_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-            if builder_ctx:
+            if isinstance(builder_ctx, (FallbackResult, ErrorResult)):
+                builder_ctx = ""
+            elif builder_ctx:
                 builder_ctx = compress_snippets({"snippet": builder_ctx}).get(
                     "snippet", builder_ctx
                 )
@@ -468,13 +472,14 @@ class ChatGPTClient:
                 logger.exception("failed to fetch memory context")
 
         combined_ctx = "\n".join(part for part in [builder_ctx, mem_ctx] if part)
-        system_msgs: List[Dict[str, str]] = []
+        system_msgs: List[Dict[str, Any]] = []
         if combined_ctx:
             system_msgs.append({"role": "system", "content": combined_ctx})
 
-        messages: List[Dict[str, str]] = system_msgs + [
+        messages: List[Dict[str, Any]] = system_msgs + [
             {"role": "user", "content": prompt}
         ]
+        messages[0].setdefault("metadata", {})["retrieval_session_id"] = session_id
         return messages
 
 
@@ -483,7 +488,7 @@ def build_prompt(
     context_builder: ContextBuilder,
     tags: Iterable[str],
     prior: str | None = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """Construct a prompt and fetch memory-aware messages via ``client``."""
     parts = ["Suggest five new online business models"]
     if prior:
