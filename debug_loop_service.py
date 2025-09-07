@@ -29,12 +29,14 @@ class DebugLoopService:
     ) -> None:
         self.graph = graph or KnowledgeGraph()
         if feedback is None:
-            logger = ErrorLogger(knowledge_graph=self.graph)
             builder = ContextBuilder()
             try:
                 builder.refresh_db_weights()
             except Exception:
                 pass
+            logger = ErrorLogger(
+                knowledge_graph=self.graph, context_builder=builder
+            )
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=builder
             )

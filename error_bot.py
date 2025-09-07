@@ -35,6 +35,11 @@ import threading
 from jinja2 import Template
 import yaml
 
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder_utils import get_default_context_builder
+except Exception:  # pragma: no cover - fallback
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return None
 logger = logging.getLogger(__name__)
 
 try:
@@ -922,7 +927,10 @@ class ErrorBot(AdminBotBase):
         self.name = "ErrorBot"
         self.db = db or ErrorDB()
         self.graph = graph
-        self.error_logger = ErrorLogger(self.db, knowledge_graph=self.graph)
+        builder = get_default_context_builder()
+        self.error_logger = ErrorLogger(
+            self.db, knowledge_graph=self.graph, context_builder=builder
+        )
         self.data_bot = data_bot
         if metrics_db:
             self.metrics_db = metrics_db

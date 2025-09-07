@@ -591,7 +591,10 @@ _INPUT_HISTORY_DB: InputHistoryDB | None = None
 
 # Shared error logger and category counters for sandbox runs
 KNOWLEDGE_GRAPH = KnowledgeGraph()
-ERROR_LOGGER = ErrorLogger(knowledge_graph=KNOWLEDGE_GRAPH)
+ERROR_LOGGER = ErrorLogger(
+    knowledge_graph=KNOWLEDGE_GRAPH,
+    context_builder=get_default_context_builder(),
+)
 ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
 # Track how many times each module/scenario combination was executed

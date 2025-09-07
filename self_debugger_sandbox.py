@@ -336,7 +336,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._failure_cache = FailureCache()
         self._last_test_log: Path | None = None
         self.graph = KnowledgeGraph()
-        self.error_logger = ErrorLogger(knowledge_graph=self.graph)
+        self.error_logger = ErrorLogger(
+            knowledge_graph=self.graph, context_builder=CONTEXT_BUILDER
+        )
         self._attempt_tracker = PatchAttemptTracker(self.logger)
         self._last_region: TargetRegion | None = None
 

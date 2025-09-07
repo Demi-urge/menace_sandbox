@@ -146,7 +146,7 @@ for name in _stubs:
             stub.SelfDebuggerSandbox = SelfDebuggerSandbox
         if name.endswith("error_logger"):
             class ErrorLogger:
-                def __init__(self, *a):
+                def __init__(self, *a, **k):
                     pass
 
             stub.ErrorLogger = ErrorLogger
@@ -191,7 +191,7 @@ for name in _stubs:
             stub.BotTestingBot = BotTestingBot
         sys.modules[name] = stub
 
-import menace.launch_menace_bots as lmb
+import menace.launch_menace_bots as lmb  # noqa: E402
 sys.modules.pop("menace.self_debugger_sandbox", None)
 
 

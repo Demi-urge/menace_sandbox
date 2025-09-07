@@ -60,17 +60,14 @@ except Exception:  # pragma: no cover - package fallback
 
 try:  # pragma: no cover - optional dependency
     from .quick_fix_engine import generate_patch
-    from vector_service import ContextBuilder, get_default_context_builder
+    from vector_service import ContextBuilder
 except Exception:
     try:
         from quick_fix_engine import generate_patch  # type: ignore
-        from vector_service import ContextBuilder, get_default_context_builder  # type: ignore
+        from vector_service import ContextBuilder  # type: ignore
     except Exception:
         generate_patch = None  # type: ignore
         ContextBuilder = None  # type: ignore
-
-        def get_default_context_builder(**kwargs):  # type: ignore
-            return ContextBuilder(**kwargs) if ContextBuilder else None
 
 from governed_embeddings import governed_embed, get_embedder
 try:  # pragma: no cover - allow flat imports
@@ -453,6 +450,7 @@ class ErrorLogger:
         *,
         sentry: "SentryClient" | None = None,
         knowledge_graph: "KnowledgeGraph" | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         if db is None:
             try:
@@ -477,6 +475,7 @@ class ErrorLogger:
         self.logger = logging.getLogger("ErrorLogger")
         self.sentry = sentry
         self.graph = knowledge_graph
+        self.context_builder = context_builder
         self.replicator = None
         self._unknown_counter = 0
         self._update_threshold = int(
@@ -495,6 +494,13 @@ class ErrorLogger:
                     self.replicator.flush()
                 except Exception as e:  # pragma: no cover - optional
                     self.logger.error("failed to init TelemetryReplicator: %s", e)
+        if self.context_builder is not None:
+            try:
+                self.context_builder.refresh_db_weights()
+            except Exception as e:  # pragma: no cover - init issues
+                self.logger.error(
+                    "ContextBuilder initialisation failed: %s", e
+                )
 
     def log(
         self,
@@ -742,46 +748,35 @@ class ErrorLogger:
                     self.logger.error("failed to open fix ticket: %s", e)
 
             if generate_patch is not None and resolved_module:
-                if ContextBuilder is None:
+                if self.context_builder is None:
                     self.logger.error(
-                        "ContextBuilder unavailable; cannot generate patch for %s",
+                        "ContextBuilder not provided; cannot generate patch for %s",
                         resolved_module,
                     )
                 else:
                     try:
-                        builder = get_default_context_builder()
-                        if builder is not None:
-                            builder.refresh_db_weights()
-                    except Exception as e:  # pragma: no cover - init issues
+                        patch_id = generate_patch(
+                            resolved_module, context_builder=self.context_builder
+                        )
+                        if patch_id is not None:
+                            try:
+                                from sandbox_runner import integrate_new_orphans
+
+                                integrate_new_orphans(
+                                    Path.cwd(), router=GLOBAL_ROUTER
+                                )
+                            except Exception as e2:  # pragma: no cover - integration issues
+                                self.logger.error(
+                                    "integrate_new_orphans after patch for %s failed: %s",
+                                    resolved_module,
+                                    e2,
+                                )
+                    except Exception as e:  # pragma: no cover - patch failures
                         self.logger.error(
-                            "ContextBuilder initialisation failed for %s: %s",
+                            "quick fix generation failed for %s: %s",
                             resolved_module,
                             e,
                         )
-                    else:
-                        try:
-                            patch_id = generate_patch(
-                                resolved_module, context_builder=builder
-                            )
-                            if patch_id is not None:
-                                try:
-                                    from sandbox_runner import integrate_new_orphans
-
-                                    integrate_new_orphans(
-                                        Path.cwd(), router=GLOBAL_ROUTER
-                                    )
-                                except Exception as e2:  # pragma: no cover - integration issues
-                                    self.logger.error(
-                                        "integrate_new_orphans after patch for %s failed: %s",
-                                        resolved_module,
-                                        e2,
-                                    )
-                        except Exception as e:  # pragma: no cover - patch failures
-                            self.logger.error(
-                                "quick fix generation failed for %s: %s",
-                                resolved_module,
-                                e,
-                            )
             else:
                 prompt = f"Fix bottleneck in {resolved_module or 'unknown module'}: {hint}"
                 if prompt_context:

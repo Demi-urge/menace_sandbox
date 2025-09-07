@@ -53,9 +53,12 @@ Install `sentry-sdk` and create a `SentryClient` to capture exceptions from
 ```python
 from menace.sentry_client import SentryClient
 from menace.error_logger import ErrorLogger
+from vector_service import get_default_context_builder
 
 sentry = SentryClient("https://public@o0.ingest.sentry.io/0")
-logger = ErrorLogger(sentry=sentry)
+logger = ErrorLogger(
+    sentry=sentry, context_builder=get_default_context_builder()
+)
 ```
 
 ## Watchdog Runbooks

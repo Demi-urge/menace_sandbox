@@ -879,7 +879,9 @@ def _sandbox_init(
 
     graph = KnowledgeGraph()
     telem_db = ErrorDB(Path(tmp) / "errors.db", graph=graph)
-    error_logger = ErrorLogger(telem_db, knowledge_graph=graph)
+    error_logger = ErrorLogger(
+        telem_db, knowledge_graph=graph, context_builder=context_builder
+    )
     forecaster = ErrorForecaster(metrics_db, graph=graph)
     improver.error_bot = ErrorBot(
         telem_db,
@@ -1333,7 +1335,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     ctx = _sandbox_init(preset, args, context_builder)
     graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
     err_logger = getattr(
-        ctx.sandbox, "error_logger", ErrorLogger(knowledge_graph=graph)
+        ctx.sandbox,
+        "error_logger",
+        ErrorLogger(knowledge_graph=graph, context_builder=context_builder),
     )
 
     @radar.track

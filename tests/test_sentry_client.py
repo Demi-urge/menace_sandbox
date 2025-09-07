@@ -4,11 +4,19 @@ import importlib
 import menace.error_logger as elog
 import menace.sentry_client as sc
 
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 class StubSDK:
     def __init__(self):
         self.captured = []
+
     def init(self, dsn=None, **kw):
         self.dsn = dsn
+
     def capture_exception(self, exc):
         self.captured.append(str(exc))
 
@@ -23,7 +31,7 @@ def test_error_logger_with_sentry(monkeypatch):
     sentry = sc.SentryClient("http://dsn")
     events = []
     db = types.SimpleNamespace(add_telemetry=lambda e: events.append(e))
-    logger = elog.ErrorLogger(db, sentry=sentry)
+    logger = elog.ErrorLogger(db, sentry=sentry, context_builder=DummyBuilder())
     try:
         raise RuntimeError("boom")
     except Exception as exc:
@@ -67,4 +75,3 @@ def test_custom_fallback_logger(monkeypatch):
     sentry = sc.SentryClient("http://dsn", fallback_logger=logger)
     sentry.capture_exception(RuntimeError("boom"))
     assert any("failed to send" in m for m in logger.logged)
-

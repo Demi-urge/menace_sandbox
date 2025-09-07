@@ -126,8 +126,9 @@ tickets or feed the hints into a Codex prompt.
 
 ```python
 from menace_sandbox.error_logger import ErrorLogger
+from vector_service import get_default_context_builder
 
-elog = ErrorLogger()
+elog = ErrorLogger(context_builder=get_default_context_builder())
 elog.log_roi_cap(metrics, "scraper_bot")
 ```
 

@@ -12,10 +12,15 @@ from menace.error_logger import ErrorLogger  # noqa: E402
 from menace.error_bot import ErrorDB  # noqa: E402
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 def test_error_logger_triggers_rule_update(monkeypatch, tmp_path):
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = ErrorDB(path=tmp_path / "errors.db")
-    logger = ErrorLogger(db=db)
+    logger = ErrorLogger(db=db, context_builder=DummyBuilder())
 
     called: list[bool] = []
 

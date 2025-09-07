@@ -2,6 +2,12 @@ import types
 import menace.error_logger as elog
 from db_dedup import compute_content_hash
 
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 class StubReplicator:
     instances = []
 
@@ -49,7 +55,7 @@ def test_error_logger_telemetry_replication(monkeypatch):
     events = []
     db = types.SimpleNamespace(add_telemetry=lambda e: events.append(e))
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
     try:
         raise RuntimeError("boom")
     except Exception as exc:
@@ -71,7 +77,7 @@ def test_replicator_flush_after_failure(monkeypatch):
     events = []
     db = types.SimpleNamespace(add_telemetry=lambda e: events.append(e))
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
     inst = StubReplicator.instances[-1]
     inst.fail = True
     try:
@@ -92,7 +98,7 @@ def test_event_checksum_and_validation(monkeypatch):
     events = []
     db = types.SimpleNamespace(add_telemetry=lambda e: events.append(e))
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
     try:
         raise RuntimeError("boom3")
     except Exception as exc:

@@ -3,6 +3,11 @@ import types
 import menace.error_logger as elog
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 class StubReplicator:
     instances = []
 
@@ -24,7 +29,7 @@ def test_log_roi_cap_emits_roibottleneck_event(monkeypatch):
     monkeypatch.setattr(elog, "TelemetryReplicator", StubReplicator)
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = types.SimpleNamespace(add_telemetry=lambda e: None)
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
     profile = {
         "weights": {
             "profitability": 0.25,
@@ -64,7 +69,7 @@ def test_log_roi_cap_logs_when_no_replicator(monkeypatch):
     monkeypatch.delenv("KAFKA_HOSTS", raising=False)
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = types.SimpleNamespace(add_telemetry=lambda e: None)
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
 
     class StubLogger:
         def __init__(self):

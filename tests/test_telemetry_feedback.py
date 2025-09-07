@@ -37,6 +37,11 @@ from pathlib import Path  # noqa: E402
 import pytest  # noqa: E402
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 class DummyEngine:
     def __init__(self):
         self.calls = []
@@ -65,9 +70,11 @@ def _setup(tmp_path, monkeypatch):
     dpr._PATH_CACHE.clear()
     db = eb.ErrorDB(tmp_path / "e.db")
     db.conn.execute(
-        "CREATE TABLE IF NOT EXISTS error_stats(category TEXT, module TEXT, count INTEGER, PRIMARY KEY(category, module))"
+        "CREATE TABLE IF NOT EXISTS error_stats("  # noqa: E501
+        "category TEXT, module TEXT, count INTEGER, PRIMARY KEY(category, module)"
+        ")"
     )
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
     engine = DummyEngine()
     mod = tmp_path / "bot.py"  # path-ignore
     mod.write_text("def x():\n    pass\n")
