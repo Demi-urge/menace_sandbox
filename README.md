@@ -259,11 +259,11 @@ message if installation fails.
   ranking with ROI feedback – is available in
   [docs/vectorized_cognition.md](docs/vectorized_cognition.md).
 - Compact, offline context assembly via `ContextBuilder` which summarises error,
-  bot, workflow and code records for code-generation modules. Prompt‑constructing
-  bots must be supplied a builder configured for the standard local databases,
-  e.g. `ContextBuilder(bot_db="bots.db", code_db="code.db", error_db="errors.db",
-  workflow_db="workflows.db")` or the `get_default_context_builder()` helper, and
-  passed to `SelfCodingEngine` or `QuickFixEngine`
+  bot, workflow and code records for code‑generation modules. Prompt‑constructing
+  bots must receive a builder via constructor or method arguments, configured for
+  the standard local databases, e.g. `builder = ContextBuilder("bots.db",
+  "code.db", "errors.db", "workflows.db")`, then passed to `SelfCodingEngine`,
+  `QuickFixEngine`, `Watchdog` or `AutomatedReviewer`
   ([docs/context_builder.md](docs/context_builder.md))
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
@@ -2115,10 +2115,12 @@ from menace.workflow_evolution_bot import WorkflowEvolutionBot
 from menace.trending_scraper import TrendingScraper
 from vector_service import ContextBuilder
 
+# supply an explicit builder for downstream modules
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 creator = BotCreationBot(
     workflow_bot=WorkflowEvolutionBot(),
     trending_scraper=TrendingScraper(),
-    context_builder=ContextBuilder(),
+    context_builder=builder,
 )
 # tasks is a list of PlanningTask objects
 creator.create_bots(tasks)

@@ -16,8 +16,12 @@ block that fits within strict token budgets.
 ## Configuration
 
 ```python
-from menace.context_builder import ContextBuilder
+from vector_service import ContextBuilder
 
+# explicit construction for the standard local databases
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+
+# configuration with optional tuning
 builder = ContextBuilder(
     error_db="errors.db",
     bot_db="bots.db",
@@ -95,19 +99,16 @@ summariser also operates offline, so even without the optional memory manager
 
 ## Integration
 
-`SelfCodingEngine`, `QuickFixEngine` and `BotDevelopmentBot` instantiate
-`ContextBuilder` automatically when available to enrich their prompts with
-historical context. `AutomatedReviewer` now requires an explicit
-`ContextBuilder` instance to provide similar context during reviews. All
-prompt‑constructing bots must supply a builder configured for the standard
-local databases:
+`SelfCodingEngine`, `QuickFixEngine`, `BotDevelopmentBot`, `PromptEngine`,
+`AutomatedReviewer` and `Watchdog` expect a `ContextBuilder` to be supplied via
+constructor or method arguments.  Instantiate the builder with the standard
+databases and pass it through explicitly:
 
 ```python
-from vector_service.context_builder_utils import get_default_context_builder
+from vector_service import ContextBuilder
 
-builder = get_default_context_builder()
-# equivalent to:
-# ContextBuilder(bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db")
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+# e.g. engine = SelfCodingEngine(..., context_builder=builder)
 ```
 
 ## Static enforcement
@@ -138,10 +139,10 @@ through explicitly:
 
 ```python
 from menace_sandbox.chatgpt_idea_bot import build_prompt
-from vector_service.context_builder_utils import get_default_context_builder
+from vector_service import ContextBuilder
 
 def my_prompt(client):
-    builder = get_default_context_builder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     # static check fails if ``context_builder`` is omitted
     return build_prompt(client, context_builder=builder, tags=["ai", "fintech"])
 ```
