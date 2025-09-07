@@ -4545,6 +4545,7 @@ class SelfImprovementEngine:
                 env_presets=env_map,
                 return_details=True,
                 runner_config=self.runner_config,
+                context_builder=self.self_coding_engine.context_builder,
             )
             scenario_synergy = getattr(tracker_wf, "scenario_synergy", {})
             for runs in wf_details.values():
@@ -4594,7 +4595,7 @@ class SelfImprovementEngine:
             for m in modules:
                 try:
                     tracker_res, details = _sim(
-                        str(repo), modules=[m], return_details=True
+                        str(repo), modules=[m], return_details=True, context_builder=self.self_coding_engine.context_builder
                     )
                 except Exception:
                     continue

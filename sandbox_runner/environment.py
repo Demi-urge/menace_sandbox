@@ -585,10 +585,9 @@ _INPUT_HISTORY_DB: InputHistoryDB | None = None
 
 # Shared error logger and category counters for sandbox runs
 KNOWLEDGE_GRAPH = KnowledgeGraph()
-CONTEXT_BUILDER = ContextBuilder()
 ERROR_LOGGER = ErrorLogger(
     knowledge_graph=KNOWLEDGE_GRAPH,
-    context_builder=CONTEXT_BUILDER,
+    context_builder=ContextBuilder(),
 )
 ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
@@ -6907,7 +6906,7 @@ def run_repo_section_simulations(
     env_presets: List[Dict[str, Any]] | Mapping[str, List[Dict[str, Any]]] | None = None,
     modules: Iterable[str] | None = None,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     return_details: bool = False,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, Dict[str, list[Dict[str, Any]]]]]:
     """Analyse sections and simulate execution environment per section.
@@ -6988,7 +6987,7 @@ def run_repo_section_simulations(
         else:
             env_presets = [{}]
 
-    base_builder = context_builder or ContextBuilder()
+    base_builder = context_builder
     try:
         base_builder.refresh_db_weights()
     except Exception:
@@ -8101,7 +8100,7 @@ def run_workflow_simulations(
     foresight_tracker: "ForesightTracker" | None = None,
     router: DBRouter | None = None,
     runner_config: Dict[str, Any] | None = None,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
     """Execute stored workflows under optional environment presets.
 
@@ -8152,7 +8151,7 @@ def run_workflow_simulations(
         else:
             env_presets = [{}]
 
-    base_builder = context_builder or ContextBuilder()
+    base_builder = context_builder
     try:
         base_builder.refresh_db_weights()
     except Exception:
@@ -8899,7 +8898,7 @@ def auto_include_modules(
     except Exception:
         logger.exception('unexpected error')
 
-    baseline_result = run_workflow_simulations(router=router)
+    baseline_result = run_workflow_simulations(router=router, context_builder=ContextBuilder())
     baseline_tracker = (
         baseline_result[0] if isinstance(baseline_result, tuple) else baseline_result
     )
@@ -8918,7 +8917,7 @@ def auto_include_modules(
     low_roi_mods: list[str] = []
     for mod in mods:
         ids = generate_workflows_for_modules([mod], router=router)
-        result = run_workflow_simulations(router=router)
+        result = run_workflow_simulations(router=router, context_builder=ContextBuilder())
         tracker = result[0] if isinstance(result, tuple) else result
         new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
         delta = new_roi - baseline_roi
@@ -8999,7 +8998,7 @@ def auto_include_modules(
     except Exception:
         logger.exception('unexpected error')
 
-    result = run_workflow_simulations(router=router)
+    result = run_workflow_simulations(router=router, context_builder=ContextBuilder())
     tracker = result[0] if isinstance(result, tuple) else result
     new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
     if new_roi < pre_integrate_roi:

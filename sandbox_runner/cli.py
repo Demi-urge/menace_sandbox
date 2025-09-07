@@ -14,6 +14,7 @@ import platform
 import subprocess
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from dynamic_path_router import resolve_path, path_for_prompt
+from vector_service.context_builder import ContextBuilder
 try:  # optional dependency
     from scipy.stats import pearsonr, t, levene
 except Exception:  # pragma: no cover - fallback when scipy is missing
@@ -79,6 +80,7 @@ def _fallback_presets(count: int | None = None) -> list[dict[str, Any]]:
         count = 1
     return [base.copy() for _ in range(count)]
 
+
 logger = get_logger(__name__)
 
 _settings_cache: SandboxSettings | None = None
@@ -133,7 +135,8 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
                 source = "fallback"
     if not presets or presets == [{}]:
         logger.error(
-            "no valid presets available; install menace.environment_generator or set SANDBOX_ENV_PRESETS",
+            "no valid presets available; install menace.environment_generator "
+            "or set SANDBOX_ENV_PRESETS",
             extra={"preset_source": source},
         )
         raise SystemExit(1)
@@ -166,7 +169,8 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
         return
 
     preset = presets[0]
-    sandbox_main(preset, args)
+    builder = ContextBuilder()
+    sandbox_main(preset, args, builder)
     if _SandboxMetaLogger is not None:
         try:
             data_dir = Path(resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")))
@@ -398,9 +402,10 @@ def _capture_run(preset: dict[str, str], args: argparse.Namespace):
     from sandbox_runner import _sandbox_main
 
     holder: dict[str, Any] = {}
+    builder = ContextBuilder()
 
     def wrapper(p: dict[str, str], a: argparse.Namespace):
-        holder["tracker"] = _sandbox_main(p, a)
+        holder["tracker"] = _sandbox_main(p, a, builder)
 
     _run_sandbox(args, sandbox_main=wrapper)
     return holder.get("tracker")
@@ -598,7 +603,7 @@ def _synergy_converged(
         ma_series: list[float] = []
         for i in range(len(series)):
             start = max(0, i - ma_window + 1)
-            window_vals = series[start : i + 1]
+            window_vals = series[start:i + 1]
             ma_series.append(sum(window_vals) / len(window_vals))
         try:  # pragma: no cover - optional dependency
             from statsmodels.tsa.stattools import adfuller
@@ -607,7 +612,7 @@ def _synergy_converged(
             size = min(len(ma_series), ma_window)
             if size >= 3:
                 for j in range(len(ma_series) - size + 1):
-                    p_val = adfuller(ma_series[j : j + size])[1]
+                    p_val = adfuller(ma_series[j:j + size])[1]
                     adf_ps.append(float(p_val))
             if adf_ps:
                 stat_conf = 1.0 - max(adf_ps)
@@ -653,7 +658,7 @@ def _synergy_converged(
             corrs: list[float] = []
             size = min(ma_window, n)
             for i in range(n - size + 1):
-                sub = series[i : i + size]
+                sub = series[i:i + size]
                 if len(set(sub)) <= 1:
                     corrs.append(0.0)
                 else:
@@ -892,7 +897,7 @@ def full_autonomous_run(
                 if k.startswith("synergy_") and v
             }
             pred_vals = {
-                k[len("pred_") :]: v[-1]
+                k[len("pred_"):]: v[-1]
                 for k, v in tracker.metrics_history.items()
                 if k.startswith("pred_synergy_") and v
             }
@@ -920,7 +925,10 @@ def full_autonomous_run(
             elif roi_threshold is None:
                 if hasattr(last_tracker, "get") and hasattr(last_tracker, "std"):
                     try:
-                        roi_threshold = last_tracker.get("roi_delta") + roi_k * last_tracker.std("roi_delta")
+                        roi_threshold = (
+                            last_tracker.get("roi_delta")
+                            + roi_k * last_tracker.std("roi_delta")
+                        )
                     except Exception:
                         roi_threshold = last_tracker.diminishing()
                 else:
@@ -1020,7 +1028,11 @@ def run_complete(args: argparse.Namespace) -> None:
 
     global generate_presets
     original = generate_presets
-    generate_presets = lambda n=None: presets  # type: ignore
+
+    def _gen_presets(n=None):
+        return presets
+
+    generate_presets = _gen_presets  # type: ignore
     try:
         full_autonomous_run(args)
     finally:
@@ -1235,7 +1247,8 @@ def main(argv: List[str] | None = None) -> None:
         "--fail-on-missing-scenarios",
         action="store_true",
         help=(
-            "treat missing canonical scenarios as errors (or set SANDBOX_FAIL_ON_MISSING_SCENARIOS=1)"
+            "treat missing canonical scenarios as errors "
+            "(or set SANDBOX_FAIL_ON_MISSING_SCENARIOS=1)"
         ),
     )
     parser.add_argument(
@@ -1862,7 +1875,7 @@ def main(argv: List[str] | None = None) -> None:
             run_workflow_simulations,
             load_scenario_summary,
         )
-
+        builder = ContextBuilder()
         run_workflow_simulations(
             args.workflow_db,
             dynamic_workflows=args.dynamic_workflows,
@@ -1871,6 +1884,7 @@ def main(argv: List[str] | None = None) -> None:
             if args.module_threshold is not None
             else 0.1,
             module_semantic=args.module_semantic,
+            context_builder=builder,
         )
         if getattr(args, "print_scenario_summary", False):
             print(json.dumps(load_scenario_summary(), indent=2))

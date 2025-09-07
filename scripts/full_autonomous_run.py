@@ -12,13 +12,15 @@ from metrics_dashboard import MetricsDashboard
 from dynamic_path_router import resolve_path
 from pathlib import Path
 from threading import Thread
+from vector_service.context_builder import ContextBuilder
 
 
 def _capture_run(preset: Dict[str, str], args: argparse.Namespace):
     holder = {}
 
     def wrapper(p: Dict[str, str], a: argparse.Namespace):
-        holder['tracker'] = _sandbox_main(p, a)
+        builder = ContextBuilder()
+        holder['tracker'] = _sandbox_main(p, a, builder)
 
     _run_sandbox(args, sandbox_main=wrapper)
     return holder.get('tracker')
@@ -87,9 +89,14 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     if args.dashboard_port:
-        history_file = Path(resolve_path(args.sandbox_data_dir or "sandbox_data")) / "roi_history.json"
+        history_file = (
+            Path(resolve_path(args.sandbox_data_dir or "sandbox_data"))
+            / "roi_history.json"
+        )
         dash = MetricsDashboard(str(history_file))
-        Thread(target=dash.run, kwargs={"port": args.dashboard_port}, daemon=True).start()
+        Thread(
+            target=dash.run, kwargs={"port": args.dashboard_port}, daemon=True
+        ).start()
 
     module_history: Dict[str, List[float]] = {}
     flagged: set[str] = set()
