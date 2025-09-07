@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+from pathlib import Path
 
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
 sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
@@ -23,10 +24,23 @@ sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:
 sys.modules.setdefault("httpx", types.ModuleType("httpx"))
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+os.environ["MENACE_LOCAL_DB_PATH"] = "/tmp/menace_local.db"
+os.environ["MENACE_SHARED_DB_PATH"] = "/tmp/menace_shared.db"
+
+sys.modules.setdefault(
+    "dynamic_path_router",
+    types.SimpleNamespace(
+        resolve_path=lambda p: Path(p),
+        resolve_dir=lambda p: Path(p),
+        resolve_module_path=lambda m: Path(m.replace(".", "/") + ".py"),
+        path_for_prompt=lambda p: Path(p).as_posix(),
+    ),
+)
 
 _stubs = [
     "menace.environment_bootstrap",
     "menace.code_database",
+    "code_database",
     "menace.menace_memory_manager",
     "menace.model_automation_pipeline",
     "menace.self_coding_engine",
@@ -88,7 +102,7 @@ for name in _stubs:
             stub.ModelAutomationPipeline = ModelAutomationPipeline
         if name.endswith("self_coding_engine"):
             class SelfCodingEngine:
-                def __init__(self, *a):
+                def __init__(self, *a, **k):
                     self.memory_mgr = types.SimpleNamespace(store=lambda *a, **k: None)
 
             stub.SelfCodingEngine = SelfCodingEngine
@@ -209,5 +223,6 @@ def test_debug_and_deploy_runs_sandbox(monkeypatch, tmp_path):
 
     monkeypatch.setattr(lmb, "SelfDebuggerSandbox", DummySandbox)
     (tmp_path / "mod.py").write_text("def run():\n    pass\n")  # path-ignore
-    lmb.debug_and_deploy(tmp_path)
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    lmb.debug_and_deploy(tmp_path, context_builder=builder)
     assert "fix" in calls

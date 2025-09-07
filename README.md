@@ -433,7 +433,9 @@ bucket is configured or run as a limited pilot.
 - Synergy-aware environment presets adapt CPU, memory, bandwidth and threat levels ([docs/environment_generator.md](docs/environment_generator.md))
 - Sandboxed self-debugging using `SelfDebuggerSandbox` (invoked by `launch_menace_bots.py` after the test run)
 - Comprehensive build pipeline in `launch_menace_bots.py` that plans,
-  develops, tests and scales bots before deployment
+  develops, tests and scales bots before deployment.  The CLI constructs a
+  default `ContextBuilder` and passes it to `debug_and_deploy` so callers can
+  supply custom builders if needed.
 - Automated implementation pipeline turning tasks into runnable bots ([docs/implementation_pipeline.md](docs/implementation_pipeline.md))
 - Models repository workflow with visual agents ([docs/models_repo_workflow.md](docs/models_repo_workflow.md))
 - Retirement of underperforming models by `ModelPerformanceMonitor`
