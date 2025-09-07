@@ -7,7 +7,10 @@ from .memory import ConversationMemory
 from .response_generation import ResponseCandidateGenerator
 from .scoring import CandidateResponseScorer, ResponsePriorityQueue
 from .external_integrations import GPT4Client, PineconeLogger
-from .user_preferences import PreferenceProfile
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - hints only
+    from .user_preferences import PreferenceProfile
 
 
 @dataclass
@@ -42,7 +45,9 @@ class CortexAwareResponder:
         pinecone_env: str,
         pg: Optional[InMemoryResponseDB] = None,
     ) -> None:
-        self.client = GPT4Client(openai_key)
+        from vector_service.context_builder import ContextBuilder
+
+        self.client = GPT4Client(openai_key, context_builder=ContextBuilder())
         self.pinecone = PineconeLogger(
             pinecone_index, api_key=pinecone_key, environment=pinecone_env
         )
@@ -64,7 +69,7 @@ class CortexAwareResponder:
         user_id: str,
         text: str,
         memory: ConversationMemory,
-        profile: PreferenceProfile,
+        profile: "PreferenceProfile",
     ) -> str:
         # GPT-4 first pass
         first_pass = "".join(

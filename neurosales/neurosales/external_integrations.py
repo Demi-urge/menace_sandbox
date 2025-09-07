@@ -17,9 +17,6 @@ try:  # optional dependency
 except Exception:  # pragma: no cover - optional dep
     GraphDatabase = None  # type: ignore
 
-from prompt_engine import PromptEngine
-from model_registry import get_client
-import stripe_billing_router  # noqa: F401
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - hints only
@@ -103,18 +100,13 @@ class GPT4Client:
         self,
         api_key: str | None = None,
         *,
-        context_builder: "ContextBuilder" | None = None,
-        llm_client: "LLMClient" | None = None,
+        context_builder: "ContextBuilder",
     ) -> None:
         if api_key is None:
             api_key = config.load_config().openai_key or os.getenv("OPENAI_API_KEY")
         self.api_key = api_key
         self.context_builder = context_builder
-        self.llm_client = llm_client or (
-            get_client("openai", model="gpt-4", api_key=api_key) if api_key else None
-        )
-        self.enabled = self.llm_client is not None
-        self.prompt_engine = PromptEngine(context_builder=context_builder)
+        self.enabled = api_key is not None
         if not self.enabled:  # pragma: no cover - warning path
             logger.warning("GPT4Client disabled: backend unavailable")
 
@@ -130,26 +122,19 @@ class GPT4Client:
             logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
             return
-        query = objective or text
-        context: Optional[str] = None
-        if self.context_builder is not None:
-            try:
-                context = self.context_builder.build(query)
-            except Exception:  # pragma: no cover - best effort
-                logger.warning(
-                    "ContextBuilder failed; proceeding without context",
-                    exc_info=True,
-                )
-        else:  # pragma: no cover - warning path
-            logger.warning(
-                "ContextBuilder unavailable; proceeding without context"
+        from billing.openai_wrapper import chat_completion_create
+
+        messages = [{"role": "user", "content": text}]
+        try:
+            result = chat_completion_create(
+                messages,
+                model="gpt-4",
+                context_builder=self.context_builder,
             )
-        prompt = self.prompt_engine.build_prompt(
-            text,
-            context=context,
-        )
-        result = self.llm_client.generate(prompt)
-        yield result.text
+            yield result["choices"][0]["message"]["content"]
+        except Exception:  # pragma: no cover - best effort
+            logger.warning("GPT4Client disabled: backend unavailable")
+            yield ""
 
 
 class PineconeLogger:

@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
 from llm_interface import LLMClient, LLMResult
+from typing import Any
 
 # Stub heavy dependencies so chatgpt_idea_bot can be imported without side effects
 package = types.ModuleType("menace_sandbox")
@@ -256,21 +257,25 @@ def test_openai_wrapper_injects_notice():
 
 
 def test_gpt4client_injects_notice(monkeypatch):
-    class DummyLLM(LLMClient):
-        def __init__(self):
-            super().__init__("gpt-4", backends=[], log_prompts=False)
-            self.captured = None
+    captured: dict[str, Any] = {}
 
-        def _generate(self, prompt):  # type: ignore[override]
-            self.captured = prompt
-            return LLMResult(text="")
+    def fake_chat(messages, *, context_builder, **kwargs):
+        msgs = prepend_payment_notice(messages)
+        captured["messages"] = msgs
+        return {"choices": [{"message": {"content": ""}}]}
 
-    dummy = DummyLLM()
-    monkeypatch.setattr(
-        "neurosales.external_integrations.get_client", lambda *a, **k: dummy, raising=False
+    monkeypatch.setitem(
+        sys.modules,
+        "billing.openai_wrapper",
+        types.SimpleNamespace(chat_completion_create=fake_chat),
     )
+
     from neurosales.external_integrations import GPT4Client
 
-    client = GPT4Client(api_key="k")
+    class DummyBuilder:
+        def build(self, query: str) -> str:
+            return "ctx"
+
+    client = GPT4Client(api_key="k", context_builder=DummyBuilder())
     list(client.stream_chat("arch", [0.1], "obj", "hi"))
-    assert dummy.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)

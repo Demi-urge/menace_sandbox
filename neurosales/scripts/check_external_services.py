@@ -15,7 +15,7 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
     try:
         client = get_client("openai", model="gpt-3.5-turbo", api_key=cfg.openai_key)
         engine = PromptEngine(context_builder=ContextBuilder())
-        prompt = engine.build_prompt("ping")
+        prompt = engine.build_prompt("ping", context_builder=ContextBuilder())
         client.generate(prompt)
         print("OpenAI reachable")
         return True
