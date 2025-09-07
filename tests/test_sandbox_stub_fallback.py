@@ -108,6 +108,15 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     _stub_module(monkeypatch, "menace.code_database", PatchHistoryDB=DummyBot, CodeDB=DummyBot)
     _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
     _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    class DummyContextBuilder:
+        def refresh_db_weights(self):
+            pass
+    _stub_module(
+        monkeypatch,
+        "vector_service",
+        ContextBuilder=DummyContextBuilder,
+        FallbackResult=None,
+    )
     _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
     _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
     _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
@@ -146,7 +155,9 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     spec.loader.exec_module(sr)
 
     caplog.set_level("INFO")
-    ctx = sr._sandbox_init({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))
+    ctx = sr._sandbox_init(
+        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path)), sr.ContextBuilder()
+    )
 
     assert ctx.pre_roi_bot.__class__.__name__ == "PreExecutionROIBotStub"
     assert ctx.va_client.__class__.__name__ == "VisualAgentClientStub"

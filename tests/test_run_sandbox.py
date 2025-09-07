@@ -181,7 +181,7 @@ def test_run_sandbox_uses_temporary_env(monkeypatch, tmp_path):
     sandbox_runner = types.ModuleType("sandbox_runner")
     sandbox_runner.subprocess = types.SimpleNamespace(run=lambda *a, **k: None)
     sandbox_runner.shutil = types.SimpleNamespace(copy2=lambda *a, **k: None)
-    def _sandbox_init(config, args):
+    def _sandbox_init(config, args, context_builder=None):
         bus = sandbox_runner.UnifiedEventBus(persist_path="menace_sandbox_dummy.db")
         return types.SimpleNamespace(bus=bus, tracker=_ROITracker())
     def _sandbox_cycle_runner(ctx, a, b, tracker):
@@ -253,7 +253,7 @@ def test_run_sandbox_uses_temporary_env(monkeypatch, tmp_path):
     monkeypatch.setenv("BOT_PERFORMANCE_DB", str(tmp_path / "perf.db"))
     monkeypatch.setenv("MAINTENANCE_DB", str(tmp_path / "maint.db"))
 
-    ctx = sandbox_runner._sandbox_init({}, argparse.Namespace())
+    ctx = sandbox_runner._sandbox_init({}, argparse.Namespace(), object())
     sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
     sandbox_runner._sandbox_cleanup(ctx)
 
@@ -280,7 +280,7 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
     sandbox_runner = types.ModuleType("sandbox_runner")
     sandbox_runner.subprocess = types.SimpleNamespace(run=lambda *a, **k: None)
     sandbox_runner.shutil = types.SimpleNamespace(copy2=lambda *a, **k: None)
-    def _sandbox_init(config, args):
+    def _sandbox_init(config, args, context_builder=None):
         bus = sandbox_runner.UnifiedEventBus(persist_path="menace_sandbox_dummy.db")
         return types.SimpleNamespace(bus=bus, tracker=_ROITracker())
     def _sandbox_cycle_runner(ctx, a, b, tracker):
@@ -360,10 +360,18 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
     monkeypatch.setattr(sandbox_runner, "SelfTestService", DummyTester, raising=False)
     monkeypatch.setattr(sys.modules["menace.self_debugger_sandbox"], "SelfDebuggerSandbox", DummySandbox)
     monkeypatch.setattr(sys.modules["menace.data_bot"], "MetricsDB", DummyBot)
+    class DummyContextBuilder:
+        def refresh_db_weights(self):
+            pass
+    monkeypatch.setattr(
+        sandbox_runner, "ContextBuilder", DummyContextBuilder, raising=False
+    )
 
     module_map = tmp_path / "module_map.json"
     module_map.write_text("{\"old.py\": 42}")  # path-ignore
-    ctx = sandbox_runner._sandbox_init({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))
+    ctx = sandbox_runner._sandbox_init(
+        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path)), sandbox_runner.ContextBuilder()
+    )
     sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
     sandbox_runner._sandbox_cleanup(ctx)
 
@@ -498,7 +506,9 @@ def test_section_short_circuit(monkeypatch, tmp_path):
     )
 
     monkeypatch.setenv("SANDBOX_CYCLES", "5")
-    ctx = sandbox_runner._sandbox_init({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))
+    ctx = sandbox_runner._sandbox_init(
+        {}, argparse.Namespace(sandbox_data_dir=str(tmp_path)), sandbox_runner.ContextBuilder()
+    )
     sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
     sandbox_runner._sandbox_cleanup(ctx)
 
@@ -662,7 +672,9 @@ def test_workflow_run_called(monkeypatch, tmp_path):
             )
             self.sandbox = types.SimpleNamespace(graph=None)
 
-    monkeypatch.setattr(sandbox_runner, "_sandbox_init", lambda preset, args: DummyCtx())
+    monkeypatch.setattr(
+        sandbox_runner, "_sandbox_init", lambda preset, args, context_builder: DummyCtx()
+    )
     monkeypatch.setattr(sandbox_runner, "_sandbox_cleanup", lambda ctx: None)
     monkeypatch.setattr(
         sandbox_runner,
@@ -679,6 +691,12 @@ def test_workflow_run_called(monkeypatch, tmp_path):
         return tracker
 
     monkeypatch.setattr(sandbox_runner, "run_workflow_simulations", fake_run)
+
+    class DummyContextBuilder:
+        def refresh_db_weights(self):
+            pass
+
+    monkeypatch.setattr(sandbox_runner, "ContextBuilder", DummyContextBuilder)
 
     args = argparse.Namespace(
         workflow_db=str(tmp_path / "wf.db"),
@@ -742,9 +760,17 @@ def test_no_workflow_run_option(monkeypatch, tmp_path):
             self.best_roi = 0.0
             self.best_synergy_metrics = {}
 
-    monkeypatch.setattr(sandbox_runner, "_sandbox_init", lambda preset, args: DummyCtx())
+    monkeypatch.setattr(
+        sandbox_runner, "_sandbox_init", lambda preset, args, context_builder: DummyCtx()
+    )
     monkeypatch.setattr(sandbox_runner, "_sandbox_cleanup", lambda ctx: None)
     monkeypatch.setattr(sandbox_runner, "_sandbox_cycle_runner", lambda *a, **k: None)
+
+    class DummyContextBuilder:
+        def refresh_db_weights(self):
+            pass
+
+    monkeypatch.setattr(sandbox_runner, "ContextBuilder", DummyContextBuilder)
 
     called = []
     monkeypatch.setattr(sandbox_runner, "run_workflow_simulations", lambda *a, **k: called.append(None))

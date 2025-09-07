@@ -187,10 +187,18 @@ def _run_sandbox_loop(monkeypatch, tmp_path, reliability):
             self.brainstorm_retries = 0
             self.adapt_presets = False
 
-    monkeypatch.setattr(sandbox_runner, "_sandbox_init", lambda preset, args: DummyCtx())
+    monkeypatch.setattr(
+        sandbox_runner, "_sandbox_init", lambda preset, args, context_builder: DummyCtx()
+    )
     monkeypatch.setattr(sandbox_runner, "_sandbox_cleanup", lambda ctx: None)
 
     args = argparse.Namespace(workflow_db=str(tmp_path / "wf.db"), sandbox_data_dir=str(tmp_path), no_workflow_run=True)
+
+    class DummyContextBuilder:
+        def refresh_db_weights(self):
+            pass
+
+    monkeypatch.setattr(sandbox_runner, "ContextBuilder", DummyContextBuilder)
 
     sandbox_runner._sandbox_main({}, args)
     return call_count["n"]
