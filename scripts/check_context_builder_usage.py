@@ -11,6 +11,12 @@ of whether it is accessed as an attribute.  Additionally, direct calls to
 ``context_builder`` keyword or an inline ``# nocb`` comment will be flagged.  The
 check ignores files located in directories named ``tests`` or ``unit_tests``.
 
+The linter also detects calls to ``LLMClient.generate`` or similar ``.generate``
+wrappers whose class name ends with ``Client``, ``Provider`` or ``Wrapper`` and
+requires a ``context_builder`` keyword.  These calls are reported when the
+argument is absent and no ``# nocb`` marker is present on the line or the one
+directly above.
+
 Furthermore, the linter searches for imports or calls to
 ``get_default_context_builder`` outside of test directories.  Such usage is
 reported unless the offending line (or the one immediately above it) contains a
@@ -34,6 +40,8 @@ REQUIRED_NAMES = {
     "build_prompt_with_memory",
     "chat_completion_create",
 }
+
+GENERATE_WRAPPER_SUFFIXES = ("client", "provider", "wrapper")
 
 
 def iter_python_files(root: Path):
@@ -73,6 +81,19 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         "openai.Completion.create",
     }
 
+    def is_generate_wrapper(name: str) -> bool:
+        """Return True if *name* looks like an unbound ``.generate`` wrapper."""
+
+        if not name.endswith(".generate"):
+            return False
+        parts = name.split(".")
+        if len(parts) != 2:
+            return False
+        cls = parts[0]
+        return cls[0].isupper() and any(
+            cls.lower().endswith(suf) for suf in GENERATE_WRAPPER_SUFFIXES
+        )
+
     class Visitor(ast.NodeVisitor):
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
             name_full = full_name(node.func)
@@ -90,6 +111,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 if name_simple in REQUIRED_NAMES:
                     target = name_simple
                 elif name_full in OPENAI_NAMES:
+                    target = name_full
+                elif name_full and is_generate_wrapper(name_full):
                     target = name_full
                 if target and not has_kw:
                     line_no = node.lineno
