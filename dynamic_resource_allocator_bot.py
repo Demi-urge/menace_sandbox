@@ -17,6 +17,7 @@ from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from .neuroplasticity import PathwayDB
 from .advanced_error_management import PredictiveResourceAllocator
 from .resource_allocation_optimizer import ResourceAllocationOptimizer
+from vector_service import ContextBuilder
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
@@ -99,7 +100,9 @@ class DynamicResourceAllocator:
         self.metrics_db = metrics_db or MetricsDB()
         self.prediction_bot = prediction_bot or ResourcePredictionBot()
         self.ledger = ledger or DecisionLedger()
-        self.alloc_bot = alloc_bot or ResourceAllocationBot(AllocationDB())
+        self.alloc_bot = alloc_bot or ResourceAllocationBot(
+            AllocationDB(), context_builder=ContextBuilder()
+        )
         self.pathway_db = pathway_db
         self.scaler = predictive_allocator or PredictiveResourceAllocator(self.metrics_db)
         self.orchestrator = orchestrator

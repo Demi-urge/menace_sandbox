@@ -6,6 +6,11 @@ import menace.resource_prediction_bot as rpb
 import menace.neuroplasticity as neu
 
 
+class _DummyBuilder:
+    def build(self, *_: object, **__: object) -> str:
+        return "ctx"
+
+
 def test_allocate_and_log(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "psutil", None)
     monkeypatch.setattr(db, "Gauge", None)
@@ -16,7 +21,9 @@ def test_allocate_and_log(tmp_path, monkeypatch):
         mdb,
         rpb.ResourcePredictionBot(rpb.TemplateDB(tmp_path / "t.csv")),
         drab.DecisionLedger(tmp_path / "d.db"),
-        drab.ResourceAllocationBot(drab.AllocationDB(tmp_path / "a.db")),
+        drab.ResourceAllocationBot(
+            drab.AllocationDB(tmp_path / "a.db"), context_builder=_DummyBuilder()
+        ),
     )
     actions = allocator.allocate(["bot1"])
     rows = allocator.ledger.fetch()
@@ -58,7 +65,9 @@ def test_myelinated_priority(tmp_path, monkeypatch):
         mdb,
         rpb.ResourcePredictionBot(rpb.TemplateDB(tmp_path / "t.csv")),
         drab.DecisionLedger(tmp_path / "d.db"),
-        drab.ResourceAllocationBot(drab.AllocationDB(tmp_path / "a.db")),
+        drab.ResourceAllocationBot(
+            drab.AllocationDB(tmp_path / "a.db"), context_builder=_DummyBuilder()
+        ),
         pdb,
     )
     actions = allocator.allocate(["bot1", "bot2"])

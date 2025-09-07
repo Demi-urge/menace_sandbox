@@ -37,6 +37,11 @@ class _KG:
 kg_mod.KnowledgeGraph = _KG
 sys.modules["menace.knowledge_graph"] = kg_mod
 
+dpr_mod = types.ModuleType("dynamic_path_router")
+dpr_mod.get_project_root = lambda *a, **k: Path(".")
+dpr_mod.get_project_roots = lambda *a, **k: [Path(".")]
+sys.modules.setdefault("dynamic_path_router", dpr_mod)
+
 from menace.evaluation_history_db import EvaluationHistoryDB
 import db_router
 
@@ -68,6 +73,11 @@ class ResourceAllocationBot:
 alloc_mod.ResourceAllocationBot = ResourceAllocationBot
 sys.modules["menace.resource_allocation_bot"] = alloc_mod
 
+
+class _DummyBuilder:
+    def build(self, *_: object, **__: object) -> str:
+        return "ctx"
+
 import menace.niche_saturation_bot as ns
 from menace.menace_memory_manager import MenaceMemoryManager
 
@@ -77,7 +87,7 @@ def test_saturate_logs_strategy_error(tmp_path, caplog):
         def receive_niche_info(self, info):
             raise RuntimeError("boom")
 
-    alloc = ResourceAllocationBot()
+    alloc = ResourceAllocationBot(context_builder=_DummyBuilder())
     bot = ns.NicheSaturationBot(
         db=ns.NicheDB(tmp_path / "n.db"), alloc_bot=alloc, strategy_bot=BadStrategy()
     )

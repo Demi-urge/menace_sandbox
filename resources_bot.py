@@ -22,6 +22,7 @@ from vector_service import EmbeddableDBMixin
 from resource_vectorizer import ResourceVectorizer
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from .resource_prediction_bot import ResourceMetrics
+from vector_service import ContextBuilder
 from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
 
@@ -110,7 +111,9 @@ class ResourcesBot:
         strategy_bot: "StrategyPredictionBot" | None = None,
     ) -> None:
         self.db = db or ROIHistoryDB()
-        self.alloc_bot = alloc_bot or ResourceAllocationBot(AllocationDB())
+        self.alloc_bot = alloc_bot or ResourceAllocationBot(
+            AllocationDB(), context_builder=ContextBuilder()
+        )
         self.strategy_bot = strategy_bot
         self.prediction_manager = prediction_manager
         self.assigned_prediction_bots = []

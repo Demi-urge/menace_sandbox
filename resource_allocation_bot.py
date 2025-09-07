@@ -13,11 +13,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-try:
-    import openai  # type: ignore
-except Exception:  # pragma: no cover - optional
-    openai = None  # type: ignore
-
 from .resource_prediction_bot import ResourceMetrics, TemplateDB
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
@@ -33,6 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .resources_bot import ResourcesBot
     from .contrarian_model_bot import ContrarianModelBot
     from .bot_database import BotDB
+    from vector_service import ContextBuilder
 
 
 @dataclass
@@ -90,6 +86,7 @@ class ResourceAllocationBot:
         db: AllocationDB | None = None,
         template_db: TemplateDB | None = None,
         *,
+        context_builder: "ContextBuilder",
         data_bot: "DataBot" | None = None,
         capital_bot: "CapitalManagementBot" | None = None,
         prediction_manager: "PredictionManager" | None = None,
@@ -99,8 +96,11 @@ class ResourceAllocationBot:
         contrarian_db: "ContrarianDB" | None = None,
         bot_db: "BotDB" | None = None,
     ) -> None:
+        if context_builder is None:
+            raise ValueError("ContextBuilder is required")
         self.db = db or AllocationDB()
         self.template_db = template_db or TemplateDB()
+        self.context_builder = context_builder
         self.data_bot = data_bot
         self.capital_bot = capital_bot
         self.prediction_manager = prediction_manager
@@ -305,10 +305,31 @@ class ResourceAllocationBot:
         return actions
 
     def suggest_improvement(self, bot: str) -> str:
-        if not openai:  # pragma: no cover - optional
+        try:
+            context = self.context_builder.build(bot)
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("Context build failed for %s", bot)
             return "upgrade"
-        resp = openai.Completion.create(prompt=f"Improve {bot}", max_tokens=5)
-        return resp.choices[0].text.strip()  # type: ignore
+        try:
+            from prompt_engine import PromptEngine
+            from local_backend import mixtral_client
+        except Exception:  # pragma: no cover - dependencies missing
+            return "upgrade"
+        llm = None
+        try:  # pragma: no cover - optional local backend
+            llm = mixtral_client()
+        except Exception:
+            pass
+        engine = PromptEngine(context_builder=self.context_builder, llm=llm)
+        prompt = engine.build_prompt(f"Improve {bot}", context=context)
+        if engine.llm is None:
+            return "upgrade"
+        try:
+            result = engine.llm.generate(prompt)
+            return (getattr(result, "text", "") or "").strip()
+        except Exception:  # pragma: no cover - local LLM failures
+            self.logger.exception("Improvement suggestion failed for %s", bot)
+            return "upgrade"
 
     def genetic_step(self, strategies: Iterable[Dict[str, float]]) -> Dict[str, float]:
         """Select strategy with highest ROI."""

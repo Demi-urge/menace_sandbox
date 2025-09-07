@@ -27,6 +27,7 @@ from .resource_allocation_bot import ResourceAllocationBot
 from .resource_prediction_bot import ResourceMetrics
 from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
+from vector_service import ContextBuilder
 
 
 @dataclass
@@ -94,7 +95,9 @@ class NicheSaturationBot:
         strategy_bot: "StrategyPredictionBot" | None = None,
     ) -> None:
         self.db = db or NicheDB()
-        self.alloc_bot = alloc_bot or ResourceAllocationBot()
+        self.alloc_bot = alloc_bot or ResourceAllocationBot(
+            context_builder=ContextBuilder()
+        )
         self.prediction_manager = prediction_manager
         self.assigned_prediction_bots = []
         if self.prediction_manager:
