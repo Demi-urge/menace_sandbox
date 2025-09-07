@@ -34,7 +34,7 @@ class AutomatedReviewer:
         if escalation_manager is None:
             from .auto_escalation_manager import AutoEscalationManager
 
-            escalation_manager = AutoEscalationManager()
+            escalation_manager = AutoEscalationManager(context_builder=context_builder)
         self.escalation_manager = escalation_manager
         self.logger = logging.getLogger(self.__class__.__name__)
         if context_builder is None:

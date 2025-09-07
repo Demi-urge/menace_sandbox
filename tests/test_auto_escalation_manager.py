@@ -43,6 +43,24 @@ req_mod = types.ModuleType("requests")
 req_mod.Session = lambda: None
 sys.modules.setdefault("requests", req_mod)
 
+
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build(self, *a, **k):
+        return ""
+
+
+vs_mod = types.SimpleNamespace(
+    ContextBuilder=DummyContextBuilder,
+    get_default_context_builder=lambda **kwargs: DummyContextBuilder(),
+    CognitionLayer=object,
+    EmbeddableDBMixin=object,
+    SharedVectorService=object,
+)
+sys.modules.setdefault("vector_service", vs_mod)
+
 import menace.watchdog as wd
 import menace.auto_escalation_manager as aem
 
@@ -66,7 +84,12 @@ def test_notifier_default_handler(monkeypatch):
         def handle(self, msg, attachments=None):
             called.append(msg)
 
-    monkeypatch.setattr(wd, "AutoEscalationManager", lambda: DummyAuto())
+    monkeypatch.setattr(wd, "AutoEscalationManager", lambda *a, **k: DummyAuto())
+    monkeypatch.setattr(
+        wd,
+        "get_default_context_builder",
+        lambda: types.SimpleNamespace(refresh_db_weights=lambda: None),
+    )
     n = wd.Notifier()
     n.escalate("boom")
     assert called == ["boom"]
@@ -112,7 +135,13 @@ def test_publish_retry_and_log(monkeypatch, caplog):
             attempts.append(True)
             raise RuntimeError("boom")
 
-    mgr = aem.AutoEscalationManager(event_bus=DummyBus(), publish_attempts=3)
+    from vector_service import get_default_context_builder
+
+    mgr = aem.AutoEscalationManager(
+        context_builder=get_default_context_builder(),
+        event_bus=DummyBus(),
+        publish_attempts=3,
+    )
     caplog.set_level(logging.ERROR)
     mgr.handle("x")
     assert len(attempts) == 3
