@@ -30,8 +30,9 @@ def _ctx_builder():
 def test_full_pipeline(tmp_path: Path):
     db_path = _make_db(tmp_path / "models.db")
     ipo = ipb.IPOBot(db_path=str(db_path), enhancements_db=tmp_path / "enh.db")
+    builder = _ctx_builder()
     developer = bdb.BotDevelopmentBot(
-        repo_base=tmp_path / "repos", context_builder=_ctx_builder()
+        repo_base=tmp_path / "repos", context_builder=builder
     )
     tester = btb.BotTestingBot()
     scaler = sab.ScalabilityAssessmentBot()
@@ -42,6 +43,7 @@ def test_full_pipeline(tmp_path: Path):
         tester=tester,
         scaler=scaler,
         deployer=deployer,
+        context_builder=builder,
     )
     results = pipeline.run("BotA does things")
     assert results
