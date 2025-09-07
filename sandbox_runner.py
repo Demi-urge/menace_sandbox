@@ -853,7 +853,6 @@ def _sandbox_init(
     env["PYTHONPATH"] = str(repo)
     models = env.get("MODELS", "demo").split(",")
     os.chdir(repo)
-    context_builder = ContextBuilder()
     orchestrator = MenaceOrchestrator(context_builder=context_builder)
     orchestrator.create_oversight("root", "L1")
     policy = SelfImprovementPolicy(path=str(policy_file))
@@ -1320,18 +1319,26 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
 
 
 @radar.track
-def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITracker":
+def _sandbox_main(
+    preset: Dict[str, Any],
+    args: argparse.Namespace,
+    context_builder: ContextBuilder | None = None,
+) -> "ROITracker":
     from menace.roi_tracker import ROITracker
 
     global SANDBOX_ENV_PRESETS, _local_knowledge_refresh_counter
     logger.info("starting sandbox run", extra=log_record(preset=preset))
-    context_builder = ContextBuilder(
-        bot_db="bots.db",
-        code_db="code.db",
-        error_db="errors.db",
-        workflow_db="workflows.db",
-    )
-    context_builder.refresh_db_weights()
+    if context_builder is None:
+        context_builder = ContextBuilder(
+            bot_db="bots.db",
+            code_db="code.db",
+            error_db="errors.db",
+            workflow_db="workflows.db",
+        )
+    try:
+        context_builder.refresh_db_weights()
+    except Exception:
+        pass
     ctx = _sandbox_init(preset, args, context_builder)
     graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
     err_logger = getattr(

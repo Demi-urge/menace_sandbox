@@ -6907,6 +6907,7 @@ def run_repo_section_simulations(
     env_presets: List[Dict[str, Any]] | Mapping[str, List[Dict[str, Any]]] | None = None,
     modules: Iterable[str] | None = None,
     *,
+    context_builder: ContextBuilder | None = None,
     return_details: bool = False,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, Dict[str, list[Dict[str, Any]]]]]:
     """Analyse sections and simulate execution environment per section.
@@ -6986,6 +6987,12 @@ def run_repo_section_simulations(
                 env_presets = [{}]
         else:
             env_presets = [{}]
+
+    base_builder = context_builder or ContextBuilder()
+    try:
+        base_builder.refresh_db_weights()
+    except Exception:
+        pass
 
     async def _run() -> (
         "ROITracker" | tuple["ROITracker", Dict[str, Dict[str, list[Dict[str, Any]]]]]
@@ -7143,8 +7150,7 @@ def run_repo_section_simulations(
             for module, sec_map in sections.items():
                 tmp_dir = tempfile.mkdtemp(prefix="section_")
                 shutil.copytree(repo_path, tmp_dir, dirs_exist_ok=True)
-                builder = ContextBuilder()
-                builder.refresh_db_weights()
+                builder = ContextBuilder(db_weights=base_builder.db_weights)
                 debugger = SelfDebuggerSandbox(
                     object(),
                     SelfCodingEngine(
@@ -8095,6 +8101,7 @@ def run_workflow_simulations(
     foresight_tracker: "ForesightTracker" | None = None,
     router: DBRouter | None = None,
     runner_config: Dict[str, Any] | None = None,
+    context_builder: ContextBuilder | None = None,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
     """Execute stored workflows under optional environment presets.
 
@@ -8144,6 +8151,12 @@ def run_workflow_simulations(
                 env_presets = [{}]
         else:
             env_presets = [{}]
+
+    base_builder = context_builder or ContextBuilder()
+    try:
+        base_builder.refresh_db_weights()
+    except Exception:
+        pass
 
     if isinstance(env_presets, Mapping):
         preset_map: Dict[str, List[Dict[str, Any]]] = {}
@@ -8309,8 +8322,7 @@ def run_workflow_simulations(
         for wf in workflows:
             for step in wf.workflow:
                 snippet = _wf_snippet([step])
-                builder = ContextBuilder()
-                builder.refresh_db_weights()
+                builder = ContextBuilder(db_weights=base_builder.db_weights)
                 debugger = SelfDebuggerSandbox(
                     object(),
                     SelfCodingEngine(
