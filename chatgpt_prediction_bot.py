@@ -48,6 +48,7 @@ try:  # pragma: no cover - optional dependency
     from .chatgpt_idea_bot import ChatGPTClient
 except BaseException:  # pragma: no cover - missing or failing dependency
     ChatGPTClient = None  # type: ignore
+from vector_service.context_builder import ContextBuilder  # noqa: E402
 from gpt_memory_interface import GPTMemoryInterface  # noqa: E402
 try:  # memory-aware wrapper
     from .memory_aware_gpt_client import ask_with_memory
@@ -86,7 +87,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     FileLock = None  # type: ignore
 
-from dynamic_path_router import resolve_path
+from dynamic_path_router import resolve_path  # noqa: E402
 
 
 def _resolve_model_path(path_str: str) -> Path:
@@ -696,7 +697,11 @@ class ChatGPTPredictionBot:
             self.client = client
         elif gpt_memory is not None:
             try:
-                self.client = ChatGPTClient(gpt_memory=gpt_memory)
+                builder = ContextBuilder()
+                builder.refresh_db_weights()
+                self.client = ChatGPTClient(
+                    gpt_memory=gpt_memory, context_builder=builder
+                )
             except Exception:  # pragma: no cover - optional dependency
                 logger.debug("failed to initialize ChatGPTClient", exc_info=True)
                 self.client = None

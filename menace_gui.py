@@ -9,6 +9,7 @@ from typing import List
 from pathlib import Path
 
 from .conversation_manager_bot import ConversationManagerBot, ChatGPTClient
+from vector_service.context_builder import ContextBuilder
 from .env_config import OPENAI_API_KEY
 from .menace_memory_manager import MenaceMemoryManager
 from .report_generation_bot import ReportGenerationBot
@@ -36,8 +37,12 @@ class MenaceGUI(tk.Tk):
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
         if self.chatgpt_enabled:
+            builder = ContextBuilder()
+            builder.refresh_db_weights()
             client = ChatGPTClient(
-                api_key=OPENAI_API_KEY, gpt_memory=GPT_MEMORY_MANAGER
+                api_key=OPENAI_API_KEY,
+                gpt_memory=GPT_MEMORY_MANAGER,
+                context_builder=builder,
             )
             self.conv_bot = ConversationManagerBot(client, report_bot=self.report_bot)
         else:

@@ -1,7 +1,8 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import menace.query_bot as qb
-import menace.chatgpt_idea_bot as cib
+import menace.query_bot as qb  # noqa: E402
+import menace.chatgpt_idea_bot as cib  # noqa: E402
+from vector_service.context_builder import ContextBuilder  # noqa: E402
 
 
 def test_nlu():
@@ -18,7 +19,9 @@ def test_context_store():
 
 
 def test_process(monkeypatch):
-    client = cib.ChatGPTClient("k")
+    builder = ContextBuilder()
+    builder.refresh_db_weights()
+    client = cib.ChatGPTClient("k", context_builder=builder)
     monkeypatch.setattr(client, "ask", lambda msgs: {"choices": [{"message": {"content": "ok"}}]})
     fetcher = qb.DataFetcher({"foo": {"val": 1}})
     bot = qb.QueryBot(client, fetcher=fetcher)
