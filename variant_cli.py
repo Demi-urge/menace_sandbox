@@ -6,6 +6,8 @@ import argparse
 import json
 from typing import Any, Dict
 
+from vector_service.context_builder import ContextBuilder
+
 from .experiment_manager import ExperimentManager
 from .variant_manager import VariantManager
 from .mutation_lineage import MutationLineage
@@ -23,7 +25,13 @@ def main() -> None:  # pragma: no cover - CLI glue
     # Clone the branch explicitly so operators can see the new patch id
     new_patch = lineage.clone_branch_for_ab_test(args.patch_id, args.variant)
 
-    exp_mgr = ExperimentManager(DataBot(), CapitalManagementBot(), lineage=lineage)
+    builder = ContextBuilder()
+    exp_mgr = ExperimentManager(
+        DataBot(),
+        CapitalManagementBot(),
+        context_builder=builder,
+        lineage=lineage,
+    )
     vm = VariantManager(exp_mgr)
     event_id, results = vm.ab_test_branch(args.patch_id, args.variant)
     comparisons = exp_mgr.compare_variants(results)

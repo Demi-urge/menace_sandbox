@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
-from vector_service.context_builder import ContextBuilder
+try:  # pragma: no cover - fallback for light imports in tests
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - best effort
+    from vector_service import ContextBuilder  # type: ignore
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .prediction_manager_bot import PredictionManager
@@ -39,6 +42,7 @@ class ExperimentManager:
         data_bot: DataBot,
         capital_bot: CapitalManagementBot,
         pipeline: ModelAutomationPipeline | None = None,
+        context_builder: ContextBuilder | None = None,
         prediction_manager: PredictionManager | None = None,
         experiment_db: ExperimentHistoryDB | None = None,
         p_threshold: float = 0.05,
@@ -47,15 +51,12 @@ class ExperimentManager:
         self.data_bot = data_bot
         self.capital_bot = capital_bot
         if pipeline is None:
-            builder = ContextBuilder()
-            try:
-                builder.refresh_db_weights()
-            except Exception:
-                pass
+            if context_builder is None:
+                raise ValueError("context_builder is required when pipeline is None")
             self.pipeline = ModelAutomationPipeline(
                 data_bot=self.data_bot,
                 capital_manager=self.capital_bot,
-                context_builder=builder,
+                context_builder=context_builder,
             )
         else:
             self.pipeline = pipeline
