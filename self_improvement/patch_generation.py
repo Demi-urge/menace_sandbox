@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-"""Patch generation utilities for the self-improvement engine."""
+"""Patch generation utilities for the self-improvement engine.
+
+This module provides a thin wrapper around :mod:`quick_fix_engine`'s patch
+generation.  Callers must supply a ready-to-use
+``vector_service.ContextBuilder`` instance when invoking
+``generate_patch``.
+"""
 
 import logging
 
@@ -53,7 +59,8 @@ def generate_patch(
             exc_info=exc,
         )
         raise RuntimeError(
-            "quick_fix_engine is required for patch generation. Install it via `pip install quick_fix_engine`."
+            "quick_fix_engine is required for patch generation. "
+            "Install it via `pip install quick_fix_engine`."
         ) from exc
     try:
         patch_id = _call_with_retries(

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-"""Automatically propose fixes for recurring errors."""
+"""Automatically propose fixes for recurring errors.
+
+The public :func:`generate_patch` helper expects callers to provide a
+pre-configured :class:`vector_service.ContextBuilder`. The builder should
+have its database weights refreshed before use to ensure accurate context
+retrieval.
+"""
 
 __version__ = "1.0.0"
 
