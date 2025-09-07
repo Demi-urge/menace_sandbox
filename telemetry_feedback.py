@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional, List, Tuple, Any
+from typing import Optional, List, Tuple
 
 from .dynamic_path_router import resolve_path
 
@@ -22,22 +22,34 @@ from .knowledge_graph import KnowledgeGraph
 
 
 class TelemetryFeedback:
-    """Monitor telemetry and trigger self-coding patches."""
+    """Monitor telemetry and trigger self-coding patches.
+
+    The class deliberately avoids any direct dependency on
+    :class:`~vector_service.context_builder.ContextBuilder`.  All prompt
+    construction responsibilities lie with the supplied
+    :class:`SelfCodingEngine`.
+    """
 
     def __init__(
         self,
         logger: ErrorLogger,
         engine: SelfCodingEngine,
         *,
-        context_builder: Any | None = None,
         threshold: int = 3,
         interval: int = 60,
         graph: KnowledgeGraph | None = None,
         router: DBRouter | None = None,
     ) -> None:
+        """Initialise the feedback loop.
+
+        ``TelemetryFeedback`` itself remains agnostic about
+        :class:`~vector_service.context_builder.ContextBuilder` usage; any
+        prompt construction is delegated to the provided
+        :class:`SelfCodingEngine`.  The engine should therefore be configured
+        with an appropriate builder.
+        """
         self.logger = logger
         self.engine = engine
-        self.context_builder = context_builder
         self.threshold = threshold
         self.interval = interval
         self.graph = graph
