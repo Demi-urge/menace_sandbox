@@ -1,11 +1,43 @@
 import types
 
 import pytest
+import types
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
+
+import os
+import tempfile
+import db_router
+import types
+import sys
+
+# Provide a minimal stub for the heavy ``config`` module used by ContextBuilder.
+config_stub = types.ModuleType("config")
+
+
+class ContextBuilderConfig:
+    def __getattr__(self, name):
+        if name == "roi_tag_penalties":
+            return {}
+        if name == "license_denylist":
+            return set()
+        if name == "precise_token_count":
+            return False
+        if name == "similarity_metric":
+            return "cosine"
+        return 0
+
+
+config_stub.ContextBuilderConfig = ContextBuilderConfig
+sys.modules.setdefault("config", config_stub)
+
+tmp_dir = tempfile.gettempdir()
+local_db = os.path.join(tmp_dir, "test_local.db")
+shared_db = os.path.join(tmp_dir, "test_shared.db")
+db_router.init_db_router("test", local_db_path=local_db, shared_db_path=shared_db)
 
 import vector_service_api as api
 from vector_service import VectorServiceError
@@ -38,22 +70,24 @@ def test_search_error(monkeypatch):
     assert resp.json()["detail"] == "bad"
 
 
-def test_build_context_success(monkeypatch):
-    def fake_build(task, **extras):
-        return f"ctx:{task}"
+def test_query_success(monkeypatch):
+    def fake_query(task, **extras):
+        return f"ctx:{task}", "sid"
 
-    monkeypatch.setattr(api, "_context_builder", types.SimpleNamespace(build=fake_build))
-    resp = client.post("/build-context", json={"task_description": "t"})
+    monkeypatch.setattr(api, "_cognition_layer", types.SimpleNamespace(query=fake_query))
+    resp = client.post("/query", json={"task_description": "t"})
     assert resp.status_code == 200
-    assert resp.json()["data"] == "ctx:t"
+    data = resp.json()
+    assert data["data"] == "ctx:t"
+    assert data["session_id"] == "sid"
 
 
-def test_build_context_error(monkeypatch):
+def test_query_error(monkeypatch):
     def boom(*args, **kwargs):
         raise VectorServiceError("fail")
 
-    monkeypatch.setattr(api, "_context_builder", types.SimpleNamespace(build=boom))
-    resp = client.post("/build-context", json={"task_description": "t"})
+    monkeypatch.setattr(api, "_cognition_layer", types.SimpleNamespace(query=boom))
+    resp = client.post("/query", json={"task_description": "t"})
     assert resp.status_code == 500
     assert resp.json()["detail"] == "fail"
 
