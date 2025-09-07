@@ -1,12 +1,12 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import time
-import menace.research_aggregator_bot as rab
-import menace.chatgpt_research_bot as crb
-import menace.chatgpt_idea_bot as cib
-import menace.chatgpt_enhancement_bot as ceb
-import menace.chatgpt_prediction_bot as cpb
-import sqlite3
+import time  # noqa: E402
+import menace.research_aggregator_bot as rab  # noqa: E402
+import menace.chatgpt_research_bot as crb  # noqa: E402
+import menace.chatgpt_idea_bot as cib  # noqa: E402
+import menace.chatgpt_enhancement_bot as ceb  # noqa: E402
+import menace.chatgpt_prediction_bot as cpb  # noqa: E402
+import sqlite3  # noqa: E402
 
 
 def test_memory_decay(monkeypatch):
@@ -69,7 +69,14 @@ def test_interactive_loop(monkeypatch, tmp_path):
 
 
 def test_chatgpt_integration(monkeypatch):
-    client = cib.ChatGPTClient("key")
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
 
     def fake_ask(messages):
         return {"choices": [{"message": {"content": "Some info"}}]}
@@ -134,7 +141,7 @@ def test_enhancement_links(monkeypatch, tmp_path):
         ["Topic"], enhancement_bot=enh_bot, info_db=info_db, enhancements_db=enh_db
     )
     bot._maybe_enhance("Topic", "reason")
-    with sqlite3.connect(enh_db.path) as conn:
+    with sqlite3.connect(enh_db.path) as conn:  # noqa: SQL001
         row = conn.execute("SELECT id, triggered_by FROM enhancements").fetchone()
     assert row is not None and row[1] == "ResearchAggregatorBot"
     eid = row[0]
@@ -146,7 +153,9 @@ def test_info_db_persistence(monkeypatch, tmp_path):
     monkeypatch.setattr(
         text_bot,
         "process",
-        lambda urls, files, ratio=0.2: [rab.text_research_bot.TextSource(content="info", url="http://src")],
+        lambda urls, files, ratio=0.2: [
+            rab.text_research_bot.TextSource(content="info", url="http://src")
+        ],
     )
     info_db = rab.InfoDB(tmp_path / "info.db")
     bot = rab.ResearchAggregatorBot(["Topic"], text_bot=text_bot, info_db=info_db)
@@ -181,7 +190,9 @@ def test_enhancement_generates_followup_research(monkeypatch, tmp_path):
     monkeypatch.setattr(
         text_bot,
         "process",
-        lambda urls, files, ratio=0.2: [rab.text_research_bot.TextSource(content="detail", url="u")],
+        lambda urls, files, ratio=0.2: [
+            rab.text_research_bot.TextSource(content="detail", url="u")
+        ],
     )
 
     class V:
@@ -205,7 +216,7 @@ def test_enhancement_generates_followup_research(monkeypatch, tmp_path):
     bot._maybe_enhance("Topic", "reason")
     items = info_db.search("imp")
     assert any(i.content == "detail" for i in items)
-    with sqlite3.connect(info_db.path) as conn:
+    with sqlite3.connect(info_db.path) as conn:  # noqa: SQL001
         count = conn.execute("SELECT COUNT(*) FROM info_enhancements").fetchone()[0]
     assert count > 1
 

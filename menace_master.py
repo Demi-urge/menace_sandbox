@@ -70,7 +70,8 @@ from menace.disaster_recovery import DisasterRecovery  # noqa: E402
 try:
     import sandbox_runner  # noqa: E402
 except Exception:  # pragma: no cover - fallback for tests
-    import types, sys
+    import types  # noqa: E402
+    import sys  # noqa: E402
 
     def _fallback_run_sandbox(*args, **kwargs):  # type: ignore[override]
         return None
@@ -346,7 +347,26 @@ def _auto_service_setup() -> None:
 def _init_unused_bots() -> None:
     """Instantiate helper bots that are not used elsewhere."""
     api_key = os.environ.get("OPENAI_API_KEY", "")
-    client = ChatGPTClient(api_key, gpt_memory=LOCAL_KNOWLEDGE_MODULE.memory)
+    try:
+        from vector_service.context_builder import ContextBuilder  # type: ignore
+
+        builder = ContextBuilder()
+        builder.refresh_db_weights()
+    except Exception:  # pragma: no cover - optional dependency
+        logger.debug("failed to initialize ContextBuilder", exc_info=True)
+
+        class _DummyBuilder:
+            def refresh_db_weights(self):
+                pass
+
+            def build(self, query: str, **_: object) -> str:
+                return ""
+
+        builder = _DummyBuilder()
+
+    client = ChatGPTClient(
+        api_key, gpt_memory=LOCAL_KNOWLEDGE_MODULE.memory, context_builder=builder
+    )
     bot_classes = [
         BotDevelopmentBot,
         BotTestingBot,

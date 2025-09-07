@@ -1,9 +1,7 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import json
-from types import SimpleNamespace
-
-import menace_sandbox.chatgpt_idea_bot as cib
+import json  # noqa: E402
+import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
 
 
 def test_build_prompt():
@@ -43,7 +41,14 @@ def test_generate_and_filter(monkeypatch):
         ]
     }
 
-    client = cib.ChatGPTClient("key")
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
     monkeypatch.setattr(client, "ask", lambda msgs, **kw: fake_resp)
     validator = cib.SocialValidator()
     monkeypatch.setattr(validator, "is_unique_online", lambda name: name == "Idea1")

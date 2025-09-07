@@ -18,7 +18,15 @@ def test_propose(monkeypatch, tmp_path):
             {"message": {"content": json.dumps([{"idea": "New", "rationale": "More efficient"}])}}
         ]
     }
-    client = cib.ChatGPTClient("key")
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
     monkeypatch.setattr(ceb, "ask_with_memory", lambda *a, **k: resp)
     router = ceb.init_db_router("enhprop", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     db = ceb.EnhancementDB(tmp_path / "enh.db", router=router)
