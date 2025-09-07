@@ -1,5 +1,26 @@
 import types
+import types
 import sys
+from pathlib import Path
+import pytest
+
+pkg = types.ModuleType("menace")
+pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
+pkg.RAISE_ERRORS = False
+sys.modules["menace"] = pkg
+
+vector_service_pkg = types.ModuleType("vector_service")
+vector_service_pkg.__path__ = []
+vector_service_pkg.SharedVectorService = object
+vector_service_pkg.CognitionLayer = object
+class _StubContextBuilder:
+    def refresh_db_weights(self):
+        pass
+ctx_mod = types.ModuleType("vector_service.context_builder")
+ctx_mod.ContextBuilder = _StubContextBuilder
+sys.modules["vector_service"] = vector_service_pkg
+sys.modules["vector_service.context_builder"] = ctx_mod
+sys.modules["menace.shared_gpt_memory"] = types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
 
 sys.modules.setdefault(
     "menace.database_manager",
@@ -11,6 +32,7 @@ sys.modules.setdefault(
 
 import menace.chatgpt_prediction_bot as cpb
 
+DummyBuilder = _StubContextBuilder
 
 class FakeMemory:
     def __init__(self):
@@ -30,7 +52,9 @@ def test_enhancement_uses_memory(monkeypatch):
     monkeypatch.setattr(cpb, "joblib", None)
     monkeypatch.setattr(cpb, "sentiment_score", lambda text: 0.0)
 
-    bot = cpb.ChatGPTPredictionBot(gpt_memory=mem)
+    bot = cpb.ChatGPTPredictionBot(gpt_memory=mem, context_builder=DummyBuilder())
+    if bot.client is None:
+        pytest.skip("ChatGPTClient unavailable")
     bot.client.session = None
     monkeypatch.setattr(
         bot.client,
