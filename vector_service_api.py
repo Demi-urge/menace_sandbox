@@ -59,8 +59,12 @@ app = FastAPI()
 # expose stateless interfaces which makes them safe to reuse across requests.
 _retriever = Retriever()
 _roi_tracker = ROITracker()
-_context_builder = ContextBuilder(retriever=_retriever)
-_cognition_layer = CognitionLayer(context_builder=_context_builder, roi_tracker=_roi_tracker)
+_builder = ContextBuilder()
+_builder.refresh_db_weights()
+_cognition_layer = CognitionLayer(
+    roi_tracker=_roi_tracker,
+    context_builder=_builder,
+)
 _patch_logger = PatchLogger(roi_tracker=_roi_tracker)
 _backfill = EmbeddingBackfill()
 _ranker_scheduler = start_scheduler_from_env([_cognition_layer])
