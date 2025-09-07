@@ -18,8 +18,8 @@ def test_process(monkeypatch):
 
         def build(self, query, **_):
             return ""
-
-    client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
+    builder = DummyBuilder()
+    client = cib.ChatGPTClient("key", context_builder=builder)
     responses = [
         {"choices": [{"message": {"content": "Answer one."}}]},
         {"choices": [{"message": {"content": "Answer two."}}]},
@@ -40,7 +40,7 @@ def test_process(monkeypatch):
         sent["summary"] = summary
 
     monkeypatch.setattr(crb, "send_to_aggregator", fake_send)
-    bot = crb.ChatGPTResearchBot(client)
+    bot = crb.ChatGPTResearchBot(builder, client)
     result = bot.process("Question", depth=2, ratio=0.5)
     assert len(result.conversation) == 2
     assert sent["conv"] == result.conversation
