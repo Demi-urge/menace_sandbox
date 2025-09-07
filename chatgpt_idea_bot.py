@@ -106,7 +106,7 @@ try:  # pragma: no cover - optional
 except Exception:  # pragma: no cover - fallback when service missing
     ContextBuilder = Any  # type: ignore
 
-from snippet_compressor import compress_snippets
+from snippet_compressor import compress_snippets  # noqa: E402
 DEFAULT_IDEA_DB = database_manager.DB_PATH
 IDEA_DB_PATH = Path(resolve_path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB))))
 
@@ -126,7 +126,7 @@ class ChatGPTClient:
     gpt_memory: "GPTMemoryInterface | None" = field(
         default_factory=lambda: GPT_MEMORY_MANAGER
     )
-    context_builder: ContextBuilder | None = None
+    context_builder: ContextBuilder
 
     def __post_init__(self) -> None:
         if not self.session:
@@ -145,13 +145,13 @@ class ChatGPTClient:
                 logger.exception("failed to load offline cache: %s", exc)
                 if RAISE_ERRORS:
                     raise
-        if self.context_builder is not None:
-            try:
-                self.context_builder.refresh_db_weights()
-            except Exception as exc:  # pragma: no cover - validation
-                raise RuntimeError(
-                    "provided ContextBuilder cannot query local databases"
-                ) from exc
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception as exc:  # pragma: no cover - validation
+            logger.exception("failed to refresh context builder")
+            raise RuntimeError(
+                "provided ContextBuilder cannot query local databases"
+            ) from exc
 
     def ask(
         self,
@@ -427,29 +427,32 @@ class ChatGPTClient:
         self,
         tags: list[str],
         prompt: str,
+        *,
+        prior: str | None = None,
         context_builder: ContextBuilder | None = None,
     ) -> List[Dict[str, str]]:
         """Prepend builder and memory-derived context to ``prompt`` if available."""
 
         builder = context_builder or self.context_builder
-        system_msgs: List[Dict[str, str]] = []
+        builder_ctx = ""
         if builder is not None:
             try:
                 query_parts = [*tags]
-                if prompt:
-                    query_parts.append(prompt)
+                if prior:
+                    query_parts.append(prior)
                 query = " ".join(query_parts)
                 ctx_res = builder.build(query)
-                ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-                if ctx:
-                    ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
-                    system_msgs.append({"role": "system", "content": ctx})
+                builder_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+                if builder_ctx:
+                    builder_ctx = compress_snippets({"snippet": builder_ctx}).get(
+                        "snippet", builder_ctx
+                    )
             except Exception:
                 logger.exception("failed to build vector context")
 
+        mem_ctx = ""
         if self.gpt_memory is not None:
             try:
-                mem_ctx = ""
                 if hasattr(self.gpt_memory, "search_context"):
                     entries = self.gpt_memory.search_context("", tags=tags)
                     if entries:
@@ -459,10 +462,13 @@ class ChatGPTClient:
                         )
                 elif hasattr(self.gpt_memory, "fetch_context"):
                     mem_ctx = self.gpt_memory.fetch_context(tags)
-                if mem_ctx:
-                    system_msgs.append({"role": "system", "content": mem_ctx})
             except Exception:
                 logger.exception("failed to fetch memory context")
+
+        combined_ctx = "\n".join(part for part in [builder_ctx, mem_ctx] if part)
+        system_msgs: List[Dict[str, str]] = []
+        if combined_ctx:
+            system_msgs.append({"role": "system", "content": combined_ctx})
 
         messages: List[Dict[str, str]] = system_msgs + [
             {"role": "user", "content": prompt}
@@ -488,7 +494,10 @@ def build_prompt(
     )
     base_tags = [IMPROVEMENT_PATH, *tags]
     return client.build_prompt_with_memory(
-        base_tags, prompt, context_builder=context_builder
+        base_tags,
+        prompt,
+        prior=prior,
+        context_builder=context_builder,
     )
 
 

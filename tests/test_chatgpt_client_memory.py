@@ -8,7 +8,7 @@ sys.modules.setdefault(
     "menace.database_management_bot", types.SimpleNamespace(DatabaseManagementBot=object)
 )
 
-import menace.chatgpt_idea_bot as cib
+import menace.chatgpt_idea_bot as cib  # noqa: E402
 
 
 class FakeMemory:
@@ -24,7 +24,15 @@ class FakeMemory:
 
 def test_build_prompt_with_memory():
     mem = FakeMemory()
-    client = cib.ChatGPTClient(gpt_memory=mem)
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
     msgs = client.build_prompt_with_memory(["ai"], "hello")
     assert msgs[0]["role"] == "system"
     assert "ctx:ai" in msgs[0]["content"]
@@ -34,7 +42,15 @@ def test_build_prompt_with_memory():
 
 def test_ask_logs_interaction(monkeypatch):
     mem = FakeMemory()
-    client = cib.ChatGPTClient(gpt_memory=mem)
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
     client.session = None  # force offline response
     monkeypatch.setattr(
         client,
@@ -45,4 +61,3 @@ def test_ask_logs_interaction(monkeypatch):
     assert mem.logged[0][0] == "hi"
     assert mem.logged[0][1] == "resp"
     assert cib.INSIGHT in mem.logged[0][2]
-

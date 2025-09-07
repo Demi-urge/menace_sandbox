@@ -1,7 +1,7 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import menace.chatgpt_research_bot as crb
-import menace.chatgpt_idea_bot as cib
+import menace.chatgpt_research_bot as crb  # noqa: E402
+import menace.chatgpt_idea_bot as cib  # noqa: E402
 
 
 def test_summarise_text():
@@ -12,7 +12,14 @@ def test_summarise_text():
 
 
 def test_process(monkeypatch):
-    client = cib.ChatGPTClient("key")
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
     responses = [
         {"choices": [{"message": {"content": "Answer one."}}]},
         {"choices": [{"message": {"content": "Answer two."}}]},

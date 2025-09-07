@@ -138,7 +138,14 @@ def test_chatgpt_client_injects_notice(monkeypatch):
             captured["messages"] = json["messages"]
             return DummyResponse()
 
-    client = ChatGPTClient(session=DummySession(), gpt_memory=None)
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = ChatGPTClient(session=DummySession(), gpt_memory=None, context_builder=DummyBuilder())
     client.ask([{"role": "user", "content": "hi"}], use_memory=False, tags=[])
     assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
 

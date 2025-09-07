@@ -1,6 +1,5 @@
 import sys
 import types
-import json
 
 # stub modules required by ChatGPTClient
 sys.modules.setdefault(
@@ -12,14 +11,26 @@ sys.modules.setdefault(
 
 # stub sentence_transformers to avoid heavy import
 stub_st = types.ModuleType("sentence_transformers")
+
+
 class _DummyModel:
     def encode(self, text):
         return [0.0]
+
+
 stub_st.SentenceTransformer = _DummyModel
 sys.modules.setdefault("sentence_transformers", stub_st)
 
-import menace.chatgpt_idea_bot as cib
-from gpt_memory import GPTMemoryManager
+import menace.chatgpt_idea_bot as cib  # noqa: E402
+from gpt_memory import GPTMemoryManager  # noqa: E402
+
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build(self, query, **_):
+        return ""
 
 
 def test_build_prompt_injects_summary_and_logs(monkeypatch):
@@ -27,7 +38,7 @@ def test_build_prompt_injects_summary_and_logs(monkeypatch):
     # previous interaction stored for tag 'topic'
     mem.log_interaction("early prompt", "early resp", ["topic"])
 
-    client = cib.ChatGPTClient(gpt_memory=mem)
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
     client.session = None  # offline mode
     monkeypatch.setattr(
         client,
@@ -47,7 +58,7 @@ def test_build_prompt_injects_summary_and_logs(monkeypatch):
 
 def test_summarize_and_prune_via_client(monkeypatch):
     mem = GPTMemoryManager(db_path=":memory:")
-    client = cib.ChatGPTClient(gpt_memory=mem)
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
     client.session = None
     monkeypatch.setattr(
         client,

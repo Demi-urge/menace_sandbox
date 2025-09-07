@@ -1,6 +1,5 @@
 import types
 import sys
-import types
 
 sys.modules.setdefault(
     "menace_sandbox.database_manager",
@@ -37,13 +36,16 @@ sys.modules.setdefault(
     types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x),
 )
 
-import menace_sandbox.chatgpt_idea_bot as cib
+import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
+
 
 class DummyBuilder:
     def __init__(self):
         self.calls = []
+
     def refresh_db_weights(self):
         self.refreshed = True
+
     def build(self, query, **_):
         self.calls.append(query)
         return "vector:" + query
@@ -53,8 +55,8 @@ def test_builder_context_included():
     builder = DummyBuilder()
     client = cib.ChatGPTClient(context_builder=builder)
     msgs = client.build_prompt_with_memory(["alpha", "beta"], "hi")
-    assert builder.calls == ["alpha beta hi"]
+    assert builder.calls == ["alpha beta"]
     assert msgs[0]["role"] == "system"
-    assert "vector:alpha beta hi" in msgs[0]["content"]
+    assert "vector:alpha beta" in msgs[0]["content"]
     assert msgs[-1]["role"] == "user"
     assert msgs[-1]["content"] == "hi"

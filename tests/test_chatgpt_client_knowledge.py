@@ -42,7 +42,15 @@ def test_ask_injects_context_and_logs(monkeypatch):
     cib.requests = type("R", (), {"Timeout": Exception, "RequestException": Exception})
 
     session = DummySession(record)
-    client = cib.ChatGPTClient(api_key="key", session=session)
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient(api_key="key", session=session, context_builder=DummyBuilder())
     knowledge = DummyKnowledge(record)
 
     resp = client.ask(

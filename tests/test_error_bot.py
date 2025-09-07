@@ -315,7 +315,15 @@ def test_safe_mode_activation(tmp_path):
     from menace.conversation_manager_bot import ConversationManagerBot
 
     err_db = eb.ErrorDB(tmp_path / "e.db")
-    client = cib.ChatGPTClient("key")
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
     conv = ConversationManagerBot(client)
     metrics = make_metrics(tmp_path)
     bot = eb.ErrorBot(err_db, metrics, conversation_bot=conv)

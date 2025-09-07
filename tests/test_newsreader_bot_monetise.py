@@ -9,8 +9,8 @@ sys.modules.setdefault(
     "menace.database_management_bot", types.SimpleNamespace(DatabaseManagementBot=object)
 )
 
-import menace.chatgpt_idea_bot as cib
-import menace.newsreader_bot as nrb
+import menace.chatgpt_idea_bot as cib  # noqa: E402
+import menace.newsreader_bot as nrb  # noqa: E402
 
 
 class FakeMemory:
@@ -23,7 +23,15 @@ class FakeMemory:
 
 def test_monetise_event_records_interaction(monkeypatch):
     mem = FakeMemory()
-    client = cib.ChatGPTClient(gpt_memory=mem)
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
     client.session = None  # force offline mode
     monkeypatch.setattr(
         client,
