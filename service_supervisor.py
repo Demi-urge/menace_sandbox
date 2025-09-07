@@ -8,9 +8,10 @@ import multiprocessing as mp
 import os
 import time
 import uuid
+from functools import partial
 from pathlib import Path
 from threading import Event
-from typing import Callable, Dict, Tuple, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 from .db_router import GLOBAL_ROUTER, init_db_router
 try:  # pragma: no cover - allow running as script
@@ -81,13 +82,13 @@ def _parse_map(value: str) -> dict[str, str]:
     return result
 
 
-def _orchestrator_worker() -> None:
+def _orchestrator_worker(context_builder: ContextBuilder) -> None:
     """Run the main Menace orchestration loop."""
     logger = logging.getLogger("orchestrator_worker")
     _init_unused_bots()
     models = os.environ.get("MODELS", "demo").split(",")
     sleep_seconds = float(os.environ.get("SLEEP_SECONDS", "0"))
-    orch = MenaceOrchestrator(context_builder=ContextBuilder())
+    orch = MenaceOrchestrator(context_builder=context_builder)
     orch.create_oversight("root", "L1")
     if sleep_seconds > 0:
         orch.start_scheduled_jobs()
@@ -173,10 +174,10 @@ def _dep_update_worker() -> None:
         stop.set()
 
 
-def _chaos_worker() -> None:
+def _chaos_worker(context_builder: ContextBuilder) -> None:
     """Continuously inject faults and rollback on failure."""
     logger = logging.getLogger("chaos_worker")
-    service = ChaosMonitoringService(context_builder=ContextBuilder())
+    service = ChaosMonitoringService(context_builder=context_builder)
     stop = Event()
     interval = float(os.getenv("CHAOS_INTERVAL", "300"))
     service.run_continuous(interval=interval, stop_event=stop)
@@ -203,11 +204,11 @@ def _eval_worker() -> None:
         stop.set()
 
 
-def _debug_worker() -> None:
+def _debug_worker(context_builder: ContextBuilder) -> None:
     """Continuously run telemetry-driven debugging."""
     from .debug_loop_service import DebugLoopService
     logger = logging.getLogger("debug_worker")
-    service = DebugLoopService(context_builder=ContextBuilder())
+    service = DebugLoopService(context_builder=context_builder)
     stop = Event()
     interval = float(os.getenv("DEBUG_INTERVAL", "300"))
     service.run_continuous(interval=interval, stop_event=stop)
@@ -511,15 +512,15 @@ def main() -> None:
     EnvironmentBootstrapper().bootstrap()
     builder = ContextBuilder()
     sup = ServiceSupervisor(context_builder=builder)
-    sup.register("orchestrator", _orchestrator_worker)
+    sup.register("orchestrator", partial(_orchestrator_worker, builder))
     sup.register("microtrend_service", _microtrend_worker)
     sup.register("self_evaluation_service", _self_eval_worker)
     sup.register("self_learning_service", _learning_worker)
     sup.register("model_ranking_service", _ranking_worker)
     sup.register("dependency_update_service", _dep_update_worker)
-    sup.register("chaos_monitoring_service", _chaos_worker)
+    sup.register("chaos_monitoring_service", partial(_chaos_worker, builder))
     sup.register("model_evaluation_service", _eval_worker)
-    sup.register("debug_loop_service", _debug_worker)
+    sup.register("debug_loop_service", partial(_debug_worker, builder))
     sup.register("dependency_watchdog", _dependency_provision_worker)
     sup.register("dependency_monitor", _dependency_monitor_worker)
     sup.register("environment_restoration", _env_restore_worker)
