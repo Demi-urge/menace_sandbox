@@ -3,12 +3,20 @@ pytest.skip("optional dependencies not installed", allow_module_level=True)
 import json
 from types import SimpleNamespace
 
-import menace.chatgpt_idea_bot as cib
+import menace_sandbox.chatgpt_idea_bot as cib
 
 
 def test_build_prompt():
-    client = cib.ChatGPTClient("key")
-    msg = cib.build_prompt(client, ["ai", "fintech"], prior="e-commerce")
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    builder = DummyBuilder()
+    client = cib.ChatGPTClient("key", context_builder=builder)
+    msg = cib.build_prompt(client, builder, ["ai", "fintech"], prior="e-commerce")
     assert "e-commerce" in msg[-1]["content"]
     assert "ai, fintech" in msg[-1]["content"]
 
