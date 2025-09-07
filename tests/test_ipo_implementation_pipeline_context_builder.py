@@ -113,11 +113,13 @@ def test_context_builder_reused(tmp_path):
         def deploy(self, name, files, spec):
             return 1
 
+    cb = StubContextBuilder()
     pipeline = ipp.IPOImplementationPipeline(
         ipo=DummyIPOBot(),
         tester=DummyTester(),
         scaler=DummyScaler(),
         deployer=DummyDeployer(),
+        context_builder=cb,
     )
     pipeline.run("plan")
 

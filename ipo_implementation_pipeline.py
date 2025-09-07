@@ -8,12 +8,9 @@ import logging
 
 from .ipo_bot import IPOBot, ExecutionPlan
 try:
-    from vector_service import ContextBuilder, get_default_context_builder
+    from vector_service import ContextBuilder
 except ImportError:  # pragma: no cover - fallback when helper missing
     from vector_service import ContextBuilder  # type: ignore
-
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
 
 logger = logging.getLogger(__name__)
 from .bot_development_bot import BotDevelopmentBot, BotSpec
@@ -44,17 +41,21 @@ class IPOImplementationPipeline:
         deployer: DeploymentBot | None = None,
         handoff: TaskHandoffBot | None = None,
         researcher: ResearchAggregatorBot | None = None,
+        *,
+        context_builder: ContextBuilder,
         max_attempts: int = 3,
     ) -> None:
         self.ipo = ipo or IPOBot()
-        builder = get_default_context_builder()
-        self.developer = developer or BotDevelopmentBot(context_builder=builder)
+        self.developer = developer or BotDevelopmentBot(
+            context_builder=context_builder
+        )
         self.tester = tester or BotTestingBot()
         self.scaler = scaler or ScalabilityAssessmentBot()
         self.deployer = deployer or DeploymentBot()
         self.handoff = handoff
         self.researcher = researcher
         self.max_attempts = max_attempts
+        self.context_builder = context_builder
 
     # --------------------------------------------------------------
     def _spec_from_action(self, name: str) -> BotSpec:
