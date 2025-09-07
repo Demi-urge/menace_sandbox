@@ -4,9 +4,10 @@
 
 ```python
 from menace.chaos_scheduler import ChaosScheduler
-from menace.watchdog import Watchdog, get_default_context_builder
+from menace.watchdog import Watchdog
+from vector_service import ContextBuilder
 
-builder = get_default_context_builder()
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 scheduler = ChaosScheduler(
     processes=[proc],
     bots=[bot],
@@ -16,7 +17,7 @@ scheduler = ChaosScheduler(
 )
 scheduler.start()
 ```
-
+`Watchdog` receives the builder via the `context_builder` argument.
 When a fault is injected the scheduler calls `Watchdog.record_fault()` which logs the event and checks if the provided bot recovered via `ChaosTester.validate_recovery()`. Fault history is stored in-memory and included when operators gather diagnostics.
 
 Failed workflows can also be replayed once issues are resolved. Pass the `workflow` name to
