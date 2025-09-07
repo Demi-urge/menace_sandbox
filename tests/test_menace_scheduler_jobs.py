@@ -1,3 +1,4 @@
+# flake8: noqa
 import types
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
@@ -24,7 +25,7 @@ def orch(monkeypatch):
     monkeypatch.setattr(mo, "BackgroundScheduler", None)
     monkeypatch.setattr(mo.TrendingScraper, "scrape_reddit", lambda self: None)
     monkeypatch.setattr(mo, "learning_main", lambda *a, **k: None)
-    o = mo.MenaceOrchestrator()
+    o = mo.MenaceOrchestrator(context_builder=mo.ContextBuilder())
     o.watchdog = DummyWatchdog()
     return o
 

@@ -1,5 +1,7 @@
+# flake8: noqa
 import sys
 import types
+from pathlib import Path
 
 sys.modules.setdefault("psutil", types.ModuleType("psutil"))
 git_mod = types.ModuleType("git")
@@ -54,6 +56,11 @@ if "pandas" in sys.modules:
 if "requests" in sys.modules:
     sys.modules["requests"].Session = lambda *a, **k: None
 
+dyn = types.ModuleType("dynamic_path_router")
+dyn.resolve_path = lambda p, **k: Path(p)
+dyn.get_project_root = lambda: Path(".")
+sys.modules.setdefault("dynamic_path_router", dyn)
+
 map_mod = types.ModuleType("menace.model_automation_pipeline")
 class DummyPipeline:
     def __init__(self, *a, **k):
@@ -84,7 +91,7 @@ import menace.menace_orchestrator as mo
 
 
 def test_reroute_on_failure():
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
     orch.create_oversight("A", "L1")
     orch.create_oversight("B", "L1")
     orch.create_oversight("C", "L1")

@@ -87,7 +87,7 @@ def _orchestrator_worker() -> None:
     _init_unused_bots()
     models = os.environ.get("MODELS", "demo").split(",")
     sleep_seconds = float(os.environ.get("SLEEP_SECONDS", "0"))
-    orch = MenaceOrchestrator()
+    orch = MenaceOrchestrator(context_builder=ContextBuilder())
     orch.create_oversight("root", "L1")
     if sleep_seconds > 0:
         orch.start_scheduled_jobs()

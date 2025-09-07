@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import time
 import threading
-from typing import Iterable, TYPE_CHECKING
+from typing import Iterable
 import argparse
 import importlib
 import platform
@@ -29,9 +29,6 @@ import sys
 import logging
 from logging_utils import log_record
 from dynamic_path_router import resolve_path
-
-if TYPE_CHECKING:  # pragma: no cover - type hints only
-    from vector_service.context_builder import ContextBuilder
 
 # Logger for this module
 logger = logging.getLogger(__name__)
@@ -61,6 +58,7 @@ from menace.unified_config_store import UnifiedConfigStore  # noqa: E402
 from menace.dependency_self_check import self_check  # noqa: E402
 
 from menace.menace_orchestrator import MenaceOrchestrator  # noqa: E402
+from vector_service import ContextBuilder  # noqa: E402
 from menace.self_coding_manager import PatchApprovalPolicy, SelfCodingManager  # noqa: E402
 from menace.advanced_error_management import AutomatedRollbackManager  # noqa: E402
 from menace.environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
@@ -445,7 +443,7 @@ def _init_unused_bots() -> None:
 def run_once(models: Iterable[str]) -> None:
     """Run a single automation cycle for the given models."""
     _init_unused_bots()
-    orchestrator = MenaceOrchestrator()
+    orchestrator = MenaceOrchestrator(context_builder=ContextBuilder())
     # Create a default root oversight bot
     orchestrator.create_oversight("root", "L1")
     override_svc = SelfServiceOverride(ROIDB(), MetricsDB())
@@ -614,7 +612,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     )
     learning_thread.start()
 
-    orchestrator = MenaceOrchestrator()
+    orchestrator = MenaceOrchestrator(context_builder=ContextBuilder())
     orchestrator.create_oversight("root", "L1")
     orchestrator.start_scheduled_jobs()
     override_svc = SelfServiceOverride(ROIDB(), MetricsDB())

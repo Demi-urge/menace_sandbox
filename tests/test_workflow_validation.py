@@ -19,7 +19,7 @@ def test_replay_updates_confidence(tmp_path):
     err_db, roi_db, metrics_db = _setup_dbs(tmp_path)
     builder = wd.get_default_context_builder()
     watch = wd.Watchdog(err_db, roi_db, metrics_db, context_builder=builder)
-    orch = MenaceOrchestrator()
+    orch = MenaceOrchestrator(context_builder=builder)
     watch.record_fault("fail", workflow="wf1")
     validator = ReplayValidator(lambda wf: None)
     res = watch.validate_workflows(validator, orch)

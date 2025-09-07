@@ -34,7 +34,7 @@ from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .efficiency_bot import EfficiencyBot
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
 from .ad_integration import AdIntegration
-from .watchdog import Watchdog, get_default_context_builder
+from .watchdog import Watchdog, ContextBuilder
 from .error_bot import ErrorDB
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
@@ -211,6 +211,7 @@ class MenaceOrchestrator:
         menace_id: str | None = None,
         router: DBRouter | None = None,
         *,
+        context_builder: ContextBuilder,
         on_restart: Callable[[str], None] | None = None,
         auto_bootstrap: bool | None = None,
         visual_agent_client: object | None = None,
@@ -225,18 +226,22 @@ class MenaceOrchestrator:
             )
         db_router.GLOBAL_ROUTER = router
         self.router = router
-        builder = get_default_context_builder()
+        self.context_builder = context_builder
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger("MenaceOrchestrator")
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception:
+            self.logger.exception("context builder refresh failed")
         self.pipeline = ModelAutomationPipeline(
             pathway_db=pathway_db,
             myelination_threshold=myelination_threshold,
-            context_builder=builder,
+            context_builder=self.context_builder,
         )
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
         self.ad_client = ad_client or AdIntegration()
         self.rollback_mgr = rollback_mgr
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("MenaceOrchestrator")
         if auto_bootstrap is None:
             auto_bootstrap = not bool(os.getenv("MENACE_LIGHT_IMPORTS"))
         self.model_id: int | None = None
@@ -278,9 +283,11 @@ class MenaceOrchestrator:
         self.last_root_causes: Dict[str, List[str]] = {}
         self.workflow_confidence: Dict[str, float] = {}
         self._workflow_counts: Dict[str, int] = {}
-        builder = get_default_context_builder()
         self.watchdog = Watchdog(
-            ErrorDB(router=self.router), ROIDB(), MetricsDB(), context_builder=builder
+            ErrorDB(router=self.router),
+            ROIDB(),
+            MetricsDB(),
+            context_builder=self.context_builder,
         )
         self.scheduler: object | None = None
         self.planner = StrategicPlanner(

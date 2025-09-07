@@ -150,7 +150,7 @@ message if installation fails.
 - Automated reinvestment of profits via `investment_engine.AutoReinvestmentBot` with a predictive spend engine ([docs/auto_reinvestment.md](docs/auto_reinvestment.md))
 - Bottleneck detection via performance monitors ([docs/bottleneck_detection.md](docs/bottleneck_detection.md))
 - Adaptive energy score guiding resource allocation ([docs/energy_score.md](docs/energy_score.md))
-- Central Menace orchestrator coordinating all stages and hierarchical oversight
+- Central Menace orchestrator coordinating all stages and hierarchical oversight (requires an explicit `ContextBuilder` instance)
 - Self improvement engine automatically runs the workflow on the Menace model when metrics degrade
 - Optional meta planner integrates structural evolution; set `ENABLE_META_PLANNER=true` to require its presence
 - ROI foresight with `ForesightTracker.predict_roi_collapse`, projecting trends,
