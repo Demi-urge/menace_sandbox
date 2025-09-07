@@ -7,6 +7,7 @@ import time
 
 from .competitive_intelligence_bot import CompetitiveIntelligenceBot
 from .niche_saturation_bot import NicheCandidate, NicheSaturationBot
+from vector_service.context_builder import ContextBuilder
 from .compliance_checker import ComplianceChecker
 
 
@@ -23,9 +24,12 @@ class MarketManipulationBot:
         *,
         checker: ComplianceChecker | None = None,
         role: str = "trader",
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.intel_bot = intel_bot or CompetitiveIntelligenceBot()
-        self.saturation_bot = saturation_bot or NicheSaturationBot()
+        self.saturation_bot = saturation_bot or NicheSaturationBot(
+            context_builder=context_builder or ContextBuilder()
+        )
         self.checker = checker or ComplianceChecker()
         self.role = role
 

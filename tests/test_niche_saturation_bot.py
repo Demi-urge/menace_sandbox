@@ -19,7 +19,7 @@ def test_saturate_logs(tmp_path):
     alloc_bot = rab.ResourceAllocationBot(
         alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=_DummyBuilder()
     )
-    bot = nsb.NicheSaturationBot(db, alloc_bot)
+    bot = nsb.NicheSaturationBot(db, alloc_bot, context_builder=_DummyBuilder())
     cand = nsb.NicheCandidate(name="ai-tools", demand=5.0, competition=1.0, trend=1.0)
     actions = bot.saturate([cand])
     hist = db.history()

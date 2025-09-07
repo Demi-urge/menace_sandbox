@@ -81,6 +81,13 @@ class _DummyBuilder:
     def refresh_db_weights(self):
         pass
 
+stub_ctx = types.ModuleType("vector_service.context_builder")
+class ContextBuilder:
+    def __init__(self, *a, **k):
+        pass
+stub_ctx.ContextBuilder = ContextBuilder
+sys.modules["vector_service.context_builder"] = stub_ctx
+
 import menace.niche_saturation_bot as ns
 from menace.menace_memory_manager import MenaceMemoryManager
 
@@ -92,7 +99,10 @@ def test_saturate_logs_strategy_error(tmp_path, caplog):
 
     alloc = ResourceAllocationBot(context_builder=_DummyBuilder())
     bot = ns.NicheSaturationBot(
-        db=ns.NicheDB(tmp_path / "n.db"), alloc_bot=alloc, strategy_bot=BadStrategy()
+        db=ns.NicheDB(tmp_path / "n.db"),
+        alloc_bot=alloc,
+        strategy_bot=BadStrategy(),
+        context_builder=_DummyBuilder(),
     )
     caplog.set_level(logging.ERROR)
     bot.saturate([ns.NicheCandidate("x", 1.0, 0.0)])

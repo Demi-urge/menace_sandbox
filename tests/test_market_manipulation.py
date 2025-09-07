@@ -42,6 +42,21 @@ ns_mod = types.ModuleType("niche_saturation_bot")
 ns_mod.NicheSaturationBot = _DummySaturation
 ns_mod.NicheCandidate = _NicheCandidate
 sys.modules["menace.niche_saturation_bot"] = ns_mod
+setattr(pkg, "niche_saturation_bot", ns_mod)
+
+stub_ctx = types.ModuleType("vector_service.context_builder")
+class ContextBuilder:
+    def __init__(self, *a, **k):
+        pass
+stub_ctx.ContextBuilder = ContextBuilder
+sys.modules["vector_service.context_builder"] = stub_ctx
+
+alloc_mod = types.ModuleType("menace.resource_allocation_bot")
+class ResourceAllocationBot:
+    def __init__(self, *a, **k):
+        pass
+alloc_mod.ResourceAllocationBot = ResourceAllocationBot
+sys.modules["menace.resource_allocation_bot"] = alloc_mod
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(
