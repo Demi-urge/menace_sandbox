@@ -24,10 +24,15 @@ class DiscoveryScheduler:
         *,
         scraper: TrendingScraper | None = None,
         creation_bot: BotCreationBot | None = None,
+        context_builder: ContextBuilder,
         interval: int = 3600,
     ) -> None:
         self.scraper = scraper or TrendingScraper()
-        self.context_builder = ContextBuilder()
+        self.context_builder = context_builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception:
+            pass
         self.creation_bot = creation_bot or BotCreationBot(
             context_builder=self.context_builder
         )
