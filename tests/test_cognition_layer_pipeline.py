@@ -73,11 +73,13 @@ def test_cognition_layer_pipeline_feedback_updates_weights_and_roi():
         roi_tracker=tracker,
     )
 
-    cl_module._layer = layer
+    setattr(builder, "_cognition_layer", layer)
     cl_module._roi_tracker = tracker
 
-    _ctx, sid = cl_module.build_cognitive_context("example query", top_k=1)
-    cl_module.log_feedback(sid, True)
+    _ctx, sid = cl_module.build_cognitive_context(
+        "example query", top_k=1, context_builder=builder
+    )
+    cl_module.log_feedback(sid, True, context_builder=builder)
 
     weights = metrics.get_db_weights()
     assert weights.get("db1", 0.0) > 0.0

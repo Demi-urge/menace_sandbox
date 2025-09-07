@@ -15,10 +15,11 @@ Example
 ...     reload_ranker_model,
 ...     get_roi_stats,
 ... )
->>> context, sid = build_cognitive_context("improve error handling")
->>> log_feedback(sid, success=True)
->>> reload_ranker_model()
->>> stats = get_roi_stats()
+>>> builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+>>> context, sid = build_cognitive_context("improve error handling", context_builder=builder)
+>>> log_feedback(sid, success=True, context_builder=builder)
+>>> reload_ranker_model(context_builder=builder)
+>>> stats = get_roi_stats(context_builder=builder)
 """
 
 from __future__ import annotations
@@ -39,18 +40,19 @@ __all__ = [
     "get_roi_stats",
 ]
 
-# Global components shared by all calls.  They ensure every query flows
-# through retrieval, ranking, patch safety and ROI tracking.
+# Global ROI tracker shared by all calls so ROI metrics accumulate across
+# retrieval sessions.  Context builders are supplied by callers to avoid
+# implicit global state.
 _roi_tracker = ROITracker()
-_context_builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
-_patch_safety = _context_builder.patch_safety
-_layer = _CognitionLayer(context_builder=_context_builder, roi_tracker=_roi_tracker)
 
 
-def _get_layer(builder: ContextBuilder | None) -> _CognitionLayer:
-    """Return cognition layer bound to *builder* or the shared default."""
-    if builder is None:
-        return _layer
+def _get_layer(builder: ContextBuilder) -> _CognitionLayer:
+    """Return cognition layer bound to *builder*.
+
+    The layer instance is cached on ``builder`` to avoid recreating heavy
+    components across calls.
+    """
+
     layer = getattr(builder, "_cognition_layer", None)
     if layer is None:
         layer = _CognitionLayer(context_builder=builder, roi_tracker=_roi_tracker)
@@ -64,7 +66,7 @@ def _get_layer(builder: ContextBuilder | None) -> _CognitionLayer:
 def build_cognitive_context(
     query: str,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     **kwargs: Any,
 ) -> Tuple[str, str]:
     """Return context and session id for *query*.
@@ -85,7 +87,7 @@ def build_cognitive_context(
 async def build_cognitive_context_async(
     query: str,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     **kwargs: Any,
 ) -> Tuple[str, str]:
     """Asynchronously return context and session id for *query*.
@@ -109,7 +111,7 @@ def log_feedback(
     *,
     patch_id: str = "",
     contribution: float | None = None,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> None:
     """Record feedback for a previously built context.
 
@@ -133,7 +135,7 @@ async def log_feedback_async(
     *,
     patch_id: str = "",
     contribution: float | None = None,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> None:
     """Record feedback asynchronously for a previously built context.
 
@@ -156,7 +158,7 @@ def reload_ranker_model(
     *,
     roi_delta: float | None = None,
     risk_penalty: float | None = None,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> None:
     """Reload the retrieval ranking model used by the cognition layer.
 
@@ -177,7 +179,7 @@ def reload_ranker_model(
     )
 
 
-def reload_reliability_scores(*, context_builder: ContextBuilder | None = None) -> None:
+def reload_reliability_scores(*, context_builder: ContextBuilder) -> None:
     """Refresh retriever reliability statistics."""
 
     layer = _get_layer(context_builder)
@@ -185,7 +187,7 @@ def reload_reliability_scores(*, context_builder: ContextBuilder | None = None) 
 
 
 def get_roi_stats(
-    *, context_builder: ContextBuilder | None = None
+    *, context_builder: ContextBuilder,
 ) -> dict[str, dict[str, dict[str, float]]]:
     """Return latest ROI statistics grouped by origin type."""
 

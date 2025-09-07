@@ -414,13 +414,12 @@ def test_build_context_and_feedback_updates_weights(monkeypatch):
     import cognition_layer as cl
 
     monkeypatch.setattr(cl, "_roi_tracker", tracker)
-    monkeypatch.setattr(cl, "_context_builder", builder)
-    monkeypatch.setattr(cl, "_layer", layer)
+    setattr(builder, "_cognition_layer", layer)
 
-    ctx, sid = cl.build_cognitive_context("hello", top_k=3)
+    ctx, sid = cl.build_cognitive_context("hello", top_k=3, context_builder=builder)
     assert ctx and sid
 
-    cl.log_feedback(sid, True, patch_id="p1")
+    cl.log_feedback(sid, True, patch_id="p1", context_builder=builder)
 
     weights_success = metrics.get_db_weights()
     assert set(weights_success) == {"workflow", "enhancement", "resource"}
@@ -436,8 +435,8 @@ def test_build_context_and_feedback_updates_weights(monkeypatch):
         "vector_service.cognition_layer.schedule_backfill", fake_schedule_backfill
     )
 
-    ctx2, sid2 = cl.build_cognitive_context("boom", top_k=3)
-    cl.log_feedback(sid2, False, patch_id="p2")
+    ctx2, sid2 = cl.build_cognitive_context("boom", top_k=3, context_builder=builder)
+    cl.log_feedback(sid2, False, patch_id="p2", context_builder=builder)
 
     weights_failure = metrics.get_db_weights()
     assert any(weights_failure[db] < weights_success[db] for db in weights_success)
@@ -525,12 +524,12 @@ def test_wrapper_build_and_feedback(monkeypatch):
         vector_metrics=metrics,
         roi_tracker=tracker,
     )
-    monkeypatch.setattr(cl, "_layer", layer)
+    setattr(builder, "_cognition_layer", layer)
 
-    ctx, sid = cl.build_cognitive_context("hello world")
+    ctx, sid = cl.build_cognitive_context("hello world", context_builder=builder)
     assert ctx and sid
 
-    cl.log_feedback(sid, True, patch_id="p1")
+    cl.log_feedback(sid, True, patch_id="p1", context_builder=builder)
     weights_success = metrics.get_db_weights()
     assert set(weights_success) == {"workflow", "enhancement", "resource"}
     assert all(w > 0 for w in weights_success.values())
@@ -544,9 +543,9 @@ def test_wrapper_build_and_feedback(monkeypatch):
         "vector_service.cognition_layer.schedule_backfill", fake_schedule_backfill
     )
 
-    ctx2, sid2 = cl.build_cognitive_context("again")
+    ctx2, sid2 = cl.build_cognitive_context("again", context_builder=builder)
     assert ctx2 and sid2
-    cl.log_feedback(sid2, False, patch_id="p2")
+    cl.log_feedback(sid2, False, patch_id="p2", context_builder=builder)
 
     weights_failure = metrics.get_db_weights()
     assert all(weights_failure[db] == 0.0 for db in weights_failure)
