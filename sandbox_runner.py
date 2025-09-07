@@ -1323,19 +1323,12 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
 def _sandbox_main(
     preset: Dict[str, Any],
     args: argparse.Namespace,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> "ROITracker":
     from menace.roi_tracker import ROITracker
 
     global SANDBOX_ENV_PRESETS, _local_knowledge_refresh_counter
     logger.info("starting sandbox run", extra=log_record(preset=preset))
-    if context_builder is None:
-        context_builder = ContextBuilder(
-            bot_db="bots.db",
-            code_db="code.db",
-            error_db="errors.db",
-            workflow_db="workflows.db",
-        )
     try:
         context_builder.refresh_db_weights()
     except Exception:
@@ -1809,6 +1802,7 @@ def _sandbox_main(
                 module_algorithm=getattr(args, "module_algorithm", "greedy"),
                 module_threshold=float(getattr(args, "module_threshold", 0.1)),
                 module_semantic=getattr(args, "module_semantic", False),
+                context_builder=context_builder,
             )
         except Exception:
             logger.exception("workflow simulations failed")

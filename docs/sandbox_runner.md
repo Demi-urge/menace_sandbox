@@ -360,10 +360,14 @@ levels for the same scenario:
 
 ```python
 from environment_generator import generate_canonical_presets
+from vector_service.context_builder import ContextBuilder
 from sandbox_runner import run_repo_section_simulations
 
 presets = generate_canonical_presets()
-tracker = run_repo_section_simulations("/repo", env_presets=presets)
+builder = ContextBuilder()
+tracker = run_repo_section_simulations(
+    "/repo", env_presets=presets, context_builder=builder
+)
 ```
 
 Run all canonical profiles with:
@@ -697,7 +701,7 @@ runner.run(task, timeout=2.0, memory_limit=50_000_000)
 
 ## Workflow Simulations
 
-`run_workflow_simulations(workflows_db, env_presets=None)` replays stored
+`run_workflow_simulations(workflows_db, env_presets=None, context_builder=builder)` replays stored
 workflow sequences under each environment preset. ROI deltas and metrics are
 aggregated per workflow ID. After iterating over individual workflows a single
 combined snippet containing all steps is executed. Metrics from this run are
@@ -716,7 +720,7 @@ The differences are stored under `synergy_roi` and `synergy_<metric>` entries in
 `roi_history.json`. The delta is also attributed to each involved module so
 `ROITracker.rankings()` reflects the overall cross‑module impact.
 
-`run_workflow_simulations()` performs the same comparison for entire workflows.
+`run_workflow_simulations(..., context_builder=builder)` performs the same comparison for entire workflows.
 Each workflow is executed on its own and then as part of a single combined
 snippet. `synergy_roi` and `synergy_<metric>` values capture how the result of
 the combined workflow run differs from the average metrics recorded during the

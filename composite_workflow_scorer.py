@@ -34,6 +34,7 @@ from .workflow_scorer_core import (
     compute_bottleneck_index,
     compute_patchability,
 )
+from vector_service.context_builder import ContextBuilder
 
 try:  # pragma: no cover - optional dependency
     from .code_database import PatchHistoryDB
@@ -349,11 +350,13 @@ class CompositeWorkflowScorer(ROIScorer):
         """Backwards compatible wrapper executing sandbox simulations."""
 
         start = time.perf_counter()
+        builder = ContextBuilder()
         tracker, details = sandbox_runner.environment.run_workflow_simulations(
             workflows_db=workflow_id,
             env_presets=env_presets,
             return_details=True,
             tracker=self.tracker,
+            context_builder=builder,
         )
         runtime = time.perf_counter() - start
 

@@ -262,13 +262,17 @@ every module can be exercised under both intensities:
 
 ```python
 from environment_generator import generate_canonical_presets
+from vector_service.context_builder import ContextBuilder
 
 presets = generate_canonical_presets()
 # access individual levels
 low_latency = presets["high_latency_api"]["low"]
 high_latency = presets["high_latency_api"]["high"]
 # run all scenarios under both severities
-run_repo_section_simulations(repo_path, env_presets=presets)
+builder = ContextBuilder()
+run_repo_section_simulations(
+    repo_path, env_presets=presets, context_builder=builder
+)
 ```
 
 Set `SANDBOX_FAIL_ON_MISSING_SCENARIOS=1` to raise an error if any canonical
