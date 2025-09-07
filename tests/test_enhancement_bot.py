@@ -1,22 +1,56 @@
-import pytest
-pytest.skip("optional dependencies not installed", allow_module_level=True)
+"""Tests for the enhancement bot context injection."""
+
 import sys
+import types
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import menace.enhancement_bot as eb
-import menace.chatgpt_enhancement_bot as ceb
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+# Stub heavy dependencies so the module imports without optional components
+ceb_stub = types.SimpleNamespace(
+    EnhancementDB=object,
+    EnhancementHistory=object,
+    Enhancement=object,
+)
+sys.modules.setdefault("menace_sandbox.chatgpt_enhancement_bot", ceb_stub)
+sys.modules.setdefault("chatgpt_enhancement_bot", ceb_stub)
+
+code_db_stub = types.SimpleNamespace(CodeDB=object)
+sys.modules.setdefault("menace_sandbox.code_database", code_db_stub)
+sys.modules.setdefault("code_database", code_db_stub)
+
+# Micro model stubs
+diff_stub = types.SimpleNamespace(summarize_diff=lambda a, b: "")
+micro_pkg = types.ModuleType("menace_sandbox.micro_models")
+sys.modules.setdefault("menace_sandbox.micro_models", micro_pkg)
+sys.modules.setdefault("menace_sandbox.micro_models.diff_summarizer", diff_stub)
+
+from menace_sandbox.enhancement_bot import EnhancementBot  # noqa: E402
+from llm_interface import LLMClient, LLMResult  # noqa: E402
 
 
-def test_evaluate_and_log(tmp_path):
-    f = tmp_path / "a.py"  # path-ignore
-    f.write_text("def run(x, y):\n    total = 0\n    for _ in range(1000):\n        total += x + y\n    return total\n")
-    new_code = "def run(x, y):\n    return (x + y) * 1000\n"
-    db = ceb.EnhancementDB(tmp_path / "e.db")
-    bot = eb.EnhancementBot(enhancement_db=db)
-    prop = eb.RefactorProposal(file_path=f, new_code=new_code, author_bot="codex")
-    ok = bot.evaluate(prop)
-    assert ok
-    hist = db.history()
-    assert hist and hist[0].file_path == str(f)
+def test_codex_summarize_injects_context():
+    calls: dict[str, str] = {}
+
+    class DummyBuilder:
+        def build(self, desc: str) -> str:
+            calls["desc"] = desc
+            return "CTX"
+
+    class DummyLLM(LLMClient):
+        def __init__(self) -> None:
+            self.prompt = None
+            super().__init__(model="dummy", backends=[])
+
+        def generate(self, prompt):  # type: ignore[override]
+            self.prompt = prompt
+            return LLMResult(text="summary")
+
+    builder = DummyBuilder()
+    llm = DummyLLM()
+    bot = EnhancementBot(context_builder=builder, llm_client=llm)
+    res = bot._codex_summarize("before", "after", hint="diff")
+    assert res == "summary"
+    assert calls["desc"] == "diff"
+    assert llm.prompt and "CTX" in llm.prompt.user

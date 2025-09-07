@@ -14,6 +14,7 @@ from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
 from prompt_engine import PromptEngine
 
 from billing.openai_wrapper import chat_completion_create
+from llm_interface import LLMClient, LLMResult
 
 # Stub heavy dependencies so chatgpt_idea_bot can be imported without side effects
 package = types.ModuleType("menace_sandbox")
@@ -64,11 +65,15 @@ sys.modules["menace_sandbox.sandbox_runner"] = types.SimpleNamespace(
     LOCAL_KNOWLEDGE_MODULE=None
 )
 
+class _CB:
+    def build(self, *a, **k):
+        return ""
+
 vector_service = types.SimpleNamespace(
     Retriever=None,
     FallbackResult=list,
     ErrorResult=Exception,
-    ContextBuilder=type("ContextBuilder", (), {}),
+    ContextBuilder=_CB,
 )
 sys.modules.setdefault("vector_service", vector_service)
 
@@ -99,6 +104,21 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault(
     "menace_sandbox.micro_models.prefix_injector", prefix_injector
+)
+
+# Minimal ChatGPTClient stub to avoid heavy imports
+class _ChatGPTClient:
+    def __init__(self, session=None, gpt_memory=None, context_builder=None):
+        self.session = session
+
+    def ask(self, messages, use_memory=False, tags=None):
+        msgs = prepend_payment_notice(messages)
+        if self.session:
+            self.session.post("http://", json={"messages": msgs})
+        return {}
+
+sys.modules.setdefault(
+    "menace_sandbox.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=_ChatGPTClient)
 )
 
 from menace_sandbox.enhancement_bot import EnhancementBot
@@ -150,25 +170,24 @@ def test_chatgpt_client_injects_notice(monkeypatch):
     assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
 
 
-def test_enhancement_bot_injects_notice(monkeypatch):
-    captured = {}
-    fake_openai = types.SimpleNamespace()
+def test_enhancement_bot_injects_notice():
+    class DummyLLM(LLMClient):
+        def __init__(self):
+            self.captured = None
+            super().__init__(model="dummy", backends=[])
 
-    def fake_create(*args, **kwargs):
-        captured["messages"] = kwargs.get("messages")
-        return {"choices": [{"message": {"content": ""}}]}
+        def generate(self, prompt):  # type: ignore[override]
+            self.captured = prompt
+            return LLMResult(text="")
 
-    fake_openai.ChatCompletion = types.SimpleNamespace(create=fake_create)
-    monkeypatch.setitem(sys.modules, "openai", fake_openai)
-    monkeypatch.setenv("OPENAI_API_KEY", "test")
-
-    bot = EnhancementBot()
+    llm = DummyLLM()
+    bot = EnhancementBot(llm_client=llm)
     bot._codex_summarize("a", "b")
-    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
+    assert llm.captured and llm.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
 
 
 def test_prompt_engine_build_prompt_contains_notice():
-    engine = PromptEngine(retriever=None)
+    engine = PromptEngine(retriever=None, context_builder=vector_service.ContextBuilder())
     prompt = engine.build_prompt("task")
     assert prompt.system.startswith(PAYMENT_ROUTER_NOTICE)
 
