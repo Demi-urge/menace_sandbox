@@ -8,6 +8,8 @@ on:
 jobs:
   retrain:
     runs-on: ubuntu-latest
+    env:
+      MENACE_SAFE: "1"
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -15,5 +17,7 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: bash ./setup_env.sh
+      - name: Enforce ContextBuilder usage
+        run: python scripts/check_context_builder_usage.py
       - name: Retrain ranker
         run: python analytics/retrain_vector_ranker.py --vector-db vector_metrics.db --patch-db metrics.db
