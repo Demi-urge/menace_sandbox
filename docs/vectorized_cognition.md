@@ -17,15 +17,20 @@ vectorizers → EmbeddingBackfill/EmbeddingScheduler → Retriever/ContextBuilde
 ## Building Context and Logging Feedback
 
 ```python
+from vector_service.context_builder import ContextBuilder
 from cognition_layer import build_cognitive_context, log_feedback
 
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+
 # Build a context for a natural‑language request
-context, session_id = build_cognitive_context("optimise cache eviction", top_k=5)
+context, session_id = build_cognitive_context(
+    "optimise cache eviction", top_k=5, context_builder=builder
+)
 
 # ...apply patch based on the context...
 
 # Record whether the change succeeded
-log_feedback(session_id, True, patch_id="cache-fix-42")
+log_feedback(session_id, True, patch_id="cache-fix-42", context_builder=builder)
 ```
 
 `build_cognitive_context` wraps `vector_service.cognition_layer.CognitionLayer.query` to return a JSON context blob and session id. `log_feedback` forwards patch outcomes so ROI histories and ranking weights can update.

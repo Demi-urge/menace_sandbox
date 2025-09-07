@@ -113,18 +113,17 @@ def _setup_layer(tmp_path, monkeypatch, roi_deltas):
     monkeypatch.setattr("vector_service.cognition_layer.schedule_backfill", fake_backfill)
     monkeypatch.setattr(layer, "reload_reliability_scores", lambda: None)
 
-    cl_module._layer = layer
-    cl_module._context_builder = builder
+    setattr(builder, "_cognition_layer", layer)
     cl_module._roi_tracker = tracker
-    return cl_module, vm
+    return cl_module, vm, builder
 
 
 def test_success_updates_metrics_and_weights(tmp_path, monkeypatch):
-    cl, vm = _setup_layer(tmp_path, monkeypatch, {"text": 0.2, "code": -0.1})
-    ctx, sid = cl.build_cognitive_context("prompt", top_k=2)
+    cl, vm, builder = _setup_layer(tmp_path, monkeypatch, {"text": 0.2, "code": -0.1})
+    ctx, sid = cl.build_cognitive_context("prompt", top_k=2, context_builder=builder)
     assert ctx.split() == ["t1", "c1"]
 
-    cl.log_feedback(sid, True, contribution=1.0)
+    cl.log_feedback(sid, True, contribution=1.0, context_builder=builder)
 
     win_rates = vm.retriever_win_rate_by_db()
     assert win_rates["text"] == pytest.approx(1.0)
@@ -135,9 +134,9 @@ def test_success_updates_metrics_and_weights(tmp_path, monkeypatch):
 
 
 def test_failure_updates_metrics_and_weights(tmp_path, monkeypatch):
-    cl, vm = _setup_layer(tmp_path, monkeypatch, {"text": 0.2, "code": -0.1})
-    ctx, sid = cl.build_cognitive_context("prompt", top_k=2)
-    cl.log_feedback(sid, False, contribution=1.0)
+    cl, vm, builder = _setup_layer(tmp_path, monkeypatch, {"text": 0.2, "code": -0.1})
+    ctx, sid = cl.build_cognitive_context("prompt", top_k=2, context_builder=builder)
+    cl.log_feedback(sid, False, contribution=1.0, context_builder=builder)
 
     regret_rates = vm.retriever_regret_rate_by_db()
     assert regret_rates["text"] == pytest.approx(1.0)
