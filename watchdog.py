@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""System health watchdog.
+
+This module depends on :class:`vector_service.ContextBuilder` for gathering
+diagnostic context.  Importing this module without the ``vector_service``
+package installed results in an :class:`ImportError` to make the dependency
+explicit.
+"""
+
 import json
 import logging
 import os
@@ -83,15 +91,13 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
     UnifiedEventBus = None  # type: ignore
 from .retry_utils import retry
 
-try:  # pragma: no cover - optional dependency
+try:
     from vector_service import ContextBuilder
-except Exception:  # pragma: no cover - fallback when helper missing
-    try:
-        from vector_service.context_builder import ContextBuilder  # type: ignore
-    except Exception:  # pragma: no cover - last resort
-        class ContextBuilder:  # type: ignore[override]
-            def refresh_db_weights(self) -> None:  # pragma: no cover - stub
-                pass
+except Exception as exc:  # pragma: no cover - fail fast when dependency missing
+    raise ImportError(
+        "watchdog requires vector_service.ContextBuilder; install the"
+        " vector_service package to enable context retrieval"
+    ) from exc
 
 if TYPE_CHECKING:
     from .replay_engine import ReplayValidator

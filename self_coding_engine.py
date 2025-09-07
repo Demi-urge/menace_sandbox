@@ -1,4 +1,9 @@
-"""Self-coding engine that retrieves code snippets and proposes patches."""
+"""Self-coding engine that retrieves code snippets and proposes patches.
+
+The engine relies on :class:`vector_service.ContextBuilder` and related
+components.  If ``vector_service`` is unavailable an informative
+:class:`ImportError` is raised during import.
+"""
 
 from __future__ import annotations
 
@@ -90,59 +95,23 @@ except Exception:  # pragma: no cover - graceful degradation
         stdout = ""
 from .sandbox_settings import SandboxSettings
 
-try:  # pragma: no cover - optional dependency
+try:
     from vector_service import (
         CognitionLayer,
         ContextBuilder,
         PatchLogger,
         VectorServiceError,
     )
-except Exception:  # pragma: no cover - defensive fallback
-    PatchLogger = object  # type: ignore
+except Exception as exc:  # pragma: no cover - fail fast when dependency missing
+    raise ImportError(
+        "self_coding_engine requires vector_service and its ContextBuilder;"
+        " install the vector_service package to enable self-coding"
+    ) from exc
 
-    class VectorServiceError(Exception):
-        """Raised when the vector service dependency is missing."""
-
-        def __init__(
-            self,
-            message: str,
-            *,
-            missing_dependency: str | None = None,
-            suggested_fix: str | None = None,
-        ) -> None:
-            super().__init__(message)
-            self.missing_dependency = missing_dependency
-            self.suggested_fix = suggested_fix
-
-    class CognitionLayer:  # type: ignore[override]
-        """Stub cognition layer used when vector service is unavailable."""
-
-        def __init__(self, *_, **kwargs):
-            self.patch_logger = kwargs.get("patch_logger")
-            self.roi_tracker = kwargs.get("roi_tracker")
-            logging.getLogger(__name__).warning(
-                "vector service dependency missing; CognitionLayer disabled"
-            )
-
-        def query(self, *_args, **_kwargs):
-            raise VectorServiceError(
-                "CognitionLayer unavailable",
-                missing_dependency="vector_service",
-                suggested_fix="install the vector_service package",
-            )
-
-        def record_patch_outcome(self, *_args, **_kwargs):
-            raise VectorServiceError(
-                "CognitionLayer unavailable",
-                missing_dependency="vector_service",
-                suggested_fix="install the vector_service package",
-            )
-
-    class ContextBuilder:  # type: ignore[override]
-        """Fallback context builder when vector service is unavailable."""
-
-        def __init__(self, *_, **__):
-            pass
+try:  # pragma: no cover - required for payment integration checks
+    import stripe_billing_router  # noqa: F401
+except Exception:  # pragma: no cover - optional
+    stripe_billing_router = None  # type: ignore
 
 try:  # pragma: no cover - optional ROI tracking
     from .roi_tracker import ROITracker

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Automatically validate and merge Codex refactors.
+
+The enhancement workflow depends on :class:`vector_service.ContextBuilder` for
+supplementary code context.  If the ``vector_service`` package is unavailable an
+informative :class:`ImportError` is raised at import time.
+"""
+
 import hashlib
 import subprocess
 import time
@@ -21,10 +28,15 @@ from .micro_models.diff_summarizer import summarize_diff
 
 from billing.prompt_notice import prepend_payment_notice
 from llm_interface import LLMClient, Prompt
-try:  # pragma: no cover - optional service layer
+
+try:
     from vector_service import ContextBuilder
-except Exception:  # pragma: no cover - degrade gracefully
-    ContextBuilder = None  # type: ignore
+except Exception as exc:  # pragma: no cover - fail fast when dependency missing
+    raise ImportError(
+        "enhancement_bot requires vector_service.ContextBuilder; install the"
+        " vector_service package to enable context retrieval"
+    ) from exc
+
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback for flat layout
