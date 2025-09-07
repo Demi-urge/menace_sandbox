@@ -955,7 +955,7 @@ def _sandbox_init(
     from menace.model_automation_pipeline import ModelAutomationPipeline
 
     quick_manager = SelfCodingManager(
-        engine, ModelAutomationPipeline(), bot_name="menace"
+        engine, ModelAutomationPipeline(context_builder=context_builder), bot_name="menace"
     )
     quick_fix_engine = QuickFixEngine(
         telem_db, quick_manager, graph=graph, context_builder=context_builder

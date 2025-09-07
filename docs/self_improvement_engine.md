@@ -7,10 +7,11 @@ import os
 from dynamic_path_router import resolve_path
 from menace.self_improvement.api import SelfImprovementEngine, ImprovementEngineRegistry
 from menace.model_automation_pipeline import ModelAutomationPipeline
+from vector_service import ContextBuilder
 
 engine = SelfImprovementEngine(
     bot_name="alpha",
-    pipeline=ModelAutomationPipeline(),
+    pipeline=ModelAutomationPipeline(context_builder=ContextBuilder()),
     state_path=resolve_path(f"{os.getenv('SANDBOX_DATA_DIR', 'sandbox_data')}/alpha_state.json"),
 )
 registry = ImprovementEngineRegistry()
@@ -558,9 +559,14 @@ Provide it with a `CapitalManagementBot`, a `DataBot` and a factory function
 that returns a new `SelfImprovementEngine` for a given name:
 
 ```python
+from vector_service import ContextBuilder
+
+
 def factory(name: str) -> SelfImprovementEngine:
-    return SelfImprovementEngine(bot_name=name,
-                                 pipeline=ModelAutomationPipeline())
+    return SelfImprovementEngine(
+        bot_name=name,
+        pipeline=ModelAutomationPipeline(context_builder=ContextBuilder()),
+    )
 
 registry = ImprovementEngineRegistry()
 registry.register_engine("alpha", factory("alpha"))

@@ -225,8 +225,11 @@ class MenaceOrchestrator:
             )
         db_router.GLOBAL_ROUTER = router
         self.router = router
+        builder = get_default_context_builder()
         self.pipeline = ModelAutomationPipeline(
-            pathway_db=pathway_db, myelination_threshold=myelination_threshold
+            pathway_db=pathway_db,
+            myelination_threshold=myelination_threshold,
+            context_builder=builder,
         )
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold

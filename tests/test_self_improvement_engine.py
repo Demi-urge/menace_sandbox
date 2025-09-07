@@ -4,6 +4,27 @@ import sys
 import pytest
 import asyncio
 
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+import types
+
+from pathlib import Path
+
+vs = types.ModuleType("vector_service")
+class DummyBuilder:
+    def __init__(self, *a, **k):
+        pass
+    def refresh_db_weights(self):
+        pass
+vs.ContextBuilder = DummyBuilder
+vs.CognitionLayer = object
+sys.modules["vector_service"] = vs
+
+menace_pkg = types.ModuleType("menace")
+menace_pkg.__path__ = [str(Path(__file__).resolve().parent.parent)]
+menace_pkg.RAISE_ERRORS = False
+sys.modules["menace"] = menace_pkg
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import json
 from pathlib import Path
 import types
@@ -414,7 +435,8 @@ def test_run_cycle(tmp_path, monkeypatch):
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
     diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
-    agg = rab.ResearchAggregatorBot(["menace"], info_db=info)
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    agg = rab.ResearchAggregatorBot(["menace"], info_db=info, context_builder=builder)
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
             return mp.AutomationResult(
