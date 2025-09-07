@@ -60,12 +60,19 @@ from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
 from .quick_fix_engine import QuickFixEngine  # noqa: E402
 try:  # noqa: E402 - optional helper for default ContextBuilder
-    from vector_service import ContextBuilder, get_default_context_builder
+    from vector_service import ContextBuilder
 except ImportError:  # pragma: no cover - fallback when helper missing
     from vector_service import ContextBuilder  # type: ignore
 
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
+
+def get_default_context_builder(**kwargs):  # type: ignore
+    return ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+        **kwargs,
+    )
 
 try:  # optional dependency
     import psutil  # type: ignore
