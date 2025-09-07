@@ -24,7 +24,7 @@ def test_process(monkeypatch):
     client = cib.ChatGPTClient("k", context_builder=builder)
     monkeypatch.setattr(client, "ask", lambda msgs: {"choices": [{"message": {"content": "ok"}}]})
     fetcher = qb.DataFetcher({"foo": {"val": 1}})
-    bot = qb.QueryBot(client, fetcher=fetcher)
+    bot = qb.QueryBot(client, fetcher=fetcher, context_builder=builder)
     result = bot.process("get foo", "cid")
     assert result.data == {"foo": {"val": 1}}
     assert result.text == "ok"
