@@ -28,6 +28,7 @@ try:  # Optional dependency – self-coding engine
     from code_database import CodeDB  # type: ignore
     from menace_memory_manager import MenaceMemoryManager  # type: ignore
     try:
+        # Prefer the default context builder helper when available.
         from vector_service.context_builder_utils import get_default_context_builder
     except ImportError:  # pragma: no cover - fallback when helper missing
         from vector_service.context_builder import ContextBuilder  # type: ignore
