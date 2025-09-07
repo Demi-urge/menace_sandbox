@@ -378,9 +378,9 @@ class ServiceSupervisor:
         self.approval_policy = PatchApprovalPolicy(
             rollback_mgr=self.rollback_mgr, bot_name="menace"
         )
-        self.auto_mgr = AutoEscalationManager()
         self.context_builder = get_default_context_builder()
         self.context_builder.refresh_db_weights()
+        self.auto_mgr = AutoEscalationManager(context_builder=self.context_builder)
         engine = SelfCodingEngine(
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
         )

@@ -11,7 +11,10 @@ from datetime import datetime
 from email.message import EmailMessage
 from typing import Iterable, Callable, TYPE_CHECKING
 
-from . import RAISE_ERRORS
+try:
+    from . import RAISE_ERRORS
+except Exception:  # pragma: no cover - fallback when package missing
+    RAISE_ERRORS = False
 from db_router import GLOBAL_ROUTER
 from .scope_utils import Scope, build_scope_clause, apply_scope
 try:  # pragma: no cover - allow flat imports
@@ -38,17 +41,63 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     BackgroundScheduler = None  # type: ignore
 
-from .auto_escalation_manager import AutoEscalationManager
-from .error_bot import ErrorDB
-from .resource_allocation_optimizer import ROIDB
-from .data_bot import MetricsDB
-from .chaos_tester import ChaosTester
-from .knowledge_graph import KnowledgeGraph
-from .advanced_error_management import SelfHealingOrchestrator, PlaybookGenerator
-from .bot_registry import BotRegistry
-from .escalation_protocol import EscalationProtocol, EscalationLevel
-from .unified_event_bus import UnifiedEventBus
+try:  # pragma: no cover - optional heavy dependency
+    from .auto_escalation_manager import AutoEscalationManager
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    AutoEscalationManager = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .error_bot import ErrorDB
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    ErrorDB = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .resource_allocation_optimizer import ROIDB
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    ROIDB = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .data_bot import MetricsDB
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    MetricsDB = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .chaos_tester import ChaosTester
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    ChaosTester = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .knowledge_graph import KnowledgeGraph
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    KnowledgeGraph = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .advanced_error_management import SelfHealingOrchestrator, PlaybookGenerator
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    SelfHealingOrchestrator = PlaybookGenerator = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .bot_registry import BotRegistry
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    BotRegistry = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .escalation_protocol import EscalationProtocol, EscalationLevel
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    EscalationProtocol = EscalationLevel = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover - gracefully degrade in tests
+    UnifiedEventBus = None  # type: ignore
 from .retry_utils import retry
+
+try:  # pragma: no cover - optional dependency
+    from vector_service import get_default_context_builder
+except Exception:  # pragma: no cover - fallback when helper missing
+    try:
+        from vector_service.context_builder import ContextBuilder  # type: ignore
+
+        def get_default_context_builder(**kwargs):  # type: ignore
+            return ContextBuilder(**kwargs)
+    except Exception:  # pragma: no cover - last resort
+        def get_default_context_builder(**kwargs):  # type: ignore
+            class _Dummy:
+                def refresh_db_weights(self) -> None:
+                    pass
+
+            return _Dummy()
 
 if TYPE_CHECKING:
     from .replay_engine import ReplayValidator
@@ -57,7 +106,11 @@ if TYPE_CHECKING:
 
 def _default_auto_handler() -> AutoEscalationManager | None:
     try:
-        return AutoEscalationManager()
+        builder = get_default_context_builder()
+        builder.refresh_db_weights()
+        if AutoEscalationManager is None:
+            return None
+        return AutoEscalationManager(context_builder=builder)
     except Exception:
         logging.exception("auto handler init failed")
         return None
