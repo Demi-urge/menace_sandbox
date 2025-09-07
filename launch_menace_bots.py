@@ -99,7 +99,7 @@ def _infer_schedule(doc: str) -> str:
 def debug_and_deploy(
     repo: Path,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     jobs: int = 1,
     override_veto: bool = False,
 ) -> None:
@@ -110,10 +110,9 @@ def debug_and_deploy(
     repo:
         Repository root containing bots to validate and deploy.
     context_builder:
-        Optional :class:`~vector_service.context_builder.ContextBuilder` used
-        for semantic context generation.  When ``None`` a new builder is
-        instantiated using the local database paths.  Its weights are refreshed
-        before building the coding engine.
+        Preconfigured :class:`~vector_service.context_builder.ContextBuilder`
+        used for semantic context generation. Its weights are refreshed before
+        building the coding engine.
     jobs:
         Number of parallel jobs for the test runner.
     override_veto:
@@ -125,8 +124,6 @@ def debug_and_deploy(
     except TypeError:
         code_db = CodeDB()
     memory_mgr = MenaceMemoryManager()
-    if context_builder is None:
-        context_builder = ContextBuilder()
     context_builder.refresh_db_weights()
     engine = SelfCodingEngine(
         code_db, memory_mgr, context_builder=context_builder
@@ -297,6 +294,7 @@ def main() -> None:
     args = parser.parse_args()
     debug_and_deploy(
         Path(args.repo),
+        context_builder=ContextBuilder(),
         jobs=args.jobs,
         override_veto=args.override_veto,
     )
