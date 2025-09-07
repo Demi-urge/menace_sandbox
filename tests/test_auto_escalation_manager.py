@@ -85,13 +85,9 @@ def test_notifier_default_handler(monkeypatch):
             called.append(msg)
 
     monkeypatch.setattr(wd, "AutoEscalationManager", lambda *a, **k: DummyAuto())
-    monkeypatch.setattr(
-        wd,
-        "get_default_context_builder",
-        lambda: types.SimpleNamespace(refresh_db_weights=lambda: None),
-    )
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
     n = wd.Notifier()
-    n.auto_handler = wd._default_auto_handler(wd.get_default_context_builder())
+    n.auto_handler = wd._default_auto_handler(builder)
     n.escalate("boom")
     assert called == ["boom"]
 
@@ -123,7 +119,8 @@ def test_self_service_override_enables_safe(tmp_path, monkeypatch):
     metrics = db.MetricsDB(tmp_path / "m.db")
     metrics.add(db.MetricRecord(bot="b", cpu=1.0, memory=1.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=10))
 
-    svc = so.SelfServiceOverride(roi, metrics)
+    svc = so.SelfServiceOverride(roi, metrics, tracker=so.BaselineTracker())
+    monkeypatch.setattr(svc.tracker, "update", lambda *a, **k: (0, 0, 0, 3))
     svc.adjust()
     assert os.environ.get("MENACE_SAFE") == "1"
 
@@ -186,7 +183,8 @@ def test_auto_rollback_service(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    svc = so.AutoRollbackService(roi, metrics)
+    svc = so.AutoRollbackService(roi, metrics, tracker=so.BaselineTracker())
+    monkeypatch.setattr(svc.tracker, "update", lambda *a, **k: (0, 0, 0, 3))
     svc.adjust()
     assert calls and calls[0][0] == "git"
     assert os.environ.get("MENACE_SAFE") == "1"

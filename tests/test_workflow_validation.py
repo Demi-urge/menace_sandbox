@@ -1,6 +1,7 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
 import menace.watchdog as wd  # noqa: E402
+from vector_service.context_builder_utils import get_default_context_builder  # noqa: E402
 import menace.error_bot as eb  # noqa: E402
 import menace.resource_allocation_optimizer as rao  # noqa: E402
 import menace.data_bot as db  # noqa: E402
@@ -17,7 +18,7 @@ def _setup_dbs(tmp_path):
 
 def test_replay_updates_confidence(tmp_path):
     err_db, roi_db, metrics_db = _setup_dbs(tmp_path)
-    builder = wd.get_default_context_builder()
+    builder = get_default_context_builder()
     watch = wd.Watchdog(err_db, roi_db, metrics_db, context_builder=builder)
     orch = MenaceOrchestrator(context_builder=builder)
     watch.record_fault("fail", workflow="wf1")

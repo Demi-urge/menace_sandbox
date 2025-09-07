@@ -7,22 +7,38 @@ import threading
 from threading import Event
 
 from .chaos_scheduler import ChaosScheduler
-from .watchdog import Watchdog, get_default_context_builder
+from .watchdog import Watchdog
 from .error_bot import ErrorDB
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
 from .advanced_error_management import AutomatedRollbackManager
 
+try:  # pragma: no cover - optional dependency
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - fallback when helper missing
+    try:
+        from vector_service.context_builder import ContextBuilder  # type: ignore
+    except Exception:  # pragma: no cover - last resort
+        class ContextBuilder:  # type: ignore[override]
+            pass
+
 
 class ChaosMonitoringService:
     """Inject faults and rollback bots that fail to recover."""
 
-    def __init__(self,
-                 scheduler: ChaosScheduler | None = None,
-                 rollback_mgr: AutomatedRollbackManager | None = None) -> None:
-        builder = get_default_context_builder()
-        watch = Watchdog(ErrorDB(), ROIDB(), MetricsDB(), context_builder=builder)
-        self.scheduler = scheduler or ChaosScheduler(watchdog=watch)
+    def __init__(
+        self,
+        scheduler: ChaosScheduler | None = None,
+        rollback_mgr: AutomatedRollbackManager | None = None,
+        *,
+        context_builder: ContextBuilder | None = None,
+    ) -> None:
+        if scheduler is None:
+            if context_builder is None:
+                raise ValueError("context_builder required when scheduler not provided")
+            watch = Watchdog(ErrorDB(), ROIDB(), MetricsDB(), context_builder=context_builder)
+            scheduler = ChaosScheduler(watchdog=watch)
+        self.scheduler = scheduler
         self.rollback_mgr = rollback_mgr or AutomatedRollbackManager()
         self.logger = logging.getLogger(self.__class__.__name__)
 
