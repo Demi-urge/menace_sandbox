@@ -182,7 +182,9 @@ class ActionPlanner:
         self.priority_weights: Dict[str, float] = {}
         if cognition_layer is None:
             try:
-                cognition_layer = CognitionLayer(context_builder=context_builder)
+                cognition_layer = CognitionLayer(
+                    context_builder=context_builder, roi_tracker=self.roi_tracker
+                )
             except Exception:  # pragma: no cover - optional dependency
                 cognition_layer = None
         self.cognition_layer = cognition_layer
