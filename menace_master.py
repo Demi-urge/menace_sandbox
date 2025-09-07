@@ -350,7 +350,12 @@ def _init_unused_bots() -> None:
     try:
         from vector_service.context_builder import ContextBuilder  # type: ignore
 
-        builder = ContextBuilder()
+        builder = ContextBuilder(
+            bot_db="bots.db",
+            code_db="code.db",
+            error_db="errors.db",
+            workflow_db="workflows.db",
+        )
         builder.refresh_db_weights()
     except Exception:  # pragma: no cover - optional dependency
         logger.debug("failed to initialize ContextBuilder", exc_info=True)
@@ -367,38 +372,58 @@ def _init_unused_bots() -> None:
     client = ChatGPTClient(
         api_key, gpt_memory=LOCAL_KNOWLEDGE_MODULE.memory, context_builder=builder
     )
+
+    from functools import partial
+
+    def _wrap(cls, *args, **kwargs):
+        fn = partial(cls, *args, **kwargs)
+        fn.__name__ = getattr(cls, "__name__", repr(cls))
+        return fn
+
     bot_classes = [
-        BotDevelopmentBot,
+        _wrap(BotDevelopmentBot, context_builder=builder),
         BotTestingBot,
-        lambda: ChatGPTEnhancementBot(client),
-        lambda: ChatGPTPredictionBot(),
-        lambda: ChatGPTResearchBot(client),
+        _wrap(ChatGPTEnhancementBot, client),
+        _wrap(ChatGPTPredictionBot, client),
+        _wrap(ChatGPTResearchBot, client),
         CompetitiveIntelligenceBot,
-        ContrarianModelBot,
-        ConversationManagerBot,
+        _wrap(
+            ContrarianModelBot,
+            allocator=ResourceAllocationBot(context_builder=builder),
+        ),
+        _wrap(ConversationManagerBot, client),
         DatabaseStewardBot,
         DeploymentBot,
-        EnhancementBot,
+        _wrap(EnhancementBot, context_builder=builder),
         ErrorBot,
         GAPredictionBot,
         GeneticAlgorithmBot,
         IPOBot,
-        ImplementationOptimiserBot,
+        _wrap(ImplementationOptimiserBot, context_builder=builder),
         MirrorBot,
-        NicheSaturationBot,
+        _wrap(
+            NicheSaturationBot,
+            alloc_bot=ResourceAllocationBot(context_builder=builder),
+        ),
         MarketManipulationBot,
         PassiveDiscoveryBot,
         PreliminaryResearchBot,
         ReportGenerationBot,
-        ResourceAllocationBot,
-        ResourcesBot,
+        _wrap(ResourceAllocationBot, context_builder=builder),
+        _wrap(
+            ResourcesBot,
+            alloc_bot=ResourceAllocationBot(context_builder=builder),
+        ),
         ScalabilityAssessmentBot,
         StrategyPredictionBot,
         StructuralEvolutionBot,
         TextResearchBot,
         VideoResearchBot,
         AICounterBot,
-        DynamicResourceAllocator,
+        _wrap(
+            DynamicResourceAllocator,
+            alloc_bot=ResourceAllocationBot(context_builder=builder),
+        ),
         DiagnosticManager,
         KeywordBank,
         NewsDB,
