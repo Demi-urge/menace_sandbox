@@ -214,7 +214,9 @@ class ModelAutomationPipeline:
                 AllocationDB(), context_builder=self.context_builder
             )
         )
-        self.diagnostic_manager = diagnostic_manager or DiagnosticManager()
+        self.diagnostic_manager = diagnostic_manager or DiagnosticManager(
+            context_builder=self.context_builder
+        )
         self.idea_bank = idea_bank or KeywordBank()
         self.news_db = news_db or NewsDB()
         self.reinvestment_bot = reinvestment_bot or AutoReinvestmentBot()
