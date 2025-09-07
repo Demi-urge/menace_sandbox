@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-"""Automatic handler for escalation events."""
+"""Automatic handler for escalation events.
+
+This module requires :class:`vector_service.ContextBuilder`.  A clear
+``ImportError`` is raised during import when the dependency is missing to
+avoid silently running without context retrieval capabilities.
+"""
 
 import logging
 import os
@@ -8,15 +13,18 @@ from typing import Iterable
 from .retry_utils import retry
 
 from .knowledge_graph import KnowledgeGraph
-try:  # pragma: no cover - optional dependency
+try:  # pragma: no cover - allow flat imports
+    from .dynamic_path_router import resolve_path
+except Exception:  # pragma: no cover - fallback for flat layout
+    from dynamic_path_router import resolve_path  # type: ignore
+
+try:
     from vector_service import ContextBuilder
-except Exception:  # pragma: no cover - fallback when helper missing
-    try:
-        from vector_service.context_builder import ContextBuilder  # type: ignore
-    except Exception:  # pragma: no cover - last resort
-        class ContextBuilder:  # type: ignore[override]
-            def refresh_db_weights(self) -> None:
-                pass
+except Exception as exc:  # pragma: no cover - fail fast when dependency missing
+    raise ImportError(
+        "auto_escalation_manager requires vector_service.ContextBuilder; install the"
+        " vector_service package to enable context retrieval"
+    ) from exc
 try:  # pragma: no cover - optional dependency
     from .automated_debugger import AutomatedDebugger
 except Exception:  # pragma: no cover - gracefully degrade in tests
@@ -63,6 +71,8 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
     class RollbackManager:  # type: ignore[override]
         def auto_rollback(self, *a, **k) -> None:
             pass
+
+
 class AutoEscalationManager:
     """Analyse issues and initiate remediation without human input."""
 
@@ -90,7 +100,10 @@ class AutoEscalationManager:
                 and AutomatedDebugger is not None
             ):
                 gpt_mem = init_local_knowledge(
-                    os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+                    os.getenv(
+                        "GPT_MEMORY_DB",
+                        resolve_path("gpt_memory.db").as_posix(),
+                    )
                 ).memory
                 engine = SelfCodingEngine(
                     CodeDB(),
