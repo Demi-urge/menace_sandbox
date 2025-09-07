@@ -321,7 +321,9 @@ class ResourceAllocationBot:
         except Exception:
             pass
         engine = PromptEngine(context_builder=self.context_builder, llm=llm)
-        prompt = engine.build_prompt(f"Improve {bot}", context=context)  # nocb
+        prompt = engine.build_prompt(
+            f"Improve {bot}", context=context, context_builder=self.context_builder
+        )
         if engine.llm is None:
             return "upgrade"
         try:

@@ -742,8 +742,12 @@ class PromptEngine:
         tone: str | None = None,
         strategy: str | None = None,
         target_region: TargetRegion | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> Prompt:
         """Return a :class:`Prompt` for *task* using retrieved patch examples.
+
+        ``context_builder`` overrides :attr:`self.context_builder` for a single
+        invocation.
 
         ``context`` and ``retrieval_context`` allow callers to prepend
         additional information such as the snippet body, repository layout or
@@ -760,6 +764,50 @@ class PromptEngine:
         confidence of returned patches falls below ``confidence_threshold`` a
         static fallback template is returned.
         """
+
+        builder = context_builder or self.context_builder
+
+        def _count(text: str) -> int:
+            counter = getattr(builder, "_count_tokens", None)
+            if counter is None:
+                if _ENCODER is not None:
+                    def _token_counter(s: Any) -> int:
+                        return len(_ENCODER.encode(str(s)))
+
+                    counter = _token_counter
+                else:
+                    def _default_counter(s: Any) -> int:
+                        return len(str(s).split())
+
+                    counter = _default_counter
+            return counter(text)
+
+        def _trim(text: str, limit: int) -> str:
+            counter = getattr(builder, "_count_tokens", None)
+            if counter is None:
+                if _ENCODER is not None:
+                    def _token_counter(s: Any) -> int:
+                        return len(_ENCODER.encode(str(s)))
+
+                    counter = _token_counter
+                else:
+                    logger.warning(
+                        "precise token counting requires the 'tiktoken' package"
+                    )
+
+                    def _default_counter(s: Any) -> int:
+                        return len(str(s).split())
+
+                    counter = _default_counter
+            tokens = counter(text)
+            if tokens <= limit:
+                return text
+            ratio = limit / max(tokens, 1)
+            char_limit = max(1, int(len(text) * ratio))
+            trimmed = text[:char_limit].rstrip()
+            if trimmed != text:
+                trimmed += "..."
+            return trimmed
         self._maybe_refresh_optimizer()
         if not self._optimizer_applied:
             self.apply_optimizer_format(__name__, "build_prompt")
@@ -808,7 +856,7 @@ class PromptEngine:
             context
             and summaries is None
             and self.chunk_token_threshold
-            and self._count_tokens(context) > self.chunk_token_threshold
+            and _count(context) > self.chunk_token_threshold
             and target_region is None
         ):
             chunks = split_into_chunks(context, self.chunk_token_threshold)
@@ -929,7 +977,7 @@ class PromptEngine:
         if retry_trace:
             lines.extend(self._format_retry_trace(retry_trace))
         text = "\n".join(line for line in lines if line)
-        text = self._trim_tokens(text, self.token_threshold)
+        text = _trim(text, self.token_threshold)
         meta: Dict[str, Any] = {"vector_confidences": scores}
         if strategy:
             meta["strategy"] = strategy
@@ -1314,6 +1362,7 @@ def build_prompt(
         summaries=summaries,
         strategy=strategy,
         target_region=target_region,
+        context_builder=context_builder,
     )
 
 
