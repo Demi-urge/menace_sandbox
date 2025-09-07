@@ -157,15 +157,7 @@ def handle_patch(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"ContextBuilder initialisation failed: {exc}", file=sys.stderr)
         return 1
-    patch_id = quick_fix_engine.generate_patch(
-        args.module,
-        context_builder=builder,
-        engine=None,
-        description=args.desc,
-        patch_logger=patch_logger,
-        context=ctx,
-        effort_estimate=args.effort_estimate,
-    )
+    patch_id = quick_fix_engine.generate_patch(args.module, context_builder=builder, engine=None, description=args.desc, patch_logger=patch_logger, context=ctx, effort_estimate=args.effort_estimate)
     if not patch_id:
         return 1
     record = db.get(patch_id)
