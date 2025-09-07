@@ -300,6 +300,8 @@ class PromptEngine:
         return self.chunk_summary_cache_dir
 
     def __post_init__(self) -> None:  # pragma: no cover - lightweight setup
+        if self.context_builder is None:
+            raise ValueError("PromptEngine requires a ContextBuilder instance")
         try:
             self.template_path = resolve_path(self.template_path)
         except Exception:
@@ -1293,6 +1295,8 @@ class PromptEngine:
         strategy: str | None = None,
     ) -> Prompt:
         """Class method wrapper used by existing callers and tests."""
+        if context_builder is None:
+            raise ValueError("context_builder is required")
 
         return build_prompt(
             goal,
@@ -1338,6 +1342,8 @@ def build_prompt(
     strategy: str | None = None,
 ) -> Prompt:
     """Convenience helper to build a :class:`Prompt` without instantiating ``PromptEngine``."""
+    if context_builder is None:
+        raise ValueError("context_builder is required")
 
     engine = PromptEngine(
         retriever=retriever,
