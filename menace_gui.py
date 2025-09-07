@@ -36,13 +36,18 @@ class MenaceGUI(tk.Tk):
         self.memory = MenaceMemoryManager()
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
+        self.context_builder = ContextBuilder(
+            bot_db="bots.db",
+            code_db="code.db",
+            error_db="errors.db",
+            workflow_db="workflows.db",
+        )
+        self.context_builder.refresh_db_weights()
         if self.chatgpt_enabled:
-            builder = ContextBuilder()
-            builder.refresh_db_weights()
             client = ChatGPTClient(
                 api_key=OPENAI_API_KEY,
                 gpt_memory=GPT_MEMORY_MANAGER,
-                context_builder=builder,
+                context_builder=self.context_builder,
             )
             self.conv_bot = ConversationManagerBot(client, report_bot=self.report_bot)
         else:
@@ -184,7 +189,7 @@ class MenaceGUI(tk.Tk):
             roi_db = ROIHistoryDB()
             pred_bot = ResourcePredictionBot()
             alloc_bot = ResourceAllocationBot(
-                AllocationDB(), context_builder=ContextBuilder()
+                AllocationDB(), context_builder=self.context_builder
             )
 
             records = bot_db.fetch_all()
