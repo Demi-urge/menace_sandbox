@@ -33,6 +33,7 @@ vec_stub.FallbackResult = type("FallbackResult", (), {})
 vec_stub.ErrorResult = type("ErrorResult", (), {})
 vec_stub.EmbeddableDBMixin = object
 sys.modules.setdefault("vector_service", vec_stub)
+sys.modules.setdefault("vector_service.context_builder", vec_stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]  # path-ignore
@@ -171,16 +172,22 @@ def test_prompt_includes_vector_context(tmp_path):
         def __init__(self):
             self.calls = []
 
-        def build(self, query):  # type: ignore[override]
-            self.calls.append(query)
-            return "retrieved context"
+        def build(
+            self, query, *, session_id=None, include_vectors=False
+        ):  # type: ignore[override]
+            self.calls.append((query, session_id, include_vectors))
+            return "retrieved context", session_id, [("origin", "vid", 0.1)]
 
     builder = DummyBuilder()
     bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     spec = bdb.BotSpec(name="ctx_bot", purpose="demo", description="demo")
     prompt = bot._build_prompt(spec, context_builder=builder)
     assert builder.calls, "context_builder.build was not invoked"
+    q, sid, inc_vec = builder.calls[0]
+    assert inc_vec is True
+    assert sid in prompt
     assert "retrieved context" in prompt
+    assert "Context Metadata" in prompt
 
 
 def test_visual_and_openai_failure_fallback(tmp_path, monkeypatch, caplog):
