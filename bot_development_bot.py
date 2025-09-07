@@ -17,6 +17,8 @@ import subprocess
 import shutil
 import sys
 from dynamic_path_router import resolve_path
+import uuid
+from snippet_compressor import compress_snippets
 
 try:
     from packaging.requirements import Requirement  # type: ignore
@@ -1019,9 +1021,23 @@ class BotDevelopmentBot:
             Whether to request embedding vectors for the training examples.
         """
         query = spec.description or spec.purpose or spec.name
-        retrieval_context: str | Dict[str, Any] = context_builder.build(query)
-        if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
+        session_id = uuid.uuid4().hex
+        ctx_result = context_builder.build(
+            query, session_id=session_id, include_vectors=True
+        )
+        context_session_id = session_id
+        vector_metadata: list[tuple[str, str, float]] = []
+        retrieval_context: str | Dict[str, Any] = ""
+        if isinstance(ctx_result, (ErrorResult, FallbackResult)):
             retrieval_context = ""
+        else:
+            if isinstance(ctx_result, tuple):
+                retrieval_context, context_session_id, vector_metadata = ctx_result
+            else:
+                retrieval_context = ctx_result
+            retrieval_context = compress_snippets({"snippet": retrieval_context}).get(
+                "snippet", retrieval_context
+            )
 
         predicted_tool = ""
         pred_conf = 0.0
@@ -1125,6 +1141,11 @@ class BotDevelopmentBot:
             if not isinstance(retrieval_context, str):
                 retrieval_context = json.dumps(retrieval_context, indent=2)
             prompt += "\n\nContext:\n" + retrieval_context
+            meta_block = json.dumps(
+                {"context_session_id": context_session_id, "vectors": vector_metadata},
+                indent=2,
+            )
+            prompt += "\n\nContext Metadata:\n" + meta_block
         if sample_context:
             prompt += "\n\n### Training Examples\n" + sample_context
 
