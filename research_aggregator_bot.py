@@ -757,8 +757,10 @@ class ResearchAggregatorBot:
         enhancement_interval: float = 300.0,
         cache_ttl: float = 3600.0,
         *,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
+        if context_builder is None:
+            raise ValueError("ContextBuilder is required")
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
         self.info_db = info_db or InfoDB()
@@ -778,6 +780,11 @@ class ResearchAggregatorBot:
         self.cache_ttl = cache_ttl
         self.cache: dict[str, tuple[float, List[ResearchItem]]] = {}
         self.context_builder = context_builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception:
+            logger.exception("Failed to initialise ContextBuilder")
+            raise
 
     # ------------------------------------------------------------------
     def _increment_enh_count(self, model_id: int) -> None:
@@ -865,6 +872,11 @@ class ResearchAggregatorBot:
         collected_text = []
         queried: List[str] = []
         targets = set(missing or ["text", "video", "chatgpt"])
+        try:
+            ctx = str(self.context_builder.build(topic))
+        except Exception as exc:
+            logger.exception("Context build failed for %s: %s", topic, exc)
+            ctx = ""
         for _ in range(max(1, amount)):
             if "text" in targets and self.text_bot:
                 try:
@@ -909,15 +921,31 @@ class ResearchAggregatorBot:
                     logger.exception("Video bot failed for %s: %s", topic, exc)
             if self.enhancement_bot and (not missing or "enhancement" in targets):
                 try:
-                    enhs = self.enhancement_bot.propose(topic, num_ideas=1)
+                    try:
+                        enhs = self.enhancement_bot.propose(
+                            topic,
+                            num_ideas=1,
+                            context=ctx,
+                            context_builder=self.context_builder,
+                        )
+                    except TypeError:
+                        enhs = self.enhancement_bot.propose(
+                            topic, num_ideas=1, context=ctx
+                        )
                     for enh in enhs:
                         evaluation = None
                         if self.prediction_bot:
                             try:
-                                evaluation = self.prediction_bot.evaluate_enhancement(
-                                    enh.idea,
-                                    enh.rationale,
-                                )
+                                try:
+                                    evaluation = self.prediction_bot.evaluate_enhancement(
+                                        enh.idea,
+                                        enh.rationale,
+                                        context_builder=self.context_builder,
+                                    )
+                                except TypeError:
+                                    evaluation = self.prediction_bot.evaluate_enhancement(
+                                        enh.idea, enh.rationale
+                                    )
                                 enh.score = evaluation.value
                             except Exception:
                                 evaluation = None
@@ -948,7 +976,17 @@ class ResearchAggregatorBot:
                 if collected_text:
                     joined = " ".join(collected_text)
                     instruction = f"Summarise the following about {topic}: {joined}"
-                res = self.chatgpt_bot.process(instruction, depth=1, ratio=0.2)
+                if ctx:
+                    instruction = f"{ctx}\n\n{instruction}"
+                try:
+                    res = self.chatgpt_bot.process(
+                        instruction,
+                        depth=1,
+                        ratio=0.2,
+                        context_builder=self.context_builder,
+                    )
+                except TypeError:
+                    res = self.chatgpt_bot.process(instruction, depth=1, ratio=0.2)
                 item = ResearchItem(
                     topic=topic,
                     content=res.summary,
@@ -1001,11 +1039,26 @@ class ResearchAggregatorBot:
         """Request an enhancement from the enhancement bot if available."""
         if not self.enhancement_bot:
             return
-        instruction = f"{reason} about {topic}"
         try:
-            enhancements = self.enhancement_bot.propose(
-                instruction, num_ideas=1, context=topic
-            )
+            ctx = str(self.context_builder.build(topic))
+        except Exception as exc:
+            logger.exception("Context build failed for %s: %s", topic, exc)
+            ctx = ""
+        instruction = f"{reason} about {topic}"
+        if ctx:
+            instruction = f"{ctx}\n\n{instruction}"
+        try:
+            try:
+                enhancements = self.enhancement_bot.propose(
+                    instruction,
+                    num_ideas=1,
+                    context=ctx or topic,
+                    context_builder=self.context_builder,
+                )
+            except TypeError:
+                enhancements = self.enhancement_bot.propose(
+                    instruction, num_ideas=1, context=ctx or topic
+                )
         except Exception:
             return
         for enh in enhancements:
@@ -1013,10 +1066,16 @@ class ResearchAggregatorBot:
             enh_id = 0
             try:
                 if self.prediction_bot:
-                    evaluation = self.prediction_bot.evaluate_enhancement(
-                        enh.idea,
-                        enh.rationale,
-                    )
+                    try:
+                        evaluation = self.prediction_bot.evaluate_enhancement(
+                            enh.idea,
+                            enh.rationale,
+                            context_builder=self.context_builder,
+                        )
+                    except TypeError:
+                        evaluation = self.prediction_bot.evaluate_enhancement(
+                            enh.idea, enh.rationale
+                        )
                     enh.score = evaluation.value
                 if getattr(self.info_db, "current_model_id", 0):
                     enh.model_ids = [self.info_db.current_model_id]
@@ -1126,7 +1185,23 @@ class ResearchAggregatorBot:
                     logger.exception("Video bot failed while enhancing %s", enh.idea)
             if self.chatgpt_bot:
                 try:
-                    res = self.chatgpt_bot.process(enh.idea, depth=1, ratio=0.2)
+                    try:
+                        ctx_enh = str(self.context_builder.build(enh.idea))
+                    except Exception as exc:
+                        logger.exception("Context build failed for %s: %s", enh.idea, exc)
+                        ctx_enh = ""
+                    instruction = enh.idea
+                    if ctx_enh:
+                        instruction = f"{ctx_enh}\n\n{enh.idea}"
+                    try:
+                        res = self.chatgpt_bot.process(
+                            instruction,
+                            depth=1,
+                            ratio=0.2,
+                            context_builder=self.context_builder,
+                        )
+                    except TypeError:
+                        res = self.chatgpt_bot.process(instruction, depth=1, ratio=0.2)
                     r = ResearchItem(
                         topic=enh.idea,
                         content=res.summary,
