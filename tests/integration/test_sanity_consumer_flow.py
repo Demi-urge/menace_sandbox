@@ -132,10 +132,15 @@ def test_watchdog_anomaly_reaches_consumer(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, "SelfCodingEngine", DummyEngine)
 
     class DummyBuilder:
-        def refresh_db_weights(self):
-            pass
+        def __init__(self) -> None:
+            self.refreshed = False
 
-    consumer = sc.SanityConsumer(event_bus=bus, context_builder=DummyBuilder())
+        def refresh_db_weights(self):
+            self.refreshed = True
+
+    builder = DummyBuilder()
+    consumer = sc.SanityConsumer(event_bus=bus, context_builder=builder)
+    assert builder.refreshed
 
     # Emit anomaly
     record = {"type": "missing_charge", "id": "ch_1", "amount": 5}

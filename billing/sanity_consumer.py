@@ -50,7 +50,7 @@ class SanityConsumer:
         event_bus: UnifiedEventBus | None = None,
         *,
         engine: SelfCodingEngine | None = None,
-        context_builder: "ContextBuilder" | None = None,
+        context_builder: "ContextBuilder",
     ) -> None:
         self.event_bus = event_bus or getattr(
             menace_sanity_layer, "_EVENT_BUS", UnifiedEventBus()
@@ -60,6 +60,8 @@ class SanityConsumer:
         self._feedback: SanityFeedback | None = None
         self._outcome_db = DiscrepancyDB() if DiscrepancyDB is not None else None
         self._context_builder = context_builder
+        # Refresh DB weights early so the engine has up-to-date context
+        self._context_builder.refresh_db_weights()
 
     # ------------------------------------------------------------------
     def _get_engine(self) -> SelfCodingEngine:
@@ -79,9 +81,6 @@ class SanityConsumer:
                     memory_mgr = object()
 
                 builder = self._context_builder
-                if builder is None:
-                    raise RuntimeError("ContextBuilder required")
-                builder.refresh_db_weights()
                 self._engine = SelfCodingEngine(
                     code_db, memory_mgr, context_builder=builder
                 )
@@ -95,9 +94,8 @@ class SanityConsumer:
             self._feedback = SanityFeedback(
                 self._get_engine(), outcome_db=self._outcome_db
             )
-            if self._context_builder is not None:
-                # Share builder so feedback analysers can inspect engine context
-                setattr(self._feedback, "context_builder", self._context_builder)
+            # Share builder so feedback analysers can inspect engine context
+            setattr(self._feedback, "context_builder", self._context_builder)
         return self._feedback
 
     # ------------------------------------------------------------------
