@@ -133,6 +133,11 @@ class DummyTelemetry:
         return [self.log]
 
 
+class DummyBuilder:
+    def build_context(self, query: str, **kwargs):
+        return {}
+
+
 class DummyPipeline:
     def run(self, bot_name: str, energy: int = 1):  # pragma: no cover - simple
         return types.SimpleNamespace(roi=0.0)
@@ -148,7 +153,7 @@ def test_automated_debugger_escalation_and_reset(tmp_path, monkeypatch):
     log = f"Traceback (most recent call last):\n  File \"{mod}\", line 2, in f\nValueError: boom"
 
     engine = DummyEngine()
-    debugger = AutomatedDebugger(DummyTelemetry(log), engine)
+    debugger = AutomatedDebugger(DummyTelemetry(log), engine, DummyBuilder())
 
     call = {"n": 0}
 

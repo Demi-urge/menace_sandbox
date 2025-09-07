@@ -179,11 +179,12 @@ auto_dbg = types.ModuleType("menace.automated_debugger")
 
 
 class AutomatedDebugger:
-    def __init__(self, telemetry_db, engine):
+    def __init__(self, telemetry_db, engine, context_builder):
         import logging as _logging
 
         self.telemetry_db = telemetry_db
         self.engine = engine
+        self.context_builder = context_builder
         self.logger = _logging.getLogger("AutomatedDebugger")
 
     def _generate_tests(self, logs):
@@ -282,6 +283,19 @@ sys.modules["menace.self_debugger_sandbox"] = sds
 sds.ErrorLogger = lambda *a, **k: types.SimpleNamespace(record=lambda *a, **k: None)
 sds.create_ephemeral_env = _fake_env
 sds.generate_edge_cases = lambda: {}
+
+
+class DummyBuilder:
+    def build_context(self, query: str, **kwargs):
+        return {}
+    def exclude_failed_strategies(self, tags):
+        pass
+    def query(self, *a, **k):
+        return [], {}
+    def refresh_db_weights(self):
+        pass
+
+sds.CONTEXT_BUILDER = DummyBuilder()
 
 
 class DummyTelem:

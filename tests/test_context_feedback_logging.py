@@ -65,6 +65,8 @@ sys.modules['jsonschema'] = types.SimpleNamespace(ValidationError=Exception, val
 sys.modules['quick_fix_engine'] = types.SimpleNamespace(generate_patch=lambda *a, **k: None)
 sys.modules['menace.quick_fix_engine'] = sys.modules['quick_fix_engine']
 sys.modules['menace.patch_score_backend'] = types.SimpleNamespace()
+sys.modules['sandbox_runner.scoring'] = types.SimpleNamespace(record_run=lambda *a, **k: None)
+sys.modules['menace.sandbox_runner.scoring'] = sys.modules['sandbox_runner.scoring']
 
 menace_pkg = types.ModuleType('menace')
 menace_pkg.__path__ = []
@@ -86,9 +88,10 @@ _router_stub = types.SimpleNamespace(get_connection=lambda name: (_ for _ in ())
 sys.modules['db_router'] = types.SimpleNamespace(
     GLOBAL_ROUTER=_router_stub, init_db_router=lambda name: _router_stub
 )
-def _auto_init(self, telem, engine):
+def _auto_init(self, telem, engine, context_builder):
     self.telemetry_db = telem
     self.engine = engine
+    self.context_builder = context_builder
     self.logger = logging.getLogger('AutomatedDebugger')
 
 sys.modules['menace.automated_debugger'] = types.SimpleNamespace(
@@ -137,6 +140,10 @@ class _CB:
         pass
     def query(self, *a, **k):
         return [], {}
+    def build_context(self, query, **kwargs):
+        return {}
+    def refresh_db_weights(self):
+        pass
 vs_mod = types.ModuleType('vector_service')
 vs_mod.ContextBuilder = _CB
 sys.modules['vector_service'] = vs_mod
@@ -147,6 +154,7 @@ _spec = importlib.util.spec_from_file_location('menace.self_debugger_sandbox', P
 sds = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None
 _spec.loader.exec_module(sds)
+sds.CONTEXT_BUILDER = _CB()
 
 
 class DummyTelem:
@@ -163,8 +171,13 @@ def test_context_feedback_logs_malformed_metadata(monkeypatch, caplog):
             pass
         def query(self, *args, **kwargs):
             return [], {'bucket': [object()]}
+        def build_context(self, query, **kwargs):
+            return {}
+        def refresh_db_weights(self):
+            pass
 
     monkeypatch.setattr(sds, 'ContextBuilder', DummyBuilder)
+    sds.CONTEXT_BUILDER = DummyBuilder()
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
     report = types.SimpleNamespace(trace='x')
 

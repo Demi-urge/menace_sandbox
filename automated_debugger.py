@@ -26,8 +26,10 @@ class AutomatedDebugger:
         self,
         telemetry_db: object,
         engine: SelfCodingEngine,
-        context_builder: Any | None = None,
+        context_builder: Any,
     ) -> None:
+        if context_builder is None:
+            raise TypeError("context_builder is required")
         self.telemetry_db = telemetry_db
         self.engine = engine
         self.context_builder = context_builder
@@ -85,6 +87,10 @@ class AutomatedDebugger:
 
         pattern = re.compile(r"File '([^']+)', line (\d+)(?:, in ([^\s]+))?")
         for i, log in enumerate(logs):
+            try:
+                self.context_builder.build_context(str(log))
+            except Exception:
+                self.logger.exception("context build failed")
             parsed = _parse(log)
             if not parsed:
                 matches = pattern.findall(log)
@@ -175,14 +181,24 @@ class AutomatedDebugger:
                 level, target = "module", None
                 module_path = test_path
 
+            try:
+                retrieval_context = self.context_builder.build_context(str(log))
+            except Exception:
+                self.logger.exception("context build failed")
+                retrieval_context = None
+
             @retry(Exception, attempts=3)
             def _apply(path: Path, region: TargetRegion | None) -> None:
+                kwargs: dict[str, Any] = {}
+                if retrieval_context is not None:
+                    kwargs["context_meta"] = {"retrieval_context": retrieval_context}
                 self.engine.apply_patch(
                     path,
                     "auto_debug",
                     reason="auto_debug",
                     trigger="automated_debugger",
                     target_region=region,
+                    **kwargs,
                 )
 
             try:
