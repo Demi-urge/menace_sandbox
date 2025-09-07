@@ -63,7 +63,12 @@ class TrendMonitor:
         self.reddit = reddit
         self.twitter = twitter
         self.medium = medium
-        self.gpt4 = gpt4 or GPT4Client(openai_key)
+        if gpt4 is None:
+            from vector_service.context_builder import ContextBuilder
+
+            self.gpt4 = GPT4Client(openai_key, context_builder=ContextBuilder())
+        else:
+            self.gpt4 = gpt4
         if vector is None:
             raise ValueError("vector logger required")
         self.vector = vector

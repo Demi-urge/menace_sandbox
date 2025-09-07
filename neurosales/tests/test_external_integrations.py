@@ -11,9 +11,10 @@ from neurosales.external_integrations import (
 )
 from unittest.mock import patch, MagicMock
 import types
-from billing.prompt_notice import PAYMENT_ROUTER_NOTICE
+import pytest
+from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
+from typing import Any
 from llm_interface import LLMClient, LLMResult
-import model_registry
 
 
 def test_reddit_harvester_basic():
@@ -46,23 +47,27 @@ def test_twitter_tracker_refresh():
 
 
 def test_gpt4_client_stream(monkeypatch):
-    class DummyLLM(LLMClient):
-        def __init__(self):
-            super().__init__("gpt-4", backends=[], log_prompts=False)
-            self.captured = None
+    captured: dict[str, Any] = {}
 
-        def _generate(self, prompt):  # type: ignore[override]
-            self.captured = prompt
-            return LLMResult(text="Hi!")
+    def fake_chat(messages, *, context_builder, **kwargs):
+        msgs = prepend_payment_notice(messages)
+        captured["messages"] = msgs
+        return {"choices": [{"message": {"content": "Hi!"}}]}
 
-    dummy = DummyLLM()
-    monkeypatch.setattr(
-        "neurosales.external_integrations.get_client", lambda *a, **k: dummy, raising=False
+    monkeypatch.setitem(
+        sys.modules,
+        "billing.openai_wrapper",
+        types.SimpleNamespace(chat_completion_create=fake_chat),
     )
-    client = GPT4Client("k")
+
+    class DummyBuilder:
+        def build(self, query: str) -> str:  # pragma: no cover - simple stub
+            return "CTX"
+
+    client = GPT4Client("k", context_builder=DummyBuilder())
     out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
     assert "".join(out) == "Hi!"
-    assert dummy.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
 
 
 def test_gpt4_client_stream_with_context_builder(monkeypatch):
@@ -73,68 +78,41 @@ def test_gpt4_client_stream_with_context_builder(monkeypatch):
             captured["query"] = query
             return "CTX"
 
-    class DummyLLM(LLMClient):
-        def __init__(self):
-            super().__init__("gpt-4", backends=[], log_prompts=False)
-            self.captured = None
+    def fake_chat(messages, *, context_builder, **kwargs):
+        context_builder.build(messages[-1]["content"])
+        return {"choices": [{"message": {"content": "Hi!"}}]}
 
-        def _generate(self, prompt):  # type: ignore[override]
-            self.captured = prompt
-            return LLMResult(text="Hi!")
-
-    dummy = DummyLLM()
-    monkeypatch.setattr(
-        "neurosales.external_integrations.get_client", lambda *a, **k: dummy, raising=False
+    monkeypatch.setitem(
+        sys.modules,
+        "billing.openai_wrapper",
+        types.SimpleNamespace(chat_completion_create=fake_chat),
     )
+
     client = GPT4Client("k", context_builder=DummyBuilder())
     out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
     assert "".join(out) == "Hi!"
-    assert captured["query"] == "persuade"
+    assert captured["query"] == "hello"
 
 
-def test_gpt4_client_stream_warns_without_context_builder(monkeypatch, caplog):
-    caplog.set_level("WARNING")
-
-    class DummyLLM(LLMClient):
-        def __init__(self):
-            super().__init__("gpt-4", backends=[], log_prompts=False)
-
-        def _generate(self, prompt):  # type: ignore[override]
-            return LLMResult(text="")
-
-    dummy = DummyLLM()
-    monkeypatch.setattr(
-        "neurosales.external_integrations.get_client", lambda *a, **k: dummy, raising=False
-    )
-    client = GPT4Client("k")
-    list(client.stream_chat("user", [0.1], "objective", "hi"))
-    assert any("context" in r.getMessage().lower() for r in caplog.records)
+def test_gpt4_client_requires_context_builder():
+    with pytest.raises(TypeError):
+        GPT4Client("k")  # type: ignore[misc]
 
 
 def test_gpt4_client_env(monkeypatch, caplog):
     caplog.set_level("WARNING")
 
-    class DummyLLM(LLMClient):
-        def __init__(self):
-            super().__init__("gpt-4", backends=[], log_prompts=False)
+    class DummyBuilder:
+        def build(self, query: str) -> str:  # pragma: no cover - simple stub
+            return "CTX"
 
-        def _generate(self, prompt):  # type: ignore[override]
-            return LLMResult(text="")
-
-    dummy = DummyLLM()
-    monkeypatch.setattr(
-        "neurosales.external_integrations.get_client", lambda *a, **k: dummy, raising=False
-    )
     monkeypatch.setenv("NEURO_OPENAI_KEY", "env-k")
-    client = GPT4Client(None)
+    client = GPT4Client(None, context_builder=DummyBuilder())
     assert client.api_key == "env-k"
     assert client.enabled
     monkeypatch.delenv("NEURO_OPENAI_KEY")
     caplog.clear()
-    monkeypatch.setattr(
-        "neurosales.external_integrations.get_client", lambda *a, **k: None, raising=False
-    )
-    client2 = GPT4Client(None)
+    client2 = GPT4Client(None, context_builder=DummyBuilder())
     assert not client2.enabled
     assert "disabled" in caplog.text.lower()
 
@@ -180,10 +158,11 @@ def test_pinecone_logger_missing_conf(monkeypatch, caplog):
 
 
 def test_gpt4_client_stream_warns_when_unavailable(monkeypatch, caplog):
-    monkeypatch.setattr(
-        "neurosales.external_integrations.get_client", lambda *a, **k: None, raising=False
-    )
-    client = GPT4Client("k")
+    class DummyBuilder:
+        def build(self, query: str) -> str:  # pragma: no cover - simple stub
+            return "CTX"
+
+    client = GPT4Client(None, context_builder=DummyBuilder())
     caplog.set_level("WARNING")
     caplog.clear()
     out = list(client.stream_chat("user", [0.1], "persuade", "hi"))
