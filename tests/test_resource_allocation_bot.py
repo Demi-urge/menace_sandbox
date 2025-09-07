@@ -8,6 +8,9 @@ class _DummyBuilder:
     def build(self, *_: object, **__: object) -> str:
         return "ctx"
 
+    def refresh_db_weights(self):
+        pass
+
 
 def test_allocate_and_history(tmp_path):
     db = rab.AllocationDB(tmp_path / "a.db")
@@ -23,6 +26,15 @@ def test_allocate_and_history(tmp_path):
     assert len(hist) == 2
     assert actions[0][1] is True
     assert actions[1][1] is False
+
+
+def test_refresh_db_weights_failure(tmp_path):
+    class BadBuilder(_DummyBuilder):
+        def refresh_db_weights(self):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        rab.ResourceAllocationBot(rab.AllocationDB(tmp_path / "a.db"), context_builder=BadBuilder())
 
 
 def test_genetic_step():

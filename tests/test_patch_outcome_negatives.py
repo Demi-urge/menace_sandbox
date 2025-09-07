@@ -184,7 +184,10 @@ def test_rollback_logs_negative_outcome(tmp_path, monkeypatch):
         mem,
         data_bot=data_bot,
         patch_db=patch_db,
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     engine.formal_verifier = None
     monkeypatch.setattr(engine, "_run_ci", lambda *a, **k: True)
@@ -218,7 +221,10 @@ def test_failed_tests_log_negative_outcome(tmp_path, monkeypatch):
         mem,
         data_bot=data_bot,
         patch_db=patch_db,
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     engine.formal_verifier = None
     monkeypatch.setattr(engine, "_run_ci", lambda *a, **k: False)

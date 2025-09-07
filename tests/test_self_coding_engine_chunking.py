@@ -38,7 +38,10 @@ _setmod("vector_service", vec_mod)
 _setmod("vector_service.retriever", types.ModuleType("vector_service.retriever"))
 _setmod("vector_service.decorators", types.ModuleType("vector_service.decorators"))
 
-builder = types.SimpleNamespace(build_context=lambda *a, **k: {})
+builder = types.SimpleNamespace(
+    build_context=lambda *a, **k: {},
+    refresh_db_weights=lambda *a, **k: None,
+)
 
 code_db_mod = types.ModuleType("code_database")
 code_db_mod.CodeDB = object

@@ -15,7 +15,10 @@ def _make_engine(tmp_path):
         code_db=object(),
         memory_mgr=object(),
         patch_db=None,
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     eng._build_retry_context = lambda desc, rep: {}
     eng._run_ci = lambda path=None: None

@@ -43,6 +43,11 @@ class ImplementationOptimiserBot:
         self.history: List[TaskPackage] = []
         self.engine = engine
         self.context_builder = context_builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception as exc:
+            logger.error("context builder refresh failed: %s", exc)
+            raise RuntimeError("context builder refresh failed") from exc
         if self.engine is not None:
             try:
                 self.engine.context_builder = context_builder  # type: ignore[attr-defined]

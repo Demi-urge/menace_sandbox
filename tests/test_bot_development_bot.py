@@ -8,6 +8,7 @@ import types
 from types import ModuleType
 from pathlib import Path
 import logging
+import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 stub = ModuleType("db_router")
@@ -25,6 +26,8 @@ class _CB:
         pass
     def build(self, *_a, **_k):
         return ""
+    def refresh_db_weights(self):
+        pass
 vec_stub.ContextBuilder = _CB
 vec_stub.FallbackResult = type("FallbackResult", (), {})
 vec_stub.ErrorResult = type("ErrorResult", (), {})
@@ -43,6 +46,15 @@ cfg_mod = importlib.import_module("menace.bot_dev_config")
 
 def _ctx_builder():
     return vec_stub.ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+
+
+def test_refresh_db_weights_failure(tmp_path):
+    class BadBuilder(_CB):
+        def refresh_db_weights(self):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=BadBuilder())
 
 
 def _spec_dict():

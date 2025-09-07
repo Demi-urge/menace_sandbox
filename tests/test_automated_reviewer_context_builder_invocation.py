@@ -11,6 +11,9 @@ class RecordingBuilder:
         self.calls.append(payload)
         return "ctx"
 
+    def refresh_db_weights(self):
+        pass
+
 
 class DummyCognitionLayer:
     def __init__(self, *, context_builder=None, **__):

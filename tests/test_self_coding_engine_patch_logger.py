@@ -127,7 +127,10 @@ def test_track_contributors_records_roi():
         DummyDB(),
         DummyMem(),
         patch_logger=pl,
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     vectors = [("db1", "v1", 0.1), ("db2", "v2", 0.2)]
     engine._track_contributors(

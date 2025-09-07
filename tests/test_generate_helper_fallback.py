@@ -37,7 +37,10 @@ def _engine(tmp_path: Path) -> sce.SelfCodingEngine:
     return sce.SelfCodingEngine(
         cd.CodeDB(tmp_path / "c.db"),
         mm.MenaceMemoryManager(tmp_path / "m.db"),
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
 
 

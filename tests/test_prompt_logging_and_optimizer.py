@@ -30,7 +30,10 @@ def make_engine(tmp_path: Path):
         prompt_evolution_memory=logger,
         prompt_optimizer=optimizer,
         audit_trail_path=str(tmp_path / "audit.log"),
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     return engine, success_log, failure_log, optimizer
 

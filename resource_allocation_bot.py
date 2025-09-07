@@ -101,6 +101,13 @@ class ResourceAllocationBot:
         self.db = db or AllocationDB()
         self.template_db = template_db or TemplateDB()
         self.context_builder = context_builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception as exc:
+            logging.getLogger("ResourceAllocationBot").error(
+                "context builder refresh failed: %s", exc
+            )
+            raise RuntimeError("context builder refresh failed") from exc
         self.data_bot = data_bot
         self.capital_bot = capital_bot
         self.prediction_manager = prediction_manager
