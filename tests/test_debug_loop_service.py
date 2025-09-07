@@ -52,7 +52,7 @@ spec.loader.exec_module(mod)
 def test_collect_crash_traces(tmp_path):
     log = tmp_path / "err.log"
     log.write_text("Traceback\nboom", encoding="utf-8")
-    svc = mod.DebugLoopService()
+    svc = mod.DebugLoopService(context_builder=vs_pkg.ContextBuilder())
     svc.collect_crash_traces(str(tmp_path))
     assert svc.graph.traces and svc.graph.traces[0][0] == "err"
 
@@ -60,14 +60,14 @@ def test_collect_crash_traces(tmp_path):
 def test_collect_crash_traces_ignores(tmp_path):
     log = tmp_path / "info.log"
     log.write_text("no error", encoding="utf-8")
-    svc = mod.DebugLoopService()
+    svc = mod.DebugLoopService(context_builder=vs_pkg.ContextBuilder())
     svc.collect_crash_traces(str(tmp_path))
     assert not svc.graph.traces
 
 
 def test_run_continuous_logs_errors(monkeypatch, caplog):
     stop = threading.Event()
-    svc = mod.DebugLoopService()
+    svc = mod.DebugLoopService(context_builder=vs_pkg.ContextBuilder())
 
     def fail_collect(path):
         stop.set()

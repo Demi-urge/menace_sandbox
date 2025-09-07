@@ -207,7 +207,7 @@ def _debug_worker() -> None:
     """Continuously run telemetry-driven debugging."""
     from .debug_loop_service import DebugLoopService
     logger = logging.getLogger("debug_worker")
-    service = DebugLoopService()
+    service = DebugLoopService(context_builder=ContextBuilder())
     stop = Event()
     interval = float(os.getenv("DEBUG_INTERVAL", "300"))
     service.run_continuous(interval=interval, stop_event=stop)
