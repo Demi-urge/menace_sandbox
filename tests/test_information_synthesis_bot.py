@@ -82,13 +82,18 @@ class RecordSchema(Schema):
     value = fields.Str(required=True)
 
 
+builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+
+
 def test_analyse_detects_issues(tmp_path):
     df = pd.DataFrame(
         {"id": [1, 2, 3], "name": ["Alpha", "Alpha", "Beta"], "value": ["1", "2", None]}
     )
     agg = DummyAggregator()
     wf = thb.WorkflowDB(tmp_path / "wf.db")
-    bot = isb.InformationSynthesisBot(db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf)
+    bot = isb.InformationSynthesisBot(
+        db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf, context_builder=builder
+    )
     reqs = bot.analyse(df, RecordSchema(), "records")
     reasons = [r.reason for r in reqs]
     assert "duplicate" in reasons or "invalid" in reasons
@@ -101,7 +106,9 @@ def test_dispatch_requests(monkeypatch, tmp_path):
     )
     agg = DummyAggregator()
     wf = thb.WorkflowDB(tmp_path / "wf.db")
-    bot = isb.InformationSynthesisBot(db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf)
+    bot = isb.InformationSynthesisBot(
+        db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf, context_builder=builder
+    )
     sent = []
     monkeypatch.setattr(bot.app, "send_task", lambda name, kwargs=None: sent.append((name, kwargs)))
     reqs = bot.analyse(df, RecordSchema(), "records")
@@ -115,7 +122,9 @@ def test_synthesise_creates_tasks(monkeypatch, tmp_path):
     )
     agg = DummyAggregator()
     wf = thb.WorkflowDB(tmp_path / "wf.db")
-    bot = isb.InformationSynthesisBot(db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf)
+    bot = isb.InformationSynthesisBot(
+        db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf, context_builder=builder
+    )
     monkeypatch.setattr(bot.app, "send_task", lambda *a, **k: None)
     tasks_sent = []
     monkeypatch.setattr(isb, "send_to_task_manager", lambda t: tasks_sent.append(t))
@@ -133,7 +142,9 @@ def test_simple_schema_validation(tmp_path):
     df = pd.DataFrame({"id": [1, "a"], "name": [None, None]})
     agg = DummyAggregator()
     wf = thb.WorkflowDB(tmp_path / "wf.db")
-    bot = isb.InformationSynthesisBot(db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf)
+    bot = isb.InformationSynthesisBot(
+        db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf, context_builder=builder
+    )
     reqs = bot.analyse(df, SimpleRecord(), "tbl")
     fields_seen = {r.field for r in reqs}
     assert "name" in fields_seen
@@ -151,7 +162,9 @@ def test_celery_present(monkeypatch, tmp_path):
     monkeypatch.setattr(isb, "Celery", FakeCelery)
     agg = DummyAggregator()
     wf = thb.WorkflowDB(tmp_path / "wf.db")
-    bot = isb.InformationSynthesisBot(db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf)
+    bot = isb.InformationSynthesisBot(
+        db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf, context_builder=builder
+    )
     bot.app.send_task("stage2.fetch", kwargs={"a": 1})
     assert ("stage2.fetch", {"a": 1}) in bot.app.sent
 
@@ -160,7 +173,9 @@ def test_queue_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(isb, "Celery", None)
     agg = DummyAggregator()
     wf = thb.WorkflowDB(tmp_path / "wf.db")
-    bot = isb.InformationSynthesisBot(db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf)
+    bot = isb.InformationSynthesisBot(
+        db_url="sqlite:///:memory:", aggregator=agg, workflow_db=wf, context_builder=builder
+    )
     bot.app.send_task("stage2.fetch", kwargs={"b": 2})
     bot.app.queue.join()
     assert bot.app.sent == [("stage2.fetch", {"b": 2})]

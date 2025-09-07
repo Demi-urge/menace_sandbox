@@ -47,7 +47,11 @@ from .simple_validation import (
 
 
 try:
-    from marshmallow import Schema as MM_Schema, fields as mm_fields, ValidationError as MMValidationError  # type: ignore
+    from marshmallow import (
+        Schema as MM_Schema,
+        fields as mm_fields,
+        ValidationError as MMValidationError,
+    )  # type: ignore
     Schema = MM_Schema
     fields = mm_fields
     ValidationError = MMValidationError
@@ -100,18 +104,19 @@ class InformationSynthesisBot:
         workflow_db: WorkflowDB | None = None,
         *,
         event_bus: UnifiedEventBus | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
         self.engine = create_engine(db_url)
         self.meta = MetaData()
         self.meta.reflect(bind=self.engine)
-        builder = context_builder or ContextBuilder()
         try:
-            builder.refresh_db_weights()
+            context_builder.refresh_db_weights()
         except Exception:
             pass
-        self.context_builder = builder
-        self.aggregator = aggregator or ResearchAggregatorBot([], context_builder=builder)
+        self.context_builder = context_builder
+        self.aggregator = aggregator or ResearchAggregatorBot(
+            [], context_builder=context_builder
+        )
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
         if Celery:
             self.app = Celery("synthesis", broker=broker, backend="rpc://")
@@ -138,9 +143,11 @@ class InformationSynthesisBot:
         if fuzz and "name" in df.columns:
             names = df["name"].tolist()
             for i, n1 in enumerate(names):
-                for n2 in names[i + 1 :]:
+                for n2 in names[i + 1:]:
                     if fuzz.token_set_ratio(str(n1), str(n2)) > 90:
-                        requests.append(DataRequest(table=table, field="name", reason="duplicate"))
+                        requests.append(
+                            DataRequest(table=table, field="name", reason="duplicate")
+                        )
                         break
                 else:
                     continue
@@ -155,7 +162,11 @@ class InformationSynthesisBot:
         tasks: List[SynthesisTask] = []
         for _, row in df.iterrows():
             desc = f"Process {row.get('name', 'item')}"
-            tasks.append(SynthesisTask(description=desc, urgency=1, complexity=1, category="analysis"))
+            tasks.append(
+                SynthesisTask(
+                    description=desc, urgency=1, complexity=1, category="analysis"
+                )
+            )
         return tasks
 
     def send_tasks(self, tasks: Iterable[SynthesisTask]) -> None:

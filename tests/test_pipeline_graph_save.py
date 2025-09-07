@@ -49,7 +49,7 @@ def test_pipeline_calls_save(monkeypatch, tmp_path):
     pipeline = mapl.ModelAutomationPipeline(
         aggregator=agg,
         synthesis_bot=isb.InformationSynthesisBot(
-            db_url="sqlite:///:memory:", aggregator=agg
+            db_url="sqlite:///:memory:", aggregator=agg, context_builder=builder
         ),
         validator=tvb.TaskValidationBot(["model"]),
         planner=bpb.BotPlanningBot(),
