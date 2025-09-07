@@ -27,15 +27,25 @@ sys.modules["menace"] = pkg
 
 ss_mod = types.ModuleType("menace.service_supervisor")
 
+
 class ServiceSupervisor:
-    def __init__(self, check_interval: float = 5.0) -> None:
+    def __init__(
+        self,
+        check_interval: float = 5.0,
+        *,
+        context_builder=None,
+    ) -> None:
         self.check_interval = check_interval
+        self.context_builder = context_builder
+        if context_builder and hasattr(context_builder, "refresh_db_weights"):
+            context_builder.refresh_db_weights()
 
     def start_all(self) -> None:
         pass
 
     def _monitor(self) -> None:
         pass
+
 
 ss_mod.ServiceSupervisor = ServiceSupervisor
 sys.modules["menace.service_supervisor"] = ss_mod
@@ -63,7 +73,8 @@ def test_cluster_supervisor_start(monkeypatch):
         return DummyProc()
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    sup = cs.ClusterServiceSupervisor(hosts=["h1"])
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    sup = cs.ClusterServiceSupervisor(hosts=["h1"], context_builder=builder)
     monkeypatch.setattr(ss.ServiceSupervisor, "start_all", lambda self: None)
     monkeypatch.setattr(ss.ServiceSupervisor, "_monitor", lambda self: None)
     sup.start_all()
@@ -84,7 +95,8 @@ def test_cluster_supervisor_start_docker(monkeypatch):
     monkeypatch.setenv("CLUSTER_BACKEND", "docker")
     monkeypatch.setenv("CLUSTER_DOCKER_IMAGE", "img")
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    sup = cs.ClusterServiceSupervisor(hosts=["h1"])
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    sup = cs.ClusterServiceSupervisor(hosts=["h1"], context_builder=builder)
     monkeypatch.setattr(ss.ServiceSupervisor, "start_all", lambda self: None)
     monkeypatch.setattr(ss.ServiceSupervisor, "_monitor", lambda self: None)
     sup.start_all()
@@ -114,7 +126,8 @@ def test_cluster_supervisor_start_k8s(monkeypatch):
     monkeypatch.setenv("CLUSTER_BACKEND", "k8s")
     monkeypatch.setenv("CLUSTER_K8S_NAMESPACE", "ns")
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    sup = cs.ClusterServiceSupervisor(hosts=["dep"])
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    sup = cs.ClusterServiceSupervisor(hosts=["dep"], context_builder=builder)
     monkeypatch.setattr(ss.ServiceSupervisor, "start_all", lambda self: None)
     monkeypatch.setattr(ss.ServiceSupervisor, "_monitor", lambda self: None)
     sup.start_all()
@@ -135,7 +148,8 @@ def test_cluster_supervisor_redeploy_unhealthy(monkeypatch):
         return DummyProc(rc=1)
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    sup = cs.ClusterServiceSupervisor(hosts=["h1"])
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    sup = cs.ClusterServiceSupervisor(hosts=["h1"], context_builder=builder)
     sup.remote_procs["h1"] = DummyProc(rc=1)
 
     def fake_start(self, host):
@@ -161,7 +175,8 @@ def test_cluster_supervisor_add_hosts(monkeypatch):
         return DummyProc()
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    sup = cs.ClusterServiceSupervisor(hosts=["h1"])
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    sup = cs.ClusterServiceSupervisor(hosts=["h1"], context_builder=builder)
     sup.add_hosts(["h2", "h3"])
     assert "h2" in sup.hosts and "h3" in sup.hosts
     assert ["ssh", "h2", "python3", "-m", "menace.service_supervisor"] in calls

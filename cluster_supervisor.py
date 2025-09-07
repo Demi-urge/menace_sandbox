@@ -15,8 +15,14 @@ from .service_supervisor import ServiceSupervisor
 class ClusterServiceSupervisor(ServiceSupervisor):
     """Extend :class:`ServiceSupervisor` to manage remote supervisors."""
 
-    def __init__(self, hosts: Iterable[str] | None = None, check_interval: float = 5.0) -> None:
-        super().__init__(check_interval=check_interval)
+    def __init__(
+        self,
+        hosts: Iterable[str] | None = None,
+        check_interval: float = 5.0,
+        *,
+        context_builder: "ContextBuilder",
+    ) -> None:
+        super().__init__(check_interval=check_interval, context_builder=context_builder)
         env_hosts = os.getenv("CLUSTER_HOSTS", "").split(",")
         self.hosts = [h.strip() for h in (hosts or env_hosts) if h.strip()]
         failover = os.getenv("FAILOVER_HOSTS", "").split(",")
