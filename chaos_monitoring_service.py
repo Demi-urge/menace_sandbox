@@ -3,8 +3,8 @@ from __future__ import annotations
 """Run chaos experiments and automatically rollback failing bots.
 
 The service relies on :class:`vector_service.ContextBuilder` for contextual
-analysis.  A builder must be provided by the caller when the default
-scheduler is used.
+analysis.  Callers must supply a builder instance and database weights are
+refreshed at startup to ensure ranking reflects the latest metrics.
 """
 
 import logging
@@ -31,11 +31,22 @@ class ChaosMonitoringService:
         scheduler: ChaosScheduler | None = None,
         rollback_mgr: AutomatedRollbackManager | None = None,
         *,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
+        """Create service.
+
+        Parameters
+        ----------
+        scheduler:
+            Optional pre-configured scheduler. When omitted a default scheduler
+            using ``context_builder`` is created.
+        rollback_mgr:
+            Automated rollback manager.
+        context_builder:
+            Builder used for contextual analysis.
+        """
+        context_builder.refresh_db_weights()
         if scheduler is None:
-            if context_builder is None:
-                raise ValueError("context_builder required when scheduler not provided")
             watch = Watchdog(ErrorDB(), ROIDB(), MetricsDB(), context_builder=context_builder)
             scheduler = ChaosScheduler(watchdog=watch)
         self.scheduler = scheduler
