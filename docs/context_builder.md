@@ -110,3 +110,29 @@ builder = get_default_context_builder()
 # ContextBuilder(bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db")
 ```
 
+## Static enforcement
+
+The repository includes a helper script,
+`scripts/check_context_builder_usage.py`, which statically scans Python files
+to ensure a ``context_builder`` keyword is threaded through common prompt
+helpers.  It flags calls to ``PromptEngine``, ``_build_prompt``,
+``generate_patch``, bare ``build_prompt(...)`` helpers and methods named
+``build_prompt_with_memory`` when they omit the keyword.  Only direct
+``build_prompt(...)`` calls are checked to avoid warning on unrelated methods
+with the same name.
+
+## Custom prompt builders
+
+When rolling your own prompt builders, accept a ``ContextBuilder`` and pass it
+through explicitly:
+
+```python
+from menace_sandbox.chatgpt_idea_bot import build_prompt
+from vector_service.context_builder_utils import get_default_context_builder
+
+def my_prompt(client):
+    builder = get_default_context_builder()
+    # static check fails if ``context_builder`` is omitted
+    return build_prompt(client, context_builder=builder, tags=["ai", "fintech"])
+```
+

@@ -484,7 +484,9 @@ def build_prompt(
         + ". Respond in JSON list format with fields name, description and tags."
     )
     base_tags = [IMPROVEMENT_PATH, *tags]
-    return client.build_prompt_with_memory(base_tags, prompt, context_builder)
+    return client.build_prompt_with_memory(
+        base_tags, prompt, context_builder=context_builder
+    )
 
 
 @dataclass
