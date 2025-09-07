@@ -5,14 +5,18 @@ patch logger and metrics database into a single convenience facade.  It
 exposes a small API used by services that want to perform a retrieval
 request and later record the outcome of a patch based on that retrieval.
 
-An optional :class:`roi_tracker.ROITracker` instance can be supplied to
-record ROI deltas for the origin databases contributing to a patch::
+A :class:`ContextBuilder` instance **must** be supplied.  It defines how
+the retrieval context is constructed.  An optional
+:class:`roi_tracker.ROITracker` instance can also be provided to record
+ROI deltas for the origin databases contributing to a patch::
 
     from roi_tracker import ROITracker
+    from vector_service.context_builder import ContextBuilder
     from vector_service.cognition_layer import CognitionLayer
 
     tracker = ROITracker()
-    layer = CognitionLayer(roi_tracker=tracker)
+    builder = ContextBuilder(...)
+    layer = CognitionLayer(context_builder=builder, roi_tracker=tracker)
     ctx, sid = layer.query("What is ROI?")
     # ... apply patch ...
     layer.record_patch_outcome(sid, True, contribution=1.0)
@@ -62,29 +66,37 @@ class CognitionLayer:
 
     Parameters
     ----------
+    context_builder:
+        :class:`ContextBuilder` instance used to build retrieval context.
+        This parameter is required.
     roi_tracker:
         Optional :class:`roi_tracker.ROITracker` instance used to update
         ROI histories when recording patch outcomes.  If not provided and
         the tracker can be imported, a default instance is created.
     ranking_model:
-        Optional ranking model object passed to :class:`ContextBuilder`
-        when one is not supplied directly.
+        Optional ranking model object assigned to ``context_builder`` if
+        provided.
     """
 
     def __init__(
         self,
         *,
+        context_builder: ContextBuilder,
         retriever: Retriever | None = None,
         patch_retriever: PatchRetriever | None = None,
-        context_builder: ContextBuilder | None = None,
         patch_logger: PatchLogger | None = None,
         vector_metrics: VectorMetricsDB | None = None,
         event_bus: "UnifiedEventBus" | None = None,
         roi_tracker: ROITracker | None = None,
         ranking_model: Any | None = None,
     ) -> None:
-        self.retriever = retriever or Retriever()
-        self.patch_retriever = patch_retriever or PatchRetriever()
+        if context_builder is None:
+            raise ValueError("context_builder is required")
+        self.context_builder = context_builder
+        self.retriever = retriever or getattr(self.context_builder, "retriever", Retriever())
+        self.patch_retriever = patch_retriever or getattr(
+            self.context_builder, "patch_retriever", PatchRetriever()
+        )
         self.vector_metrics = vector_metrics or VectorMetricsDB()
         self.roi_tracker = roi_tracker or (ROITracker() if ROITracker is not None else None)
         self.event_bus = event_bus or getattr(patch_logger, "event_bus", None)
@@ -95,25 +107,17 @@ class CognitionLayer:
             except Exception:  # pragma: no cover - best effort
                 db_weights = None
         self._db_weights: Dict[str, float] = dict(db_weights or {})
-        if context_builder is not None:
-            self.context_builder = context_builder
-        else:
-            self.context_builder = ContextBuilder(
-                retriever=self.retriever,
-                patch_retriever=self.patch_retriever,
-                ranking_model=ranking_model,
-                roi_tracker=self.roi_tracker,
-                db_weights=db_weights,
-            )
-        if (
-            context_builder is not None
-            and getattr(context_builder, "patch_retriever", None) is None
-        ):
+        if getattr(self.context_builder, "patch_retriever", None) is None:
             try:
-                context_builder.patch_retriever = self.patch_retriever
+                self.context_builder.patch_retriever = self.patch_retriever
             except Exception:
                 pass
-        if context_builder is not None and db_weights:
+        if ranking_model is not None:
+            try:
+                self.context_builder.ranking_model = ranking_model
+            except Exception:
+                pass
+        if db_weights:
             try:
                 if hasattr(self.context_builder, "refresh_db_weights"):
                     self.context_builder.refresh_db_weights(
