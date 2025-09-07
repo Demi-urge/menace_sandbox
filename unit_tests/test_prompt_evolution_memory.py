@@ -112,8 +112,13 @@ def test_optimizer_ranking_influences_prompt_engine(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(pe, "compress_snippets", lambda m: m)
     monkeypatch.setattr(pe, "audit_log_event", lambda *a, **k: None)
 
-    engine = PromptEngine(retriever=DummyRetriever(), optimizer=opt, confidence_threshold=0.0)
-    engine.build_prompt("task")
+    engine = PromptEngine(
+        retriever=DummyRetriever(),
+        optimizer=opt,
+        confidence_threshold=0.0,
+        context_builder=object(),
+    )
+    engine.build_prompt("task", context_builder=engine.context_builder)
 
     assert engine.tone == "cheerful"
     assert "h1" in engine.last_metadata.get("structured_sections", [])

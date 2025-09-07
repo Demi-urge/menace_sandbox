@@ -31,34 +31,40 @@ def test_construct_prompt_orders_by_roi_and_timestamp():
         _record(1.0, ts=2, summary="new fail", tests_passed=False),
         _record(1.0, ts=0, summary="old fail", tests_passed=False),
     ]
-    engine = PromptEngine(retriever=DummyRetriever(records), confidence_threshold=0.05)
-    prompt = engine.build_prompt("desc")
+    engine = PromptEngine(
+        retriever=DummyRetriever(records),
+        confidence_threshold=0.05,
+        context_builder=object(),
+    )
+    prompt = engine.build_prompt("desc", context_builder=engine.context_builder)
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     assert "Code summary: new fail" in prompt
     assert "Code summary: old fail" not in prompt
 
 
 def test_construct_prompt_fallback_on_low_confidence(monkeypatch, caplog):
-    engine = PromptEngine(retriever=DummyRetriever([]))
+    engine = PromptEngine(retriever=DummyRetriever([]), context_builder=object())
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     events: List[Tuple[str, Dict[str, Any]]] = []
     monkeypatch.setattr("prompt_engine.audit_log_event", lambda e, d: events.append((e, d)))
     with caplog.at_level(logging.INFO):
-        prompt = engine.build_prompt("desc")
-    assert prompt == DEFAULT_TEMPLATE
+        prompt = engine.build_prompt("desc", context_builder=engine.context_builder)
+    assert prompt.user == DEFAULT_TEMPLATE
     assert "falling back" in caplog.text.lower()
     assert events and events[0][0] == "prompt_engine_fallback"
     assert events[0][1]["reason"] == "low_confidence"
 
 
 def test_construct_prompt_fallback_on_retrieval_error(monkeypatch, caplog):
-    engine = PromptEngine(retriever=DummyRetriever([], boom=True))
+    engine = PromptEngine(
+        retriever=DummyRetriever([], boom=True), context_builder=object()
+    )
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     events: List[Tuple[str, Dict[str, Any]]] = []
     monkeypatch.setattr("prompt_engine.audit_log_event", lambda e, d: events.append((e, d)))
     with caplog.at_level(logging.ERROR):
-        prompt = engine.build_prompt("desc")
-    assert prompt == DEFAULT_TEMPLATE
+        prompt = engine.build_prompt("desc", context_builder=engine.context_builder)
+    assert prompt.user == DEFAULT_TEMPLATE
     assert "boom" in caplog.text.lower()
     assert events and events[0][1]["reason"] == "retrieval_error"
 
@@ -71,5 +77,6 @@ def test_static_prompt_uses_config(tmp_path):
         retriever=DummyRetriever([]),
         template_path=cfg,
         template_sections=["a"],
+        context_builder=object(),
     )
     assert engine._static_prompt() == "A1\nA2"

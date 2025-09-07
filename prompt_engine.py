@@ -744,12 +744,12 @@ class PromptEngine:
         tone: str | None = None,
         strategy: str | None = None,
         target_region: TargetRegion | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> Prompt:
         """Return a :class:`Prompt` for *task* using retrieved patch examples.
 
-        ``context_builder`` overrides :attr:`self.context_builder` for a single
-        invocation.
+        ``context_builder`` supplies token counting and ROI helpers for the
+        invocation and must be provided explicitly.
 
         ``context`` and ``retrieval_context`` allow callers to prepend
         additional information such as the snippet body, repository layout or
@@ -767,7 +767,9 @@ class PromptEngine:
         static fallback template is returned.
         """
 
-        builder = context_builder or self.context_builder
+        if context_builder is None:
+            raise ValueError("context_builder is required")
+        builder = context_builder
 
         def _count(text: str) -> int:
             counter = getattr(builder, "_count_tokens", None)

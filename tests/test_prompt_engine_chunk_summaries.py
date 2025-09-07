@@ -48,9 +48,12 @@ def test_prompt_engine_auto_summarises_when_limit_exceeded(monkeypatch):
         token_threshold=50,
         chunk_token_threshold=20,
         llm=object(),
+        context_builder=object(),
     )
 
-    prompt = engine.build_prompt("do something", context=code)
+    prompt = engine.build_prompt(
+        "do something", context=code, context_builder=engine.context_builder
+    )
     assert calls == ["chunkA", "chunkB"]
     assert "sum:chunkA" in prompt and "sum:chunkB" in prompt
     assert "x = 0" not in prompt

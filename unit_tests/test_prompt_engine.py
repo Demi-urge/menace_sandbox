@@ -61,7 +61,7 @@ def test_retrieval_snippets_included():
     engine = PromptEngine(
         retriever=DummyRetriever(records), context_builder=DummyBuilder()
     )
-    prompt = engine.build_prompt("desc")
+    prompt = engine.build_prompt("desc", context_builder=engine.context_builder)
     assert "Given the following pattern, desc" in prompt.text
     assert "Given the following pattern:" in prompt.text
     assert "Code summary: fixed bug" in prompt.text
@@ -82,10 +82,12 @@ def test_custom_headers_codex_style():
         confidence_threshold=0.0,
         success_header="Correct example:",
         failure_header="Incorrect example:",
+        trainer=object(),
     )
-    prompt = engine.build_prompt("desc")
-    assert "Correct example:" in prompt
-    assert "Incorrect example:" in prompt
+    prompt = engine.build_prompt("desc", context_builder=engine.context_builder)
+    text = str(prompt)
+    assert "Correct example:" in text
+    assert "Incorrect example:" in text
 
 
 def test_orders_by_roi_and_timestamp():
@@ -112,7 +114,7 @@ def test_orders_by_roi_and_timestamp():
         context_builder=DummyBuilder(),
         confidence_threshold=-1.0,
     )
-    prompt = engine.build_prompt("desc")
+    prompt = engine.build_prompt("desc", context_builder=engine.context_builder)
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     assert prompt.index("Code summary: new fail") < prompt.index("Code summary: old fail")
 
@@ -149,7 +151,7 @@ def test_fallback_on_low_confidence(caplog, monkeypatch):
     )
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     with caplog.at_level(logging.INFO):
-        prompt = engine.build_prompt("desc")
+        prompt = engine.build_prompt("desc", context_builder=engine.context_builder)
     assert prompt.user == DEFAULT_TEMPLATE
     assert "falling back" in caplog.text.lower()
 
@@ -160,7 +162,7 @@ def test_retry_trace_included():
         retriever=DummyRetriever(records), context_builder=DummyBuilder()
     )
     trace = "Traceback: fail"
-    prompt = engine.build_prompt("desc", retry_trace=trace)
+    prompt = engine.build_prompt("desc", retry_trace=trace, context_builder=engine.context_builder)
     expected = "Previous failure:\nTraceback: fail\nPlease attempt a different solution."
     assert expected in prompt.text
 
@@ -173,7 +175,7 @@ def test_retry_trace_idempotent():
     trace = (
         "Previous failure:\nTraceback: boom\nPlease attempt a different solution."
     )
-    prompt = engine.build_prompt("desc", retry_trace=trace)
+    prompt = engine.build_prompt("desc", retry_trace=trace, context_builder=engine.context_builder)
     assert prompt.text.count("Traceback: boom") == 1
     assert prompt.text.count("Previous failure:") == 1
 

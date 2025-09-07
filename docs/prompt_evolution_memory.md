@@ -76,8 +76,8 @@ optimizer = PromptOptimizer(
     roi_weight=1.2           # emphasise ROI in ranking
 )
 
-engine = PromptEngine(retriever=my_retriever, optimizer=optimizer)
-engine.build_prompt("add caching")
+engine = PromptEngine(context_builder=ContextBuilder(), retriever=my_retriever, optimizer=optimizer)
+engine.build_prompt("add caching", context_builder=engine.context_builder)
 ```
 
 `PromptEngine` applies the optimizer's suggestions when formatting future

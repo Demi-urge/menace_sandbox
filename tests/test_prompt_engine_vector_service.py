@@ -40,8 +40,10 @@ def test_prompt_engine_retrieves_top_n_snippets(monkeypatch, tmp_path):
         ("3", [0.0, 1.0], {"summary": "A3", "tests_passed": True, "ts": 1}),
     ]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    engine = PromptEngine(retriever=pr, top_n=2, confidence_threshold=0.0)
-    prompt = engine.build_prompt("goal")
+    engine = PromptEngine(
+        retriever=pr, top_n=2, confidence_threshold=0.0, context_builder=object()
+    )
+    prompt = engine.build_prompt("goal", context_builder=engine.context_builder)
     assert "Given the following pattern:" in prompt
     assert "Code summary: A1" in prompt
     assert "Code summary: A2" in prompt
@@ -56,8 +58,10 @@ def test_prompt_engine_orders_by_roi_and_recency(monkeypatch, tmp_path):
         ("4", [1.0, 0.0], {"summary": "old fail", "tests_passed": False, "ts": 1}),
     ]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    engine = PromptEngine(retriever=pr, top_n=4, confidence_threshold=0.05)
-    prompt = engine.build_prompt("goal")
+    engine = PromptEngine(
+        retriever=pr, top_n=4, confidence_threshold=0.05, context_builder=object()
+    )
+    prompt = engine.build_prompt("goal", context_builder=engine.context_builder)
     assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
     assert "Code summary: new fail" in prompt
     assert "Code summary: old fail" not in prompt
@@ -66,9 +70,9 @@ def test_prompt_engine_orders_by_roi_and_recency(monkeypatch, tmp_path):
 def test_retry_trace_injection(monkeypatch, tmp_path):
     patches = [("1", [1.0, 0.0], {"summary": "foo", "tests_passed": True, "raroi": 0.5})]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    engine = PromptEngine(retriever=pr)
+    engine = PromptEngine(retriever=pr, context_builder=object())
     trace = "Traceback: fail"
-    prompt = engine.build_prompt("goal", retry_trace=trace)
+    prompt = engine.build_prompt("goal", retry_trace=trace, context_builder=engine.context_builder)
     expected = "Previous failure:\nTraceback: fail\nPlease attempt a different solution."
     assert expected in prompt
 
@@ -76,9 +80,9 @@ def test_retry_trace_injection(monkeypatch, tmp_path):
 def test_fallback_when_confidence_low(monkeypatch, tmp_path, caplog):
     patches = [("1", [-1.0, 0.0], {"summary": "bad", "tests_passed": True})]
     pr = _setup_store(monkeypatch, tmp_path, patches, [1.0, 0.0])
-    engine = PromptEngine(retriever=pr, top_n=1)
+    engine = PromptEngine(retriever=pr, top_n=1, context_builder=object())
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
     with caplog.at_level(logging.INFO):
-        prompt = engine.build_prompt("goal")
+        prompt = engine.build_prompt("goal", context_builder=engine.context_builder)
     assert prompt == DEFAULT_TEMPLATE
     assert "falling back" in caplog.text.lower()
