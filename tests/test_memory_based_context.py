@@ -1,4 +1,42 @@
-import menace.chatgpt_idea_bot as cib
+import types
+import sys
+
+sys.modules.setdefault(
+    "menace_sandbox.database_manager",
+    types.SimpleNamespace(DB_PATH="db", search_models=lambda *a, **k: []),
+)
+sys.modules.setdefault(
+    "menace_sandbox.database_management_bot",
+    types.SimpleNamespace(DatabaseManagementBot=object),
+)
+sys.modules.setdefault(
+    "menace_sandbox.shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
+)
+sys.modules.setdefault(
+    "menace_sandbox.memory_logging", types.SimpleNamespace(log_with_tags=lambda *a, **k: None)
+)
+sys.modules.setdefault(
+    "menace_sandbox.memory_aware_gpt_client",
+    types.SimpleNamespace(ask_with_memory=lambda *a, **k: {}),
+)
+sys.modules.setdefault(
+    "menace_sandbox.local_knowledge_module",
+    types.SimpleNamespace(LocalKnowledgeModule=lambda *a, **k: types.SimpleNamespace(memory=None)),
+)
+sys.modules.setdefault(
+    "menace_sandbox.knowledge_retriever",
+    types.SimpleNamespace(
+        get_feedback=lambda *a, **k: [],
+        get_improvement_paths=lambda *a, **k: [],
+        get_error_fixes=lambda *a, **k: [],
+    ),
+)
+sys.modules.setdefault(
+    "governed_retrieval",
+    types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x),
+)
+
+import menace_sandbox.chatgpt_idea_bot as cib
 from log_tags import IMPROVEMENT_PATH
 
 
@@ -22,7 +60,15 @@ def test_memory_based_context(monkeypatch):
     mem = DummyMemory()
     mem.log_interaction("Initial feedback", "Improve caching strategy", tags=[IMPROVEMENT_PATH])
 
-    client = cib.ChatGPTClient(gpt_memory=mem)
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, query, **_):
+            return ""
+
+    builder = DummyBuilder()
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
     client.session = None  # force offline response
 
     def offline_response(msgs):
@@ -31,7 +77,9 @@ def test_memory_based_context(monkeypatch):
 
     monkeypatch.setattr(client, "_offline_response", offline_response)
 
-    messages = client.build_prompt_with_memory([IMPROVEMENT_PATH], "What's next?")
+    messages = client.build_prompt_with_memory(
+        [IMPROVEMENT_PATH], "What's next?", context_builder=builder
+    )
     result = client.ask(messages, use_memory=False)
     text = result["choices"][0]["message"]["content"]
 
