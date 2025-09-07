@@ -215,7 +215,7 @@ def test_prompt_engine_build_prompt_contains_notice():
     from prompt_engine import PromptEngine
 
     engine = PromptEngine(retriever=None, context_builder=vector_service.ContextBuilder())
-    prompt = engine.build_prompt("task")
+    prompt = engine.build_prompt("task", context_builder=engine.context_builder)
     assert prompt.system.startswith(PAYMENT_ROUTER_NOTICE)
 
 

@@ -11,7 +11,27 @@ import tempfile
 sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=object))
 sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=object))
 sys.modules.setdefault("menace_sandbox", types.SimpleNamespace())
-sys.modules.setdefault("prompt_memory_trainer", types.SimpleNamespace(PromptMemoryTrainer=object))
+
+class _PMT:
+    def __init__(self, *a, **k):
+        pass
+
+    def _extract_style(self, prompt: str):
+        has_code = "```" in prompt
+        has_bullets = "-" in prompt
+        sections = [s.split(":")[0].lower() for s in prompt.splitlines() if ":" in s]
+        return {"has_code": has_code, "has_bullets": has_bullets, "sections": sections[:2]}
+
+    def train(self):
+        return {"headers": {json.dumps(["H"]): 2 / 7}}
+
+    def record(self, **_k):
+        return True
+
+
+sys.modules.setdefault(
+    "prompt_memory_trainer", types.SimpleNamespace(PromptMemoryTrainer=_PMT)
+)
 
 from prompt_engine import (
     PromptEngine,
@@ -19,7 +39,9 @@ from prompt_engine import (
     diff_within_target_region,
 )  # noqa: E402
 from self_improvement.target_region import TargetRegion  # noqa: E402
+from prompt_memory_trainer import PromptMemoryTrainer  # noqa: E402
 
+DUMMY_BUILDER = object()
 
 class FallbackResult:
     def __init__(self, reason: str, patches: List[Dict[str, Any]], confidence: float = 0.0):
@@ -80,8 +102,9 @@ def test_prompt_engine_returns_confidences_and_tags():
         retriever=DummyRetriever(records),
         patch_retriever=DummyRetriever(records),
         confidence_threshold=-1.0,
+        context_builder=DUMMY_BUILDER,
     )
-    prompt = engine.build_prompt("desc")
+    prompt = engine.build_prompt("desc", context_builder=DUMMY_BUILDER)
     assert len(prompt.examples) == 2
     assert len(prompt.examples) == len(prompt.vector_confidences)
     assert RoiTag.HIGH_ROI.value in prompt.outcome_tags
@@ -99,17 +122,20 @@ def test_prompt_engine_sections_and_ranking():
         patch_retriever=DummyRetriever(records),
         top_n=3,
         confidence_threshold=0.0,
+        context_builder=DUMMY_BUILDER,
+        trainer=object(),
     )
-    prompt = engine.build_prompt("desc")
+    prompt = engine.build_prompt("desc", context_builder=DUMMY_BUILDER)
 
+    text = str(prompt)
     # Sections from build_snippets are present
-    assert "Given the following pattern:" in prompt
-    assert "Avoid fail because it caused a failure:" in prompt
+    assert "Given the following pattern:" in text
+    assert "Avoid fail because it caused a failure:" in text
 
     # Ranking respects ROI values
-    assert prompt.index("Code summary: high") < prompt.index("Code summary: low")
+    assert text.index("Code summary: high") < text.index("Code summary: low")
     # Failure snippet appears after successes
-    assert prompt.rindex("Code summary: fail") > prompt.index(
+    assert text.rindex("Code summary: fail") > text.index(
         "Avoid fail because it caused a failure:"
     )
 
@@ -126,12 +152,15 @@ def test_prompt_engine_custom_headers():
         confidence_threshold=0.0,
         success_header="Correct example:",
         failure_header="Incorrect example:",
+        context_builder=DUMMY_BUILDER,
+        trainer=object(),
     )
-    prompt = engine.build_prompt("desc")
-    assert "Correct example:" in prompt
-    assert "Incorrect example:" in prompt
-    assert "Given the following pattern:" not in prompt
-    assert "Avoid bad because it caused a failure:" not in prompt
+    prompt = engine.build_prompt("desc", context_builder=DUMMY_BUILDER)
+    text = str(prompt)
+    assert "Correct example:" in text
+    assert "Incorrect example:" in text
+    assert "Given the following pattern:" not in text
+    assert "Avoid bad because it caused a failure:" not in text
 
 
 def test_prompt_engine_applies_trained_preferences(monkeypatch):
@@ -162,11 +191,11 @@ def test_prompt_engine_applies_trained_preferences(monkeypatch):
     engine = pe.PromptEngine(
         retriever=DummyRetriever(records),
         patch_retriever=DummyRetriever(records),
-        context_builder=object(),
+        context_builder=DUMMY_BUILDER,
         top_n=2,
         confidence_threshold=0.0,
     )
-    prompt = engine.build_prompt("desc")
+    prompt = engine.build_prompt("desc", context_builder=DUMMY_BUILDER)
 
     # learned success header is used
     assert "Preferred header:" in prompt
@@ -181,9 +210,9 @@ def test_prompt_engine_applies_trained_preferences(monkeypatch):
 
 def test_prompt_engine_handles_retry_trace():
     records = [_record(1.0, summary="foo", tests_passed=True, raroi=0.5)]
-    engine = PromptEngine(patch_retriever=DummyRetriever(records))
+    engine = PromptEngine(patch_retriever=DummyRetriever(records), context_builder=DUMMY_BUILDER)
     trace = "Previous failure:\nTraceback: fail\nPlease attempt a different solution."
-    prompt = engine.build_prompt("goal", retry_trace=trace)
+    prompt = engine.build_prompt("goal", retry_trace=trace, context_builder=DUMMY_BUILDER)
 
     assert prompt.count("Previous failure:") == 1
     assert "Traceback: fail" in prompt
@@ -192,17 +221,17 @@ def test_prompt_engine_handles_retry_trace():
 
 def test_prompt_engine_uses_template_on_low_confidence(monkeypatch):
     records = [_record(0.0, summary="bad", tests_passed=True)]
-    engine = PromptEngine(patch_retriever=DummyRetriever(records))
+    engine = PromptEngine(patch_retriever=DummyRetriever(records), context_builder=DUMMY_BUILDER)
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
-    prompt = engine.build_prompt("goal")
-    assert prompt == DEFAULT_TEMPLATE
+    prompt = engine.build_prompt("goal", context_builder=DUMMY_BUILDER)
+    assert prompt.user == DEFAULT_TEMPLATE
 
 
 def test_prompt_engine_handles_fallback_result(monkeypatch):
-    engine = PromptEngine(patch_retriever=DummyFallbackRetriever())
+    engine = PromptEngine(patch_retriever=DummyFallbackRetriever(), context_builder=DUMMY_BUILDER)
     monkeypatch.setattr(engine, "_static_prompt", lambda: DEFAULT_TEMPLATE)
-    prompt = engine.build_prompt("goal")
-    assert prompt == DEFAULT_TEMPLATE
+    prompt = engine.build_prompt("goal", context_builder=DUMMY_BUILDER)
+    assert prompt.user == DEFAULT_TEMPLATE
 
 
 def test_weighted_scoring_alters_ordering():
@@ -216,6 +245,7 @@ def test_weighted_scoring_alters_ordering():
         roi_weight=1.0,
         recency_weight=0.0,
         confidence_threshold=-10,
+        context_builder=DUMMY_BUILDER,
     )
 
     ranked = engine._rank_records(records)
@@ -252,6 +282,7 @@ def test_roi_tag_weights_adjust_ranking():
         roi_weight=0.0,
         recency_weight=0.0,
         confidence_threshold=-10,
+        context_builder=DUMMY_BUILDER,
     )
 
     ranked = engine._rank_records(records)
@@ -321,7 +352,7 @@ def test_trim_tokens_with_tokenizer():
     engine = PromptEngine(
         retriever=DummyRetriever([]),
         patch_retriever=DummyRetriever([]),
-        context_builder=object(),
+        context_builder=DUMMY_BUILDER,
     )
     text = "Hello, world!"
     assert engine._trim_tokens(text, 3) == "Hello, wo..."
@@ -336,7 +367,7 @@ def test_trim_tokens_without_tokenizer(monkeypatch):
     engine = PromptEngine(
         retriever=DummyRetriever([]),
         patch_retriever=DummyRetriever([]),
-        context_builder=object(),
+        context_builder=DUMMY_BUILDER,
     )
     text = "Hello, world!"
     assert engine._trim_tokens(text, 3) == text
@@ -363,7 +394,7 @@ def test_prompt_engine_refreshes_after_record(monkeypatch):
             pass
 
     trainer = StubTrainer()
-    engine = PromptEngine(trainer=trainer)
+    engine = PromptEngine(trainer=trainer, context_builder=DUMMY_BUILDER)
     called: Dict[str, Dict[str, float]] | None = None
 
     def fake_load(summary=None, **kwargs):
@@ -399,8 +430,9 @@ def test_prompt_engine_uses_optimizer_preferences():
         optimizer=opt,
         optimizer_refresh_interval=1,
         confidence_threshold=-1.0,
+        context_builder=DUMMY_BUILDER,
     )
-    engine.build_prompt("task")
+    engine.build_prompt("task", context_builder=DUMMY_BUILDER)
     assert engine.tone == "friendly"
     assert engine.trained_structured_sections == ["overview"]
     assert engine.trained_example_placement == "start"
@@ -413,9 +445,10 @@ def test_build_prompt_trims_final_text():
         patch_retriever=DummyRetriever(records),
         token_threshold=5,
         confidence_threshold=-1.0,
+        context_builder=DUMMY_BUILDER,
     )
     long_context = "word " * 100
-    prompt = engine.build_prompt("desc", context=long_context)
+    prompt = engine.build_prompt("desc", context=long_context, context_builder=DUMMY_BUILDER)
     assert str(prompt).endswith("...")
 
 
@@ -425,6 +458,7 @@ def test_prompt_engine_includes_target_region_metadata(tmp_path):
         retriever=DummyRetriever(records),
         patch_retriever=DummyRetriever(records),
         confidence_threshold=-1.0,
+        context_builder=DUMMY_BUILDER,
     )
     lines = [
         "# Region func lines 3-5",
@@ -438,7 +472,9 @@ def test_prompt_engine_includes_target_region_metadata(tmp_path):
     mod_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     region = TargetRegion(start_line=3, end_line=5, function="func", filename=str(mod_path))
     region.func_signature = "def func(a, b):"
-    prompt = engine.build_prompt("desc", context=context, target_region=region)
+    prompt = engine.build_prompt(
+        "desc", context=context, target_region=region, context_builder=DUMMY_BUILDER
+    )
     text = str(prompt)
     assert text.splitlines()[0].startswith(
         "Modify only lines 3-5 within function func"

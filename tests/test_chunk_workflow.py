@@ -127,6 +127,7 @@ def test_prompt_from_summaries_under_limit(tmp_path, monkeypatch):
         confidence_threshold=-1.0,
         token_threshold=50,
         chunk_token_threshold=20,
+        context_builder=object(),
     )
 
     if pc._count_tokens(code) > engine.token_threshold:
@@ -137,7 +138,9 @@ def test_prompt_from_summaries_under_limit(tmp_path, monkeypatch):
     else:
         context = code
 
-    prompt = engine.build_prompt("do something", context=context)
+    prompt = engine.build_prompt(
+        "do something", context=context, context_builder=engine.context_builder
+    )
     assert "sumA" in prompt.user and "sumB" in prompt.user
     assert "x = 0" not in prompt.user
     assert pc._count_tokens(prompt.user) <= engine.token_threshold

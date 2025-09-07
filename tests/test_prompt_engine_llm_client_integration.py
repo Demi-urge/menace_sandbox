@@ -33,9 +33,10 @@ def test_prompt_engine_to_llm_client_flow():
         patch_retriever=SimpleRetriever(),
         top_n=1,
         confidence_threshold=0,
+        context_builder=object(),
     )
 
-    prompt = engine.build_prompt("do things")
+    prompt = engine.build_prompt("do things", context_builder=engine.context_builder)
     client = CapturingClient()
     result = client.generate(prompt)
 

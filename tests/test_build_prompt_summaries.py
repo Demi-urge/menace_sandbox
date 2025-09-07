@@ -17,8 +17,11 @@ def test_build_prompt_includes_summaries():
         retriever=DummyRetriever(records),
         patch_retriever=DummyRetriever(records),
         confidence_threshold=-1.0,
+        context_builder=object(),
     )
-    prompt = engine.build_prompt("do things", summaries=["sumA", "sumB"])
+    prompt = engine.build_prompt(
+        "do things", summaries=["sumA", "sumB"], context_builder=engine.context_builder
+    )
     text = str(prompt)
     assert "sumA" in text and "sumB" in text
 
@@ -29,8 +32,9 @@ def test_build_prompt_skips_summaries_when_absent():
         retriever=DummyRetriever(records),
         patch_retriever=DummyRetriever(records),
         confidence_threshold=-1.0,
+        context_builder=object(),
     )
-    prompt = engine.build_prompt("do things")
+    prompt = engine.build_prompt("do things", context_builder=engine.context_builder)
     text = str(prompt)
     assert "irrelevant" in text
     assert "sumA" not in text and "sumB" not in text

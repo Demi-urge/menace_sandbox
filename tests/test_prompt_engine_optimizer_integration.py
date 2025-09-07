@@ -61,8 +61,13 @@ def test_optimizer_ranking_and_influence(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(pe_mod, "audit_log_event", lambda *a, **k: None)
 
-    engine = PromptEngine(retriever=DummyRetriever(), optimizer=opt, confidence_threshold=0.0)
-    prompt = engine.build_prompt("task")
+    engine = PromptEngine(
+        retriever=DummyRetriever(),
+        optimizer=opt,
+        confidence_threshold=0.0,
+        context_builder=object(),
+    )
+    prompt = engine.build_prompt("task", context_builder=engine.context_builder)
     assert engine.tone == "cheerful"
     assert "h1" in engine.last_metadata.get("structured_sections", [])
     assert isinstance(prompt, Prompt)

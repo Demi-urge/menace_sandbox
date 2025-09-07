@@ -115,6 +115,7 @@ chunks = get_chunk_summaries(Path("bots/example.py"), 800)
 prompt = engine.build_prompt(
     "refactor helper",
     summaries=[c["summary"] for c in chunks],
+    context_builder=engine.context_builder,
 )
 ```
 
