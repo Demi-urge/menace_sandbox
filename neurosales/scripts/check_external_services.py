@@ -1,9 +1,9 @@
+import os
 import sys
 from dotenv import load_dotenv
 from neurosales import config
-from prompt_engine import PromptEngine
-from vector_service import ContextBuilder
-from model_registry import get_client
+from billing.openai_wrapper import chat_completion_create
+from vector_service.context_builder import ContextBuilder
 
 load_dotenv()
 
@@ -13,10 +13,17 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
         print("OpenAI disabled")
         return True
     try:
-        client = get_client("openai", model="gpt-3.5-turbo", api_key=cfg.openai_key)
-        engine = PromptEngine(context_builder=ContextBuilder())
-        prompt = engine.build_prompt("ping", context_builder=ContextBuilder())
-        client.generate(prompt)
+        builder = ContextBuilder()
+    except Exception as e:
+        print(f"ContextBuilder initialization error: {e}")
+        return False
+    try:
+        os.environ.setdefault("OPENAI_API_KEY", cfg.openai_key)
+        chat_completion_create(
+            [{"role": "user", "content": "ping"}],
+            model="gpt-3.5-turbo",
+            context_builder=builder,
+        )
         print("OpenAI reachable")
         return True
     except Exception as e:
