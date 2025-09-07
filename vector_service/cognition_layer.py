@@ -38,7 +38,6 @@ from dynamic_path_router import resolve_path
 
 from .retriever import Retriever, PatchRetriever
 from .context_builder import ContextBuilder
-from .context_builder_utils import get_default_context_builder
 from .patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
 from .decorators import log_and_measure
@@ -99,7 +98,7 @@ class CognitionLayer:
         if context_builder is not None:
             self.context_builder = context_builder
         else:
-            self.context_builder = get_default_context_builder(
+            self.context_builder = ContextBuilder(
                 retriever=self.retriever,
                 patch_retriever=self.patch_retriever,
                 ranking_model=ranking_model,
