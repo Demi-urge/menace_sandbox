@@ -117,9 +117,19 @@ The repository includes a helper script,
 to ensure a ``context_builder`` keyword is threaded through common prompt
 helpers.  It flags calls to ``PromptEngine``, ``_build_prompt``,
 ``generate_patch``, bare ``build_prompt(...)`` helpers and methods named
-``build_prompt_with_memory`` when they omit the keyword.  Only direct
+``build_prompt_with_memory`` when they omit the keyword.  The checker also
+inspects direct ``openai.Completion.create`` and ``openai.ChatCompletion.create``
+invocations along with the ``chat_completion_create`` wrapper.  To intentionally
+skip a call, append ``# nocb`` on the call line (or the line above).  Only direct
 ``build_prompt(...)`` calls are checked to avoid warning on unrelated methods
 with the same name.
+
+```python
+import openai
+
+# openai.ChatCompletion.create call is ignored thanks to the marker
+openai.ChatCompletion.create([{"role": "user", "content": "hi"}])  # nocb
+```
 
 ## Custom prompt builders
 

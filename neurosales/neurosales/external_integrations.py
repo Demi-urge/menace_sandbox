@@ -152,7 +152,7 @@ class GPT4Client:
         if context:
             messages.append({"role": "system", "content": context})
         messages.append({"role": "user", "content": text})
-        resp = chat_completion_create(
+        resp = chat_completion_create(  # nocb
             messages,
             model="gpt-4",
             stream=True,

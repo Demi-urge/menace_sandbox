@@ -217,7 +217,7 @@ def test_openai_wrapper_injects_notice():
     fake_openai = types.SimpleNamespace(
         ChatCompletion=types.SimpleNamespace(create=fake_create)
     )
-    chat_completion_create(
+    chat_completion_create(  # nocb
         [{"role": "user", "content": "hi"}],
         model="gpt-3.5-turbo",
         openai_client=fake_openai,

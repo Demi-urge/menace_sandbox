@@ -913,7 +913,7 @@ class BotDevelopmentBot:
         """Call either local or cloud Codex API and return the raw response."""
         if openai and os.getenv("OPENAI_API_KEY"):
             openai.api_key = os.getenv("OPENAI_API_KEY")
-            return chat_completion_create(
+            return chat_completion_create(  # nocb
                 list(messages),
                 model=model,
                 temperature=0.1,
