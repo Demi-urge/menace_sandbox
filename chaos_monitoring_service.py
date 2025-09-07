@@ -3,8 +3,8 @@ from __future__ import annotations
 """Run chaos experiments and automatically rollback failing bots.
 
 The service relies on :class:`vector_service.ContextBuilder` for contextual
-analysis.  Importing this module without ``vector_service`` installed will
-raise an :class:`ImportError` with guidance for the integrator.
+analysis.  A builder must be provided by the caller when the default
+scheduler is used.
 """
 
 import logging
@@ -17,14 +17,10 @@ from .error_bot import ErrorDB
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
 from .advanced_error_management import AutomatedRollbackManager
+from typing import TYPE_CHECKING
 
-try:
+if TYPE_CHECKING:  # pragma: no cover - optional dependency for type hints
     from vector_service import ContextBuilder
-except Exception as exc:  # pragma: no cover - fail fast when dependency missing
-    raise ImportError(
-        "chaos_monitoring_service requires vector_service.ContextBuilder; install"
-        " the vector_service package to enable context retrieval"
-    ) from exc
 
 
 class ChaosMonitoringService:
