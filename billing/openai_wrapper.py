@@ -10,6 +10,8 @@ It allows passing a custom ``openai_client`` for easy testing.
 
 from typing import Any, Dict, List, Optional
 
+from vector_service.context_builder import ContextBuilder
+
 from resilience import retry_with_backoff
 from sandbox_settings import SandboxSettings
 from .prompt_notice import prepend_payment_notice
@@ -24,6 +26,7 @@ def chat_completion_create(
     messages: List[Dict[str, str]],
     *,
     openai_client: Optional[Any] = None,
+    context_builder: ContextBuilder | None = None,
     **kwargs: Any,
 ) -> Any:
     """Proxy ``openai.ChatCompletion.create`` with payment notice injection."""
@@ -32,6 +35,12 @@ def chat_completion_create(
     if client is None:  # pragma: no cover - import guard
         raise RuntimeError("openai library not available")
     msgs = prepend_payment_notice(messages)
+    if context_builder is not None and messages:
+        ctx = context_builder.build(messages[-1]["content"])
+        if isinstance(ctx, dict):
+            msgs.append(ctx)
+        else:
+            msgs.append({"role": "system", "content": ctx})
     _settings = SandboxSettings()
     delays = list(getattr(_settings, "codex_retry_delays", [2, 5, 10]))
     return retry_with_backoff(
