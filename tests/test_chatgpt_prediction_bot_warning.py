@@ -1,8 +1,6 @@
 import importlib
 import sys
 import types
-
-import pytest
 from pathlib import Path
 
 pkg = types.ModuleType("menace")
@@ -14,17 +12,18 @@ vector_service_pkg = types.ModuleType("vector_service")
 vector_service_pkg.__path__ = []
 vector_service_pkg.SharedVectorService = object
 vector_service_pkg.CognitionLayer = object
+
+
 class _StubContextBuilder:
     def refresh_db_weights(self):
         pass
+
+
 ctx_mod = types.ModuleType("vector_service.context_builder")
 ctx_mod.ContextBuilder = _StubContextBuilder
 sys.modules["vector_service"] = vector_service_pkg
 sys.modules["vector_service.context_builder"] = ctx_mod
 sys.modules["menace.shared_gpt_memory"] = types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
-
-
-DummyBuilder = _StubContextBuilder
 
 
 def test_warning_on_missing_sklearn(monkeypatch, caplog, tmp_path):
@@ -39,7 +38,7 @@ def test_warning_on_missing_sklearn(monkeypatch, caplog, tmp_path):
         sys.modules, "menace.shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
     )
     cpb = importlib.import_module("menace.chatgpt_prediction_bot")
-    bot = cpb.ChatGPTPredictionBot(tmp_path / "none.joblib", context_builder=DummyBuilder())
+    bot = cpb.ChatGPTPredictionBot(tmp_path / "none.joblib")
     assert "scikit-learn" in caplog.text
     assert not cpb._SKLEARN_AVAILABLE
     assert isinstance(bot.pipeline, cpb.Pipeline)
@@ -61,7 +60,7 @@ def test_fallback_prediction_stable(monkeypatch, tmp_path):
     cpb = importlib.import_module("menace.chatgpt_prediction_bot")
 
     bot = cpb.ChatGPTPredictionBot(
-        tmp_path / "none.joblib", l2=0.1, iters=5, val_steps=1, context_builder=DummyBuilder()
+        tmp_path / "none.joblib", l2=0.1, iters=5, val_steps=1
     )
     idea = cpb.IdeaFeatures(
         market_type="tech",

@@ -5,6 +5,10 @@ model when available.  If scikit-learn is missing, a small logistic regression
 ``Pipeline`` defined here is used instead.  Instantiating
 :class:`ChatGPTPredictionBot` will emit a warning when falling back to this
 simplified implementation.
+
+When using the bot's LLM features (``gpt_memory`` or ``client``), callers must
+provide a :class:`~vector_service.context_builder.ContextBuilder` instance to
+build the necessary context.
 """
 
 from __future__ import annotations
@@ -58,11 +62,6 @@ try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
-try:  # shared GPT memory instance
-    from .shared_gpt_memory import GPT_MEMORY_MANAGER
-except Exception:  # pragma: no cover - fallback for flat layout
-    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
-
 try:  # pragma: no cover - optional dependency
     from sentence_transformers import SentenceTransformer, util as st_util
 except Exception:  # pragma: no cover - optional dependency
@@ -669,27 +668,35 @@ class EnhancementEvaluation:
 
 
 class ChatGPTPredictionBot:
-    """Evaluate business ideas using a trained ML model."""
+    """Evaluate business ideas using a trained ML model.
+
+    LLM-driven predictions require both ``gpt_memory`` (or a ``client`` using
+    one) and a :class:`~vector_service.context_builder.ContextBuilder`.
+    """
 
     def __init__(
         self,
         model_path: Path | str | None = None,
         threshold: float | None = None,
         *,
-        context_builder: ContextBuilder,
+        context_builder: ContextBuilder | None = None,
         client: ChatGPTClient | None = None,
-        gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
+        gpt_memory: GPTMemoryInterface | None = None,
         **model_kwargs,
     ) -> None:
         """Load a trained model or fall back to the internal pipeline.
 
         A warning is logged when scikit-learn is unavailable and the simplified
-        pipeline is used.
+        pipeline is used.  When ``gpt_memory`` or ``client`` is supplied, a
+        ``ContextBuilder`` must also be provided.
         """
 
-        if context_builder is None:
-            raise ValueError("context_builder is required")
-        context_builder.refresh_db_weights()
+        if gpt_memory is not None and context_builder is None:
+            raise ValueError("context_builder is required when gpt_memory is provided")
+        if client is not None and context_builder is None:
+            raise ValueError("context_builder is required when client is provided")
+        if context_builder is not None:
+            context_builder.refresh_db_weights()
 
         self.model_path = Path(model_path) if model_path else CFG.model_path
         self.threshold = float(threshold) if threshold is not None else CFG.threshold
@@ -701,7 +708,7 @@ class ChatGPTPredictionBot:
                 client.context_builder = context_builder
             except Exception:
                 logger.debug("failed to attach context_builder to client", exc_info=True)
-            if getattr(client, "gpt_memory", None) is None:
+            if getattr(client, "gpt_memory", None) is None and gpt_memory is not None:
                 try:
                     client.gpt_memory = gpt_memory
                 except Exception:
