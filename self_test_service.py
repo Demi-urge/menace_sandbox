@@ -37,6 +37,11 @@ from contextlib import AsyncExitStack, contextmanager
 from db_router import init_db_router
 from dynamic_path_router import resolve_path, path_for_prompt
 
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder_utils import get_default_context_builder
+except Exception:  # pragma: no cover - fallback
+    def get_default_context_builder(**kwargs):  # type: ignore
+        return None
 MENACE_ID = uuid.uuid4().hex
 
 try:  # pragma: no cover - compatibility with pydantic v1/v2
@@ -563,7 +568,10 @@ class SelfTestService:
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.graph = graph or KnowledgeGraph()
-        self.error_logger = ErrorLogger(db, knowledge_graph=self.graph)
+        builder = get_default_context_builder()
+        self.error_logger = ErrorLogger(
+            db, knowledge_graph=self.graph, context_builder=builder
+        )
         self.data_bot = data_bot
         self.result_callback = result_callback
         self.container_image = container_image

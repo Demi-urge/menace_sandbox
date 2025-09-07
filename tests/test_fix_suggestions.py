@@ -4,9 +4,14 @@ import menace.error_bot as eb
 import menace.error_logger as elog
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 def test_log_fix_suggestions_records_and_triggers(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e.db")
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
     calls = []
 
     def fake_patch(module, *a, **k):

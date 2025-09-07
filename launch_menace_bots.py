@@ -142,9 +142,11 @@ def debug_and_deploy(
     tester = BotTestingBot()
     # instantiate telemetry logger for completeness
     try:
-        _ = ErrorLogger(error_db, knowledge_graph=KnowledgeGraph())
+        _ = ErrorLogger(
+            error_db, knowledge_graph=KnowledgeGraph(), context_builder=context_builder
+        )
     except TypeError:
-        _ = ErrorLogger(error_db)
+        _ = ErrorLogger(error_db, context_builder=context_builder)
 
     class _TelemProxy:
         def __init__(self, db: ErrorDB) -> None:

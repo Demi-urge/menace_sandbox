@@ -1,5 +1,9 @@
 import importlib
-from pathlib import Path
+
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
 
 
 def test_resolve_path_updates_after_repo_move(monkeypatch, tmp_path):
@@ -48,7 +52,11 @@ def test_error_logger_path_for_prompt_cache(monkeypatch, tmp_path):
 
     el = importlib.reload(importlib.import_module("menace.error_logger"))
     monkeypatch.setattr(el, "cdh", None)
-    monkeypatch.setattr(el, "propose_fix", lambda metrics, profile: [("pkg/mod.py", "hint")])  # path-ignore
+    monkeypatch.setattr(
+        el,
+        "propose_fix",
+        lambda metrics, profile: [("pkg/mod.py", "hint")],  # path-ignore
+    )
 
     class DummyDB:
         def __init__(self):
@@ -57,7 +65,7 @@ def test_error_logger_path_for_prompt_cache(monkeypatch, tmp_path):
         def add_telemetry(self, event):
             self.events.append(event)
 
-    logger = el.ErrorLogger(db=DummyDB())
+    logger = el.ErrorLogger(db=DummyDB(), context_builder=DummyBuilder())
     events1 = logger.log_fix_suggestions({}, {})
     assert events1 and events1[0].module == file_a.resolve().as_posix()
 

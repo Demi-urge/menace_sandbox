@@ -1,18 +1,22 @@
-import importlib, sys
-from pathlib import Path
+import importlib
+import sys
 import pytest
-
-pytest.importorskip("networkx")
-
 import menace.error_bot as eb
 import menace.error_logger as elog
 import menace.knowledge_graph as kg
+
+pytest.importorskip("networkx")
+
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
 
 
 def test_update_error_stats_records_causes(tmp_path, monkeypatch):
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = eb.ErrorDB(tmp_path / "e.db")
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
 
     mod = tmp_path / "m.py"  # path-ignore
     mod.write_text("def boom():\n    raise ValueError('bad')\n")

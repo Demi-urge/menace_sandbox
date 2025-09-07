@@ -1832,7 +1832,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 logger.exception("failed to initialise SelfCodingEngine")
         if TelemetryFeedback and ErrorLogger and engine is not None:
             try:
-                telemetry = TelemetryFeedback(ErrorLogger(), engine)
+                telemetry = TelemetryFeedback(
+                    ErrorLogger(context_builder=builder), engine
+                )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise telemetry feedback")
 

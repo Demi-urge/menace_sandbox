@@ -3,6 +3,11 @@ import menace.error_logger as elog
 from roi_calculator import propose_fix
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 def test_propose_fix_highlights_missing_metrics():
     profile = {
         "weights": {
@@ -31,7 +36,7 @@ def test_propose_fix_prioritises_vetoed_bottlenecks():
 
 def test_log_fix_suggestions_attaches_and_triggers_hooks(tmp_path, monkeypatch, caplog):
     db = eb.ErrorDB(tmp_path / "e.db")
-    logger = elog.ErrorLogger(db)
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
     patch_calls = []
 
     def fake_patch(module, *a, **k):
