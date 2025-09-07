@@ -28,6 +28,7 @@ from vector_service import (
     VectorServiceError,
     FallbackResult,
 )
+from vector_service.context_builder import ContextBuilder
 from vector_service.patch_logger import RoiTag
 try:  # pragma: no cover - optional dependency
     from roi_tracker import ROITracker
@@ -58,7 +59,8 @@ app = FastAPI()
 # expose stateless interfaces which makes them safe to reuse across requests.
 _retriever = Retriever()
 _roi_tracker = ROITracker()
-_cognition_layer = CognitionLayer(roi_tracker=_roi_tracker)
+_context_builder = ContextBuilder(retriever=_retriever)
+_cognition_layer = CognitionLayer(context_builder=_context_builder, roi_tracker=_roi_tracker)
 _patch_logger = PatchLogger(roi_tracker=_roi_tracker)
 _backfill = EmbeddingBackfill()
 _ranker_scheduler = start_scheduler_from_env([_cognition_layer])

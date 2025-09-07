@@ -34,6 +34,7 @@ from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
 from vector_service import CognitionLayer
+from vector_service.context_builder import ContextBuilder
 from .governance import check_veto, load_rules
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,8 @@ class ActionPlanner:
         self.priority_weights: Dict[str, float] = {}
         if cognition_layer is None:
             try:
-                cognition_layer = CognitionLayer()
+                builder = ContextBuilder()
+                cognition_layer = CognitionLayer(context_builder=builder)
             except Exception:  # pragma: no cover - optional dependency
                 cognition_layer = None
         self.cognition_layer = cognition_layer
