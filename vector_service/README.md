@@ -18,10 +18,12 @@ top hits. `cognition_layer.py` orchestrates this flow:
 
 ```python
 from roi_tracker import ROITracker  # optional
+from vector_service.context_builder import ContextBuilder
 from vector_service.cognition_layer import CognitionLayer
 
 tracker = ROITracker()
-layer = CognitionLayer(roi_tracker=tracker)
+builder = ContextBuilder()
+layer = CognitionLayer(context_builder=builder, roi_tracker=tracker)
 
 ctx, session_id = layer.query("How can I fix latency?")
 # ...apply patch based on ctx...
@@ -85,10 +87,11 @@ retrieval ranker:
 
 ```python
 from vector_service.cognition_layer import CognitionLayer
+from vector_service.context_builder import ContextBuilder
 from vector_service.embedding_backfill import schedule_backfill
 import asyncio
 
-layer = CognitionLayer()
+layer = CognitionLayer(context_builder=ContextBuilder())
 ctx, sid = layer.query("Improve throughput?")
 layer.record_patch_outcome(sid, True)
 # contributors gain weight in the ranker

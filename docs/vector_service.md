@@ -113,8 +113,9 @@ applied.
 
 ```python
 from vector_service import CognitionLayer
+from vector_service.context_builder import ContextBuilder
 
-layer = CognitionLayer()
+layer = CognitionLayer(context_builder=ContextBuilder())
 ctx, sid = layer.query("What is ROI?")
 # ... apply patch ...
 layer.record_patch_outcome(sid, True)
