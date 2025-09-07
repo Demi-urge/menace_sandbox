@@ -54,12 +54,15 @@ class DummyContextBuilder:
 
 vs_mod = types.SimpleNamespace(
     ContextBuilder=DummyContextBuilder,
-    get_default_context_builder=lambda **kwargs: DummyContextBuilder(),
     CognitionLayer=object,
     EmbeddableDBMixin=object,
     SharedVectorService=object,
 )
 sys.modules.setdefault("vector_service", vs_mod)
+sys.modules.setdefault(
+    "vector_service.context_builder",
+    types.SimpleNamespace(ContextBuilder=DummyContextBuilder),
+)
 
 import menace.watchdog as wd
 import menace.auto_escalation_manager as aem
@@ -133,10 +136,12 @@ def test_publish_retry_and_log(monkeypatch, caplog):
             attempts.append(True)
             raise RuntimeError("boom")
 
-    from vector_service import get_default_context_builder
+    from vector_service.context_builder import ContextBuilder
 
     mgr = aem.AutoEscalationManager(
-        context_builder=get_default_context_builder(),
+        context_builder=ContextBuilder(
+            "bots.db", "code.db", "errors.db", "workflows.db"
+        ),
         event_bus=DummyBus(),
         publish_attempts=3,
     )
