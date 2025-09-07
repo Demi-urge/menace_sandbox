@@ -386,7 +386,7 @@ def _init_unused_bots() -> None:
         BotTestingBot,
         _wrap(ChatGPTEnhancementBot, client, context_builder=builder),
         _wrap(ChatGPTPredictionBot, client=client, context_builder=builder),
-        _wrap(ChatGPTResearchBot, client),
+        _wrap(ChatGPTResearchBot, builder, client),
         CompetitiveIntelligenceBot,
         _wrap(
             ContrarianModelBot,

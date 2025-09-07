@@ -15,7 +15,7 @@ _deps = DependencyManager()
 
 requests = _deps.load("requests", lambda: __import__("requests"))  # type: ignore
 from dataclasses import dataclass, asdict, field
-from typing import Iterable, List, Optional, Callable
+from typing import Iterable, List, Optional, Callable, Any
 import re
 from collections import Counter
 np = _deps.load("numpy", lambda: __import__("numpy"))  # type: ignore
@@ -116,6 +116,11 @@ try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
+
+try:  # optional context builder
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - fallback when service unavailable
+    ContextBuilder = Any  # type: ignore
 
 DBRouter = _deps.load(
     "DBRouter", lambda: __import__("menace.db_router", fromlist=["DBRouter"]).DBRouter
@@ -593,7 +598,8 @@ class ChatGPTResearchBot:
 
     def __init__(
         self,
-        client: ChatGPTClient,
+        context_builder: ContextBuilder,
+        client: ChatGPTClient | None = None,
         send_callback: Optional[Callable[[Iterable[Exchange], str], None]] = None,
         db_steward: "DBRouter" | None = None,
         summary_config: SummaryConfig | None = None,
@@ -601,6 +607,11 @@ class ChatGPTResearchBot:
         settings: ResearchBotSettings | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
     ) -> None:
+        self.context_builder = context_builder
+        if client is None:
+            client = ChatGPTClient(
+                context_builder=context_builder, gpt_memory=gpt_memory
+            )
         if not isinstance(client, ChatGPTClient):
             raise TypeError("client must be ChatGPTClient")
         self.client = client
@@ -616,6 +627,13 @@ class ChatGPTResearchBot:
                 self.client.gpt_memory = self.gpt_memory
             except Exception:
                 logger.debug("failed to attach gpt_memory to client", exc_info=True)
+        if getattr(self.client, "context_builder", None) is None:
+            try:
+                self.client.context_builder = self.context_builder
+            except Exception:
+                logger.debug(
+                    "failed to attach context_builder to client", exc_info=True
+                )
 
     def _truncate_history(self, text: str) -> str:
         limit = self.settings.conversation_token_limit
@@ -643,7 +661,7 @@ class ChatGPTResearchBot:
                 "chatgpt_research_bot._ask",
                 b_prompt,
                 memory=self.gpt_memory,
-                context_builder=self.client.context_builder,
+                context_builder=self.context_builder,
                 tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
             if not isinstance(data, dict):

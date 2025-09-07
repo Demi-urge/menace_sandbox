@@ -88,7 +88,7 @@ def test_chatgpt_integration(monkeypatch):
         return {"choices": [{"message": {"content": "Some info"}}]}
 
     monkeypatch.setattr(client, "ask", fake_ask)
-    chat_bot = crb.ChatGPTResearchBot(client)
+    chat_bot = crb.ChatGPTResearchBot(builder, client)
 
     text_bot = rab.TextResearchBot()
     monkeypatch.setattr(
