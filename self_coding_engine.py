@@ -1099,8 +1099,9 @@ class SelfCodingEngine:
         resolved = path_for_prompt(path) if path else None
         self._apply_prompt_style(description, module=resolved or "visual_agent")
         retry_trace = self._last_retry_trace
+        build = self.prompt_engine.build_prompt
         try:
-            prompt_obj = self.prompt_engine.build_prompt(
+            prompt_obj = build(
                 description,
                 context="\n".join([p for p in (context.strip(), repo_layout) if p]),
                 retrieval_context=retrieval_context or "",
@@ -1110,7 +1111,7 @@ class SelfCodingEngine:
                 strategy=strategy,
             )
         except TypeError:
-            prompt_obj = self.prompt_engine.build_prompt(
+            prompt_obj = build(
                 description,
                 context="\n".join([p for p in (context.strip(), repo_layout) if p]),
                 retrieval_context=retrieval_context or "",
@@ -1262,8 +1263,9 @@ class SelfCodingEngine:
                 or metadata.get("prompt_id")
                 or metadata.get("prompt_strategy")
             )
+        build = self.prompt_engine.build_prompt
         try:
-            prompt_obj = self.prompt_engine.build_prompt(
+            prompt_obj = build(
                 description,
                 context=context_block,
                 retrieval_context=retrieval_context,
@@ -1287,7 +1289,7 @@ class SelfCodingEngine:
                     if context_block
                     else instr
                 )
-            prompt_obj = self.prompt_engine.build_prompt(
+            prompt_obj = build(
                 description,
                 context=context_block,
                 retrieval_context=retrieval_context,

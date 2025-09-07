@@ -1246,9 +1246,14 @@ class PromptEngine:
     ) -> Prompt:
         """Class method wrapper used by existing callers and tests."""
 
-        engine = cls(
-            retriever=retriever,
+        return build_prompt(
+            goal,
+            retry_trace=retry_trace,
+            context=context,
+            retrieval_context=retrieval_context,
+            summaries=summaries,
             context_builder=context_builder,
+            retriever=retriever,
             roi_tracker=roi_tracker,
             confidence_threshold=confidence_threshold,
             top_n=top_n,
@@ -1258,16 +1263,8 @@ class PromptEngine:
             trainer=trainer,
             optimizer=optimizer,
             optimizer_refresh_interval=optimizer_refresh_interval,
-        )
-        return engine.build_prompt(
-            goal,
-            context=context,
-            retrieval_context=retrieval_context,
-            retry_trace=retry_trace,
-            tone=tone,
-            summaries=summaries,
-            strategy=strategy,
             target_region=target_region,
+            strategy=strategy,
         )
 
 
@@ -1279,6 +1276,9 @@ def build_prompt(
     retrieval_context: str | None = None,
     summaries: List[str] | None = None,
     context_builder: ContextBuilder,
+    retriever: Retriever | None = None,
+    roi_tracker: Any | None = None,
+    confidence_threshold: float = 0.3,
     top_n: int = 5,
     success_header: str = "Given the following pattern:",
     failure_header: str = "Avoid {summary} because it caused {outcome}:",
@@ -1289,21 +1289,13 @@ def build_prompt(
     target_region: TargetRegion | None = None,
     strategy: str | None = None,
 ) -> Prompt:
-    """Convenience wrapper mirroring :meth:`PromptEngine.construct_prompt`.
+    """Convenience helper to build a :class:`Prompt` without instantiating ``PromptEngine``."""
 
-    ``strategy`` accepts the same values as :meth:`PromptEngine.build_prompt`,
-    e.g. ``strict_fix`` or ``delete_rebuild``.  The helper instantiates a
-    temporary :class:`PromptEngine` and returns the resulting :class:`Prompt`
-    instance.
-    """
-
-    return PromptEngine.construct_prompt(
-        goal,
-        retry_trace,
-        context=context,
-        retrieval_context=retrieval_context,
-        summaries=summaries,
+    engine = PromptEngine(
+        retriever=retriever,
         context_builder=context_builder,
+        roi_tracker=roi_tracker,
+        confidence_threshold=confidence_threshold,
         top_n=top_n,
         success_header=success_header,
         failure_header=failure_header,
@@ -1311,8 +1303,17 @@ def build_prompt(
         trainer=trainer,
         optimizer=optimizer,
         optimizer_refresh_interval=optimizer_refresh_interval,
-        target_region=target_region,
+    )
+    build = engine.build_prompt
+    return build(
+        goal,
+        context=context,
+        retrieval_context=retrieval_context,
+        retry_trace=retry_trace,
+        tone=tone,
+        summaries=summaries,
         strategy=strategy,
+        target_region=target_region,
     )
 
 
