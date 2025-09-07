@@ -100,6 +100,13 @@ try:  # pragma: no cover - optional
 except Exception:  # pragma: no cover - fallback
     class ErrorResult(Exception):  # type: ignore
         pass
+
+try:  # pragma: no cover - optional
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - fallback when service missing
+    ContextBuilder = Any  # type: ignore
+
+from snippet_compressor import compress_snippets
 DEFAULT_IDEA_DB = database_manager.DB_PATH
 IDEA_DB_PATH = Path(resolve_path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB))))
 
@@ -119,6 +126,7 @@ class ChatGPTClient:
     gpt_memory: "GPTMemoryInterface | None" = field(
         default_factory=lambda: GPT_MEMORY_MANAGER
     )
+    context_builder: ContextBuilder | None = None
 
     def __post_init__(self) -> None:
         if not self.session:
@@ -137,6 +145,13 @@ class ChatGPTClient:
                 logger.exception("failed to load offline cache: %s", exc)
                 if RAISE_ERRORS:
                     raise
+        if self.context_builder is not None:
+            try:
+                self.context_builder.refresh_db_weights()
+            except Exception as exc:  # pragma: no cover - validation
+                raise RuntimeError(
+                    "provided ContextBuilder cannot query local databases"
+                ) from exc
 
     def ask(
         self,
@@ -409,31 +424,54 @@ class ChatGPTClient:
         return {"choices": [{"message": {"content": "offline"}}]}
 
     def build_prompt_with_memory(
-        self, tags: list[str], prompt: str
+        self,
+        tags: list[str],
+        prompt: str,
+        context_builder: ContextBuilder | None = None,
     ) -> List[Dict[str, str]]:
-        """Prepend memory-derived context to ``prompt`` if available."""
-        messages: List[Dict[str, str]] = [{"role": "user", "content": prompt}]
+        """Prepend builder and memory-derived context to ``prompt`` if available."""
+
+        builder = context_builder or self.context_builder
+        system_msgs: List[Dict[str, str]] = []
+        if builder is not None:
+            try:
+                query = " ".join(tags)
+                ctx_res = builder.build(query)
+                ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+                if ctx:
+                    ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
+                    system_msgs.append({"role": "system", "content": ctx})
+            except Exception:
+                logger.exception("failed to build vector context")
+
         if self.gpt_memory is not None:
             try:
+                mem_ctx = ""
                 if hasattr(self.gpt_memory, "search_context"):
                     entries = self.gpt_memory.search_context("", tags=tags)
                     if entries:
-                        ctx = "\n".join(
+                        mem_ctx = "\n".join(
                             f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}"
                             for e in entries
                         )
-                        messages = [{"role": "system", "content": ctx}] + messages
                 elif hasattr(self.gpt_memory, "fetch_context"):
-                    ctx = self.gpt_memory.fetch_context(tags)
-                    if ctx:
-                        messages = [{"role": "system", "content": ctx}] + messages
+                    mem_ctx = self.gpt_memory.fetch_context(tags)
+                if mem_ctx:
+                    system_msgs.append({"role": "system", "content": mem_ctx})
             except Exception:
                 logger.exception("failed to fetch memory context")
+
+        messages: List[Dict[str, str]] = system_msgs + [
+            {"role": "user", "content": prompt}
+        ]
         return messages
 
 
 def build_prompt(
-    client: ChatGPTClient, tags: Iterable[str], prior: str | None = None
+    client: ChatGPTClient,
+    context_builder: ContextBuilder,
+    tags: Iterable[str],
+    prior: str | None = None,
 ) -> List[Dict[str, str]]:
     """Construct a prompt and fetch memory-aware messages via ``client``."""
     parts = ["Suggest five new online business models"]
@@ -446,7 +484,7 @@ def build_prompt(
         + ". Respond in JSON list format with fields name, description and tags."
     )
     base_tags = [IMPROVEMENT_PATH, *tags]
-    return client.build_prompt_with_memory(base_tags, prompt)
+    return client.build_prompt_with_memory(base_tags, prompt, context_builder)
 
 
 @dataclass
