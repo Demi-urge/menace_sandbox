@@ -1,7 +1,8 @@
-import types
-import types
+import importlib
 import sys
+import types
 from pathlib import Path
+
 import pytest
 
 pkg = types.ModuleType("menace")
@@ -13,9 +14,13 @@ vector_service_pkg = types.ModuleType("vector_service")
 vector_service_pkg.__path__ = []
 vector_service_pkg.SharedVectorService = object
 vector_service_pkg.CognitionLayer = object
+
+
 class _StubContextBuilder:
     def refresh_db_weights(self):
         pass
+
+
 ctx_mod = types.ModuleType("vector_service.context_builder")
 ctx_mod.ContextBuilder = _StubContextBuilder
 sys.modules["vector_service"] = vector_service_pkg
@@ -30,9 +35,10 @@ sys.modules.setdefault(
     "menace.database_management_bot", types.SimpleNamespace(DatabaseManagementBot=object)
 )
 
-import menace.chatgpt_prediction_bot as cpb
+cpb = importlib.import_module("menace.chatgpt_prediction_bot")
 
 DummyBuilder = _StubContextBuilder
+
 
 class FakeMemory:
     def __init__(self):
@@ -68,3 +74,11 @@ def test_enhancement_uses_memory(monkeypatch):
     assert mem.logged[0][0].startswith("Evaluate enhancement")
     assert mem.logged[0][1] == "resp"
     assert cpb.INSIGHT in mem.logged[0][2]
+
+
+def test_memory_without_builder_errors(monkeypatch):
+    mem = FakeMemory()
+    monkeypatch.setattr(cpb, "joblib", None)
+    monkeypatch.setattr(cpb, "sentiment_score", lambda text: 0.0)
+    with pytest.raises(ValueError, match="context_builder"):
+        cpb.ChatGPTPredictionBot(gpt_memory=mem)

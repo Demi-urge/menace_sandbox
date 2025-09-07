@@ -1,14 +1,14 @@
-import pytest
-
-pytest.importorskip("joblib")
-
-import joblib
+import importlib
+import sys
+import types
 from pathlib import Path
+
+import pytest
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-import types, sys
+joblib = pytest.importorskip("joblib")
 
 pkg = types.ModuleType("menace")
 pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
@@ -19,18 +19,22 @@ vector_service_pkg = types.ModuleType("vector_service")
 vector_service_pkg.__path__ = []
 vector_service_pkg.SharedVectorService = object
 vector_service_pkg.CognitionLayer = object
+
+
 class _StubContextBuilder:
     def refresh_db_weights(self):
         pass
+
+
 ctx_mod = types.ModuleType("vector_service.context_builder")
 ctx_mod.ContextBuilder = _StubContextBuilder
 sys.modules["vector_service"] = vector_service_pkg
 sys.modules["vector_service.context_builder"] = ctx_mod
 sys.modules["menace.shared_gpt_memory"] = types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
 
-import menace.chatgpt_prediction_bot as cpb
 
-DummyBuilder = _StubContextBuilder
+cpb = importlib.import_module("menace.chatgpt_prediction_bot")
+
 
 def build_model(path: Path) -> None:
     X = [
@@ -62,7 +66,7 @@ def build_model(path: Path) -> None:
 def test_prediction(tmp_path):
     model_path = tmp_path / "model.joblib"
     build_model(model_path)
-    bot = cpb.ChatGPTPredictionBot(model_path, context_builder=DummyBuilder())
+    bot = cpb.ChatGPTPredictionBot(model_path)
     idea = cpb.IdeaFeatures(
         market_type="finance",
         monetization_model="subscription",
@@ -79,7 +83,7 @@ def test_prediction(tmp_path):
 def test_batch_prediction(tmp_path):
     model_path = tmp_path / "model.joblib"
     build_model(model_path)
-    bot = cpb.ChatGPTPredictionBot(model_path, context_builder=DummyBuilder())
+    bot = cpb.ChatGPTPredictionBot(model_path)
     ideas = [
         cpb.IdeaFeatures(
             market_type="tech",
