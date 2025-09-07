@@ -3,7 +3,9 @@
 This entry point initialises :data:`GLOBAL_ROUTER` via :func:`init_db_router`
 before importing modules that touch the database.  Doing so ensures all
 database access uses the configured router rather than creating implicit
-connections.
+connections.  Callers must provide a :class:`ContextBuilder` to
+``debug_and_deploy``; the CLI helper constructs a default instance and passes it
+through.
 """
 
 from __future__ import annotations
@@ -37,7 +39,10 @@ from menace.code_database import CodeDB  # noqa: E402
 from menace.menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from menace.self_coding_engine import SelfCodingEngine  # noqa: E402
 try:
-    from vector_service.context_builder_utils import get_default_context_builder  # noqa: E402
+    from vector_service.context_builder_utils import (  # noqa: E402
+        ContextBuilder,
+        get_default_context_builder,
+    )
 except ImportError:  # pragma: no cover - fallback when helper missing
     from vector_service.context_builder import ContextBuilder  # type: ignore
 
@@ -101,17 +106,38 @@ def _infer_schedule(doc: str) -> str:
     return "once"
 
 
-def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) -> None:
-    """Run tests, apply fixes and deploy existing bots in *repo*."""
+def debug_and_deploy(
+    repo: Path,
+    *,
+    context_builder: ContextBuilder,
+    jobs: int = 1,
+    override_veto: bool = False,
+) -> None:
+    """Run tests, apply fixes and deploy existing bots in *repo*.
+
+    Parameters
+    ----------
+    repo:
+        Repository root containing bots to validate and deploy.
+    context_builder:
+        Preconfigured :class:`~vector_service.context_builder.ContextBuilder` used
+        for semantic context generation.  Its weights are refreshed before
+        building the coding engine.
+    jobs:
+        Number of parallel jobs for the test runner.
+    override_veto:
+        Whether to bypass governance vetoes when allowed.
+    """
 
     try:
         code_db = CodeDB(router=GLOBAL_ROUTER)
     except TypeError:
         code_db = CodeDB()
     memory_mgr = MenaceMemoryManager()
-    builder = get_default_context_builder()
-    builder.refresh_db_weights()
-    engine = SelfCodingEngine(code_db, memory_mgr, context_builder=builder)
+    context_builder.refresh_db_weights()
+    engine = SelfCodingEngine(
+        code_db, memory_mgr, context_builder=context_builder
+    )
     error_db = ErrorDB(router=GLOBAL_ROUTER)
     tester = BotTestingBot()
     # instantiate telemetry logger for completeness
@@ -171,7 +197,7 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
 
         SelfDebuggerSandbox = _SelfDebuggerSandbox
     sandbox = SelfDebuggerSandbox(_TelemProxy(error_db), engine)
-    sandbox.context_builder = builder
+    sandbox.context_builder = context_builder
     try:
         deployer = DeploymentBot(
             code_db=code_db,
@@ -261,6 +287,12 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1, override_veto: bool = False) 
 
 
 def main() -> None:
+    """CLI entry point for self-debugging and deployment.
+
+    A default :class:`ContextBuilder` is created and passed to
+    :func:`debug_and_deploy`.
+    """
+
     parser = argparse.ArgumentParser(description="Self-debug and deploy Menace")
     parser.add_argument("repo", nargs="?", default=".", help="Path to repo")
     parser.add_argument("--jobs", "-j", type=int, default=1, help="Parallel jobs")
@@ -271,7 +303,13 @@ def main() -> None:
         help="Bypass governance vetoes when override is allowed",
     )
     args = parser.parse_args()
-    debug_and_deploy(Path(args.repo), jobs=args.jobs, override_veto=args.override_veto)
+    builder = get_default_context_builder()
+    debug_and_deploy(
+        Path(args.repo),
+        context_builder=builder,
+        jobs=args.jobs,
+        override_veto=args.override_veto,
+    )
 
 
 if __name__ == "__main__":
