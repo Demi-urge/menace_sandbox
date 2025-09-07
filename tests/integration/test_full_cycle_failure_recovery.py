@@ -6,7 +6,7 @@ import types
 import pytest
 
 from tests.test_self_test_service import mod as sts
-from tests.test_self_debugger_sandbox import sds, DummyTelem, DummyTrail
+from tests.test_self_debugger_sandbox import sds, DummyTelem, DummyTrail, DummyBuilder
 from tests.test_self_debugger_patch_flow import FlowEngine
 
 
@@ -79,7 +79,9 @@ def test_full_cycle_failure_and_recovery(monkeypatch, tmp_path, caplog):
     # ---- SelfDebuggerSandbox: failing subprocess then recovery ----
     engine = FlowEngine()
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder(), audit_trail=trail
+    )
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"])

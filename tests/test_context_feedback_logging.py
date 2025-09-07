@@ -154,7 +154,6 @@ _spec = importlib.util.spec_from_file_location('menace.self_debugger_sandbox', P
 sds = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None
 _spec.loader.exec_module(sds)
-sds.CONTEXT_BUILDER = _CB()
 
 
 class DummyTelem:
@@ -177,8 +176,9 @@ def test_context_feedback_logs_malformed_metadata(monkeypatch, caplog):
             pass
 
     monkeypatch.setattr(sds, 'ContextBuilder', DummyBuilder)
-    sds.CONTEXT_BUILDER = DummyBuilder()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
     report = types.SimpleNamespace(trace='x')
 
     with caplog.at_level(logging.ERROR, logger='AutomatedDebugger'):

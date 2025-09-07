@@ -102,24 +102,13 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     from sandbox_runner import post_round_orphan_scan  # type: ignore
 try:
-    from vector_service import ContextBuilder, get_default_context_builder
+    from vector_service import ContextBuilder
     from vector_service.context_builder import record_failed_tags
 except Exception:  # pragma: no cover - optional dependency
     ContextBuilder = None  # type: ignore
 
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs) if ContextBuilder else None
-
     def record_failed_tags(_tags):  # type: ignore
         return None
-
-# Global ContextBuilder instance for reuse across patch generation calls
-try:
-    CONTEXT_BUILDER = get_default_context_builder() if ContextBuilder else None
-    if CONTEXT_BUILDER is not None:
-        CONTEXT_BUILDER.refresh_db_weights()
-except Exception:
-    CONTEXT_BUILDER = None
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -146,6 +135,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
     Parameters
     ----------
+    context_builder:
+        Preconfigured :class:`~vector_service.context_builder.ContextBuilder` used
+        for context retrieval and patch scoring.
     flakiness_runs:
         Number of test executions used when estimating flakiness.
     weight_update_interval:
@@ -166,12 +158,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self,
         telemetry_db: object,
         engine: SelfCodingEngine,
-        context_builder: Any | None = None,
+        *,
+        context_builder: ContextBuilder,
         audit_trail: AuditTrail | None = None,
         policy: SelfImprovementPolicy | None = None,
         state_getter: Callable[[], tuple[int, ...]] | None = None,
         error_predictor: ErrorClusterPredictor | None = None,
-        *,
         score_weights: tuple[float, float, float, float, float, float] | None = None,
         flakiness_runs: int | None = None,
         smoothing_factor: float = 0.5,
@@ -182,12 +174,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         merge_threshold: float | None = None,
         settings: SandboxSettings | None = None,
     ) -> None:
-        global CONTEXT_BUILDER
-        builder = context_builder or CONTEXT_BUILDER
-        if builder is None:
+        if context_builder is None:
             raise TypeError("context_builder is required")
-        CONTEXT_BUILDER = builder
-        super().__init__(telemetry_db, engine, builder)
+        context_builder.refresh_db_weights()
+        super().__init__(telemetry_db, engine, context_builder)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
         self.policy = policy
         self.state_getter = state_getter
@@ -337,7 +327,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._last_test_log: Path | None = None
         self.graph = KnowledgeGraph()
         self.error_logger = ErrorLogger(
-            knowledge_graph=self.graph, context_builder=CONTEXT_BUILDER
+            knowledge_graph=self.graph, context_builder=self.context_builder
         )
         self._attempt_tracker = PatchAttemptTracker(self.logger)
         self._last_region: TargetRegion | None = None
@@ -446,14 +436,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     before_target = Path(before_dir) / rel
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
-                    if CONTEXT_BUILDER is None:
+                    if self.context_builder is None:  # pragma: no cover - defensive
                         self.logger.warning(
                             "ContextBuilder unavailable; skipping patch generation",
                         )
                         patch_id = None
                     else:
                         patch_id = generate_patch(
-                            mod, self.engine, context_builder=CONTEXT_BUILDER
+                            mod, self.engine, context_builder=self.context_builder
                         )
                     if patch_id is not None:
                         try:
@@ -969,14 +959,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 failed_tags = db.failed_strategy_tags()
             except Exception:
                 self.logger.exception("failed strategy tag lookup failed")
-        try:
-            builder = get_default_context_builder()
-            if builder is None:
-                return []
-            if failed_tags:
-                builder.exclude_failed_strategies(failed_tags)
-        except Exception:
+        builder = self.context_builder
+        if builder is None:
             return []
+        if failed_tags:
+            try:
+                builder.exclude_failed_strategies(failed_tags)
+            except Exception:
+                return []
         try:
             ctx, meta = builder.query(
                 report.trace,

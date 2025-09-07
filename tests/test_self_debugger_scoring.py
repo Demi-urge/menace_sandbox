@@ -2,7 +2,7 @@ import types
 import logging
 import threading
 import contextlib
-from tests.test_self_debugger_sandbox import sds, DummyTelem, DummyEngine
+from tests.test_self_debugger_sandbox import sds, DummyTelem, DummyEngine, DummyBuilder
 
 
 def test_z_score_prefers_better_patch(tmp_path):
@@ -49,6 +49,7 @@ def test_z_score_prefers_better_patch(tmp_path):
     dbg = sds.SelfDebuggerSandbox(
         DummyTelem(),
         DummyEngine(),
+        context_builder=DummyBuilder(),
         score_weights=(1.0, 1.0, 1.0, 1.0, 0.0, 0.0),
         weight_update_interval=0.0,
     )
@@ -63,7 +64,12 @@ def test_z_score_prefers_better_patch(tmp_path):
 
 
 def test_complexity_penalizes_score():
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), score_weights=(1.0, 1.0, 1.0, 1.0, 0.0, 0.0))
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        score_weights=(1.0, 1.0, 1.0, 1.0, 0.0, 0.0),
+    )
     dbg._update_score_weights = lambda *a, **k: None
     dbg._metric_stats = {
         "coverage": (0.1, 0.05),
@@ -82,6 +88,7 @@ def test_complexity_penalizes_score():
 
 def test_entropy_penalizes_score():
     dbg = sds.SelfDebuggerSandbox.__new__(sds.SelfDebuggerSandbox)
+    dbg.context_builder = DummyBuilder()
     dbg.score_weights = (1.0, 1.0, 1.0, 1.0, 0.0, 0.0)
     dbg._baseline_tracker = types.SimpleNamespace(
         update=lambda s: (0.0, 0.0), stats=lambda: (0.0, 0.0)

@@ -5,7 +5,13 @@ import contextlib
 import types
 from pathlib import Path
 
-from tests.test_self_debugger_sandbox import sds, DummyTelem, DummyEngine, DummyTrail
+from tests.test_self_debugger_sandbox import (
+    sds,
+    DummyTelem,
+    DummyEngine,
+    DummyTrail,
+    DummyBuilder,
+)
 
 
 class RB:
@@ -35,7 +41,9 @@ class FlowEngine(DummyEngine):
 def _setup_dbg(monkeypatch, tmp_path, coverage_vals, error_vals):
     engine = FlowEngine()
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder(), audit_trail=trail
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n    pass\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
@@ -76,6 +84,7 @@ def test_bad_patch_rolled_back(monkeypatch, tmp_path):
 
 def test_composite_score_prefers_better(monkeypatch):
     dbg = sds.SelfDebuggerSandbox.__new__(sds.SelfDebuggerSandbox)
+    dbg.context_builder = DummyBuilder()
     dbg.score_weights = (1.0, 1.0, 1.0, 1.0, 0.0, 0.0)
     dbg._baseline_tracker = types.SimpleNamespace(
         update=lambda s: (0.0, 0.0), stats=lambda: (0.0, 0.0)

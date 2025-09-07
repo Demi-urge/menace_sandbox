@@ -198,8 +198,9 @@ def debug_and_deploy(
                     pass
 
         SelfDebuggerSandbox = _SelfDebuggerSandbox
-    sandbox = SelfDebuggerSandbox(_TelemProxy(error_db), engine)
-    sandbox.context_builder = context_builder
+    sandbox = SelfDebuggerSandbox(
+        _TelemProxy(error_db), engine, context_builder=context_builder
+    )
     try:
         deployer = DeploymentBot(
             code_db=code_db,

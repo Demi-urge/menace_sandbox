@@ -153,7 +153,12 @@ sandbox_stub.__path__ = [str(Path(__file__).resolve().parents[1] / "sandbox_runn
 sandbox_stub.post_round_orphan_scan = lambda *a, **k: ([], True, True)
 sys.modules.setdefault("sandbox_runner", sandbox_stub)
 
-from tests.test_self_debugger_sandbox import sds, DummyTelem, DummyEngine  # noqa: E402
+from tests.test_self_debugger_sandbox import (
+    sds,
+    DummyTelem,
+    DummyEngine,
+    DummyBuilder,
+)  # noqa: E402
 
 
 def test_preemptive_fix_triggers_scan_once_success(monkeypatch, tmp_path):
@@ -174,7 +179,10 @@ def test_preemptive_fix_triggers_scan_once_success(monkeypatch, tmp_path):
         predict_high_risk_modules=lambda top_n=5: ["mod.py"]  # path-ignore
     )
     sandbox = sds.SelfDebuggerSandbox(
-        DummyTelem(), DummyEngine(), error_predictor=predictor
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        error_predictor=predictor,
     )
 
     sandbox.preemptive_fix_high_risk_modules(limit=1)
@@ -199,7 +207,10 @@ def test_preemptive_fix_scan_failure_handled(monkeypatch, tmp_path):
         predict_high_risk_modules=lambda top_n=5: ["mod.py"]  # path-ignore
     )
     sandbox = sds.SelfDebuggerSandbox(
-        DummyTelem(), DummyEngine(), error_predictor=predictor
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        error_predictor=predictor,
     )
 
     sandbox.preemptive_fix_high_risk_modules(limit=1)

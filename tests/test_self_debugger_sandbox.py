@@ -165,13 +165,7 @@ sys.modules.setdefault(
     "readiness_index", types.SimpleNamespace(compute_readiness=lambda *a, **k: 0.0)
 )
 
-rt_spec = importlib.util.spec_from_file_location(
-    "menace.roi_tracker",
-    dynamic_path_router.path_for_prompt("roi_tracker.py"),  # path-ignore
-)
-rt = importlib.util.module_from_spec(rt_spec)
-assert rt_spec.loader is not None
-rt_spec.loader.exec_module(rt)
+rt = types.ModuleType("roi_tracker")
 sys.modules.setdefault("roi_tracker", rt)
 sys.modules.setdefault("menace.roi_tracker", rt)
 
@@ -295,8 +289,6 @@ class DummyBuilder:
     def refresh_db_weights(self):
         pass
 
-sds.CONTEXT_BUILDER = DummyBuilder()
-
 
 class DummyTelem:
     def recent_errors(self, limit: int = 5):
@@ -328,10 +320,31 @@ class DummyTrail:
         self.records.append(msg)
 
 
+def test_no_global_builder():
+    assert not hasattr(sds, 'CONTEXT_BUILDER')
+
+
+def test_builder_injected_and_refreshed():
+    class B(DummyBuilder):
+        def __init__(self):
+            self.refreshed = False
+
+        def refresh_db_weights(self):
+            self.refreshed = True
+
+    b = B()
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=b
+    )
+    assert dbg.context_builder is b
+    assert b.refreshed
+
+
 def test_baseline_config_from_env():
     dbg = sds.SelfDebuggerSandbox(
         DummyTelem(),
         DummyEngine(),
+        context_builder=DummyBuilder(),
         baseline_window=7,
         stagnation_iters=3,
         delta_margin=0.8,
@@ -345,7 +358,9 @@ def test_baseline_config_from_env():
 
 def test_sandbox_failing_patch(monkeypatch, tmp_path):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         dbg, "_generate_tests", lambda logs: ["def test_fail():\n    assert False\n"]
@@ -369,7 +384,9 @@ def test_sandbox_failing_patch(monkeypatch, tmp_path):
 def test_sandbox_success(monkeypatch, tmp_path):
     engine = DummyEngine()
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder(), audit_trail=trail
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"]
@@ -454,7 +471,9 @@ def test_sandbox_failed_audit(monkeypatch, tmp_path):
 
     engine = FailEngine()
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder(), audit_trail=trail
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         dbg, "_generate_tests", lambda logs: ["def test_ok():\n   assert True\n"]
@@ -477,7 +496,9 @@ def test_log_patch_logs_audit_error(caplog):
         def record(self, msg):
             raise RuntimeError("boom")
 
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=FailTrail())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), audit_trail=FailTrail()
+    )
     caplog.set_level(logging.ERROR)
     dbg._log_patch("desc", "res")
     assert "audit trail logging failed" in caplog.text
@@ -485,7 +506,9 @@ def test_log_patch_logs_audit_error(caplog):
 
 def test_log_patch_records_extra_fields():
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), audit_trail=trail
+    )
     dbg._log_patch(
         "desc",
         "success",
@@ -524,7 +547,9 @@ def test_coverage_drop_reverts(monkeypatch, tmp_path):
 
     engine = CovEngine()
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder(), audit_trail=trail
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"]
@@ -573,7 +598,9 @@ def test_select_best_patch(monkeypatch, tmp_path):
             pass
 
     engine = ScoreEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         dbg,
@@ -598,7 +625,9 @@ def test_select_best_patch(monkeypatch, tmp_path):
 
 def test_run_tests_includes_telemetry(monkeypatch, tmp_path):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
     monkeypatch.chdir(tmp_path)
 
     base = Path("test_base.py")  # path-ignore
@@ -635,7 +664,9 @@ def _stub_proc(rc=0, out=b"", err=b""):
 
 def test_coverage_xml_report_failure(monkeypatch, caplog):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
     caplog.set_level(logging.ERROR)
 
     async def fake_exec(*a, **k):
@@ -667,7 +698,9 @@ def test_coverage_xml_report_failure(monkeypatch, caplog):
 
 def test_coverage_report_failure(monkeypatch, caplog):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
     caplog.set_level(logging.ERROR)
 
     async def fake_exec(*a, **k):
@@ -698,7 +731,9 @@ def test_coverage_report_failure(monkeypatch, caplog):
 
 def test_coverage_records_executed_functions(monkeypatch, tmp_path):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
 
     async def fake_exec(*a, **k):
         return _stub_proc()
@@ -740,7 +775,9 @@ def test_coverage_records_executed_functions(monkeypatch, tmp_path):
 
 def test_coverage_subprocess_failure(monkeypatch):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
 
     async def fail_exec(*a, **k):
         return _stub_proc(1, b"boom", b"err")
@@ -754,13 +791,17 @@ def test_coverage_subprocess_failure(monkeypatch):
 
 
 def test_flakiness_deterministic(monkeypatch):
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
     monkeypatch.setattr(dbg, "_run_tests", lambda p, env=None: (80.0, 0.0))
     assert dbg._test_flakiness(Path("dummy.py")) == 0.0  # path-ignore
 
 
 def test_flakiness_variable(monkeypatch):
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), flakiness_runs=5)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), flakiness_runs=5
+    )
     cov_vals = [50.0, 60.0, 70.0, 80.0, 90.0]
 
     def fake_run(path, env=None):
@@ -772,7 +813,9 @@ def test_flakiness_variable(monkeypatch):
 
 
 def test_flakiness_handles_failed_runs(monkeypatch):
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), flakiness_runs=5)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), flakiness_runs=5
+    )
     vals = [50.0, RuntimeError("boom"), 70.0, RuntimeError("boom"), 50.0]
 
     def flaky_run(path, env=None):
@@ -787,7 +830,9 @@ def test_flakiness_handles_failed_runs(monkeypatch):
 
 
 def test_run_tests_retries_on_subprocess_failure(monkeypatch):
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
 
     calls = {"n": 0}
 
@@ -820,13 +865,19 @@ def test_backend_unreachable_fails_fast(monkeypatch):
     monkeypatch.setitem(sys.modules, "bad_backend", mod)
     monkeypatch.setenv("PATCH_SCORE_BACKEND", "bad_backend:BadBackend")
     with pytest.raises(RuntimeError):
-        sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+        sds.SelfDebuggerSandbox(
+            DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+        )
 
 
 def test_score_weights_evolve_from_audit():
     trail = DummyTrail()
     dbg = sds.SelfDebuggerSandbox(
-        DummyTelem(), DummyEngine(), audit_trail=trail, smoothing_factor=0.5
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        audit_trail=trail,
+        smoothing_factor=0.5,
     )
 
     dbg._log_patch(
@@ -871,7 +922,11 @@ def test_score_weights_evolve_from_audit():
 def test_composite_score_ema_smooth():
     trail = DummyTrail()
     dbg = sds.SelfDebuggerSandbox(
-        DummyTelem(), DummyEngine(), audit_trail=trail, smoothing_factor=0.5
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        audit_trail=trail,
+        smoothing_factor=0.5,
     )
 
     patches = [
@@ -902,7 +957,9 @@ def test_composite_score_ema_smooth():
 def test_weights_update_from_patch_db(tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
 
     patch_db.add(
         types.SimpleNamespace(
@@ -954,7 +1011,9 @@ def test_weights_update_from_patch_db(tmp_path):
 
 def test_weight_updates_affect_score(tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
 
     base = dbg._composite_score(0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5)
 
@@ -980,7 +1039,9 @@ def test_weight_updates_affect_score(tmp_path):
 
 def test_weights_persist_across_instances(tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
-    dbg1 = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg1 = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
     patch_db.add(
         types.SimpleNamespace(
             ts="1",
@@ -996,7 +1057,9 @@ def test_weights_persist_across_instances(tmp_path):
     dbg1._update_score_weights(patch_db)
     saved = dbg1.score_weights
 
-    dbg2 = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg2 = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
     dbg2._update_score_weights(patch_db)
     assert dbg2.score_weights == saved
 
@@ -1006,7 +1069,9 @@ def test_composite_score_uses_tracker_synergy():
         synergy_metrics_history={"synergy_roi": [0.5], "synergy_efficiency": [0.4]},
         metrics_history={},
     )
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
     base = dbg._composite_score(0.1, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0)
     with_tracker = dbg._composite_score(
         0.1,
@@ -1022,7 +1087,9 @@ def test_composite_score_uses_tracker_synergy():
 
 
 def test_composite_score_custom_weights():
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
     base = dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)
     weighted = dbg._composite_score(
         0.0,
@@ -1043,7 +1110,11 @@ def test_synergy_metrics_affect_patch_acceptance(monkeypatch, tmp_path):
     engine = DummyEngine()
     trail = DummyTrail()
     dbg = sds.SelfDebuggerSandbox(
-        DummyTelem(), engine, audit_trail=trail, delta_margin=0.6
+        DummyTelem(),
+        engine,
+        context_builder=DummyBuilder(),
+        audit_trail=trail,
+        delta_margin=0.6,
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -1068,7 +1139,9 @@ def test_synergy_metrics_affect_patch_acceptance(monkeypatch, tmp_path):
 
 def test_candidates_evaluated_concurrently(monkeypatch, tmp_path):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         dbg,
@@ -1094,7 +1167,9 @@ def test_candidates_evaluated_concurrently(monkeypatch, tmp_path):
 
 def test_run_tests_logs_output(monkeypatch, tmp_path):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
@@ -1118,7 +1193,9 @@ def test_run_tests_logs_output(monkeypatch, tmp_path):
 
 def test_log_patch_includes_log_path(monkeypatch, tmp_path):
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), audit_trail=trail
+    )
     monkeypatch.chdir(tmp_path)
 
     log_file = tmp_path / "fail.log"
@@ -1133,7 +1210,9 @@ def test_log_patch_includes_log_path(monkeypatch, tmp_path):
 
 def test_analyse_and_fix_aborts_on_run_error(monkeypatch, tmp_path):
     engine = DummyEngine()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder()
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"]
@@ -1153,13 +1232,17 @@ def test_analyse_and_fix_aborts_on_run_error(monkeypatch, tmp_path):
 
 def test_flakiness_runs_env(monkeypatch):
     monkeypatch.setenv("FLAKINESS_RUNS", "7")
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), flakiness_runs=3)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), flakiness_runs=3
+    )
     assert dbg.flakiness_runs == 7
 
 
 def test_flakiness_history_affects_score(tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+    )
     dbg._score_db = patch_db
     patch_db.record_flakiness("a.py", 1.0)  # path-ignore
     base = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0)
@@ -1171,7 +1254,9 @@ def test_patch_scores_persist_and_retrieve(monkeypatch, tmp_path):
     db_path = tmp_path / "scores.db"
     monkeypatch.setenv("SANDBOX_SCORE_DB", str(db_path))
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), audit_trail=trail
+    )
     dbg._log_patch(
         "desc",
         "success",
@@ -1196,7 +1281,9 @@ def test_patch_scores_persist_and_retrieve(monkeypatch, tmp_path):
 def test_recent_scores_limit(monkeypatch, tmp_path):
     db_path = tmp_path / "scores.db"
     monkeypatch.setenv("SANDBOX_SCORE_DB", str(db_path))
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=DummyTrail())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), audit_trail=DummyTrail()
+    )
     for i in range(3):
         dbg._log_patch(f"p{i}", "success", score=float(i))
     rows = dbg.recent_scores(2)
@@ -1209,7 +1296,11 @@ def test_parallel_evaluation_records_scores(monkeypatch, tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
     trail = DummyTrail()
     dbg = sds.SelfDebuggerSandbox(
-        DummyTelem(), DummyEngine(), audit_trail=trail, flakiness_runs=1
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        audit_trail=trail,
+        flakiness_runs=1,
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -1238,7 +1329,11 @@ def test_parallel_candidate_scoring_runtime(monkeypatch, tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
     trail = DummyTrail()
     dbg = sds.SelfDebuggerSandbox(
-        DummyTelem(), DummyEngine(), audit_trail=trail, flakiness_runs=1
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        audit_trail=trail,
+        flakiness_runs=1,
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -1285,7 +1380,9 @@ def test_coverage_revert_records_history(monkeypatch, tmp_path):
 
     engine = CovEngine()
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), engine, context_builder=DummyBuilder(), audit_trail=trail
+    )
     monkeypatch.setattr(
         dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"]
     )
@@ -1312,7 +1409,11 @@ def test_analyse_and_fix_records_history(monkeypatch, tmp_path):
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
     trail = DummyTrail()
     dbg = sds.SelfDebuggerSandbox(
-        DummyTelem(), DummyEngine(), audit_trail=trail, flakiness_runs=2
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        audit_trail=trail,
+        flakiness_runs=2,
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -1355,7 +1456,9 @@ def test_analyse_and_fix_records_history(monkeypatch, tmp_path):
 def test_roi_metrics_change_between_runs(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_SCORE_DB", str(tmp_path / "scores.db"))
     patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), flakiness_runs=1)
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), flakiness_runs=1
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"]

@@ -1,7 +1,13 @@
 import types
 import types
 import logging
-from tests.test_self_debugger_sandbox import DummyTelem, DummyEngine, DummyTrail
+from tests.test_self_debugger_sandbox import (
+    sds,
+    DummyTelem,
+    DummyEngine,
+    DummyTrail,
+    DummyBuilder,
+)
 import patch_score_backend as psb
 
 
@@ -301,7 +307,9 @@ def test_sandbox_backend_retries(monkeypatch, tmp_path):
     import time as _time
     monkeypatch.setattr(_time, "sleep", lambda *_: None)
 
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=DummyTrail())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), audit_trail=DummyTrail()
+    )
     dbg._log_patch("d", "ok")
     rows = dbg.recent_scores(1)
 
@@ -324,7 +332,9 @@ def test_sandbox_backend_unreachable_warns(monkeypatch, caplog, tmp_path):
     import time as _time
     monkeypatch.setattr(_time, "sleep", lambda *_: None)
 
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=DummyTrail())
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), context_builder=DummyBuilder(), audit_trail=DummyTrail()
+    )
     caplog.set_level(logging.WARNING)
     dbg._log_patch("d", "ok")
     rows = dbg.recent_scores(1)
