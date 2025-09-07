@@ -9,6 +9,11 @@ import menace.error_bot as eb
 from sqlalchemy import Column, Integer, String, Table
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 def test_version_and_lock(tmp_path: Path):
     repo = tmp_path / "repo"
     bot = dsb.DatabaseStewardBot(sql_url=f"sqlite:///{tmp_path / 'db.sqlite'}", repo_path=repo)
@@ -36,7 +41,7 @@ def test_error_bot_fix(tmp_path: Path):
     admin = tmp_path / "admin.py"  # path-ignore
     admin.write_text("print('x')\n")
     err = eb.ErrorDB(tmp_path / "e.db")
-    ebot = eb.ErrorBot(err)
+    ebot = eb.ErrorBot(err, context_builder=DummyBuilder())
     bot = dsb.DatabaseStewardBot(
         sql_url=f"sqlite:///{tmp_path / 'db.sqlite'}",
         error_bot=ebot,

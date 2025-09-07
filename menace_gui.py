@@ -53,7 +53,7 @@ class MenaceGUI(tk.Tk):
         else:
             logging.warning("OPENAI_API_KEY not set. ChatGPT features disabled.")
             self.conv_bot = None
-        self.error_bot = ErrorBot()
+        self.error_bot = ErrorBot(context_builder=self.context_builder)
         self._setup_widgets()
 
     # ------------------------------------------------------------------

@@ -40,10 +40,20 @@ class BadMem:
         raise RuntimeError("fail")
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 def test_error_bot_logs_failures(tmp_path, caplog):
     caplog.set_level(logging.ERROR)
     bus = BadBus()
-    bot = ErrorBot(ErrorDB(tmp_path / "e.db", event_bus=bus), event_bus=bus, memory_mgr=BadMem())
+    bot = ErrorBot(
+        ErrorDB(tmp_path / "e.db", event_bus=bus),
+        event_bus=bus,
+        memory_mgr=BadMem(),
+        context_builder=DummyBuilder(),
+    )
     bot.db._publish("t", {})
     text = caplog.text
     assert "event bus subscription failed" in text

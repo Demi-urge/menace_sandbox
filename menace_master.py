@@ -454,7 +454,7 @@ def run_once(models: Iterable[str]) -> None:
         try:  # best effort ErrorBot logging
             from menace.error_bot import ErrorBot  # type: ignore
 
-            err_bot = ErrorBot()  # type: ignore[call-arg]
+            err_bot = ErrorBot(context_builder=ContextBuilder())  # type: ignore[call-arg]
             if hasattr(err_bot, "handle_error"):
                 err_bot.handle_error(str(exc))
         except Exception:

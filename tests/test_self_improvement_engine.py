@@ -430,11 +430,16 @@ import menace.evolution_history_db as eh
 import menace.self_improvement_policy as sip
 
 
+def _diag(edb, mdb):
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    return dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb, context_builder=builder))
+
+
 def test_run_cycle(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
     builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
     agg = rab.ResearchAggregatorBot(["menace"], info_db=info, context_builder=builder)
     class StubPipeline:
@@ -457,7 +462,7 @@ def test_run_cycle_triggers_workflow_evolution(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -555,7 +560,7 @@ def test_schedule_baseline_deviation(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -615,7 +620,7 @@ def test_schedule_deviation_autoruns(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -661,7 +666,7 @@ def test_policy_state_with_patch_metrics(tmp_path):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
     hist = eh.EvolutionHistoryDB(tmp_path / "h.db")
     patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
 
@@ -717,7 +722,7 @@ def test_pre_roi_energy_scaling(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def __init__(self) -> None:
@@ -770,7 +775,7 @@ def test_policy_state_includes_synergy(tmp_path):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -802,7 +807,7 @@ def test_engine_policy_persistence(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -855,7 +860,7 @@ def test_synergy_energy_scaling(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def __init__(self) -> None:
@@ -900,7 +905,7 @@ def test_synergy_energy_cap(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def __init__(self) -> None:
@@ -933,7 +938,7 @@ def test_policy_update_receives_synergy_deltas(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -985,7 +990,7 @@ def test_roi_history_group_ids(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -1101,7 +1106,7 @@ def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -1169,7 +1174,7 @@ def test_init_refresh_called_for_unknown_patches(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
             return mp.AutomationResult(package=None, roi=prb.ROIResult(0.0, 0.0, 0.0, 0.0, 0.0))
@@ -1226,7 +1231,7 @@ def test_init_discovers_module_groups(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -1372,7 +1377,7 @@ def test_deployment_governor_promote_marks_workflow_ready(
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -1405,7 +1410,7 @@ def test_deployment_governor_pilot_enqueues_borderline(
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
@@ -1492,7 +1497,7 @@ def test_deployment_gate_promotes(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
     engine = sie.SelfImprovementEngine(
         interval=0,
         pipeline=_StubPipeline(),
@@ -1524,7 +1529,7 @@ def test_deployment_gate_borderline(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
     bucket = _Bucket()
     engine = sie.SelfImprovementEngine(
         interval=0,
@@ -1550,7 +1555,7 @@ def test_deployment_gate_pilot(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    diag = _diag(edb, mdb)
     engine = sie.SelfImprovementEngine(
         interval=0,
         pipeline=_StubPipeline(),

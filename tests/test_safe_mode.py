@@ -17,8 +17,14 @@ def test_bot_safe_mode(tmp_path):
         def build(self, query, **_):
             return ""
 
-    conv = cmb.ConversationManagerBot(cib.ChatGPTClient("key", context_builder=DummyBuilder()))
-    bot = eb.ErrorBot(err_db, conversation_bot=conv, metrics_db=db.MetricsDB(tmp_path / "m.db"))
+    builder = DummyBuilder()
+    conv = cmb.ConversationManagerBot(cib.ChatGPTClient("key", context_builder=builder))
+    bot = eb.ErrorBot(
+        err_db,
+        conversation_bot=conv,
+        metrics_db=db.MetricsDB(tmp_path / "m.db"),
+        context_builder=builder,
+    )
     steward = dsb.DatabaseStewardBot(
         sql_url=f"sqlite:///{tmp_path / 'db.sqlite'}",
         error_bot=bot,

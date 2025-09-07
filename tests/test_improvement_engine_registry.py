@@ -52,7 +52,8 @@ def _make_engine(tmp_path, name: str, monkeypatch):
     mdb = db.MetricsDB(tmp_path / f"{name}.m.db")
     edb = eb.ErrorDB(tmp_path / f"{name}.e.db")
     info = rab.InfoDB(tmp_path / f"{name}.i.db")
-    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb, context_builder=builder))
     pipe = StubPipeline()
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
     engine = sie.SelfImprovementEngine(

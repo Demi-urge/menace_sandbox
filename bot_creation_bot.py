@@ -100,7 +100,7 @@ class BotCreationBot(AdminBotBase):
         )
         self.tester = tester or BotTestingBot()
         self.deployer = deployer or DeploymentBot()
-        self.error_bot = error_bot or ErrorBot()
+        self.error_bot = error_bot or ErrorBot(context_builder=self.context_builder)
         self.scaler = scaler or ScalabilityAssessmentBot()
         self.config = config or CreationConfig()
         self.prediction_manager = prediction_manager

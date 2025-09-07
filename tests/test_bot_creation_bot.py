@@ -197,7 +197,7 @@ def test_create_bots_logs_errors(tmp_path):
         developer=developer,
         tester=tester,
         deployer=deployer,
-        error_bot=eb.ErrorBot(err_db),
+        error_bot=eb.ErrorBot(err_db, context_builder=developer.context_builder),
         context_builder=developer.context_builder,
     )
     developer.errors.append("integration fail")
@@ -286,7 +286,7 @@ def test_code_db_updates_on_creation(tmp_path):
         developer=developer,
         tester=tester,
         deployer=deployer,
-        error_bot=eb.ErrorBot(err_db),
+        error_bot=eb.ErrorBot(err_db, context_builder=developer.context_builder),
         context_builder=developer.context_builder,
     )
 
@@ -451,7 +451,7 @@ def test_higher_order_contrarian_new_links(tmp_path):
         developer=developer,
         tester=tester,
         deployer=deployer,
-        error_bot=eb.ErrorBot(err_db),
+        error_bot=eb.ErrorBot(err_db, context_builder=developer.context_builder),
         context_builder=developer.context_builder,
     )
 
@@ -580,7 +580,10 @@ def test_enhancement_link_error_logged(tmp_path, caplog):
         developer=developer,
         tester=tester,
         deployer=deployer,
-        error_bot=eb.ErrorBot(eb.ErrorDB(tmp_path / "err.db")),
+        error_bot=eb.ErrorBot(
+            eb.ErrorDB(tmp_path / "err.db"),
+            context_builder=developer.context_builder,
+        ),
         context_builder=developer.context_builder,
     )
 

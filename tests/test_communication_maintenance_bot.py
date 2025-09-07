@@ -1,6 +1,11 @@
 import os
 import sys
 import types
+
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
 import logging
 from datetime import datetime
 import pytest
@@ -87,7 +92,7 @@ def test_hotfix_logs(monkeypatch, tmp_path):
 
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
     edb = cmb.ErrorDB(tmp_path / "e.db")
-    ebot = cmb.ErrorBot(edb)
+    ebot = cmb.ErrorBot(edb, context_builder=DummyBuilder())
     router = types.SimpleNamespace(terms=[])
     router.query_all = lambda term: router.terms.append(term) or {}
     bot = cmb.CommunicationMaintenanceBot(mdb, ebot, repo_path, db_router=router)

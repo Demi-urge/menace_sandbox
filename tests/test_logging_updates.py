@@ -13,7 +13,7 @@ def _stub_deps():
         mod.Template = type("T", (), {"render": lambda self, *a, **k: ""})
         sys.modules["jinja2"] = mod
     for name in ["yaml", "numpy", "matplotlib", "matplotlib.pyplot", "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives", "cryptography.hazmat.primitives.asymmetric"]:  # path-ignore  # noqa: E501
-        sys.modules.setdefault(name, types.ModuleType(name))
+    sys.modules.setdefault(name, types.ModuleType(name))
     sys.modules.pop('menace.database_steward_bot', None)
     sys.modules.pop('menace.capital_management_bot', None)
     sa = types.ModuleType("sqlalchemy")
@@ -65,7 +65,10 @@ def test_database_steward_safe_mode_logs(tmp_path, caplog):
         def is_safe_mode(self, module):
             return True
 
-    err_bot = eb.ErrorBot(eb.ErrorDB(tmp_path / "e.db"))  # noqa: F821
+    err_bot = eb.ErrorBot(
+        eb.ErrorDB(tmp_path / "e.db"),
+        context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None),
+    )  # noqa: F821
     err_bot.db = DummyErrDB()
 
     class Conv:
