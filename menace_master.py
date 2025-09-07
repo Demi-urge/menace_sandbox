@@ -405,6 +405,7 @@ def _init_unused_bots() -> None:
         _wrap(
             NicheSaturationBot,
             alloc_bot=ResourceAllocationBot(context_builder=builder),
+            context_builder=builder,
         ),
         MarketManipulationBot,
         PassiveDiscoveryBot,

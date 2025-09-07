@@ -93,11 +93,16 @@ class NicheSaturationBot:
         *,
         prediction_manager: "PredictionManager" | None = None,
         strategy_bot: "StrategyPredictionBot" | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
+        if alloc_bot is None and context_builder is None:
+            raise ValueError("context_builder required when alloc_bot not provided")
+
         self.db = db or NicheDB()
         self.alloc_bot = alloc_bot or ResourceAllocationBot(
-            context_builder=ContextBuilder()
+            context_builder=context_builder  # type: ignore[arg-type]
         )
+        self.context_builder = context_builder
         self.prediction_manager = prediction_manager
         self.assigned_prediction_bots = []
         if self.prediction_manager:

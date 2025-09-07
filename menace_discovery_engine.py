@@ -22,6 +22,7 @@ from .normalize_scraped_data import (
     NicheCandidate,
 )
 from .niche_saturation_bot import NicheSaturationBot, NicheCandidate as SatCandidate
+from vector_service.context_builder import ContextBuilder
 from .candidate_matcher import find_matching_models
 from .database_management_bot import DatabaseManagementBot
 from .research_aggregator_bot import InfoDB, ResearchItem
@@ -253,7 +254,7 @@ async def run_cycle() -> None:
         )
 
     sat_candidates = convert_for_saturation(candidates)
-    sat_bot = NicheSaturationBot()
+    sat_bot = NicheSaturationBot(context_builder=ContextBuilder())
     viable = sat_bot.detect(sat_candidates)
 
     mapping = { (cand.product_name or cand.niche or cand.platform): cand for cand in candidates }

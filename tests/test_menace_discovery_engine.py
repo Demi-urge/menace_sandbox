@@ -56,12 +56,22 @@ class NCand:
         self.trend_signal = trend
 
 class SatBot:
+    def __init__(self, *a, **k):
+        pass
+
     def detect(self, items):
         return items
 
 stub_sat.NicheCandidate = NCand
 stub_sat.NicheSaturationBot = SatBot
 sys.modules["menace.niche_saturation_bot"] = stub_sat
+
+stub_ctx = ModuleType("vector_service.context_builder")
+class ContextBuilder:
+    def __init__(self, *a, **k):
+        pass
+stub_ctx.ContextBuilder = ContextBuilder
+sys.modules["vector_service.context_builder"] = stub_ctx
 
 stub_match = ModuleType("menace.candidate_matcher")
 stub_match.find_matching_models = lambda c: False
