@@ -35,6 +35,18 @@ jobs:
       - name: Check for dynamic path references
         run: "python tools/check_dynamic_paths.py $(git ls-files '*.py')"
 
+  context-builder-check:
+    runs-on: ubuntu-latest
+    env:
+      MENACE_SAFE: "1"
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Enforce ContextBuilder usage
+        run: python scripts/check_context_builder_usage.py
+
   tests:
     runs-on: ubuntu-latest
     env:
