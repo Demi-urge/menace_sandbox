@@ -6,7 +6,7 @@ import menace.resource_allocation_optimizer as rao  # noqa: E402
 import menace.data_bot as db  # noqa: E402
 from menace.unified_event_bus import UnifiedEventBus  # noqa: E402
 from menace.error_logger import TelemetryEvent  # noqa: E402
-from vector_service.context_builder_utils import get_default_context_builder  # noqa: E402
+from vector_service.context_builder import ContextBuilder  # noqa: E402
 from datetime import datetime, timedelta  # noqa: E402
 
 
@@ -36,7 +36,7 @@ def test_watchdog_triggers(tmp_path, monkeypatch):
 
     notifier = wd.Notifier()
     notifier.notify = fake_notify
-    builder = get_default_context_builder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     watch = wd.Watchdog(
         err_db, roi_db, metrics_db, notifier=notifier, context_builder=builder
     )
@@ -58,7 +58,7 @@ def test_watchdog_no_trigger(tmp_path):
         called.append(msg)
 
     notifier.notify = fake_notify
-    builder = get_default_context_builder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     watch = wd.Watchdog(
         err_db, roi_db, metrics_db, notifier=notifier, context_builder=builder
     )
@@ -83,7 +83,7 @@ def test_watchdog_heals_lost_heartbeat(tmp_path, monkeypatch):
         "SelfHealingOrchestrator",
         lambda g, backend=None: DummyHealer(),
     )
-    builder = get_default_context_builder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     watch = wd.Watchdog(
         err_db, roi_db, metrics_db, registry=registry, context_builder=builder
     )
@@ -168,7 +168,7 @@ def test_watchdog_runs_debugger(tmp_path, monkeypatch):
     bus = UnifiedEventBus()
 
     monkeypatch.setattr(wd, "AutomatedDebugger", DummyDebugger)
-    builder = get_default_context_builder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     watch = wd.Watchdog(
         err_db,
         roi_db,
@@ -193,7 +193,7 @@ def test_restart_logging(tmp_path, monkeypatch):
 
     monkeypatch.setattr(wd, "SelfHealingOrchestrator", lambda g, backend=None: DummyHealer())
     log = tmp_path / "r.log"
-    builder = get_default_context_builder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     watch = wd.Watchdog(
         err_db,
         roi_db,
@@ -229,7 +229,7 @@ def test_failover_restart(tmp_path, monkeypatch):
 
     monkeypatch.setattr(wd.subprocess, "Popen", fake_popen)
     log = tmp_path / "r.log"
-    builder = get_default_context_builder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     watch = wd.Watchdog(
         err_db,
         roi_db,

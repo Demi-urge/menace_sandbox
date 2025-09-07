@@ -13,12 +13,12 @@ pkg.__path__ = [str(TMP), str(ROOT)]
 sys.modules["menace"] = pkg
 sys.modules.pop("vector_service", None)
 vs_pkg = types.ModuleType("vector_service")
-vs_pkg.ContextBuilder = type("ContextBuilder", (), {"__init__": lambda self, *a, **k: None})
+vs_pkg.ContextBuilder = type(
+    "ContextBuilder", (), {"__init__": lambda self, *a, **k: None}
+)
 sys.modules["vector_service"] = vs_pkg
-sys.modules["vector_service.context_builder_utils"] = types.SimpleNamespace(
-    get_default_context_builder=lambda **_: types.SimpleNamespace(
-        refresh_db_weights=lambda: None
-    )
+sys.modules["vector_service.context_builder"] = types.SimpleNamespace(
+    ContextBuilder=vs_pkg.ContextBuilder
 )
 
 # write stub modules to temporary package path
