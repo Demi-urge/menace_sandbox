@@ -919,7 +919,7 @@ class ErrorBot(AdminBotBase):
         event_bus: Optional[EventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
         graph: KnowledgeGraph | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         forecaster: ErrorForecaster | None = None,
         self_coding_engine: "SelfCodingEngine" | None = None,
         improvement_engine: "SelfImprovementEngine" | None = None,
@@ -928,9 +928,12 @@ class ErrorBot(AdminBotBase):
         self.name = "ErrorBot"
         self.db = db or ErrorDB()
         self.graph = graph
-        builder = context_builder or ContextBuilder()
+        self.context_builder = context_builder
+        self.context_builder.refresh_db_weights()
         self.error_logger = ErrorLogger(
-            self.db, knowledge_graph=self.graph, context_builder=builder
+            self.db,
+            knowledge_graph=self.graph,
+            context_builder=self.context_builder,
         )
         self.data_bot = data_bot
         if metrics_db:

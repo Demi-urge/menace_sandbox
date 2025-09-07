@@ -16,6 +16,14 @@ from pathlib import Path
 pytest.importorskip("sqlalchemy")
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build(self, *a, **k):
+        return ""
+
+
 def make_metrics(tmp_path):
     mdb = db.MetricsDB(tmp_path / "m.db")
     rec = db.MetricRecord(
@@ -85,7 +93,7 @@ def test_add_error_duplicate_different_message(tmp_path, caplog, monkeypatch):
 def test_handle_known(tmp_path):
     e = eb.ErrorDB(tmp_path / "e.db")
     e.add_known("err", "fix")
-    bot = eb.ErrorBot(e, make_metrics(tmp_path))
+    bot = eb.ErrorBot(e, make_metrics(tmp_path), context_builder=DummyBuilder())
     res = bot.handle_error("err")
     assert res == "fix"
     assert e.discrepancies().empty
@@ -93,7 +101,7 @@ def test_handle_known(tmp_path):
 
 def test_handle_unknown(tmp_path):
     e = eb.ErrorDB(tmp_path / "e.db")
-    bot = eb.ErrorBot(e, make_metrics(tmp_path))
+    bot = eb.ErrorBot(e, make_metrics(tmp_path), context_builder=DummyBuilder())
     bot.handle_error("unknown")
     df = e.discrepancies()
     assert len(df) == 1
@@ -137,7 +145,7 @@ def test_top_error_module_scope(tmp_path):
 def test_summarize_telemetry_scope(tmp_path):
     err_db = eb.ErrorDB(tmp_path / "e.db")
     metrics = make_metrics(tmp_path)
-    bot = eb.ErrorBot(err_db, metrics)
+    bot = eb.ErrorBot(err_db, metrics, context_builder=DummyBuilder())
     # Insert telemetry with different menace ids
     err_db.conn.execute(
         "INSERT INTO telemetry(error_type, resolution_status, source_menace_id) VALUES (?,?,?)",
@@ -163,7 +171,7 @@ def test_summarize_telemetry_scope(tmp_path):
 def test_monitor_logs(tmp_path):
     mdb = make_metrics(tmp_path)
     e = eb.ErrorDB(tmp_path / "e.db")
-    bot = eb.ErrorBot(e, mdb)
+    bot = eb.ErrorBot(e, mdb, context_builder=DummyBuilder())
     bot.monitor()
     df = e.discrepancies()
     assert not df.empty
@@ -206,7 +214,13 @@ def test_predict_and_roi_scan(tmp_path):
     data_bot = db.DataBot(mdb, capital_bot=capital)
     pm = pmb.PredictionManager(tmp_path / "reg.json")
     pm.register_bot(DummyPredictor(), {"scope": ["errors"], "risk": ["low"]})
-    bot = eb.ErrorBot(eb.ErrorDB(tmp_path / "e2.db"), mdb, prediction_manager=pm, data_bot=data_bot)
+    bot = eb.ErrorBot(
+        eb.ErrorDB(tmp_path / "e2.db"),
+        mdb,
+        prediction_manager=pm,
+        data_bot=data_bot,
+        context_builder=DummyBuilder(),
+    )
     assert bot.prediction_ids
     preds = bot.predict_errors()
     assert "future_err" in preds
@@ -271,7 +285,14 @@ def test_roi_discrepancy_links(tmp_path):
     bdb.link_enhancement(bid, 1)
 
     err_db = eb.ErrorDB(tmp_path / "e.db")
-    bot = eb.ErrorBot(err_db, mdb, data_bot=data_bot, menace_db=menace, bot_db=bdb)
+    bot = eb.ErrorBot(
+        err_db,
+        mdb,
+        data_bot=data_bot,
+        menace_db=menace,
+        bot_db=bdb,
+        context_builder=DummyBuilder(),
+    )
     bot.scan_roi_discrepancies(threshold=5.0)
 
     with menace.engine.connect() as conn:
@@ -288,7 +309,7 @@ def test_prompt_rewriter_daemon(tmp_path):
     err_db = eb.ErrorDB(tmp_path / "e.db")
     enh_db = ceb.EnhancementDB(tmp_path / "enh.db")
     mdb = make_metrics(tmp_path)
-    bot = eb.ErrorBot(err_db, mdb, enhancement_db=enh_db)
+    bot = eb.ErrorBot(err_db, mdb, enhancement_db=enh_db, context_builder=DummyBuilder())
     bot.record_runtime_error("boom")
     import time
     time.sleep(0.1)
@@ -326,7 +347,7 @@ def test_safe_mode_activation(tmp_path):
     client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
     conv = ConversationManagerBot(client)
     metrics = make_metrics(tmp_path)
-    bot = eb.ErrorBot(err_db, metrics, conversation_bot=conv)
+    bot = eb.ErrorBot(err_db, metrics, conversation_bot=conv, context_builder=DummyBuilder())
     bot.record_runtime_error("fail", bot_ids=["DatabaseStewardBot"])
     assert err_db.is_safe_mode("DatabaseStewardBot")
     notes = conv.get_notifications()
@@ -336,7 +357,7 @@ def test_safe_mode_activation(tmp_path):
 def test_root_cause_graph(tmp_path):
     err_db = eb.ErrorDB(tmp_path / "e.db")
     mdb = make_metrics(tmp_path)
-    bot = eb.ErrorBot(err_db, mdb)
+    bot = eb.ErrorBot(err_db, mdb, context_builder=DummyBuilder())
     bot.record_runtime_error(
         "boom",
         model_id=1,
@@ -361,7 +382,7 @@ def test_forecaster_safe_mode(tmp_path):
     mdb.add(db.MetricRecord(bot="X", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=1))  # noqa: E501
     fc = DummyForecaster()
     err_db = eb.ErrorDB(tmp_path / "e.db")
-    bot = eb.ErrorBot(err_db, mdb, forecaster=fc)
+    bot = eb.ErrorBot(err_db, mdb, forecaster=fc, context_builder=DummyBuilder())
     bot.predict_errors()
     assert err_db.is_safe_mode("X")
 
@@ -384,7 +405,14 @@ def test_forecaster_cascade(tmp_path):
 
     fc = DummyForecaster()
     err_db = eb.ErrorDB(tmp_path / "e.db")
-    bot = eb.ErrorBot(err_db, mdb, forecaster=fc, graph=g, prediction_manager=DummyPM())
+    bot = eb.ErrorBot(
+        err_db,
+        mdb,
+        forecaster=fc,
+        graph=g,
+        prediction_manager=DummyPM(),
+        context_builder=DummyBuilder(),
+    )
     preds = bot.predict_errors()
     chain = "bot:A -> model:1 -> code:foo"
     assert chain in preds
@@ -419,7 +447,13 @@ def test_forecaster_patch_rollback(tmp_path, monkeypatch):
     bot_file.write_text("def z():\n    pass\n")
     monkeypatch.chdir(tmp_path)
 
-    bot = eb.ErrorBot(err_db, mdb, forecaster=fc, self_coding_engine=engine)
+    bot = eb.ErrorBot(
+        err_db,
+        mdb,
+        forecaster=fc,
+        self_coding_engine=engine,
+        context_builder=DummyBuilder(),
+    )
     bot.predict_errors()
     assert engine.called
     assert "#patch" not in bot_file.read_text()
@@ -447,7 +481,14 @@ def test_runbook_generation(tmp_path):
     g.graph.add_edge("bot:R", "module:X")
     fc = DummyForecaster()
     err_db = eb.ErrorDB(tmp_path / "e.db")
-    bot = eb.ErrorBot(err_db, mdb, forecaster=fc, graph=g, prediction_manager=DummyPM())
+    bot = eb.ErrorBot(
+        err_db,
+        mdb,
+        forecaster=fc,
+        graph=g,
+        prediction_manager=DummyPM(),
+        context_builder=DummyBuilder(),
+    )
     preds = bot.predict_errors()
     assert any(p.endswith(".json") for p in preds)
     path = bot.generated_runbooks.get("R")

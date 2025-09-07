@@ -886,6 +886,7 @@ def _sandbox_init(
         telem_db,
         metrics_db,
         graph=graph,
+        context_builder=context_builder,
         forecaster=forecaster,
         improvement_engine=improver,
     )

@@ -81,12 +81,26 @@ class DiagnosticManager:
         self,
         metrics_db: MetricsDB | None = None,
         error_bot: ErrorBot | None = None,
+        *,
+        context_builder: "ContextBuilder" | None = None,
         ledger: DecisionLedger | None = None,
         queue: CoordinationManager | None = None,
         log: ResolutionDB | None = None,
     ) -> None:
         self.metrics = metrics_db or MetricsDB()
-        self.error_bot = error_bot or ErrorBot(ErrorDB(), self.metrics)
+        self.context_builder = context_builder
+        if error_bot is None:
+            if self.context_builder is None:
+                from vector_service.context_builder import ContextBuilder
+
+                self.context_builder = ContextBuilder()
+            self.error_bot = ErrorBot(
+                ErrorDB(),
+                self.metrics,
+                context_builder=self.context_builder,
+            )
+        else:
+            self.error_bot = error_bot
         self.ledger = ledger or DecisionLedger()
         self.queue = queue or CoordinationManager()
         self.log = log or ResolutionDB()

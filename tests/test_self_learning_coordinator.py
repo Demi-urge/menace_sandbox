@@ -297,7 +297,7 @@ def test_telemetry_summary_updates_training(tmp_path):
                 )
 
     class DummyErrorBot:
-        def __init__(self, db, metrics):
+        def __init__(self, db, metrics, context_builder=None):
             self.db = db
             self.metrics = metrics
 
@@ -317,7 +317,7 @@ def test_telemetry_summary_updates_training(tmp_path):
     engine = DummyEngine()
     mdb = MetricsDB(tmp_path / "m.db")
     edb = eb.ErrorDB(tmp_path / "e.db", event_bus=bus)
-    err_bot = eb.ErrorBot(edb, mdb)
+    err_bot = eb.ErrorBot(edb, mdb, context_builder=None)
     import os
     os.environ["SELF_LEARNING_SUMMARY_INTERVAL"] = "1"
     coord = SelfLearningCoordinator(

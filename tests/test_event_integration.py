@@ -11,6 +11,11 @@ from menace.unified_event_bus import UnifiedEventBus  # noqa: E402
 from menace.menace_memory_manager import MenaceMemoryManager, MemoryEntry  # noqa: E402
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
 def test_error_bot_event_subscription(tmp_path):
     bus = UnifiedEventBus()
     try:
@@ -19,7 +24,7 @@ def test_error_bot_event_subscription(tmp_path):
         pytest.skip("error bot unavailable")
     err_db = eb.ErrorDB(tmp_path / "e.db", event_bus=bus)
     metrics = db.MetricsDB(tmp_path / "m.db")
-    bot = eb.ErrorBot(err_db, metrics, event_bus=bus)
+    bot = eb.ErrorBot(err_db, metrics, event_bus=bus, context_builder=DummyBuilder())
     bus.publish("errors:new", {"message": "boom"})
     assert bot.last_error_event
 

@@ -311,7 +311,7 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
 
 
     class ErrorBot:
-        def __init__(self, db: ErrorDB) -> None:
+        def __init__(self, db: ErrorDB, context_builder=None) -> None:
             self.db = db
             self.logger = logging.getLogger("CommMaintenanceBot.ErrorBot")
 
@@ -1063,6 +1063,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
+        context_builder: "ContextBuilder" | None = None,
         logger: logging.Logger | None = None,
         webhook_urls: Optional[Iterable[str] | str] = None,
         msg_retry_attempts: Optional[int] = None,
@@ -1094,7 +1095,10 @@ class CommunicationMaintenanceBot(AdminBotBase):
                     self.db = SQLiteMaintenanceDB()
             else:
                 self.db = SQLiteMaintenanceDB()
-        self.error_bot = error_bot or ErrorBot(ErrorDB(self.config.error_db_path))
+        self.context_builder = context_builder
+        self.error_bot = error_bot or ErrorBot(
+            ErrorDB(self.config.error_db_path), context_builder=self.context_builder
+        )
         repo_path = Path(repo_path or os.getenv("MAINTENANCE_REPO_PATH", "."))
         broker = broker or os.getenv("CELERY_BROKER_URL")
         if Celery and not broker and MENACE_MODE.lower() == "production":

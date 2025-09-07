@@ -15,9 +15,10 @@ from menace.unified_event_bus import UnifiedEventBus
 from menace.error_bot import ErrorBot
 from menace.curriculum_builder import CurriculumBuilder
 from menace.self_learning_coordinator import SelfLearningCoordinator
+from vector_service.context_builder import ContextBuilder
 
 bus = UnifiedEventBus()
-err_bot = ErrorBot()
+err_bot = ErrorBot(context_builder=ContextBuilder())
 builder = CurriculumBuilder(err_bot, bus, threshold=5)
 coord = SelfLearningCoordinator(bus, curriculum_builder=builder)
 coord.start()

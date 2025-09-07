@@ -173,7 +173,10 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
     mdb = sie_tests.db.MetricsDB(tmp_path / "m.db")
     edb = sie_tests.eb.ErrorDB(tmp_path / "e.db")
     info = sie_tests.rab.InfoDB(tmp_path / "i.db")
-    diag = sie_tests.dm.DiagnosticManager(mdb, sie_tests.eb.ErrorBot(edb, mdb))
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    diag = sie_tests.dm.DiagnosticManager(
+        mdb, sie_tests.eb.ErrorBot(edb, mdb, context_builder=builder)
+    )
 
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
