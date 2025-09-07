@@ -74,6 +74,7 @@ from .bot_registry import BotRegistry
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_planner import ActionPlanner
+from vector_service import ContextBuilder
 
 MENACE_ID = "model_automation_pipeline"
 DB_ROUTER = GLOBAL_ROUTER or init_db_router(MENACE_ID)
@@ -139,6 +140,7 @@ class ModelAutomationPipeline:
         *,
         event_bus: UnifiedEventBus | None = None,
         bot_registry: BotRegistry | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.aggregator = aggregator or ResearchAggregatorBot([])
@@ -170,7 +172,10 @@ class ModelAutomationPipeline:
                 self.roi_bot.handoff = self.handoff
         else:
             self.roi_bot = PreExecutionROIBot(handoff=self.handoff)
-        self.optimiser = optimiser or ImplementationOptimiserBot()
+        self.context_builder = context_builder or ContextBuilder()
+        self.optimiser = optimiser or ImplementationOptimiserBot(
+            context_builder=self.context_builder
+        )
         self.funds = funds
         self.roi_threshold = roi_threshold
 
@@ -318,7 +323,12 @@ class ModelAutomationPipeline:
     def _validate_tasks(self, tasks: Iterable[SynthesisTask]) -> List[SynthesisTask]:
         return self.validator.validate_tasks(list(tasks))
 
-    def _plan_bots(self, tasks: Iterable[SynthesisTask], *, trust_weight: float = 1.0) -> List[BotPlan]:
+    def _plan_bots(
+        self,
+        tasks: Iterable[SynthesisTask],
+        *,
+        trust_weight: float = 1.0,
+    ) -> List[BotPlan]:
         planning = [
             PlanningTask(
                 description=t.description,
@@ -528,7 +538,14 @@ class ModelAutomationPipeline:
                     category="workflow",
                 )
             )
-        tasks.append(SynthesisTask(description=f"Complete {model}", urgency=1, complexity=1, category="completion"))
+        tasks.append(
+            SynthesisTask(
+                description=f"Complete {model}",
+                urgency=1,
+                complexity=1,
+                category="completion",
+            )
+        )
 
         validated = list(tasks) if high else self._validate_tasks(tasks)
         if not validated:
@@ -631,7 +648,7 @@ class ModelAutomationPipeline:
         self._run_support_bots(model, energy=float(energy), weight=final_weight)
         if self.pathway_db:
             outcome = Outcome.SUCCESS if package else Outcome.FAILURE
-            pid = self.pathway_db.log(
+            self.pathway_db.log(
                 PathwayRecord(
                     actions=("pipeline:" + model + (":fast" if high else "")),
                     inputs=model,

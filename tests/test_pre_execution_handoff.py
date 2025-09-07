@@ -1,14 +1,24 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import menace.pre_execution_roi_bot as prb
-import menace.implementation_optimiser_bot as iob
-import menace.task_handoff_bot as thb
+import menace.pre_execution_roi_bot as prb  # noqa: E402
+import menace.implementation_optimiser_bot as iob  # noqa: E402
+import menace.task_handoff_bot as thb  # noqa: E402
+import types  # noqa: E402
 
 
 def test_handoff_to_implementation(monkeypatch):
     bot = prb.PreExecutionROIBot()
-    optimiser = iob.ImplementationOptimiserBot()
-    tasks = [prb.BuildTask(name="a", complexity=1.0, frequency=1.0, expected_income=1.0, resources={})]
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    optimiser = iob.ImplementationOptimiserBot(context_builder=builder)
+    tasks = [
+        prb.BuildTask(
+            name="a",
+            complexity=1.0,
+            frequency=1.0,
+            expected_income=1.0,
+            resources={},
+        )
+    ]
     package = thb.TaskPackage(tasks=[])
 
     def fake_compile(infos):

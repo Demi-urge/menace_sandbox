@@ -101,7 +101,7 @@ def _fake_subprocess(monkeypatch):
 def test_pipeline_runs(tmp_path):
     builder = _ctx_builder()
     handoff = thb.TaskHandoffBot()
-    optimiser = iob.ImplementationOptimiserBot()
+    optimiser = iob.ImplementationOptimiserBot(context_builder=builder)
     developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     pipeline = ip.ImplementationPipeline(
         builder,
@@ -173,7 +173,7 @@ def run():
     desc, docs = _extract(code)
     builder = _ctx_builder()
     handoff = thb.TaskHandoffBot()
-    optimiser = iob.ImplementationOptimiserBot()
+    optimiser = iob.ImplementationOptimiserBot(context_builder=builder)
     developer = CaptureDevBot(repo_base=tmp_path, builder=builder)
     pipeline = ip.ImplementationPipeline(
         builder,
@@ -268,7 +268,7 @@ def test_retry_handoff_and_plan_generation(tmp_path):
 
     builder = _ctx_builder()
     handoff = DummyHandoff()
-    optimiser = iob.ImplementationOptimiserBot()
+    optimiser = iob.ImplementationOptimiserBot(context_builder=builder)
     developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     ipo = DummyIPO()
     pipeline = ip.ImplementationPipeline(
@@ -299,7 +299,7 @@ def test_handoff_fails_after_two_network_errors(tmp_path):
 
     builder = _ctx_builder()
     handoff = FailingHandoff()
-    optimiser = iob.ImplementationOptimiserBot()
+    optimiser = iob.ImplementationOptimiserBot(context_builder=builder)
     developer = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     pipeline = ip.ImplementationPipeline(
         builder,

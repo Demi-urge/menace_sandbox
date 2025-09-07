@@ -36,14 +36,18 @@ class ImplementationOptimiserBot:
         self,
         engine: SelfCodingEngine | None = None,
         *,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         self.history: List[TaskPackage] = []
         self.engine = engine
         self.context_builder = context_builder
-        if self.engine is not None and context_builder is not None:
+        if self.engine is not None:
             try:
                 self.engine.context_builder = context_builder  # type: ignore[attr-defined]
+                if hasattr(self.engine.context_builder, "refresh_db_weights"):
+                    self.engine.context_builder.refresh_db_weights()  # type: ignore[attr-defined]
             except Exception:
                 pass
 

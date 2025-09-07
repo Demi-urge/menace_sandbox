@@ -10,9 +10,9 @@ os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 def _stub_deps():
     if "jinja2" not in sys.modules:
         mod = types.ModuleType("jinja2")
-        mod.Template = type("T", (), {"render": lambda self,*a,**k: ""})
+        mod.Template = type("T", (), {"render": lambda self, *a, **k: ""})
         sys.modules["jinja2"] = mod
-    for name in ["yaml", "numpy", "matplotlib", "matplotlib.pyplot", "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives", "cryptography.hazmat.primitives.asymmetric"]:  # path-ignore
+    for name in ["yaml", "numpy", "matplotlib", "matplotlib.pyplot", "cryptography", "cryptography.hazmat", "cryptography.hazmat.primitives", "cryptography.hazmat.primitives.asymmetric"]:  # path-ignore  # noqa: E501
         sys.modules.setdefault(name, types.ModuleType(name))
     sys.modules.pop('menace.database_steward_bot', None)
     sys.modules.pop('menace.capital_management_bot', None)
@@ -32,7 +32,7 @@ def _stub_deps():
         ed.Ed25519PrivateKey = type("P", (), {})
         ed.Ed25519PublicKey = type("U", (), {})
         sys.modules["cryptography.hazmat.primitives.asymmetric.ed25519"] = ed
-    sys.modules.setdefault("cryptography.hazmat.primitives.serialization", types.ModuleType("serialization"))
+    sys.modules.setdefault("cryptography.hazmat.primitives.serialization", types.ModuleType("serialization"))  # noqa: E501
 
 
 def test_offer_bot_logs_memory_errors(tmp_path, caplog):
@@ -43,6 +43,7 @@ def test_offer_bot_logs_memory_errors(tmp_path, caplog):
     class BadMM:
         def subscribe(self, *a, **k):
             raise RuntimeError("boom")
+
         def store(self, *a, **k):
             raise RuntimeError("boom")
 
@@ -64,14 +65,18 @@ def test_database_steward_safe_mode_logs(tmp_path, caplog):
         def is_safe_mode(self, module):
             return True
 
-    err_bot = eb.ErrorBot(eb.ErrorDB(tmp_path / "e.db"))
+    err_bot = eb.ErrorBot(eb.ErrorDB(tmp_path / "e.db"))  # noqa: F821
     err_bot.db = DummyErrDB()
 
     class Conv:
         def notify(self, msg):
             raise RuntimeError("boom")
 
-    bot = dsb.DatabaseStewardBot(sql_url=f"sqlite:///{tmp_path / 'db.sqlite'}", conversation_bot=Conv(), error_bot=err_bot)
+    bot = dsb.DatabaseStewardBot(  # noqa: F821
+        sql_url=f"sqlite:///{tmp_path / 'db.sqlite'}",
+        conversation_bot=Conv(),
+        error_bot=err_bot,
+    )
     caplog.set_level(logging.ERROR)
     with pytest.raises(RuntimeError):
         bot._check_safe()
@@ -81,6 +86,7 @@ def test_database_steward_safe_mode_logs(tmp_path, caplog):
 def test_capital_prediction_logs(caplog):
     _stub_deps()
     import menace.capital_management_bot as cmb
+
     class BadPred:
         def predict(self, feats):
             raise RuntimeError("boom")
@@ -88,6 +94,7 @@ def test_capital_prediction_logs(caplog):
     class DummyPM:
         def __init__(self):
             self.registry = {"b": types.SimpleNamespace(bot=BadPred())}
+
         def assign_prediction_bots(self, bot):
             return ["b"]
 
@@ -99,7 +106,11 @@ def test_capital_prediction_logs(caplog):
     assert "prediction bot BadPred failed" in caplog.text
 
 
-@pytest.mark.skipif('menace.model_automation_pipeline' not in sys.modules and os.getenv('SKIP_PIPELINE_TEST'), reason="pipeline unavailable")
+@pytest.mark.skipif(
+    'menace.model_automation_pipeline' not in sys.modules
+    and os.getenv('SKIP_PIPELINE_TEST'),
+    reason="pipeline unavailable",
+)
 def test_pipeline_prime_logging(caplog):
     _stub_deps()
     try:
@@ -108,7 +119,9 @@ def test_pipeline_prime_logging(caplog):
     except Exception:
         pytest.skip("pipeline import failed")
     agg = ResearchAggregatorBot([])
-    pipeline = mapl.ModelAutomationPipeline(aggregator=agg)
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    pipeline = mapl.ModelAutomationPipeline(aggregator=agg, context_builder=builder)
+
     class BadBot:
         def prime(self):
             raise RuntimeError("boom")
