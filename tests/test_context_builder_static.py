@@ -72,22 +72,23 @@ def test_allows_nocb_comment(tmp_path):
     assert check_file(path) == []
 
 
-def test_flags_default_builder_import(tmp_path):
+def test_allows_context_builder_import(tmp_path):
     from scripts.check_context_builder_usage import check_file
 
-    code = "from vector_service import get_default_context_builder\n"
+    code = "from vector_service.context_builder import ContextBuilder\n"
     path = tmp_path / "snippet.py"
     path.write_text(code)
-    assert check_file(path) == [(1, "get_default_context_builder")]
+    assert check_file(path) == []
 
 
-def test_flags_default_builder_call(tmp_path):
+def test_allows_context_builder_call(tmp_path):
     from scripts.check_context_builder_usage import check_file
 
     code = (
+        "from vector_service.context_builder import ContextBuilder\n"
         "def demo():\n"
-        "    get_default_context_builder()\n"
+        "    ContextBuilder(bots_db='bots.db', code_db='code.db', errors_db='errors.db', workflows_db='workflows.db')\n"
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
-    assert check_file(path) == [(2, "get_default_context_builder")]
+    assert check_file(path) == []
