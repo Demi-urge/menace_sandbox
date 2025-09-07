@@ -60,7 +60,7 @@ class EnhancementBot:
         self.cadence = cadence
         self.confidence_override = confidence_override
         self.context_builder = context_builder
-        self.db_weights = context_builder.refresh_db_weights()
+        self.db_weights = self.context_builder.refresh_db_weights()
         self.llm_client = llm_client
 
     # ------------------------------------------------------------------
@@ -119,12 +119,11 @@ class EnhancementBot:
         fetch a broader context window.
         """
 
-        builder = self.context_builder
         context = ""
-        if builder is not None and confidence > 0.0:
+        if confidence > 0.0:
             try:  # pragma: no cover - builder failures are non fatal
                 top_k = max(1, int(5 * confidence))
-                context = builder.build(hint, top_k=top_k)
+                context = self.context_builder.build(hint, top_k=top_k)
             except Exception:
                 context = ""
 
