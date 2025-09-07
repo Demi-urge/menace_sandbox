@@ -16,16 +16,15 @@ class DummyBuilder:
         self.refresh_calls += 1
 
 
-def test_refresh_called_before_generate_patch(monkeypatch, tmp_path):
+def test_refresh_called_during_init(monkeypatch, tmp_path):
     builder = DummyBuilder()
     db = types.SimpleNamespace(add_telemetry=lambda *a, **k: None)
     logger = ErrorLogger(db=db, context_builder=builder)
-    initial_calls = builder.refresh_calls
     called: list[bool] = []
 
     def fake_generate_patch(module, *, context_builder):
         assert context_builder is builder
-        assert builder.refresh_calls > initial_calls
+        assert builder.refresh_calls == 1
         called.append(True)
         return 1
 
