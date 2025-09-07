@@ -67,10 +67,17 @@ writes the runbook to `/tmp/watchdog_runbook_<epoch>.json` and the path is attac
 to the alert. The unique runbook ID returned by the protocol is logged for traceability.
 
 ```python
-from menace.watchdog import Watchdog, Notifier
+from menace.watchdog import (
+    Watchdog,
+    Notifier,
+    get_default_context_builder,
+)
 
 notifier = Notifier(slack_webhook="https://hooks.slack.com/services/TOKEN")
-watchdog = Watchdog(err_db, roi_db, metrics_db, notifier=notifier)
+builder = get_default_context_builder()
+watchdog = Watchdog(
+    err_db, roi_db, metrics_db, notifier=notifier, context_builder=builder
+)
 watchdog.check()
 ```
 

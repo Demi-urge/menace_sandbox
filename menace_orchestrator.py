@@ -34,7 +34,7 @@ from .discrepancy_detection_bot import DiscrepancyDetectionBot
 from .efficiency_bot import EfficiencyBot
 from .neuroplasticity import Outcome, PathwayDB, PathwayRecord
 from .ad_integration import AdIntegration
-from .watchdog import Watchdog
+from .watchdog import Watchdog, get_default_context_builder
 from .error_bot import ErrorDB
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
@@ -275,7 +275,10 @@ class MenaceOrchestrator:
         self.last_root_causes: Dict[str, List[str]] = {}
         self.workflow_confidence: Dict[str, float] = {}
         self._workflow_counts: Dict[str, int] = {}
-        self.watchdog = Watchdog(ErrorDB(router=self.router), ROIDB(), MetricsDB())
+        builder = get_default_context_builder()
+        self.watchdog = Watchdog(
+            ErrorDB(router=self.router), ROIDB(), MetricsDB(), context_builder=builder
+        )
         self.scheduler: object | None = None
         self.planner = StrategicPlanner(
             StrategyPredictionBot(), Autoscaler(), TrendPredictor()

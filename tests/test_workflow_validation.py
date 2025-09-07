@@ -1,11 +1,11 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import menace.watchdog as wd
-import menace.error_bot as eb
-import menace.resource_allocation_optimizer as rao
-import menace.data_bot as db
-from menace.recovery_validator import ReplayValidator
-from menace.menace_orchestrator import MenaceOrchestrator
+import menace.watchdog as wd  # noqa: E402
+import menace.error_bot as eb  # noqa: E402
+import menace.resource_allocation_optimizer as rao  # noqa: E402
+import menace.data_bot as db  # noqa: E402
+from menace.recovery_validator import ReplayValidator  # noqa: E402
+from menace.menace_orchestrator import MenaceOrchestrator  # noqa: E402
 
 
 def _setup_dbs(tmp_path):
@@ -17,7 +17,8 @@ def _setup_dbs(tmp_path):
 
 def test_replay_updates_confidence(tmp_path):
     err_db, roi_db, metrics_db = _setup_dbs(tmp_path)
-    watch = wd.Watchdog(err_db, roi_db, metrics_db)
+    builder = wd.get_default_context_builder()
+    watch = wd.Watchdog(err_db, roi_db, metrics_db, context_builder=builder)
     orch = MenaceOrchestrator()
     watch.record_fault("fail", workflow="wf1")
     validator = ReplayValidator(lambda wf: None)
