@@ -15,13 +15,7 @@ import json
 import os
 import sys
 import yaml
-try:
-    from vector_service.context_builder_utils import get_default_context_builder
-except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service.context_builder import ContextBuilder  # type: ignore
-
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
+from vector_service.context_builder import ContextBuilder
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -591,9 +585,10 @@ _INPUT_HISTORY_DB: InputHistoryDB | None = None
 
 # Shared error logger and category counters for sandbox runs
 KNOWLEDGE_GRAPH = KnowledgeGraph()
+CONTEXT_BUILDER = ContextBuilder()
 ERROR_LOGGER = ErrorLogger(
     knowledge_graph=KNOWLEDGE_GRAPH,
-    context_builder=get_default_context_builder(),
+    context_builder=CONTEXT_BUILDER,
 )
 ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
@@ -7148,7 +7143,7 @@ def run_repo_section_simulations(
             for module, sec_map in sections.items():
                 tmp_dir = tempfile.mkdtemp(prefix="section_")
                 shutil.copytree(repo_path, tmp_dir, dirs_exist_ok=True)
-                builder = get_default_context_builder()
+                builder = ContextBuilder()
                 builder.refresh_db_weights()
                 debugger = SelfDebuggerSandbox(
                     object(),
@@ -8314,7 +8309,7 @@ def run_workflow_simulations(
         for wf in workflows:
             for step in wf.workflow:
                 snippet = _wf_snippet([step])
-                builder = get_default_context_builder()
+                builder = ContextBuilder()
                 builder.refresh_db_weights()
                 debugger = SelfDebuggerSandbox(
                     object(),
