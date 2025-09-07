@@ -126,7 +126,7 @@ class ChatGPTClient:
     gpt_memory: "GPTMemoryInterface | None" = field(
         default_factory=lambda: GPT_MEMORY_MANAGER
     )
-    context_builder: ContextBuilder
+    context_builder: ContextBuilder = field(kw_only=True)
 
     def __post_init__(self) -> None:
         if not self.session:
@@ -429,26 +429,28 @@ class ChatGPTClient:
         prompt: str,
         *,
         prior: str | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> List[Dict[str, str]]:
-        """Prepend builder and memory-derived context to ``prompt`` if available."""
+        """Prepend builder and memory-derived context to ``prompt``."""
 
-        builder = context_builder or self.context_builder
+        if context_builder is None:
+            raise ValueError("context_builder is required")
+
+        builder = context_builder
         builder_ctx = ""
-        if builder is not None:
-            try:
-                query_parts = [*tags]
-                if prior:
-                    query_parts.append(prior)
-                query = " ".join(query_parts)
-                ctx_res = builder.build(query)
-                builder_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-                if builder_ctx:
-                    builder_ctx = compress_snippets({"snippet": builder_ctx}).get(
-                        "snippet", builder_ctx
-                    )
-            except Exception:
-                logger.exception("failed to build vector context")
+        try:
+            query_parts = [*tags]
+            if prior:
+                query_parts.append(prior)
+            query = " ".join(query_parts)
+            ctx_res = builder.build(query)
+            builder_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+            if builder_ctx:
+                builder_ctx = compress_snippets({"snippet": builder_ctx}).get(
+                    "snippet", builder_ctx
+                )
+        except Exception:
+            logger.exception("failed to build vector context")
 
         mem_ctx = ""
         if self.gpt_memory is not None:

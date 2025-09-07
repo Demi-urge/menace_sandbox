@@ -85,7 +85,7 @@ def test_prompts_embed_local_db_data(tmp_path):
 
     builder = DBContextBuilder(paths)
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(["x"], "y")
+    msgs = client.build_prompt_with_memory(["x"], "y", context_builder=builder)
 
     content = msgs[0]["content"]
     for text in db_contents.values():

@@ -2,13 +2,41 @@ import sys
 import types
 
 sys.modules.setdefault(
-    "menace.database_manager", types.SimpleNamespace(DB_PATH="db", search_models=lambda *a, **k: [])
+    "menace_sandbox.database_manager",
+    types.SimpleNamespace(DB_PATH="db", search_models=lambda *a, **k: []),
 )
 sys.modules.setdefault(
-    "menace.database_management_bot", types.SimpleNamespace(DatabaseManagementBot=object)
+    "menace_sandbox.database_management_bot",
+    types.SimpleNamespace(DatabaseManagementBot=object),
+)
+sys.modules.setdefault(
+    "menace_sandbox.shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
+)
+sys.modules.setdefault(
+    "menace_sandbox.memory_logging", types.SimpleNamespace(log_with_tags=lambda *a, **k: None)
+)
+sys.modules.setdefault(
+    "menace_sandbox.memory_aware_gpt_client",
+    types.SimpleNamespace(ask_with_memory=lambda *a, **k: {}),
+)
+sys.modules.setdefault(
+    "menace_sandbox.local_knowledge_module",
+    types.SimpleNamespace(LocalKnowledgeModule=lambda *a, **k: types.SimpleNamespace(memory=None)),
+)
+sys.modules.setdefault(
+    "menace_sandbox.knowledge_retriever",
+    types.SimpleNamespace(
+        get_feedback=lambda *a, **k: [],
+        get_improvement_paths=lambda *a, **k: [],
+        get_error_fixes=lambda *a, **k: [],
+    ),
+)
+sys.modules.setdefault(
+    "governed_retrieval",
+    types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x),
 )
 
-import menace.chatgpt_idea_bot as cib  # noqa: E402
+import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
 
 
 class FakeMemory:
@@ -32,8 +60,9 @@ def test_build_prompt_with_memory():
         def build(self, query, **_):
             return ""
 
-    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
-    msgs = client.build_prompt_with_memory(["ai"], "hello")
+    builder = DummyBuilder()
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
+    msgs = client.build_prompt_with_memory(["ai"], "hello", context_builder=builder)
     assert msgs[0]["role"] == "system"
     assert "ctx:ai" in msgs[0]["content"]
     assert msgs[1]["role"] == "user"
@@ -57,7 +86,13 @@ def test_ask_logs_interaction(monkeypatch):
         "_offline_response",
         lambda msgs: {"choices": [{"message": {"content": "resp"}}]},
     )
-    client.ask([{"role": "user", "content": "hi"}])
-    assert mem.logged[0][0] == "hi"
-    assert mem.logged[0][1] == "resp"
-    assert cib.INSIGHT in mem.logged[0][2]
+    logged = []
+    monkeypatch.setattr(
+        cib,
+        "log_with_tags",
+        lambda mem, prompt, response, tags: logged.append((prompt, response, tags)),
+    )
+    client.ask([{"role": "user", "content": "hi"}], use_memory=False)
+    assert logged[0][0] == "hi"
+    assert logged[0][1] == "resp"
+    assert cib.INSIGHT in logged[0][2]

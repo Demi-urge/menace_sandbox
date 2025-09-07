@@ -1,5 +1,6 @@
 import types
 import sys
+import pytest
 
 sys.modules.setdefault(
     "menace_sandbox.database_manager",
@@ -54,9 +55,18 @@ class DummyBuilder:
 def test_builder_context_included():
     builder = DummyBuilder()
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(["alpha", "beta"], "hi")
+    msgs = client.build_prompt_with_memory(
+        ["alpha", "beta"], "hi", context_builder=builder
+    )
     assert builder.calls == ["alpha beta"]
     assert msgs[0]["role"] == "system"
     assert "vector:alpha beta" in msgs[0]["content"]
     assert msgs[-1]["role"] == "user"
     assert msgs[-1]["content"] == "hi"
+
+
+def test_requires_context_builder():
+    builder = DummyBuilder()
+    client = cib.ChatGPTClient(context_builder=builder)
+    with pytest.raises(ValueError):
+        client.build_prompt_with_memory(["alpha"], "hi", context_builder=None)

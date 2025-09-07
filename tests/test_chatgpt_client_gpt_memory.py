@@ -3,10 +3,38 @@ import types
 
 # stub modules required by ChatGPTClient
 sys.modules.setdefault(
-    "menace.database_manager", types.SimpleNamespace(DB_PATH="db", search_models=lambda *a, **k: [])
+    "menace_sandbox.database_manager",
+    types.SimpleNamespace(DB_PATH="db", search_models=lambda *a, **k: []),
 )
 sys.modules.setdefault(
-    "menace.database_management_bot", types.SimpleNamespace(DatabaseManagementBot=object)
+    "menace_sandbox.database_management_bot",
+    types.SimpleNamespace(DatabaseManagementBot=object),
+)
+sys.modules.setdefault(
+    "menace_sandbox.shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
+)
+sys.modules.setdefault(
+    "menace_sandbox.memory_logging", types.SimpleNamespace(log_with_tags=lambda *a, **k: None)
+)
+sys.modules.setdefault(
+    "menace_sandbox.memory_aware_gpt_client",
+    types.SimpleNamespace(ask_with_memory=lambda *a, **k: {}),
+)
+sys.modules.setdefault(
+    "menace_sandbox.local_knowledge_module",
+    types.SimpleNamespace(LocalKnowledgeModule=lambda *a, **k: types.SimpleNamespace(memory=None)),
+)
+sys.modules.setdefault(
+    "menace_sandbox.knowledge_retriever",
+    types.SimpleNamespace(
+        get_feedback=lambda *a, **k: [],
+        get_improvement_paths=lambda *a, **k: [],
+        get_error_fixes=lambda *a, **k: [],
+    ),
+)
+sys.modules.setdefault(
+    "governed_retrieval",
+    types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x),
 )
 
 # stub sentence_transformers to avoid heavy import
@@ -21,7 +49,7 @@ class _DummyModel:
 stub_st.SentenceTransformer = _DummyModel
 sys.modules.setdefault("sentence_transformers", stub_st)
 
-import menace.chatgpt_idea_bot as cib  # noqa: E402
+import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
 from gpt_memory import GPTMemoryManager  # noqa: E402
 
 
@@ -46,7 +74,9 @@ def test_build_prompt_injects_summary_and_logs(monkeypatch):
         lambda msgs: {"choices": [{"message": {"content": "later resp"}}]},
     )
 
-    msgs = client.build_prompt_with_memory(["topic"], "new question")
+    msgs = client.build_prompt_with_memory(
+        ["topic"], "new question", context_builder=client.context_builder
+    )
     assert msgs[0]["role"] == "system"
     assert "early prompt" in msgs[0]["content"]
 
