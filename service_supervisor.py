@@ -59,20 +59,7 @@ from .code_database import CodeDB  # noqa: E402
 from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
 from .quick_fix_engine import QuickFixEngine  # noqa: E402
-try:  # noqa: E402 - optional helper for default ContextBuilder
-    from vector_service import ContextBuilder
-except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service import ContextBuilder  # type: ignore
-
-
-def get_default_context_builder(**kwargs):  # type: ignore
-    return ContextBuilder(
-        bot_db="bots.db",
-        code_db="code.db",
-        error_db="errors.db",
-        workflow_db="workflows.db",
-        **kwargs,
-    )
+from vector_service import ContextBuilder
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -359,6 +346,7 @@ class ServiceSupervisor:
         self,
         check_interval: float = 5.0,
         *,
+        context_builder: ContextBuilder,
         log_path: str = "supervisor.log",
         restart_log: str = "restart.log",
     ) -> None:
@@ -378,7 +366,7 @@ class ServiceSupervisor:
         self.approval_policy = PatchApprovalPolicy(
             rollback_mgr=self.rollback_mgr, bot_name="menace"
         )
-        self.context_builder = get_default_context_builder()
+        self.context_builder = context_builder
         self.context_builder.refresh_db_weights()
         self.auto_mgr = AutoEscalationManager(context_builder=self.context_builder)
         engine = SelfCodingEngine(
@@ -517,7 +505,8 @@ def main() -> None:
     """Entry point starting the service supervisor."""
     logging.basicConfig(level=logging.INFO)
     EnvironmentBootstrapper().bootstrap()
-    sup = ServiceSupervisor()
+    builder = ContextBuilder()
+    sup = ServiceSupervisor(context_builder=builder)
     sup.register("orchestrator", _orchestrator_worker)
     sup.register("microtrend_service", _microtrend_worker)
     sup.register("self_evaluation_service", _self_eval_worker)
