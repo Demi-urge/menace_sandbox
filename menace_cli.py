@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 
 from dynamic_path_router import resolve_path
 from db_router import init_db_router
@@ -17,12 +18,12 @@ from db_router import init_db_router
 # Expose a DBRouter for CLI operations early so imported modules can rely on
 # ``GLOBAL_ROUTER``.
 MENACE_ID = uuid.uuid4().hex
-LOCAL_DB_PATH = os.getenv(
-    "MENACE_LOCAL_DB_PATH", str(resolve_path(f"menace_{MENACE_ID}_local.db"))
-)
-SHARED_DB_PATH = os.getenv(
-    "MENACE_SHARED_DB_PATH", str(resolve_path("shared/global.db"))
-)
+LOCAL_DB_PATH = os.getenv("MENACE_LOCAL_DB_PATH")
+SHARED_DB_PATH = os.getenv("MENACE_SHARED_DB_PATH")
+if not LOCAL_DB_PATH:
+    LOCAL_DB_PATH = os.path.abspath(f"menace_{MENACE_ID}_local.db")
+if not SHARED_DB_PATH:
+    SHARED_DB_PATH = os.path.abspath("shared/global.db")
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from menace.plugins import load_plugins  # noqa: E402
@@ -99,8 +100,10 @@ def _normalise_hits(hits, origin=None):
 
 def handle_new_db(args: argparse.Namespace) -> int:
     """Handle ``new-db`` command."""
-    script_path = str(resolve_path("scripts/new_db_template.py"))
-    return _run([sys.executable, script_path, args.name])
+    script = Path("scripts/new_db_template.py")
+    if not script.exists():
+        script = resolve_path("scripts/new_db_template.py")
+    return _run([sys.executable, str(script), args.name])
 
 
 def handle_new_vector(args: argparse.Namespace) -> int:
@@ -123,12 +126,10 @@ def handle_new_vector(args: argparse.Namespace) -> int:
 def handle_patch(args: argparse.Namespace) -> int:
     """Handle ``patch`` command."""
     try:
-        from vector_service import ContextBuilder, get_default_context_builder
-    except ImportError:  # pragma: no cover - fallback when helper missing
-        from vector_service import ContextBuilder  # type: ignore
-
-        def get_default_context_builder(**kwargs):  # type: ignore
-            return ContextBuilder(**kwargs)
+        from vector_service import ContextBuilder
+    except ImportError:
+        print("ContextBuilder unavailable", file=sys.stderr)
+        return 1
     from vector_service.retriever import Retriever
     import quick_fix_engine
 
@@ -142,23 +143,30 @@ def handle_patch(args: argparse.Namespace) -> int:
             print("invalid JSON context", file=sys.stderr)
             return 1
 
-    db = PatchHistoryDB()
+    db_kwargs = {}
+    if args.db_path:
+        db_kwargs["path"] = args.db_path
+    try:
+        db = PatchHistoryDB(**db_kwargs)
+    except TypeError:  # pragma: no cover - fallback for stub implementations
+        db = PatchHistoryDB()
     patch_logger = PatchLogger(patch_db=db)
     try:
-        builder = get_default_context_builder(retriever=retriever)
+        builder = ContextBuilder(retriever=retriever)
         builder.refresh_db_weights()
     except Exception as exc:
         print(f"ContextBuilder initialisation failed: {exc}", file=sys.stderr)
         return 1
-    patch_id = quick_fix_engine.generate_patch(
-        args.module,
-        context_builder=builder,
-        engine=None,
-        description=args.desc,
-        patch_logger=patch_logger,
-        context=ctx,
-        effort_estimate=args.effort_estimate,
-    )
+    patch_args = {
+        "context_builder": builder,
+        "engine": None,
+        "description": args.desc,
+        "patch_logger": patch_logger,
+        "context": ctx,
+    }
+    if args.effort_estimate is not None:
+        patch_args["effort_estimate"] = args.effort_estimate
+    patch_id = quick_fix_engine.generate_patch(args.module, **patch_args)
     if not patch_id:
         return 1
     record = db.get(patch_id)
@@ -319,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
     p_quick.add_argument(
         "--effort-estimate", type=float, default=None, help="Estimated effort for patch"
     )
+    p_quick.add_argument("--db-path", help="Patch history database path")
     p_quick.set_defaults(func=handle_patch)
 
     p_patch = sub.add_parser("patches", help="Patch provenance helpers")
