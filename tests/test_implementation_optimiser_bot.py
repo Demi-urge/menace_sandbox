@@ -1,7 +1,8 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
-import menace.task_handoff_bot as thb
-import menace.implementation_optimiser_bot as iob
+import menace.task_handoff_bot as thb  # noqa: E402
+import menace.implementation_optimiser_bot as iob  # noqa: E402
+import types  # noqa: E402
 
 
 def test_process_records_package():
@@ -15,7 +16,8 @@ def test_process_records_package():
             metadata={},
         )
     ])
-    bot = iob.ImplementationOptimiserBot()
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    bot = iob.ImplementationOptimiserBot(context_builder=builder)
     advice = bot.process(pkg)
     assert bot.history and bot.history[0] is pkg
     assert advice[0].name == "t"
