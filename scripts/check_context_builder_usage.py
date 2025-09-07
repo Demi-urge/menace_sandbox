@@ -5,8 +5,11 @@ This script scans the repository for calls to ``_build_prompt``,
 ``PromptEngine`` and patch helpers such as ``generate_patch`` to ensure that a
 ``context_builder`` keyword argument is supplied.  It now also checks *any*
 function call named ``build_prompt`` or ``build_prompt_with_memory`` regardless
-of whether it is accessed as an attribute.  The check ignores any files located
-in directories named ``tests`` or ``unit_tests``.
+of whether it is accessed as an attribute.  Additionally, direct calls to
+``openai.Completion.create`` and ``openai.ChatCompletion.create`` as well as the
+``chat_completion_create`` wrapper are inspected.  Any invocation missing a
+``context_builder`` keyword or an inline ``# nocb`` comment will be flagged.  The
+check ignores files located in directories named ``tests`` or ``unit_tests``.
 """
 from __future__ import annotations
 
@@ -15,12 +18,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+NOCB_MARK = "# nocb"
 REQUIRED_NAMES = {
     "PromptEngine",
     "_build_prompt",
     "generate_patch",
     "build_prompt",
     "build_prompt_with_memory",
+    "chat_completion_create",
 }
 
 
@@ -33,25 +38,51 @@ def iter_python_files(root: Path):
 
 def check_file(path: Path) -> list[tuple[int, str]]:
     try:
-        tree = ast.parse(path.read_text())
+        text = path.read_text()
+        tree = ast.parse(text)
     except SyntaxError as exc:  # pragma: no cover - syntax errors
         print(f"Skipping {path}: {exc}", file=sys.stderr)
         return []
 
+    lines = text.splitlines()
     errors: list[tuple[int, str]] = []
+
+    def full_name(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            parts: list[str] = []
+            cur = node
+            while isinstance(cur, ast.Attribute):
+                parts.append(cur.attr)
+                cur = cur.value
+            if isinstance(cur, ast.Name):
+                parts.append(cur.id)
+                return ".".join(reversed(parts))
+        return None
+
+    OPENAI_NAMES = {
+        "openai.ChatCompletion.create",
+        "openai.Completion.create",
+    }
 
     class Visitor(ast.NodeVisitor):
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
-            fn = node.func
-            name: str | None = None
-            if isinstance(fn, ast.Name):
-                name = fn.id
-            elif isinstance(fn, ast.Attribute):
-                name = fn.attr
+            name_full = full_name(node.func)
+            name_simple = name_full.split(".")[-1] if name_full else None
             has_kw = any(kw.arg == "context_builder" for kw in node.keywords)
 
-            if name in REQUIRED_NAMES and not has_kw:
-                errors.append((node.lineno, name))
+            target = None
+            if name_simple in REQUIRED_NAMES:
+                target = name_simple
+            elif name_full in OPENAI_NAMES:
+                target = name_full
+            if target and not has_kw:
+                line_no = node.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append((line_no, target))
 
             self.generic_visit(node)
 

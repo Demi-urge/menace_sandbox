@@ -17,7 +17,7 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
         return False
     openai.api_key = cfg.openai_key  # type: ignore[arg-type]
     try:
-        chat_completion_create(
+        chat_completion_create(  # nocb
             [{"role": "user", "content": "ping"}],
             model="gpt-3.5-turbo",
             max_tokens=1,
