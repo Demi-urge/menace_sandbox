@@ -20,7 +20,7 @@ from .advanced_error_management import AutomatedRollbackManager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - optional dependency for type hints
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 
 
 class ChaosMonitoringService:

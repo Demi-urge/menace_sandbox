@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - optional
 from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
 from .task_handoff_bot import WorkflowDB
 from .unified_event_bus import UnifiedEventBus
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 try:
     import pandas as pd  # type: ignore

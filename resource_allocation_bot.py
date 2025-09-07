@@ -28,7 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .resources_bot import ResourcesBot
     from .contrarian_model_bot import ContrarianModelBot
     from .bot_database import BotDB
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 
 
 @dataclass

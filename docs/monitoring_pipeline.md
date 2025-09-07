@@ -53,7 +53,7 @@ Install `sentry-sdk` and create a `SentryClient` to capture exceptions from
 ```python
 from menace.sentry_client import SentryClient
 from menace.error_logger import ErrorLogger
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 sentry = SentryClient("https://public@o0.ingest.sentry.io/0")
 logger = ErrorLogger(sentry=sentry, context_builder=ContextBuilder())
@@ -69,7 +69,7 @@ to the alert. The unique runbook ID returned by the protocol is logged for trace
 
 ```python
 from menace.watchdog import Watchdog, Notifier
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 notifier = Notifier(slack_webhook="https://hooks.slack.com/services/TOKEN")
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")

@@ -102,7 +102,7 @@ try:
 except Exception:  # pragma: no cover - fallback for flat layout
     from sandbox_runner import post_round_orphan_scan  # type: ignore
 try:
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
     from vector_service.context_builder import record_failed_tags
 except Exception:  # pragma: no cover - optional dependency
     ContextBuilder = None  # type: ignore

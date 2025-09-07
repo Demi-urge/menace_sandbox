@@ -35,7 +35,7 @@ from .models_repo import (
     ACTIVE_MODEL_FILE,
     ensure_models_repo,
 )
-from vector_service import ContextBuilder, FallbackResult, ErrorResult
+from vector_service.context_builder import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )

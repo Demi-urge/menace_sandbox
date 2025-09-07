@@ -59,7 +59,7 @@ from .code_database import CodeDB  # noqa: E402
 from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
 from .quick_fix_engine import QuickFixEngine  # noqa: E402
-from vector_service import ContextBuilder  # noqa: E402
+from vector_service.context_builder import ContextBuilder  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore

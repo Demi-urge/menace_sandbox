@@ -16,7 +16,7 @@ block that fits within strict token budgets.
 ## Configuration
 
 ```python
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 # explicit construction for the standard local databases
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
@@ -105,7 +105,7 @@ constructor or method arguments.  Instantiate the builder with the standard
 databases and pass it through explicitly:
 
 ```python
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 # e.g. engine = SelfCodingEngine(..., context_builder=builder)
@@ -139,7 +139,7 @@ through explicitly:
 
 ```python
 from menace_sandbox.chatgpt_idea_bot import build_prompt
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 def my_prompt(client):
     builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")

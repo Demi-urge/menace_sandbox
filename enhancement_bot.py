@@ -30,7 +30,7 @@ from billing.prompt_notice import prepend_payment_notice
 from llm_interface import LLMClient, Prompt
 
 try:
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except Exception as exc:  # pragma: no cover - fail fast when dependency missing
     raise ImportError(
         "enhancement_bot requires vector_service.ContextBuilder; install the"

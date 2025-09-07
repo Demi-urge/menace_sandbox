@@ -92,7 +92,7 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
 from .retry_utils import retry
 
 try:
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except Exception as exc:  # pragma: no cover - fail fast when dependency missing
     raise ImportError(
         "watchdog requires vector_service.ContextBuilder; install the"

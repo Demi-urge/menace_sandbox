@@ -27,7 +27,7 @@ from .resource_allocation_bot import ResourceAllocationBot
 from .resource_prediction_bot import ResourceMetrics
 from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 
 @dataclass

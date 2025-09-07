@@ -11,7 +11,7 @@ from dynamic_path_router import resolve_path
 
 from module_graph_analyzer import build_import_graph
 from quick_fix_engine import generate_patch
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 from metrics_exporter import (
     update_module_retirement_metrics,
     retired_modules_total,

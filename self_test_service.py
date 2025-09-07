@@ -38,7 +38,7 @@ from db_router import init_db_router
 from dynamic_path_router import resolve_path, path_for_prompt
 
 try:  # pragma: no cover - optional dependency for type hints
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback for flat layout
     from vector_service.context_builder import ContextBuilder  # type: ignore
 MENACE_ID = uuid.uuid4().hex

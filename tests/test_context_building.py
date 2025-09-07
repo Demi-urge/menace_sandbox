@@ -1,5 +1,5 @@
 import json
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 
 class DummyRetriever:

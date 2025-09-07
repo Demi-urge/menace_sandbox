@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .prediction_manager_bot import PredictionManager

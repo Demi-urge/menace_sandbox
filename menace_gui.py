@@ -17,7 +17,7 @@ from .bot_database import BotDB
 from .resources_bot import ROIHistoryDB
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 from .scope_utils import Scope, build_scope_clause, apply_scope
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER

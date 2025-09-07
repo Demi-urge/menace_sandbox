@@ -2115,7 +2115,7 @@ trending product names scraped from multiple sources:
 from menace.bot_creation_bot import BotCreationBot
 from menace.workflow_evolution_bot import WorkflowEvolutionBot
 from menace.trending_scraper import TrendingScraper
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 # supply an explicit builder for downstream modules
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")

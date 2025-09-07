@@ -8,7 +8,7 @@ formats them into reusable snippets.
 
 ```python
 from prompt_engine import PromptEngine
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 prompt = PromptEngine.construct_prompt(

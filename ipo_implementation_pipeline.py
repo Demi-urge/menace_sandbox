@@ -8,9 +8,9 @@ import logging
 
 from .ipo_bot import IPOBot, ExecutionPlan
 try:
-    from vector_service import ContextBuilder
+    from vector_service.context_builder import ContextBuilder
 except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service import ContextBuilder  # type: ignore
+    from vector_service.context_builder import ContextBuilder  # type: ignore
 
 from .bot_development_bot import BotDevelopmentBot, BotSpec
 from .bot_testing_bot import BotTestingBot

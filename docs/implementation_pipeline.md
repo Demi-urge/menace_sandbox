@@ -93,7 +93,7 @@ If the key is absent the fallback is skipped entirely.
 
 ```python
 from menace.research_aggregator_bot import ResearchAggregatorBot
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 researcher = ResearchAggregatorBot(["security", "optimisation"], context_builder=ContextBuilder())
 ```

@@ -48,7 +48,7 @@ PY
 ```python
 from self_improvement.api import SelfImprovementEngine
 from model_automation_pipeline import ModelAutomationPipeline
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 engine = SelfImprovementEngine(bot_name="alpha",
                                pipeline=ModelAutomationPipeline(context_builder=ContextBuilder()))

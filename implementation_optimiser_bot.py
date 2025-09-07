@@ -8,7 +8,7 @@ from typing import List
 from .self_coding_engine import SelfCodingEngine
 import ast
 import logging
-from vector_service import ContextBuilder
+from vector_service.context_builder import ContextBuilder
 
 logger = logging.getLogger(__name__)
 
