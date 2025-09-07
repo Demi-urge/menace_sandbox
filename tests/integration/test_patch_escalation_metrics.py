@@ -47,7 +47,10 @@ def test_escalation_metrics(monkeypatch, tmp_path):
     engine = SelfCodingEngine(
         code_db=object(),
         memory_mgr=object(),
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     engine.audit_trail = types.SimpleNamespace(record=lambda payload: None)
     engine._build_retry_context = lambda desc, rep: {}

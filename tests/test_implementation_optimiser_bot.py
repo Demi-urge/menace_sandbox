@@ -21,3 +21,12 @@ def test_process_records_package():
     advice = bot.process(pkg)
     assert bot.history and bot.history[0] is pkg
     assert advice[0].name == "t"
+
+
+def test_refresh_db_weights_failure():
+    class BadBuilder:
+        def refresh_db_weights(self):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        iob.ImplementationOptimiserBot(context_builder=BadBuilder())

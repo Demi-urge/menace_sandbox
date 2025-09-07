@@ -1,6 +1,7 @@
 import os
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+import pytest
 
 
 class DummyEscalation:
@@ -86,6 +87,9 @@ def _stub_vector_service(monkeypatch):
         def build(self, prompt, **_):
             self.__class__.calls.append(prompt)
             return "ctx"
+
+        def refresh_db_weights(self):
+             pass
 
         build_context = build
 
@@ -189,3 +193,16 @@ def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
     assert g1.inc_calls == 1
     assert attachments_list == [""]
     assert "context build failed" in caplog.text
+
+
+def test_refresh_db_weights_failure(monkeypatch):
+    _stub_vector_service(monkeypatch)
+    import menace.automated_reviewer as ar
+    import vector_service
+
+    class BadBuilder(vector_service.ContextBuilder):
+        def refresh_db_weights(self):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        ar.AutomatedReviewer(context_builder=BadBuilder())

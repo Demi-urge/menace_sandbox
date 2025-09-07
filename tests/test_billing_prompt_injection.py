@@ -54,7 +54,8 @@ def test_billing_instructions_in_prompt(monkeypatch):
     engine.prompt_evolution_memory = None
     engine.roi_tracker = None
     engine.context_builder = types.SimpleNamespace(
-        build_context=lambda *a, **k: {}
+        build_context=lambda *a, **k: {},
+        refresh_db_weights=lambda *a, **k: None,
     )
     engine.prompt_tone = None
     engine._last_prompt_metadata = {}

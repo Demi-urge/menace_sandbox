@@ -10,6 +10,9 @@ class _DummyBuilder:
     def build(self, *_: object, **__: object) -> str:
         return "ctx"
 
+    def refresh_db_weights(self):
+        pass
+
 
 def test_allocate_and_log(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "psutil", None)

@@ -476,6 +476,11 @@ class SelfCodingEngine:
                     extra={"context_builder": type(builder).__name__},
                 )
         self.context_builder = builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception as exc:
+            self.logger.error("context builder refresh failed: %s", exc)
+            raise RuntimeError("context builder refresh failed") from exc
         if patch_logger is not None and getattr(patch_logger, "roi_tracker", None) is None:
             try:
                 patch_logger.roi_tracker = tracker  # type: ignore[attr-defined]

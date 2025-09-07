@@ -158,7 +158,10 @@ def _setup_engine(tmp_path, monkeypatch):
         llm_client=DummyLLM(),
         prompt_chunk_token_threshold=50,
         chunk_summary_cache_dir=tmp_path,
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     engine.data_bot = None
     engine.trend_predictor = None

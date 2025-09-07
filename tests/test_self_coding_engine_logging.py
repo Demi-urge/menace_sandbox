@@ -121,7 +121,10 @@ def test_roi_tracker_logging(caplog):
         DummyMemory(),
         patch_logger=BadPatchLogger(),
         cognition_layer=BadCognitionLayer(),
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     messages = [record.message for record in caplog.records]
     assert any("patch_logger" in m for m in messages)
@@ -135,7 +138,10 @@ def test_knowledge_service_logging(monkeypatch, caplog):
         DummyMemory(),
         knowledge_service=object(),
         llm_client=llm,
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     monkeypatch.setattr(sce, "get_feedback", lambda *a, **k: [])
     monkeypatch.setattr(sce, "get_error_fixes", lambda *a, **k: [])
@@ -167,7 +173,10 @@ def test_tempfile_cleanup_logging(monkeypatch, caplog, tmp_path):
         object(),
         DummyMemory(),
         llm_client=llm,
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
 
     class Verifier:

@@ -9,6 +9,9 @@ class _DummyBuilder:
     def build(self, *_: object, **__: object) -> str:
         return "ctx"
 
+    def refresh_db_weights(self):
+        pass
+
 def test_redistribute_records(tmp_path):
     db = resb.ROIHistoryDB(tmp_path / "roi.db")
     alloc_db = rab.AllocationDB(tmp_path / "a.db")

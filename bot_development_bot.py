@@ -334,6 +334,11 @@ class BotDevelopmentBot:
                 self.logger.error(msg)
             raise ValueError(msg)
         self.context_builder = context_builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception as exc:
+            self.logger.error("context builder refresh failed: %s", exc)
+            raise RuntimeError("context builder refresh failed") from exc
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,

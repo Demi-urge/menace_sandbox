@@ -77,7 +77,23 @@ dec_mod.log_and_measure = log_and_measure
 sys.modules.setdefault("vector_service.decorators", dec_mod)
 sys.modules.setdefault("vector_service", vec_mod)
 
-builder = types.SimpleNamespace(build_context=lambda *a, **k: {})
+builder = types.SimpleNamespace(
+    build_context=lambda *a, **k: {},
+    refresh_db_weights=lambda *a, **k: None,
+)
+
+
+def test_refresh_db_weights_failure(tmp_path):
+    import menace.self_coding_engine as sce
+    import menace.code_database as cd
+
+    bad = types.SimpleNamespace(
+        build_context=lambda *a, **k: {},
+        refresh_db_weights=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    mem = types.SimpleNamespace()
+    with pytest.raises(RuntimeError):
+        sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, context_builder=bad)
 
 from vector_service import VectorServiceError
 
@@ -442,6 +458,9 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
             return context_json
 
         build_context = build
+
+        def refresh_db_weights(self):
+            pass
 
     engine.context_builder = RecordingBuilder()
 

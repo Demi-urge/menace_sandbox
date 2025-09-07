@@ -52,7 +52,10 @@ def _build_engine(monkeypatch, tmp_path, similar_return, skip: bool = False):
         memory_mgr=object(),
         patch_db=patch_db,
         skip_retry_on_similarity=skip,
-        context_builder=types.SimpleNamespace(build_context=lambda *a, **k: {}),
+        context_builder=types.SimpleNamespace(
+            build_context=lambda *a, **k: {},
+            refresh_db_weights=lambda *a, **k: None,
+        ),
     )
     records: list[dict] = []
     engine.audit_trail = types.SimpleNamespace(record=lambda payload: records.append(payload))

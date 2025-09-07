@@ -43,6 +43,11 @@ class AutomatedReviewer:
             raise TypeError("context_builder must implement build()")
         self.context_builder = context_builder
         try:
+            self.context_builder.refresh_db_weights()
+        except Exception as exc:
+            self.logger.error("context builder refresh failed: %s", exc)
+            raise RuntimeError("context builder refresh failed") from exc
+        try:
             self.cognition_layer = CognitionLayer(context_builder=context_builder)
         except Exception:  # pragma: no cover - optional dependency failed
             self.logger.error("failed to initialise CognitionLayer", exc_info=True)

@@ -9,6 +9,9 @@ class _DummyBuilder:
     def build(self, *_: object, **__: object) -> str:
         return "ctx"
 
+    def refresh_db_weights(self):
+        pass
+
 
 def test_saturate_logs(tmp_path):
     db = nsb.NicheDB(tmp_path / "niche.db")
