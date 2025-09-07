@@ -1,5 +1,4 @@
 import types
-import types
 import logging
 from tests.test_self_debugger_sandbox import (
     sds,
@@ -175,7 +174,9 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
     info = sie_tests.rab.InfoDB(tmp_path / "i.db")
     builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
     diag = sie_tests.dm.DiagnosticManager(
-        mdb, sie_tests.eb.ErrorBot(edb, mdb, context_builder=builder)
+        mdb,
+        sie_tests.eb.ErrorBot(edb, mdb, context_builder=builder),
+        context_builder=builder,
     )
 
     class StubPipeline:

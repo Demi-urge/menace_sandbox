@@ -564,7 +564,9 @@ class SelfImprovementEngine:
         self.action_planner = action_planner
         err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=builder)
         self.error_bot = err_bot
-        self.diagnostics = diagnostics or DiagnosticManager(MetricsDB(), err_bot)
+        self.diagnostics = diagnostics or DiagnosticManager(
+            MetricsDB(), err_bot, context_builder=builder
+        )
         self._alignment_agent: AlignmentReviewAgent | None = None
         self.last_run = 0.0
         self.capital_bot = capital_bot

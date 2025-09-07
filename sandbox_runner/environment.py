@@ -1080,7 +1080,7 @@ def _get_history_db() -> InputHistoryDB:
 
 if DiagnosticManager is not None:
     try:
-        _DIAGNOSTIC = DiagnosticManager()
+        _DIAGNOSTIC = DiagnosticManager(context_builder=ContextBuilder())
     except (OSError, RuntimeError) as exc:  # pragma: no cover - diagnostics optional
         logger.warning(
             "diagnostic manager unavailable",

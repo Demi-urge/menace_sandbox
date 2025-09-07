@@ -432,7 +432,9 @@ import menace.self_improvement_policy as sip
 
 def _diag(edb, mdb):
     builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
-    return dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb, context_builder=builder))
+    return dm.DiagnosticManager(
+        mdb, eb.ErrorBot(edb, mdb, context_builder=builder), context_builder=builder
+    )
 
 
 def test_run_cycle(tmp_path, monkeypatch):

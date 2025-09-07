@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
@@ -15,6 +14,9 @@ try:  # pragma: no cover - support package and flat layouts
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from vector_service.context_builder import ContextBuilder
 
 try:
     import pandas as pd  # type: ignore
@@ -82,7 +84,7 @@ class DiagnosticManager:
         metrics_db: MetricsDB | None = None,
         error_bot: ErrorBot | None = None,
         *,
-        context_builder: "ContextBuilder" | None = None,
+        context_builder: "ContextBuilder",
         ledger: DecisionLedger | None = None,
         queue: CoordinationManager | None = None,
         log: ResolutionDB | None = None,
@@ -90,10 +92,6 @@ class DiagnosticManager:
         self.metrics = metrics_db or MetricsDB()
         self.context_builder = context_builder
         if error_bot is None:
-            if self.context_builder is None:
-                from vector_service.context_builder import ContextBuilder
-
-                self.context_builder = ContextBuilder()
             self.error_bot = ErrorBot(
                 ErrorDB(),
                 self.metrics,
