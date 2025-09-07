@@ -48,9 +48,6 @@ def test_builder_flows_through_pipeline(tmp_path, monkeypatch):
         tasks: list[TaskInfo]
 
     class StubHandoffBot:
-        def __init__(self, *, context_builder=None):
-            self.context_builder = context_builder
-
         def compile(self, tasks):
             return TaskPackage(list(tasks))
 
@@ -154,7 +151,11 @@ def test_builder_flows_through_pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr(
         ip,
         "subprocess",
-        types.SimpleNamespace(run=lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="", stderr="")),
+        types.SimpleNamespace(
+            run=lambda *a, **k: types.SimpleNamespace(
+                returncode=0, stdout="", stderr=""
+            )
+        ),
     )
     ip.TaskInfo = TaskInfo
     ip.TaskPackage = TaskPackage
@@ -180,7 +181,6 @@ def test_builder_flows_through_pipeline(tmp_path, monkeypatch):
     pipeline.run([task])
 
     assert pipeline.context_builder is builder
-    assert pipeline.handoff.context_builder is builder
     assert pipeline.optimiser.context_builder is builder
     assert pipeline.developer.context_builder is builder
     assert pipeline.researcher.context_builder is builder

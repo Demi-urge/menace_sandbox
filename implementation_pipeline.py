@@ -70,14 +70,7 @@ class ImplementationPipeline:
             Planner used to generate IPO execution plans.
         """
         self.context_builder = context_builder
-        if handoff is not None:
-            try:
-                handoff.context_builder = context_builder  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            self.handoff = handoff
-        else:
-            self.handoff = TaskHandoffBot(context_builder=context_builder)
+        self.handoff = handoff or TaskHandoffBot()
         if optimiser is not None:
             try:
                 optimiser.context_builder = context_builder  # type: ignore[attr-defined]
@@ -99,7 +92,9 @@ class ImplementationPipeline:
                 pass
             self.researcher = researcher
         elif isinstance(ResearchAggregatorBot, type) and ResearchAggregatorBot is not object:
-            self.researcher = ResearchAggregatorBot([], context_builder=context_builder)  # type: ignore
+            self.researcher = ResearchAggregatorBot(
+                [], context_builder=context_builder
+            )  # type: ignore
         else:
             self.researcher = None
         if ipo is not None:
