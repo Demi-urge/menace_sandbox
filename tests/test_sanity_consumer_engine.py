@@ -88,22 +88,10 @@ class _Memory:
 mmm_module.MenaceMemoryManager = _Memory
 sys.modules["menace_memory_manager"] = mmm_module
 
-vector_pkg = types.ModuleType("vector_service")
-ctx_module = types.ModuleType("vector_service.context_builder_utils")
-
 
 class _Builder:
     def refresh_db_weights(self):
         pass
-
-
-def get_default_context_builder(**_):
-    return _Builder()
-
-
-ctx_module.get_default_context_builder = get_default_context_builder
-sys.modules["vector_service"] = vector_pkg
-sys.modules["vector_service.context_builder_utils"] = ctx_module
 
 import billing.sanity_consumer as sc  # noqa: E402
 from unified_event_bus import UnifiedEventBus  # noqa: E402
@@ -138,7 +126,7 @@ def test_engine_instantiates_dependencies(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, 'MenaceMemoryManager', DummyMemory)
     monkeypatch.setattr(sc, 'SelfCodingEngine', DummyEngine)
 
-    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus())
+    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus(), context_builder=_Builder())
     engine = consumer._get_engine()
     assert isinstance(engine, DummyEngine)
     assert isinstance(engine.code_db, DummyCodeDB)
@@ -168,7 +156,7 @@ def test_optional_dependency_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, 'MenaceMemoryManager', DummyMemory)
     monkeypatch.setattr(sc, 'SelfCodingEngine', DummyEngine)
 
-    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus())
+    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus(), context_builder=_Builder())
     engine = consumer._get_engine()
     assert engine is not None
     assert captured['memory_mgr'].__class__ is DummyMemory
@@ -196,6 +184,20 @@ def test_builder_shared_with_feedback(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, 'MenaceMemoryManager', DummyMemory)
     monkeypatch.setattr(sc, 'SelfCodingEngine', DummyEngine)
 
-    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus())
+    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus(), context_builder=_Builder())
     feedback = consumer._get_feedback()
     assert getattr(feedback, 'context_builder', None) is shared['builder']
+
+
+def teardown_module(module):  # pragma: no cover - test cleanup
+    for name in [
+        "unified_event_bus",
+        "sanity_feedback",
+        "self_coding_engine",
+        "menace_sanity_layer",
+        "dynamic_path_router",
+        "discrepancy_db",
+        "code_database",
+        "menace_memory_manager",
+    ]:
+        sys.modules.pop(name, None)
