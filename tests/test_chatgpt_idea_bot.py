@@ -47,14 +47,14 @@ def test_generate_and_filter(monkeypatch):
 
         def build(self, query, **_):
             return ""
-
-    client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
+    builder = DummyBuilder()
+    client = cib.ChatGPTClient("key", context_builder=builder)
     monkeypatch.setattr(client, "ask", lambda msgs, **kw: fake_resp)
     validator = cib.SocialValidator()
     monkeypatch.setattr(validator, "is_unique_online", lambda name: name == "Idea1")
     monkeypatch.setattr(cib.database_manager, "search_models", lambda name: [])
 
-    ideas = cib.generate_and_filter(["ai"], client, validator)
+    ideas = cib.generate_and_filter(["ai"], client, validator, builder)
     names = [i.name for i in ideas]
     assert names == ["Idea1",]
 
