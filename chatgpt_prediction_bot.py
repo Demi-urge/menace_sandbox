@@ -675,9 +675,10 @@ class ChatGPTPredictionBot:
         self,
         model_path: Path | str | None = None,
         threshold: float | None = None,
+        *,
+        context_builder: ContextBuilder,
         client: ChatGPTClient | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
-        context_builder: ContextBuilder | None = None,
         **model_kwargs,
     ) -> None:
         """Load a trained model or fall back to the internal pipeline.
@@ -686,17 +687,27 @@ class ChatGPTPredictionBot:
         pipeline is used.
         """
 
+        if context_builder is None:
+            raise ValueError("context_builder is required")
+        context_builder.refresh_db_weights()
+
         self.model_path = Path(model_path) if model_path else CFG.model_path
         self.threshold = float(threshold) if threshold is not None else CFG.threshold
         self.gpt_memory = gpt_memory
+        self.context_builder = context_builder
+
         if client is not None:
+            try:
+                client.context_builder = context_builder
+            except Exception:
+                logger.debug("failed to attach context_builder to client", exc_info=True)
             if getattr(client, "gpt_memory", None) is None:
                 try:
                     client.gpt_memory = gpt_memory
                 except Exception:
                     logger.debug("failed to attach gpt_memory to client", exc_info=True)
             self.client = client
-        elif gpt_memory is not None and context_builder is not None:
+        elif gpt_memory is not None:
             try:
                 self.client = ChatGPTClient(
                     gpt_memory=gpt_memory, context_builder=context_builder
@@ -890,7 +901,7 @@ class ChatGPTPredictionBot:
                     "chatgpt_prediction_bot.evaluate_enhancement",
                     prompt,
                     memory=self.gpt_memory,
-                    context_builder=client.context_builder,
+                    context_builder=self.context_builder,
                     tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                 )
             except Exception:
