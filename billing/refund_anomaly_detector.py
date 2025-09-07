@@ -22,23 +22,19 @@ from dynamic_path_router import resolve_path
 from billing import billing_logger
 from billing.billing_log_db import BillingLogDB
 from menace_sanity_layer import record_billing_event, record_payment_anomaly
+from typing import TYPE_CHECKING
 
 try:  # Optional dependency – self-coding engine
     from self_coding_engine import SelfCodingEngine  # type: ignore
     from code_database import CodeDB  # type: ignore
     from menace_memory_manager import MenaceMemoryManager  # type: ignore
-    try:
-        # Prefer the default context builder helper when available.
-        from vector_service.context_builder_utils import get_default_context_builder
-    except ImportError:  # pragma: no cover - fallback when helper missing
-        from vector_service.context_builder import ContextBuilder  # type: ignore
-
-        def get_default_context_builder(**kwargs):  # type: ignore
-            return ContextBuilder(**kwargs)
 except Exception:  # pragma: no cover - best effort
     SelfCodingEngine = None  # type: ignore
     CodeDB = None  # type: ignore
     MenaceMemoryManager = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from vector_service.context_builder import ContextBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +83,7 @@ def detect_anomalies(
     db_path: Path | str | None = None,
     self_coding_engine: Any | None = None,
     config_path: Path | str | None = CONFIG_PATH,
+    context_builder: "ContextBuilder",
 ) -> List[dict]:
     """Return list of refund or failure anomalies.
 
@@ -101,10 +98,9 @@ def detect_anomalies(
     engine = self_coding_engine
     if engine is None and SelfCodingEngine and CodeDB and MenaceMemoryManager:
         try:  # pragma: no cover - best effort
-            builder = get_default_context_builder()
-            builder.refresh_db_weights()
+            context_builder.refresh_db_weights()
             engine = SelfCodingEngine(
-                CodeDB(), MenaceMemoryManager(), context_builder=builder
+                CodeDB(), MenaceMemoryManager(), context_builder=context_builder
             )
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to initialise SelfCodingEngine")
