@@ -39,7 +39,8 @@ from vector_service import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from billing.openai_wrapper import chat_completion_create
+from prompt_engine import PromptEngine
+from model_registry import get_client
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -54,10 +55,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     requests = None  # type: ignore
 
-try:  # pragma: no cover - optional dependency
-    import openai  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    openai = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     import mss  # type: ignore
@@ -341,7 +338,6 @@ class BotDevelopmentBot:
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
-            "openai": openai,
             "mss": mss,
             "numpy": np,
             "pytesseract": pytesseract,
@@ -910,23 +906,13 @@ class BotDevelopmentBot:
     def _call_codex_api(
         self, model: str, messages: list[dict[str, str]]
     ) -> Any:
-        """Call either local or cloud Codex API and return the raw response."""
-        if openai and os.getenv("OPENAI_API_KEY"):
-            openai.api_key = os.getenv("OPENAI_API_KEY")
-            return chat_completion_create(  # nocb
-                list(messages),
-                model=model,
-                temperature=0.1,
-                openai_client=openai,
-            )
-        url = os.getenv("LOCAL_CODEX_URL")
-        if url and requests:
-            resp = requests.post(
-                url, json={"model": model, "messages": messages}, timeout=60
-            )
-            resp.raise_for_status()
-            return resp.json()
-        raise RuntimeError("Codex API not configured")
+        """Call a configured LLM backend and return a chat-style response."""
+        engine = PromptEngine(context_builder=ContextBuilder())
+        client = get_client("openai", model=model, api_key=os.getenv("OPENAI_API_KEY"))
+        content = "\n".join(m.get("content", "") for m in messages)
+        prompt = engine.build_prompt(content)
+        result = client.generate(prompt)
+        return {"choices": [{"message": {"content": result.text}}]}
 
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
         if not requests:

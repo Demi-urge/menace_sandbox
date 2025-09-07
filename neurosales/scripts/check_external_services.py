@@ -1,7 +1,9 @@
 import sys
 from dotenv import load_dotenv
 from neurosales import config
-from billing.openai_wrapper import chat_completion_create
+from prompt_engine import PromptEngine
+from vector_service import ContextBuilder
+from model_registry import get_client
 
 load_dotenv()
 
@@ -11,18 +13,10 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
         print("OpenAI disabled")
         return True
     try:
-        import openai  # type: ignore
-    except Exception as e:
-        print(f"OpenAI library missing: {e}")
-        return False
-    openai.api_key = cfg.openai_key  # type: ignore[arg-type]
-    try:
-        chat_completion_create(  # nocb
-            [{"role": "user", "content": "ping"}],
-            model="gpt-3.5-turbo",
-            max_tokens=1,
-            openai_client=openai,
-        )
+        client = get_client("openai", model="gpt-3.5-turbo", api_key=cfg.openai_key)
+        engine = PromptEngine(context_builder=ContextBuilder())
+        prompt = engine.build_prompt("ping")
+        client.generate(prompt)
         print("OpenAI reachable")
         return True
     except Exception as e:

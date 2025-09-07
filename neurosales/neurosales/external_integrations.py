@@ -8,11 +8,6 @@ import logging
 import requests
 
 try:  # optional dependency
-    import openai  # type: ignore
-except Exception:  # pragma: no cover - optional dep
-    openai = None  # type: ignore
-
-try:  # optional dependency
     import pinecone  # type: ignore
 except Exception:  # pragma: no cover - optional dep
     pinecone = None  # type: ignore
@@ -22,7 +17,8 @@ try:  # optional dependency
 except Exception:  # pragma: no cover - optional dep
     GraphDatabase = None  # type: ignore
 
-from billing.openai_wrapper import chat_completion_create
+from prompt_engine import PromptEngine
+from model_registry import get_client
 import stripe_billing_router  # noqa: F401
 logger = logging.getLogger(__name__)
 
@@ -108,16 +104,19 @@ class GPT4Client:
         api_key: str | None = None,
         *,
         context_builder: "ContextBuilder" | None = None,
+        llm_client: "LLMClient" | None = None,
     ) -> None:
         if api_key is None:
             api_key = config.load_config().openai_key or os.getenv("OPENAI_API_KEY")
         self.api_key = api_key
-        self.enabled = openai is not None and api_key is not None
         self.context_builder = context_builder
-        if self.enabled:
-            openai.api_key = api_key  # type: ignore[arg-type]
-        else:  # pragma: no cover - warning path
-            logger.warning("GPT4Client disabled: no API key provided")
+        self.llm_client = llm_client or (
+            get_client("openai", model="gpt-4", api_key=api_key) if api_key else None
+        )
+        self.enabled = self.llm_client is not None
+        self.prompt_engine = PromptEngine(context_builder=context_builder)
+        if not self.enabled:  # pragma: no cover - warning path
+            logger.warning("GPT4Client disabled: backend unavailable")
 
     # ------------------------------------------------------------------
     def stream_chat(
@@ -128,13 +127,9 @@ class GPT4Client:
         text: str,
     ) -> Iterator[str]:
         if not self.enabled:
-            logger.warning("GPT4Client disabled: library unavailable")
+            logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
             return
-        system_msg = (
-            f"archetype:{archetype}; objective:{objective}; emotion:{emotion_tensor}"
-        )
-        messages = [{"role": "system", "content": system_msg}]
         query = objective or text
         context: Optional[str] = None
         if self.context_builder is not None:
@@ -149,19 +144,12 @@ class GPT4Client:
             logger.warning(
                 "ContextBuilder unavailable; proceeding without context"
             )
-        if context:
-            messages.append({"role": "system", "content": context})
-        messages.append({"role": "user", "content": text})
-        resp = chat_completion_create(  # nocb
-            messages,
-            model="gpt-4",
-            stream=True,
-            openai_client=openai,
+        prompt = self.prompt_engine.build_prompt(
+            text,
+            context=context,
         )
-        for chunk in resp:
-            delta = chunk["choices"][0]["delta"].get("content")
-            if delta:
-                yield delta
+        result = self.llm_client.generate(prompt)
+        yield result.text
 
 
 class PineconeLogger:

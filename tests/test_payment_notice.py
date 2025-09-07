@@ -15,6 +15,7 @@ from prompt_engine import PromptEngine
 
 from billing.openai_wrapper import chat_completion_create
 from llm_interface import LLMClient, LLMResult
+import model_registry
 
 # Stub heavy dependencies so chatgpt_idea_bot can be imported without side effects
 package = types.ModuleType("menace_sandbox")
@@ -193,18 +194,21 @@ def test_prompt_engine_build_prompt_contains_notice():
 
 
 def test_bot_development_bot_injects_notice(monkeypatch):
-    captured = {}
-    fake_openai = types.SimpleNamespace(
-        ChatCompletion=types.SimpleNamespace(
-            create=lambda *a, **k: captured.update(messages=k.get("messages")) or {}
-        )
-    )
+    class DummyLLM(LLMClient):
+        def __init__(self):
+            super().__init__("m", backends=[], log_prompts=False)
+            self.captured = None
+
+        def _generate(self, prompt):  # type: ignore[override]
+            self.captured = prompt
+            return LLMResult(text="")
+
+    dummy = DummyLLM()
     monkeypatch.setattr(
-        "menace_sandbox.bot_development_bot.openai", fake_openai, raising=False
+        "menace_sandbox.bot_development_bot.get_client", lambda *a, **k: dummy, raising=False
     )
-    monkeypatch.setenv("OPENAI_API_KEY", "k")
     BotDevelopmentBot._call_codex_api(object(), "m", [{"role": "user", "content": "hi"}])
-    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
+    assert dummy.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
 
 
 def test_openai_wrapper_injects_notice():
@@ -217,7 +221,7 @@ def test_openai_wrapper_injects_notice():
     fake_openai = types.SimpleNamespace(
         ChatCompletion=types.SimpleNamespace(create=fake_create)
     )
-    chat_completion_create(  # nocb
+    chat_completion_create(
         [{"role": "user", "content": "hi"}],
         model="gpt-3.5-turbo",
         openai_client=fake_openai,
@@ -226,25 +230,21 @@ def test_openai_wrapper_injects_notice():
 
 
 def test_gpt4client_injects_notice(monkeypatch):
-    captured = {}
+    class DummyLLM(LLMClient):
+        def __init__(self):
+            super().__init__("gpt-4", backends=[], log_prompts=False)
+            self.captured = None
 
-    def fake_create(*args, **kwargs):
-        captured["messages"] = kwargs.get("messages")
-        return iter([{ "choices": [{"delta": {"content": ""}}] }])
+        def _generate(self, prompt):  # type: ignore[override]
+            self.captured = prompt
+            return LLMResult(text="")
 
-    fake_openai = types.SimpleNamespace(
-        ChatCompletion=types.SimpleNamespace(create=fake_create)
+    dummy = DummyLLM()
+    monkeypatch.setattr(
+        "neurosales.external_integrations.get_client", lambda *a, **k: dummy, raising=False
     )
-    monkeypatch.setitem(sys.modules, "openai", fake_openai)
-    monkeypatch.setitem(sys.modules, "stripe_billing_router", types.ModuleType("sbr"))
-    monkeypatch.syspath_prepend(
-        str(Path(__file__).resolve().parents[1] / "neurosales")
-    )
-    import importlib
-    ext = importlib.import_module("neurosales.external_integrations")
-    importlib.reload(ext)
     from neurosales.external_integrations import GPT4Client
 
     client = GPT4Client(api_key="k")
     list(client.stream_chat("arch", [0.1], "obj", "hi"))
-    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
+    assert dummy.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
