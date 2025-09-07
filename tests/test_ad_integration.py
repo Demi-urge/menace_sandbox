@@ -1,4 +1,5 @@
 import pytest
+# flake8: noqa
 pytest.skip("optional dependencies not installed", allow_module_level=True)
 
 import types
@@ -58,7 +59,7 @@ def test_orchestrator_calls_ad_client(monkeypatch):
 
     import menace.menace_orchestrator as mo
 
-    orch = mo.MenaceOrchestrator(ad_client=DummyAd())
+    orch = mo.MenaceOrchestrator(ad_client=DummyAd(), context_builder=mo.ContextBuilder())
     orch.pipeline = StubPipeline()
     orch.run_cycle(["m"])
     assert calls == ["called"]

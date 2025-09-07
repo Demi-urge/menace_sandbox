@@ -1,3 +1,4 @@
+# flake8: noqa
 import sys
 import types
 import pytest
@@ -85,14 +86,14 @@ class DummyAlloc:
 
 
 def test_hint_triggers_autoscaler():
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=mo.ContextBuilder())
     orch.planner.autoscaler = DummyAuto()
     orch.receive_scaling_hint("scale_up")
     assert orch.planner.autoscaler.calls
 
 
 def test_hint_triggers_allocator():
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=mo.ContextBuilder())
     orch.pipeline.allocator = DummyAlloc()
     orch.engines = {"a": None}
     orch.receive_scaling_hint("rebalance")

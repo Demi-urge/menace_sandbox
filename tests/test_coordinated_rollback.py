@@ -1,6 +1,7 @@
 # flake8: noqa
 import sys
 import types
+from pathlib import Path
 
 jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None
@@ -45,6 +46,11 @@ if "prometheus_client" in sys.modules:
     prom.Gauge = lambda *a, **k: None
 if "requests" in sys.modules:
     sys.modules["requests"].Session = lambda *a, **k: None
+
+dyn = types.ModuleType("dynamic_path_router")
+dyn.resolve_path = lambda p, **k: Path(p)
+dyn.get_project_root = lambda: Path(".")
+sys.modules.setdefault("dynamic_path_router", dyn)
 map_mod = types.ModuleType("menace.model_automation_pipeline")
 class DummyPipeline:
     def __init__(self, *a, **k):
@@ -113,7 +119,10 @@ def test_coordinated_rollback(tmp_path, monkeypatch):
 
     monkeypatch.setattr(eng_b, "_current_errors", err_b)
 
-    orch = MenaceOrchestrator(rollback_mgr=rb)
+    orch = MenaceOrchestrator(
+        rollback_mgr=rb,
+        context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None),
+    )
     orch.register_engine("A", eng_a)
     orch.register_engine("B", eng_b)
 

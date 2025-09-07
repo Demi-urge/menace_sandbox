@@ -1,3 +1,4 @@
+# flake8: noqa
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
 import types
@@ -7,7 +8,7 @@ import menace.discrepancy_detection_bot as ddb
 
 
 def test_create_and_run_cycle(monkeypatch):
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
     orch.create_oversight("bot1", "L1")
     # stub pipeline
     class StubPipeline:
@@ -23,7 +24,7 @@ def test_pathway_priority(tmp_path):
     hi = db.log(neu.PathwayRecord(actions="run_cycle:hi", inputs="", outputs="", exec_time=0, resources="", outcome=neu.Outcome.SUCCESS, roi=2))
     for _ in range(3):
         db._update_meta(hi, neu.PathwayRecord(actions="run_cycle:hi", inputs="", outputs="", exec_time=0, resources="", outcome=neu.Outcome.SUCCESS, roi=2))
-    orch = mo.MenaceOrchestrator(pathway_db=db)
+    orch = mo.MenaceOrchestrator(pathway_db=db, context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
     class StubPipeline:
         def __init__(self):
             self.calls = []
@@ -44,7 +45,7 @@ def test_next_pathway_sequencing(tmp_path):
     db.conn.execute("UPDATE metadata SET myelination_score=2 WHERE pathway_id=?", (b,))
     db.reinforce_link(a, b)
     db.conn.commit()
-    orch = mo.MenaceOrchestrator(pathway_db=db)
+    orch = mo.MenaceOrchestrator(pathway_db=db, context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
     class StubPipeline:
         def __init__(self):
             self.calls = []
@@ -58,7 +59,7 @@ def test_next_pathway_sequencing(tmp_path):
 
 
 def test_health_check_and_reroute(monkeypatch):
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
     orch.create_oversight("A", "L1")
     orch.create_oversight("B", "L1")
     orch.create_oversight("C", "L1")
@@ -91,7 +92,7 @@ def test_planning_job_trigger(monkeypatch):
     monkeypatch.setenv("PLANNING_INTERVAL", "0")
     monkeypatch.setenv("WATCHDOG_INTERVAL", "0")
     monkeypatch.setattr(mo, "BackgroundScheduler", None)
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
     orch.watchdog = DummyWatchdog()
     planner = types.SimpleNamespace(called=False)
 
@@ -114,7 +115,7 @@ def test_planning_job_logs_error(monkeypatch, caplog):
     monkeypatch.setenv("PLANNING_INTERVAL", "0")
     monkeypatch.setenv("WATCHDOG_INTERVAL", "0")
     monkeypatch.setattr(mo, "BackgroundScheduler", None)
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
     orch.watchdog = DummyWatchdog()
     monkeypatch.setattr(orch, "_trending_job", lambda: None)
     monkeypatch.setattr(orch, "_learning_job", lambda: None)
@@ -150,7 +151,7 @@ def test_seed_job_triggers(monkeypatch, tmp_path):
     dv = DummyVault(str(tmp_path / "v.db"))
     monkeypatch.setattr(mo, "SessionVault", lambda path: dv)
     monkeypatch.setattr(mo, "seed_identity", fake_seed)
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
     monkeypatch.setattr(orch, "_heartbeat", lambda name: None)
 
     orch._seed_job()
@@ -164,7 +165,7 @@ def test_seed_job_triggers(monkeypatch, tmp_path):
 
 
 def test_detection_hooks(monkeypatch):
-    orch = mo.MenaceOrchestrator()
+    orch = mo.MenaceOrchestrator(context_builder=types.SimpleNamespace(refresh_db_weights=lambda: None))
 
     class StubPipeline:
         def __init__(self):
