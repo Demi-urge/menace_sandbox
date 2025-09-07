@@ -59,7 +59,7 @@ from .code_database import CodeDB  # noqa: E402
 from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
 from .quick_fix_engine import QuickFixEngine  # noqa: E402
-from vector_service import ContextBuilder
+from vector_service import ContextBuilder  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -372,12 +372,14 @@ class ServiceSupervisor:
         engine = SelfCodingEngine(
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
         )
+        pipeline = ModelAutomationPipeline(context_builder=self.context_builder)
         manager = SelfCodingManager(
             engine,
-            ModelAutomationPipeline(),
+            pipeline,
             bot_name="menace",
             approval_policy=self.approval_policy,
         )
+        manager.context_builder = self.context_builder
         self.error_db = ErrorDB()
         self.fix_engine = QuickFixEngine(
             self.error_db,
@@ -405,12 +407,14 @@ class ServiceSupervisor:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
+            pipeline = ModelAutomationPipeline(context_builder=self.context_builder)
             manager = SelfCodingManager(
                 engine,
-                ModelAutomationPipeline(),
+                pipeline,
                 bot_name="menace",
                 approval_policy=self.approval_policy,
             )
+            manager.context_builder = self.context_builder
             manager.run_patch(path, description)
             added_modules = getattr(engine, "last_added_modules", None)
             if not added_modules:
