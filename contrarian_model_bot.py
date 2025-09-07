@@ -148,18 +148,20 @@ class ContrarianModelBot:
         self.innovations_db = innovations_db or InnovationsDB()
         self.info_db = info_db or InfoDB()
         self.enh_db = enhancements_db or EnhancementDB()
-        self.aggregator = aggregator or ResearchAggregatorBot([], info_db=self.info_db, enhancements_db=self.enh_db)
+        builder = ContextBuilder(
+            bot_db="bots.db",
+            code_db="code.db",
+            error_db="errors.db",
+            workflow_db="workflows.db",
+        )
+        builder.refresh_db_weights()
+        self.aggregator = aggregator or ResearchAggregatorBot(
+            [], info_db=self.info_db, enhancements_db=self.enh_db, context_builder=builder
+        )
         self.prediction_manager = prediction_manager
         self.data_bot = data_bot
         self.strategy_bot = strategy_bot or StrategyPredictionBot()
         if allocator is None:
-            builder = ContextBuilder(
-                bot_db="bots.db",
-                code_db="code.db",
-                error_db="errors.db",
-                workflow_db="workflows.db",
-            )
-            builder.refresh_db_weights()
             allocator = ResourceAllocationBot(context_builder=builder)
         self.allocator = allocator
         self.contrarian_db = contrarian_db or ContrarianDB()

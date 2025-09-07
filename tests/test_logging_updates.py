@@ -118,8 +118,8 @@ def test_pipeline_prime_logging(caplog):
         from menace.research_aggregator_bot import ResearchAggregatorBot
     except Exception:
         pytest.skip("pipeline import failed")
-    agg = ResearchAggregatorBot([])
     builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    agg = ResearchAggregatorBot([], context_builder=builder)
     pipeline = mapl.ModelAutomationPipeline(aggregator=agg, context_builder=builder)
 
     class BadBot:

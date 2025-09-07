@@ -55,6 +55,7 @@ from .meta_genetic_algorithm_bot import MetaGeneticAlgorithmBot
 from .offer_testing_bot import OfferTestingBot
 from .research_fallback_bot import ResearchFallbackBot
 from .resource_allocation_optimizer import ResourceAllocationOptimizer
+from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
 from .database_manager import update_model
 from .ai_counter_bot import AICounterBot
 from .dynamic_resource_allocator_bot import DynamicResourceAllocator
@@ -140,10 +141,18 @@ class ModelAutomationPipeline:
         *,
         event_bus: UnifiedEventBus | None = None,
         bot_registry: BotRegistry | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.aggregator = aggregator or ResearchAggregatorBot([])
+        self.context_builder = context_builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception as exc:
+            self.logger.exception("context builder refresh failed: %s", exc)
+        self.db_router = db_router or DB_ROUTER
+        self.aggregator = aggregator or ResearchAggregatorBot(
+            [], context_builder=self.context_builder
+        )
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
         self.synthesis_bot = synthesis_bot or InformationSynthesisBot(
             aggregator=self.aggregator, workflow_db=self.workflow_db, event_bus=event_bus
@@ -172,7 +181,6 @@ class ModelAutomationPipeline:
                 self.roi_bot.handoff = self.handoff
         else:
             self.roi_bot = PreExecutionROIBot(handoff=self.handoff)
-        self.context_builder = context_builder or ContextBuilder()
         self.optimiser = optimiser or ImplementationOptimiserBot(
             context_builder=self.context_builder
         )
@@ -186,6 +194,11 @@ class ModelAutomationPipeline:
         self.db_bot = db_bot or CentralDatabaseBot(db_router=self.db_router)
         self.sentiment_bot = sentiment_bot or SentimentBot()
         self.query_bot = query_bot or QueryBot()
+        if getattr(self.query_bot, "client", None):
+            try:
+                self.query_bot.client.context_builder = self.context_builder
+            except Exception:
+                pass
         self.memory_bot = memory_bot or MemoryBot()
         self.comms_test_bot = comms_test_bot or CommunicationTestingBot()
         self.discrepancy_bot = discrepancy_bot or DiscrepancyDetectionBot()
@@ -198,15 +211,17 @@ class ModelAutomationPipeline:
         self.fallback_bot = fallback_bot or ResearchFallbackBot()
         self.optimizer = optimizer or ResourceAllocationOptimizer()
         self.ai_counter_bot = ai_counter_bot or AICounterBot()
-        self.allocator = allocator or DynamicResourceAllocator()
+        self.allocator = allocator or DynamicResourceAllocator(
+            alloc_bot=ResourceAllocationBot(
+                AllocationDB(), context_builder=self.context_builder
+            )
+        )
         self.diagnostic_manager = diagnostic_manager or DiagnosticManager()
         self.idea_bank = idea_bank or KeywordBank()
         self.news_db = news_db or NewsDB()
         self.reinvestment_bot = reinvestment_bot or AutoReinvestmentBot()
         self.spike_bot = spike_bot or RevenueSpikeEvaluatorBot(RevenueEventsDB())
         self.allocation_bot = allocation_bot or CapitalAllocationBot()
-
-        self.db_router = db_router or DB_ROUTER
         self.bot_registry = bot_registry or BotRegistry()
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold

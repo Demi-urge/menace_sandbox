@@ -1,6 +1,26 @@
+import os
 import types
 import sys
 import asyncio
+from pathlib import Path
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+vs = types.ModuleType("vector_service")
+class DummyBuilder:
+    def __init__(self, *a, **k):
+        pass
+    def refresh_db_weights(self):
+        pass
+vs.ContextBuilder = DummyBuilder
+vs.CognitionLayer = object
+sys.modules["vector_service"] = vs
+
+menace_pkg = types.ModuleType("menace")
+menace_pkg.__path__ = [str(Path(__file__).resolve().parent.parent)]
+menace_pkg.RAISE_ERRORS = False
+sys.modules["menace"] = menace_pkg
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 dummy_mods = {
     'menace.model_automation_pipeline': types.SimpleNamespace(ModelAutomationPipeline=object, AutomationResult=object),

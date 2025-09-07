@@ -29,6 +29,7 @@ sys.modules.setdefault("vector_service", vec_mod)
 # Minimal menace package to avoid executing heavy __init__
 menace_pkg = types.ModuleType("menace")
 menace_pkg.__path__ = [str(Path(__file__).resolve().parent.parent)]
+menace_pkg.RAISE_ERRORS = False
 sys.modules.setdefault("menace", menace_pkg)
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -42,6 +43,9 @@ class AutomationResult:
     def __init__(self, roi=None):
         self.roi = roi
 class ModelAutomationPipeline:
+    def __init__(self, *a, **k):
+        pass
+
     def run(self, *a, **k):
         return AutomationResult()
 mapl_mod.AutomationResult = AutomationResult
@@ -120,7 +124,8 @@ def test_failed_tags_recorded(monkeypatch, tmp_path):
             return 1, False, 0.0
 
     engine = Engine()
-    pipeline = ModelAutomationPipeline()
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    pipeline = ModelAutomationPipeline(context_builder=builder)
     mgr = scm.SelfCodingManager(engine, pipeline)
 
     # ensure clone path exists and file copied during git clone

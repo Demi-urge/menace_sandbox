@@ -34,7 +34,9 @@ def test_pipeline_runs(tmp_path):
     builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
     pipeline = mapl.ModelAutomationPipeline(
         aggregator=agg,
-        synthesis_bot=isb.InformationSynthesisBot(db_url="sqlite:///:memory:"),
+        synthesis_bot=isb.InformationSynthesisBot(
+            db_url="sqlite:///:memory:", aggregator=agg
+        ),
         validator=tvb.TaskValidationBot(["model"]),
         planner=bpb.BotPlanningBot(),
         hierarchy=mapl.HierarchyAssessmentBot(),
@@ -58,7 +60,9 @@ def test_reuse_granular(monkeypatch, tmp_path):
     builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
     pipeline = mapl.ModelAutomationPipeline(
         aggregator=agg,
-        synthesis_bot=isb.InformationSynthesisBot(db_url="sqlite:///:memory:"),
+        synthesis_bot=isb.InformationSynthesisBot(
+            db_url="sqlite:///:memory:", aggregator=agg
+        ),
         validator=tvb.TaskValidationBot(["model"]),
         planner=bpb.BotPlanningBot(),
         hierarchy=mapl.HierarchyAssessmentBot(),

@@ -371,6 +371,7 @@ from ..model_automation_pipeline import (
     ModelAutomationPipeline,
     AutomationResult,
 )
+from vector_service import ContextBuilder
 from ..diagnostic_manager import DiagnosticManager
 from ..error_bot import ErrorBot, ErrorDB
 from ..data_bot import MetricsDB, DataBot
@@ -547,9 +548,18 @@ class SelfImprovementEngine:
         self.interval = interval
         self.bot_name = bot_name
         self.info_db = info_db or InfoDB()
-        self.aggregator = ResearchAggregatorBot([bot_name], info_db=self.info_db)
+        builder = ContextBuilder()
+        try:
+            builder.refresh_db_weights()
+        except Exception:
+            pass
+        self.aggregator = ResearchAggregatorBot(
+            [bot_name], info_db=self.info_db, context_builder=builder
+        )
         self.pipeline = pipeline or ModelAutomationPipeline(
-            aggregator=self.aggregator, action_planner=action_planner
+            aggregator=self.aggregator,
+            action_planner=action_planner,
+            context_builder=builder,
         )
         self.action_planner = action_planner
         err_bot = ErrorBot(ErrorDB(), MetricsDB())

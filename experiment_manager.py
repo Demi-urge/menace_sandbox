@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+from vector_service import ContextBuilder
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .prediction_manager_bot import PredictionManager
@@ -45,7 +46,19 @@ class ExperimentManager:
     ) -> None:
         self.data_bot = data_bot
         self.capital_bot = capital_bot
-        self.pipeline = pipeline or ModelAutomationPipeline()
+        if pipeline is None:
+            builder = ContextBuilder()
+            try:
+                builder.refresh_db_weights()
+            except Exception:
+                pass
+            self.pipeline = ModelAutomationPipeline(
+                data_bot=self.data_bot,
+                capital_manager=self.capital_bot,
+                context_builder=builder,
+            )
+        else:
+            self.pipeline = pipeline
         self.prediction_manager = prediction_manager
         self.experiment_db = experiment_db or ExperimentHistoryDB()
         self.p_threshold = p_threshold
