@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Static check for ContextBuilder usage.
+"""Static check for ``ContextBuilder`` usage.
 
-This script scans the repository for calls to ``_build_prompt`` or
-``PromptEngine`` and ensures that a ``context_builder`` keyword argument is
-supplied.  The check ignores any files located in directories named ``tests``
-or ``unit_tests``.
+This script scans the repository for calls to ``_build_prompt``,
+``PromptEngine`` and patch helpers such as ``generate_patch`` to ensure that a
+``context_builder`` keyword argument is supplied.  The check ignores any files
+located in directories named ``tests`` or ``unit_tests``.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+REQUIRED_NAMES = {"PromptEngine", "_build_prompt", "generate_patch"}
 
 
 def iter_python_files(root: Path):
@@ -37,11 +38,11 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             if isinstance(fn, ast.Name):
                 name = fn.id
             elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
-                name = fn.attr if fn.attr == "PromptEngine" else None
-            # Only enforce for ``PromptEngine`` and top-level ``_build_prompt``
-            if name in {"PromptEngine", "_build_prompt"}:
-                if not any(kw.arg == "context_builder" for kw in node.keywords):
-                    errors.append((node.lineno, name))
+                name = fn.attr
+            if name in REQUIRED_NAMES and not any(
+                kw.arg == "context_builder" for kw in node.keywords
+            ):
+                errors.append((node.lineno, name))
             self.generic_visit(node)
 
     Visitor().visit(tree)
