@@ -1,18 +1,15 @@
+import os
+import sys
+import tempfile
 import types
 
+import db_router
 import pytest
-import types
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
-from fastapi.testclient import TestClient
-
-import os
-import tempfile
-import db_router
-import types
-import sys
+from fastapi.testclient import TestClient  # noqa: E402
 
 # Provide a minimal stub for the heavy ``config`` module used by ContextBuilder.
 config_stub = types.ModuleType("config")
@@ -39,8 +36,13 @@ local_db = os.path.join(tmp_dir, "test_local.db")
 shared_db = os.path.join(tmp_dir, "test_shared.db")
 db_router.init_db_router("test", local_db_path=local_db, shared_db_path=shared_db)
 
-import vector_service_api as api
-from vector_service import VectorServiceError
+from vector_service import VectorServiceError  # noqa: E402
+from vector_service.context_builder import ContextBuilder  # noqa: E402
+import vector_service_api as api  # noqa: E402
+
+# Explicitly initialise the API with a context builder so tests can hook into
+# the lazily configured services.
+api.create_app(ContextBuilder())
 
 client = TestClient(api.app)
 
