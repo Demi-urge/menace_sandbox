@@ -31,3 +31,42 @@ def test_flags_missing_context_builder_with_memory(tmp_path):
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == [(2, "build_prompt_with_memory")]
+
+
+def test_flags_openai_calls(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "import openai\n"
+        "def demo():\n"
+        "    openai.ChatCompletion.create([])\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [(3, "openai.ChatCompletion.create")]
+
+
+def test_flags_chat_completion_wrapper(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from billing.openai_wrapper import chat_completion_create\n"
+        "def demo():\n"
+        "    chat_completion_create([])\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [(3, "chat_completion_create")]
+
+
+def test_allows_nocb_comment(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from billing.openai_wrapper import chat_completion_create\n"
+        "def demo():\n"
+        "    chat_completion_create([], model='x')  # nocb\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == []
