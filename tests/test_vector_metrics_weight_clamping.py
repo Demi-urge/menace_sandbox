@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from vector_service.cognition_layer import CognitionLayer
@@ -6,7 +8,8 @@ from vector_metrics_db import VectorMetricsDB
 
 def test_weights_stay_within_bounds_after_feedback(tmp_path):
     vec_db = VectorMetricsDB(tmp_path / "vm.db")
-    layer = CognitionLayer(vector_metrics=vec_db)
+    builder = SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    layer = CognitionLayer(context_builder=builder, vector_metrics=vec_db)
     vectors = [("db1", "v1", 0.0), ("db2", "v2", 0.0)]
 
     for _ in range(5):

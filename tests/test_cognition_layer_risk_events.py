@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from vector_service.cognition_layer import CognitionLayer
@@ -41,8 +43,34 @@ def test_risk_scores_reduce_weights_and_emit_events(tmp_path, monkeypatch):
     retriever = DummyRetriever(hits)
     vec_db = VectorMetricsDB(tmp_path / "vec.db")
     bus = DummyBus()
+
+    class DummyBuilder:
+        def __init__(self, retriever):
+            self.retriever = retriever
+
+        def build_context(self, query, top_k=5, session_id="", **kwargs):
+            hits = self.retriever.search(query, top_k=top_k, session_id=session_id)
+            vectors = [(h["origin_db"], h["record_id"], h["score"]) for h in hits]
+            meta = {f"{h['origin_db']}:{h['record_id']}": h for h in hits}
+            stats = {"tokens": 0, "wall_time_ms": 0.0, "prompt_tokens": 0}
+            return "", session_id or "sid", vectors, meta, stats
+
+        def refresh_db_weights(self, *args, **kwargs):
+            pass
+
+    builder = DummyBuilder(retriever)
+    patch_logger = SimpleNamespace(
+        track_contributors=lambda *a, **k: {},
+        roi_tracker=None,
+        event_bus=bus,
+    )
     layer = CognitionLayer(
-        retriever=retriever, vector_metrics=vec_db, event_bus=bus, roi_tracker=None
+        retriever=retriever,
+        context_builder=builder,
+        patch_logger=patch_logger,
+        vector_metrics=vec_db,
+        event_bus=bus,
+        roi_tracker=None,
     )
 
     _ctx, sid = layer.query("q", top_k=2)
