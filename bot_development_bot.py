@@ -39,8 +39,7 @@ from vector_service import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from prompt_engine import PromptEngine
-from model_registry import get_client
+from billing.openai_wrapper import chat_completion_create
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -906,13 +905,17 @@ class BotDevelopmentBot:
     def _call_codex_api(
         self, model: str, messages: list[dict[str, str]]
     ) -> Any:
-        """Call a configured LLM backend and return a chat-style response."""
-        engine = PromptEngine(context_builder=ContextBuilder())
-        client = get_client("openai", model=model, api_key=os.getenv("OPENAI_API_KEY"))
-        content = "\n".join(m.get("content", "") for m in messages)
-        prompt = engine.build_prompt(content)
-        result = client.generate(prompt)
-        return {"choices": [{"message": {"content": result.text}}]}
+        """Call a configured LLM backend and return a chat-style response.
+
+        The internal :class:`~vector_service.ContextBuilder` is always forwarded
+        to :func:`chat_completion_create`.
+        """
+
+        return chat_completion_create(
+            messages,
+            model=model,
+            context_builder=self.context_builder,
+        )
 
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
         if not requests:
