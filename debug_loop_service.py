@@ -38,7 +38,7 @@ class DebugLoopService:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=builder
             )
-            feedback = TelemetryFeedback(logger, engine, context_builder=builder)
+            feedback = TelemetryFeedback(logger, engine)
         self.feedback = feedback
         self.logger = logging.getLogger(self.__class__.__name__)
         self.failure_count = 0
