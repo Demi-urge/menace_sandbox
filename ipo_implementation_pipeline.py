@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Iterable, Optional
+from typing import List
 import json
 import sys
 import logging
@@ -12,13 +12,14 @@ try:
 except ImportError:  # pragma: no cover - fallback when helper missing
     from vector_service import ContextBuilder  # type: ignore
 
-logger = logging.getLogger(__name__)
 from .bot_development_bot import BotDevelopmentBot, BotSpec
 from .bot_testing_bot import BotTestingBot
 from .scalability_assessment_bot import ScalabilityAssessmentBot
 from .deployment_bot import DeploymentBot, DeploymentSpec
 from .task_handoff_bot import TaskHandoffBot, TaskInfo
 from .research_aggregator_bot import ResearchAggregatorBot
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -66,7 +67,7 @@ class IPOImplementationPipeline:
         while attempts < self.max_attempts:
             attempts += 1
             path = self.developer.build_bot(
-                spec, context_builder=self.developer.context_builder
+                spec, context_builder=self.context_builder
             )
             if str(path.parent) not in sys.path:
                 sys.path.insert(0, str(path.parent))
