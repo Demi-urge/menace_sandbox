@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def _load_meta_planning():
     src = (ROOT / "self_improvement" / "meta_planning.py").read_text()  # path-ignore
     tree = ast.parse(src)
-    wanted = {"_get_entropy_threshold", "_should_encode", "self_improvement_cycle"}
+    wanted = {"_get_entropy_threshold", "_should_encode", "self_improvement_cycle", "_evaluate_cycle"}
     nodes = [
         n
         for n in tree.body
@@ -98,7 +98,7 @@ def test_self_improvement_cycle_runs_with_patch_and_orphans(tmp_path):
             import quick_fix_engine
             from sandbox_runner.orphan_integration import integrate_orphans
 
-            quick_fix_engine.generate_patch("repo")
+            quick_fix_engine.generate_patch("repo", context_builder=object())
             integrate_orphans(tmp_path)
             return [
                 {"chain": ["wf"], "roi_gain": 1.0, "failures": 0, "entropy": 0.0}

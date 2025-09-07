@@ -231,7 +231,9 @@ def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
     dynamic_path_router.clear_cache()
     monkeypatch.chdir(tmp_path)
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
-    monkeypatch.setattr(quick_fix, "generate_patch", lambda m, engine=None: 999)
+    monkeypatch.setattr(
+        quick_fix, "generate_patch", lambda m, engine=None, **kw: 999
+    )
     engine.preemptive_patch_modules([("mod", 0.8)], risk_threshold=0.5)
     assert mgr.calls == [
         (dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")
@@ -405,7 +407,11 @@ def test_generate_patch_uses_context_builder(tmp_path, monkeypatch):
     captured: dict[str, object] = {}
 
     class DummyBuilder:
+        def __init__(self):
+            self.refreshed = False
+
         def refresh_db_weights(self):
+            self.refreshed = True
             return None
 
         def build(self, desc, session_id=None, include_vectors=False):
@@ -445,6 +451,7 @@ def test_generate_patch_uses_context_builder(tmp_path, monkeypatch):
     assert build_args and build_args[0] == "fix bug"
     assert build_args[2] is True
     assert "snippet" in captured.get("patched_desc", "")
+    assert builder.refreshed is True
 
 
 def test_init_auto_builds_context_builder(tmp_path, monkeypatch):

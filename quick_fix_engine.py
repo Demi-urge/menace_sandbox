@@ -83,6 +83,7 @@ def generate_patch(
     module: str,
     engine: "SelfCodingEngine" | None = None,
     *,
+    context_builder: ContextBuilder,
     description: str | None = None,
     strategy: PromptStrategy | None = None,
     patch_logger: PatchLogger | None = None,
@@ -92,7 +93,7 @@ def generate_patch(
 ) -> int | None:
     """Attempt a quick patch for *module* and return the patch id.
 
-    A :class:`vector_service.ContextBuilder` is always used to gather context
+    A provided :class:`vector_service.ContextBuilder` is used to gather context
     for the patch.
 
     Parameters
@@ -103,6 +104,10 @@ def generate_patch(
         Optional :class:`~self_coding_engine.SelfCodingEngine` instance.  If not
         provided, a minimal engine is instantiated on demand.  The function
         tolerates missing dependencies and simply returns ``None`` on failure.
+    context_builder:
+        :class:`vector_service.ContextBuilder` instance used to retrieve
+        contextual information from local databases. The builder must be able
+        to query the databases associated with the current repository.
     description:
         Optional patch description.  When omitted, a generic description is
         used.
@@ -122,7 +127,7 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
-    builder = ContextBuilder()
+    builder = context_builder
     try:
         builder.refresh_db_weights()
     except Exception as exc:  # pragma: no cover - validation
@@ -589,7 +594,9 @@ class QuickFixEngine:
                 self.logger.error("preemptive patch failed for %s: %s", prompt_path, exc)
                 try:
                     patch_id = generate_patch(
-                        prompt_path, getattr(self.manager, "engine", None)
+                        prompt_path,
+                        getattr(self.manager, "engine", None),
+                        context_builder=self.context_builder,
                     )
                 except Exception:
                     patch_id = None
