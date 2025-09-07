@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import time
 import threading
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING
 import argparse
 import importlib
 import platform
@@ -29,6 +29,9 @@ import sys
 import logging
 from logging_utils import log_record
 from dynamic_path_router import resolve_path
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from vector_service.context_builder import ContextBuilder
 
 # Logger for this module
 logger = logging.getLogger(__name__)
@@ -486,7 +489,9 @@ def _mark_first_run(path: str) -> None:
         logger.exception("failed creating first run flag %s", flag)
 
 
-def deploy_patch(path: Path, description: str) -> None:
+def deploy_patch(
+    path: Path, description: str, context_builder: "ContextBuilder"
+) -> None:
     """Apply a patch using approval policy before deployment."""
     rb = AutomatedRollbackManager()
     policy = PatchApprovalPolicy(rollback_mgr=rb)
@@ -494,22 +499,14 @@ def deploy_patch(path: Path, description: str) -> None:
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
     from menace.model_automation_pipeline import ModelAutomationPipeline
-    try:
-        from vector_service.context_builder_utils import get_default_context_builder
-    except ImportError:  # pragma: no cover - fallback
-        from vector_service.context_builder import ContextBuilder  # type: ignore
 
-        def get_default_context_builder(**kwargs):  # type: ignore
-            return ContextBuilder(**kwargs)
-
-    builder = get_default_context_builder()
+    builder = context_builder
     builder.refresh_db_weights()
     engine = SelfCodingEngine(
         CodeDB(), MenaceMemoryManager(), context_builder=builder
     )
-    pipeline = ModelAutomationPipeline()
+    pipeline = ModelAutomationPipeline(context_builder=builder)
     manager = SelfCodingManager(engine, pipeline, approval_policy=policy)
-    pipeline.context_builder = builder
     manager.context_builder = builder
     try:
         manager.run_patch(path, description)
