@@ -3,8 +3,12 @@
 
 This script scans the repository for calls to ``_build_prompt``,
 ``PromptEngine`` and patch helpers such as ``generate_patch`` to ensure that a
-``context_builder`` keyword argument is supplied.  The check ignores any files
-located in directories named ``tests`` or ``unit_tests``.
+``context_builder`` keyword argument is supplied.  It also checks top-level
+``build_prompt`` helpers and methods named ``build_prompt_with_memory``.  To
+avoid false positives the ``build_prompt`` check only triggers for direct calls
+like ``build_prompt(...)`` and intentionally ignores attribute accesses such as
+``obj.build_prompt(...)`` which may refer to unrelated methods.  The check
+ignores any files located in directories named ``tests`` or ``unit_tests``.
 """
 from __future__ import annotations
 
@@ -35,14 +39,23 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
             fn = node.func
             name: str | None = None
+            is_attr = False
             if isinstance(fn, ast.Name):
                 name = fn.id
-            elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+            elif isinstance(fn, ast.Attribute):
                 name = fn.attr
-            if name in REQUIRED_NAMES and not any(
-                kw.arg == "context_builder" for kw in node.keywords
-            ):
+                is_attr = True
+            has_kw = any(kw.arg == "context_builder" for kw in node.keywords)
+
+            if name in REQUIRED_NAMES and not has_kw:
                 errors.append((node.lineno, name))
+            elif name == "build_prompt" and not is_attr and not has_kw:
+                # Only flag bare ``build_prompt(...)`` calls to avoid warning on
+                # unrelated methods named ``build_prompt``.
+                errors.append((node.lineno, name))
+            elif name == "build_prompt_with_memory" and is_attr and not has_kw:
+                errors.append((node.lineno, name))
+
             self.generic_visit(node)
 
     Visitor().visit(tree)
