@@ -8,8 +8,29 @@ from sklearn.feature_extraction import DictVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
+import types, sys
+
+pkg = types.ModuleType("menace")
+pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
+pkg.RAISE_ERRORS = False
+sys.modules["menace"] = pkg
+
+vector_service_pkg = types.ModuleType("vector_service")
+vector_service_pkg.__path__ = []
+vector_service_pkg.SharedVectorService = object
+vector_service_pkg.CognitionLayer = object
+class _StubContextBuilder:
+    def refresh_db_weights(self):
+        pass
+ctx_mod = types.ModuleType("vector_service.context_builder")
+ctx_mod.ContextBuilder = _StubContextBuilder
+sys.modules["vector_service"] = vector_service_pkg
+sys.modules["vector_service.context_builder"] = ctx_mod
+sys.modules["menace.shared_gpt_memory"] = types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
+
 import menace.chatgpt_prediction_bot as cpb
 
+DummyBuilder = _StubContextBuilder
 
 def build_model(path: Path) -> None:
     X = [
@@ -41,7 +62,7 @@ def build_model(path: Path) -> None:
 def test_prediction(tmp_path):
     model_path = tmp_path / "model.joblib"
     build_model(model_path)
-    bot = cpb.ChatGPTPredictionBot(model_path)
+    bot = cpb.ChatGPTPredictionBot(model_path, context_builder=DummyBuilder())
     idea = cpb.IdeaFeatures(
         market_type="finance",
         monetization_model="subscription",
@@ -58,7 +79,7 @@ def test_prediction(tmp_path):
 def test_batch_prediction(tmp_path):
     model_path = tmp_path / "model.joblib"
     build_model(model_path)
-    bot = cpb.ChatGPTPredictionBot(model_path)
+    bot = cpb.ChatGPTPredictionBot(model_path, context_builder=DummyBuilder())
     ideas = [
         cpb.IdeaFeatures(
             market_type="tech",

@@ -677,6 +677,7 @@ class ChatGPTPredictionBot:
         threshold: float | None = None,
         client: ChatGPTClient | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
+        context_builder: ContextBuilder | None = None,
         **model_kwargs,
     ) -> None:
         """Load a trained model or fall back to the internal pipeline.
@@ -695,12 +696,10 @@ class ChatGPTPredictionBot:
                 except Exception:
                     logger.debug("failed to attach gpt_memory to client", exc_info=True)
             self.client = client
-        elif gpt_memory is not None:
+        elif gpt_memory is not None and context_builder is not None:
             try:
-                builder = ContextBuilder()
-                builder.refresh_db_weights()
                 self.client = ChatGPTClient(
-                    gpt_memory=gpt_memory, context_builder=builder
+                    gpt_memory=gpt_memory, context_builder=context_builder
                 )
             except Exception:  # pragma: no cover - optional dependency
                 logger.debug("failed to initialize ChatGPTClient", exc_info=True)
