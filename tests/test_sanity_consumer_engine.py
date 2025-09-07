@@ -90,8 +90,11 @@ sys.modules["menace_memory_manager"] = mmm_module
 
 
 class _Builder:
+    def __init__(self):
+        self.refreshed = False
+
     def refresh_db_weights(self):
-        pass
+        self.refreshed = True
 
 import billing.sanity_consumer as sc  # noqa: E402
 from unified_event_bus import UnifiedEventBus  # noqa: E402
@@ -103,8 +106,12 @@ def test_injected_engine_used():
         pass
 
     engine = DummyEngine()
-    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus(), engine=engine)
+    builder = _Builder()
+    consumer = sc.SanityConsumer(
+        event_bus=UnifiedEventBus(), engine=engine, context_builder=builder
+    )
     assert consumer._get_engine() is engine
+    assert builder.refreshed
 
 
 def test_engine_instantiates_dependencies(monkeypatch, tmp_path):
