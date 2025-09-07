@@ -152,9 +152,16 @@ class ContrarianModelBot:
         self.prediction_manager = prediction_manager
         self.data_bot = data_bot
         self.strategy_bot = strategy_bot or StrategyPredictionBot()
-        self.allocator = allocator or ResourceAllocationBot(
-            context_builder=ContextBuilder()
-        )
+        if allocator is None:
+            builder = ContextBuilder(
+                bot_db="bots.db",
+                code_db="code.db",
+                error_db="errors.db",
+                workflow_db="workflows.db",
+            )
+            builder.refresh_db_weights()
+            allocator = ResourceAllocationBot(context_builder=builder)
+        self.allocator = allocator
         self.contrarian_db = contrarian_db or ContrarianDB()
         self.capital_manager = capital_manager
         self.model_ids = model_ids or []
