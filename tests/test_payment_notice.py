@@ -254,13 +254,46 @@ def test_openai_wrapper_injects_notice():
     )
     from billing.openai_wrapper import chat_completion_create
 
+    class DummyBuilder:
+        def __init__(self) -> None:
+            self.called = False
+
+        def build(self, query: str) -> str:
+            self.called = True
+            return "ctx"
+
+    builder = DummyBuilder()
+
     chat_completion_create(
         [{"role": "user", "content": "hi"}],
         model="gpt-3.5-turbo",
         openai_client=fake_openai,
-        context_builder=types.SimpleNamespace(build=lambda _: "ctx"),
+        context_builder=builder,
     )
     assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
+    assert captured["messages"][-1] == {"role": "system", "content": "ctx"}
+    assert builder.called
+
+
+def test_openai_wrapper_requires_context_builder():
+    captured = {}
+
+    def fake_create(*args, **kwargs):  # pragma: no cover - simple stub
+        captured["messages"] = kwargs.get("messages")
+        return {}
+
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(create=fake_create)
+    )
+    from billing.openai_wrapper import chat_completion_create
+
+    with pytest.raises(TypeError):
+        chat_completion_create(
+            [{"role": "user", "content": "hi"}],
+            model="gpt-3.5-turbo",
+            openai_client=fake_openai,
+            context_builder=None,  # type: ignore[arg-type]
+        )
 
 
 def test_gpt4client_injects_notice(monkeypatch):

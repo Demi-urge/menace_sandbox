@@ -211,20 +211,18 @@ def test_influence_graph_updater_env(monkeypatch):
 
 
 def test_check_external_services_injects_notice(monkeypatch):
-    class DummyLLM(LLMClient):
-        def __init__(self):
-            super().__init__("gpt-3.5-turbo", backends=[], log_prompts=False)
-            self.captured = None
+    captured: dict[str, Any] = {}
 
-        def _generate(self, prompt):  # type: ignore[override]
-            self.captured = prompt
-            return LLMResult(text="")
+    def fake_chat(messages, *, context_builder, **kwargs):
+        captured["messages"] = prepend_payment_notice(messages)
+        return {}
 
-    dummy = DummyLLM()
     from types import SimpleNamespace
     from neurosales.scripts import check_external_services as ces
-    monkeypatch.setattr(ces, "get_client", lambda *a, **k: dummy)
     monkeypatch.setattr(ces.config, "is_openai_enabled", lambda cfg: True)
+    monkeypatch.setattr(ces, "ContextBuilder", lambda: SimpleNamespace(build=lambda _: "CTX"))
+    monkeypatch.setattr(ces, "chat_completion_create", fake_chat)
+
     cfg = SimpleNamespace(openai_key="k")
     assert ces.check_openai(cfg)
-    assert dummy.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
