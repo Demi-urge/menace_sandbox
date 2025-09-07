@@ -604,7 +604,11 @@ def parse_ideas(data: Dict[str, object]) -> List[Idea]:
     return ideas
 
 
-def follow_up(client: ChatGPTClient, idea: Idea) -> str:
+def follow_up(
+    client: ChatGPTClient,
+    idea: Idea,
+    context_builder: ContextBuilder,
+) -> str:
     """Request additional insight for a single idea."""
     prompt = (
         f"Provide deeper insight or variations for this business model: {idea.name} - "
@@ -616,7 +620,7 @@ def follow_up(client: ChatGPTClient, idea: Idea) -> str:
             "chatgpt_idea_bot.follow_up",
             prompt,
             memory=LOCAL_KNOWLEDGE_MODULE,
-            context_builder=client.context_builder,
+            context_builder=context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
         idea.insight = (
@@ -638,6 +642,7 @@ def generate_and_filter(
     tags: Iterable[str],
     client: ChatGPTClient,
     validator: SocialValidator,
+    context_builder: ContextBuilder,
 ) -> List[Idea]:
     """Generate ideas and filter them for novelty."""
     logger.info("requesting ideas for tags: %s", ", ".join(tags))
@@ -653,7 +658,7 @@ def generate_and_filter(
         "chatgpt_idea_bot.generate_and_filter",
         prompt,
         memory=LOCAL_KNOWLEDGE_MODULE,
-        context_builder=client.context_builder,
+        context_builder=context_builder,
         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
     )
     ideas = parse_ideas(response)
@@ -667,7 +672,7 @@ def generate_and_filter(
             logger.debug("idea %s already in database", idea.name)
             continue
         try:
-            follow_up(client, idea)
+            follow_up(client, idea, context_builder=context_builder)
         except Exception:
             logger.exception("failed to enrich idea %s", idea.name)
             if RAISE_ERRORS:
