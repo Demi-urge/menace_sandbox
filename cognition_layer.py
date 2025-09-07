@@ -25,15 +25,8 @@ from __future__ import annotations
 
 from typing import Any, Tuple
 
-try:
-    from vector_service import ContextBuilder, get_default_context_builder
-except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service import ContextBuilder  # type: ignore
-
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
+from vector_service import ContextBuilder
 from vector_service.cognition_layer import CognitionLayer as _CognitionLayer
-from patch_safety import PatchSafety
 from roi_tracker import ROITracker
 
 __all__ = [
@@ -49,14 +42,31 @@ __all__ = [
 # Global components shared by all calls.  They ensure every query flows
 # through retrieval, ranking, patch safety and ROI tracking.
 _roi_tracker = ROITracker()
-_patch_safety = PatchSafety()
-_context_builder = get_default_context_builder(
-    roi_tracker=_roi_tracker, patch_safety=_patch_safety
-)
+_context_builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+_patch_safety = _context_builder.patch_safety
 _layer = _CognitionLayer(context_builder=_context_builder, roi_tracker=_roi_tracker)
 
 
-def build_cognitive_context(query: str, **kwargs: Any) -> Tuple[str, str]:
+def _get_layer(builder: ContextBuilder | None) -> _CognitionLayer:
+    """Return cognition layer bound to *builder* or the shared default."""
+    if builder is None:
+        return _layer
+    layer = getattr(builder, "_cognition_layer", None)
+    if layer is None:
+        layer = _CognitionLayer(context_builder=builder, roi_tracker=_roi_tracker)
+        try:
+            setattr(builder, "_cognition_layer", layer)
+        except Exception:  # pragma: no cover - builder may be immutable
+            pass
+    return layer
+
+
+def build_cognitive_context(
+    query: str,
+    *,
+    context_builder: ContextBuilder | None = None,
+    **kwargs: Any,
+) -> Tuple[str, str]:
     """Return context and session id for *query*.
 
     Parameters
@@ -68,10 +78,16 @@ def build_cognitive_context(query: str, **kwargs: Any) -> Tuple[str, str]:
         :meth:`vector_service.cognition_layer.CognitionLayer.query`.
     """
 
-    return _layer.query(query, **kwargs)
+    layer = _get_layer(context_builder)
+    return layer.query(query, **kwargs)
 
 
-async def build_cognitive_context_async(query: str, **kwargs: Any) -> Tuple[str, str]:
+async def build_cognitive_context_async(
+    query: str,
+    *,
+    context_builder: ContextBuilder | None = None,
+    **kwargs: Any,
+) -> Tuple[str, str]:
     """Asynchronously return context and session id for *query*.
 
     Parameters
@@ -83,7 +99,8 @@ async def build_cognitive_context_async(query: str, **kwargs: Any) -> Tuple[str,
         :meth:`vector_service.cognition_layer.CognitionLayer.query_async`.
     """
 
-    return await _layer.query_async(query, **kwargs)
+    layer = _get_layer(context_builder)
+    return await layer.query_async(query, **kwargs)
 
 
 def log_feedback(
@@ -92,6 +109,7 @@ def log_feedback(
     *,
     patch_id: str = "",
     contribution: float | None = None,
+    context_builder: ContextBuilder | None = None,
 ) -> None:
     """Record feedback for a previously built context.
 
@@ -100,7 +118,8 @@ def log_feedback(
     ranking model and ROI metrics.
     """
 
-    _layer.record_patch_outcome(
+    layer = _get_layer(context_builder)
+    layer.record_patch_outcome(
         session_id,
         success,
         patch_id=patch_id,
@@ -114,6 +133,7 @@ async def log_feedback_async(
     *,
     patch_id: str = "",
     contribution: float | None = None,
+    context_builder: ContextBuilder | None = None,
 ) -> None:
     """Record feedback asynchronously for a previously built context.
 
@@ -122,7 +142,8 @@ async def log_feedback_async(
     ranking model and ROI metrics.
     """
 
-    await _layer.record_patch_outcome_async(
+    layer = _get_layer(context_builder)
+    await layer.record_patch_outcome_async(
         session_id,
         success,
         patch_id=patch_id,
@@ -135,6 +156,7 @@ def reload_ranker_model(
     *,
     roi_delta: float | None = None,
     risk_penalty: float | None = None,
+    context_builder: ContextBuilder | None = None,
 ) -> None:
     """Reload the retrieval ranking model used by the cognition layer.
 
@@ -149,18 +171,23 @@ def reload_ranker_model(
         Optional risk penalty that can trigger an asynchronous retrain.
     """
 
-    _layer.reload_ranker_model(
+    layer = _get_layer(context_builder)
+    layer.reload_ranker_model(
         model_path, roi_delta=roi_delta, risk_penalty=risk_penalty
     )
 
 
-def reload_reliability_scores() -> None:
+def reload_reliability_scores(*, context_builder: ContextBuilder | None = None) -> None:
     """Refresh retriever reliability statistics."""
 
-    _layer.reload_reliability_scores()
+    layer = _get_layer(context_builder)
+    layer.reload_reliability_scores()
 
 
-def get_roi_stats() -> dict[str, dict[str, dict[str, float]]]:
+def get_roi_stats(
+    *, context_builder: ContextBuilder | None = None
+) -> dict[str, dict[str, dict[str, float]]]:
     """Return latest ROI statistics grouped by origin type."""
 
-    return _layer.roi_stats()
+    layer = _get_layer(context_builder)
+    return layer.roi_stats()
