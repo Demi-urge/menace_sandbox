@@ -53,8 +53,8 @@ def test_builder_context_included():
     builder = DummyBuilder()
     client = cib.ChatGPTClient(context_builder=builder)
     msgs = client.build_prompt_with_memory(["alpha", "beta"], "hi")
-    assert builder.calls == ["alpha beta"]
+    assert builder.calls == ["alpha beta hi"]
     assert msgs[0]["role"] == "system"
-    assert "vector:alpha beta" in msgs[0]["content"]
+    assert "vector:alpha beta hi" in msgs[0]["content"]
     assert msgs[-1]["role"] == "user"
     assert msgs[-1]["content"] == "hi"
