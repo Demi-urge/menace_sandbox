@@ -198,9 +198,16 @@ def test_enhancement_bot_injects_notice():
             self.captured = prompt
             return LLMResult(text="")
 
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            return {}
+
+        def build(self, query, **_):
+            return ""
+
     llm = DummyLLM()
-    bot = EnhancementBot(llm_client=llm)
-    bot._codex_summarize("a", "b")
+    bot = EnhancementBot(context_builder=DummyBuilder(), llm_client=llm)
+    bot._codex_summarize("a", "b", confidence=1.0)
     assert llm.captured and llm.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
 
 

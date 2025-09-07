@@ -4,6 +4,7 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -31,11 +32,15 @@ from llm_interface import LLMClient, LLMResult  # noqa: E402
 
 
 def test_codex_summarize_injects_context():
-    calls: dict[str, str] = {}
+    calls: dict[str, str | int] = {}
 
     class DummyBuilder:
-        def build(self, desc: str) -> str:
+        def refresh_db_weights(self):
+            return {}
+
+        def build(self, desc: str, *, top_k: int = 5) -> str:
             calls["desc"] = desc
+            calls["top_k"] = top_k
             return "CTX"
 
     class DummyLLM(LLMClient):
@@ -50,7 +55,13 @@ def test_codex_summarize_injects_context():
     builder = DummyBuilder()
     llm = DummyLLM()
     bot = EnhancementBot(context_builder=builder, llm_client=llm)
-    res = bot._codex_summarize("before", "after", hint="diff")
+    res = bot._codex_summarize("before", "after", hint="diff", confidence=1.0)
     assert res == "summary"
     assert calls["desc"] == "diff"
+    assert calls["top_k"] == 5
     assert llm.prompt and "CTX" in llm.prompt.user
+
+
+def test_requires_context_builder():
+    with pytest.raises(ValueError):
+        EnhancementBot(context_builder=None)  # type: ignore[arg-type]

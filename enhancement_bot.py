@@ -50,14 +50,17 @@ class EnhancementBot:
         cadence: int = 86_400,
         confidence_override: float = 1.0,
         *,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         llm_client: LLMClient | None = None,
     ) -> None:
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         self.code_db = code_db or CodeDB()
         self.enh_db = enhancement_db or EnhancementDB()
         self.cadence = cadence
         self.confidence_override = confidence_override
         self.context_builder = context_builder
+        self.db_weights = context_builder.refresh_db_weights()
         self.llm_client = llm_client
 
     # ------------------------------------------------------------------
@@ -105,7 +108,6 @@ class EnhancementBot:
         *,
         hint: str = "",
         confidence: float = 0.0,
-        context_builder: ContextBuilder | None = None,
     ) -> str:
         """Summarise the code change using the internal LLM interface.
 
@@ -113,14 +115,16 @@ class EnhancementBot:
         ``ContextBuilder`` is available the description is passed to
         :meth:`ContextBuilder.build` to gather additional historical or code
         context which is appended to the prompt before invoking the LLM client.
+        ``confidence`` weights the retrieval scope so more confident summaries
+        fetch a broader context window.
         """
 
-        _ = confidence  # compatibility placeholder
-        builder = context_builder or self.context_builder
+        builder = self.context_builder
         context = ""
-        if builder is not None:
+        if builder is not None and confidence > 0.0:
             try:  # pragma: no cover - builder failures are non fatal
-                context = builder.build(hint)
+                top_k = max(1, int(5 * confidence))
+                context = builder.build(hint, top_k=top_k)
             except Exception:
                 context = ""
 
