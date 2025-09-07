@@ -643,6 +643,7 @@ class ChatGPTResearchBot:
                 "chatgpt_research_bot._ask",
                 b_prompt,
                 memory=self.gpt_memory,
+                context_builder=self.client.context_builder,
                 tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
             if not isinstance(data, dict):

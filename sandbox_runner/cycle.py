@@ -1457,6 +1457,7 @@ def _sandbox_cycle_runner(
                         f"sandbox_runner.cycle.{memory_key}",
                         prompt_text,
                         memory=gpt_mem,
+                        context_builder=builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                     )
                     suggestion = (
@@ -1726,6 +1727,7 @@ def _sandbox_cycle_runner(
                             "sandbox_runner.cycle.brainstorm",
                             prompt_text,
                             memory=gpt_mem,
+                            context_builder=builder,
                             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                         )
                         idea = (
@@ -1829,6 +1831,7 @@ def _sandbox_cycle_runner(
                         "sandbox_runner.cycle.brainstorm",
                         prompt_text,
                         memory=gpt_mem,
+                        context_builder=builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                     )
                     idea = (

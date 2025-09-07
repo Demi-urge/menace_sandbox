@@ -890,6 +890,7 @@ class ChatGPTPredictionBot:
                     "chatgpt_prediction_bot.evaluate_enhancement",
                     prompt,
                     memory=self.gpt_memory,
+                    context_builder=client.context_builder,
                     tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                 )
             except Exception:
