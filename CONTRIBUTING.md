@@ -82,8 +82,10 @@ defaults or silent fallbacks. Tests should assert that these components fail
 fast when the builder is omitted.
 
 Run `python scripts/check_context_builder_usage.py` before committing to verify
-all relevant calls include a `context_builder` argument. Continuous integration
-runs this script and fails the build if any violations are found.
+all relevant calls include a `context_builder` argument. The command exits with
+non-zero status on violations, so add it to your local workflow to catch issues
+early. Continuous integration runs this script and fails the build if any
+violations are found.
 
 ## Stripe integration
 
