@@ -3,9 +3,8 @@
 This entry point initialises :data:`GLOBAL_ROUTER` via :func:`init_db_router`
 before importing modules that touch the database.  Doing so ensures all
 database access uses the configured router rather than creating implicit
-connections.  Callers must provide a :class:`ContextBuilder` to
-``debug_and_deploy``; the CLI helper constructs a default instance and passes it
-through.
+connections.  A :class:`ContextBuilder` is created with local database paths
+inside :func:`debug_and_deploy` unless supplied by the caller.
 """
 
 from __future__ import annotations
@@ -38,16 +37,7 @@ SelfDebuggerSandbox = None  # type: ignore
 from menace.code_database import CodeDB  # noqa: E402
 from menace.menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from menace.self_coding_engine import SelfCodingEngine  # noqa: E402
-try:
-    from vector_service.context_builder_utils import (  # noqa: E402
-        ContextBuilder,
-        get_default_context_builder,
-    )
-except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service.context_builder import ContextBuilder  # type: ignore
-
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
+from vector_service.context_builder import ContextBuilder  # noqa: E402
 from menace.error_bot import ErrorDB  # noqa: E402
 from menace.error_logger import ErrorLogger  # noqa: E402
 from menace.knowledge_graph import KnowledgeGraph  # noqa: E402
@@ -109,7 +99,7 @@ def _infer_schedule(doc: str) -> str:
 def debug_and_deploy(
     repo: Path,
     *,
-    context_builder: ContextBuilder,
+    context_builder: ContextBuilder | None = None,
     jobs: int = 1,
     override_veto: bool = False,
 ) -> None:
@@ -120,9 +110,10 @@ def debug_and_deploy(
     repo:
         Repository root containing bots to validate and deploy.
     context_builder:
-        Preconfigured :class:`~vector_service.context_builder.ContextBuilder` used
-        for semantic context generation.  Its weights are refreshed before
-        building the coding engine.
+        Optional :class:`~vector_service.context_builder.ContextBuilder` used
+        for semantic context generation.  When ``None`` a new builder is
+        instantiated using the local database paths.  Its weights are refreshed
+        before building the coding engine.
     jobs:
         Number of parallel jobs for the test runner.
     override_veto:
@@ -134,6 +125,8 @@ def debug_and_deploy(
     except TypeError:
         code_db = CodeDB()
     memory_mgr = MenaceMemoryManager()
+    if context_builder is None:
+        context_builder = ContextBuilder()
     context_builder.refresh_db_weights()
     engine = SelfCodingEngine(
         code_db, memory_mgr, context_builder=context_builder
@@ -290,11 +283,7 @@ def debug_and_deploy(
 
 
 def main() -> None:
-    """CLI entry point for self-debugging and deployment.
-
-    A default :class:`ContextBuilder` is created and passed to
-    :func:`debug_and_deploy`.
-    """
+    """CLI entry point for self-debugging and deployment."""
 
     parser = argparse.ArgumentParser(description="Self-debug and deploy Menace")
     parser.add_argument("repo", nargs="?", default=".", help="Path to repo")
@@ -306,10 +295,8 @@ def main() -> None:
         help="Bypass governance vetoes when override is allowed",
     )
     args = parser.parse_args()
-    builder = get_default_context_builder()
     debug_and_deploy(
         Path(args.repo),
-        context_builder=builder,
         jobs=args.jobs,
         override_veto=args.override_veto,
     )
