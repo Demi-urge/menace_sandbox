@@ -1322,7 +1322,12 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
 
     global SANDBOX_ENV_PRESETS, _local_knowledge_refresh_counter
     logger.info("starting sandbox run", extra=log_record(preset=preset))
-    context_builder = ContextBuilder()
+    context_builder = ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
     context_builder.refresh_db_weights()
     ctx = _sandbox_init(preset, args, context_builder)
     graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
