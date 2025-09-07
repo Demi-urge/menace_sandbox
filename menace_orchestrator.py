@@ -47,7 +47,7 @@ from .trend_predictor import TrendPredictor
 from .identity_seeder import seed_identity
 from .session_vault import SessionVault
 import requests
-from .cognition_layer import build_cognitive_context, log_feedback, _patch_safety
+from .cognition_layer import build_cognitive_context, log_feedback
 import db_router
 from db_router import DBRouter
 
@@ -391,13 +391,16 @@ class MenaceOrchestrator:
             success,
             patch_id=patch_id,
             contribution=contribution,
+            context_builder=self.context_builder,
         )
         if not success and errors:
+            patch_safety = getattr(self.context_builder, "patch_safety", None)
             for err in errors:
-                try:
-                    _patch_safety.record_failure(dict(err))
-                except Exception:
-                    self.logger.exception("failed to record failure metadata")
+                if patch_safety is not None:
+                    try:
+                        patch_safety.record_failure(dict(err))
+                    except Exception:
+                        self.logger.exception("failed to record failure metadata")
 
     def update_confidence_metrics(self, results: Dict[str, bool]) -> None:
         """Update workflow confidence scores based on replay results."""
@@ -440,7 +443,8 @@ class MenaceOrchestrator:
             if not eng:
                 continue
             _ctx, session_id = build_cognitive_context(
-                f"apply patch {description} on {node}"
+                f"apply patch {description} on {node}",
+                context_builder=self.context_builder,
             )
             try:
                 pid, reverted, _ = eng.apply_patch(
