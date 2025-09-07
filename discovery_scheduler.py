@@ -13,6 +13,7 @@ from .research_aggregator_bot import InfoDB, ResearchItem
 from .bot_creation_bot import BotCreationBot
 from .bot_planning_bot import PlanningTask
 from .normalize_scraped_data import load_items, normalize
+from vector_service import ContextBuilder
 
 
 class DiscoveryScheduler:
@@ -26,7 +27,10 @@ class DiscoveryScheduler:
         interval: int = 3600,
     ) -> None:
         self.scraper = scraper or TrendingScraper()
-        self.creation_bot = creation_bot or BotCreationBot()
+        self.context_builder = ContextBuilder()
+        self.creation_bot = creation_bot or BotCreationBot(
+            context_builder=self.context_builder
+        )
         self.interval = interval
         self.running = False
         self._thread: Optional[threading.Thread] = None

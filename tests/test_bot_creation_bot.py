@@ -44,7 +44,10 @@ def _ctx_builder():
 
 
 def test_needs_new_bot(tmp_path):
-    bot = bcb.BotCreationBot(metrics_db=_metrics(tmp_path))
+    bot = bcb.BotCreationBot(
+        metrics_db=_metrics(tmp_path),
+        context_builder=_ctx_builder(),
+    )
     assert bot.needs_new_bot()
 
 
@@ -67,7 +70,11 @@ class StubManager:
 
 def test_needs_new_bot_with_prediction(tmp_path):
     manager = StubManager(DummyPred())
-    bot = bcb.BotCreationBot(metrics_db=_metrics(tmp_path), prediction_manager=manager)
+    bot = bcb.BotCreationBot(
+        metrics_db=_metrics(tmp_path),
+        prediction_manager=manager,
+        context_builder=_ctx_builder(),
+    )
     assert bot.assigned_prediction_bots == ["p"]
     assert not bot.needs_new_bot()
     assert manager.registry["p"].bot.called
@@ -96,6 +103,7 @@ def test_create_bots(tmp_path):
         tester=tester,
         deployer=deployer,
         intent_clusterer=DummyClusterer(),
+        context_builder=developer.context_builder,
     )
     task = bp.PlanningTask(
         description="do", complexity=1, frequency=1, expected_time=0.1, actions=["run"]
@@ -158,6 +166,7 @@ def test_trending_scraper_receives_energy(tmp_path):
         deployer=deployer,
         trending_scraper=scraper,
         capital_bot=DummyCapital(),
+        context_builder=developer.context_builder,
     )
     task = bp.PlanningTask(
         description="do",
@@ -189,6 +198,7 @@ def test_create_bots_logs_errors(tmp_path):
         tester=tester,
         deployer=deployer,
         error_bot=eb.ErrorBot(err_db),
+        context_builder=developer.context_builder,
     )
     developer.errors.append("integration fail")
     task = bp.PlanningTask(
@@ -231,6 +241,7 @@ def test_create_bots_records_workflows(tmp_path):
         developer=developer,
         tester=tester,
         deployer=deployer,
+        context_builder=developer.context_builder,
     )
 
     dm.DB_PATH = tmp_path / "models.db"
@@ -276,6 +287,7 @@ def test_code_db_updates_on_creation(tmp_path):
         tester=tester,
         deployer=deployer,
         error_bot=eb.ErrorBot(err_db),
+        context_builder=developer.context_builder,
     )
 
     task = bp.PlanningTask(
@@ -342,6 +354,7 @@ def test_creation_updates_status_and_enh_links(tmp_path):
         developer=developer,
         tester=tester,
         deployer=deployer,
+        context_builder=developer.context_builder,
     )
 
     task = bp.PlanningTask(
@@ -387,6 +400,7 @@ def test_higher_order_contrarian_timestamp(tmp_path):
         developer=developer,
         tester=tester,
         deployer=deployer,
+        context_builder=developer.context_builder,
     )
 
     tasks = [
@@ -438,6 +452,7 @@ def test_higher_order_contrarian_new_links(tmp_path):
         tester=tester,
         deployer=deployer,
         error_bot=eb.ErrorBot(err_db),
+        context_builder=developer.context_builder,
     )
 
     tasks = [
@@ -485,6 +500,7 @@ def test_workflow_bot_links(tmp_path):
         developer=developer,
         tester=tester,
         deployer=deployer,
+        context_builder=developer.context_builder,
     )
 
     task = bp.PlanningTask(
@@ -519,6 +535,7 @@ def test_trending_order(tmp_path):
         tester=tester,
         deployer=deployer,
         trending_scraper=DummyScraper(),
+        context_builder=developer.context_builder,
     )
 
     tasks = [
@@ -564,6 +581,7 @@ def test_enhancement_link_error_logged(tmp_path, caplog):
         tester=tester,
         deployer=deployer,
         error_bot=eb.ErrorBot(eb.ErrorDB(tmp_path / "err.db")),
+        context_builder=developer.context_builder,
     )
 
     task = bp.PlanningTask(

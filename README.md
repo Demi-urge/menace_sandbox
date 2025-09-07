@@ -2113,10 +2113,12 @@ trending product names scraped from multiple sources:
 from menace.bot_creation_bot import BotCreationBot
 from menace.workflow_evolution_bot import WorkflowEvolutionBot
 from menace.trending_scraper import TrendingScraper
+from vector_service import ContextBuilder
 
 creator = BotCreationBot(
     workflow_bot=WorkflowEvolutionBot(),
     trending_scraper=TrendingScraper(),
+    context_builder=ContextBuilder(),
 )
 # tasks is a list of PlanningTask objects
 creator.create_bots(tasks)

@@ -190,7 +190,9 @@ class ModelAutomationPipeline:
         self.comms_test_bot = comms_test_bot or CommunicationTestingBot()
         self.discrepancy_bot = discrepancy_bot or DiscrepancyDetectionBot()
         self.finance_bot = finance_bot or FinanceRouterBot()
-        self.creation_bot = creation_bot or BotCreationBot()
+        self.creation_bot = creation_bot or BotCreationBot(
+            context_builder=self.context_builder
+        )
         self.meta_ga_bot = meta_ga_bot or MetaGeneticAlgorithmBot()
         self.offer_bot = offer_bot or OfferTestingBot()
         self.fallback_bot = fallback_bot or ResearchFallbackBot()
