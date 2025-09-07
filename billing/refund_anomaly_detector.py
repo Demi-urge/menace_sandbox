@@ -24,16 +24,16 @@ from billing.billing_log_db import BillingLogDB
 from menace_sanity_layer import record_billing_event, record_payment_anomaly
 
 try:  # Optional dependency – self-coding engine
-from self_coding_engine import SelfCodingEngine  # type: ignore
-from code_database import CodeDB  # type: ignore
-from menace_memory_manager import MenaceMemoryManager  # type: ignore
-try:
-    from vector_service.context_builder_utils import get_default_context_builder
-except ImportError:  # pragma: no cover - fallback when helper missing
-    from vector_service.context_builder import ContextBuilder  # type: ignore
+    from self_coding_engine import SelfCodingEngine  # type: ignore
+    from code_database import CodeDB  # type: ignore
+    from menace_memory_manager import MenaceMemoryManager  # type: ignore
+    try:
+        from vector_service.context_builder_utils import get_default_context_builder
+    except ImportError:  # pragma: no cover - fallback when helper missing
+        from vector_service.context_builder import ContextBuilder  # type: ignore
 
-    def get_default_context_builder(**kwargs):  # type: ignore
-        return ContextBuilder(**kwargs)
+        def get_default_context_builder(**kwargs):  # type: ignore
+            return ContextBuilder(**kwargs)
 except Exception:  # pragma: no cover - best effort
     SelfCodingEngine = None  # type: ignore
     CodeDB = None  # type: ignore
