@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 import logging
@@ -23,9 +23,8 @@ try:
 except Exception:  # pragma: no cover - optional
     redis = None  # type: ignore
 
-logger = logging.getLogger(__name__)
-
 from .chatgpt_idea_bot import ChatGPTClient
+from vector_service.context_builder import ContextBuilder
 from gpt_memory_interface import GPTMemoryInterface
 from . import database_manager
 try:  # memory-aware wrapper
@@ -54,6 +53,8 @@ except Exception:
 if _LOCAL_KNOWLEDGE is None:
     _LOCAL_KNOWLEDGE = LocalKnowledgeModule(manager=GPT_MEMORY_MANAGER)
 LOCAL_KNOWLEDGE_MODULE = _LOCAL_KNOWLEDGE
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -126,7 +127,11 @@ class SimpleNLU:
 class DataFetcher:
     """Retrieve records from the models database."""
 
-    def __init__(self, data: Optional[Dict[str, Dict[str, Any]]] = None, db_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        data: Optional[Dict[str, Dict[str, Any]]] = None,
+        db_path: Path | None = None,
+    ) -> None:
         self.data = data or {}
         self.db_path = db_path or database_manager.DB_PATH
 
@@ -156,7 +161,11 @@ class QueryBot:
     ) -> None:
         if client is None:
             api_key = get_config().api_keys.openai
-            client = ChatGPTClient(api_key, gpt_memory=GPT_MEMORY_MANAGER)
+            builder = ContextBuilder()
+            builder.refresh_db_weights()
+            client = ChatGPTClient(
+                api_key, gpt_memory=GPT_MEMORY_MANAGER, context_builder=builder
+            )
         self.client = client
         self.fetcher = fetcher or DataFetcher()
         self.store = store or ContextStore()

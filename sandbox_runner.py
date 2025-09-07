@@ -962,7 +962,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             from menace.chatgpt_idea_bot import ChatGPTClient
 
             gpt_client = ChatGPTClient(
-                model="gpt-4", gpt_memory=_get_local_knowledge().memory
+                model="gpt-4",
+                gpt_memory=_get_local_knowledge().memory,
+                context_builder=context_builder,
             )
         except Exception:
             logger.exception("GPT client init failed")
