@@ -59,15 +59,42 @@ app = FastAPI()
 # expose stateless interfaces which makes them safe to reuse across requests.
 _retriever = Retriever()
 _roi_tracker = ROITracker()
-_builder = ContextBuilder()
-_builder.refresh_db_weights()
-_cognition_layer = CognitionLayer(
-    roi_tracker=_roi_tracker,
-    context_builder=_builder,
-)
-_patch_logger = PatchLogger(roi_tracker=_roi_tracker)
-_backfill = EmbeddingBackfill()
-_ranker_scheduler = start_scheduler_from_env([_cognition_layer])
+
+# The context builder and dependent services are initialised lazily so tests and
+# embedding environments can inject custom builders.
+_builder: ContextBuilder | None = None
+_cognition_layer: CognitionLayer | None = None
+_patch_logger: PatchLogger | None = None
+_backfill: EmbeddingBackfill | None = None
+_ranker_scheduler = None
+
+
+def create_app(builder: ContextBuilder | None = None) -> FastAPI:
+    """Initialise service dependencies and return the FastAPI app.
+
+    A :class:`ContextBuilder` instance can be supplied to explicitly control
+    how context is assembled.  When omitted a default ``ContextBuilder`` is
+    constructed.  The returned ``FastAPI`` app is ready for use by tests or
+    service start-up scripts.
+    """
+
+    global _builder, _cognition_layer, _patch_logger, _backfill, _ranker_scheduler
+
+    _builder = builder or ContextBuilder()
+    try:
+        _builder.refresh_db_weights()
+    except Exception:  # pragma: no cover - best effort
+        pass
+
+    _cognition_layer = CognitionLayer(
+        roi_tracker=_roi_tracker,
+        context_builder=_builder,
+    )
+    _patch_logger = PatchLogger(roi_tracker=_roi_tracker)
+    _backfill = EmbeddingBackfill()
+    _ranker_scheduler = start_scheduler_from_env([_cognition_layer])
+    return app
+
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +194,8 @@ class ContextRequest(BaseModel):
 def query(req: ContextRequest) -> Any:
     """Retrieve context via :class:`vector_service.CognitionLayer`."""
     start = time.time()
+    if _cognition_layer is None:
+        raise HTTPException(status_code=500, detail="Service not initialised")
     try:
         ctx, sid = _cognition_layer.query(
             req.task_description, **(req.extras or {})
@@ -193,6 +222,8 @@ class OutcomeRequest(BaseModel):
 @app.post("/record-outcome")
 def record_outcome(req: OutcomeRequest) -> Any:
     """Forward patch outcome to :class:`CognitionLayer`."""
+    if _cognition_layer is None:
+        raise HTTPException(status_code=500, detail="Service not initialised")
     try:
         _cognition_layer.record_patch_outcome(
             req.session_id,
@@ -219,6 +250,8 @@ class TrackRequest(BaseModel):
 def track_contributors(req: TrackRequest) -> Any:
     """Record contributor outcomes via :class:`vector_service.PatchLogger`."""
     start = time.time()
+    if _patch_logger is None:
+        raise HTTPException(status_code=500, detail="Service not initialised")
     try:
         scores = _patch_logger.track_contributors(
             req.vector_ids,
@@ -250,6 +283,8 @@ class BackfillRequest(BaseModel):
 def backfill_embeddings(req: BackfillRequest) -> Any:
     """Kick off embedding backfill using :class:`vector_service.EmbeddingBackfill`."""
     start = time.time()
+    if _backfill is None:
+        raise HTTPException(status_code=500, detail="Service not initialised")
     try:
         _backfill.run(
             session_id=req.session_id,
@@ -262,7 +297,7 @@ def backfill_embeddings(req: BackfillRequest) -> Any:
     return {"status": "ok", "metrics": {"duration": duration}}
 
 
-__all__ = ["app"]
+__all__ = ["app", "create_app"]
 
 
 # ---------------------------------------------------------------------------
