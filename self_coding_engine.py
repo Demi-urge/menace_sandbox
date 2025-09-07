@@ -154,7 +154,12 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - graceful degradation
     def record_patch_metadata(*_a: Any, **_k: Any) -> None:  # type: ignore
         return None
-from .prompt_engine import PromptEngine, _ENCODER, diff_within_target_region
+from .prompt_engine import (
+    PromptEngine,
+    _ENCODER,
+    diff_within_target_region,
+    build_prompt,
+)
 from .prompt_memory_trainer import PromptMemoryTrainer
 from chunking import split_into_chunks, get_chunk_summaries, summarize_code
 try:
@@ -375,14 +380,14 @@ class SelfCodingEngine:
         self.chunk_token_threshold = (
             prompt_chunk_token_threshold
             if prompt_chunk_token_threshold is not None
-            else _settings.prompt_chunk_token_threshold
+            else getattr(_settings, "prompt_chunk_token_threshold", 0)
         )
         # maintain backward compatibility
         self.prompt_chunk_token_threshold = self.chunk_token_threshold
         cache_dir = (
             chunk_summary_cache_dir
             or prompt_chunk_cache_dir
-            or _settings.chunk_summary_cache_dir
+            or getattr(_settings, "chunk_summary_cache_dir", "")
         )
         self.chunk_summary_cache_dir = resolve_path(cache_dir)
         # backward compatibility
@@ -434,12 +439,12 @@ class SelfCodingEngine:
             ],
         ] = {}
         self.bot_roles: Dict[str, str] = bot_roles or {}
-        path_setting = audit_trail_path or _settings.audit_log_path
+        path_setting = audit_trail_path or getattr(_settings, "audit_log_path", "")
         try:
             path = resolve_path(path_setting)
         except FileNotFoundError:
             path = Path(path_setting)
-        key_b64 = audit_privkey or _settings.audit_privkey
+        key_b64 = audit_privkey or getattr(_settings, "audit_privkey", None)
         # Fallback to unsigned logging when no key is provided
         if key_b64:
             priv = base64.b64decode(key_b64) if isinstance(key_b64, str) else key_b64
@@ -518,13 +523,17 @@ class SelfCodingEngine:
         self.roi_tracker = tracker
         self.knowledge_service = knowledge_service
         try:
-            success_log_path = resolve_path(_settings.prompt_success_log_path)
+            success_log_path = resolve_path(
+                getattr(_settings, "prompt_success_log_path", "")
+            )
         except FileNotFoundError:
-            success_log_path = Path(_settings.prompt_success_log_path)
+            success_log_path = Path(getattr(_settings, "prompt_success_log_path", ""))
         try:
-            failure_log_path = resolve_path(_settings.prompt_failure_log_path)
+            failure_log_path = resolve_path(
+                getattr(_settings, "prompt_failure_log_path", "")
+            )
         except FileNotFoundError:
-            failure_log_path = Path(_settings.prompt_failure_log_path)
+            failure_log_path = Path(getattr(_settings, "prompt_failure_log_path", ""))
         if prompt_optimizer is None:
             try:
                 prompt_optimizer = PromptOptimizer(
@@ -1099,9 +1108,8 @@ class SelfCodingEngine:
         resolved = path_for_prompt(path) if path else None
         self._apply_prompt_style(description, module=resolved or "visual_agent")
         retry_trace = self._last_retry_trace
-        build = self.prompt_engine.build_prompt
         try:
-            prompt_obj = build(
+            prompt_obj = build_prompt(
                 description,
                 context="\n".join([p for p in (context.strip(), repo_layout) if p]),
                 retrieval_context=retrieval_context or "",
@@ -1109,13 +1117,15 @@ class SelfCodingEngine:
                 tone=self.prompt_tone,
                 target_region=target_region,
                 strategy=strategy,
+                context_builder=self.context_builder,
             )
         except TypeError:
-            prompt_obj = build(
+            prompt_obj = build_prompt(
                 description,
                 context="\n".join([p for p in (context.strip(), repo_layout) if p]),
                 retrieval_context=retrieval_context or "",
                 retry_trace=retry_trace,
+                context_builder=self.context_builder,
             )
         self._last_prompt = prompt_obj
         body = prompt_obj.text if isinstance(prompt_obj, Prompt) else str(prompt_obj)
