@@ -53,12 +53,17 @@ class DummyTelem:
         return [self.log]
 
 
+class DummyBuilder:
+    def build_context(self, query: str, **kwargs):
+        return {}
+
+
 def test_analyse_and_fix(monkeypatch, tmp_path):
     mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text("def x():\n    pass\n")
     log = f"File '{mod}', line 1, in x"
     eng = DummyEngine()
-    dbg = ad.AutomatedDebugger(DummyTelem(log), eng)
+    dbg = ad.AutomatedDebugger(DummyTelem(log), eng, DummyBuilder())
     monkeypatch.setitem(sys.modules, "sandbox_runner", types.SimpleNamespace(integrate_new_orphans=lambda p: None))
     monkeypatch.setattr(ad.tempfile, "NamedTemporaryFile", lambda *a, **k: open(tmp_path / "t.py", "w+"))  # path-ignore
     monkeypatch.setattr(ad.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=b"", stdout=""))
@@ -68,7 +73,7 @@ def test_analyse_and_fix(monkeypatch, tmp_path):
 
 def test_generate_tests_absolute_path(monkeypatch, tmp_path):
     eng = DummyEngine()
-    dbg = ad.AutomatedDebugger(DummyTelem(), eng)
+    dbg = ad.AutomatedDebugger(DummyTelem(), eng, DummyBuilder())
     mod = tmp_path / "mod.py"  # path-ignore
     mod.write_text("def x():\n    pass\n")
     monkeypatch.chdir(tmp_path)
@@ -79,7 +84,7 @@ def test_generate_tests_absolute_path(monkeypatch, tmp_path):
 
 def test_generate_tests_traceback(monkeypatch, tmp_path):
     eng = DummyEngine()
-    dbg = ad.AutomatedDebugger(DummyTelem(), eng)
+    dbg = ad.AutomatedDebugger(DummyTelem(), eng, DummyBuilder())
     a = tmp_path / "a.py"  # path-ignore
     b = tmp_path / "b.py"  # path-ignore
     a.write_text("def foo():\n    bar()\n")

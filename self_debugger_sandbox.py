@@ -22,7 +22,7 @@ import threading
 import importlib
 from types import SimpleNamespace
 from contextlib import contextmanager
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping
 from collections import deque
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
@@ -166,6 +166,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self,
         telemetry_db: object,
         engine: SelfCodingEngine,
+        context_builder: Any | None = None,
         audit_trail: AuditTrail | None = None,
         policy: SelfImprovementPolicy | None = None,
         state_getter: Callable[[], tuple[int, ...]] | None = None,
@@ -181,7 +182,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         merge_threshold: float | None = None,
         settings: SandboxSettings | None = None,
     ) -> None:
-        super().__init__(telemetry_db, engine)
+        global CONTEXT_BUILDER
+        builder = context_builder or CONTEXT_BUILDER
+        if builder is None:
+            raise TypeError("context_builder is required")
+        CONTEXT_BUILDER = builder
+        super().__init__(telemetry_db, engine, builder)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
         self.policy = policy
         self.state_getter = state_getter
