@@ -11,7 +11,6 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
-from billing.openai_wrapper import chat_completion_create
 from llm_interface import LLMClient, LLMResult
 
 # Stub heavy dependencies so chatgpt_idea_bot can be imported without side effects
@@ -69,7 +68,11 @@ sys.modules["menace_sandbox.sandbox_runner"] = types.SimpleNamespace(
 )
 
 class _CB:
+    def __init__(self, *a, **k):
+        self.called = False
+
     def build(self, *a, **k):
+        self.called = True
         return ""
 
 vector_service = types.ModuleType("vector_service")
@@ -209,21 +212,26 @@ def test_prompt_engine_build_prompt_contains_notice():
 
 
 def test_bot_development_bot_injects_notice(monkeypatch):
-    class DummyLLM(LLMClient):
-        def __init__(self):
-            super().__init__("m", backends=[], log_prompts=False)
-            self.captured = None
+    captured = {}
 
-        def _generate(self, prompt):  # type: ignore[override]
-            self.captured = prompt
-            return LLMResult(text="")
+    def fake_create(*args, **kwargs):
+        captured["messages"] = kwargs.get("messages")
+        return {}
 
-    dummy = DummyLLM()
-    monkeypatch.setattr(
-        "menace_sandbox.bot_development_bot.get_client", lambda *a, **k: dummy, raising=False
+    fake_openai = types.SimpleNamespace(
+        ChatCompletion=types.SimpleNamespace(create=fake_create)
     )
-    BotDevelopmentBot._call_codex_api(object(), "m", [{"role": "user", "content": "hi"}])
-    assert dummy.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
+    monkeypatch.setattr("billing.openai_wrapper.openai", fake_openai, raising=False)
+
+    cb = vector_service.ContextBuilder()
+    dummy = types.SimpleNamespace(context_builder=cb)
+
+    BotDevelopmentBot._call_codex_api(
+        dummy, "m", [{"role": "user", "content": "hi"}]
+    )
+
+    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
+    assert cb.called
 
 
 def test_openai_wrapper_injects_notice():
@@ -236,6 +244,8 @@ def test_openai_wrapper_injects_notice():
     fake_openai = types.SimpleNamespace(
         ChatCompletion=types.SimpleNamespace(create=fake_create)
     )
+    from billing.openai_wrapper import chat_completion_create
+
     chat_completion_create(
         [{"role": "user", "content": "hi"}],
         model="gpt-3.5-turbo",
