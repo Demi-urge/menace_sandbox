@@ -37,11 +37,12 @@ sys.modules.setdefault(
         init_db_router=lambda *a, **k: None,
         DBRouter=_StubDBRouter,
         LOCAL_TABLES=set(),
+        GLOBAL_ROUTER=None,
     ),
 )
 sys.modules.setdefault("db_router", sys.modules["menace_sandbox.db_router"])
 from menace_sandbox.db_router import init_db_router  # noqa: E402
-from menace_sandbox.roi_calculator import ROIResult
+from menace_sandbox.roi_calculator import ROIResult  # noqa: E402
 
 
 class _StubPatchDB:
@@ -165,7 +166,8 @@ def test_composite_workflow_scorer_records_metrics(tmp_path, monkeypatch):
         calculator_factory=_stub_calculator_factory,
     )
     workflow_id = "wf_example"
-    result = scorer.evaluate(workflow_id)
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    result = scorer.evaluate(workflow_id, context_builder=builder)
 
     # Basic sanity checks on aggregate metrics.
     assert result.runtime > 0
@@ -248,9 +250,15 @@ def test_patch_success_modulates_patchability(tmp_path, monkeypatch):
     )
     workflow_id = "wf_example"
 
-    high = scorer.evaluate(workflow_id, patch_success=1.0).patchability_score
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    high = scorer.evaluate(
+        workflow_id, patch_success=1.0, context_builder=builder
+    ).patchability_score
 
-    low = scorer.evaluate(workflow_id, patch_success=0.25).patchability_score
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    low = scorer.evaluate(
+        workflow_id, patch_success=0.25, context_builder=builder
+    ).patchability_score
 
     assert low == pytest.approx(high * 0.25)
 
@@ -325,12 +333,14 @@ def test_fetch_trends_returns_time_ordered_metrics(tmp_path, monkeypatch):
         calculator_factory=_stub_calculator_factory,
     )
     workflow_id = "wf_trend"
-    first = scorer.evaluate(workflow_id)
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    first = scorer.evaluate(workflow_id, context_builder=builder)
 
     # adjust tracker for a second run with different ROI gain
     tracker.roi_history = [2.0, 3.0, 4.0]
     tracker.module_deltas = {"mod_a": [2.0], "mod_b": [1.0], "mod_c": [0.0]}
-    second = scorer.evaluate(workflow_id)
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    second = scorer.evaluate(workflow_id, context_builder=builder)
 
     trends = scorer.results_db.fetch_trends(workflow_id)
     assert [t["roi_gain"] for t in trends] == [first.roi_gain, second.roi_gain]

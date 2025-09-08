@@ -26,10 +26,16 @@ scorer = CompositeWorkflowScorer(calculator_factory=stub_calculator)
 
 ```python
 from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
+from vector_service.context_builder import ContextBuilder
+
 scorer = CompositeWorkflowScorer()
-result = scorer.evaluate("wf_example")
+builder = ContextBuilder()
+result = scorer.evaluate("wf_example", context_builder=builder)
 print(result.success_rate, result.roi_gain)
 ```
+
+`evaluate` refreshes the builder's database weights before running the
+simulations to ensure the latest ranking information is applied.
 
 ## Metric formulas
 
@@ -80,9 +86,11 @@ Run a workflow evaluation and fetch stored results:
 python - <<'PY'
 from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer
 from menace_sandbox.roi_results_db import module_impact_report
+from vector_service.context_builder import ContextBuilder
 
 scorer = CompositeWorkflowScorer()
-res = scorer.evaluate("wf_example")
+builder = ContextBuilder()
+res = scorer.evaluate("wf_example", context_builder=builder)
 cur = scorer.results_db.conn.cursor()
 run_id = cur.execute(
     "SELECT run_id FROM workflow_results WHERE workflow_id=? ORDER BY timestamp DESC LIMIT 1",
