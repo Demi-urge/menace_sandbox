@@ -19,7 +19,7 @@ def test_process(monkeypatch):
         def build(self, query, **_):
             return ""
     builder = DummyBuilder()
-    client = cib.ChatGPTClient("key", context_builder=builder)
+    client = cib.ChatGPTClient(api_key="key", context_builder=builder)
     responses = [
         {"choices": [{"message": {"content": "Answer one."}}]},
         {"choices": [{"message": {"content": "Answer two."}}]},

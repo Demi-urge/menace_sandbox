@@ -82,7 +82,7 @@ def test_interactive_loop(monkeypatch, tmp_path):
 
 def test_chatgpt_integration(monkeypatch):
     builder = _builder()
-    client = cib.ChatGPTClient("key", context_builder=builder)
+    client = cib.ChatGPTClient(api_key="key", context_builder=builder)
 
     def fake_ask(messages):
         return {"choices": [{"message": {"content": "Some info"}}]}

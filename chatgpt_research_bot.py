@@ -612,8 +612,11 @@ class ChatGPTResearchBot:
             client = ChatGPTClient(
                 context_builder=context_builder, gpt_memory=gpt_memory
             )
-        if not isinstance(client, ChatGPTClient):
-            raise TypeError("client must be ChatGPTClient")
+        else:
+            if not isinstance(client, ChatGPTClient):
+                raise TypeError("client must be ChatGPTClient")
+            if getattr(client, "context_builder", None) is None:
+                raise ValueError("client.context_builder must not be None")
         self.client = client
         self.send_callback = send_callback
         if db_steward is not None and not isinstance(db_steward, DBRouter):
@@ -627,13 +630,6 @@ class ChatGPTResearchBot:
                 self.client.gpt_memory = self.gpt_memory
             except Exception:
                 logger.debug("failed to attach gpt_memory to client", exc_info=True)
-        if getattr(self.client, "context_builder", None) is None:
-            try:
-                self.client.context_builder = self.context_builder
-            except Exception:
-                logger.debug(
-                    "failed to attach context_builder to client", exc_info=True
-                )
 
     def _truncate_history(self, text: str) -> str:
         limit = self.settings.conversation_token_limit
