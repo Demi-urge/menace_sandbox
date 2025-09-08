@@ -10,10 +10,6 @@ import logging
 from scipy import stats
 
 from .mutation_lineage import MutationLineage
-
-logger = logging.getLogger(__name__)
-
-
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
 try:  # pragma: no cover - fallback for light imports in tests
     from vector_service.context_builder import ContextBuilder
@@ -23,6 +19,8 @@ from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .prediction_manager_bot import PredictionManager
 from .experiment_history_db import ExperimentHistoryDB, ExperimentLog, TestLog
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -51,17 +49,23 @@ class ExperimentManager:
     ) -> None:
         self.data_bot = data_bot
         self.capital_bot = capital_bot
+        if context_builder is None:
+            raise ValueError("context_builder is required")
+        try:
+            context_builder.refresh_db_weights()
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("context builder refresh failed: %s", exc)
         self.context_builder = context_builder
         if pipeline is None:
             self.pipeline = ModelAutomationPipeline(
                 data_bot=self.data_bot,
                 capital_manager=self.capital_bot,
-                context_builder=context_builder,
+                context_builder=self.context_builder,
             )
         else:
             if not hasattr(pipeline, "context_builder"):
                 raise ValueError("pipeline must expose a context_builder")
-            if pipeline.context_builder is not context_builder:
+            if pipeline.context_builder is not self.context_builder:
                 raise ValueError("pipeline and context_builder must match")
             self.pipeline = pipeline
         self.prediction_manager = prediction_manager
@@ -99,7 +103,9 @@ class ExperimentManager:
             logger.warning("failed cloning branch for A/B test: %s", exc)
             return None
 
-    async def run_experiments(self, variants: Iterable[str], energy: int = 1) -> List[ExperimentResult]:
+    async def run_experiments(
+        self, variants: Iterable[str], energy: int = 1
+    ) -> List[ExperimentResult]:
         results: List[ExperimentResult] = []
         tasks = [self._run_variant(v, energy) for v in variants]
         outs = await asyncio.gather(*tasks, return_exceptions=True)
@@ -180,7 +186,9 @@ class ExperimentManager:
             return []
         return await self.run_experiments(variants, energy=energy)
 
-    def compare_variants(self, results: Iterable[ExperimentResult]) -> Dict[tuple[str, str], tuple[float, float]]:
+    def compare_variants(
+        self, results: Iterable[ExperimentResult]
+    ) -> Dict[tuple[str, str], tuple[float, float]]:
         """Return t-statistics and p-values comparing ROI across variants."""
         comps: Dict[tuple[str, str], tuple[float, float]] = {}
         res_list = list(results)
@@ -235,7 +243,9 @@ class ExperimentManager:
                 return None
         return best
 
-    async def run_suggested_experiments(self, bot_name: str, energy: int = 1) -> ExperimentResult | None:
+    async def run_suggested_experiments(
+        self, bot_name: str, energy: int = 1
+    ) -> ExperimentResult | None:
         """Run experiments for variants suggested by PredictionManager."""
         if not self.prediction_manager:
             return None
