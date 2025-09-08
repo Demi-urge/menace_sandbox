@@ -17,7 +17,7 @@ from .bot_database import BotDB
 from .resources_bot import ROIHistoryDB
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
-from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 from .scope_utils import Scope, build_scope_clause, apply_scope
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
@@ -36,12 +36,7 @@ class MenaceGUI(tk.Tk):
         self.memory = MenaceMemoryManager()
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
-        self.context_builder = ContextBuilder(
-            bot_db="bots.db",
-            code_db="code.db",
-            error_db="errors.db",
-            workflow_db="workflows.db",
-        )
+        self.context_builder = create_context_builder()
         self.context_builder.refresh_db_weights()
         if self.chatgpt_enabled:
             client = ChatGPTClient(
