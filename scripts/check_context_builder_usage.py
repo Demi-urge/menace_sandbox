@@ -311,11 +311,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             self.generic_visit(node)
 
     Visitor().visit(tree)
+    REQUIRED_DB_STRINGS = {"bots.db", "code.db", "errors.db", "workflows.db"}
 
-    # Detect top-level ``ContextBuilder()`` calls.
-    parent_map = {
-        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
-    }
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -324,35 +321,17 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             name != "ContextBuilder" and not name.endswith(".ContextBuilder")
         ):
             continue
-        # Determine whether call is at module level
-        ancestor = parent_map.get(node)
-        top_level = True
-        while ancestor:
-            if isinstance(
-                ancestor, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            ):
-                top_level = False
-                break
-            ancestor = parent_map.get(ancestor)
-        if not top_level:
-            continue
-        # Check if call is passed through another constructor
-        ancestor = parent_map.get(node)
-        passed_through = False
-        while ancestor:
-            if isinstance(ancestor, ast.Call):
-                passed_through = True
-                break
-            ancestor = parent_map.get(ancestor)
-        # Determine whether explicit database paths are provided
-        has_db_path = any(
-            isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-            for arg in node.args
-        ) or any(
-            isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
-            for kw in node.keywords
-        )
-        if not has_db_path or not passed_through:
+
+        strings: list[str] = []
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                strings.append(arg.value)
+        for kw in node.keywords:
+            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                strings.append(kw.value.value)
+
+        missing = sorted(db for db in REQUIRED_DB_STRINGS if db not in strings)
+        if missing:
             line_no = node.lineno
             line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
             prev = lines[line_no - 2] if line_no >= 2 else ""
@@ -360,9 +339,10 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 errors.append(
                     (
                         line_no,
-                        "top-level ContextBuilder() missing explicit database paths or not passed through constructor",
+                        "ContextBuilder() missing " + ", ".join(missing),
                     )
                 )
+
     return errors
 
 

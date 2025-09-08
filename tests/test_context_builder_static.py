@@ -18,7 +18,9 @@ def test_flags_missing_context_builder(tmp_path):
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
-    assert check_file(path) == [(3, "build_prompt")]
+    assert check_file(path) == [
+        (3, "build_prompt disallowed or missing context_builder")
+    ]
 
 
 def test_flags_missing_context_builder_with_memory(tmp_path):
@@ -30,7 +32,9 @@ def test_flags_missing_context_builder_with_memory(tmp_path):
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
-    assert check_file(path) == [(2, "build_prompt_with_memory")]
+    assert check_file(path) == [
+        (2, "build_prompt_with_memory disallowed or missing context_builder")
+    ]
 
 
 def test_flags_openai_calls(tmp_path):
@@ -43,7 +47,9 @@ def test_flags_openai_calls(tmp_path):
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
-    assert check_file(path) == [(3, "openai.ChatCompletion.create")]
+    assert check_file(path) == [
+        (3, "openai.ChatCompletion.create disallowed or missing context_builder")
+    ]
 
 
 def test_flags_chat_completion_wrapper(tmp_path):
@@ -56,7 +62,9 @@ def test_flags_chat_completion_wrapper(tmp_path):
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
-    assert check_file(path) == [(3, "chat_completion_create")]
+    assert check_file(path) == [
+        (3, "chat_completion_create disallowed or missing context_builder")
+    ]
 
 
 def test_allows_nocb_comment(tmp_path):
@@ -94,6 +102,35 @@ def test_allows_context_builder_call(tmp_path):
     assert check_file(path) == []
 
 
+def test_flags_context_builder_in_function(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from vector_service.context_builder import ContextBuilder\n"
+        "def demo():\n"
+        "    ContextBuilder()\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [(
+        3,
+        "ContextBuilder() missing bots.db, code.db, errors.db, workflows.db",
+    )]
+
+
+def test_allows_context_builder_with_nocb(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from vector_service.context_builder import ContextBuilder\n"
+        "def demo():\n"
+        "    ContextBuilder()  # nocb\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == []
+
+
 def test_flags_getattr_context_builder(tmp_path):
     from scripts.check_context_builder_usage import check_file
 
@@ -103,7 +140,9 @@ def test_flags_getattr_context_builder(tmp_path):
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
-    assert check_file(path) == [(2, "getattr context_builder default None")]
+    assert check_file(path) == [
+        (2, "getattr context_builder default None disallowed or missing context_builder")
+    ]
 
 
 def test_allows_getattr_with_nocb(tmp_path):
