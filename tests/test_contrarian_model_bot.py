@@ -8,6 +8,7 @@ import menace.contrarian_model_bot as cmb
 import menace.research_aggregator_bot as rab
 import menace.task_handoff_bot as thb
 import menace.contrarian_db as cdb
+from vector_service.context_builder import ContextBuilder
 
 
 def make_workflow_db(tmp_path: Path) -> cmb.WorkflowDB:
@@ -45,11 +46,18 @@ def test_merge_and_innovate(tmp_path: Path):
     innovations = cmb.InnovationsDB(tmp_path / "innov.json")
     info_db = rab.InfoDB(tmp_path / "info.db")
     wf_db = thb.WorkflowDB(tmp_path / "wf.db")
+    builder = ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
     bot = cmb.ContrarianModelBot(
         workflow_db=db,
         workflows_db=wf_db,
         innovations_db=innovations,
         info_db=info_db,
+        context_builder=builder,
         capital_manager=None,
         risk_tolerance=0.4,
         resources=1.0,
@@ -74,10 +82,17 @@ def test_ideate_triggers_research(tmp_path: Path, monkeypatch):
         def process(self, topic: str, energy: int = 1) -> None:
             called["topic"] = topic
 
+    builder = ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
     bot = cmb.ContrarianModelBot(
         workflow_db=db,
         innovations_db=innovations,
         aggregator=DummyAggregator(),
+        context_builder=builder,
         capital_manager=None,
         risk_tolerance=0.4,
         resources=1.0,
@@ -92,12 +107,19 @@ def test_ideate_logs_contrarian(tmp_path: Path):
     innovations = cmb.InnovationsDB(tmp_path / "innov.json")
     contr_db = cdb.ContrarianDB(tmp_path / "c.db")
     info_db = rab.InfoDB(tmp_path / "info.db")
+    builder = ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
     bot = cmb.ContrarianModelBot(
         workflow_db=db,
         innovations_db=innovations,
         contrarian_db=contr_db,
         model_ids=[1, 2],
         info_db=info_db,
+        context_builder=builder,
         capital_manager=None,
         risk_tolerance=0.4,
         resources=1.0,
@@ -116,7 +138,17 @@ def test_update_risk_tolerance_logs(tmp_path: Path, monkeypatch):
             raise RuntimeError("boom")
 
     db = make_workflow_db(tmp_path)
-    bot = cmb.ContrarianModelBot(workflow_db=db, capital_manager=FailMgr())
+    builder = ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
+    bot = cmb.ContrarianModelBot(
+        workflow_db=db,
+        capital_manager=FailMgr(),
+        context_builder=builder,
+    )
     calls = []
     monkeypatch.setattr(bot, "logger", types.SimpleNamespace(exception=calls.append))
     bot._update_risk_tolerance()
@@ -127,8 +159,17 @@ def test_allocate_resources_logs(tmp_path: Path, monkeypatch):
     class FailAlloc:
         def allocate(self, _):
             raise RuntimeError("fail")
-
-    bot = cmb.ContrarianModelBot(workflow_db=make_workflow_db(tmp_path), allocator=FailAlloc())
+    builder = ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
+    bot = cmb.ContrarianModelBot(
+        workflow_db=make_workflow_db(tmp_path),
+        allocator=FailAlloc(),
+        context_builder=builder,
+    )
     calls = []
     monkeypatch.setattr(bot, "logger", types.SimpleNamespace(exception=calls.append))
     bot.allocate_resources(1.0)
@@ -146,7 +187,21 @@ def test_ideate_logs_aggregator_error(tmp_path: Path, monkeypatch):
 
     db = make_workflow_db(tmp_path)
     innovations = cmb.InnovationsDB(tmp_path / "innov.json")
-    bot = cmb.ContrarianModelBot(workflow_db=db, innovations_db=innovations, aggregator=Agg(), capital_manager=None, risk_tolerance=0.4, resources=1.0)
+    builder = ContextBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
+    bot = cmb.ContrarianModelBot(
+        workflow_db=db,
+        innovations_db=innovations,
+        aggregator=Agg(),
+        context_builder=builder,
+        capital_manager=None,
+        risk_tolerance=0.4,
+        resources=1.0,
+    )
     calls = []
     monkeypatch.setattr(bot, "logger", types.SimpleNamespace(exception=calls.append))
     innov = bot.ideate()
