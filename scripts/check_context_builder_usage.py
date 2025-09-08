@@ -95,6 +95,42 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         )
 
     class Visitor(ast.NodeVisitor):
+        @staticmethod
+        def _has_none_default(arg: ast.arg, default: ast.AST | None) -> bool:
+            return bool(
+                default
+                and isinstance(default, ast.Constant)
+                and default.value is None
+                and arg.arg == "context_builder"
+            )
+
+        def _check_args(self, node: ast.AST) -> None:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return
+            args = node.args
+
+            pos_args = args.posonlyargs + args.args
+            defaults: list[ast.AST | None] = [None] * (
+                len(pos_args) - len(args.defaults)
+            ) + list(args.defaults)
+            for arg, default in zip(pos_args, defaults):
+                if self._has_none_default(arg, default):
+                    line_no = arg.lineno
+                    line = (
+                        lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    )
+                    if NOCB_MARK not in line:
+                        errors.append((line_no, "context_builder default None"))
+
+            for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+                if self._has_none_default(arg, default):
+                    line_no = arg.lineno
+                    line = (
+                        lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    )
+                    if NOCB_MARK not in line:
+                        errors.append((line_no, "context_builder default None"))
+
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
             name_full = full_name(node.func)
             name_simple = name_full.split(".")[-1] if name_full else None
@@ -142,6 +178,14 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     prev = lines[line_no - 2] if line_no >= 2 else ""
                     if NOCB_MARK not in line and NOCB_MARK not in prev:
                         errors.append((line_no, DEFAULT_BUILDER_NAME))
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: D401
+            self._check_args(node)
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: D401
+            self._check_args(node)
             self.generic_visit(node)
 
     Visitor().visit(tree)

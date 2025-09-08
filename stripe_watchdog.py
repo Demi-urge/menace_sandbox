@@ -1758,7 +1758,12 @@ def check_revenue_projection(
 # CLI ----------------------------------------------------------------------
 
 
-def main(argv: Optional[List[str]] = None, *, context_builder: "ContextBuilder" | None = None) -> None:
+# CLI can run without a context builder
+def main(
+    argv: Optional[List[str]] = None,
+    *,
+    context_builder: "ContextBuilder" | None = None,  # nocb
+) -> None:
     """Entry point for command line execution."""
 
     global ANOMALY_LOG

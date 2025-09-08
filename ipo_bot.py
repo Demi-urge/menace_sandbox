@@ -227,7 +227,7 @@ class IPOBot:
         db_path: str = "models.db",
         enhancements_db: Optional[Path] = None,
         *,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
         self.ingestor = BlueprintIngestor()
         self.searcher = BotDatabaseSearcher(db_path)
