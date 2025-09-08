@@ -214,7 +214,8 @@ class ModelAutomationPipeline:
         self.allocator = allocator or DynamicResourceAllocator(
             alloc_bot=ResourceAllocationBot(
                 AllocationDB(), context_builder=self.context_builder
-            )
+            ),
+            context_builder=self.context_builder,
         )
         self.diagnostic_manager = diagnostic_manager or DiagnosticManager(
             context_builder=self.context_builder

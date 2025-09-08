@@ -96,33 +96,19 @@ class DynamicResourceAllocator:
         *,
         scale_up_threshold: float = 0.8,
         scale_down_threshold: float = 0.2,
-        context_builder: ContextBuilder | None = None,  # nocb
+        context_builder: ContextBuilder,
     ) -> None:
         self.metrics_db = metrics_db or MetricsDB()
         self.prediction_bot = prediction_bot or ResourcePredictionBot()
         self.ledger = ledger or DecisionLedger()
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("DynamicAllocator")
-
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         self.context_builder = context_builder
-        if alloc_bot is None:
-            self.context_builder = self.context_builder or ContextBuilder()
-            try:
-                self.context_builder.refresh_db_weights()
-            except Exception as exc:  # pragma: no cover - log then raise
-                self.logger.error("context builder refresh failed: %s", exc)
-                raise RuntimeError("context builder refresh failed") from exc
-            self.alloc_bot = ResourceAllocationBot(
-                AllocationDB(), context_builder=self.context_builder
-            )
-        else:
-            self.alloc_bot = alloc_bot
-            if self.context_builder is not None:
-                try:
-                    self.context_builder.refresh_db_weights()
-                except Exception as exc:  # pragma: no cover - log then raise
-                    self.logger.error("context builder refresh failed: %s", exc)
-                    raise RuntimeError("context builder refresh failed") from exc
+        self.alloc_bot = alloc_bot or ResourceAllocationBot(
+            AllocationDB(), context_builder=self.context_builder
+        )
 
         self.pathway_db = pathway_db
         self.scaler = predictive_allocator or PredictiveResourceAllocator(self.metrics_db)
