@@ -88,6 +88,8 @@ non-zero status on violations, so add it to your local workflow to catch issues
 early. Continuous integration runs this script and fails the build when it
 detects missing or implicit `ContextBuilder` usage.
 
+The `mypy` Makefile target runs this check automatically.
+
 ## Stripe integration
 
 To centralize billing logic and API configuration, the `stripe` Python package

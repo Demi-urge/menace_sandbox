@@ -1,8 +1,9 @@
 .PHONY: mypy synergy-graph install-self-improvement-deps
 mypy:
-        mypy --config mypy.ini self_* sandbox_runner
-        python scripts/check_governed_embeddings.py
-        python scripts/check_governed_retrieval.py
+	mypy --config mypy.ini self_* sandbox_runner
+	python scripts/check_governed_embeddings.py
+	python scripts/check_governed_retrieval.py
+	python scripts/check_context_builder_usage.py
 
 synergy-graph:
         python module_synergy_grapher.py --build
