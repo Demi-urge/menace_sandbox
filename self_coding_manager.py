@@ -231,11 +231,12 @@ class SelfCodingManager:
             patch_id: int | None = None
             reverted = False
             ctx_meta = context_meta or {}
-            builder = getattr(
-                getattr(self.engine, "cognition_layer", None),
-                "context_builder",
-                None,
-            )
+            clayer = self.engine.cognition_layer
+            if clayer is None or clayer.context_builder is None:
+                raise AttributeError(
+                    "engine.cognition_layer must provide a context_builder"
+                )
+            builder = clayer.context_builder
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None

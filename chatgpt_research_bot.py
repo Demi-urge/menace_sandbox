@@ -615,7 +615,7 @@ class ChatGPTResearchBot:
         else:
             if not isinstance(client, ChatGPTClient):
                 raise TypeError("client must be ChatGPTClient")
-            if getattr(client, "context_builder", None) is None:
+            if client.context_builder is None:
                 raise ValueError("client.context_builder must not be None")
         self.client = client
         self.send_callback = send_callback

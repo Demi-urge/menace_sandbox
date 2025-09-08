@@ -106,8 +106,14 @@ class RankingModelScheduler:
         # runtime.
         self.services = list(services)
         for svc in self.services:
-            cb = getattr(svc, "context_builder", None)
-            if cb is None or not hasattr(cb, "refresh_db_weights"):
+            try:
+                cb = svc.context_builder  # type: ignore[attr-defined]
+            except AttributeError as exc:  # pragma: no cover - validation
+                raise AttributeError(
+                    "All services must provide a `context_builder` with"
+                    " `refresh_db_weights`."
+                ) from exc
+            if not hasattr(cb, "refresh_db_weights"):
                 raise AttributeError(
                     "All services must provide a `context_builder` with"
                     " `refresh_db_weights`."
