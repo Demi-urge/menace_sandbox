@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 import logging
+import uuid
 
 try:  # pragma: no cover - support package and standalone usage
     from config import get_config  # type: ignore
@@ -169,19 +170,9 @@ class QueryBot:
                 gpt_memory=gpt_memory or GPT_MEMORY_MANAGER,
                 context_builder=context_builder,
             )
-        elif getattr(client, "context_builder", None) is None:
-            try:
-                client.context_builder = context_builder
-            except Exception:
-                logger.debug(
-                    "failed to attach context_builder to client", exc_info=True
-                )
-        try:
-            context_builder.refresh_db_weights()
-        except Exception:
-            logger.debug("failed to refresh context builder", exc_info=True)
         self.client = client
         self.context_builder = context_builder
+        self.context_builder.refresh_db_weights()
         self.fetcher = fetcher or DataFetcher()
         self.store = store or ContextStore()
         self.nlu = nlu or SimpleNLU()
@@ -199,8 +190,8 @@ class QueryBot:
         data = self.fetcher.fetch(ents)
         self.store.add(context_id, query)
         try:
-            _, meta = self.client.context_builder.build_context(
-                query, return_metadata=True
+            _, meta = self.context_builder.build(
+                query, session_id=uuid.uuid4().hex, return_metadata=True
             )
             compressed = {
                 k: [compress_snippets(m) for m in v]
@@ -215,7 +206,7 @@ class QueryBot:
             "query_bot.process",
             prompt,
             memory=self.local_knowledge,
-            context_builder=self.client.context_builder,
+            context_builder=self.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
         text = (
