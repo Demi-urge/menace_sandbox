@@ -573,6 +573,8 @@ class SelfTestService:
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.graph = graph or KnowledgeGraph()
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         self.context_builder = context_builder
         try:
             self.context_builder.refresh_db_weights()
@@ -3319,6 +3321,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_redundant=args.include_redundant,
             report_dir=args.report_dir,
             ephemeral=args.ephemeral,
+            context_builder=ContextBuilder(),
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -3364,6 +3367,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_redundant=args.include_redundant,
             report_dir=args.report_dir,
             ephemeral=args.ephemeral,
+            context_builder=ContextBuilder(),
         )
         try:
             service.run_scheduled(
@@ -3389,6 +3393,7 @@ def cli(argv: list[str] | None = None) -> int:
             container_runtime=args.container_runtime,
             docker_host=args.docker_host,
             container_retries=args.retries,
+            context_builder=ContextBuilder(),
         )
         try:
             asyncio.run(service._cleanup_containers())

@@ -29,6 +29,13 @@ class DummyAggregator:
         ]
 
 
+def test_builder_required():
+    with pytest.raises(TypeError):
+        mapl.ModelAutomationPipeline()
+    with pytest.raises(ValueError):
+        mapl.ModelAutomationPipeline(context_builder=None)
+
+
 def test_pipeline_runs(tmp_path):
     agg = DummyAggregator()
     builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
