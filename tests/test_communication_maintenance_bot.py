@@ -1,11 +1,71 @@
 import os
 import sys
 import types
+os.environ.setdefault("MENACE_DB_PATH", "/tmp")
+os.environ.setdefault("MENACE_SHARED_DB_PATH", "/tmp")
 
 
 class DummyBuilder:
+    def __init__(self):
+        self.terms = []
+
     def refresh_db_weights(self):
         pass
+
+    def query(self, term, **kwargs):  # pragma: no cover - simple stub
+        self.terms.append(term)
+        return {"snippets": [term], "metadata": {"q": term}}
+
+# Stub loguru to avoid optional dependency
+loguru_mod = types.ModuleType("loguru")
+class DummyLogger:
+    def add(self, *a, **k):
+        pass
+
+    def __getattr__(self, name):
+        return lambda *a, **k: None
+
+loguru_mod.logger = DummyLogger()
+sys.modules.setdefault("loguru", loguru_mod)
+
+# Stub vector_service to avoid heavy dependencies
+vector_service_stub = types.SimpleNamespace(
+    ContextBuilder=DummyBuilder,
+    FallbackResult=object,
+    ErrorResult=object,
+    Retriever=object,
+    EmbeddingBackfill=object,
+    CognitionLayer=object,
+    EmbeddableDBMixin=object,
+    SharedVectorService=object,
+)
+sys.modules.setdefault("vector_service", vector_service_stub)
+
+# Stub db_router to prevent filesystem access
+class DummyConn:
+    def execute(self, *a, **k):
+        return None
+
+    def commit(self):  # pragma: no cover - stub
+        return None
+
+class DummyRouter:
+    def __init__(self, *a, **k):
+        self.terms = []
+
+    def query_all(self, term):  # pragma: no cover - stub
+        self.terms.append(term)
+        return {}
+
+    def get_connection(self, name):  # pragma: no cover - stub
+        return DummyConn()
+
+db_router_stub = types.SimpleNamespace(
+    DBRouter=DummyRouter,
+    GLOBAL_ROUTER=DummyRouter(),
+    init_db_router=lambda name: DummyRouter(),
+)
+sys.modules.setdefault("menace.db_router", db_router_stub)
 import logging
 from datetime import datetime
 import pytest
@@ -92,10 +152,12 @@ def test_hotfix_logs(monkeypatch, tmp_path):
 
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
     edb = cmb.ErrorDB(tmp_path / "e.db")
-    ebot = cmb.ErrorBot(edb, context_builder=DummyBuilder())
-    router = types.SimpleNamespace(terms=[])
-    router.query_all = lambda term: router.terms.append(term) or {}
-    bot = cmb.CommunicationMaintenanceBot(mdb, ebot, repo_path, db_router=router)
+    builder = DummyBuilder()
+    ebot = cmb.ErrorBot(edb, context_builder=builder)
+    router = DummyRouter()
+    bot = cmb.CommunicationMaintenanceBot(
+        mdb, ebot, repo_path, db_router=router, context_builder=builder
+    )
     monkeypatch.setattr(bot, "notify", lambda *a, **k: None)
     monkeypatch.setattr(bot, "notify_critical", lambda *a, **k: None)
 
@@ -105,6 +167,7 @@ def test_hotfix_logs(monkeypatch, tmp_path):
     df = edb.discrepancies()
     assert not df.empty
     assert "fix" in router.terms
+    assert "fix" in builder.terms
 
 
 def test_adjust_resources(monkeypatch, tmp_path):
@@ -115,15 +178,18 @@ def test_adjust_resources(monkeypatch, tmp_path):
     repo.index.commit("init")
 
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
-    router2 = types.SimpleNamespace(terms=[])
-    router2.query_all = lambda term: router2.terms.append(term) or {}
-    bot = cmb.CommunicationMaintenanceBot(mdb, repo_path=repo_path, db_router=router2)
+    router2 = DummyRouter()
+    builder = DummyBuilder()
+    bot = cmb.CommunicationMaintenanceBot(
+        mdb, repo_path=repo_path, db_router=router2, context_builder=builder
+    )
     monkeypatch.setattr(bot, "notify", lambda *a, **k: None)
     monkeypatch.setattr(bot, "notify_critical", lambda *a, **k: None)
     metrics = {"a": ResourceMetrics(cpu=1.0, memory=10.0, disk=1.0, time=1.0)}
     actions = bot.adjust_resources(metrics)
     assert actions and actions[0][0] == "a"
     assert "allocation" in router2.terms
+    assert "allocation" in builder.terms
 
 
 def test_check_updates(monkeypatch, tmp_path):
@@ -134,15 +200,18 @@ def test_check_updates(monkeypatch, tmp_path):
     repo.index.commit("init")
 
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
-    router3 = types.SimpleNamespace(terms=[])
-    router3.query_all = lambda term: router3.terms.append(term) or {}
-    bot = cmb.CommunicationMaintenanceBot(mdb, repo_path=repo_path, db_router=router3)
+    router3 = DummyRouter()
+    builder = DummyBuilder()
+    bot = cmb.CommunicationMaintenanceBot(
+        mdb, repo_path=repo_path, db_router=router3, context_builder=builder
+    )
     monkeypatch.setattr(bot, "notify", lambda *a, **k: None)
     monkeypatch.setattr(bot, "notify_critical", lambda *a, **k: None)
     bot.check_updates()
     rows = mdb.fetch()
     assert rows and rows[0][0] == "update_check"
     assert "update" in router3.terms
+    assert "update" in builder.terms
 
 
 def test_subscribe_failures_logged(monkeypatch, tmp_path, caplog):
@@ -164,6 +233,7 @@ def test_subscribe_failures_logged(monkeypatch, tmp_path, caplog):
         repo_path=repo_path,
         event_bus=BadBus(),
         memory_mgr=BadMem(),
+        context_builder=DummyBuilder(),
     )
     assert "event bus subscription failed" in caplog.text
     assert "memory subscription failed" in caplog.text
@@ -183,7 +253,9 @@ def test_ping_bots(monkeypatch, tmp_path):
     monkeypatch.setattr(cmb.time, "sleep", lambda s: None)
 
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
-    bot = cmb.CommunicationMaintenanceBot(mdb, repo_path=repo_path)
+    bot = cmb.CommunicationMaintenanceBot(
+        mdb, repo_path=repo_path, context_builder=DummyBuilder()
+    )
     monkeypatch.setattr(bot, "notify", lambda *a, **k: None)
     monkeypatch.setattr(bot, "notify_critical", lambda *a, **k: None)
     bot.bot_urls = {"b1": "http://b1"}
@@ -204,7 +276,9 @@ def test_ping_bots_failure_removal(monkeypatch, tmp_path):
     monkeypatch.setattr(cmb.time, "sleep", lambda s: None)
 
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
-    bot = cmb.CommunicationMaintenanceBot(mdb, repo_path=repo_path)
+    bot = cmb.CommunicationMaintenanceBot(
+        mdb, repo_path=repo_path, context_builder=DummyBuilder()
+    )
     monkeypatch.setattr(bot, "notify", lambda *a, **k: None)
     monkeypatch.setattr(bot, "notify_critical", lambda *a, **k: None)
     bot.bot_urls = {"b1": "http://b1"}
@@ -218,7 +292,9 @@ def test_evaluate_status(monkeypatch, tmp_path):
     repo_path = tmp_path / "repo"
     cmb.Repo.init(repo_path)
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
-    bot = cmb.CommunicationMaintenanceBot(mdb, repo_path=repo_path)
+    bot = cmb.CommunicationMaintenanceBot(
+        mdb, repo_path=repo_path, context_builder=DummyBuilder()
+    )
 
     now = datetime.utcnow().isoformat()
     data = [
@@ -235,7 +311,9 @@ def test_generate_maintenance_report(monkeypatch, tmp_path):
     repo_path = tmp_path / "repo"
     cmb.Repo.init(repo_path)
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
-    bot = cmb.CommunicationMaintenanceBot(mdb, repo_path=repo_path)
+    bot = cmb.CommunicationMaintenanceBot(
+        mdb, repo_path=repo_path, context_builder=DummyBuilder()
+    )
     monkeypatch.setattr(bot, "evaluate_status", lambda: {"messages_last_hour": 5, "error_rate": 0.2})
     bot.cluster_data = {"nodes": 3}
     report = bot.generate_maintenance_report()
@@ -247,7 +325,9 @@ def test_monitor_communication_alert(monkeypatch, tmp_path):
     repo_path = tmp_path / "repo"
     cmb.Repo.init(repo_path)
     mdb = cmb.MaintenanceDB(tmp_path / "m.db")
-    bot = cmb.CommunicationMaintenanceBot(mdb, repo_path=repo_path)
+    bot = cmb.CommunicationMaintenanceBot(
+        mdb, repo_path=repo_path, context_builder=DummyBuilder()
+    )
 
     monkeypatch.setattr(bot, "evaluate_status", lambda: {"messages_last_hour": 10, "error_rate": 0.3})
     called = {}

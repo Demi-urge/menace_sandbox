@@ -1063,7 +1063,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         memory_mgr: MenaceMemoryManager | None = None,
-        context_builder: "ContextBuilder" | None = None,
+        context_builder: "ContextBuilder",
         logger: logging.Logger | None = None,
         webhook_urls: Optional[Iterable[str] | str] = None,
         msg_retry_attempts: Optional[int] = None,
@@ -1095,6 +1095,8 @@ class CommunicationMaintenanceBot(AdminBotBase):
                     self.db = SQLiteMaintenanceDB()
             else:
                 self.db = SQLiteMaintenanceDB()
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         self.context_builder = context_builder
         self.error_bot = error_bot or ErrorBot(
             ErrorDB(self.config.error_db_path), context_builder=self.context_builder
@@ -1189,26 +1191,54 @@ class CommunicationMaintenanceBot(AdminBotBase):
             except Exception as exc:
                 self.logger.exception("memory subscription failed: %s", exc)
 
+    def query(self, term: str) -> str:
+        """Query DB router and context builder for ``term`` and return context."""
+        try:
+            self.db_router.query_all(term)
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.warning("db query failed: %s", exc)
+        snippet = ""
+        metadata: Dict[str, object] = {}
+        try:
+            result = self.context_builder.query(term, return_metadata=True)
+            if isinstance(result, dict):
+                snips = result.get("snippets") or result.get("context") or []
+                if isinstance(snips, list):
+                    snippet = snips[0] if snips else ""
+                else:
+                    snippet = str(snips)
+                metadata = result.get("metadata") or {}
+        except Exception as exc:  # pragma: no cover - retrieval failures
+            self.logger.warning("context retrieval failed: %s", exc)
+        parts = []
+        if snippet:
+            parts.append(f"snippet: {snippet}")
+        if metadata:
+            parts.append(f"metadata: {metadata}")
+        return " | ".join(parts)
+
     def escalate_error(self, message: str, severity: Severity = Severity.CRITICAL) -> None:
         """Handle failure by logging, auditing and notifying."""
+        context = self.query(message)
+        enriched = f"{message} | {context}" if context else message
         self.logger.error(
             "escalation: %s",
-            message,
+            enriched,
             extra={"tag": severity.value, "bot_name": self.bot_name},
         )
         try:
             audit_log_event(
                 "maintenance_error",
-                {"bot": self.bot_name, "message": message, "severity": severity.value},
+                {"bot": self.bot_name, "message": enriched, "severity": severity.value},
             )
         except Exception:
             self.logger.exception("audit logging failed")
         try:
-            self.error_bot.handle_error(message)
+            self.error_bot.handle_error(enriched)
         except Exception:
             self.logger.exception("error escalation handling failed")
         try:
-            self.notify_critical(f"ESCALATION: {message}")
+            self.notify_critical(f"ESCALATION: {enriched}")
         except Exception:
             self.logger.exception("escalation notification failed")
 
@@ -1320,7 +1350,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
 
     def check_updates(self) -> None:
         """Check for uncommitted changes and log status."""
-        self.query("update")
+        context = self.query("update")
 
         def _impl() -> None:
             if not self.repo:
@@ -1344,6 +1374,8 @@ class CommunicationMaintenanceBot(AdminBotBase):
             msg = self.templates["update_status"].safe_substitute(
                 bot=self.bot_name, status=status
             )
+            if context:
+                msg = f"{msg} | {context}"
             self.notify(msg)
 
         self._run_task(_impl, "check_updates")
@@ -1358,7 +1390,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         diff_log: bool = False,
     ) -> None:
         """Apply hotfix and optionally commit the changes."""
-        self.query(description)
+        context = self.query(description)
 
         def _impl() -> None:
             commit_flag = commit
@@ -1414,6 +1446,8 @@ class CommunicationMaintenanceBot(AdminBotBase):
                 msg = self.templates["hotfix_applied"].safe_substitute(
                     bot=self.bot_name, desc=description
                 )
+                if context:
+                    msg = f"{msg} | {context}"
                 self.notify(msg)
             if exc:
                 raise exc
@@ -1422,7 +1456,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
 
     def optimise_performance(self) -> None:
         """Perform lightweight git maintenance to keep repository efficient."""
-        self.query("optimise")
+        context = self.query("optimise")
 
         def _impl() -> None:
             if not self.repo:
@@ -1449,6 +1483,8 @@ class CommunicationMaintenanceBot(AdminBotBase):
             msg = self.templates["optimise_summary"].safe_substitute(
                 bot=self.bot_name, summary=summary
             )
+            if context:
+                msg = f"{msg} | {context}"
             self.notify(msg)
 
         self._run_task(_impl, "optimise_performance")
