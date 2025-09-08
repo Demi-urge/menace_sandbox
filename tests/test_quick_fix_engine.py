@@ -21,6 +21,7 @@ if not hasattr(dynamic_path_router, "clear_cache"):
 
 # Avoid heavy imports from the real package
 package = types.ModuleType("menace")
+package.__path__ = []
 sys.modules["menace"] = package
 
 # Stub required submodules
@@ -87,6 +88,14 @@ vec = types.SimpleNamespace(
 )
 sys.modules.setdefault("vector_service", vec)
 sys.modules.setdefault("vector_service.patch_logger", types.SimpleNamespace(PatchLogger=object))
+sys.modules.setdefault("vector_service.context_builder", vec)
+sc_stub = types.SimpleNamespace(compress_snippets=lambda meta, **k: meta)
+sys.modules.setdefault("snippet_compressor", sc_stub)
+sys.modules.setdefault("menace.snippet_compressor", sc_stub)
+sys.modules.setdefault(
+    "menace.codebase_diff_checker",
+    types.SimpleNamespace(generate_code_diff=lambda *a, **k: "", flag_risky_changes=lambda *a, **k: False),
+)
 
 # Load QuickFixEngine without importing the full package
 spec = importlib.util.spec_from_file_location(
@@ -487,3 +496,43 @@ def test_init_auto_builds_context_builder(tmp_path, monkeypatch):
     monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
     engine.run("bot")
     assert engine.context_builder.calls
+
+
+def test_generate_patch_context_compression(monkeypatch, tmp_path):
+    class SentinelBuilder(_DummyContextBuilder):
+        def __init__(self, **dbs):
+            self.dbs = dbs
+
+        def build(self, *_, **__):
+            return "RAW-" + ",".join(sorted(self.dbs.values()))
+
+    def fake_compress(meta, **_):
+        txt = meta.get("snippet", "")
+        return {"snippet": txt.replace("RAW-", "COMPRESSED-")}
+
+    monkeypatch.setattr(quick_fix, "compress_snippets", fake_compress)
+
+    builder = SentinelBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
+
+    class DummyEngine:
+        def __init__(self):
+            self.descs = []
+
+        def apply_patch_with_retry(self, path, desc, **_):
+            self.descs.append(desc)
+            return 1, "", ""
+
+    eng = DummyEngine()
+    p = tmp_path / "mod.py"
+    p.write_text("print(1)\n")  # path-ignore
+    quick_fix.generate_patch(p.as_posix(), engine=eng, context_builder=builder)
+    assert eng.descs and "COMPRESSED-bots.db,code.db,errors.db,workflows.db" in eng.descs[0]
+    assert "RAW-bots.db,code.db,errors.db,workflows.db" not in eng.descs[0]
+
+    with pytest.raises(TypeError):
+        quick_fix.generate_patch(p.as_posix(), engine=eng)  # type: ignore[call-arg]

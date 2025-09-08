@@ -1,6 +1,9 @@
 import types
 import sys
 import importlib
+import pytest
+sc_stub = types.SimpleNamespace(compress_snippets=lambda meta, **k: meta)
+sys.modules.setdefault("snippet_compressor", sc_stub)
 
 
 class RecordingBuilder:
@@ -50,3 +53,42 @@ def test_reviewer_uses_context_builder():
     assert builder.calls, "context_builder.build was not invoked"
     assert esc.attachments and "ctx" in esc.attachments[0]
     assert esc.session_id
+
+
+def test_reviewer_context_compression(monkeypatch):
+    class SentinelBuilder:
+        def __init__(self, **dbs):
+            self.dbs = dbs
+            self.calls = []
+
+        def build(self, payload, **_):
+            self.calls.append(payload)
+            return {"snippet": "RAW-" + ",".join(sorted(self.dbs.values()))}
+
+        def refresh_db_weights(self):
+            pass
+
+    def fake_compress(meta, **_):
+        txt = meta.get("snippet", "")
+        return {"snippet": txt.replace("RAW-", "COMPRESSED-")}
+
+    monkeypatch.setattr(ar, "compress_snippets", fake_compress)
+
+    builder = SentinelBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
+    db = types.SimpleNamespace(update_bot=lambda *a, **k: None)
+    esc = RecordingEscalator()
+    reviewer = ar.AutomatedReviewer(context_builder=builder, bot_db=db, escalation_manager=esc)
+    reviewer.handle({"bot_id": "42", "severity": "critical"})
+
+    assert builder.calls
+    payload = esc.attachments[0]
+    assert "COMPRESSED-bots.db,code.db,errors.db,workflows.db" in payload
+    assert "RAW-bots.db,code.db,errors.db,workflows.db" not in payload
+
+    with pytest.raises(ValueError):
+        ar.AutomatedReviewer(bot_db=db, escalation_manager=esc, context_builder=None)  # type: ignore[arg-type]
