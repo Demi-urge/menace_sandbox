@@ -6,6 +6,7 @@ import json
 from types import SimpleNamespace
 import pathlib
 import sys
+from dynamic_path_router import resolve_path
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 sys.modules.setdefault("vector_service", SimpleNamespace(CognitionLayer=lambda: None))
@@ -308,11 +309,15 @@ def test_main_updates_last_run(monkeypatch, tmp_path):
             with open(self.path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry) + "\n")
 
-    audit_file = tmp_path / "audit.jsonl"
+    audit_file = pathlib.Path(resolve_path("audit.jsonl", root=tmp_path))
     monkeypatch.setattr(sw, "ANOMALY_LOG", audit_file)
     monkeypatch.setattr(sw, "ANOMALY_TRAIL", DummyTrail(audit_file))
 
-    sw.main([])
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            return {"db": 1}
+
+    sw.main([], context_builder=DummyBuilder())
 
     assert int(last_run.read_text()) >= 100
 

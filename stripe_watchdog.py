@@ -56,6 +56,7 @@ from logging.handlers import RotatingFileHandler
 import gzip
 import shutil
 import types
+from snippet_compressor import compress_snippets
 
 logger = logging.getLogger(__name__)
 
@@ -771,6 +772,19 @@ def _emit_anomaly(
     audit_logger.log_event("stripe_anomaly", record)
     metadata = {k: v for k, v in record.items() if k != "type"}
     metadata.setdefault("timestamp", datetime.utcnow().isoformat())
+    ctx_builder = None
+    if self_coding_engine is not None:
+        ctx_builder = getattr(self_coding_engine, "context_builder", None)
+    if ctx_builder is None and telemetry_feedback is not None:
+        ctx_builder = getattr(telemetry_feedback, "context_builder", None)
+    if ctx_builder is not None:
+        try:
+            ctx_res = ctx_builder.build(record.get("type", "stripe anomaly"))
+            snippet = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+            if snippet:
+                metadata.update(compress_snippets({"snippet": snippet}))
+        except Exception:
+            logger.exception("context build failed", extra={"record": record})
     if not metadata.get("stripe_account"):
         acct = metadata.get("account_id")
         if not acct:
@@ -1758,11 +1772,10 @@ def check_revenue_projection(
 # CLI ----------------------------------------------------------------------
 
 
-# CLI can run without a context builder
 def main(
     argv: Optional[List[str]] = None,
     *,
-    context_builder: "ContextBuilder" | None = None,  # nocb
+    context_builder: "ContextBuilder",
 ) -> None:
     """Entry point for command line execution."""
 
@@ -1790,6 +1803,10 @@ def main(
         help="write normalized anomalies to training_data/stripe_anomalies.jsonl",
     )
     args = parser.parse_args(argv)
+
+    weights = context_builder.refresh_db_weights()
+    if not weights:
+        raise RuntimeError("context builder failed to refresh db weights")
 
     api_key = load_api_key()
     if not api_key:
@@ -1824,25 +1841,14 @@ def main(
     telemetry = None
     builder = context_builder
     if SANITY_LAYER_FEEDBACK_ENABLED:
-        if (
-            SelfCodingEngine
-            and CodeDB
-            and MenaceMemoryManager
-            and builder is not None
-        ):
+        if SelfCodingEngine and CodeDB and MenaceMemoryManager:
             try:
-                builder.refresh_db_weights()
                 engine = SelfCodingEngine(
                     CodeDB(), MenaceMemoryManager(), context_builder=builder
                 )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise SelfCodingEngine")
-        if (
-            TelemetryFeedback
-            and ErrorLogger
-            and engine is not None
-            and builder is not None
-        ):
+        if TelemetryFeedback and ErrorLogger and engine is not None:
             try:
                 telemetry = TelemetryFeedback(
                     ErrorLogger(context_builder=builder), engine
