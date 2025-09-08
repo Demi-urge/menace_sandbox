@@ -113,3 +113,8 @@ def test_evaluate_enhancement():
     ev = bot.evaluate_enhancement("Improve", "Adds more features and efficiency")
     assert -1.0 <= ev.value <= 1.0
     assert ev.description and ev.reason
+
+
+def test_init_without_builder_errors():
+    with pytest.raises(TypeError):
+        cpb.ChatGPTPredictionBot(context_builder=None)
