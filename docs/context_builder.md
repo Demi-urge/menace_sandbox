@@ -101,8 +101,10 @@ summariser also operates offline, so even without the optional memory manager
 
 `SelfCodingEngine`, `QuickFixEngine`, `BotDevelopmentBot`, `PromptEngine`,
 `AutomatedReviewer`, `Watchdog` and `QueryBot` expect a `ContextBuilder` to be
-supplied via constructor or method arguments.  Instantiate the builder with the standard
-databases and pass it through explicitly:
+supplied via constructor or method arguments. Omitting it raises a `ValueError`
+in most helpers and otherwise produces generic prompts with no retrieved
+context. Instantiate the builder with the standard databases and pass it through
+explicitly:
 
 ```python
 from vector_service.context_builder import ContextBuilder
@@ -110,6 +112,13 @@ from vector_service.context_builder import ContextBuilder
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 # e.g. engine = SelfCodingEngine(..., context_builder=builder)
 ```
+
+## Failure modes
+
+Leaving out the builder causes helper methods that require contextual snippets
+to either throw a `ValueError("ContextBuilder is required")` or silently fall
+back to empty prompts. The latter severely degrades code generation quality
+because no historical data is supplied to the model.
 
 ## Static enforcement
 

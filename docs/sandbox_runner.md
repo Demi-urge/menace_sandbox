@@ -364,7 +364,7 @@ from vector_service.context_builder import ContextBuilder
 from sandbox_runner import run_repo_section_simulations
 
 presets = generate_canonical_presets()
-builder = ContextBuilder()
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 tracker = run_repo_section_simulations(
     "/repo", env_presets=presets, context_builder=builder
 )

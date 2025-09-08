@@ -101,8 +101,10 @@ from chunking import get_chunk_summaries
 get_chunk_summaries(Path("bots/example.py"), 800)
 ```
 
-When building prompts the self‑coding engine loads these summaries and passes
-them to the prompt engine:
+All prompt‑generating bots require an explicit `ContextBuilder`; omitting it
+raises a `ValueError` or yields empty prompts with no historical context. When
+building prompts the self‑coding engine loads these summaries and passes them to
+the prompt engine:
 
 ```python
 from pathlib import Path
@@ -110,12 +112,13 @@ from chunking import get_chunk_summaries
 from prompt_engine import PromptEngine
 from vector_service.context_builder import ContextBuilder
 
-engine = PromptEngine(context_builder=ContextBuilder())
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+engine = PromptEngine(context_builder=builder)
 chunks = get_chunk_summaries(Path("bots/example.py"), 800)
 prompt = engine.build_prompt(
     "refactor helper",
     summaries=[c["summary"] for c in chunks],
-    context_builder=engine.context_builder,
+    context_builder=builder,
 )
 ```
 
