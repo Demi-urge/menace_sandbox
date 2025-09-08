@@ -4,6 +4,8 @@ import types
 import tempfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 TMP = Path(tempfile.mkdtemp())
 
@@ -11,6 +13,24 @@ pkg = types.ModuleType("menace")
 pkg.__path__ = [str(TMP), str(ROOT)]
 pkg.RAISE_ERRORS = False
 sys.modules["menace"] = pkg
+
+# stub vector service and ContextBuilder
+vector_service_pkg = types.ModuleType("vector_service")
+context_mod = types.ModuleType("vector_service.context_builder")
+
+
+class ContextBuilder:
+    def __init__(self) -> None:
+        self.refreshed = False
+
+    def refresh_db_weights(self) -> None:
+        self.refreshed = True
+
+
+context_mod.ContextBuilder = ContextBuilder
+vector_service_pkg.context_builder = context_mod
+sys.modules["vector_service"] = vector_service_pkg
+sys.modules["vector_service.context_builder"] = context_mod
 
 # stub modules
 (TMP / "chaos_scheduler.py").write_text(  # path-ignore
@@ -42,14 +62,13 @@ sys.modules["menace"] = pkg
         "            raise RuntimeError('boom')\n"
     )
 )
+class DummyBuilder(ContextBuilder):
+    pass
 
 
-class DummyBuilder:
-    def __init__(self) -> None:
-        self.refreshed = False
-
-    def refresh_db_weights(self) -> None:
-        self.refreshed = True
+class BrokenBuilder(ContextBuilder):
+    def refresh_db_weights(self) -> None:  # pragma: no cover - trigger error
+        raise RuntimeError("boom")
 
 
 spec = importlib.util.spec_from_file_location(
@@ -115,3 +134,13 @@ def test_weights_refreshed_on_startup():
     builder = DummyBuilder()
     mod.ChaosMonitoringService(context_builder=builder)
     assert builder.refreshed
+
+
+def test_requires_context_builder_instance():
+    with pytest.raises(TypeError):
+        mod.ChaosMonitoringService(context_builder=object())
+
+
+def test_refresh_errors_surface_early():
+    with pytest.raises(RuntimeError):
+        mod.ChaosMonitoringService(context_builder=BrokenBuilder())
