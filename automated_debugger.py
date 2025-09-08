@@ -14,6 +14,7 @@ from .self_coding_engine import SelfCodingEngine
 from .retry_utils import retry
 from .self_improvement.target_region import TargetRegion, extract_target_region
 from .patch_attempt_tracker import PatchAttemptTracker
+from .vector_service.context_builder import ContextBuilder
 
 
 _FRAME_RE = re.compile(r"File \"([^\"]+)\", line (\d+), in ([^\n]+)")
@@ -26,10 +27,11 @@ class AutomatedDebugger:
         self,
         telemetry_db: object,
         engine: SelfCodingEngine,
-        context_builder: Any,
+        context_builder: ContextBuilder,
     ) -> None:
-        if context_builder is None:
-            raise TypeError("context_builder is required")
+        if not isinstance(context_builder, ContextBuilder):
+            raise TypeError("context_builder must be a ContextBuilder instance")
+        context_builder.refresh_db_weights()
         self.telemetry_db = telemetry_db
         self.engine = engine
         self.context_builder = context_builder

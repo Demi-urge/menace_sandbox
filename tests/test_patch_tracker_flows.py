@@ -34,14 +34,21 @@ sys.modules.setdefault(
         record_failure=lambda fp, store: None,
     ),
 )
-sys.modules.setdefault("menace.patch_suggestion_db", types.SimpleNamespace(PatchSuggestionDB=object))
+sys.modules.setdefault(
+    "menace.patch_suggestion_db",
+    types.SimpleNamespace(PatchSuggestionDB=object),
+)
 sys.modules.setdefault(
     "menace.error_parser",
     types.SimpleNamespace(
         FailureCache=type(
             "FailureCache",
             (),
-            {"__init__": lambda self: None, "add": lambda self, report: None, "seen": lambda self, trace: False},
+            {
+                "__init__": lambda self: None,
+                "add": lambda self, report: None,
+                "seen": lambda self, trace: False,
+            },
         ),
         ErrorReport=type("ErrorReport", (), {"__init__": lambda self, trace, tags: None}),
         ErrorParser=types.SimpleNamespace(
@@ -100,7 +107,8 @@ assert spec_scm.loader is not None
 spec_scm.loader.exec_module(self_coding_manager)
 SelfCodingManager = self_coding_manager.SelfCodingManager
 
-from menace.self_improvement.target_region import TargetRegion
+from menace.self_improvement.target_region import TargetRegion  # noqa: E402
+from menace.vector_service.context_builder import ContextBuilder  # noqa: E402
 
 
 class DummyEngine:
@@ -108,7 +116,9 @@ class DummyEngine:
         self.calls = []
         self.last_prompt_text = ""
         self.cognition_layer = types.SimpleNamespace(
-            context_builder=types.SimpleNamespace(query=lambda desc, exclude_tags=None: ("ctx", "sid"))
+            context_builder=types.SimpleNamespace(
+                query=lambda desc, exclude_tags=None: ("ctx", "sid")
+            )
         )
 
     def apply_patch(
@@ -133,9 +143,15 @@ class DummyTelemetry:
         return [self.log]
 
 
-class DummyBuilder:
+class DummyBuilder(ContextBuilder):
+    def __init__(self):
+        pass
+
     def build_context(self, query: str, **kwargs):
         return {}
+
+    def refresh_db_weights(self):
+        pass
 
 
 class DummyPipeline:
@@ -147,10 +163,14 @@ class DummyDataBot:
     def roi(self, bot_name: str) -> float:  # pragma: no cover - simple
         return 0.0
 
+
 def test_automated_debugger_escalation_and_reset(tmp_path, monkeypatch):
     mod = tmp_path / "buggy.py"  # path-ignore
     mod.write_text("def f():\n    raise ValueError('boom')\n")
-    log = f"Traceback (most recent call last):\n  File \"{mod}\", line 2, in f\nValueError: boom"
+    log = (
+        "Traceback (most recent call last):\n  File \""
+        f"{mod}\", line 2, in f\nValueError: boom"
+    )
 
     engine = DummyEngine()
     debugger = AutomatedDebugger(DummyTelemetry(log), engine, DummyBuilder())
@@ -189,9 +209,21 @@ def test_self_coding_manager_escalation_and_reset(tmp_path, monkeypatch):
     monkeypatch.chdir(repo)
 
     # patch similarity and fingerprint helpers
-    monkeypatch.setattr(self_coding_manager, "check_similarity_and_warn", lambda *a, **k: (a[3], False, 0.0, [], None))
-    monkeypatch.setattr(self_coding_manager, "record_failure", lambda *a, **k: None)
-    monkeypatch.setattr(self_coding_manager, "record_failed_tags", lambda tags: None)
+    monkeypatch.setattr(
+        self_coding_manager,
+        "check_similarity_and_warn",
+        lambda *a, **k: (a[3], False, 0.0, [], None),
+    )
+    monkeypatch.setattr(
+        self_coding_manager,
+        "record_failure",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        self_coding_manager,
+        "record_failed_tags",
+        lambda tags: None,
+    )
     monkeypatch.setattr(
         self_coding_manager,
         "MutationLogger",
@@ -223,11 +255,21 @@ def test_self_coding_manager_escalation_and_reset(tmp_path, monkeypatch):
     def fake_parse(trace):
         return {
             "trace": trace,
-            "target_region": types.SimpleNamespace(file=str(mod), start_line=2, end_line=2, function="f"),
+            "target_region": types.SimpleNamespace(
+                file=str(mod), start_line=2, end_line=2, function="f"
+            ),
         }
 
-    monkeypatch.setattr(self_coding_manager.ErrorParser, "parse_failure", staticmethod(fake_parse_failure))
-    monkeypatch.setattr(self_coding_manager.ErrorParser, "parse", staticmethod(fake_parse))
+    monkeypatch.setattr(
+        self_coding_manager.ErrorParser,
+        "parse_failure",
+        staticmethod(fake_parse_failure),
+    )
+    monkeypatch.setattr(
+        self_coding_manager.ErrorParser,
+        "parse",
+        staticmethod(fake_parse),
+    )
 
     from sandbox_runner.test_harness import TestHarnessResult
 

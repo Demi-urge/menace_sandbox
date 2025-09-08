@@ -24,7 +24,7 @@ yaml = types.ModuleType("yaml")
 sys.modules.setdefault("yaml", yaml)
 sys.modules.setdefault("numpy", types.ModuleType("numpy"))
 
-import importlib.util
+import importlib.util  # noqa: E402
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -34,7 +34,8 @@ pkg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pkg)
 sys.modules["menace"] = pkg
 sys.modules.setdefault("menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object))
-import menace.automated_debugger as ad
+import menace.automated_debugger as ad  # noqa: E402
+from menace.vector_service.context_builder import ContextBuilder  # noqa: E402
 
 
 class DummyEngine:
@@ -53,9 +54,15 @@ class DummyTelem:
         return [self.log]
 
 
-class DummyBuilder:
+class DummyBuilder(ContextBuilder):
+    def __init__(self):
+        pass
+
     def build_context(self, query: str, **kwargs):
         return {}
+
+    def refresh_db_weights(self):
+        pass
 
 
 def test_analyse_and_fix(monkeypatch, tmp_path):
@@ -64,9 +71,21 @@ def test_analyse_and_fix(monkeypatch, tmp_path):
     log = f"File '{mod}', line 1, in x"
     eng = DummyEngine()
     dbg = ad.AutomatedDebugger(DummyTelem(log), eng, DummyBuilder())
-    monkeypatch.setitem(sys.modules, "sandbox_runner", types.SimpleNamespace(integrate_new_orphans=lambda p: None))
-    monkeypatch.setattr(ad.tempfile, "NamedTemporaryFile", lambda *a, **k: open(tmp_path / "t.py", "w+"))  # path-ignore
-    monkeypatch.setattr(ad.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=b"", stdout=""))
+    monkeypatch.setitem(
+        sys.modules,
+        "sandbox_runner",
+        types.SimpleNamespace(integrate_new_orphans=lambda p: None),
+    )
+    monkeypatch.setattr(
+        ad.tempfile,
+        "NamedTemporaryFile",
+        lambda *a, **k: open(tmp_path / "t.py", "w+"),
+    )  # path-ignore
+    monkeypatch.setattr(
+        ad.subprocess,
+        "run",
+        lambda *a, **k: types.SimpleNamespace(returncode=0, stderr=b"", stdout=""),
+    )
     dbg.analyse_and_fix()
     assert eng.called
 

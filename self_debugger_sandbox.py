@@ -176,7 +176,6 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     ) -> None:
         if context_builder is None:
             raise ValueError("SelfDebuggerSandbox requires a ContextBuilder instance")
-        context_builder.refresh_db_weights()
         super().__init__(telemetry_db, engine, context_builder)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
         self.policy = policy
