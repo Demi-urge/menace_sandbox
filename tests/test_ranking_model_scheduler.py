@@ -15,6 +15,9 @@ def test_scheduler_trains_and_reloads(tmp_path, monkeypatch):
         def __init__(self) -> None:
             self.model_path: Path | None = None
             self.reliability_reloaded = False
+            self.context_builder = SimpleNamespace(
+                refresh_db_weights=lambda *a, **k: None
+            )
 
         def reload_ranker_model(self, path: Path) -> None:
             self.model_path = Path(path)
@@ -71,6 +74,9 @@ def test_scheduler_retrains_on_roi_feedback(tmp_path, monkeypatch):
         def __init__(self) -> None:
             self.model_path: Path | None = None
             self.reliability_reloaded = False
+            self.context_builder = SimpleNamespace(
+                refresh_db_weights=lambda *a, **k: None
+            )
 
         def reload_ranker_model(self, path: Path) -> None:
             self.model_path = Path(path)
@@ -193,6 +199,9 @@ def test_scheduler_reloads_dependents(tmp_path, monkeypatch):
         def __init__(self) -> None:
             self.reliability_reloaded = False
             self.model_path: Path | None = None
+            self.context_builder = SimpleNamespace(
+                refresh_db_weights=lambda *a, **k: None
+            )
 
         def reload_ranker_model(self, path: Path) -> None:
             self.model_path = Path(path)
@@ -207,6 +216,9 @@ def test_scheduler_reloads_dependents(tmp_path, monkeypatch):
             self.dependent_services = [child]
             self.reliability_reloaded = False
             self.model_path: Path | None = None
+            self.context_builder = SimpleNamespace(
+                refresh_db_weights=lambda *a, **k: None
+            )
 
         def reload_ranker_model(self, path: Path) -> None:
             self.model_path = Path(path)
@@ -300,6 +312,9 @@ def test_scheduler_retrains_on_win_rate_drop(tmp_path, monkeypatch):
         def __init__(self) -> None:
             self.model_path: Path | None = None
             self.reliability_reloaded = False
+            self.context_builder = SimpleNamespace(
+                refresh_db_weights=lambda *a, **k: None
+            )
 
         def reload_ranker_model(self, path: Path) -> None:
             self.model_path = Path(path)
