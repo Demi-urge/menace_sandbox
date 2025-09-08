@@ -46,7 +46,7 @@ class IPOImplementationPipeline:
         context_builder: ContextBuilder,
         max_attempts: int = 3,
     ) -> None:
-        self.ipo = ipo or IPOBot()
+        self.ipo = ipo or IPOBot(context_builder=context_builder)
         self.developer = developer or BotDevelopmentBot(
             context_builder=context_builder
         )

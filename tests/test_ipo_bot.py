@@ -1,11 +1,10 @@
 import pytest
-from pathlib import Path
-
-from db_router import GLOBAL_ROUTER, init_db_router
-import menace.ipo_bot as ipb
-
 
 pytest.skip("optional dependencies not installed", allow_module_level=True)
+
+from pathlib import Path  # noqa: E402
+from db_router import GLOBAL_ROUTER, init_db_router  # noqa: E402
+import menace.ipo_bot as ipb  # noqa: E402
 
 
 BLUEPRINT = "BotA collects data using BotB. BotC processes results after BotB."
