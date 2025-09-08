@@ -25,6 +25,7 @@ from .chatgpt_enhancement_bot import (
     Enhancement,
 )
 from .micro_models.diff_summarizer import summarize_diff
+from snippet_compressor import compress_snippets
 
 from billing.prompt_notice import prepend_payment_notice
 from llm_interface import LLMClient, Prompt
@@ -135,7 +136,8 @@ class EnhancementBot:
         if confidence > 0.0:
             try:  # pragma: no cover - builder failures are non fatal
                 top_k = max(1, int(5 * confidence))
-                context = self.context_builder.build(hint, top_k=top_k)
+                retrieved = self.context_builder.build(hint, top_k=top_k)
+                context = compress_snippets({"snippet": retrieved}).get("snippet", "")
             except Exception:
                 context = ""
 
