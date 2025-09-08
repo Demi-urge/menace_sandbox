@@ -148,7 +148,7 @@ class DiagnosticManager:
         success = False
         if issue == "high_response_time":
             bots = {row[0] for row in self.metrics.fetch(5).itertuples(index=False)}
-            DynamicResourceAllocator(self.metrics).allocate(bots)
+            DynamicResourceAllocator(self.metrics, context_builder=self.context_builder).allocate(bots)
             action = "reallocate_resources"
             success = True
         elif issue == "error_rate":

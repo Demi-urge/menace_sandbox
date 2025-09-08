@@ -20,13 +20,15 @@ def test_allocate_and_log(tmp_path, monkeypatch):
     mdb = db.MetricsDB(tmp_path / "m.db")
     rec = db.MetricRecord("bot1", 10.0, 50.0, 0.1, 1.0, 1.0, 0)
     mdb.add(rec)
+    builder = _DummyBuilder()
     allocator = drab.DynamicResourceAllocator(
         mdb,
         rpb.ResourcePredictionBot(rpb.TemplateDB(tmp_path / "t.csv")),
         drab.DecisionLedger(tmp_path / "d.db"),
         drab.ResourceAllocationBot(
-            drab.AllocationDB(tmp_path / "a.db"), context_builder=_DummyBuilder()
+            drab.AllocationDB(tmp_path / "a.db"), context_builder=builder
         ),
+        context_builder=builder,
     )
     actions = allocator.allocate(["bot1"])
     rows = allocator.ledger.fetch()
@@ -64,14 +66,16 @@ def test_myelinated_priority(tmp_path, monkeypatch):
             roi=2.0,
         ),
     )
+    builder = _DummyBuilder()
     allocator = drab.DynamicResourceAllocator(
         mdb,
         rpb.ResourcePredictionBot(rpb.TemplateDB(tmp_path / "t.csv")),
         drab.DecisionLedger(tmp_path / "d.db"),
         drab.ResourceAllocationBot(
-            drab.AllocationDB(tmp_path / "a.db"), context_builder=_DummyBuilder()
+            drab.AllocationDB(tmp_path / "a.db"), context_builder=builder
         ),
         pdb,
+        context_builder=builder,
     )
     actions = allocator.allocate(["bot1", "bot2"])
     result = dict(actions)

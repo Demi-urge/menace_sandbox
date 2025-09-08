@@ -128,6 +128,7 @@ def test_scaling_hint_logged(monkeypatch, tmp_path, caplog):
         pathway_db=None,
         predictive_allocator=aem.PredictiveResourceAllocator(mdb),
         orchestrator=orch,
+        context_builder=types.SimpleNamespace(),
     )
     allocator.allocate(["bot"])
 
@@ -185,6 +186,7 @@ def test_scaling_respects_optimizer(monkeypatch, tmp_path):
         predictive_allocator=aem.PredictiveResourceAllocator(mdb),
         orchestrator=orch,
         optimizer=opt,
+        context_builder=types.SimpleNamespace(),
     )
     allocator.allocate(["bot"])
 
