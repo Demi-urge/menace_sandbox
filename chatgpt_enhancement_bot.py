@@ -1036,6 +1036,8 @@ class ChatGPTEnhancementBot:
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
+        if client is not None and getattr(client, "context_builder", None) is None:
+            raise ValueError("client.context_builder is required")
         self.override_manager = override_manager
         self.client = client
         self.db = db or EnhancementDB(override_manager=override_manager)
@@ -1053,13 +1055,6 @@ class ChatGPTEnhancementBot:
                 self.client.gpt_memory = self.gpt_memory
             except Exception:
                 logger.debug("failed to attach gpt_memory to client", exc_info=True)
-        if self.client is not None and getattr(self.client, "context_builder", None) is None:
-            try:
-                self.client.context_builder = self.context_builder
-            except Exception:
-                logger.debug(
-                    "failed to attach context_builder to client", exc_info=True
-                )
 
     def _feasible(self, enh: Enhancement) -> bool:
         return len(enh.rationale.split()) < FEASIBLE_WORD_LIMIT
