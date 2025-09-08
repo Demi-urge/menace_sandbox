@@ -390,6 +390,7 @@ def _init_unused_bots() -> None:
         _wrap(
             ContrarianModelBot,
             allocator=ResourceAllocationBot(context_builder=builder),
+            context_builder=builder,
         ),
         _wrap(ConversationManagerBot, client),
         DatabaseStewardBot,
