@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import logging
-
-logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +26,10 @@ from .resource_prediction_bot import ResourceMetrics
 from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
 from vector_service.context_builder import ContextBuilder
+from snippet_compressor import compress_snippets
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -98,19 +100,19 @@ class NicheSaturationBot:
         if context_builder is None:
             raise TypeError("context_builder is required")
 
+        try:
+            context_builder.refresh_db_weights()
+        except Exception as exc:
+            logger.exception("context builder refresh failed: %s", exc)
+            raise RuntimeError("context builder refresh failed") from exc
+
+        self.context_builder = context_builder
         self.db = db or NicheDB()
         if alloc_bot is None:
-            self.alloc_bot = ResourceAllocationBot(context_builder=context_builder)
+            self.alloc_bot = ResourceAllocationBot(context_builder=self.context_builder)
         else:
             self.alloc_bot = alloc_bot
-            # always forward builder to the allocation bot
-            self.alloc_bot.context_builder = context_builder
-            try:
-                self.alloc_bot.context_builder.refresh_db_weights()
-            except Exception as exc:
-                logger.exception("context builder refresh failed: %s", exc)
-                raise RuntimeError("context builder refresh failed") from exc
-        self.context_builder = context_builder
+            self.alloc_bot.context_builder = self.context_builder
         self.prediction_manager = prediction_manager
         self.assigned_prediction_bots = []
         if self.prediction_manager:
@@ -170,6 +172,12 @@ class NicheSaturationBot:
 
         promising: List[NicheCandidate] = []
         for cand in candidates:
+            try:
+                ctx = self.context_builder.build(cand.name)
+                ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
+            except Exception:
+                ctx = ""
+
             use_model = (
                 self.model is not None
                 and np is not None
@@ -183,6 +191,9 @@ class NicheSaturationBot:
             else:
                 score = (cand.demand * (1 + cand.trend)) / (cand.competition + 1)
                 score = self._apply_prediction_bots(score, cand)
+
+            if ctx:
+                score *= 1 + min(len(ctx), 1000) / 10000.0
 
             if score > 0.5:
                 promising.append(cand)
