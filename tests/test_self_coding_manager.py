@@ -1,4 +1,8 @@
+# flake8: noqa
 import pytest
+from dynamic_path_router import resolve_path
+
+resolve_path("README.md")
 
 pytest.importorskip("networkx")
 pytest.importorskip("pandas")
@@ -212,9 +216,13 @@ def test_approval_logs_audit_failure(monkeypatch, tmp_path, caplog):
 
 
 def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
+    builder = types.SimpleNamespace()
+
     class DummyEngine:
         def __init__(self):
-            self.cognition_layer = types.SimpleNamespace(calls=[])
+            self.cognition_layer = types.SimpleNamespace(
+                calls=[], context_builder=builder
+            )
 
         def apply_patch(self, path: Path, desc: str, **_: object):
             with open(path, "a", encoding="utf-8") as fh:

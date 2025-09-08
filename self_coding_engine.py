@@ -483,15 +483,10 @@ class SelfCodingEngine:
                         exc_info=True,
                         extra={"cognition_layer": type(cognition_layer).__name__},
                     )
-            if getattr(cognition_layer, "context_builder", None) is None:
-                try:
-                    cognition_layer.context_builder = builder  # type: ignore[attr-defined]
-                except Exception:
-                    self.logger.warning(
-                        "failed to attach context builder to cognition_layer",
-                        exc_info=True,
-                        extra={"cognition_layer": type(cognition_layer).__name__},
-                    )
+            if getattr(cognition_layer, "context_builder", None) is not builder:
+                raise ValueError(
+                    "cognition_layer must be constructed with the provided context builder"
+                )
         self.cognition_layer = cognition_layer
         self.patch_logger = patch_logger
         self.roi_tracker = tracker
