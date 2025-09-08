@@ -100,8 +100,8 @@ summariser also operates offline, so even without the optional memory manager
 ## Integration
 
 `SelfCodingEngine`, `QuickFixEngine`, `BotDevelopmentBot`, `PromptEngine`,
-`AutomatedReviewer` and `Watchdog` expect a `ContextBuilder` to be supplied via
-constructor or method arguments.  Instantiate the builder with the standard
+`AutomatedReviewer`, `Watchdog` and `QueryBot` expect a `ContextBuilder` to be
+supplied via constructor or method arguments.  Instantiate the builder with the standard
 databases and pass it through explicitly:
 
 ```python

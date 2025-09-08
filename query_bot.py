@@ -27,6 +27,7 @@ from .chatgpt_idea_bot import ChatGPTClient
 from vector_service.context_builder import ContextBuilder
 from gpt_memory_interface import GPTMemoryInterface
 from . import database_manager
+from snippet_compressor import compress_snippets
 try:  # memory-aware wrapper
     from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -158,24 +159,29 @@ class QueryBot:
         nlu: SimpleNLU | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
         knowledge: LocalKnowledgeModule | None = LOCAL_KNOWLEDGE_MODULE,
-        context_builder: ContextBuilder | None = None,
+        *,
+        context_builder: ContextBuilder,
     ) -> None:
         if client is None:
-            if context_builder is None:
-                raise ValueError("context_builder is required when client is None")
             api_key = get_config().api_keys.openai
             client = ChatGPTClient(
-                api_key, gpt_memory=GPT_MEMORY_MANAGER, context_builder=context_builder
+                api_key,
+                gpt_memory=gpt_memory or GPT_MEMORY_MANAGER,
+                context_builder=context_builder,
             )
-        else:
-            if context_builder is not None and getattr(client, "context_builder", None) is None:
-                try:
-                    client.context_builder = context_builder
-                except Exception:
-                    logger.debug(
-                        "failed to attach context_builder to client", exc_info=True
-                    )
+        elif getattr(client, "context_builder", None) is None:
+            try:
+                client.context_builder = context_builder
+            except Exception:
+                logger.debug(
+                    "failed to attach context_builder to client", exc_info=True
+                )
+        try:
+            context_builder.refresh_db_weights()
+        except Exception:
+            logger.debug("failed to refresh context builder", exc_info=True)
         self.client = client
+        self.context_builder = context_builder
         self.fetcher = fetcher or DataFetcher()
         self.store = store or ContextStore()
         self.nlu = nlu or SimpleNLU()
@@ -192,7 +198,18 @@ class QueryBot:
         ents = [t[1] for t in parsed.get("entities", [])]
         data = self.fetcher.fetch(ents)
         self.store.add(context_id, query)
-        prompt = f"Summarize the following data: {json.dumps(data)}"
+        try:
+            _, meta = self.client.context_builder.build_context(
+                query, return_metadata=True
+            )
+            compressed = {
+                k: [compress_snippets(m) for m in v]
+                for k, v in meta.items()
+            }
+            vec_prompt = json.dumps(compressed)
+        except Exception:
+            vec_prompt = "{}"
+        prompt = f"Summarize the following data: {json.dumps(data)}\nContext: {vec_prompt}"
         answer = ask_with_memory(
             self.client,
             "query_bot.process",
