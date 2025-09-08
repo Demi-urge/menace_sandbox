@@ -11,6 +11,7 @@ import os
 import atexit
 import tempfile
 import time
+import sqlite3
 try:  # optional dependency
     from sqlalchemy import Column, String, Text, Table, MetaData, create_engine
     from sqlalchemy.engine import Engine
@@ -56,6 +57,10 @@ from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .admin_bot_base import AdminBotBase
 from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
+try:  # pragma: no cover - optional heavy import
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - fallback when vector_service is stubbed
+    from vector_service import ContextBuilder  # type: ignore
 
 logger = logging.getLogger(__name__)
 router = GLOBAL_ROUTER or init_db_router("communication_maintenance")
@@ -312,14 +317,26 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
 
 
     class ErrorBot:
-        def __init__(self, db: ErrorDB, context_builder) -> None:
+        def __init__(self, db: ErrorDB, context_builder: ContextBuilder) -> None:
+            if not isinstance(context_builder, ContextBuilder):
+                raise TypeError("context_builder must be an instance of ContextBuilder")
             self.db = db
             self.logger = logging.getLogger("CommMaintenanceBot.ErrorBot")
             self.context_builder = context_builder
+            try:
+                self.context_builder.refresh_db_weights()
+            except Exception:  # pragma: no cover - best effort
+                pass
 
         def handle_error(self, message: str) -> None:  # pragma: no cover - noop
-            self.logger.error("noop ErrorBot handling error: %s", message)
-            self.db.log_discrepancy(message)
+            context = ""
+            try:
+                context = self.context_builder.query(message)
+            except Exception:
+                pass
+            enriched = f"{message} | {context}" if context else message
+            self.logger.error("noop ErrorBot handling error: %s", enriched)
+            self.db.log_discrepancy(enriched)
 else:
     from .error_bot import ErrorBot, ErrorDB
 if os.getenv("MENACE_LIGHT_IMPORTS"):
@@ -538,7 +555,7 @@ class TaskLock:
                 logger.exception("file lock release failed")
 
 
-def _alloc_bot_instance() -> "ResourceAllocationBot":
+def _alloc_bot_instance(context_builder: ContextBuilder) -> "ResourceAllocationBot":
     """Create a ResourceAllocationBot with graceful fallbacks."""
     RAB = ResourceAllocationBot
     ADB = AllocationDB
@@ -550,7 +567,9 @@ def _alloc_bot_instance() -> "ResourceAllocationBot":
             raise RuntimeError("ResourceAllocationBot unavailable") from exc
         RAB = _RAB
         ADB = _ADB
-    return RAB(ADB())
+    if not isinstance(context_builder, ContextBuilder):
+        raise TypeError("context_builder must be an instance of ContextBuilder")
+    return RAB(ADB(), context_builder=context_builder)
 
 
 class MaintenanceStorageAdapter:
@@ -575,7 +594,12 @@ class SQLiteMaintenanceDB(MaintenanceStorageAdapter):
     def __init__(self, path: Path | str | None = None) -> None:
         db_path = Path(path or os.environ.get("MAINTENANCE_DB", env_config.MAINTENANCE_DB))
         ensure_directory(db_path.parent)
-        self.conn = router.get_connection("maintenance")
+        try:
+            self.conn = router.get_connection("maintenance")
+        except Exception:  # pragma: no cover - router unavailable
+            self.conn = None
+        if not isinstance(self.conn, sqlite3.Connection):
+            self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.path = db_path
         self.conn.execute(
             """
@@ -718,6 +742,8 @@ class MaintenanceDB(MaintenanceStorageAdapter):
             else:
                 self.path = Path(db_url.split("///")[-1])
             conn = router.get_connection("maintenance")
+            if not isinstance(conn, sqlite3.Connection):
+                conn = sqlite3.connect(str(self.path), check_same_thread=False)
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS maintenance(task TEXT, status TEXT, details TEXT, ts TEXT)"
             )
@@ -726,6 +752,7 @@ class MaintenanceDB(MaintenanceStorageAdapter):
             )
             conn.execute("PRAGMA journal_mode=WAL")
             conn.commit()
+            self.conn = conn
             self.engine = None  # type: ignore
             self.meta = None  # type: ignore
             self.table = None  # type: ignore
@@ -756,12 +783,11 @@ class MaintenanceDB(MaintenanceStorageAdapter):
     def log(self, rec: MaintenanceRecord) -> None:
         if self._sqlite:
             try:
-                conn = router.get_connection("maintenance")
-                conn.execute(
+                self.conn.execute(
                     "INSERT INTO maintenance(task, status, details, ts) VALUES (?,?,?,?)",
                     (rec.task, rec.status, rec.details, rec.ts),
                 )
-                conn.commit()
+                self.conn.commit()
             except Exception as exc:  # pragma: no cover - sqlite failure
                 logging.getLogger(__name__).error("sqlite log failed: %s", exc)
         else:
@@ -782,8 +808,7 @@ class MaintenanceDB(MaintenanceStorageAdapter):
     def fetch(self) -> List[Tuple[str, str, str, str]]:
         if self._sqlite:
             try:
-                conn = router.get_connection("maintenance")
-                rows = conn.execute(
+                rows = self.conn.execute(
                     "SELECT task, status, details, ts FROM maintenance"
                 ).fetchall()
             except Exception as exc:  # pragma: no cover - sqlite failure
@@ -798,12 +823,11 @@ class MaintenanceDB(MaintenanceStorageAdapter):
     def set_state(self, key: str, value: str) -> None:
         if self._sqlite:
             try:
-                conn = router.get_connection("maintenance")
-                conn.execute(
+                self.conn.execute(
                     "INSERT OR REPLACE INTO state(key,value) VALUES (?,?)",
                     (key, value),
                 )
-                conn.commit()
+                self.conn.commit()
             except Exception as exc:  # pragma: no cover - sqlite failure
                 logging.getLogger(__name__).error("sqlite set_state failed: %s", exc)
         else:
@@ -821,8 +845,7 @@ class MaintenanceDB(MaintenanceStorageAdapter):
     def get_state(self, key: str) -> Optional[str]:
         if self._sqlite:
             try:
-                conn = router.get_connection("maintenance")
-                row = conn.execute(
+                row = self.conn.execute(
                     "SELECT value FROM state WHERE key=?", (key,)
                 ).fetchone()
                 return row[0] if row else None
@@ -1076,7 +1099,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         config: MaintenanceBotConfig | None = None,
         admin_tokens: Optional[Iterable[str] | str] = None,
     ) -> None:
-        super().__init__(db_router=db_router)
+        super().__init__(db_router=db_router or router)
         self.logger = configure_logger(
             logger or logging.getLogger("CommMaintenanceBot"),
             level=os.getenv("MAINTENANCE_LOG_LEVEL"),
@@ -1496,7 +1519,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         self.query("allocation")
 
         def _impl() -> List[Tuple[str, bool]]:
-            alloc_bot = _alloc_bot_instance()
+            alloc_bot = _alloc_bot_instance(self.context_builder)
             if alloc_bot is None:
                 raise RuntimeError("ResourceAllocationBot missing")
             actions = alloc_bot.allocate(metrics)
