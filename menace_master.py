@@ -403,7 +403,6 @@ def _init_unused_bots() -> None:
         MirrorBot,
         _wrap(
             NicheSaturationBot,
-            alloc_bot=ResourceAllocationBot(context_builder=builder),
             context_builder=builder,
         ),
         _wrap(MarketManipulationBot, context_builder=builder),

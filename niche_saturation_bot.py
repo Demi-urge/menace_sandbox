@@ -108,11 +108,8 @@ class NicheSaturationBot:
 
         self.context_builder = context_builder
         self.db = db or NicheDB()
-        if alloc_bot is None:
-            self.alloc_bot = ResourceAllocationBot(context_builder=self.context_builder)
-        else:
-            self.alloc_bot = alloc_bot
-            self.alloc_bot.context_builder = self.context_builder
+        self.alloc_bot = alloc_bot or ResourceAllocationBot(context_builder=self.context_builder)
+        self.alloc_bot.context_builder = self.context_builder
         self.prediction_manager = prediction_manager
         self.assigned_prediction_bots = []
         if self.prediction_manager:
