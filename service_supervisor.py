@@ -286,7 +286,7 @@ def _update_worker() -> None:
 def _self_test_worker() -> None:
     """Execute the self test suite periodically."""
     logger = logging.getLogger("self_test_worker")
-    builder = ContextBuilder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     svc = SelfTestService(context_builder=builder)
     stop = Event()
     interval = float(os.getenv("SELF_TEST_INTERVAL", "86400"))
@@ -511,7 +511,7 @@ def main() -> None:
     """Entry point starting the service supervisor."""
     logging.basicConfig(level=logging.INFO)
     EnvironmentBootstrapper().bootstrap()
-    builder = ContextBuilder()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     sup = ServiceSupervisor(context_builder=builder)
     sup.register("orchestrator", partial(_orchestrator_worker, builder))
     sup.register("microtrend_service", _microtrend_worker)
