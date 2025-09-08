@@ -124,14 +124,15 @@ class InnovationsDB:
 
 class ContrarianModelBot:
     prediction_profile = {"scope": ["contrarian"], "risk": ["high"]}
+
     def __init__(
         self,
+        context_builder: ContextBuilder,
         workflow_db: Optional[WorkflowDB] = None,
         workflows_db: Optional[HandoffWorkflowDB] = None,
         innovations_db: Optional[InnovationsDB] = None,
         info_db: Optional[InfoDB] = None,
         enhancements_db: Optional[EnhancementDB] = None,
-        context_builder: Optional[ContextBuilder] = None,  # nocb
         aggregator: Optional[ResearchAggregatorBot] = None,
         prediction_manager: Optional[PredictionManager] = None,
         data_bot: Optional[DataBot] = None,
@@ -150,11 +151,8 @@ class ContrarianModelBot:
         self.info_db = info_db or InfoDB()
         self.enh_db = enhancements_db or EnhancementDB()
         self.context_builder = context_builder
-        if self.context_builder is not None:
-            self.context_builder.refresh_db_weights()
+        self.context_builder.refresh_db_weights()
         if aggregator is None:
-            if self.context_builder is None:
-                raise ValueError("context_builder is required when aggregator is not provided")
             self.aggregator = ResearchAggregatorBot(
                 [],
                 info_db=self.info_db,
@@ -167,8 +165,6 @@ class ContrarianModelBot:
         self.data_bot = data_bot
         self.strategy_bot = strategy_bot or StrategyPredictionBot()
         if allocator is None:
-            if self.context_builder is None:
-                raise ValueError("context_builder is required when allocator is not provided")
             allocator = ResourceAllocationBot(context_builder=self.context_builder)
         self.allocator = allocator
         self.contrarian_db = contrarian_db or ContrarianDB()
