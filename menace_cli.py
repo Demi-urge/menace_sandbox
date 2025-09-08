@@ -429,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
-    builder = ContextBuilder(
+    builder = ContextBuilder(  # nocb
         args.bots_db, args.code_db, args.errors_db, args.workflows_db
     )
     setattr(args, "builder", builder)

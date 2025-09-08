@@ -372,6 +372,7 @@ from ..model_automation_pipeline import (
     AutomationResult,
 )
 from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 from ..diagnostic_manager import DiagnosticManager
 from ..error_bot import ErrorBot, ErrorDB
 from ..data_bot import MetricsDB, DataBot
@@ -548,7 +549,7 @@ class SelfImprovementEngine:
         self.interval = interval
         self.bot_name = bot_name
         self.info_db = info_db or InfoDB()
-        builder = ContextBuilder()
+        builder = create_context_builder()
         try:
             builder.refresh_db_weights()
         except Exception:

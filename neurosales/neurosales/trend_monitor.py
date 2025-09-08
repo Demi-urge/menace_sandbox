@@ -12,6 +12,7 @@ from .external_integrations import (
     GPT4Client,
     PineconeLogger,
 )
+from context_builder_util import create_context_builder
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +65,7 @@ class TrendMonitor:
         self.twitter = twitter
         self.medium = medium
         if gpt4 is None:
-            from vector_service.context_builder import ContextBuilder
-
-            self.gpt4 = GPT4Client(openai_key, context_builder=ContextBuilder())
+            self.gpt4 = GPT4Client(openai_key, context_builder=create_context_builder())
         else:
             self.gpt4 = gpt4
         if vector is None:
