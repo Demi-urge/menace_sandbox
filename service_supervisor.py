@@ -286,7 +286,8 @@ def _update_worker() -> None:
 def _self_test_worker() -> None:
     """Execute the self test suite periodically."""
     logger = logging.getLogger("self_test_worker")
-    svc = SelfTestService()
+    builder = ContextBuilder()
+    svc = SelfTestService(context_builder=builder)
     stop = Event()
     interval = float(os.getenv("SELF_TEST_INTERVAL", "86400"))
     svc.run_continuous(interval=interval, stop_event=stop)

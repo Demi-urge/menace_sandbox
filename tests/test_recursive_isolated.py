@@ -49,6 +49,16 @@ spec.loader.exec_module(svc_mod)
 svc_mod.analyze_redundancy = lambda p: False
 
 
+# simple context builder stub for tests
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        if k.get("return_metadata"):
+            return "", {}
+        return ""
+
 # ----------------------------------------------------------------------
 # Helper to compile discover_isolated_modules with stubs
 
@@ -155,7 +165,7 @@ def test_service_recursive_isolated_updates_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     called = _setup_isolated(monkeypatch, ["foo.py", "bar.py"])  # path-ignore
-    svc = svc_mod.SelfTestService(discover_isolated=True, recursive_isolated=True)
+    svc = svc_mod.SelfTestService(discover_isolated=True, recursive_isolated=True, context_builder=DummyBuilder())
     asyncio.run(svc._run_once())
 
     assert called.get("recursive") is True
@@ -178,7 +188,7 @@ def test_settings_enable_isolated_processing(tmp_path, monkeypatch):
         recursive_isolated = True
 
     monkeypatch.setattr(svc_mod, "SandboxSettings", lambda: DummySettings())
-    svc = svc_mod.SelfTestService(discover_isolated=False, recursive_isolated=False)
+    svc = svc_mod.SelfTestService(discover_isolated=False, recursive_isolated=False, context_builder=DummyBuilder())
     asyncio.run(svc._run_once())
 
     assert called.get("recursive") is True
@@ -209,6 +219,7 @@ def test_discover_isolated_records_dependencies(tmp_path, monkeypatch):
         discover_orphans=False,
         discover_isolated=True,
         recursive_isolated=True,
+        context_builder=DummyBuilder(),
     )
     mods = svc._discover_isolated()
     assert set(mods) == {"a.py", "b.py"}  # path-ignore
@@ -244,6 +255,7 @@ def test_discover_isolated_skips_redundant(tmp_path, monkeypatch):
         discover_orphans=False,
         discover_isolated=True,
         recursive_isolated=True,
+        context_builder=DummyBuilder(),
     )
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     mods = svc._discover_isolated()

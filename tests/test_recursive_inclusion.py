@@ -49,6 +49,15 @@ mod_db = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod_db)
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        if k.get("return_metadata"):
+            return "", {}
+        return ""
+
 class DummyLogger:
     def __init__(self) -> None:
         self.exc: list[str] = []
@@ -154,6 +163,7 @@ def test_recursive_inclusion_cleanup(tmp_path, monkeypatch):
         include_orphans=True,
         integration_callback=engine._refresh_module_map,
         clean_orphans=True,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 
@@ -222,6 +232,7 @@ def test_local_import_inclusion_non_recursive(tmp_path, monkeypatch):
         discover_orphans=False,
         discover_isolated=False,
         recursive_orphans=False,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 

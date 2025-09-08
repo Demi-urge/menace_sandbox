@@ -15,6 +15,15 @@ sys.modules.setdefault("menace", menace_pkg)
 import menace.self_test_service as sts
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        if k.get("return_metadata"):
+            return "", {}
+        return ""
+
 async def _dummy_proc(results: dict[str, int]):
     class P:
         returncode = 0
@@ -43,7 +52,7 @@ def test_container_env_vars(monkeypatch):
     monkeypatch.setattr(sts.SelfTestService, "_docker_available", avail)
     monkeypatch.setenv("TEST_ENV_VAR", "42")
 
-    svc = sts.SelfTestService(use_container=True, container_image="img")
+    svc = sts.SelfTestService(use_container=True, container_image="img", context_builder=DummyBuilder())
     svc.run_once()
 
     cmd = recorded["cmd"]
@@ -80,6 +89,7 @@ def test_podman_offline_load(monkeypatch, tmp_path):
         container_image="img",
         container_runtime="podman",
         docker_host="ssh://host",
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 

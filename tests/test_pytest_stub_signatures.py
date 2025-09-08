@@ -120,7 +120,16 @@ def test_stub_supplies_dummy_args(tmp_path, monkeypatch):
     sys.path.insert(0, str(tmp_path))
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
-    svc = sts.SelfTestService()
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build_context(self, *a, **k):
+            if k.get("return_metadata"):
+                return "", {}
+            return ""
+
+    svc = sts.SelfTestService(context_builder=DummyBuilder())
     stub_path = svc._generate_pytest_stub(str(mod_path))
 
     ns = runpy.run_path(stub_path)

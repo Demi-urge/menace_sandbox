@@ -999,6 +999,7 @@ def _sandbox_init(
         integration_callback=lambda mods: SelfImprovementEngine._refresh_module_map(
             improver, mods
         ),
+        context_builder=context_builder,
     )
     from menace.roi_tracker import ROITracker
 

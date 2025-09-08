@@ -566,9 +566,9 @@ class SelfTestService:
             environment created via
             :func:`sandbox_runner.environment.create_ephemeral_env`.
         context_builder:
-            :class:`~vector_service.context_builder.ContextBuilder` instance
-            used by the internal :class:`~error_logger.ErrorLogger` and to
-            gather context for self‑test prompts.
+            Mandatory :class:`~vector_service.context_builder.ContextBuilder`
+            instance used by the internal :class:`~error_logger.ErrorLogger`
+            and to gather context for self‑test prompts.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)

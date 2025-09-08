@@ -2159,7 +2159,8 @@ def bootstrap(
     cleanup_funcs.append(_stop_monitor)
     cleanup_funcs.append(learn_stop)
 
-    tester = SelfTestService()
+    from vector_service.context_builder import ContextBuilder
+    tester = SelfTestService(context_builder=ContextBuilder())
     test_loop = asyncio.new_event_loop()
 
     def _tester_thread() -> None:

@@ -7982,11 +7982,14 @@ def try_integrate_into_workflows(
     test_paths = [
         (repo / m).as_posix() for mods in candidates.values() for m in mods
     ]
+    from vector_service.context_builder import ContextBuilder
+
     svc = SelfTestService(
         include_orphans=False,
         discover_orphans=False,
         discover_isolated=False,
         integration_callback=None,
+        context_builder=ContextBuilder(),
     )
     try:
         loop = asyncio.new_event_loop()
@@ -8752,6 +8755,8 @@ def auto_include_modules(
             try:
                 from self_test_service import SelfTestService
 
+                from vector_service.context_builder import ContextBuilder
+
                 svc = SelfTestService(
                     pytest_args=mod,
                     include_orphans=False,
@@ -8762,6 +8767,7 @@ def auto_include_modules(
                     auto_include_isolated=True,
                     include_redundant=settings.test_redundant_modules,
                     disable_auto_integration=True,
+                    context_builder=ContextBuilder(),
                 )
                 res = svc.run_once()
                 result = res[0] if isinstance(res, tuple) else res

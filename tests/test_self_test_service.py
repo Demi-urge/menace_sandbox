@@ -65,13 +65,23 @@ import menace.error_bot as eb  # noqa: E402
 from menace.data_bot import DataBot, MetricsDB  # noqa: E402
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        if k.get("return_metadata"):
+            return "", {}
+        return ""
+
+
 def test_scheduler_start(monkeypatch):
     calls: list[None] = []
 
     async def fake_run_once():
         calls.append(None)
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
     monkeypatch.setattr(svc, "_run_once", fake_run_once)
 
     async def runner():
@@ -86,7 +96,7 @@ def test_scheduler_start(monkeypatch):
 
 def test_failure_logs_telemetry(tmp_path, monkeypatch, caplog):
     db = eb.ErrorDB(tmp_path / "e.db")
-    svc = mod.SelfTestService(db)
+    svc = mod.SelfTestService(db, context_builder=DummyBuilder())
 
     async def fail_exec(*cmd, **kwargs):
         path = None
@@ -124,7 +134,7 @@ def test_failure_logs_telemetry(tmp_path, monkeypatch, caplog):
 
 def test_success_logs_results(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e2.db")
-    svc = mod.SelfTestService(db)
+    svc = mod.SelfTestService(db, context_builder=DummyBuilder())
 
     async def succeed_exec(*cmd, **kwargs):
         path = None
@@ -177,7 +187,7 @@ def test_custom_args(monkeypatch):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    svc = mod.SelfTestService(pytest_args="-k pattern")
+    svc = mod.SelfTestService(pytest_args="-k pattern", context_builder=DummyBuilder())
     svc.run_once()
     assert any("-k" in str(x) for x in recorded["cmd"]) and any(
         "pattern" in str(x) for x in recorded["cmd"]
@@ -208,7 +218,7 @@ def test_parallel_workers(monkeypatch):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    svc = mod.SelfTestService(pytest_args="path1 path2", workers=2)
+    svc = mod.SelfTestService(pytest_args="path1 path2", workers=2, context_builder=DummyBuilder())
     svc.run_once()
     assert len(calls) == 2
     for cmd in calls:
@@ -219,7 +229,7 @@ def test_records_coverage_and_runtime(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e3.db")
     metrics = MetricsDB(tmp_path / "m.db")
     data_bot = DataBot(metrics)
-    svc = mod.SelfTestService(db, data_bot=data_bot)
+    svc = mod.SelfTestService(db, data_bot=data_bot, context_builder=DummyBuilder())
 
     async def fake_exec(*cmd, **kwargs):
         path = None
@@ -277,7 +287,7 @@ def test_json_pipe_when_callback(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    svc = mod.SelfTestService(result_callback=lambda r: None)
+    svc = mod.SelfTestService(result_callback=lambda r: None, context_builder=DummyBuilder())
     svc.run_once()
     assert any("--json-report-file=-" in str(x) for x in recorded["cmd"])
 
@@ -302,7 +312,9 @@ def test_callback_emits_partial_results(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
     svc = mod.SelfTestService(
-        pytest_args="a b", result_callback=lambda r: calls.append(r.copy())
+        pytest_args="a b",
+        result_callback=lambda r: calls.append(r.copy()),
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 
@@ -338,7 +350,7 @@ def test_container_exec(monkeypatch):
         return True
     monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
 
-    svc = mod.SelfTestService(use_container=True, container_image="img")
+    svc = mod.SelfTestService(use_container=True, container_image="img", context_builder=DummyBuilder())
     svc.run_once()
     assert recorded["cmd"][0] == "docker"
     assert "img" in recorded["cmd"]
@@ -379,7 +391,7 @@ def test_container_metrics(tmp_path, monkeypatch):
     monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
 
     svc = mod.SelfTestService(
-        db, data_bot=data_bot, use_container=True, container_image="img"
+        db, data_bot=data_bot, use_container=True, container_image="img", context_builder=DummyBuilder()
     )
     svc.run_once()
     assert svc.results["coverage"] == 75.0
@@ -414,7 +426,7 @@ def test_container_fallback(monkeypatch):
 
     monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
 
-    svc = mod.SelfTestService(use_container=True)
+    svc = mod.SelfTestService(use_container=True, context_builder=DummyBuilder())
     svc.run_once()
     assert recorded["cmd"][0] != "docker"
 
@@ -448,6 +460,7 @@ def test_container_runtime_and_host(monkeypatch):
         container_image="img",
         container_runtime="podman",
         docker_host="ssh://host",
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
     cmd = recorded[0]
@@ -484,6 +497,7 @@ def test_container_workers_split(monkeypatch):
         workers=4,
         use_container=True,
         container_image="img",
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
     assert len(calls) == 2
@@ -517,7 +531,7 @@ def _make_fake_exec(passed: int, failed: int):
 def test_json_history_persistence(tmp_path, monkeypatch):
     path = tmp_path / "hist.json"
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _make_fake_exec(2, 0))
-    svc = mod.SelfTestService(history_path=path)
+    svc = mod.SelfTestService(history_path=path, context_builder=DummyBuilder())
     svc.run_once()
     hist = svc.recent_history(1)
     assert hist and hist[0]["passed"] == 2
@@ -526,7 +540,7 @@ def test_json_history_persistence(tmp_path, monkeypatch):
 def test_sqlite_history_persistence(tmp_path, monkeypatch):
     path = tmp_path / "hist.db"
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _make_fake_exec(1, 1))
-    svc = mod.SelfTestService(history_path=path)
+    svc = mod.SelfTestService(history_path=path, context_builder=DummyBuilder())
     svc.run_once()
     hist = svc.recent_history(1)
     assert hist and hist[0]["failed"] == 1
@@ -548,7 +562,7 @@ def test_run_files_concurrently(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    svc = mod.SelfTestService(pytest_args="a b", result_callback=lambda r: None)
+    svc = mod.SelfTestService(pytest_args="a b", result_callback=lambda r: None, context_builder=DummyBuilder())
     start = time.perf_counter()
     svc.run_once()
     elapsed = time.perf_counter() - start
@@ -587,7 +601,7 @@ def test_offline_container_load(monkeypatch, tmp_path):
     monkeypatch.setenv("MENACE_OFFLINE_INSTALL", "1")
     monkeypatch.setenv("MENACE_SELF_TEST_IMAGE_TAR", str(tar_path))
 
-    svc = mod.SelfTestService(use_container=True, container_image="img")
+    svc = mod.SelfTestService(use_container=True, container_image="img", context_builder=DummyBuilder())
     svc.run_once()
 
     assert any(c[0] == "docker" and "load" in c for c in calls)
@@ -633,7 +647,7 @@ def test_container_failure_logs_identifiers(monkeypatch, caplog):
     monkeypatch.setattr(mod.SelfTestService, "_force_remove_container", dummy)
     monkeypatch.setattr(mod.uuid, "uuid4", lambda: types.SimpleNamespace(hex="deadbeef"))
 
-    svc = mod.SelfTestService(use_container=True, container_image="img", container_retries=0)
+    svc = mod.SelfTestService(use_container=True, container_image="img", container_retries=0, context_builder=DummyBuilder())
     caplog.set_level(logging.ERROR)
     svc.run_once()
     assert "self test run failed" in caplog.text
@@ -696,7 +710,7 @@ def test_gauge_updates(monkeypatch):
     mod.self_test_failed_total.set(0)
     mod.self_test_average_runtime_seconds.set(0)
     mod.self_test_average_coverage.set(0)
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
     svc.run_once()
 
     def _get(gauge):
@@ -743,7 +757,7 @@ def test_timeout_metric(monkeypatch):
     monkeypatch.setattr(mod.SelfTestService, "_force_remove_container", dummy)
 
     mod.self_test_container_timeouts_total.set(0)
-    svc = mod.SelfTestService(use_container=True, container_timeout=0.01, container_retries=0)
+    svc = mod.SelfTestService(use_container=True, container_timeout=0.01, container_retries=0, context_builder=DummyBuilder())
     svc.run_once()
 
     def _get(gauge):
@@ -785,7 +799,7 @@ def test_summary_artifact_on_failure(monkeypatch, tmp_path):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    svc = mod.SelfTestService(report_dir=tmp_path)
+    svc = mod.SelfTestService(report_dir=tmp_path, context_builder=DummyBuilder())
     with pytest.raises(RuntimeError):
         svc.run_once()
     files = list(tmp_path.glob("*.json"))

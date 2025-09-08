@@ -44,6 +44,15 @@ sys.modules["menace.self_test_service"] = sts
 spec.loader.exec_module(sts)
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        if k.get("return_metadata"):
+            return "", {}
+        return ""
+
 # ---------------------------------------------------------------------------
 
 def test_orphan_chain_auto_integration(tmp_path, monkeypatch):
@@ -115,6 +124,7 @@ def test_orphan_chain_auto_integration(tmp_path, monkeypatch):
         recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integrate,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 
@@ -197,6 +207,7 @@ def test_orphan_chain_skips_deprecated(tmp_path, monkeypatch):
         recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integrate,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 
