@@ -100,7 +100,18 @@ class RankingModelScheduler:
         win_rate_threshold: float | None = None,
         roi_history_path: Path | str = "roi_history.db",
     ) -> None:
+        # Ensure all services expose a context builder capable of refreshing
+        # database weights.  This is now a required dependency so the scheduler
+        # can refresh ranking weights without falling back to ``getattr`` at
+        # runtime.
         self.services = list(services)
+        for svc in self.services:
+            cb = getattr(svc, "context_builder", None)
+            if cb is None or not hasattr(cb, "refresh_db_weights"):
+                raise AttributeError(
+                    "All services must provide a `context_builder` with"
+                    " `refresh_db_weights`."
+                )
         self.vector_db = Path(vector_db)
         self.metrics_db = Path(metrics_db)
         self.model_path = Path(model_path)
@@ -381,12 +392,7 @@ class RankingModelScheduler:
                 if hasattr(svc, "reload_reliability_scores"):
                     svc.reload_reliability_scores()
                 if weights:
-                    if hasattr(svc, "refresh_db_weights"):
-                        svc.refresh_db_weights(weights)  # type: ignore[arg-type]
-                    else:
-                        cb = getattr(svc, "context_builder", None)
-                        if cb is not None and hasattr(cb, "refresh_db_weights"):
-                            cb.refresh_db_weights(weights)  # type: ignore[attr-defined]
+                    svc.context_builder.refresh_db_weights(weights)  # type: ignore[attr-defined]
             except Exception:
                 return
             for dep in getattr(svc, "dependent_services", []) or []:

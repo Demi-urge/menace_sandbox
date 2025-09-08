@@ -15,6 +15,9 @@ def test_patch_logger_triggers_scheduler_on_roi(tmp_path, monkeypatch):
         def __init__(self) -> None:
             self.model_path: Path | None = None
             self.reliability_reloaded = False
+            self.context_builder = SimpleNamespace(
+                refresh_db_weights=lambda *a, **k: None
+            )
 
         def reload_ranker_model(self, path: Path) -> None:
             self.model_path = Path(path)
@@ -69,6 +72,9 @@ def test_patch_logger_does_not_trigger_when_below_threshold(tmp_path, monkeypatc
         def __init__(self) -> None:
             self.model_path: Path | None = None
             self.reliability_reloaded = False
+            self.context_builder = SimpleNamespace(
+                refresh_db_weights=lambda *a, **k: None
+            )
 
         def reload_ranker_model(self, path: Path) -> None:
             self.model_path = Path(path)
