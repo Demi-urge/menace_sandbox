@@ -34,6 +34,9 @@ def test_context_builder_reused(tmp_path):
     vs.ErrorResult = Exception
     vs.EmbeddableDBMixin = object
     sys.modules["vector_service"] = vs
+    vs_cb = types.ModuleType("vector_service.context_builder")
+    vs_cb.ContextBuilder = StubContextBuilder
+    sys.modules["vector_service.context_builder"] = vs_cb
 
     bd = types.ModuleType("menace.bot_development_bot")
     bd.BotDevelopmentBot = StubDeveloper
@@ -50,6 +53,7 @@ def test_context_builder_reused(tmp_path):
 
     dep = types.ModuleType("menace.deployment_bot")
     dep.DeploymentBot = object
+
     class DeploymentSpec:
         def __init__(self, name, resources, env):
             self.name = name

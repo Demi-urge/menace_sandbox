@@ -11,6 +11,8 @@ from typing import Iterable, List, Optional
 from db_router import GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause
 from vector_service.context_builder import ContextBuilder
+from snippet_compressor import compress_snippets
+from governed_embeddings import governed_embed, get_embedder
 
 import networkx as nx
 try:
@@ -240,7 +242,27 @@ class IPOBot:
         blueprint = self.ingestor.ingest(blueprint_text)
         actions: List[PlanAction] = []
         for task in blueprint.tasks:
-            words = re.findall(r"\w+", task.name)
+            prompt = task.name
+            if self.context_builder:
+                try:
+                    result = self.context_builder.build_context(
+                        task.name, top_k=1, return_metadata=True
+                    )
+                    meta = result[-1] if isinstance(result, tuple) else []
+                    if meta:
+                        compressed = compress_snippets(meta[0])
+                        snippet = " ".join(compressed.values())
+                        if snippet:
+                            prompt = f"{prompt} {snippet}"
+                            emb = get_embedder()
+                            if emb is not None:
+                                try:
+                                    governed_embed(snippet, emb)
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+            words = re.findall(r"\w+", prompt)
             cands = self.searcher.search(words, Scope.LOCAL)
             cand = self.decider.rank(task, cands)
             decision = self.decider.decision(task, cand)
