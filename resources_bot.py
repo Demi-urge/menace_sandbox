@@ -98,7 +98,11 @@ class ROIHistoryDB(EmbeddableDBMixin):
 
 
 class ResourcesBot:
-    """Central allocator leveraging prediction data and ROI trends."""
+    """Central allocator leveraging prediction data and ROI trends.
+
+    Downstream bots receive the same validated :class:`ContextBuilder`
+    instance to ensure consistent context generation.
+    """
 
     prediction_profile = {"scope": ["resources"], "risk": ["low"]}
 
@@ -111,9 +115,17 @@ class ResourcesBot:
         prediction_manager: "PredictionManager" | None = None,
         strategy_bot: "StrategyPredictionBot" | None = None,
     ) -> None:
+        if not isinstance(context_builder, ContextBuilder):
+            raise TypeError("context_builder must be a ContextBuilder instance")
+        self.context_builder = context_builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception as exc:
+            logger.error("context builder refresh failed: %s", exc)
+            raise RuntimeError("context builder refresh failed") from exc
         self.db = db or ROIHistoryDB()
         self.alloc_bot = alloc_bot or ResourceAllocationBot(
-            AllocationDB(), context_builder=context_builder
+            AllocationDB(), context_builder=self.context_builder
         )
         self.strategy_bot = strategy_bot
         self.prediction_manager = prediction_manager

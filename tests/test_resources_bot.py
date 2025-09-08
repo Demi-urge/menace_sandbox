@@ -1,15 +1,17 @@
-import pytest
-pytest.skip("optional dependencies not installed", allow_module_level=True)
 import menace.resource_prediction_bot as rpb
 import menace.resource_allocation_bot as rab
 import menace.resources_bot as resb
+from menace.vector_service.context_builder import ContextBuilder
 
 
-class _DummyBuilder:
-    def build(self, *_: object, **__: object) -> str:
+class _DummyBuilder(ContextBuilder):
+    def __init__(self):
+        pass
+
+    def build(self, *_: object, **__: object) -> str:  # type: ignore[override]
         return "ctx"
 
-    def refresh_db_weights(self):
+    def refresh_db_weights(self):  # type: ignore[override]
         pass
 
 def test_redistribute_records(tmp_path):
@@ -77,4 +79,3 @@ def test_strategy_and_persistence(tmp_path):
     assert len(hist) == 1
     assert strategy.calls and "b" in strategy.calls[0]
     assert bot.assigned_prediction_bots == ["p"]
-
