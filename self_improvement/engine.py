@@ -371,7 +371,6 @@ from ..model_automation_pipeline import (
     ModelAutomationPipeline,
     AutomationResult,
 )
-from vector_service.context_builder import ContextBuilder
 from context_builder_util import create_context_builder
 from ..diagnostic_manager import DiagnosticManager
 from ..error_bot import ErrorBot, ErrorDB
@@ -7121,12 +7120,7 @@ class SelfImprovementEngine:
                 self.logger.exception("roi energy adjustment failed: %s", exc)
             energy = max(1, min(int(energy), 100))
             model_id = bootstrap(
-                context_builder=ContextBuilder(
-                    bots_db="bots.db",
-                    code_db="code.db",
-                    errors_db="errors.db",
-                    workflows_db="workflows.db",
-                )
+                context_builder=self.aggregator.context_builder
             )
             self.logger.info("model bootstrapped", extra=log_record(model_id=model_id))
             self.info_db.set_current_model(model_id)

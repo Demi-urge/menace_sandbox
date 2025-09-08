@@ -9,7 +9,7 @@ associated workflows. Any runtime issues encountered during the process are
 logged via :class:`ErrorBot` and linked to the created model.
 """
 
-from pathlib import Path
+from pathlib import Path  # noqa: F401
 from dynamic_path_router import resolve_dir
 
 from menace.deployment_bot import DeploymentBot
@@ -34,8 +34,7 @@ def bootstrap(*, context_builder: ContextBuilder) -> int:
     deployer = DeploymentBot()
     capital_bot = CapitalManagementBot()
     data_bot = DataBot(MetricsDB(), capital_bot=capital_bot)
-    cb = context_builder
-    err_bot = ErrorBot(data_bot=data_bot, context_builder=cb)
+    err_bot = ErrorBot(data_bot=data_bot, context_builder=context_builder)
 
     bot_files = sorted(resolve_dir(".").glob("*_bot.py"))
     bot_names = [p.stem for p in bot_files]
@@ -92,5 +91,3 @@ def bootstrap(*, context_builder: ContextBuilder) -> int:
         err_bot.record_runtime_error(str(exc), model_id=model_id)
 
     return model_id
-
-
