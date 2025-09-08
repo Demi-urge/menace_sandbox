@@ -110,8 +110,14 @@ uvicorn stage3_service:app
 
 ```python
 from menace.ipo_bot import IPOBot
+from vector_service.context_builder import ContextBuilder
 
-ipo = IPOBot(db_path="models.db", enhancements_db="enhancements.db")
+builder = ContextBuilder()
+ipo = IPOBot(
+    db_path="models.db",
+    enhancements_db="enhancements.db",
+    context_builder=builder,
+)
 
 pipeline = ImplementationPipeline(researcher=researcher, ipo=ipo)
 ```

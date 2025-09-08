@@ -364,8 +364,8 @@ def _init_unused_bots() -> None:
             def refresh_db_weights(self):
                 pass
 
-            def build(self, query: str, **_: object) -> str:
-                return ""
+            def build_context(self, *args: object, **kwargs: object) -> list[object]:
+                return []
 
         builder = _DummyBuilder()
 
@@ -398,7 +398,7 @@ def _init_unused_bots() -> None:
         ErrorBot,
         GAPredictionBot,
         GeneticAlgorithmBot,
-        IPOBot,
+        _wrap(IPOBot, context_builder=builder),
         _wrap(ImplementationOptimiserBot, context_builder=builder),
         MirrorBot,
         _wrap(
