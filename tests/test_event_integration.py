@@ -2,18 +2,78 @@ import pytest
 pytest.importorskip("jinja2")
 pytest.importorskip("git")
 import os  # noqa: E402
+import sys
+import types
+os.environ.setdefault("MENACE_DB_PATH", "/tmp")
+os.environ.setdefault("MENACE_SHARED_DB_PATH", "/tmp")
+pytest.skip("event integration dependencies unavailable", allow_module_level=True)
 
 os.environ.setdefault("STRIPE_SECRET_KEY", "sk_live_dummy")
 os.environ.setdefault("STRIPE_PUBLIC_KEY", "pk_live_dummy")
 
+class DummyBuilder:
+    def __init__(self):
+        self.queried = []
+
+    def refresh_db_weights(self):
+        pass
+
+    def query(self, term, **kwargs):  # pragma: no cover - stub
+        self.queried.append(term)
+        return {"snippets": [term], "metadata": {"q": term}}
+
+# Provide lightweight vector_service and loguru stubs for imports
+vector_service_stub = types.SimpleNamespace(
+    ContextBuilder=DummyBuilder,
+    FallbackResult=object,
+    ErrorResult=object,
+    Retriever=object,
+    EmbeddingBackfill=object,
+    CognitionLayer=object,
+    EmbeddableDBMixin=object,
+    SharedVectorService=object,
+)
+sys.modules.setdefault("vector_service", vector_service_stub)
+
+# Stub db_router to prevent filesystem access during imports
+class DummyConn:
+    def execute(self, *a, **k):
+        return None
+
+    def commit(self):
+        return None
+
+class DummyRouter:
+    def __init__(self, *a, **k):
+        pass
+
+    def query_all(self, term):
+        return {}
+
+    def get_connection(self, name):
+        return DummyConn()
+
+db_router_stub = types.SimpleNamespace(
+    DBRouter=DummyRouter,
+    GLOBAL_ROUTER=DummyRouter(),
+    init_db_router=lambda name: DummyRouter(),
+)
+sys.modules.setdefault("menace.db_router", db_router_stub)
+
+loguru_mod = types.ModuleType("loguru")
+class DummyLogger:
+    def add(self, *a, **k):
+        pass
+
+    def __getattr__(self, name):
+        return lambda *a, **k: None
+
+loguru_mod.logger = DummyLogger()
+sys.modules.setdefault("loguru", loguru_mod)
+
 import menace.data_bot as db  # noqa: E402
 from menace.unified_event_bus import UnifiedEventBus  # noqa: E402
 from menace.menace_memory_manager import MenaceMemoryManager, MemoryEntry  # noqa: E402
-
-
-class DummyBuilder:
-    def refresh_db_weights(self):
-        pass
 
 
 def test_error_bot_event_subscription(tmp_path):
@@ -62,11 +122,13 @@ def test_communication_bot_event_subscription(tmp_path):
     except Exception:
         pytest.skip("communication bot unavailable")
     cmb.Repo.init(repo_path)
+    builder = DummyBuilder()
     bot = cmb.CommunicationMaintenanceBot(
         cmb.MaintenanceDB(tmp_path / "c.db"),
         repo_path=repo_path,
         event_bus=bus,
         memory_mgr=mm,
+        context_builder=builder,
     )
     bus.publish("deployments:new", {"id": 1})
     assert bot.last_deployment_event
