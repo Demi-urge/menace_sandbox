@@ -145,27 +145,42 @@ class ContrarianModelBot:
         model_ids: Optional[List[int]] = None,
         event_bus: UnifiedEventBus | None = None,
     ) -> None:
+        if context_builder is None:
+            raise ValueError("context_builder is required")
+        self.context_builder = context_builder
+        self.context_builder.refresh_db_weights()
+
         self.workflow_db = workflow_db or WorkflowDB()
         self.workflows_db = workflows_db or HandoffWorkflowDB(event_bus=event_bus)
         self.innovations_db = innovations_db or InnovationsDB()
         self.info_db = info_db or InfoDB()
         self.enh_db = enhancements_db or EnhancementDB()
-        self.context_builder = context_builder
-        self.context_builder.refresh_db_weights()
+
         if aggregator is None:
-            self.aggregator = ResearchAggregatorBot(
+            aggregator = ResearchAggregatorBot(
                 [],
                 info_db=self.info_db,
                 enhancements_db=self.enh_db,
                 context_builder=self.context_builder,
             )
-        else:
-            self.aggregator = aggregator
+        elif not (
+            hasattr(aggregator, "context_builder")
+            and aggregator.context_builder is not None
+        ):
+            raise ValueError("aggregator must be initialised with a context_builder")
+        self.aggregator = aggregator
+
         self.prediction_manager = prediction_manager
         self.data_bot = data_bot
         self.strategy_bot = strategy_bot or StrategyPredictionBot()
+
         if allocator is None:
             allocator = ResourceAllocationBot(context_builder=self.context_builder)
+        elif not (
+            hasattr(allocator, "context_builder")
+            and allocator.context_builder is not None
+        ):
+            raise ValueError("allocator must be initialised with a context_builder")
         self.allocator = allocator
         self.contrarian_db = contrarian_db or ContrarianDB()
         self.capital_manager = capital_manager
