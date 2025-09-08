@@ -193,22 +193,20 @@ class ContextBuilder:
         patch_safety: PatchSafety | None = None,
         similarity_metric: str = getattr(ContextBuilderConfig(), "similarity_metric", "cosine"),
     ) -> None:
-        self.retriever = retriever or Retriever()
-        try:
-            self.retriever.roi_tag_weights = roi_tag_penalties
-        except Exception:
-            pass
+        self.roi_tag_penalties = roi_tag_penalties
+        self.retriever = retriever or Retriever(context_builder=self)
         if patch_retriever is None:
             self.patch_retriever = PatchRetriever(
                 metric=similarity_metric,
                 enhancement_weight=enhancement_weight,
-                roi_tag_weights=roi_tag_penalties,
+                context_builder=self,
             )
         else:
             self.patch_retriever = patch_retriever
             try:
                 self.patch_retriever.enhancement_weight = enhancement_weight
-                self.patch_retriever.roi_tag_weights = roi_tag_penalties
+                if not self.patch_retriever.roi_tag_weights:
+                    self.patch_retriever.roi_tag_weights = roi_tag_penalties
             except Exception:
                 pass
         self.similarity_metric = similarity_metric
@@ -246,7 +244,6 @@ class ContextBuilder:
         self.alignment_penalty = alignment_penalty
         self.alert_penalty = alert_penalty
         self.risk_penalty = risk_penalty
-        self.roi_tag_penalties = roi_tag_penalties
         self.max_alignment_severity = max_alignment_severity
         self.max_alerts = max_alerts
         self.license_denylist = set(license_denylist or ())
