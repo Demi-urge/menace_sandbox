@@ -41,3 +41,8 @@ def test_process(monkeypatch):
     assert result.text == "ok"
     assert "get foo" in bot.history("cid")
     assert "x" in captured["prompt"]
+
+
+def test_requires_context_builder():
+    with pytest.raises(TypeError):
+        qb.QueryBot()
