@@ -96,6 +96,44 @@ engine = QuickFixEngine(ErrorDB(), SelfCodingManager(), context_builder=builder)
 generate_patch("sandbox_runner", context_builder=builder)
 ```
 
+### Constructor propagation and linting
+
+Always initialise `ContextBuilder` with all four standard databases and thread
+the same instance through every component that assembles prompts.  Each
+constructor should accept a `context_builder` keyword and pass it to child
+helpers:
+
+```python
+from vector_service.context_builder import ContextBuilder
+
+class Planner:
+    def __init__(self, *, context_builder: ContextBuilder) -> None:
+        self.context_builder = context_builder
+
+class PromptingBot:
+    def __init__(self, planner: Planner, *, context_builder: ContextBuilder) -> None:
+        self.planner = planner
+        self.context_builder = context_builder
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+planner = Planner(context_builder=builder)
+bot = PromptingBot(planner, context_builder=builder)
+```
+
+Violations are detected by `scripts/check_context_builder_usage.py`, which flags
+any `_build_prompt`, `build_prompt`, `generate_patch` or `generate` call missing
+`context_builder`:
+
+```bash
+python scripts/check_context_builder_usage.py
+```
+
+Example output when the argument is omitted:
+
+```
+service_supervisor.py:289 -> ContextBuilder() missing bots.db, code.db, errors.db, workflows.db
+```
+
 ## Self-Improvement Sandbox Setup
 
 `initialize_autonomous_sandbox()` now creates a `.env` file on first run and
