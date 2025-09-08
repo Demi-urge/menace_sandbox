@@ -1036,8 +1036,9 @@ class ChatGPTEnhancementBot:
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
-        if client is not None and getattr(client, "context_builder", None) is None:
-            raise ValueError("client.context_builder is required")
+        if client is not None:
+            if getattr(client, "context_builder") is None:  # type: ignore[attr-defined]
+                raise ValueError("client.context_builder is required")
         self.override_manager = override_manager
         self.client = client
         self.db = db or EnhancementDB(override_manager=override_manager)

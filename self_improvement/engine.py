@@ -6409,18 +6409,15 @@ class SelfImprovementEngine:
                             gen_kwargs["strategy"] = PromptStrategy(strat_name)
                         except Exception:
                             pass
-                    builder = getattr(
-                        self.self_coding_engine, "context_builder", None
-                    )
-                    if builder is not None:
-                        try:
-                            builder.refresh_db_weights()
-                        except Exception:
-                            self.logger.exception(
-                                "failed to initialise ContextBuilder"
-                            )
-                            raise
-                        gen_kwargs["context_builder"] = builder
+                    builder = self.self_coding_engine.context_builder
+                    try:
+                        builder.refresh_db_weights()
+                    except Exception:
+                        self.logger.exception(
+                            "failed to initialise ContextBuilder"
+                        )
+                        raise
+                    gen_kwargs["context_builder"] = builder
                     task_id = self._patch_generator(
                         mod, self.self_coding_engine, **gen_kwargs
                     )

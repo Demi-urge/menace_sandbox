@@ -483,7 +483,7 @@ class SelfCodingEngine:
                         exc_info=True,
                         extra={"cognition_layer": type(cognition_layer).__name__},
                     )
-            if getattr(cognition_layer, "context_builder", None) is not builder:
+            if cognition_layer.context_builder is not builder:
                 raise ValueError(
                     "cognition_layer must be constructed with the provided context builder"
                 )
