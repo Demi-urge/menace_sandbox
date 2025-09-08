@@ -536,3 +536,35 @@ def test_generate_patch_context_compression(monkeypatch, tmp_path):
 
     with pytest.raises(TypeError):
         quick_fix.generate_patch(p.as_posix(), engine=eng)  # type: ignore[call-arg]
+
+
+def test_run_context_compression(monkeypatch, tmp_path):
+    class Builder(_DummyContextBuilder):
+        def build(self, *_, **__):
+            return "RAW-snippet"
+
+    def fake_compress(meta, **_):
+        txt = meta.get("snippet", "")
+        return {"snippet": txt.replace("RAW", "COMPRESSED")}
+
+    monkeypatch.setattr(quick_fix, "compress_snippets", fake_compress)
+
+    manager = DummyManager()
+    engine = QuickFixEngine(
+        error_db=DummyErrorDB(),
+        manager=manager,
+        threshold=1,
+        graph=DummyGraph(),
+        context_builder=Builder(),
+    )
+    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    dynamic_path_router.clear_cache()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
+    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
+
+    engine.run("bot")
+    desc = manager.calls[0][1]
+    assert "COMPRESSED-snippet" in desc
+    assert "RAW-snippet" not in desc
