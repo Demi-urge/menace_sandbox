@@ -75,7 +75,10 @@ sys.modules.setdefault(
     types.SimpleNamespace(DBRouter=object, GLOBAL_ROUTER=None, init_db_router=lambda *a, **k: None),
 )
 sys.modules.setdefault("menace_sandbox.menace_db", types.SimpleNamespace(MenaceDB=object))
+sc_stub = types.SimpleNamespace(compress_snippets=lambda meta, **_: meta)
+sys.modules.setdefault("snippet_compressor", sc_stub)
 
+import menace_sandbox.research_aggregator_bot as rab
 from menace_sandbox.research_aggregator_bot import ResearchAggregatorBot
 
 
@@ -178,6 +181,37 @@ def test_research_queries_include_context(tmp_path):
     bot.process("topic", energy=3)
     assert builder.calls and builder.calls[0] == "topic", "context builder not invoked"
     assert chatgpt.instructions and chatgpt.instructions[0].startswith("CTX"), "context missing in prompt"
+
+
+def test_research_context_compression(monkeypatch, tmp_path):
+    builder = RecordingBuilder()
+    chatgpt = RecordingChatGPTBot()
+    enh = RecordingEnhancementBot()
+    pred = RecordingPredictionBot()
+    info = DummyInfoDB()
+    enh_db = DummyEnhDB()
+    router = DummyDBRouter()
+    cap = DummyCapitalManager()
+
+    def fake_compress(meta, **_):
+        return {"snippet": "COMP-" + meta.get("snippet", "")}
+
+    monkeypatch.setattr(rab, "compress_snippets", fake_compress)
+
+    bot = ResearchAggregatorBot(
+        requirements=["topic"],
+        info_db=info,
+        enhancements_db=enh_db,
+        enhancement_bot=enh,
+        prediction_bot=pred,
+        chatgpt_bot=chatgpt,
+        capital_manager=cap,
+        db_router=router,
+        context_builder=builder,
+    )
+    bot._increment_enh_count = lambda *a, **k: None
+    bot.process("topic", energy=3)
+    assert chatgpt.instructions and chatgpt.instructions[0].startswith("COMP-CTX")
 
 
 def test_sub_bot_refuses_without_context_builder():

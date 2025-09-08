@@ -35,6 +35,7 @@ from .database_manager import get_connection, DB_PATH
 from .capital_management_bot import CapitalManagementBot
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from vector_service import EmbeddableDBMixin, ContextBuilder
+from snippet_compressor import compress_snippets
 try:
     from .menace_db import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -819,6 +820,14 @@ class ResearchAggregatorBot:
             ratio = float(energy)
         return max(1, int(round(ratio)))
 
+    def _compressed_context(self, query: str) -> str:
+        try:
+            ctx = str(self.context_builder.build(query))
+        except Exception as exc:
+            logger.exception("Context build failed for %s: %s", query, exc)
+            ctx = ""
+        return compress_snippets({"snippet": ctx}).get("snippet", ctx)
+
     def _query_local(self, topic: str) -> List[ResearchItem]:
         items = []
         lower = topic.lower()
@@ -873,11 +882,7 @@ class ResearchAggregatorBot:
         collected_text = []
         queried: List[str] = []
         targets = set(missing or ["text", "video", "chatgpt"])
-        try:
-            ctx = str(self.context_builder.build(topic))
-        except Exception as exc:
-            logger.exception("Context build failed for %s: %s", topic, exc)
-            ctx = ""
+        ctx = self._compressed_context(topic)
         for _ in range(max(1, amount)):
             if "text" in targets and self.text_bot:
                 try:
@@ -1040,11 +1045,7 @@ class ResearchAggregatorBot:
         """Request an enhancement from the enhancement bot if available."""
         if not self.enhancement_bot:
             return
-        try:
-            ctx = str(self.context_builder.build(topic))
-        except Exception as exc:
-            logger.exception("Context build failed for %s: %s", topic, exc)
-            ctx = ""
+        ctx = self._compressed_context(topic)
         instruction = f"{reason} about {topic}"
         if ctx:
             instruction = f"{ctx}\n\n{instruction}"
@@ -1186,11 +1187,7 @@ class ResearchAggregatorBot:
                     logger.exception("Video bot failed while enhancing %s", enh.idea)
             if self.chatgpt_bot:
                 try:
-                    try:
-                        ctx_enh = str(self.context_builder.build(enh.idea))
-                    except Exception as exc:
-                        logger.exception("Context build failed for %s: %s", enh.idea, exc)
-                        ctx_enh = ""
+                    ctx_enh = self._compressed_context(enh.idea)
                     instruction = enh.idea
                     if ctx_enh:
                         instruction = f"{ctx_enh}\n\n{enh.idea}"
