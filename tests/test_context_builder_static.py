@@ -92,3 +92,28 @@ def test_allows_context_builder_call(tmp_path):
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == []
+
+
+def test_flags_getattr_context_builder(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(obj):\n"
+        "    return getattr(obj, 'context_builder', None)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [(2, "getattr context_builder default None")]
+
+
+def test_allows_getattr_with_nocb(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(obj):\n"
+        "    # nocb\n"
+        "    return getattr(obj, 'context_builder', None)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == []
