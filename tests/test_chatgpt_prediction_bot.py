@@ -28,6 +28,7 @@ class _StubContextBuilder:
 
 ctx_mod = types.ModuleType("vector_service.context_builder")
 ctx_mod.ContextBuilder = _StubContextBuilder
+ctx_mod.FallbackResult = type("FallbackResult", (), {})
 sys.modules["vector_service"] = vector_service_pkg
 sys.modules["vector_service.context_builder"] = ctx_mod
 sys.modules["menace.shared_gpt_memory"] = types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
@@ -66,7 +67,7 @@ def build_model(path: Path) -> None:
 def test_prediction(tmp_path):
     model_path = tmp_path / "model.joblib"
     build_model(model_path)
-    bot = cpb.ChatGPTPredictionBot(model_path)
+    bot = cpb.ChatGPTPredictionBot(model_path, context_builder=_StubContextBuilder())
     idea = cpb.IdeaFeatures(
         market_type="finance",
         monetization_model="subscription",
@@ -83,7 +84,7 @@ def test_prediction(tmp_path):
 def test_batch_prediction(tmp_path):
     model_path = tmp_path / "model.joblib"
     build_model(model_path)
-    bot = cpb.ChatGPTPredictionBot(model_path)
+    bot = cpb.ChatGPTPredictionBot(model_path, context_builder=_StubContextBuilder())
     ideas = [
         cpb.IdeaFeatures(
             market_type="tech",

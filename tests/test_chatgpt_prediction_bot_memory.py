@@ -20,9 +20,13 @@ class _StubContextBuilder:
     def refresh_db_weights(self):
         pass
 
+    def build(self, *args, **kwargs):
+        return "dbctx"
+
 
 ctx_mod = types.ModuleType("vector_service.context_builder")
 ctx_mod.ContextBuilder = _StubContextBuilder
+ctx_mod.FallbackResult = type("FallbackResult", (), {})
 sys.modules["vector_service"] = vector_service_pkg
 sys.modules["vector_service.context_builder"] = ctx_mod
 sys.modules["menace.shared_gpt_memory"] = types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
@@ -45,11 +49,11 @@ class FakeMemory:
         self.logged = []
         self.context_calls = []
 
-    def fetch_context(self, tags):
-        self.context_calls.append(list(tags))
+    def build_context(self, key, limit=5):
+        self.context_calls.append(key)
         return "ctx"
 
-    def log_interaction(self, prompt, response, tags):
+    def log(self, prompt, response, tags):
         self.logged.append((prompt, response, tags))
 
 
@@ -70,8 +74,9 @@ def test_enhancement_uses_memory(monkeypatch):
 
     bot.evaluate_enhancement("idea", "rationale")
 
-    assert cpb.INSIGHT in mem.context_calls[0]
-    assert mem.logged[0][0].startswith("Evaluate enhancement")
+    assert mem.context_calls[0] == "chatgpt_prediction_bot.evaluate_enhancement"
+    assert mem.logged[0][0].startswith("dbctx")
+    assert "Evaluate enhancement" in mem.logged[0][0]
     assert mem.logged[0][1] == "resp"
     assert cpb.INSIGHT in mem.logged[0][2]
 
@@ -80,5 +85,5 @@ def test_memory_without_builder_errors(monkeypatch):
     mem = FakeMemory()
     monkeypatch.setattr(cpb, "joblib", None)
     monkeypatch.setattr(cpb, "sentiment_score", lambda text: 0.0)
-    with pytest.raises(ValueError, match="context_builder"):
+    with pytest.raises(TypeError):
         cpb.ChatGPTPredictionBot(gpt_memory=mem)
