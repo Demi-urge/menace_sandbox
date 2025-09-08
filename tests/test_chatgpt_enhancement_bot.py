@@ -1,5 +1,23 @@
 import json
 import logging
+import pytest
+import sys
+import types
+
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build(self, query, **_):
+        return ""
+
+
+_ctx_mod = types.SimpleNamespace(
+    ContextBuilder=DummyBuilder, ErrorResult=Exception, FallbackResult=Exception
+)
+sys.modules.setdefault("vector_service", types.SimpleNamespace(context_builder=_ctx_mod))
+sys.modules["vector_service.context_builder"] = _ctx_mod
 
 import menace.chatgpt_enhancement_bot as ceb
 import menace.chatgpt_idea_bot as cib
@@ -18,13 +36,6 @@ def test_propose(monkeypatch, tmp_path):
             {"message": {"content": json.dumps([{"idea": "New", "rationale": "More efficient"}])}}
         ]
     }
-
-    class DummyBuilder:
-        def refresh_db_weights(self):
-            pass
-
-        def build(self, query, **_):
-            return ""
     builder = DummyBuilder()
     client = cib.ChatGPTClient("key", context_builder=builder)
     monkeypatch.setattr(ceb, "ask_with_memory", lambda *a, **k: resp)
@@ -37,6 +48,16 @@ def test_propose(monkeypatch, tmp_path):
     assert results and results[0].context == "ctx"
     entries = db.fetch()
     assert entries and entries[0].idea == "New"
+
+
+def test_requires_client_context_builder(tmp_path):
+    class DummyClient:
+        pass
+
+    builder = DummyBuilder()
+    db = ceb.EnhancementDB(tmp_path / "e.db")
+    with pytest.raises(ValueError):
+        ceb.ChatGPTEnhancementBot(DummyClient(), db=db, context_builder=builder)
 
 
 def test_enhancementdb_duplicate(tmp_path, caplog, monkeypatch):
@@ -78,3 +99,4 @@ def test_enhancementdb_content_hash_unique_index(tmp_path):
         }
     assert indexes.get("idx_enhancements_content_hash") == 1
     ceb.GLOBAL_ROUTER = old
+
