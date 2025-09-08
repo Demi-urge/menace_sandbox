@@ -22,7 +22,7 @@ import threading
 import importlib
 from types import SimpleNamespace
 from contextlib import contextmanager
-from typing import Any, Callable, Mapping
+from typing import Callable, Mapping
 from collections import deque
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
@@ -175,7 +175,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         settings: SandboxSettings | None = None,
     ) -> None:
         if context_builder is None:
-            raise TypeError("context_builder is required")
+            raise ValueError("SelfDebuggerSandbox requires a ContextBuilder instance")
         context_builder.refresh_db_weights()
         super().__init__(telemetry_db, engine, context_builder)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
@@ -436,15 +436,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     before_target = Path(before_dir) / rel
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
-                    if self.context_builder is None:  # pragma: no cover - defensive
-                        self.logger.warning(
-                            "ContextBuilder unavailable; skipping patch generation",
-                        )
-                        patch_id = None
-                    else:
-                        patch_id = generate_patch(
-                            mod, self.engine, context_builder=self.context_builder
-                        )
+                    patch_id = generate_patch(
+                        mod, self.engine, context_builder=self.context_builder
+                    )
                     if patch_id is not None:
                         try:
                             post_round_orphan_scan(
