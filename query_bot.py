@@ -172,6 +172,12 @@ class QueryBot:
             )
         self.client = client
         self.context_builder = context_builder
+        try:
+            self.client.context_builder = context_builder
+        except Exception:
+            logger.debug(
+                "failed to attach context_builder to client", exc_info=True
+            )
         self.context_builder.refresh_db_weights()
         self.fetcher = fetcher or DataFetcher()
         self.store = store or ContextStore()
