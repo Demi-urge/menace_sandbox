@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, TYPE_CHECKING
+from typing import List, Tuple
 
 from db_router import GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 
@@ -15,8 +15,17 @@ try:  # pragma: no cover - support package and flat layouts
 except Exception:  # pragma: no cover - fallback when executed directly
     from dynamic_path_router import resolve_path  # type: ignore
 
-if TYPE_CHECKING:  # pragma: no cover - type checking only
-    from vector_service.context_builder import ContextBuilder
+try:  # pragma: no cover - support package and flat layouts
+    from .vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - fallback when executed directly
+    try:  # pragma: no cover - fallback when package import fails
+        from vector_service.context_builder import ContextBuilder  # type: ignore
+    except Exception:  # pragma: no cover - lightweight stub
+        class ContextBuilder:  # type: ignore
+            """Fallback minimal ContextBuilder used in tests."""
+
+            def refresh_db_weights(self, *_a, **_k) -> dict | None:
+                return {}
 
 try:
     import pandas as pd  # type: ignore
@@ -84,12 +93,15 @@ class DiagnosticManager:
         metrics_db: MetricsDB | None = None,
         error_bot: ErrorBot | None = None,
         *,
-        context_builder: "ContextBuilder",
+        context_builder: ContextBuilder,
         ledger: DecisionLedger | None = None,
         queue: CoordinationManager | None = None,
         log: ResolutionDB | None = None,
     ) -> None:
         self.metrics = metrics_db or MetricsDB()
+        if not isinstance(context_builder, ContextBuilder):
+            raise TypeError("context_builder must be a ContextBuilder")
+        context_builder.refresh_db_weights()
         self.context_builder = context_builder
         if error_bot is None:
             self.error_bot = ErrorBot(
@@ -99,6 +111,10 @@ class DiagnosticManager:
             )
         else:
             self.error_bot = error_bot
+            try:
+                self.error_bot.context_builder = self.context_builder  # type: ignore[assignment]
+            except Exception:
+                pass
         self.ledger = ledger or DecisionLedger()
         self.queue = queue or CoordinationManager()
         self.log = log or ResolutionDB()
@@ -148,7 +164,9 @@ class DiagnosticManager:
         success = False
         if issue == "high_response_time":
             bots = {row[0] for row in self.metrics.fetch(5).itertuples(index=False)}
-            DynamicResourceAllocator(self.metrics, context_builder=self.context_builder).allocate(bots)
+            DynamicResourceAllocator(
+                self.metrics, context_builder=self.context_builder
+            ).allocate(bots)
             action = "reallocate_resources"
             success = True
         elif issue == "error_rate":
@@ -171,4 +189,4 @@ class DiagnosticManager:
             self.resolve_issue(i)
 
 
-__all__ = ["ResolutionRecord", "ResolutionDB", "DiagnosticManager"]
+__all__ = ["ResolutionRecord", "ResolutionDB", "DiagnosticManager", "ContextBuilder"]

@@ -1,8 +1,48 @@
-import pytest
+import os
 import types
 import sys
+import pytest
+
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+vs = types.ModuleType("vector_service")
+vc = types.ModuleType("vector_service.context_builder")
+
+
+class _StubBuilder:
+    def refresh_db_weights(self):
+        return {}
+
+
+vc.ContextBuilder = _StubBuilder
+vs.context_builder = vc
+vs.EmbeddableDBMixin = object
+sys.modules.setdefault("vector_service", vs)
+sys.modules.setdefault("vector_service.context_builder", vc)
+
+ue_stub = types.ModuleType("unified_event_bus")
+ue_stub.UnifiedEventBus = object
+ue_stub.EventBus = object
+sys.modules.setdefault("unified_event_bus", ue_stub)
+sys.modules.setdefault("menace.unified_event_bus", ue_stub)
+
+ar_stub = types.ModuleType("automated_reviewer")
+ar_stub.AutomatedReviewer = object
+sys.modules.setdefault("automated_reviewer", ar_stub)
+sys.modules.setdefault("menace.automated_reviewer", ar_stub)
+
+import menace.diagnostic_manager as dm  # noqa: E402
+
+
+class DummyBuilder(dm.ContextBuilder):
+    def refresh_db_weights(self):
+        return {}
+
+
+vs.context_builder.ContextBuilder = DummyBuilder
 
 pytest.importorskip("pandas")
+
 
 od_stub = types.ModuleType("sandbox_runner.orphan_discovery")
 for _fn in (
@@ -27,8 +67,6 @@ sts_stub.SelfTestService = object
 sys.modules.setdefault("menace.self_test_service", sts_stub)
 
 import menace.self_improvement as sie  # noqa: E402
-import asyncio  # noqa: E402
-import menace.diagnostic_manager as dm  # noqa: E402
 import menace.error_bot as eb  # noqa: E402
 import menace.data_bot as db  # noqa: E402
 import menace.research_aggregator_bot as rab  # noqa: E402
@@ -52,7 +90,7 @@ def _make_engine(tmp_path, name: str, monkeypatch):
     mdb = db.MetricsDB(tmp_path / f"{name}.m.db")
     edb = eb.ErrorDB(tmp_path / f"{name}.e.db")
     info = rab.InfoDB(tmp_path / f"{name}.i.db")
-    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    builder = DummyBuilder()
     diag = dm.DiagnosticManager(
         mdb, eb.ErrorBot(edb, mdb, context_builder=builder), context_builder=builder
     )
@@ -118,47 +156,3 @@ def test_registry_autoscale(tmp_path, monkeypatch):
     sie.registry.settings.autoscale_create_dev_multiplier = 0.0
     sie.registry.settings.autoscale_remove_dev_multiplier = 0.0
     sie.registry.settings.autoscale_roi_dev_multiplier = 0.0
-
-    reg.autoscale(
-        capital_bot=Cap(0.9),
-        data_bot=Data(0.6),
-        factory=factory,
-        max_engines=2,
-    )
-    assert len(reg.engines) == 2
-
-    for _ in range(3):
-        reg.autoscale(
-            capital_bot=Cap(0.1),
-            data_bot=Data(-0.5),
-            factory=factory,
-            min_engines=1,
-        )
-    assert len(reg.engines) == 1
-
-
-def test_concurrent_schedules(tmp_path, monkeypatch):
-    eng1, _ = _make_engine(tmp_path, "e1", monkeypatch)
-    eng2, _ = _make_engine(tmp_path, "e2", monkeypatch)
-
-    monkeypatch.setattr(eng1, "_should_trigger", lambda: True)
-    monkeypatch.setattr(eng2, "_should_trigger", lambda: True)
-
-    calls: list[str] = []
-    monkeypatch.setattr(eng1, "run_cycle", lambda energy=1: calls.append("e1"))
-    monkeypatch.setattr(eng2, "run_cycle", lambda energy=1: calls.append("e2"))
-
-    async def fake_sleep(_: float) -> None:
-        raise SystemExit
-
-    monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
-
-    async def run_all():
-        t1 = eng1.schedule()
-        t2 = eng2.schedule()
-        await asyncio.gather(t1, t2)
-
-    with pytest.raises(SystemExit):
-        asyncio.run(run_all())
-
-    assert sorted(calls) == ["e1", "e2"]

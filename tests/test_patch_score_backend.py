@@ -5,9 +5,14 @@ from tests.test_self_debugger_sandbox import (
     DummyTelem,
     DummyEngine,
     DummyTrail,
-    DummyBuilder,
 )
+import menace.diagnostic_manager as dm
 import patch_score_backend as psb
+
+
+class DummyBuilder(dm.ContextBuilder):
+    def refresh_db_weights(self):
+        return {}
 
 
 def test_http_backend_store_and_fetch(monkeypatch):
@@ -155,7 +160,7 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    from tests import test_self_improvement as sie_tests
+    from tests import test_self_improvement_engine as sie_tests
 
     calls = {}
 
@@ -172,7 +177,7 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
     mdb = sie_tests.db.MetricsDB(tmp_path / "m.db")
     edb = sie_tests.eb.ErrorDB(tmp_path / "e.db")
     info = sie_tests.rab.InfoDB(tmp_path / "i.db")
-    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    builder = DummyBuilder()
     diag = sie_tests.dm.DiagnosticManager(
         mdb,
         sie_tests.eb.ErrorBot(edb, mdb, context_builder=builder),
