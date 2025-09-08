@@ -96,21 +96,40 @@ class DynamicResourceAllocator:
         *,
         scale_up_threshold: float = 0.8,
         scale_down_threshold: float = 0.2,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.metrics_db = metrics_db or MetricsDB()
         self.prediction_bot = prediction_bot or ResourcePredictionBot()
         self.ledger = ledger or DecisionLedger()
-        self.alloc_bot = alloc_bot or ResourceAllocationBot(
-            AllocationDB(), context_builder=ContextBuilder()
-        )
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger("DynamicAllocator")
+
+        self.context_builder = context_builder
+        if alloc_bot is None:
+            self.context_builder = self.context_builder or ContextBuilder()
+            try:
+                self.context_builder.refresh_db_weights()
+            except Exception as exc:  # pragma: no cover - log then raise
+                self.logger.error("context builder refresh failed: %s", exc)
+                raise RuntimeError("context builder refresh failed") from exc
+            self.alloc_bot = ResourceAllocationBot(
+                AllocationDB(), context_builder=self.context_builder
+            )
+        else:
+            self.alloc_bot = alloc_bot
+            if self.context_builder is not None:
+                try:
+                    self.context_builder.refresh_db_weights()
+                except Exception as exc:  # pragma: no cover - log then raise
+                    self.logger.error("context builder refresh failed: %s", exc)
+                    raise RuntimeError("context builder refresh failed") from exc
+
         self.pathway_db = pathway_db
         self.scaler = predictive_allocator or PredictiveResourceAllocator(self.metrics_db)
         self.orchestrator = orchestrator
         self.optimizer = optimizer
         self.scale_up_threshold = scale_up_threshold
         self.scale_down_threshold = scale_down_threshold
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("DynamicAllocator")
 
     @staticmethod
     def _priority(metrics: ResourceMetrics) -> float:
