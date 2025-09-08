@@ -10,7 +10,7 @@ compact.
 
 from typing import Any, Dict
 
-from redaction_utils import redact_text
+from .redaction_utils import redact_text
 
 
 def _summarize_diff(before: str, after: str) -> str:
