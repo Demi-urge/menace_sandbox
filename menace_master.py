@@ -58,7 +58,6 @@ from menace.unified_config_store import UnifiedConfigStore  # noqa: E402
 from menace.dependency_self_check import self_check  # noqa: E402
 
 from menace.menace_orchestrator import MenaceOrchestrator  # noqa: E402
-from vector_service.context_builder import ContextBuilder  # noqa: E402
 from menace.self_coding_manager import PatchApprovalPolicy, SelfCodingManager  # noqa: E402
 from menace.advanced_error_management import AutomatedRollbackManager  # noqa: E402
 from menace.environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
@@ -407,7 +406,7 @@ def _init_unused_bots() -> None:
             alloc_bot=ResourceAllocationBot(context_builder=builder),
             context_builder=builder,
         ),
-        MarketManipulationBot,
+        _wrap(MarketManipulationBot, context_builder=builder),
         PassiveDiscoveryBot,
         PreliminaryResearchBot,
         ReportGenerationBot,
@@ -445,7 +444,20 @@ def _init_unused_bots() -> None:
 def run_once(models: Iterable[str]) -> None:
     """Run a single automation cycle for the given models."""
     _init_unused_bots()
-    orchestrator = MenaceOrchestrator(context_builder=ContextBuilder())
+    builder = None
+    try:
+        from vector_service.context_builder import ContextBuilder  # type: ignore
+        builder = ContextBuilder()
+    except Exception:
+        pass
+    try:
+        orchestrator = (
+            MenaceOrchestrator(context_builder=builder)  # type: ignore[arg-type]
+            if builder is not None
+            else MenaceOrchestrator()
+        )
+    except TypeError:
+        orchestrator = MenaceOrchestrator()
     # Create a default root oversight bot
     orchestrator.create_oversight("root", "L1")
     override_svc = SelfServiceOverride(ROIDB(), MetricsDB())
@@ -455,8 +467,13 @@ def run_once(models: Iterable[str]) -> None:
     except Exception as exc:
         try:  # best effort ErrorBot logging
             from menace.error_bot import ErrorBot  # type: ignore
-
-            err_bot = ErrorBot(context_builder=ContextBuilder())  # type: ignore[call-arg]
+            if builder is not None:
+                try:
+                    err_bot = ErrorBot(context_builder=builder)  # type: ignore[call-arg]
+                except Exception:
+                    err_bot = ErrorBot()  # type: ignore[call-arg]
+            else:
+                err_bot = ErrorBot()  # type: ignore[call-arg]
             if hasattr(err_bot, "handle_error"):
                 err_bot.handle_error(str(exc))
         except Exception:
@@ -614,7 +631,20 @@ def main(argv: Iterable[str] | None = None) -> None:
     )
     learning_thread.start()
 
-    orchestrator = MenaceOrchestrator(context_builder=ContextBuilder())
+    builder = None
+    try:
+        from vector_service.context_builder import ContextBuilder  # type: ignore
+        builder = ContextBuilder()
+    except Exception:
+        pass
+    try:
+        orchestrator = (
+            MenaceOrchestrator(context_builder=builder)  # type: ignore[arg-type]
+            if builder is not None
+            else MenaceOrchestrator()
+        )
+    except TypeError:
+        orchestrator = MenaceOrchestrator()
     orchestrator.create_oversight("root", "L1")
     orchestrator.start_scheduled_jobs()
     override_svc = SelfServiceOverride(ROIDB(), MetricsDB())

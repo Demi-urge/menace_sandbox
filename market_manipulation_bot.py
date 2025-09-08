@@ -27,11 +27,12 @@ class MarketManipulationBot:
         context_builder: ContextBuilder,
     ) -> None:
         self.intel_bot = intel_bot or CompetitiveIntelligenceBot()
+        context_builder.refresh_db_weights()
         self.context_builder = context_builder
         self.saturation_bot = (
             saturation_bot
             if saturation_bot is not None
-            else NicheSaturationBot(context_builder=context_builder)
+            else NicheSaturationBot(context_builder=self.context_builder)
         )
         self.checker = checker or ComplianceChecker()
         self.role = role
