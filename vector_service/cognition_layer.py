@@ -92,9 +92,15 @@ class CognitionLayer:
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.context_builder = context_builder
-        self.retriever = retriever or getattr(self.context_builder, "retriever", Retriever())
+        self.retriever = retriever or getattr(
+            self.context_builder,
+            "retriever",
+            Retriever(context_builder=self.context_builder),
+        )
         self.patch_retriever = patch_retriever or getattr(
-            self.context_builder, "patch_retriever", PatchRetriever()
+            self.context_builder,
+            "patch_retriever",
+            PatchRetriever(context_builder=self.context_builder),
         )
         self.vector_metrics = vector_metrics or VectorMetricsDB()
         self.roi_tracker = roi_tracker

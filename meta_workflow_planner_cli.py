@@ -24,8 +24,10 @@ from meta_workflow_planner import (
 from roi_results_db import module_impact_report
 try:  # pragma: no cover - optional dependency
     from vector_service.retriever import Retriever  # type: ignore
+    from vector_service.context_builder import ContextBuilder  # type: ignore
 except Exception:  # pragma: no cover - allow running without retriever
     Retriever = None  # type: ignore
+    ContextBuilder = None  # type: ignore
 
 
 def _cmd_encode(args: argparse.Namespace) -> int:
@@ -47,9 +49,10 @@ def _cmd_candidates(args: argparse.Namespace) -> int:
     else:
         query = args.workflow_id
     retr: Retriever | None = None
-    if Retriever is not None:
+    if Retriever is not None and ContextBuilder is not None:
         try:  # pragma: no cover - best effort
-            retr = Retriever()
+            builder = ContextBuilder()
+            retr = Retriever(context_builder=builder)
         except Exception:
             retr = None
     results = (

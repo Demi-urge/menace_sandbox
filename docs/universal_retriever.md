@@ -28,8 +28,10 @@ Alternatively a lightweight wrapper is available via the service layer:
 
 ```python
 from vector_service import Retriever
+from vector_service.context_builder import ContextBuilder
 
-hits = Retriever().search("upload failed")
+builder = ContextBuilder()
+hits = Retriever(context_builder=builder).search("upload failed")
 ```
 
 The wrapper emits structured logs and returns serialisable dictionaries while delegating to ``UniversalRetriever`` under the hood.

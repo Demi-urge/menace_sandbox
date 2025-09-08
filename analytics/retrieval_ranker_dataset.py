@@ -22,6 +22,7 @@ from ..db_router import GLOBAL_ROUTER, init_db_router
 from ..vector_metrics_db import VectorMetricsDB  # type: ignore
 try:  # pragma: no cover - optional dependency
     from ..vector_service import Retriever  # type: ignore
+    from ..vector_service.context_builder import ContextBuilder  # type: ignore
 except BaseException:  # pragma: no cover - fallback for lightweight environments
     class Retriever:  # type: ignore
         def error_frequency(self, *_args: Any, **_kw: Any) -> float:
@@ -32,6 +33,10 @@ except BaseException:  # pragma: no cover - fallback for lightweight environment
 
         def bot_deploy_freq(self, *_args: Any, **_kw: Any) -> float:
             return 0.0
+
+    class ContextBuilder:  # type: ignore
+        def __init__(self) -> None:
+            self.retriever = Retriever()
 
 
 router = GLOBAL_ROUTER or init_db_router("retrieval_ranker_dataset")
@@ -157,7 +162,8 @@ def build_dataset(
     """
 
     vmdb = VectorMetricsDB(vec_db_path)
-    retriever = Retriever()
+    builder = ContextBuilder()
+    retriever = builder.retriever
     roi_conn = GLOBAL_ROUTER.get_connection("roi_events")
 
     now = datetime.utcnow()

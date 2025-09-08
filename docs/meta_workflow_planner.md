@@ -28,6 +28,8 @@ along with metadata such as the ROI curve and dependency depth.
 Embeddings can be used to group workflows or to assemble simple pipelines:
 
 ```python
+from vector_service import Retriever
+from vector_service.context_builder import ContextBuilder
 workflows = {
     "A": {"workflow": ["fetch"]},
     "B": {"workflow": ["process"]},
@@ -35,7 +37,8 @@ workflows = {
 }
 
 # Cluster similar workflow specs
-retr = Retriever()
+builder = ContextBuilder()
+retr = Retriever(context_builder=builder)
 clusters = planner.cluster_workflows(workflows, retriever=retr, epsilon=0.8)
 
 # Build a high‑synergy chain starting from A
