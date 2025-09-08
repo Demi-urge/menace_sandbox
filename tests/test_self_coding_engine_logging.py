@@ -1,3 +1,4 @@
+# flake8: noqa
 import logging
 import sys
 import types
@@ -15,6 +16,7 @@ vec_mod.PatchLogger = object
 vec_mod.VectorServiceError = _VSError
 vec_mod.EmbeddableDBMixin = object
 vec_mod.SharedVectorService = object
+vec_mod.ContextBuilder = object
 sys.modules.setdefault("vector_service", vec_mod)
 retr_mod = types.ModuleType("vector_service.retriever")
 retr_mod.Retriever = lambda: None
@@ -110,21 +112,25 @@ def test_roi_tracker_logging(caplog):
     class BadCognitionLayer:
         roi_tracker = None
 
+        def __init__(self, builder):
+            self.context_builder = builder
+
         def __setattr__(self, name, value):
             if name == "roi_tracker":
                 raise RuntimeError("fail cognition_layer")
             super().__setattr__(name, value)
 
+    builder = types.SimpleNamespace(
+        build_context=lambda *a, **k: {},
+        refresh_db_weights=lambda *a, **k: None,
+    )
     caplog.set_level(logging.WARNING)
     SelfCodingEngine(
         object(),
         DummyMemory(),
         patch_logger=BadPatchLogger(),
-        cognition_layer=BadCognitionLayer(),
-        context_builder=types.SimpleNamespace(
-            build_context=lambda *a, **k: {},
-            refresh_db_weights=lambda *a, **k: None,
-        ),
+        cognition_layer=BadCognitionLayer(builder),
+        context_builder=builder,
     )
     messages = [record.message for record in caplog.records]
     assert any("patch_logger" in m for m in messages)

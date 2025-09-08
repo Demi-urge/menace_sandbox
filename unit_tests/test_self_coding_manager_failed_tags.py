@@ -1,3 +1,4 @@
+# flake8: noqa
 import types
 import sys
 from pathlib import Path
@@ -112,10 +113,12 @@ def test_failed_tags_recorded(monkeypatch, tmp_path):
     file_path = tmp_path / resolve_path("sample.py")
     file_path.write_text("def x():\n    pass\n")
 
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+
     class Engine:
         def __init__(self):
             self.patch_suggestion_db = PatchSuggestionDB(tmp_path / "s.db")
-            self.cognition_layer = types.SimpleNamespace(context_builder=None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
             self.last_prompt_text = ""
 
         def apply_patch(self, path: Path, desc: str, **kwargs):
@@ -124,7 +127,6 @@ def test_failed_tags_recorded(monkeypatch, tmp_path):
             return 1, False, 0.0
 
     engine = Engine()
-    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
     pipeline = ModelAutomationPipeline(context_builder=builder)
     mgr = scm.SelfCodingManager(engine, pipeline)
 
