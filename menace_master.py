@@ -351,10 +351,10 @@ def _init_unused_bots() -> None:
         from vector_service.context_builder import ContextBuilder  # type: ignore
 
         builder = ContextBuilder(
-            bot_db="bots.db",
+            bots_db="bots.db",
             code_db="code.db",
-            error_db="errors.db",
-            workflow_db="workflows.db",
+            errors_db="errors.db",
+            workflows_db="workflows.db",
         )
         builder.refresh_db_weights()
     except Exception:  # pragma: no cover - optional dependency
@@ -445,20 +445,24 @@ def _init_unused_bots() -> None:
 def run_once(models: Iterable[str]) -> None:
     """Run a single automation cycle for the given models."""
     _init_unused_bots()
-    builder = None
     try:
         from vector_service.context_builder import ContextBuilder  # type: ignore
-        builder = ContextBuilder()
-    except Exception:
-        pass
-    try:
-        orchestrator = (
-            MenaceOrchestrator(context_builder=builder)  # type: ignore[arg-type]
-            if builder is not None
-            else MenaceOrchestrator()
+
+        builder = ContextBuilder(
+            bots_db="bots.db",
+            code_db="code.db",
+            errors_db="errors.db",
+            workflows_db="workflows.db",
         )
-    except TypeError:
-        orchestrator = MenaceOrchestrator()
+    except Exception:  # pragma: no cover - optional dependency
+        logger.debug("failed to initialize ContextBuilder", exc_info=True)
+
+        class _DummyBuilder:
+            def refresh_db_weights(self):
+                pass
+
+        builder = _DummyBuilder()
+    orchestrator = MenaceOrchestrator(context_builder=builder)  # type: ignore[arg-type]
     # Create a default root oversight bot
     orchestrator.create_oversight("root", "L1")
     override_svc = SelfServiceOverride(ROIDB(), MetricsDB())
@@ -632,20 +636,24 @@ def main(argv: Iterable[str] | None = None) -> None:
     )
     learning_thread.start()
 
-    builder = None
     try:
         from vector_service.context_builder import ContextBuilder  # type: ignore
-        builder = ContextBuilder()
-    except Exception:
-        pass
-    try:
-        orchestrator = (
-            MenaceOrchestrator(context_builder=builder)  # type: ignore[arg-type]
-            if builder is not None
-            else MenaceOrchestrator()
+
+        builder = ContextBuilder(
+            bots_db="bots.db",
+            code_db="code.db",
+            errors_db="errors.db",
+            workflows_db="workflows.db",
         )
-    except TypeError:
-        orchestrator = MenaceOrchestrator()
+    except Exception:  # pragma: no cover - optional dependency
+        logger.debug("failed to initialize ContextBuilder", exc_info=True)
+
+        class _DummyBuilder:
+            def refresh_db_weights(self):
+                pass
+
+        builder = _DummyBuilder()
+    orchestrator = MenaceOrchestrator(context_builder=builder)  # type: ignore[arg-type]
     orchestrator.create_oversight("root", "L1")
     orchestrator.start_scheduled_jobs()
     override_svc = SelfServiceOverride(ROIDB(), MetricsDB())

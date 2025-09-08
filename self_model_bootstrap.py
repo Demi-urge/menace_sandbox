@@ -17,14 +17,17 @@ from menace.error_bot import ErrorBot
 from menace.data_bot import DataBot, MetricsDB
 from menace.capital_management_bot import CapitalManagementBot
 from menace.database_manager import add_model, update_model, DB_PATH
-from types import SimpleNamespace
+from vector_service.context_builder import ContextBuilder
 
 
-def bootstrap(context_builder: "ContextBuilder" | None = None) -> int:
+def bootstrap(*, context_builder: ContextBuilder) -> int:
     """Create the menace model and populate related tables.
 
     Returns the model identifier from ``models.db``.
     """
+    if context_builder is None:
+        raise ValueError("context_builder must be provided")
+
     # Insert or fetch the menace model using the standard helper.
     model_id = add_model("menace", source="self", tags="menace", db_path=DB_PATH)
 
@@ -32,18 +35,6 @@ def bootstrap(context_builder: "ContextBuilder" | None = None) -> int:
     capital_bot = CapitalManagementBot()
     data_bot = DataBot(MetricsDB(), capital_bot=capital_bot)
     cb = context_builder
-    if cb is None:
-        try:
-            from vector_service.context_builder import ContextBuilder
-
-            cb = ContextBuilder(
-                bots_db="bots.db",
-                code_db="code.db",
-                errors_db="errors.db",
-                workflows_db="workflows.db",
-            )
-        except Exception:  # pragma: no cover - best effort fallback
-            cb = SimpleNamespace(refresh_db_weights=lambda: None)
     err_bot = ErrorBot(data_bot=data_bot, context_builder=cb)
 
     bot_files = sorted(resolve_dir(".").glob("*_bot.py"))

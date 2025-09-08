@@ -3,6 +3,7 @@ import sys
 import types
 import importlib.util
 import json
+import logging
 
 # flake8: noqa
 
@@ -14,6 +15,8 @@ pkg.RAISE_ERRORS = False
 
 stub = types.ModuleType("menace.logging_utils")
 stub.log_record = lambda **k: {}
+stub.get_logger = lambda name=None: logging.getLogger(name)
+stub.setup_logging = lambda *a, **k: None
 sys.modules["menace.logging_utils"] = stub
 
 # Lightweight stubs for modules pulling heavy dependencies
@@ -109,7 +112,7 @@ sys.modules["menace.adaptive_roi_dataset"].build_dataset = lambda *a, **k: []
 sys.modules["menace.roi_tracker"].ROITracker = _Dummy
 
 # Populate needed attributes
-sys.modules["menace.self_model_bootstrap"].bootstrap = lambda: None
+sys.modules["menace.self_model_bootstrap"].bootstrap = lambda *a, **k: None
 sys.modules["menace.self_improvement_policy"].SelfImprovementPolicy = object
 sys.modules["menace.self_improvement_policy"].ConfigurableSelfImprovementPolicy = object
 class _DummyStrategy:
@@ -139,22 +142,31 @@ sys.modules["menace.env_config"].PRE_ROI_CAP = 1.0
 
 # top-level module not under menace
 sandbox_settings = types.ModuleType("sandbox_settings")
-sandbox_settings.SandboxSettings = lambda: types.SimpleNamespace(
-    sandbox_score_db="db",
-    synergy_weight_roi=1.0,
-    synergy_weight_efficiency=1.0,
-    synergy_weight_resilience=1.0,
-    synergy_weight_antifragility=1.0,
-    roi_ema_alpha=0.1,
-    synergy_weights_lr=0.1,
-    enable_alignment_flagger=True,
-    alignment_warning_threshold=0.5,
-    alignment_failure_threshold=0.9,
-    patch_retries=3,
-    patch_retry_delay=0.1,
-)
-sandbox_settings.load_sandbox_settings = lambda: sandbox_settings.SandboxSettings()
+
+
+class SandboxSettings(types.SimpleNamespace):
+    def __init__(self):
+        super().__init__(
+            sandbox_score_db="db",
+            synergy_weight_roi=1.0,
+            synergy_weight_efficiency=1.0,
+            synergy_weight_resilience=1.0,
+            synergy_weight_antifragility=1.0,
+            roi_ema_alpha=0.1,
+            synergy_weights_lr=0.1,
+            enable_alignment_flagger=True,
+            alignment_warning_threshold=0.5,
+            alignment_failure_threshold=0.9,
+            patch_retries=3,
+            patch_retry_delay=0.1,
+        )
+
+
+sandbox_settings.SandboxSettings = SandboxSettings
+sandbox_settings.load_sandbox_settings = lambda: SandboxSettings()
+sandbox_settings.DEFAULT_SEVERITY_SCORE_MAP = {}
 sys.modules["sandbox_settings"] = sandbox_settings
+sys.modules["menace.sandbox_settings"] = sandbox_settings
 
 
 def _load_engine():
