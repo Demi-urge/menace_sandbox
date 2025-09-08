@@ -703,45 +703,31 @@ class ChatGPTPredictionBot:
         pipeline is used.
         """
 
+        if context_builder is None:  # pragma: no cover - defensive guard
+            raise TypeError("context_builder is required")
+
         context_builder.refresh_db_weights()
 
         self.model_path = Path(model_path) if model_path else CFG.model_path
         self.threshold = float(threshold) if threshold is not None else CFG.threshold
         self.context_builder = context_builder
-        if gpt_memory is not None:
-            try:
-                gpt_memory.context_builder = context_builder
-            except Exception:
-                logger.debug(
-                    "failed to attach context_builder to gpt_memory", exc_info=True
-                )
         self.gpt_memory = gpt_memory
+        if self.gpt_memory is not None:
+            self.gpt_memory.context_builder = context_builder
 
         if client is not None:
-            try:
-                client.context_builder = context_builder
-            except Exception:
-                logger.debug("failed to attach context_builder to client", exc_info=True)
-            existing_mem = getattr(client, "gpt_memory", None)
-            if existing_mem is None and gpt_memory is not None:
-                try:
-                    client.gpt_memory = gpt_memory
-                    existing_mem = gpt_memory
-                except Exception:
-                    logger.debug("failed to attach gpt_memory to client", exc_info=True)
-            if existing_mem is not None:
-                try:
-                    existing_mem.context_builder = context_builder
-                except Exception:
-                    logger.debug(
-                        "failed to attach context_builder to client's gpt_memory",
-                        exc_info=True,
-                    )
             self.client = client
-        elif gpt_memory is not None:
+            self.client.context_builder = context_builder
+            existing_mem = getattr(self.client, "gpt_memory", None)
+            if existing_mem is None and self.gpt_memory is not None:
+                self.client.gpt_memory = self.gpt_memory
+                existing_mem = self.gpt_memory
+            if existing_mem is not None:
+                existing_mem.context_builder = context_builder
+        elif self.gpt_memory is not None:
             try:
                 self.client = ChatGPTClient(
-                    gpt_memory=gpt_memory, context_builder=context_builder
+                    gpt_memory=self.gpt_memory, context_builder=context_builder
                 )
             except Exception:  # pragma: no cover - optional dependency
                 logger.debug("failed to initialize ChatGPTClient", exc_info=True)
