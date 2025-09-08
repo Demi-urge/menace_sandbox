@@ -15,7 +15,9 @@ The linter also detects calls to ``LLMClient.generate`` or similar ``.generate``
 wrappers whose class name ends with ``Client``, ``Provider`` or ``Wrapper`` and
 requires a ``context_builder`` keyword.  These calls are reported when the
 argument is absent and no ``# nocb`` marker is present on the line or the one
-directly above.
+directly above.  Assignments or ``functools.partial`` wrappers of such
+``.generate`` methods are tracked so that subsequent calls through variables or
+partials are likewise validated.
 
 Furthermore, the linter searches for imports or calls to
 ``get_default_context_builder`` outside of test directories.  Such usage is
@@ -42,6 +44,7 @@ REQUIRED_NAMES = {
 }
 
 GENERATE_WRAPPER_SUFFIXES = ("client", "provider", "wrapper")
+PARTIAL_NAMES = {"partial", "functools.partial"}
 
 
 def iter_python_files(root: Path):
@@ -95,6 +98,9 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         )
 
     class Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.generate_aliases: set[str] = set()
+
         @staticmethod
         def _has_none_default(arg: ast.arg, default: ast.AST | None) -> bool:
             return bool(
@@ -131,16 +137,50 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     if NOCB_MARK not in line:
                         errors.append((line_no, "context_builder default None"))
 
+        def _record_alias(self, targets: list[ast.expr], value: ast.AST) -> None:
+            names = [t.id for t in targets if isinstance(t, ast.Name)]
+            if not names:
+                return
+
+            if isinstance(value, ast.Attribute):
+                name = full_name(value)
+                if name and is_generate_wrapper(name):
+                    self.generate_aliases.update(names)
+            elif isinstance(value, ast.Call):
+                call_name = full_name(value.func)
+                if call_name in PARTIAL_NAMES and value.args:
+                    first = value.args[0]
+                    gen_name = full_name(first)
+                    if gen_name and is_generate_wrapper(gen_name):
+                        if not any(kw.arg == "context_builder" for kw in value.keywords):
+                            self.generate_aliases.update(names)
+
+        def visit_Assign(self, node: ast.Assign) -> None:  # noqa: D401
+            self._record_alias(node.targets, node.value)
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: D401
+            target = node.target
+            value = node.value
+            if isinstance(target, ast.Name) and value is not None:
+                self._record_alias([target], value)
+            self.generic_visit(node)
+
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
             name_full = full_name(node.func)
             name_simple = name_full.split(".")[-1] if name_full else None
 
-            if name_simple == DEFAULT_BUILDER_NAME:
+            if isinstance(node.func, ast.Name) and node.func.id in self.generate_aliases:
+                has_kw = any(kw.arg == "context_builder" for kw in node.keywords)
+                target = node.func.id
+            elif name_simple == DEFAULT_BUILDER_NAME:
                 line_no = node.lineno
                 line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                 prev = lines[line_no - 2] if line_no >= 2 else ""
                 if NOCB_MARK not in line and NOCB_MARK not in prev:
                     errors.append((line_no, DEFAULT_BUILDER_NAME))
+                self.generic_visit(node)
+                return
             else:
                 has_kw = any(kw.arg == "context_builder" for kw in node.keywords)
                 target = None
@@ -150,12 +190,30 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     target = name_full
                 elif name_full and is_generate_wrapper(name_full):
                     target = name_full
-                if target and not has_kw:
-                    line_no = node.lineno
-                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
-                    prev = lines[line_no - 2] if line_no >= 2 else ""
-                    if NOCB_MARK not in line and NOCB_MARK not in prev:
-                        errors.append((line_no, target))
+                elif isinstance(node.func, ast.Call):
+                    inner = node.func
+                    inner_name = full_name(inner.func)
+                    if inner_name in PARTIAL_NAMES and inner.args:
+                        first = inner.args[0]
+                        gen_name = full_name(first)
+                        if gen_name and (
+                            is_generate_wrapper(gen_name)
+                            or gen_name in self.generate_aliases
+                        ):
+                            has_kw = has_kw or any(
+                                kw.arg == "context_builder" for kw in inner.keywords
+                            )
+                            target = gen_name
+
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id in self.generate_aliases
+            ) or (target and not has_kw):
+                line_no = node.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append((line_no, target or node.func.id))
 
             self.generic_visit(node)
 
