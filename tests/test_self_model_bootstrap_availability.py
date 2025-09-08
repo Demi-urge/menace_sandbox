@@ -64,9 +64,20 @@ def test_self_model_bootstrap_returns_identifier(monkeypatch):
     dbm_mod.DB_PATH = ""
     monkeypatch.setitem(sys.modules, "menace.database_manager", dbm_mod)
 
+    cb_mod = types.ModuleType("vector_service.context_builder")
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            return None
+
+    cb_mod.ContextBuilder = DummyBuilder
+    monkeypatch.setitem(sys.modules, "vector_service.context_builder", cb_mod)
+
+    sys.modules.pop("menace.self_model_bootstrap", None)
+
     import menace.self_model_bootstrap as smb
     monkeypatch.setattr(smb.Path, "glob", lambda self, pattern: [])
-    assert smb.bootstrap() == 7
+    assert smb.bootstrap(context_builder=DummyBuilder()) == 7
 
 
 def test_bootstrap_missing_module_raises(monkeypatch):

@@ -249,7 +249,9 @@ class MenaceOrchestrator:
             try:
                 from .self_model_bootstrap import bootstrap as self_bootstrap
 
-                self.model_id = self_bootstrap()
+                self.model_id = self_bootstrap(
+                    context_builder=self.context_builder
+                )
             except Exception:
                 self.logger.exception("self bootstrap failed")
         self.restart_callback = on_restart

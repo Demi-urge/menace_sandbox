@@ -7119,7 +7119,14 @@ class SelfImprovementEngine:
             except Exception as exc:
                 self.logger.exception("roi energy adjustment failed: %s", exc)
             energy = max(1, min(int(energy), 100))
-            model_id = bootstrap()
+            model_id = bootstrap(
+                context_builder=ContextBuilder(
+                    bots_db="bots.db",
+                    code_db="code.db",
+                    errors_db="errors.db",
+                    workflows_db="workflows.db",
+                )
+            )
             self.logger.info("model bootstrapped", extra=log_record(model_id=model_id))
             self.info_db.set_current_model(model_id)
             self._record_state()
