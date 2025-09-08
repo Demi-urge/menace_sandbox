@@ -170,6 +170,35 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             name_full = full_name(node.func)
             name_simple = name_full.split(".")[-1] if name_full else None
 
+            if name_simple == "getattr":
+                second: ast.AST | None = None
+                third: ast.AST | None = None
+                if len(node.args) >= 2:
+                    second = node.args[1]
+                else:
+                    for kw in node.keywords:
+                        if kw.arg == "name":
+                            second = kw.value
+                if len(node.args) >= 3:
+                    third = node.args[2]
+                else:
+                    for kw in node.keywords:
+                        if kw.arg == "default":
+                            third = kw.value
+                if (
+                    isinstance(second, ast.Constant)
+                    and second.value == "context_builder"
+                    and isinstance(third, ast.Constant)
+                    and third.value is None
+                ):
+                    line_no = node.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append((line_no, "getattr context_builder default None"))
+                self.generic_visit(node)
+                return
+
             if isinstance(node.func, ast.Name) and node.func.id in self.generate_aliases:
                 has_kw = any(kw.arg == "context_builder" for kw in node.keywords)
                 target = node.func.id
