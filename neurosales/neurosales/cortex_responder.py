@@ -8,6 +8,7 @@ from .response_generation import ResponseCandidateGenerator
 from .scoring import CandidateResponseScorer, ResponsePriorityQueue
 from .external_integrations import GPT4Client, PineconeLogger
 from typing import TYPE_CHECKING
+from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - hints only
     from .user_preferences import PreferenceProfile
@@ -45,9 +46,7 @@ class CortexAwareResponder:
         pinecone_env: str,
         pg: Optional[InMemoryResponseDB] = None,
     ) -> None:
-        from vector_service.context_builder import ContextBuilder
-
-        self.client = GPT4Client(openai_key, context_builder=ContextBuilder())
+        self.client = GPT4Client(openai_key, context_builder=create_context_builder())
         self.pinecone = PineconeLogger(
             pinecone_index, api_key=pinecone_key, environment=pinecone_env
         )

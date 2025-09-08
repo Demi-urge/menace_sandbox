@@ -14,7 +14,7 @@ import platform
 import subprocess
 from sandbox_settings import SandboxSettings, load_sandbox_settings
 from dynamic_path_router import resolve_path, path_for_prompt
-from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 try:  # optional dependency
     from scipy.stats import pearsonr, t, levene
 except Exception:  # pragma: no cover - fallback when scipy is missing
@@ -169,7 +169,7 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
         return
 
     preset = presets[0]
-    builder = ContextBuilder()
+    builder = create_context_builder()
     sandbox_main(preset, args, builder)
     if _SandboxMetaLogger is not None:
         try:
@@ -402,7 +402,7 @@ def _capture_run(preset: dict[str, str], args: argparse.Namespace):
     from sandbox_runner import _sandbox_main
 
     holder: dict[str, Any] = {}
-    builder = ContextBuilder()
+    builder = create_context_builder()
 
     def wrapper(p: dict[str, str], a: argparse.Namespace):
         holder["tracker"] = _sandbox_main(p, a, builder)
@@ -1875,7 +1875,7 @@ def main(argv: List[str] | None = None) -> None:
             run_workflow_simulations,
             load_scenario_summary,
         )
-        builder = ContextBuilder()
+        builder = create_context_builder()
         run_workflow_simulations(
             args.workflow_db,
             dynamic_workflows=args.dynamic_workflows,

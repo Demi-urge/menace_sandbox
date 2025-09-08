@@ -22,7 +22,8 @@ partials are likewise validated.
 Furthermore, the linter searches for imports or calls to
 ``get_default_context_builder`` outside of test directories.  Such usage is
 reported unless the offending line (or the one immediately above it) contains a
-``# nocb`` marker.
+``# nocb`` marker.  Calls to ``create_context_builder`` are allowed and
+considered valid ``ContextBuilder`` instantiations.
 """
 from __future__ import annotations
 
@@ -34,6 +35,12 @@ ROOT = Path(__file__).resolve().parent.parent
 NOCB_MARK = "# nocb"
 
 DEFAULT_BUILDER_NAME = "get_default_context_builder"
+HELPER_NAMES = {
+    "create_context_builder",
+    "config.create_context_builder.create_context_builder",
+    "menace_sandbox.config.create_context_builder.create_context_builder",
+    "context_builder_util.create_context_builder",
+}
 REQUIRED_NAMES = {
     "PromptEngine",
     "_build_prompt",
@@ -317,9 +324,9 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         if not isinstance(node, ast.Call):
             continue
         name = full_name(node.func)
-        if not name or (
-            name != "ContextBuilder" and not name.endswith(".ContextBuilder")
-        ):
+        if not name or name in HELPER_NAMES:
+            continue
+        if name != "ContextBuilder" and not name.endswith(".ContextBuilder"):
             continue
 
         strings: list[str] = []

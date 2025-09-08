@@ -16,6 +16,7 @@ import os
 import sys
 import yaml
 from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -587,12 +588,7 @@ _INPUT_HISTORY_DB: InputHistoryDB | None = None
 KNOWLEDGE_GRAPH = KnowledgeGraph()
 ERROR_LOGGER = ErrorLogger(
     knowledge_graph=KNOWLEDGE_GRAPH,
-    context_builder=ContextBuilder(
-        "bots.db",
-        "code.db",
-        "errors.db",
-        "workflows.db",
-    ),
+    context_builder=create_context_builder(),
 )
 ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
@@ -1085,12 +1081,7 @@ def _get_history_db() -> InputHistoryDB:
 if DiagnosticManager is not None:
     try:
         _DIAGNOSTIC = DiagnosticManager(
-            context_builder=ContextBuilder(
-                "bots.db",
-                "code.db",
-                "errors.db",
-                "workflows.db",
-            )
+            context_builder=create_context_builder()
         )
     except (OSError, RuntimeError) as exc:  # pragma: no cover - diagnostics optional
         logger.warning(
@@ -7161,7 +7152,8 @@ def run_repo_section_simulations(
             for module, sec_map in sections.items():
                 tmp_dir = tempfile.mkdtemp(prefix="section_")
                 shutil.copytree(repo_path, tmp_dir, dirs_exist_ok=True)
-                builder = ContextBuilder(db_weights=base_builder.db_weights)
+                builder = create_context_builder()
+                builder.db_weights = base_builder.db_weights
                 debugger = SelfDebuggerSandbox(
                     object(),
                     SelfCodingEngine(
@@ -7994,14 +7986,12 @@ def try_integrate_into_workflows(
     test_paths = [
         (repo / m).as_posix() for mods in candidates.values() for m in mods
     ]
-    from vector_service.context_builder import ContextBuilder
-
     svc = SelfTestService(
         include_orphans=False,
         discover_orphans=False,
         discover_isolated=False,
         integration_callback=None,
-        context_builder=ContextBuilder(),
+        context_builder=create_context_builder(),
     )
     try:
         loop = asyncio.new_event_loop()
@@ -8336,7 +8326,8 @@ def run_workflow_simulations(
         for wf in workflows:
             for step in wf.workflow:
                 snippet = _wf_snippet([step])
-                builder = ContextBuilder(db_weights=base_builder.db_weights)
+                builder = create_context_builder()
+                builder.db_weights = base_builder.db_weights
                 debugger = SelfDebuggerSandbox(
                     object(),
                     SelfCodingEngine(
@@ -8767,8 +8758,6 @@ def auto_include_modules(
             try:
                 from self_test_service import SelfTestService
 
-                from vector_service.context_builder import ContextBuilder
-
                 svc = SelfTestService(
                     pytest_args=mod,
                     include_orphans=False,
@@ -8779,7 +8768,7 @@ def auto_include_modules(
                     auto_include_isolated=True,
                     include_redundant=settings.test_redundant_modules,
                     disable_auto_integration=True,
-                    context_builder=ContextBuilder(),
+                    context_builder=create_context_builder(),
                 )
                 res = svc.run_once()
                 result = res[0] if isinstance(res, tuple) else res
@@ -8916,7 +8905,7 @@ def auto_include_modules(
     except Exception:
         logger.exception('unexpected error')
 
-    baseline_result = run_workflow_simulations(router=router, context_builder=ContextBuilder())
+    baseline_result = run_workflow_simulations(router=router, context_builder=create_context_builder())
     baseline_tracker = (
         baseline_result[0] if isinstance(baseline_result, tuple) else baseline_result
     )
@@ -8935,7 +8924,7 @@ def auto_include_modules(
     low_roi_mods: list[str] = []
     for mod in mods:
         ids = generate_workflows_for_modules([mod], router=router)
-        result = run_workflow_simulations(router=router, context_builder=ContextBuilder())
+        result = run_workflow_simulations(router=router, context_builder=create_context_builder())
         tracker = result[0] if isinstance(result, tuple) else result
         new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
         delta = new_roi - baseline_roi
@@ -9016,7 +9005,7 @@ def auto_include_modules(
     except Exception:
         logger.exception('unexpected error')
 
-    result = run_workflow_simulations(router=router, context_builder=ContextBuilder())
+    result = run_workflow_simulations(router=router, context_builder=create_context_builder())
     tracker = result[0] if isinstance(result, tuple) else result
     new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
     if new_roi < pre_integrate_roi:

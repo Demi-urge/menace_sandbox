@@ -42,6 +42,7 @@ try:  # pragma: no cover - optional dependency for type hints
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback for flat layout
     from vector_service.context_builder import ContextBuilder  # type: ignore
+from context_builder_util import create_context_builder
 MENACE_ID = uuid.uuid4().hex
 
 try:  # pragma: no cover - compatibility with pydantic v1/v2
@@ -3321,7 +3322,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_redundant=args.include_redundant,
             report_dir=args.report_dir,
             ephemeral=args.ephemeral,
-            context_builder=ContextBuilder(),
+            context_builder=create_context_builder(),
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -3367,7 +3368,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_redundant=args.include_redundant,
             report_dir=args.report_dir,
             ephemeral=args.ephemeral,
-            context_builder=ContextBuilder(),
+            context_builder=create_context_builder(),
         )
         try:
             service.run_scheduled(
@@ -3393,7 +3394,7 @@ def cli(argv: list[str] | None = None) -> int:
             container_runtime=args.container_runtime,
             docker_host=args.docker_host,
             container_retries=args.retries,
-            context_builder=ContextBuilder(),
+            context_builder=create_context_builder(),
         )
         try:
             asyncio.run(service._cleanup_containers())

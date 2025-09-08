@@ -29,6 +29,7 @@ from vector_service import (
     FallbackResult,
 )
 from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 from vector_service.patch_logger import RoiTag
 try:  # pragma: no cover - optional dependency
     from roi_tracker import ROITracker
@@ -80,7 +81,7 @@ def create_app(builder: ContextBuilder | None = None) -> FastAPI:
 
     global _builder, _cognition_layer, _patch_logger, _backfill, _ranker_scheduler, _retriever
 
-    _builder = builder or ContextBuilder()
+    _builder = builder or create_context_builder()
     _retriever = Retriever(context_builder=_builder)
     try:
         _builder.refresh_db_weights()

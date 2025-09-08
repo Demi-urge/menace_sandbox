@@ -3,7 +3,7 @@ import sys
 from dotenv import load_dotenv
 from neurosales import config
 from billing.openai_wrapper import chat_completion_create
-from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 
 load_dotenv()
 
@@ -13,7 +13,7 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
         print("OpenAI disabled")
         return True
     try:
-        builder = ContextBuilder()
+        builder = create_context_builder()
     except Exception as e:
         print(f"ContextBuilder initialization error: {e}")
         return False

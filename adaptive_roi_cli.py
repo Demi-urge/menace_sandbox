@@ -21,7 +21,7 @@ from .roi_tracker import ROITracker
 from .truth_adapter import TruthAdapter
 from .composite_workflow_scorer import CompositeWorkflowScorer
 from .roi_results_db import ROIResultsDB
-from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 import db_router
 from .dynamic_path_router import resolve_path
 
@@ -206,7 +206,7 @@ def _workflow_eval(args: argparse.Namespace) -> None:
     scorer = CompositeWorkflowScorer(
         tracker=ROITracker(), results_db=ROIResultsDB(args.db_path)
     )
-    builder = ContextBuilder()
+    builder = create_context_builder()
     try:
         builder.refresh_db_weights()
     except Exception:  # pragma: no cover - best effort refresh

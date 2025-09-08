@@ -12,14 +12,14 @@ from metrics_dashboard import MetricsDashboard
 from dynamic_path_router import resolve_path
 from pathlib import Path
 from threading import Thread
-from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 
 
 def _capture_run(preset: Dict[str, str], args: argparse.Namespace):
     holder = {}
 
     def wrapper(p: Dict[str, str], a: argparse.Namespace):
-        builder = ContextBuilder()
+        builder = create_context_builder()
         holder['tracker'] = _sandbox_main(p, a, builder)
 
     _run_sandbox(args, sandbox_main=wrapper)
