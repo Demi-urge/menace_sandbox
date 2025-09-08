@@ -48,6 +48,7 @@ jobs:
         run: pip install pre-commit
       - name: Enforce ContextBuilder usage
         run: pre-commit run check-context-builder-usage --all-files
+        # Fails the build if any prompt-generating call lacks a context_builder.
 
   tests:
     runs-on: ubuntu-latest
