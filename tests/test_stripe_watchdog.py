@@ -49,6 +49,8 @@ _dpr.resolve_path = _fake_resolve
 
 import stripe_watchdog as sw  # noqa: E402
 
+BUILDER = SimpleNamespace(build=lambda *a, **k: "")
+
 
 @pytest.fixture
 def capture_anomalies(monkeypatch, tmp_path):
@@ -236,7 +238,7 @@ def test_env_allowed_webhook(monkeypatch):
     monkeypatch.setattr(sw, "stripe", fake_stripe)
     monkeypatch.setenv("STRIPE_ALLOWED_WEBHOOKS", "we_env")
 
-    unknown = sw.check_webhook_endpoints(api_key="sk_test")
+    unknown = sw.check_webhook_endpoints(api_key="sk_test", context_builder=BUILDER)
 
     assert unknown == []
 
@@ -247,7 +249,9 @@ def test_unexpected_refund(capture_anomalies):
     ledger: list[dict] = []
     refunds = [{"id": "rf_1", "amount": 500, "charge": "ch_1"}]
 
-    anomalies = sw.detect_missing_refunds(refunds, ledger, write_codex=True)
+    anomalies = sw.detect_missing_refunds(
+        refunds, ledger, write_codex=True, context_builder=BUILDER
+    )
 
     assert anomalies and anomalies[0]["refund_id"] == "rf_1"
     assert anomalies[0]["module"] == sw.BILLING_ROUTER_MODULE
@@ -273,7 +277,7 @@ def test_unauthorized_refund_triggers_audit_and_codex(capture_anomalies):
     logs = [{"stripe_id": "rf_orphan", "bot_id": "bot_a"}]
 
     anomalies = sw.detect_unauthorized_refunds(
-        refunds, ledger, logs, ["bot_a"], write_codex=True
+        refunds, ledger, logs, ["bot_a"], write_codex=True, context_builder=BUILDER
     )
 
     assert anomalies and anomalies[0]["refund_id"] == "rf_orphan"
@@ -304,7 +308,9 @@ def test_failed_event_missing_logs(capture_anomalies):
         {"id": "evt_1", "type": "charge.failed", "account": "acct"}
     ]
 
-    anomalies = sw.detect_failed_events(stripe_events, ledger, write_codex=True)
+    anomalies = sw.detect_failed_events(
+        stripe_events, ledger, write_codex=True, context_builder=BUILDER
+    )
 
     assert anomalies and anomalies[0]["event_id"] == "evt_1"
     assert anomalies[0]["module"] == sw.BILLING_ROUTER_MODULE
@@ -332,7 +338,7 @@ def test_unauthorized_failure_triggers_audit_and_codex(capture_anomalies):
     logs = [{"stripe_id": "evt_orphan", "bot_id": "bot_a"}]
 
     anomalies = sw.detect_unauthorized_failures(
-        stripe_events, ledger, logs, ["bot_a"], write_codex=True
+        stripe_events, ledger, logs, ["bot_a"], write_codex=True, context_builder=BUILDER
     )
 
     assert anomalies and anomalies[0]["event_id"] == "evt_orphan"
@@ -366,7 +372,9 @@ def test_revenue_mismatch(monkeypatch, capture_anomalies):
     monkeypatch.setattr(sw, "fetch_recent_refunds", lambda api_key, s, e: refunds)
     monkeypatch.setattr(sw, "_projected_revenue_between", lambda s, e: 200.0)
 
-    summary = sw.summarize_revenue_window(0, 10, tolerance=0.1, write_codex=True)
+    summary = sw.summarize_revenue_window(
+        0, 10, tolerance=0.1, write_codex=True, context_builder=BUILDER
+    )
 
     assert summary["projected_revenue"] == 200.0
     assert summary["charge_total"] == 100.0
@@ -449,6 +457,7 @@ def test_emit_anomaly_triggers_sanity_layer(monkeypatch):
         False,
         self_coding_engine=engine,
         telemetry_feedback=telemetry,
+        context_builder=BUILDER,
     )
 
     assert calls and calls[0][0][0] == "missing_charge"
@@ -471,7 +480,7 @@ def test_emit_anomaly_instruction_varies_by_event_type(monkeypatch, event_type):
     monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
     monkeypatch.setattr(sw, "ANOMALY_TRAIL", SimpleNamespace(record=lambda entry: None))
 
-    sw._emit_anomaly({"type": event_type}, False, False)
+    sw._emit_anomaly({"type": event_type}, False, False, context_builder=BUILDER)
 
     expected = sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS[event_type]
     assert calls and calls[0][2] == expected
@@ -488,6 +497,8 @@ def test_emit_anomaly_instruction_falls_back_to_generic(monkeypatch):
     monkeypatch.setattr(sw.audit_logger, "log_event", lambda *a, **k: None)
     monkeypatch.setattr(sw, "ANOMALY_TRAIL", SimpleNamespace(record=lambda entry: None))
 
-    sw._emit_anomaly({"type": "unhandled_event", "id": "x"}, False, False)
+    sw._emit_anomaly(
+        {"type": "unhandled_event", "id": "x"}, False, False, context_builder=BUILDER
+    )
 
     assert calls and calls[0][2] == sw.BILLING_EVENT_INSTRUCTION

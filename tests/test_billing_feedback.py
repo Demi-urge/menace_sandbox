@@ -16,14 +16,20 @@ MEMORY = DummyMemory()
 # Provide a lightweight menace_sanity_layer stub before importing stripe_watchdog
 sanity_stub = types.ModuleType("menace_sanity_layer")
 sanity_stub.EVENT_TYPE_INSTRUCTIONS = {
-    "missing_charge": "Avoid creating Stripe charges without billing log entries or central routing.",
+    "missing_charge": (
+        "Avoid creating Stripe charges without billing log entries or central routing."
+    ),
 }
 
 
-def record_billing_event(event_type, metadata, instruction, *, config_path=None, self_coding_engine=None):
+def record_billing_event(
+    event_type, metadata, instruction, *, config_path=None, self_coding_engine=None
+):
     MEMORY.log_interaction(
         instruction,
-        json.dumps({"event_type": event_type, "metadata": metadata}, sort_keys=True),
+        json.dumps(
+            {"event_type": event_type, "metadata": metadata}, sort_keys=True
+        ),
         tags=["billing"],
     )
     if self_coding_engine is not None:
@@ -64,7 +70,10 @@ def test_emit_anomaly_triggers_feedback(monkeypatch, tmp_path):
 
     record = {"type": "missing_charge", "id": "ch_123", "stripe_account": "acct_1"}
 
-    stripe_watchdog._emit_anomaly(record, False, False, self_coding_engine=engine)
+    builder = types.SimpleNamespace(build=lambda *a, **k: "")
+    stripe_watchdog._emit_anomaly(
+        record, False, False, self_coding_engine=engine, context_builder=builder
+    )
 
     # Instruction should be logged to GPT memory
     assert MEMORY.entries, "instruction not logged"

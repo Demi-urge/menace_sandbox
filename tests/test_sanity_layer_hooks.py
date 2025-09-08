@@ -38,6 +38,7 @@ def test_emit_anomaly_triggers_record_event(monkeypatch):
         False,
         self_coding_engine=engine,
         telemetry_feedback=telemetry,
+        context_builder=types.SimpleNamespace(build=lambda *a, **k: ""),
     )
 
     assert calls and calls[0][0] == "missing_charge"
@@ -345,7 +346,9 @@ def test_emit_anomaly_records_all_outputs(event_type, record, monkeypatch, tmp_p
     monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
     monkeypatch.setattr(sw, "load_api_key", lambda: None)
 
-    sw._emit_anomaly(record, False, False)
+    sw._emit_anomaly(
+        record, False, False, context_builder=types.SimpleNamespace(build=lambda *a, **k: "")
+    )
 
     rows = router.local_conn.execute(
         "SELECT event_type, metadata, severity FROM billing_anomalies"
