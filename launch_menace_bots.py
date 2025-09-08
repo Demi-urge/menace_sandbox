@@ -125,9 +125,7 @@ def debug_and_deploy(
         code_db = CodeDB()
     memory_mgr = MenaceMemoryManager()
     context_builder.refresh_db_weights()
-    engine = SelfCodingEngine(
-        code_db, memory_mgr, context_builder=context_builder
-    )
+    engine = SelfCodingEngine(code_db, memory_mgr, context_builder=context_builder)
     error_db = ErrorDB(router=GLOBAL_ROUTER)
     tester = BotTestingBot()
     # instantiate telemetry logger for completeness
@@ -151,10 +149,13 @@ def debug_and_deploy(
         ) -> list[str]:
             menace_id = self.db._menace_id(source_menace_id)
             clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
-            query = apply_scope(
-                "SELECT stack_trace FROM telemetry",
-                clause,
-            ) + " ORDER BY id DESC LIMIT ?"
+            query = (
+                apply_scope(
+                    "SELECT stack_trace FROM telemetry",
+                    clause,
+                )
+                + " ORDER BY id DESC LIMIT ?"
+            )
             cur = self.db.conn.execute(query, [*params, limit])
             return [str(r[0]) for r in cur.fetchall()]
 
@@ -166,10 +167,13 @@ def debug_and_deploy(
         ) -> dict[str, int]:
             menace_id = self.db._menace_id(source_menace_id)
             clause, params = build_scope_clause("telemetry", Scope(scope), menace_id)
-            query = apply_scope(
-                "SELECT root_module, COUNT(*) FROM telemetry",
-                clause,
-            ) + " GROUP BY root_module"
+            query = (
+                apply_scope(
+                    "SELECT root_module, COUNT(*) FROM telemetry",
+                    clause,
+                )
+                + " GROUP BY root_module"
+            )
             cur = self.db.conn.execute(query, params)
             return {str(r[0]): int(r[1]) for r in cur.fetchall()}
 
@@ -180,6 +184,7 @@ def debug_and_deploy(
                 SelfDebuggerSandbox as _SelfDebuggerSandbox,
             )
         except Exception:
+
             class _SelfDebuggerSandbox:  # pragma: no cover - test fallback
                 def __init__(self, *a, **k) -> None:  # noqa: D401
                     """Fallback stub when SelfDebuggerSandbox is unavailable."""
@@ -225,7 +230,9 @@ def debug_and_deploy(
         print("No Python modules found to test")
         return
 
-    module_names = [".".join(p.with_suffix("").relative_to(repo).parts) for p in module_paths]
+    module_names = [
+        ".".join(p.with_suffix("").relative_to(repo).parts) for p in module_paths
+    ]
 
     # 1) planning and optimisation -> development
     tasks = []
@@ -273,10 +280,14 @@ def debug_and_deploy(
     # Deployment specification built from static resource estimates
     resources = {t.name: t.resources for t in tasks}
     telem_counts = _TelemProxy(error_db).patterns()
-    spec = DeploymentSpec(name="menace", resources=resources, env={
-        f"ERR_{k.upper()}": str(v) for k, v in telem_counts.items()
-    })
-    deployer.deploy("menace", [p.stem for p in module_paths], spec, override_veto=override_veto)
+    spec = DeploymentSpec(
+        name="menace",
+        resources=resources,
+        env={f"ERR_{k.upper()}": str(v) for k, v in telem_counts.items()},
+    )
+    deployer.deploy(
+        "menace", [p.stem for p in module_paths], spec, override_veto=override_veto
+    )
 
 
 def main() -> None:
@@ -292,9 +303,10 @@ def main() -> None:
         help="Bypass governance vetoes when override is allowed",
     )
     args = parser.parse_args()
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     debug_and_deploy(
         Path(args.repo),
-        context_builder=ContextBuilder(),
+        context_builder=builder,
         jobs=args.jobs,
         override_veto=args.override_veto,
     )

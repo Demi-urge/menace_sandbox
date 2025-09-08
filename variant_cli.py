@@ -19,13 +19,21 @@ def main() -> None:  # pragma: no cover - CLI glue
     parser = argparse.ArgumentParser(description="Spawn and test a variant")
     parser.add_argument("patch_id", type=int, help="Parent patch or event id")
     parser.add_argument("variant", help="Name for the new variant")
+    parser.add_argument("--bots-db", default="bots.db", help="Path to bots DB")
+    parser.add_argument("--code-db", default="code.db", help="Path to code DB")
+    parser.add_argument("--errors-db", default="errors.db", help="Path to errors DB")
+    parser.add_argument(
+        "--workflows-db", default="workflows.db", help="Path to workflows DB"
+    )
     args = parser.parse_args()
 
     lineage = MutationLineage()
     # Clone the branch explicitly so operators can see the new patch id
     new_patch = lineage.clone_branch_for_ab_test(args.patch_id, args.variant)
 
-    builder = ContextBuilder()
+    builder = ContextBuilder(
+        args.bots_db, args.code_db, args.errors_db, args.workflows_db
+    )
     exp_mgr = ExperimentManager(
         DataBot(),
         CapitalManagementBot(),
