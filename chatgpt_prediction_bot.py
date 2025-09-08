@@ -6,9 +6,9 @@ model when available.  If scikit-learn is missing, a small logistic regression
 :class:`ChatGPTPredictionBot` will emit a warning when falling back to this
 simplified implementation.
 
-When using the bot's LLM features (``gpt_memory`` or ``client``), callers must
-provide a :class:`~vector_service.context_builder.ContextBuilder` instance to
-build the necessary context.
+Callers must provide a :class:`~vector_service.context_builder.ContextBuilder`
+instance which is used to build compressed context from local databases for
+all LLM prompts.
 """
 
 from __future__ import annotations
@@ -52,18 +52,24 @@ try:  # pragma: no cover - optional dependency
     from .chatgpt_idea_bot import ChatGPTClient
 except BaseException:  # pragma: no cover - missing or failing dependency
     ChatGPTClient = None  # type: ignore
-from vector_service.context_builder import ContextBuilder  # noqa: E402
 from gpt_memory_interface import GPTMemoryInterface  # noqa: E402
+from snippet_compressor import compress_snippets  # noqa: E402
+from vector_service.context_builder import ContextBuilder, FallbackResult  # noqa: E402
 try:  # memory-aware wrapper
-    from .memory_aware_gpt_client import ask_with_memory
+    from .memory_aware_gpt_client import ask_with_memory  # noqa: E402
 except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore  # noqa: E402
 try:  # canonical tag constants
-    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # noqa: E402
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
+    from log_tags import (  # type: ignore  # noqa: E402
+        FEEDBACK,
+        IMPROVEMENT_PATH,
+        ERROR_FIX,
+        INSIGHT,
+    )
 try:  # pragma: no cover - optional dependency
-    from sentence_transformers import SentenceTransformer, util as st_util
+    from sentence_transformers import SentenceTransformer, util as st_util  # noqa: E402
 except Exception:  # pragma: no cover - optional dependency
     SentenceTransformer = None  # type: ignore
     st_util = None  # type: ignore
@@ -87,6 +93,11 @@ except Exception:  # pragma: no cover - optional dependency
     FileLock = None  # type: ignore
 
 from dynamic_path_router import resolve_path  # noqa: E402
+try:  # pragma: no cover - optional dependency
+    from vector_service import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - fallback when service missing
+    class ErrorResult(Exception):
+        """Fallback placeholder when vector service is unavailable."""
 
 
 def _resolve_model_path(path_str: str) -> Path:
@@ -670,8 +681,10 @@ class EnhancementEvaluation:
 class ChatGPTPredictionBot:
     """Evaluate business ideas using a trained ML model.
 
-    LLM-driven predictions require both ``gpt_memory`` (or a ``client`` using
-    one) and a :class:`~vector_service.context_builder.ContextBuilder`.
+    A :class:`~vector_service.context_builder.ContextBuilder` is always
+    required and supplies compact context for any LLM-driven interactions.  An
+    optional ``gpt_memory`` or pre-configured ``client`` can be provided for
+    memory-aware predictions.
     """
 
     def __init__(
@@ -679,7 +692,7 @@ class ChatGPTPredictionBot:
         model_path: Path | str | None = None,
         threshold: float | None = None,
         *,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         client: ChatGPTClient | None = None,
         gpt_memory: GPTMemoryInterface | None = None,
         **model_kwargs,
@@ -687,16 +700,10 @@ class ChatGPTPredictionBot:
         """Load a trained model or fall back to the internal pipeline.
 
         A warning is logged when scikit-learn is unavailable and the simplified
-        pipeline is used.  When ``gpt_memory`` or ``client`` is supplied, a
-        ``ContextBuilder`` must also be provided.
+        pipeline is used.
         """
 
-        if gpt_memory is not None and context_builder is None:
-            raise ValueError("context_builder is required when gpt_memory is provided")
-        if client is not None and context_builder is None:
-            raise ValueError("context_builder is required when client is provided")
-        if context_builder is not None:
-            context_builder.refresh_db_weights()
+        context_builder.refresh_db_weights()
 
         self.model_path = Path(model_path) if model_path else CFG.model_path
         self.threshold = float(threshold) if threshold is not None else CFG.threshold
@@ -903,6 +910,22 @@ class ChatGPTPredictionBot:
                     f"Evaluate enhancement '{clean_idea}' with rationale '{clean_rationale}'."
                     " Provide brief feedback."
                 )
+                vec_ctx = ""
+                try:
+                    ctx_res = self.context_builder.build(
+                        f"{clean_idea} {clean_rationale}"
+                    )
+                    vec_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+                    if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
+                        vec_ctx = ""
+                    elif vec_ctx:
+                        vec_ctx = compress_snippets({"snippet": vec_ctx}).get(
+                            "snippet", vec_ctx
+                        )
+                except Exception:
+                    vec_ctx = ""
+                if vec_ctx:
+                    prompt = f"{vec_ctx}\n\n{prompt}"
                 ask_with_memory(
                     client,
                     "chatgpt_prediction_bot.evaluate_enhancement",
