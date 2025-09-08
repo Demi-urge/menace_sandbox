@@ -85,5 +85,5 @@ def test_memory_without_builder_errors(monkeypatch):
     mem = FakeMemory()
     monkeypatch.setattr(cpb, "joblib", None)
     monkeypatch.setattr(cpb, "sentiment_score", lambda text: 0.0)
-    with pytest.raises(TypeError):
-        cpb.ChatGPTPredictionBot(gpt_memory=mem)
+    with pytest.raises(AttributeError):
+        cpb.ChatGPTPredictionBot(gpt_memory=mem, context_builder=None)

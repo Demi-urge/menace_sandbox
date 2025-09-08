@@ -707,19 +707,36 @@ class ChatGPTPredictionBot:
 
         self.model_path = Path(model_path) if model_path else CFG.model_path
         self.threshold = float(threshold) if threshold is not None else CFG.threshold
-        self.gpt_memory = gpt_memory
         self.context_builder = context_builder
+        if gpt_memory is not None:
+            try:
+                gpt_memory.context_builder = context_builder
+            except Exception:
+                logger.debug(
+                    "failed to attach context_builder to gpt_memory", exc_info=True
+                )
+        self.gpt_memory = gpt_memory
 
         if client is not None:
             try:
                 client.context_builder = context_builder
             except Exception:
                 logger.debug("failed to attach context_builder to client", exc_info=True)
-            if getattr(client, "gpt_memory", None) is None and gpt_memory is not None:
+            existing_mem = getattr(client, "gpt_memory", None)
+            if existing_mem is None and gpt_memory is not None:
                 try:
                     client.gpt_memory = gpt_memory
+                    existing_mem = gpt_memory
                 except Exception:
                     logger.debug("failed to attach gpt_memory to client", exc_info=True)
+            if existing_mem is not None:
+                try:
+                    existing_mem.context_builder = context_builder
+                except Exception:
+                    logger.debug(
+                        "failed to attach context_builder to client's gpt_memory",
+                        exc_info=True,
+                    )
             self.client = client
         elif gpt_memory is not None:
             try:
