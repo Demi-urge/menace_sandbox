@@ -229,6 +229,12 @@ class IPOBot:
         *,
         context_builder: ContextBuilder,
     ) -> None:
+        if not isinstance(context_builder, ContextBuilder):
+            raise TypeError("context_builder must be a ContextBuilder instance")
+        try:
+            context_builder.refresh_db_weights()
+        except Exception:  # pragma: no cover - best effort
+            logging.getLogger(__name__).exception("failed to refresh db weights")
         self.ingestor = BlueprintIngestor()
         self.searcher = BotDatabaseSearcher(db_path)
         self.decider = DecisionMaker()
@@ -243,25 +249,24 @@ class IPOBot:
         actions: List[PlanAction] = []
         for task in blueprint.tasks:
             prompt = task.name
-            if self.context_builder:
-                try:
-                    result = self.context_builder.build_context(
-                        task.name, top_k=1, return_metadata=True
-                    )
-                    meta = result[-1] if isinstance(result, tuple) else []
-                    if meta:
-                        compressed = compress_snippets(meta[0])
-                        snippet = " ".join(compressed.values())
-                        if snippet:
-                            prompt = f"{prompt} {snippet}"
-                            emb = get_embedder()
-                            if emb is not None:
-                                try:
-                                    governed_embed(snippet, emb)
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
+            try:
+                result = self.context_builder.build_context(
+                    task.name, top_k=1, return_metadata=True
+                )
+                meta = result[-1] if isinstance(result, tuple) else []
+                if meta:
+                    compressed = compress_snippets(meta[0])
+                    snippet = " ".join(compressed.values())
+                    if snippet:
+                        prompt = f"{prompt} {snippet}"
+                        emb = get_embedder()
+                        if emb is not None:
+                            try:
+                                governed_embed(snippet, emb)
+                            except Exception:
+                                self.logger.debug("embedding failed", exc_info=True)
+            except Exception:
+                self.logger.debug("context build failed", exc_info=True)
             words = re.findall(r"\w+", prompt)
             cands = self.searcher.search(words, Scope.LOCAL)
             cand = self.decider.rank(task, cands)
