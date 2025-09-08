@@ -4,10 +4,10 @@ import logging
 import sys
 from types import SimpleNamespace
 
-import pytest
 # ---------------------------------------------------------------------------
 # Helper to reload stripe_watchdog with menace_sanity_layer import failing
 # ---------------------------------------------------------------------------
+
 
 def _reload_watchdog_with_missing_sanity_layer(monkeypatch):
     """Reload stripe_watchdog simulating menace_sanity_layer import failure."""
@@ -56,7 +56,8 @@ def test_emit_anomaly_records_billing_feedback(monkeypatch):
     monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
 
     record = {"type": "missing_charge", "id": "ch_1", "stripe_account": "acct_1"}
-    sw._emit_anomaly(record, False, False)
+    builder = SimpleNamespace(build=lambda *a, **k: "")
+    sw._emit_anomaly(record, False, False, context_builder=builder)
 
     assert billing_calls and billing_calls[0][0] == "missing_charge"
     assert billing_calls[0][1]["id"] == "ch_1"

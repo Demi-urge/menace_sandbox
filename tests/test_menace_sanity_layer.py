@@ -16,11 +16,14 @@ import menace_sanity_layer as msl  # noqa: E402
 
 msl.refresh_billing_instructions()
 
+
 def _severity_map() -> dict[str, float]:
     path = Path(resolve_path("stripe_watchdog.py"))
     mod = ast.parse(path.read_text())
     for node in mod.body:
-        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "DEFAULT_SEVERITY_MAP":
+        if isinstance(node, ast.Assign) and getattr(
+            node.targets[0], "id", ""
+        ) == "DEFAULT_SEVERITY_MAP":
             return ast.literal_eval(node.value)
     return {}
 
@@ -183,7 +186,8 @@ def test_watchdog_anomaly_updates_db_memory_and_event_bus(monkeypatch, tmp_path)
     record = {"type": "overcharge", "id": "ch_1", "amount": 5}
     monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(sw, "load_api_key", lambda: None)
-    sw._emit_anomaly(record, False, False)
+    builder = types.SimpleNamespace(build=lambda *a, **k: "")
+    sw._emit_anomaly(record, False, False, context_builder=builder)
 
     anomalies = msl.list_anomalies()
     assert anomalies and anomalies[0]["event_type"] == "overcharge"

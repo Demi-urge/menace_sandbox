@@ -105,9 +105,12 @@ def test_anomaly_threshold_triggers_engine(monkeypatch, tmp_path):
     threshold = msl.PAYMENT_ANOMALY_THRESHOLD
     monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(sw, "load_api_key", lambda: None)
+    builder = types.SimpleNamespace(build=lambda *a, **k: "")
 
     for _ in range(threshold + 1):
-        sw._emit_anomaly(record, False, False, self_coding_engine=engine)
+        sw._emit_anomaly(
+            record, False, False, self_coding_engine=engine, context_builder=builder
+        )
 
     # Memory receives an entry for each anomaly
     assert len(memory.entries) == threshold + 1

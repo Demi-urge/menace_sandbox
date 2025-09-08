@@ -147,7 +147,7 @@ def test_watchdog_anomaly_reaches_consumer(monkeypatch, tmp_path):
     monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None)
     monkeypatch.setattr(sw, "load_api_key", lambda: None)
-    sw._emit_anomaly(record, False, False)
+    sw._emit_anomaly(record, False, False, context_builder=builder)
 
     # Sanity layer persisted and published event
     anomalies = msl.list_anomalies()

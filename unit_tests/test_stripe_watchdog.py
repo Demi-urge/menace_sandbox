@@ -16,6 +16,9 @@ import pytest  # noqa: E402
 import stripe_watchdog as sw  # noqa: E402
 
 
+BUILDER = SimpleNamespace(build=lambda *a, **k: "")
+
+
 @pytest.fixture
 def capture(monkeypatch, tmp_path):
     """Capture audit events and ensure logs go to a temp file."""
@@ -160,7 +163,7 @@ def test_distinct_instructions_per_anomaly_type(capture, monkeypatch):
             {"type": "missing_refund", "id": "rf"},
         ]
         for a in anomalies:
-            sw._emit_anomaly(a, False, False)
+            sw._emit_anomaly(a, False, False, context_builder=BUILDER)
         return anomalies
 
     monkeypatch.setattr(sw, "detect_missing_charges", fake_missing_charges)
@@ -174,7 +177,7 @@ def test_distinct_instructions_per_anomaly_type(capture, monkeypatch):
 
     monkeypatch.setattr(sw, "record_billing_event", fake_record)
 
-    sw.check_events()
+    sw.check_events(context_builder=BUILDER)
 
     assert len(calls) == 2
     instr1 = sw.menace_sanity_layer.EVENT_TYPE_INSTRUCTIONS["missing_charge"]
@@ -196,7 +199,9 @@ def test_webhook_endpoint_validation(capture, monkeypatch):
     )
     monkeypatch.setattr(sw, "stripe", fake_stripe)
 
-    unknown = sw.check_webhook_endpoints(api_key="sk", approved=["we_allowed"])
+    unknown = sw.check_webhook_endpoints(
+        api_key="sk", approved=["we_allowed"], context_builder=BUILDER
+    )
 
     assert unknown == ["we_bad"]
     assert events and events[0][1]["type"] == "unknown_webhook"
@@ -223,7 +228,7 @@ def test_emit_anomaly_records_billing_event_for_all_types(monkeypatch, record):
     monkeypatch.setattr(sw, "SANITY_LAYER_FEEDBACK_ENABLED", True)
     monkeypatch.setattr(sw, "load_api_key", lambda: None)
 
-    sw._emit_anomaly(record, False, False)
+    sw._emit_anomaly(record, False, False, context_builder=BUILDER)
 
     assert calls
     event_type, instruction = calls[0]
@@ -256,7 +261,9 @@ def test_config_updates_written(monkeypatch, tmp_path):
     }
 
     def fake_charges(*a, **k):
-        sw._emit_anomaly(anomaly, False, False, self_coding_engine=engine)
+        sw._emit_anomaly(
+            anomaly, False, False, self_coding_engine=engine, context_builder=BUILDER
+        )
         return [anomaly]
 
     monkeypatch.setattr(sw, "detect_missing_charges", fake_charges)
@@ -331,7 +338,9 @@ def test_detect_missing_charges_id_matching():
     ledger = [{"id": "ch1"}]
     billing_logs = [{"stripe_id": "ch2"}]
 
-    anomalies = sw.detect_missing_charges(charges, ledger, billing_logs)
+    anomalies = sw.detect_missing_charges(
+        charges, ledger, billing_logs, context_builder=BUILDER
+    )
     assert len(anomalies) == 1 and anomalies[0]["id"] == "ch3"
 
 
@@ -344,7 +353,9 @@ def test_detect_missing_refunds_id_matching():
     ledger = [{"id": "re1", "action_type": "refund"}]
     billing_logs = [{"stripe_id": "re2"}]
 
-    anomalies = sw.detect_missing_refunds(refunds, ledger, billing_logs)
+    anomalies = sw.detect_missing_refunds(
+        refunds, ledger, billing_logs, context_builder=BUILDER
+    )
     assert len(anomalies) == 1 and anomalies[0]["refund_id"] == "re3"
 
 
@@ -357,7 +368,9 @@ def test_detect_failed_events_id_matching():
     ledger = [{"id": "ev1", "action_type": "failed"}]
     billing_logs = [{"stripe_id": "ev2"}]
 
-    anomalies = sw.detect_failed_events(events, ledger, billing_logs)
+    anomalies = sw.detect_failed_events(
+        events, ledger, billing_logs, context_builder=BUILDER
+    )
     assert len(anomalies) == 1 and anomalies[0]["event_id"] == "ev3"
 
 
@@ -372,14 +385,14 @@ def test_detect_missing_charges_workflow_approval(capture):
     logs = [{"stripe_id": "ch1", "bot_id": "bot_a"}]
 
     anomalies = sw.detect_missing_charges(
-        charges, ledger, logs, approved_workflows=["bot_b"]
+        charges, ledger, logs, approved_workflows=["bot_b"], context_builder=BUILDER
     )
     assert anomalies and anomalies[0]["type"] == "unapproved_workflow"
     assert _has_alert(events)
 
     events.clear()
     anomalies = sw.detect_missing_charges(
-        charges, ledger, logs, approved_workflows=["bot_a"]
+        charges, ledger, logs, approved_workflows=["bot_a"], context_builder=BUILDER
     )
     assert anomalies == []
     assert not events
@@ -392,14 +405,14 @@ def test_detect_missing_refunds_workflow_approval(capture):
     logs = [{"stripe_id": "re1", "bot_id": "bot_a"}]
 
     anomalies = sw.detect_missing_refunds(
-        refunds, ledger, logs, approved_workflows=["bot_b"]
+        refunds, ledger, logs, approved_workflows=["bot_b"], context_builder=BUILDER
     )
     assert anomalies and anomalies[0]["type"] == "unapproved_workflow"
     assert _has_alert(events)
 
     events.clear()
     anomalies = sw.detect_missing_refunds(
-        refunds, ledger, logs, approved_workflows=["bot_a"]
+        refunds, ledger, logs, approved_workflows=["bot_a"], context_builder=BUILDER
     )
     assert anomalies == []
     assert not events
@@ -412,14 +425,14 @@ def test_detect_failed_events_workflow_approval(capture):
     logs = [{"stripe_id": "ev1", "bot_id": "bot_a"}]
 
     anomalies = sw.detect_failed_events(
-        failed_events, ledger, logs, approved_workflows=["bot_b"]
+        failed_events, ledger, logs, approved_workflows=["bot_b"], context_builder=BUILDER
     )
     assert anomalies and anomalies[0]["type"] == "unapproved_workflow"
     assert _has_alert(events)
 
     events.clear()
     anomalies = sw.detect_failed_events(
-        failed_events, ledger, logs, approved_workflows=["bot_a"]
+        failed_events, ledger, logs, approved_workflows=["bot_a"], context_builder=BUILDER
     )
     assert anomalies == []
     assert not events
@@ -453,7 +466,9 @@ def test_detect_unauthorized_charge_triggers_anomaly(monkeypatch):
     ledger: list[dict] = []
     logs = [{"stripe_id": "ch1", "bot_id": "bot_a"}]
 
-    anomalies = sw.detect_unauthorized_charges(charges, ledger, logs, ["bot_a"])
+    anomalies = sw.detect_unauthorized_charges(
+        charges, ledger, logs, ["bot_a"], context_builder=BUILDER
+    )
 
     assert anomalies and anomalies[0]["charge_id"] == "ch1"
     assert calls_emit and calls_emit[0]["type"] == "unauthorized_charge"
@@ -477,6 +492,7 @@ def test_charge_account_mismatch_triggers_anomaly(capture, monkeypatch):
         [],
         [],
         ["acct_expected"],
+        context_builder=BUILDER,
     )
     assert anomalies and anomalies[0]["type"] == "account_mismatch"
     assert events and events[0][1]["type"] == "account_mismatch"
@@ -495,6 +511,7 @@ def test_refund_account_mismatch_triggers_anomaly(capture, monkeypatch):
         refunds,
         [],
         ["acct_expected"],
+        context_builder=BUILDER,
     )
     assert anomalies and anomalies[0]["type"] == "account_mismatch"
     assert events and events[0][1]["type"] == "account_mismatch"
@@ -515,6 +532,7 @@ def test_event_account_mismatch_triggers_anomaly(capture, monkeypatch):
         [],
         failed_events,
         ["acct_expected"],
+        context_builder=BUILDER,
     )
     assert anomalies and anomalies[0]["type"] == "account_mismatch"
     assert events and events[0][1]["type"] == "account_mismatch"
