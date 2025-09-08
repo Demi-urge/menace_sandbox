@@ -346,11 +346,31 @@ class CompositeWorkflowScorer(ROIScorer):
         ) = None,
         *,
         patch_success: float | None = None,
+        context_builder: ContextBuilder,
     ) -> EvaluationResult:
-        """Backwards compatible wrapper executing sandbox simulations."""
+        """Backwards compatible wrapper executing sandbox simulations.
+
+        Parameters
+        ----------
+        workflow_id:
+            Identifier of the workflow to evaluate.
+        env_presets:
+            Optional execution environment presets passed to the sandbox runner.
+        patch_success:
+            Override for the global patch success rate when computing
+            ``patchability_score``.
+        context_builder:
+            Builder used to construct context for workflow runs. The builder's
+            database weights are refreshed prior to invoking the sandbox
+            simulations.
+        """
 
         start = time.perf_counter()
-        builder = ContextBuilder()
+        builder = context_builder
+        try:
+            builder.refresh_db_weights()
+        except Exception:  # pragma: no cover - best effort refresh
+            pass
         tracker, details = sandbox_runner.environment.run_workflow_simulations(
             workflows_db=workflow_id,
             env_presets=env_presets,

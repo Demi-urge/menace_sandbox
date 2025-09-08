@@ -50,10 +50,6 @@ sys.modules.setdefault(
     "menace_sandbox.roi_tracker", types.SimpleNamespace(ROITracker=_StubTracker)
 )
 sys.modules.setdefault("roi_tracker", sys.modules["menace_sandbox.roi_tracker"])
-sys.modules.setdefault(
-    "menace_sandbox.roi_results_db", types.SimpleNamespace(ROIResultsDB=_StubResultsDB)
-)
-sys.modules.setdefault("roi_results_db", sys.modules["menace_sandbox.roi_results_db"])
 sys.modules["menace_sandbox.sandbox_runner"] = types.SimpleNamespace(
     environment=types.SimpleNamespace(),
     WorkflowSandboxRunner=lambda: types.SimpleNamespace(
@@ -72,6 +68,17 @@ sys.modules.setdefault(
     "menace_sandbox.code_database", types.SimpleNamespace(PatchHistoryDB=_StubPatchDB)
 )
 sys.modules.setdefault("code_database", sys.modules["menace_sandbox.code_database"])
+sys.modules.setdefault("retrieval_cache", types.SimpleNamespace(RetrievalCache=object))
+
+
+class _StubContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+sys.modules.setdefault(
+    "vector_service.context_builder", types.SimpleNamespace(ContextBuilder=_StubContextBuilder)
+)
 
 from menace_sandbox.composite_workflow_scorer import CompositeWorkflowScorer  # noqa: E402
 from menace_sandbox.roi_calculator import ROICalculator  # noqa: E402
@@ -305,7 +312,8 @@ def test_evaluate_logs_run_and_workflow(monkeypatch, tmp_path):
         results_db=results_db,
         calculator_factory=lambda: ROICalculator(profiles_path=profile_path),
     )
-    result = scorer.evaluate("wf3")
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    result = scorer.evaluate("wf3", context_builder=builder)
 
     kwargs = results_db.log_result.call_args.kwargs
     assert kwargs["workflow_id"] == "wf3"

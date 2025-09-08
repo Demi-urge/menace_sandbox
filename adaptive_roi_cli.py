@@ -21,6 +21,7 @@ from .roi_tracker import ROITracker
 from .truth_adapter import TruthAdapter
 from .composite_workflow_scorer import CompositeWorkflowScorer
 from .roi_results_db import ROIResultsDB
+from vector_service.context_builder import ContextBuilder
 import db_router
 from .dynamic_path_router import resolve_path
 
@@ -205,7 +206,12 @@ def _workflow_eval(args: argparse.Namespace) -> None:
     scorer = CompositeWorkflowScorer(
         tracker=ROITracker(), results_db=ROIResultsDB(args.db_path)
     )
-    scorer.evaluate(args.workflow_id, env_presets=presets)
+    builder = ContextBuilder()
+    try:
+        builder.refresh_db_weights()
+    except Exception:  # pragma: no cover - best effort refresh
+        pass
+    scorer.evaluate(args.workflow_id, env_presets=presets, context_builder=builder)
     cur = scorer.results_db.conn.cursor()
     row = cur.execute(
         "SELECT run_id FROM workflow_results WHERE workflow_id=? ORDER BY timestamp DESC LIMIT 1",
@@ -470,4 +476,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     raise SystemExit(main())
-
