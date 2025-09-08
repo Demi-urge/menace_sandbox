@@ -21,8 +21,13 @@ import pandas as pd
 from ..db_router import GLOBAL_ROUTER, init_db_router
 from ..vector_metrics_db import VectorMetricsDB  # type: ignore
 try:  # pragma: no cover - optional dependency
+    from ..dynamic_path_router import resolve_path  # type: ignore
+except Exception:  # pragma: no cover - fallback
+    def resolve_path(p: str | Path) -> Path:  # type: ignore
+        return Path(p)
+try:  # pragma: no cover - optional dependency
     from ..vector_service import Retriever  # type: ignore
-    from ..vector_service.context_builder import ContextBuilder  # type: ignore
+    from ..context_builder_util import create_context_builder  # type: ignore
 except BaseException:  # pragma: no cover - fallback for lightweight environments
     class Retriever:  # type: ignore
         def error_frequency(self, *_args: Any, **_kw: Any) -> float:
@@ -35,8 +40,11 @@ except BaseException:  # pragma: no cover - fallback for lightweight environment
             return 0.0
 
     class ContextBuilder:  # type: ignore
-        def __init__(self) -> None:
+        def __init__(self, *_args: Any, **_kw: Any) -> None:
             self.retriever = Retriever()
+
+    def create_context_builder() -> ContextBuilder:  # type: ignore
+        return ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 
 
 router = GLOBAL_ROUTER or init_db_router("retrieval_ranker_dataset")
@@ -119,7 +127,8 @@ def _roi_delta(conn: sqlite3.Connection, action_id: Any) -> float:
         )
         if cur.fetchone():
             cur = conn.execute(
-                "SELECT roi_after - roi_before FROM roi_events WHERE action=? ORDER BY ts DESC LIMIT 1",
+                "SELECT roi_after - roi_before FROM roi_events "
+                "WHERE action=? ORDER BY ts DESC LIMIT 1",
                 (aid,),
             )
             row = cur.fetchone()
@@ -161,8 +170,10 @@ def build_dataset(
         Return a NumPy array instead of a :class:`pandas.DataFrame`.
     """
 
+    vec_db_path = resolve_path(vec_db_path)
+    resolve_path(roi_path)
     vmdb = VectorMetricsDB(vec_db_path)
-    builder = ContextBuilder()
+    builder = create_context_builder()
     retriever = builder.retriever
     roi_conn = GLOBAL_ROUTER.get_connection("roi_events")
 
