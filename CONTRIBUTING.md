@@ -75,20 +75,33 @@ no hard-coded `.py` paths slip through.
 
 ## ContextBuilder dependency
 
-Bots or services that assemble prompts or invoke LLMs must take a
-`ContextBuilder` parameter. Instantiate the builder with local database paths
-at the call site and pass it explicitly rather than relying on internal
-defaults or silent fallbacks. Tests should assert that these components fail
-fast when the builder is omitted.
+Every constructor or method that assembles prompts must accept a
+`ContextBuilder` and use it for token accounting and ROI tracking. Instantiate
+the builder with local database paths at the call site and pass it explicitly;
+components should fail fast when the argument is missing.
 
-Run `python scripts/check_context_builder_usage.py` before committing to verify
-all relevant calls include a `context_builder` argument and that no implicit
-defaults such as `get_default_context_builder` are used. The command exits with
-non-zero status on violations, so add it to your local workflow to catch issues
-early. Continuous integration runs this script and fails the build when it
-detects missing or implicit `ContextBuilder` usage.
+```python
+from prompt_engine import PromptEngine
+from vector_service.context_builder import ContextBuilder
 
-The `mypy` Makefile target runs this check automatically.
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+engine = PromptEngine(context_builder=builder)
+prompt = engine.build_prompt("Expand tests", context_builder=builder)
+
+from menace.bot_development_bot import BotDevelopmentBot, BotSpec
+bot = BotDevelopmentBot(context_builder=builder)
+prompt = bot._build_prompt(BotSpec(goal="Add feature"), context_builder=builder)
+```
+
+The pre-commit hook `check-context-builder-usage` wraps
+`scripts/check_context_builder_usage.py` and is required for submissions. Run:
+
+```bash
+pre-commit run check-context-builder-usage --all-files
+```
+
+Continuous integration runs this hook and fails the build when missing or
+implicit `ContextBuilder` usage is detected.
 
 ## Stripe integration
 

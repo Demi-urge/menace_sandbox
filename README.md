@@ -689,6 +689,38 @@ python menace_cli.py patches search --vector v1
 python menace_cli.py patches search --license MIT
 ```
 
+### Bot development
+
+Every constructor or method that assembles prompts must accept a
+`ContextBuilder` and use it for token accounting and ROI tracking. Callers
+provide the builder explicitly.
+
+```python
+from prompt_engine import PromptEngine
+from vector_service.context_builder import ContextBuilder
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+engine = PromptEngine(context_builder=builder)
+prompt = engine.build_prompt("Expand tests", context_builder=builder)
+```
+
+Internal helpers follow the same pattern:
+
+```python
+from menace.bot_development_bot import BotDevelopmentBot, BotSpec
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+bot = BotDevelopmentBot(context_builder=builder)
+prompt = bot._build_prompt(BotSpec(goal="Add feature"), context_builder=builder)
+```
+
+The pre-commit hook `check-context-builder-usage` wraps
+`scripts/check_context_builder_usage.py` and must pass:
+
+```bash
+pre-commit run check-context-builder-usage --all-files
+```
+
 ## Self-Optimisation Loop
 
 1. **Monitor metrics** – `DataBot` tracks ROI, errors and energy scores and
