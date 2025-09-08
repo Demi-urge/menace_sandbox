@@ -3,6 +3,7 @@ import types
 import sys
 import asyncio
 from pathlib import Path
+import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -52,6 +53,38 @@ class DummyDataBot:
 
 class DummyCapitalBot:
     pass
+
+
+def test_creates_pipeline_with_builder(monkeypatch):
+    import menace.experiment_manager as exp_mod
+
+    class DummyPipeline:
+        def __init__(self, data_bot, capital_manager, context_builder):
+            self.context_builder = context_builder
+
+        def run(self, name, energy=1):
+            return types.SimpleNamespace(roi=None)
+
+    monkeypatch.setattr(exp_mod, "ModelAutomationPipeline", DummyPipeline)
+
+    builder = DummyBuilder()
+    mgr = ExperimentManager(DummyDataBot(), DummyCapitalBot(), context_builder=builder)
+    assert isinstance(mgr.pipeline, DummyPipeline)
+    assert mgr.pipeline.context_builder is builder
+
+
+def test_pipeline_builder_mismatch(monkeypatch):
+    builder = DummyBuilder()
+    other = DummyBuilder()
+    bad_pipeline = types.SimpleNamespace(run=lambda *a, **k: None, context_builder=other)
+
+    with pytest.raises(ValueError):
+        ExperimentManager(
+            DummyDataBot(),
+            DummyCapitalBot(),
+            pipeline=bad_pipeline,
+            context_builder=builder,
+        )
 
 def test_best_variant_significant(tmp_path):
     db_router.init_db_router(

@@ -49,8 +49,6 @@ class ExperimentManager:
     ) -> None:
         self.data_bot = data_bot
         self.capital_bot = capital_bot
-        if context_builder is None:
-            raise ValueError("context_builder is required")
         try:
             context_builder.refresh_db_weights()
         except Exception as exc:  # pragma: no cover - best effort
