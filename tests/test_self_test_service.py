@@ -1,3 +1,4 @@
+# flake8: noqa
 import asyncio
 import importlib.util
 import logging
@@ -73,6 +74,13 @@ class DummyBuilder:
         if k.get("return_metadata"):
             return "", {}
         return ""
+
+
+def test_context_builder_required():
+    with pytest.raises(TypeError):
+        mod.SelfTestService()
+    with pytest.raises(ValueError):
+        mod.SelfTestService(context_builder=None)
 
 
 def test_scheduler_start(monkeypatch):

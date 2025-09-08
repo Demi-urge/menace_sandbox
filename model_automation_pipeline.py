@@ -144,6 +144,8 @@ class ModelAutomationPipeline:
         context_builder: ContextBuilder,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         self.context_builder = context_builder
         try:
             self.context_builder.refresh_db_weights()
