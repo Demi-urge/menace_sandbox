@@ -53,6 +53,49 @@ breaking tooling, and nested clones can share the same lookup logic.
 When adding new scripts or documentation, resolve paths with
 `dynamic_path_router.resolve_path` rather than hard‑coding file locations.
 
+## ContextBuilder integration
+
+`ContextBuilder` collects relevant snippets from the local vector databases so
+prompts stay grounded in recent history. Instantiate it with the standard
+SQLite files and thread the instance into any bot or helper that assembles
+prompts. Calls to `_build_prompt`, `build_prompt`, `generate_patch` and similar
+functions must explicitly receive this `context_builder`.
+
+```python
+from vector_service.context_builder import ContextBuilder
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+```
+
+### BotDevelopmentBot
+
+```python
+from bot_development_bot import BotDevelopmentBot, BotSpec
+
+bot = BotDevelopmentBot(context_builder=builder)
+bot._build_prompt(BotSpec(name="demo", purpose="test"), context_builder=builder)
+```
+
+### AutomatedReviewer
+
+```python
+from automated_reviewer import AutomatedReviewer
+
+reviewer = AutomatedReviewer(context_builder=builder)
+reviewer.handle({"bot_id": "1", "severity": "critical"})
+```
+
+### QuickFixEngine
+
+```python
+from quick_fix_engine import QuickFixEngine, generate_patch
+from error_bot import ErrorDB
+from self_coding_manager import SelfCodingManager
+
+engine = QuickFixEngine(ErrorDB(), SelfCodingManager(), context_builder=builder)
+generate_patch("sandbox_runner", context_builder=builder)
+```
+
 ## Self-Improvement Sandbox Setup
 
 `initialize_autonomous_sandbox()` now creates a `.env` file on first run and

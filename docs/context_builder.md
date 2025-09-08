@@ -101,16 +101,46 @@ summariser also operates offline, so even without the optional memory manager
 
 `SelfCodingEngine`, `QuickFixEngine`, `BotDevelopmentBot`, `PromptEngine`,
 `AutomatedReviewer`, `Watchdog` and `QueryBot` expect a `ContextBuilder` to be
-supplied via constructor or method arguments. Omitting it raises a `ValueError`
-in most helpers and otherwise produces generic prompts with no retrieved
-context. Instantiate the builder with the standard databases and pass it through
-explicitly:
+supplied via constructor or method arguments. Helpers such as `_build_prompt`,
+`build_prompt` and `generate_patch` must receive this keyword or they will raise
+a `ValueError` or fall back to empty prompts. Instantiate the builder with the
+standard databases and pass it through explicitly:
 
 ```python
 from vector_service.context_builder import ContextBuilder
 
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
-# e.g. engine = SelfCodingEngine(..., context_builder=builder)
+```
+
+### Bot usage examples
+
+#### BotDevelopmentBot
+
+```python
+from bot_development_bot import BotDevelopmentBot, BotSpec
+
+bot = BotDevelopmentBot(context_builder=builder)
+bot._build_prompt(BotSpec(name="demo", purpose="test"), context_builder=builder)
+```
+
+#### AutomatedReviewer
+
+```python
+from automated_reviewer import AutomatedReviewer
+
+reviewer = AutomatedReviewer(context_builder=builder)
+reviewer.handle({"bot_id": "1", "severity": "critical"})
+```
+
+#### QuickFixEngine
+
+```python
+from quick_fix_engine import QuickFixEngine, generate_patch
+from error_bot import ErrorDB
+from self_coding_manager import SelfCodingManager
+
+engine = QuickFixEngine(ErrorDB(), SelfCodingManager(), context_builder=builder)
+generate_patch("sandbox_runner", context_builder=builder)
 ```
 
 ## Failure modes

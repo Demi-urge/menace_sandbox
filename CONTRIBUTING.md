@@ -75,22 +75,33 @@ no hard-coded `.py` paths slip through.
 
 ## ContextBuilder dependency
 
-Every constructor or method that assembles prompts must accept a
-`ContextBuilder` and use it for token accounting and ROI tracking. Instantiate
+Every constructor or function that assembles prompts must accept a
+`ContextBuilder` and use it for token accounting and ROI tracking. This applies
+to helpers like `_build_prompt`, `build_prompt` and `generate_patch`. Instantiate
 the builder with local database paths at the call site and pass it explicitly;
 components should fail fast when the argument is missing.
 
 ```python
-from prompt_engine import PromptEngine
 from vector_service.context_builder import ContextBuilder
+from prompt_engine import PromptEngine
+from bot_development_bot import BotDevelopmentBot, BotSpec
+from automated_reviewer import AutomatedReviewer
+from quick_fix_engine import QuickFixEngine, generate_patch
+from error_bot import ErrorDB
+from self_coding_manager import SelfCodingManager
 
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+
 engine = PromptEngine(context_builder=builder)
 prompt = engine.build_prompt("Expand tests", context_builder=builder)
 
-from menace.bot_development_bot import BotDevelopmentBot, BotSpec
-bot = BotDevelopmentBot(context_builder=builder)
-prompt = bot._build_prompt(BotSpec(goal="Add feature"), context_builder=builder)
+dev_bot = BotDevelopmentBot(context_builder=builder)
+dev_bot._build_prompt(BotSpec(name="demo", purpose="Add feature"), context_builder=builder)
+
+reviewer = AutomatedReviewer(context_builder=builder)
+
+qfe = QuickFixEngine(ErrorDB(), SelfCodingManager(), context_builder=builder)
+generate_patch("sandbox_runner", context_builder=builder)
 ```
 
 The pre-commit hook `check-context-builder-usage` wraps
