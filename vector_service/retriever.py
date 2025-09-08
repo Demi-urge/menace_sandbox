@@ -95,15 +95,16 @@ class Retriever:
     patch_safety: PatchSafety = field(default_factory=PatchSafety)
     risk_penalty: float = 1.0
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
+    context_builder: Any | None = None
 
     def __post_init__(self) -> None:
-        try:
-            from config import CONFIG
-            cfg = getattr(CONFIG, "context_builder", None)
-            if cfg is not None and not self.roi_tag_weights:
-                self.roi_tag_weights = getattr(cfg, "roi_tag_penalties", {})
-        except Exception:
-            pass
+        if not self.roi_tag_weights and self.context_builder is not None:
+            try:
+                self.roi_tag_weights = getattr(
+                    self.context_builder, "roi_tag_penalties", {}
+                )
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     def _get_retriever(self) -> UniversalRetriever:
@@ -546,6 +547,7 @@ class PatchRetriever:
     enhancement_weight: float = 1.0
     vector_metrics: VectorMetricsDB | None = None
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
+    context_builder: Any | None = None
 
     def __post_init__(self) -> None:
         if self.vector_service is None:
@@ -584,12 +586,11 @@ class PatchRetriever:
                 self.vector_metrics = VectorMetricsDB()
             except Exception:
                 self.vector_metrics = None
-        if not self.roi_tag_weights:
+        if not self.roi_tag_weights and self.context_builder is not None:
             try:
-                from config import CONFIG
-                cfg = getattr(CONFIG, "context_builder", None)
-                if cfg is not None:
-                    self.roi_tag_weights = getattr(cfg, "roi_tag_penalties", {})
+                self.roi_tag_weights = getattr(
+                    self.context_builder, "roi_tag_penalties", {}
+                )
             except Exception:
                 pass
 

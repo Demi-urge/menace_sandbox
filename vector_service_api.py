@@ -57,7 +57,7 @@ app = FastAPI()
 
 # Service instances are kept globally for simplicity.  They are lightweight and
 # expose stateless interfaces which makes them safe to reuse across requests.
-_retriever = Retriever()
+_retriever: Retriever | None = None
 _roi_tracker = ROITracker()
 
 # The context builder and dependent services are initialised lazily so tests and
@@ -78,9 +78,10 @@ def create_app(builder: ContextBuilder | None = None) -> FastAPI:
     service start-up scripts.
     """
 
-    global _builder, _cognition_layer, _patch_logger, _backfill, _ranker_scheduler
+    global _builder, _cognition_layer, _patch_logger, _backfill, _ranker_scheduler, _retriever
 
     _builder = builder or ContextBuilder()
+    _retriever = Retriever(context_builder=_builder)
     try:
         _builder.refresh_db_weights()
     except Exception:  # pragma: no cover - best effort

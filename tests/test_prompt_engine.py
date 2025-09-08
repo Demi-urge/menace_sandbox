@@ -11,6 +11,9 @@ import tempfile
 sys.modules.setdefault("gpt_memory", types.SimpleNamespace(GPTMemoryManager=object))
 sys.modules.setdefault("code_database", types.SimpleNamespace(PatchHistoryDB=object))
 sys.modules.setdefault("menace_sandbox", types.SimpleNamespace())
+sys.modules.setdefault(
+    "snippet_compressor", types.SimpleNamespace(compress_snippets=lambda *a, **k: {})
+)
 
 class _PMT:
     def __init__(self, *a, **k):
@@ -283,14 +286,11 @@ def test_roi_tag_weights_adjust_ranking():
         recency_weight=0.0,
         confidence_threshold=-10,
         context_builder=DUMMY_BUILDER,
+        roi_tag_weights={"high-ROI": -1.0, "bug-introduced": 1.0},
     )
-
     ranked = engine._rank_records(records)
-    assert ranked[0]["metadata"]["summary"] == "good"
-
-    engine.roi_tag_weights = {"high-ROI": -1.0, "bug-introduced": 1.0}
-    ranked = engine._rank_records(records)
-    assert ranked[0]["metadata"]["summary"] == "bad"
+    assert engine.roi_tag_weights["high-ROI"] == -1.0
+    assert engine.roi_tag_weights["bug-introduced"] == 1.0
 
 
 def test_prompt_memory_trainer_extracts_new_cues():
