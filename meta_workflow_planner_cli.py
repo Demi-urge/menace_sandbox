@@ -24,10 +24,13 @@ from meta_workflow_planner import (
 from roi_results_db import module_impact_report
 try:  # pragma: no cover - optional dependency
     from vector_service.retriever import Retriever  # type: ignore
-    from vector_service.context_builder import ContextBuilder  # type: ignore
 except Exception:  # pragma: no cover - allow running without retriever
     Retriever = None  # type: ignore
-    ContextBuilder = None  # type: ignore
+
+try:  # pragma: no cover - best effort to load default context builder
+    from config.create_context_builder import create_context_builder  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    create_context_builder = None  # type: ignore
 
 
 def _cmd_encode(args: argparse.Namespace) -> int:
@@ -49,9 +52,9 @@ def _cmd_candidates(args: argparse.Namespace) -> int:
     else:
         query = args.workflow_id
     retr: Retriever | None = None
-    if Retriever is not None and ContextBuilder is not None:
+    if Retriever is not None and create_context_builder is not None:
         try:  # pragma: no cover - best effort
-            builder = ContextBuilder()
+            builder = create_context_builder()
             retr = Retriever(context_builder=builder)
         except Exception:
             retr = None
@@ -108,7 +111,9 @@ def build_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argu
 
     p_sim = sub.add_parser("simulate", help="Generate a high-synergy workflow pipeline")
     p_sim.add_argument("start", help="Starting workflow identifier")
-    p_sim.add_argument("--length", type=int, default=5, help="Maximum number of steps in the pipeline")
+    p_sim.add_argument(
+        "--length", type=int, default=5, help="Maximum number of steps in the pipeline"
+    )
     p_sim.set_defaults(func=_cmd_simulate)
 
     p_roi = sub.add_parser("roi-report", help="Show ROI impact report for a workflow run")
