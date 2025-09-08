@@ -126,7 +126,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                     )
                     if NOCB_MARK not in line:
-                        errors.append((line_no, "context_builder default None"))
+                        errors.append(
+                            (
+                                line_no,
+                                "context_builder default None disallowed or missing context_builder",
+                            )
+                        )
 
             for arg, default in zip(args.kwonlyargs, args.kw_defaults):
                 if self._has_none_default(arg, default):
@@ -135,7 +140,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                     )
                     if NOCB_MARK not in line:
-                        errors.append((line_no, "context_builder default None"))
+                        errors.append(
+                            (
+                                line_no,
+                                "context_builder default None disallowed or missing context_builder",
+                            )
+                        )
 
         def _record_alias(self, targets: list[ast.expr], value: ast.AST) -> None:
             names = [t.id for t in targets if isinstance(t, ast.Name)]
@@ -195,7 +205,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                     prev = lines[line_no - 2] if line_no >= 2 else ""
                     if NOCB_MARK not in line and NOCB_MARK not in prev:
-                        errors.append((line_no, "getattr context_builder default None"))
+                        errors.append(
+                            (
+                                line_no,
+                                "getattr context_builder default None disallowed or missing context_builder",
+                            )
+                        )
                 self.generic_visit(node)
                 return
 
@@ -207,7 +222,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                 prev = lines[line_no - 2] if line_no >= 2 else ""
                 if NOCB_MARK not in line and NOCB_MARK not in prev:
-                    errors.append((line_no, DEFAULT_BUILDER_NAME))
+                    errors.append(
+                        (
+                            line_no,
+                            f"{DEFAULT_BUILDER_NAME} disallowed or missing context_builder",
+                        )
+                    )
                 self.generic_visit(node)
                 return
             else:
@@ -242,7 +262,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                 prev = lines[line_no - 2] if line_no >= 2 else ""
                 if NOCB_MARK not in line and NOCB_MARK not in prev:
-                    errors.append((line_no, target or node.func.id))
+                    errors.append(
+                        (
+                            line_no,
+                            f"{target or node.func.id} disallowed or missing context_builder",
+                        )
+                    )
 
             self.generic_visit(node)
 
@@ -254,7 +279,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                     prev = lines[line_no - 2] if line_no >= 2 else ""
                     if NOCB_MARK not in line and NOCB_MARK not in prev:
-                        errors.append((line_no, DEFAULT_BUILDER_NAME))
+                        errors.append(
+                            (
+                                line_no,
+                                f"{DEFAULT_BUILDER_NAME} disallowed or missing context_builder",
+                            )
+                        )
             self.generic_visit(node)
 
         def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # noqa: D401
@@ -264,7 +294,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                     prev = lines[line_no - 2] if line_no >= 2 else ""
                     if NOCB_MARK not in line and NOCB_MARK not in prev:
-                        errors.append((line_no, DEFAULT_BUILDER_NAME))
+                        errors.append(
+                            (
+                                line_no,
+                                f"{DEFAULT_BUILDER_NAME} disallowed or missing context_builder",
+                            )
+                        )
             self.generic_visit(node)
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: D401
@@ -276,14 +311,66 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             self.generic_visit(node)
 
     Visitor().visit(tree)
+
+    # Detect top-level ``ContextBuilder()`` calls.
+    parent_map = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = full_name(node.func)
+        if not name or (
+            name != "ContextBuilder" and not name.endswith(".ContextBuilder")
+        ):
+            continue
+        # Determine whether call is at module level
+        ancestor = parent_map.get(node)
+        top_level = True
+        while ancestor:
+            if isinstance(
+                ancestor, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                top_level = False
+                break
+            ancestor = parent_map.get(ancestor)
+        if not top_level:
+            continue
+        # Check if call is passed through another constructor
+        ancestor = parent_map.get(node)
+        passed_through = False
+        while ancestor:
+            if isinstance(ancestor, ast.Call):
+                passed_through = True
+                break
+            ancestor = parent_map.get(ancestor)
+        # Determine whether explicit database paths are provided
+        has_db_path = any(
+            isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            for arg in node.args
+        ) or any(
+            isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+            for kw in node.keywords
+        )
+        if not has_db_path or not passed_through:
+            line_no = node.lineno
+            line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+            prev = lines[line_no - 2] if line_no >= 2 else ""
+            if NOCB_MARK not in line and NOCB_MARK not in prev:
+                errors.append(
+                    (
+                        line_no,
+                        "top-level ContextBuilder() missing explicit database paths or not passed through constructor",
+                    )
+                )
     return errors
 
 
 def main() -> int:
     failures: list[str] = []
     for path in iter_python_files(ROOT):
-        for lineno, name in check_file(path):
-            failures.append(f"{path}:{lineno} -> {name} disallowed or missing context_builder")
+        for lineno, message in check_file(path):
+            failures.append(f"{path}:{lineno} -> {message}")
     if failures:
         for line in failures:
             print(line)

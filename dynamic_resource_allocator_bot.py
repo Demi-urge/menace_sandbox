@@ -96,7 +96,7 @@ class DynamicResourceAllocator:
         *,
         scale_up_threshold: float = 0.8,
         scale_down_threshold: float = 0.2,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder | None = None,  # nocb
     ) -> None:
         self.metrics_db = metrics_db or MetricsDB()
         self.prediction_bot = prediction_bot or ResourcePredictionBot()
