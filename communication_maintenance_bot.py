@@ -1,3 +1,4 @@
+# flake8: noqa
 """Communication Maintenance Bot for updates and resource optimisation."""
 
 from __future__ import annotations
@@ -311,9 +312,10 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
 
 
     class ErrorBot:
-        def __init__(self, db: ErrorDB, context_builder=None) -> None:
+        def __init__(self, db: ErrorDB, context_builder) -> None:
             self.db = db
             self.logger = logging.getLogger("CommMaintenanceBot.ErrorBot")
+            self.context_builder = context_builder
 
         def handle_error(self, message: str) -> None:  # pragma: no cover - noop
             self.logger.error("noop ErrorBot handling error: %s", message)

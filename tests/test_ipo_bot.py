@@ -49,7 +49,14 @@ def test_ingest():
 
 def test_generate_plan(tmp_path: Path):
     db = make_db(tmp_path / "models.db")
-    bot = ipb.IPOBot(db_path=str(db), enhancements_db=tmp_path / "enh.db")
+
+    class DummyBuilder:
+        def build_context(self, *args, **kwargs):  # pragma: no cover - simple stub
+            return []
+
+    bot = ipb.IPOBot(
+        db_path=str(db), enhancements_db=tmp_path / "enh.db", context_builder=DummyBuilder()
+    )
     plan = bot.generate_plan(BLUEPRINT, "bp1")
     assert len(plan.actions) == 3
     assert plan.graph.number_of_nodes() == 3
