@@ -21,11 +21,23 @@ def test_context_store():
 def test_process(monkeypatch):
     builder = ContextBuilder()
     builder.refresh_db_weights()
+    monkeypatch.setattr(
+        builder,
+        "build_context",
+        lambda q, **k: ("{}", {"code": [{"snippet": "x"}]}),
+    )
     client = cib.ChatGPTClient("k", context_builder=builder)
-    monkeypatch.setattr(client, "ask", lambda msgs: {"choices": [{"message": {"content": "ok"}}]})
+    captured = {}
+
+    def fake_ask(msgs, **_):
+        captured["prompt"] = msgs[-1]["content"]
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(client, "ask", fake_ask)
     fetcher = qb.DataFetcher({"foo": {"val": 1}})
     bot = qb.QueryBot(client, fetcher=fetcher, context_builder=builder)
     result = bot.process("get foo", "cid")
     assert result.data == {"foo": {"val": 1}}
     assert result.text == "ok"
     assert "get foo" in bot.history("cid")
+    assert "x" in captured["prompt"]
