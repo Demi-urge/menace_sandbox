@@ -19,7 +19,9 @@ import os
 import uuid
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
-from codebase_diff_checker import generate_code_diff, flag_risky_changes
+from .snippet_compressor import compress_snippets
+
+from .codebase_diff_checker import generate_code_diff, flag_risky_changes
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -170,7 +172,9 @@ def generate_patch(
         context_block = ""
         vectors = []
     if context_block:
-        description += "\n\n" + context_block
+        compressed = compress_snippets({"snippet": context_block}).get("snippet", "")
+        if compressed:
+            description += "\n\n" + compressed
     if strategy is not None:
         try:
             template = render_prompt(strategy, {"module": prompt_path})
