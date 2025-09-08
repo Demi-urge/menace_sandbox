@@ -34,6 +34,9 @@ vec_stub.ErrorResult = type("ErrorResult", (), {})
 vec_stub.EmbeddableDBMixin = object
 sys.modules.setdefault("vector_service", vec_stub)
 sys.modules.setdefault("vector_service.context_builder", vec_stub)
+sc_stub = ModuleType("snippet_compressor")
+sc_stub.compress_snippets = lambda meta, **k: meta
+sys.modules.setdefault("snippet_compressor", sc_stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]  # path-ignore
@@ -359,3 +362,36 @@ def test_build_from_plan_passes_context_builder(tmp_path):
     ])
     bot.build_from_plan(plan)
     assert bot.received is bot.context_builder
+
+
+def test_prompt_context_compression(tmp_path, monkeypatch):
+    class SentinelBuilder(bdb.ContextBuilder):
+        def __init__(self, **dbs):
+            self.dbs = dbs
+
+        def build(self, *_, **__):
+            return "RAW-" + ",".join(sorted(self.dbs.values()))
+
+        def refresh_db_weights(self):
+            pass
+
+    def fake_compress(meta, **_):
+        txt = meta.get("snippet", "")
+        return {"snippet": txt.replace("RAW-", "COMPRESSED-")}
+
+    monkeypatch.setattr(bdb, "compress_snippets", fake_compress)
+
+    builder = SentinelBuilder(
+        bot_db="bots.db",
+        code_db="code.db",
+        error_db="errors.db",
+        workflow_db="workflows.db",
+    )
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
+    spec = bdb.BotSpec(name="sentinel", purpose="demo")
+    prompt = bot._build_prompt(spec, context_builder=builder)
+    assert "COMPRESSED-bots.db,code.db,errors.db,workflows.db" in prompt
+    assert "RAW-bots.db,code.db,errors.db,workflows.db" not in prompt
+
+    with pytest.raises(ValueError):
+        bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=None)  # type: ignore[arg-type]
