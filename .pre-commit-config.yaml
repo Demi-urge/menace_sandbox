@@ -42,6 +42,12 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+      - id: check-context-builder-usage
+        name: Enforce ContextBuilder usage
+        entry: python scripts/check_context_builder_usage.py
+        language: system
+        pass_filenames: false
+        files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:
