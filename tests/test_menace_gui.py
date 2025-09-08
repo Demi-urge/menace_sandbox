@@ -1,5 +1,6 @@
 import os
 import pytest
+from unittest import mock
 
 pytest.importorskip("tkinter")
 
@@ -19,4 +20,22 @@ def test_gui_init(monkeypatch):
         "Overview",
         "Forecast Chains",
     ]
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="requires display")
+def test_gui_uses_context_builder(monkeypatch):
+    from menace import menace_gui as mg
+
+    builder = mock.MagicMock()
+    monkeypatch.setattr(mg, "create_context_builder", lambda: builder)
+    monkeypatch.setattr(mg.ChatGPTClient, "__post_init__", lambda self: None)
+    monkeypatch.setattr(mg, "OPENAI_API_KEY", "key")
+
+    gui = mg.MenaceGUI()
+
+    assert builder.refresh_db_weights.called
+    assert gui.context_builder is builder
+    assert gui.conv_bot is not None
+    assert gui.conv_bot.client.context_builder is builder
+    assert gui.error_bot.context_builder is builder
 
