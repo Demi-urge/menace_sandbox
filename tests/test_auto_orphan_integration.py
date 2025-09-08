@@ -110,7 +110,16 @@ def test_default_auto_integration(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path / "sandbox_data"))
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
-    svc = self_test_mod.SelfTestService()
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build_context(self, *a, **k):
+            if k.get("return_metadata"):
+                return "", {}
+            return ""
+
+    svc = self_test_mod.SelfTestService(context_builder=DummyBuilder())
     svc.run_once()
 
     data = json.loads(map_path.read_text())

@@ -43,7 +43,16 @@ sts = load_self_test_service()
 
 
 def test_run_scheduled(monkeypatch, tmp_path):
-    svc = sts.SelfTestService(history_path=tmp_path / 'h.json', use_container=True)
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build_context(self, *a, **k):
+            if k.get('return_metadata'):
+                return '', {}
+            return ''
+
+    svc = sts.SelfTestService(history_path=tmp_path / 'h.json', use_container=True, context_builder=DummyBuilder())
     calls = []
 
     async def fake_run_once():

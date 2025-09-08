@@ -163,7 +163,7 @@ async def _run_service_once(service: sts.SelfTestService) -> None:
 
 def test_self_improvement_integration(monkeypatch, tmp_path):
     # SelfTestService using temporary history path
-    svc = sts.SelfTestService(history_path=tmp_path / "hist.json")
+    svc = sts.SelfTestService(history_path=tmp_path / "hist.json", context_builder=DummyBuilder())
     monkeypatch.setattr(sts.SelfTestService, "_docker_available", lambda self: False)
     asyncio.run(_run_service_once(svc))
     assert svc.results and svc.results["passed"] == 1

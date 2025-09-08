@@ -42,7 +42,16 @@ def test_stub_handles_typed_annotations(tmp_path, monkeypatch):
     sys.path.insert(0, str(tmp_path))
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
-    svc = sts.SelfTestService(fixture_hook="hook_mod:gen")
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build_context(self, *a, **k):
+            if k.get("return_metadata"):
+                return "", {}
+            return ""
+
+    svc = sts.SelfTestService(fixture_hook="hook_mod:gen", context_builder=DummyBuilder())
     stub_path = svc._generate_pytest_stub(str(mod_path))
     ns = runpy.run_path(stub_path)
     ns["test_stub"]()

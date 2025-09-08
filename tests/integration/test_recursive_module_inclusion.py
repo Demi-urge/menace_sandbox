@@ -44,6 +44,15 @@ sys.modules["menace.self_test_service"] = sts
 spec.loader.exec_module(sts)
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        if k.get("return_metadata"):
+            return "", {}
+        return ""
+
 # ---------------------------------------------------------------------------
 
 def test_recursive_module_inclusion(tmp_path, monkeypatch):
@@ -199,6 +208,7 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
         recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integrate,
+        context_builder=DummyBuilder(),
     )
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
@@ -293,6 +303,7 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
         recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integrate,
+        context_builder=DummyBuilder(),
     )
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()

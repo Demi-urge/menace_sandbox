@@ -59,6 +59,16 @@ sts = load_self_test_service()
 SelfTestService = sts.SelfTestService
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        if k.get("return_metadata"):
+            return "", {}
+        return ""
+
+
 class DummyLogger:
     def __init__(self, db=None, knowledge_graph=None):
         self.db = types.SimpleNamespace(add_test_result=lambda *a, **k: None)
@@ -108,7 +118,7 @@ def test_container_worker_distribution(monkeypatch):
 
     monkeypatch.setattr(SelfTestService, "_docker_available", avail)
 
-    svc = SelfTestService(pytest_args="a b c", workers=5, use_container=True, container_image="img")
+    svc = SelfTestService(pytest_args="a b c", workers=5, use_container=True, container_image="img", context_builder=DummyBuilder())
     svc.run_once()
 
     assert not svc._container_lock.locked()
@@ -126,7 +136,7 @@ def test_lock_released_on_docker_error(monkeypatch, caplog):
     monkeypatch.setattr(SelfTestService, "_docker_available", fail_avail)
     monkeypatch.setattr(sts, "ErrorLogger", DummyLogger)
 
-    svc = SelfTestService(use_container=True)
+    svc = SelfTestService(use_container=True, context_builder=DummyBuilder())
     caplog.set_level(logging.ERROR)
     svc.run_once()
     assert "self test run failed" in caplog.text
@@ -158,7 +168,7 @@ def test_lock_released_on_test_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
 
-    svc = SelfTestService(use_container=True, container_image="img")
+    svc = SelfTestService(use_container=True, container_image="img", context_builder=DummyBuilder())
     caplog.set_level(logging.ERROR)
     svc.run_once()
     assert not svc._container_lock.locked()
