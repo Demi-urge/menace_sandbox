@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 # flake8: noqa
 
 """Wrapper for running the autonomous sandbox loop after dependency checks.
@@ -43,9 +44,7 @@ logger = logging.getLogger(__name__)
 
 settings = SandboxSettings()
 settings = bootstrap_environment(settings, _verify_required_dependencies)
-os.environ["SANDBOX_CENTRAL_LOGGING"] = (
-    "1" if settings.sandbox_central_logging else "0"
-)
+os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
 AGENT_MONITOR_INTERVAL = settings.visual_agent_monitor_interval
 LOCAL_KNOWLEDGE_REFRESH_INTERVAL = settings.local_knowledge_refresh_interval
 _LKM_REFRESH_STOP = threading.Event()
@@ -59,9 +58,7 @@ MENACE_ID = uuid.uuid4().hex
 LOCAL_DB_PATH = settings.menace_local_db_path or str(
     resolve_path(f"menace_{MENACE_ID}_local.db")
 )
-SHARED_DB_PATH = settings.menace_shared_db_path or str(
-    resolve_path("shared/global.db")
-)
+SHARED_DB_PATH = settings.menace_shared_db_path or str(resolve_path("shared/global.db"))
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 from gpt_memory import GPTMemoryManager
@@ -136,9 +133,7 @@ def _visual_agent_running(urls: str) -> bool:
     return False
 
 
-spec = importlib.util.spec_from_file_location(
-    "menace", resolve_path("__init__.py")
-)
+spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
 menace_pkg = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace_pkg
 spec.loader.exec_module(menace_pkg)
@@ -159,6 +154,7 @@ from foresight_tracker import ForesightTracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 import menace.synergy_history_db as shd
+
 try:  # pragma: no cover - executed when run as a script
     from metrics_exporter import (
         start_metrics_server,
@@ -309,8 +305,7 @@ class VisualAgentMonitor:
     def _loop(self) -> None:
         base = self.urls.split(";")[0]
         queue_path = (
-            Path(resolve_path(settings.sandbox_data_dir))
-            / "visual_agent_queue.db"
+            Path(resolve_path(settings.sandbox_data_dir)) / "visual_agent_queue.db"
         )
         while not self._stop.is_set():
             running = _visual_agent_running(self.urls)
@@ -654,9 +649,7 @@ def prepare_presets(
                 data_dir = resolve_path(
                     args.sandbox_data_dir or settings.sandbox_data_dir
                 )
-                presets = validate_presets(
-                    gen_func(str(data_dir), args.preset_count)
-                )
+                presets = validate_presets(gen_func(str(data_dir), args.preset_count))
                 preset_source = "history adaptation"
                 if getattr(
                     getattr(environment_generator, "adapt_presets", object),
@@ -718,9 +711,7 @@ def execute_iteration(
         if hasattr(args, "foresight_tracker"):
             delattr(args, "foresight_tracker")
 
-    data_dir = Path(
-        resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
-    )
+    data_dir = Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
     hist_file = data_dir / "roi_history.json"
     tracker = ROITracker()
     try:
@@ -900,9 +891,9 @@ def update_metrics(
     )
     logger.debug(
         "forecast %.3f CI=(%.3f, %.3f) roi_thr=%.3f(%s) syn_thr=%.3f",
-        roi_pred if roi_pred is not None else float('nan'),
-        ci_lo if ci_lo is not None else float('nan'),
-        ci_hi if ci_hi is not None else float('nan'),
+        roi_pred if roi_pred is not None else float("nan"),
+        ci_lo if ci_lo is not None else float("nan"),
+        ci_hi if ci_hi is not None else float("nan"),
         roi_threshold,
         thr_method,
         syn_thr_val,
@@ -1343,7 +1334,9 @@ def main(argv: List[str] | None = None) -> None:
     args.recursive_isolated = recursive_isolated
 
     os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if auto_include_isolated else "0"
-    os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1" if auto_include_isolated else "0"
+    os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = (
+        "1" if auto_include_isolated else "0"
+    )
     val = "1" if recursive_orphans else "0"
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
     os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
@@ -1365,9 +1358,7 @@ def main(argv: List[str] | None = None) -> None:
         discover_orphans = False
     args.discover_orphans = discover_orphans
     os.environ["SANDBOX_DISABLE_ORPHAN_SCAN"] = "1" if not discover_orphans else "0"
-    os.environ["SELF_TEST_DISCOVER_ORPHANS"] = (
-        "1" if discover_orphans else "0"
-    )
+    os.environ["SELF_TEST_DISCOVER_ORPHANS"] = "1" if discover_orphans else "0"
     if getattr(args, "discover_isolated") is not None:
         val_di = "1" if args.discover_isolated else "0"
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = val_di
@@ -1380,9 +1371,7 @@ def main(argv: List[str] | None = None) -> None:
         port,
     )
 
-    data_dir = Path(
-        resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
-    )
+    data_dir = Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
     legacy_json = data_dir / "synergy_history.json"
     db_file = data_dir / "synergy_history.db"
     if not db_file.exists() and legacy_json.exists():
@@ -1547,18 +1536,14 @@ def main(argv: List[str] | None = None) -> None:
     preset_log_path = (
         Path(resolve_path(args.preset_log_file))
         if args.preset_log_file
-        else Path(
-            resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir)
-        )
+        else Path(resolve_path(args.sandbox_data_dir or settings.sandbox_data_dir))
         / "preset_log.jsonl"
     )
     preset_log = PresetLogger(str(preset_log_path))
     cleanup_funcs.append(preset_log.close)
     forecast_log = None
     if args.forecast_log:
-        forecast_log = ForecastLogger(
-            str(Path(resolve_path(args.forecast_log)))
-        )
+        forecast_log = ForecastLogger(str(Path(resolve_path(args.forecast_log))))
         cleanup_funcs.append(forecast_log.close)
 
     synergy_exporter: SynergyExporter | None = None
@@ -1677,6 +1662,7 @@ def main(argv: List[str] | None = None) -> None:
             synergy_dash_port = _free_port()
             logger.info("using port %d for SynergyDashboard", synergy_dash_port)
         from threading import Thread
+
         try:
             from menace.self_improvement.engine import SynergyDashboard
         except RuntimeError as exc:
@@ -1745,7 +1731,10 @@ def main(argv: List[str] | None = None) -> None:
         cleanup_funcs.append(agent_monitor.stop)
 
     relevancy_radar = None
-    if settings.enable_relevancy_radar and settings.relevancy_radar_interval is not None:
+    if (
+        settings.enable_relevancy_radar
+        and settings.relevancy_radar_interval is not None
+    ):
         relevancy_radar = RelevancyRadarService(
             REPO_ROOT, float(settings.relevancy_radar_interval)
         )
@@ -1804,9 +1793,7 @@ def main(argv: List[str] | None = None) -> None:
         synergy_ma_window = args.synergy_cycles
     if synergy_stationarity_confidence is None:
         synergy_stationarity_confidence = (
-            settings.synergy.stationarity_confidence
-            or synergy_confidence
-            or 0.95
+            settings.synergy.stationarity_confidence or synergy_confidence or 0.95
         )
     if synergy_std_threshold is None:
         synergy_std_threshold = 1e-3
@@ -1856,7 +1843,11 @@ def main(argv: List[str] | None = None) -> None:
             agent_monitor.run_idx = run_idx
         if run_idx > 1:
             new_tok = settings.visual_agent_token_rotate
-            if new_tok and agent_mgr and _visual_agent_running(settings.visual_agent_urls):
+            if (
+                new_tok
+                and agent_mgr
+                and _visual_agent_running(settings.visual_agent_urls)
+            ):
                 try:
                     agent_mgr.restart_with_token(new_tok)
                     os.environ["VISUAL_AGENT_TOKEN"] = new_tok
@@ -1945,7 +1936,9 @@ def main(argv: List[str] | None = None) -> None:
 
         if foresight_tracker is not None:
             try:
-                slope, second_derivative, avg_stability = foresight_tracker.get_trend_curve("_global")
+                slope, second_derivative, avg_stability = (
+                    foresight_tracker.get_trend_curve("_global")
+                )
                 logger.info(
                     "foresight trend: slope=%.3f curve=%.3f avg_stability=%.3f",
                     slope,
@@ -2009,7 +2002,8 @@ def main(argv: List[str] | None = None) -> None:
     if exporter_monitor is not None:
         try:
             logger.info(
-                "synergy exporter stopped after %d restarts", exporter_monitor.restart_count
+                "synergy exporter stopped after %d restarts",
+                exporter_monitor.restart_count,
             )
             exporter_log.record(
                 {
@@ -2024,7 +2018,8 @@ def main(argv: List[str] | None = None) -> None:
     if trainer_monitor is not None:
         try:
             logger.info(
-                "synergy auto trainer stopped after %d restarts", trainer_monitor.restart_count
+                "synergy auto trainer stopped after %d restarts",
+                trainer_monitor.restart_count,
             )
             exporter_log.record(
                 {
@@ -2046,7 +2041,6 @@ def main(argv: List[str] | None = None) -> None:
             logger.exception("failed to close GPT memory")
 
     logger.info("run_autonomous exiting")
-
 
 
 def bootstrap(
@@ -2082,9 +2076,7 @@ def bootstrap(
 
     bootstrap_environment(settings, _verify_required_dependencies)
     os.environ.setdefault("SANDBOX_REPO_PATH", settings.sandbox_repo_path)
-    os.environ.setdefault(
-        "SANDBOX_DATA_DIR", resolve_path(settings.sandbox_data_dir)
-    )
+    os.environ.setdefault("SANDBOX_DATA_DIR", resolve_path(settings.sandbox_data_dir))
 
     init_self_improvement(settings)
 
@@ -2160,7 +2152,12 @@ def bootstrap(
     cleanup_funcs.append(learn_stop)
 
     from vector_service.context_builder import ContextBuilder
-    tester = SelfTestService(context_builder=ContextBuilder())
+
+    tester = SelfTestService(
+        context_builder=ContextBuilder(
+            "bots.db", "code.db", "errors.db", "workflows.db"
+        )
+    )
     test_loop = asyncio.new_event_loop()
 
     def _tester_thread() -> None:

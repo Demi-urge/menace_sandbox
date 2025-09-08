@@ -14,6 +14,7 @@ from pathlib import Path
 
 from dynamic_path_router import resolve_path
 from db_router import init_db_router
+from vector_service.context_builder import ContextBuilder
 
 # Expose a DBRouter for CLI operations early so imported modules can rely on
 # ``GLOBAL_ROUTER``.
@@ -125,15 +126,13 @@ def handle_new_vector(args: argparse.Namespace) -> int:
 
 def handle_patch(args: argparse.Namespace) -> int:
     """Handle ``patch`` command."""
-    try:
-        from vector_service.context_builder import ContextBuilder
-    except ImportError:
-        print("ContextBuilder unavailable", file=sys.stderr)
-        return 1
     from vector_service.retriever import Retriever
     import quick_fix_engine
 
     retriever = Retriever(cache=_get_cache())
+    builder = args.builder
+    builder.retriever = retriever
+    builder.refresh_db_weights()
 
     ctx = None
     if args.context:
@@ -151,13 +150,15 @@ def handle_patch(args: argparse.Namespace) -> int:
     except TypeError:  # pragma: no cover - fallback for stub implementations
         db = PatchHistoryDB()
     patch_logger = PatchLogger(patch_db=db)
-    try:
-        builder = ContextBuilder(retriever=retriever)
-        builder.refresh_db_weights()
-    except Exception as exc:
-        print(f"ContextBuilder initialisation failed: {exc}", file=sys.stderr)
-        return 1
-    patch_id = quick_fix_engine.generate_patch(args.module, context_builder=builder, engine=None, description=args.desc, patch_logger=patch_logger, context=ctx, effort_estimate=args.effort_estimate)
+    patch_id = quick_fix_engine.generate_patch(
+        args.module,
+        context_builder=builder,
+        engine=None,
+        description=args.desc,
+        patch_logger=patch_logger,
+        context=ctx,
+        effort_estimate=args.effort_estimate,
+    )
     if not patch_id:
         return 1
     record = db.get(patch_id)
@@ -291,6 +292,12 @@ def handle_branch_log(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Menace workflow helper")
+    parser.add_argument("--bots-db", default="bots.db", help="Path to bots DB")
+    parser.add_argument("--code-db", default="code.db", help="Path to code DB")
+    parser.add_argument("--errors-db", default="errors.db", help="Path to errors DB")
+    parser.add_argument(
+        "--workflows-db", default="workflows.db", help="Path to workflows DB"
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("setup", help="Install dependencies and bootstrap the env")
@@ -330,7 +337,9 @@ def main(argv: list[str] | None = None) -> int:
     p_chain = patch_sub.add_parser("ancestry", help="Show patch ancestry chain")
     p_chain.add_argument("patch_id", type=int)
 
-    p_search = patch_sub.add_parser("search", help="Search patches by vector or license")
+    p_search = patch_sub.add_parser(
+        "search", help="Search patches by vector or license"
+    )
     grp = p_search.add_mutually_exclusive_group(required=True)
     grp.add_argument("--vector", help="Vector identifier")
     grp.add_argument("--license", help="License filter")
@@ -356,7 +365,9 @@ def main(argv: list[str] | None = None) -> int:
     p_retrieve.add_argument(
         "--json", action="store_true", help="Output JSON results instead of text"
     )
-    p_retrieve.add_argument("--no-cache", action="store_true", help="Bypass retrieval cache")
+    p_retrieve.add_argument(
+        "--no-cache", action="store_true", help="Bypass retrieval cache"
+    )
     p_retrieve.add_argument(
         "--rebuild-cache", action="store_true", help="Force recomputation of cache"
     )
@@ -372,18 +383,14 @@ def main(argv: list[str] | None = None) -> int:
     p_embed.add_argument(
         "--batch-size", type=int, dest="batch_size", help="Batch size for backfill"
     )
-    p_embed.add_argument(
-        "--backend", dest="backend", help="Vector backend to use"
-    )
+    p_embed.add_argument("--backend", dest="backend", help="Vector backend to use")
     p_embed.set_defaults(func=handle_embed)
 
     p_newdb = sub.add_parser("new-db", help="Scaffold a new database module")
     p_newdb.add_argument("name", help="Base name for the new database")
     p_newdb.set_defaults(func=handle_new_db)
 
-    p_newvec = sub.add_parser(
-        "new-vector", help="Scaffold a new vector_service module"
-    )
+    p_newvec = sub.add_parser("new-vector", help="Scaffold a new vector_service module")
     p_newvec.add_argument("name", help="Base name for the module")
     p_newvec.add_argument("--root", help="Target directory", default=None)
     p_newvec.add_argument(
@@ -417,11 +424,15 @@ def main(argv: list[str] | None = None) -> int:
     # allow plugins to register additional subcommands
     load_plugins(sub)
 
-    sub.add_parser(
-        "branch-log", help="Show patch branch audit trail"
-    ).set_defaults(func=handle_branch_log)
+    sub.add_parser("branch-log", help="Show patch branch audit trail").set_defaults(
+        func=handle_branch_log
+    )
 
     args = parser.parse_args(argv)
+    builder = ContextBuilder(
+        args.bots_db, args.code_db, args.errors_db, args.workflows_db
+    )
+    setattr(args, "builder", builder)
 
     if hasattr(args, "func"):
         return args.func(args)
