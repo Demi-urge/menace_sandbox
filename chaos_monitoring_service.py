@@ -10,6 +10,7 @@ refreshed at startup to ensure ranking reflects the latest metrics.
 import logging
 import threading
 from threading import Event
+from typing import TYPE_CHECKING
 
 from .chaos_scheduler import ChaosScheduler
 from .watchdog import Watchdog
@@ -17,10 +18,11 @@ from .error_bot import ErrorDB
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
 from .advanced_error_management import AutomatedRollbackManager
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:  # pragma: no cover - optional dependency for type hints
+try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - surface early
+    ContextBuilder = None  # type: ignore
 
 
 class ChaosMonitoringService:
@@ -45,7 +47,12 @@ class ChaosMonitoringService:
         context_builder:
             Builder used for contextual analysis.
         """
-        context_builder.refresh_db_weights()
+        if ContextBuilder is None or not isinstance(context_builder, ContextBuilder):
+            raise TypeError("context_builder must be a ContextBuilder instance")
+        try:
+            context_builder.refresh_db_weights()
+        except Exception as exc:  # pragma: no cover - surface configuration issues
+            raise RuntimeError("failed to refresh database weights") from exc
         if scheduler is None:
             watch = Watchdog(ErrorDB(), ROIDB(), MetricsDB(), context_builder=context_builder)
             scheduler = ChaosScheduler(watchdog=watch)
