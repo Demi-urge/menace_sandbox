@@ -1,3 +1,4 @@
+# flake8: noqa
 import os
 import importlib.util
 import sys
@@ -10,12 +11,17 @@ import types
 from pathlib import Path
 
 vs = types.ModuleType("vector_service")
-class DummyBuilder:
+
+
+class _StubBuilder:
     def __init__(self, *a, **k):
         pass
+
     def refresh_db_weights(self):
         pass
-vs.ContextBuilder = DummyBuilder
+
+
+vs.ContextBuilder = _StubBuilder
 vs.CognitionLayer = object
 sys.modules["vector_service"] = vs
 
@@ -430,8 +436,16 @@ import menace.evolution_history_db as eh
 import menace.self_improvement_policy as sip
 
 
+class DummyBuilder(dm.ContextBuilder):
+    def refresh_db_weights(self):
+        return {}
+
+
+vs.ContextBuilder = DummyBuilder
+
+
 def _diag(edb, mdb):
-    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    builder = DummyBuilder()
     return dm.DiagnosticManager(
         mdb, eb.ErrorBot(edb, mdb, context_builder=builder), context_builder=builder
     )
@@ -442,7 +456,7 @@ def test_run_cycle(tmp_path, monkeypatch):
     edb = eb.ErrorDB(tmp_path / "e.db")
     info = rab.InfoDB(tmp_path / "i.db")
     diag = _diag(edb, mdb)
-    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+    builder = DummyBuilder()
     agg = rab.ResearchAggregatorBot(["menace"], info_db=info, context_builder=builder)
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
