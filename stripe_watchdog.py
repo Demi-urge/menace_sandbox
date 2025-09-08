@@ -754,6 +754,20 @@ def load_billing_logs(
     return rows
 
 
+# Context builder handling ---------------------------------------------------
+
+def _ensure_context_builder(context_builder: "ContextBuilder") -> "ContextBuilder":
+    """Validate *context_builder* and refresh database weights once per instance."""
+    if ContextBuilder is None or not isinstance(context_builder, ContextBuilder):
+        raise TypeError("context_builder must be ContextBuilder")
+    if not getattr(context_builder, "_db_weights_refreshed", False):
+        weights = context_builder.refresh_db_weights()
+        if not weights:
+            raise RuntimeError("context builder failed to refresh db weights")
+        setattr(context_builder, "_db_weights_refreshed", True)
+    return context_builder
+
+
 # Anomaly logging -----------------------------------------------------------
 
 
@@ -761,11 +775,12 @@ def _emit_anomaly(
     record: Dict[str, Any],
     write_codex: bool,
     export_training: bool,
-    context_builder: Any,
+    context_builder: ContextBuilder,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
 ) -> None:
     """Log *record* and optionally emit a training sample."""
+    builder = _ensure_context_builder(context_builder)
     _refresh_instruction_cache()
     if record.get("type") in SKIP_ANOMALY_TYPES:
         logger.debug("Skipping anomaly due to adaptive hints", extra=record)
@@ -773,14 +788,13 @@ def _emit_anomaly(
     audit_logger.log_event("stripe_anomaly", record)
     metadata = {k: v for k, v in record.items() if k != "type"}
     metadata.setdefault("timestamp", datetime.utcnow().isoformat())
-    if context_builder is not None:
-        try:
-            ctx_res = context_builder.build(record.get("type", "stripe anomaly"))
-            snippet = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-            if snippet:
-                metadata.update(compress_snippets({"snippet": snippet}))
-        except Exception:
-            logger.exception("context build failed", extra={"record": record})
+    try:
+        ctx_res = builder.build(record.get("type", "stripe anomaly"))
+        snippet = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+        if snippet:
+            metadata.update(compress_snippets({"snippet": snippet}))
+    except Exception:
+        logger.exception("context build failed", extra={"record": record})
     if not metadata.get("stripe_account"):
         acct = metadata.get("account_id")
         if not acct:
@@ -886,10 +900,11 @@ def detect_account_mismatches(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Return Stripe objects whose account is not in ``allowed_accounts``."""
 
+    builder = _ensure_context_builder(context_builder)
     allowed = {str(a) for a in allowed_accounts if a}
     anomalies: List[Dict[str, Any]] = []
 
@@ -908,7 +923,7 @@ def detect_account_mismatches(
                 anomaly,
                 write_codex,
                 export_training,
-                context_builder,
+                builder,
                 self_coding_engine,
                 telemetry_feedback,
             )
@@ -938,10 +953,11 @@ def detect_unauthorized_charges(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Return charges that bypassed central routing or lack approval."""
 
+    builder = _ensure_context_builder(context_builder)
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("id")}
     billing_map = {
         str(rec.get("stripe_id")): rec
@@ -970,7 +986,7 @@ def detect_unauthorized_charges(
             anomaly,
             write_codex,
             export_training,
-            context_builder,
+            builder,
             self_coding_engine,
             telemetry_feedback,
         )
@@ -987,10 +1003,11 @@ def detect_unauthorized_refunds(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Return refunds that bypassed central routing or lack approval."""
 
+    builder = _ensure_context_builder(context_builder)
     ledger_ids = {
         str(e.get("id")) for e in ledger if e.get("action_type") == "refund"
     }
@@ -1027,7 +1044,7 @@ def detect_unauthorized_refunds(
             anomaly,
             write_codex,
             export_training,
-            context_builder,
+            builder,
             self_coding_engine,
             telemetry_feedback,
         )
@@ -1045,10 +1062,11 @@ def detect_missing_charges(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Return Stripe charges absent from local billing logs."""
 
+    builder = _ensure_context_builder(context_builder)
     ledger_ids = {str(e.get("id")) for e in ledger if e.get("id")}
     billing_map = {
         str(rec.get("stripe_id")): rec
@@ -1078,7 +1096,7 @@ def detect_missing_charges(
                 anomaly,
                 write_codex,
                 export_training,
-                context_builder,
+                builder,
                 self_coding_engine,
                 telemetry_feedback,
             )
@@ -1097,7 +1115,7 @@ def detect_missing_charges(
                 anomaly,
                 write_codex,
                 export_training,
-                context_builder,
+                builder,
                 self_coding_engine,
                 telemetry_feedback,
             )
@@ -1128,7 +1146,7 @@ def detect_missing_charges(
             anomaly,
             write_codex,
             export_training,
-            context_builder,
+            builder,
             self_coding_engine,
             telemetry_feedback,
         )
@@ -1146,11 +1164,14 @@ def detect_missing_refunds(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Return Stripe refunds absent from the ledger and billing logs."""
 
-    ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "refund"}
+    builder = _ensure_context_builder(context_builder)
+    ledger_ids = {
+        str(e.get("id")) for e in ledger if e.get("action_type") == "refund"
+    }
     billing_map = {
         str(rec.get("stripe_id")): rec
         for rec in (billing_logs or [])
@@ -1179,7 +1200,7 @@ def detect_missing_refunds(
                 anomaly,
                 write_codex,
                 export_training,
-                context_builder,
+                builder,
                 self_coding_engine,
                 telemetry_feedback,
             )
@@ -1198,7 +1219,7 @@ def detect_missing_refunds(
                 anomaly,
                 write_codex,
                 export_training,
-                context_builder,
+                builder,
                 self_coding_engine,
                 telemetry_feedback,
             )
@@ -1228,7 +1249,7 @@ def detect_missing_refunds(
             anomaly,
             write_codex,
             export_training,
-            context_builder,
+            builder,
             self_coding_engine,
             telemetry_feedback,
         )
@@ -1245,11 +1266,14 @@ def detect_unauthorized_failures(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Return failed events present in logs but missing authorization."""
 
-    ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "failed"}
+    builder = _ensure_context_builder(context_builder)
+    ledger_ids = {
+        str(e.get("id")) for e in ledger if e.get("action_type") == "failed"
+    }
     billing_map = {
         str(rec.get("stripe_id")): rec
         for rec in (billing_logs or [])
@@ -1284,7 +1308,7 @@ def detect_unauthorized_failures(
             anomaly,
             write_codex,
             export_training,
-            context_builder,
+            builder,
             self_coding_engine,
             telemetry_feedback,
         )
@@ -1302,11 +1326,14 @@ def detect_failed_events(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Return failed payment events missing from the ledger and billing logs."""
 
-    ledger_ids = {str(e.get("id")) for e in ledger if e.get("action_type") == "failed"}
+    builder = _ensure_context_builder(context_builder)
+    ledger_ids = {
+        str(e.get("id")) for e in ledger if e.get("action_type") == "failed"
+    }
     billing_map = {
         str(rec.get("stripe_id")): rec
         for rec in (billing_logs or [])
@@ -1337,7 +1364,7 @@ def detect_failed_events(
                 anomaly,
                 write_codex,
                 export_training,
-                context_builder,
+                builder,
                 self_coding_engine,
                 telemetry_feedback,
             )
@@ -1356,7 +1383,7 @@ def detect_failed_events(
                 anomaly,
                 write_codex,
                 export_training,
-                context_builder,
+                builder,
                 self_coding_engine,
                 telemetry_feedback,
             )
@@ -1385,7 +1412,7 @@ def detect_failed_events(
             anomaly,
             write_codex,
             export_training,
-            context_builder,
+            builder,
             self_coding_engine,
             telemetry_feedback,
         )
@@ -1400,10 +1427,11 @@ def check_webhook_endpoints(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[str]:
     """Return webhook identifiers failing the allowed or enabled checks."""
 
+    builder = _ensure_context_builder(context_builder)
     if stripe is None:
         return []
     try:  # pragma: no cover - network request
@@ -1445,7 +1473,7 @@ def check_webhook_endpoints(
                 record,
                 write_codex,
                 export_training,
-                context_builder,
+                builder,
                 self_coding_engine,
                 telemetry_feedback,
             )
@@ -1502,10 +1530,11 @@ def compare_revenue(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> Optional[Dict[str, float]]:
     """Compare Stripe net revenue with projected revenue from ROI logs."""
 
+    builder = _ensure_context_builder(context_builder)
     charges = list(charges)
     refunds = list(refunds)
     total = 0.0
@@ -1545,7 +1574,7 @@ def compare_revenue(
             record,
             write_codex,
             export_training,
-            context_builder,
+            builder,
             self_coding_engine,
             telemetry_feedback,
         )
@@ -1571,7 +1600,7 @@ def summarize_revenue_window(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> Dict[str, float]:
     """Summarize Stripe revenue for ``start_ts``..``end_ts`` and compare to projections.
 
@@ -1619,6 +1648,7 @@ def summarize_revenue_window(
         "difference": difference,
     }
 
+    builder = _ensure_context_builder(context_builder)
     if projected and abs(difference) > tolerance * projected:
         record = {
             "type": "revenue_mismatch",
@@ -1630,7 +1660,7 @@ def summarize_revenue_window(
             record,
             write_codex,
             export_training,
-            context_builder,
+            builder,
             self_coding_engine,
             telemetry_feedback,
         )
@@ -1659,7 +1689,7 @@ def compare_revenue_window(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> Optional[Dict[str, float]]:
     """Compare Stripe revenue and ROI projections for a time window.
 
@@ -1667,6 +1697,7 @@ def compare_revenue_window(
     only when a mismatch is detected.
     """
 
+    builder = _ensure_context_builder(context_builder)
     summary = summarize_revenue_window(
         start_ts,
         end_ts,
@@ -1675,7 +1706,7 @@ def compare_revenue_window(
         export_training=export_training,
         self_coding_engine=self_coding_engine,
         telemetry_feedback=telemetry_feedback,
-        context_builder=context_builder,
+        context_builder=builder,
     )
     projected = summary.get("projected_revenue", 0.0)
     difference = summary.get("difference", 0.0)
@@ -1698,10 +1729,11 @@ def check_events(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Check for missing charges within the last ``hours``."""
 
+    builder = _ensure_context_builder(context_builder)
     api_key = load_api_key()
     if not api_key:
         return []
@@ -1713,7 +1745,7 @@ def check_events(
         export_training=export_training,
         self_coding_engine=self_coding_engine,
         telemetry_feedback=telemetry_feedback,
-        context_builder=context_builder,
+        context_builder=builder,
     )
     # Load the entire ledger window; many tests use historical timestamps.
     ledger = load_local_ledger(0, end_ts)
@@ -1734,7 +1766,7 @@ def check_events(
         export_training=export_training,
         self_coding_engine=self_coding_engine,
         telemetry_feedback=telemetry_feedback,
-        context_builder=context_builder,
+        context_builder=builder,
     )
     anomalies.extend(
         detect_unauthorized_charges(
@@ -1746,7 +1778,7 @@ def check_events(
             export_training=export_training,
             self_coding_engine=self_coding_engine,
             telemetry_feedback=telemetry_feedback,
-            context_builder=context_builder,
+            context_builder=builder,
         )
     )
     anomalies.extend(
@@ -1759,7 +1791,7 @@ def check_events(
             export_training=export_training,
             self_coding_engine=self_coding_engine,
             telemetry_feedback=telemetry_feedback,
-            context_builder=context_builder,
+            context_builder=builder,
         )
     )
     if anomalies and DiscrepancyDB and DiscrepancyRecord:
@@ -1783,9 +1815,10 @@ def check_revenue_projection(
     export_training: bool = False,
     self_coding_engine: Any | None = None,
     telemetry_feedback: Any | None = None,
-    context_builder: Any,
+    context_builder: ContextBuilder,
 ) -> Optional[Dict[str, float]]:
     """Compare revenue for the last ``hours`` against projections."""
+    builder = _ensure_context_builder(context_builder)
     end_ts = int(time.time())
     start_ts = end_ts - int(hours * 3600)
     return compare_revenue_window(
@@ -1796,7 +1829,7 @@ def check_revenue_projection(
         export_training=export_training,
         self_coding_engine=self_coding_engine,
         telemetry_feedback=telemetry_feedback,
-        context_builder=context_builder,
+        context_builder=builder,
     )
 
 
@@ -1806,7 +1839,7 @@ def check_revenue_projection(
 def main(
     argv: Optional[List[str]] = None,
     *,
-    context_builder: "ContextBuilder",
+    context_builder: ContextBuilder,
 ) -> None:
     """Entry point for command line execution."""
 
@@ -1835,9 +1868,7 @@ def main(
     )
     args = parser.parse_args(argv)
 
-    weights = context_builder.refresh_db_weights()
-    if not weights:
-        raise RuntimeError("context builder failed to refresh db weights")
+    builder = _ensure_context_builder(context_builder)
 
     api_key = load_api_key()
     if not api_key:
@@ -1870,7 +1901,6 @@ def main(
 
     engine = None
     telemetry = None
-    builder = context_builder
     if SANITY_LAYER_FEEDBACK_ENABLED:
         if SelfCodingEngine and CodeDB and MenaceMemoryManager:
             try:
