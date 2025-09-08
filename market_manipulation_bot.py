@@ -24,11 +24,14 @@ class MarketManipulationBot:
         *,
         checker: ComplianceChecker | None = None,
         role: str = "trader",
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
         self.intel_bot = intel_bot or CompetitiveIntelligenceBot()
-        self.saturation_bot = saturation_bot or NicheSaturationBot(
-            context_builder=context_builder or ContextBuilder()
+        self.context_builder = context_builder
+        self.saturation_bot = (
+            saturation_bot
+            if saturation_bot is not None
+            else NicheSaturationBot(context_builder=context_builder)
         )
         self.checker = checker or ComplianceChecker()
         self.role = role
@@ -36,6 +39,15 @@ class MarketManipulationBot:
     def saturate(self, niches: Iterable[str]) -> list[Tuple[str, bool]]:
         """Analyse competitive landscape and saturate the given niches."""
         niches_l = list(niches)
+        try:
+            self.context_builder.refresh_db_weights()
+            sources = ("bots", "code", "errors", "workflows")
+            self._pre_saturation_ctx = {
+                src: self.context_builder.build_context(src, top_k=1)
+                for src in sources
+            }
+        except Exception:
+            self._pre_saturation_ctx = {}
         if self.checker:
             if not self.checker.verify_permission(self.role, "trade"):
                 return []
