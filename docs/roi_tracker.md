@@ -269,7 +269,8 @@ from menace_sandbox.neuroplasticity import PathwayDB
 from menace_sandbox.resource_allocation_optimizer import ROIDB
 from vector_service.context_builder import ContextBuilder
 
-planner = ActionPlanner(PathwayDB(), ROIDB(), ContextBuilder(),
+ctx = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+planner = ActionPlanner(PathwayDB(), ROIDB(), ctx,
                         feature_fn=lambda action: [0.1, 0.2])
 planner.update_priorities({"launch_campaign": 1.0, "cleanup": 0.8})
 print(planner.get_priority_queue())  # highest ROI and growth first

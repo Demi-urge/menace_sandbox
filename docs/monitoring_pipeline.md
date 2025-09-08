@@ -56,7 +56,8 @@ from menace.error_logger import ErrorLogger
 from vector_service.context_builder import ContextBuilder
 
 sentry = SentryClient("https://public@o0.ingest.sentry.io/0")
-logger = ErrorLogger(sentry=sentry, context_builder=ContextBuilder())
+ctx = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+logger = ErrorLogger(sentry=sentry, context_builder=ctx)
 ```
 
 ## Watchdog Runbooks

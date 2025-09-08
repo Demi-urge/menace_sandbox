@@ -269,7 +269,7 @@ presets = generate_canonical_presets()
 low_latency = presets["high_latency_api"]["low"]
 high_latency = presets["high_latency_api"]["high"]
 # run all scenarios under both severities
-builder = ContextBuilder()
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 run_repo_section_simulations(
     repo_path, env_presets=presets, context_builder=builder
 )

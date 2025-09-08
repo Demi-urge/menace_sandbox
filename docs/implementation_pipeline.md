@@ -95,7 +95,8 @@ If the key is absent the fallback is skipped entirely.
 from menace.research_aggregator_bot import ResearchAggregatorBot
 from vector_service.context_builder import ContextBuilder
 
-researcher = ResearchAggregatorBot(["security", "optimisation"], context_builder=ContextBuilder())
+ctx = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+researcher = ResearchAggregatorBot(["security", "optimisation"], context_builder=ctx)
 ```
 Start the helper FastAPI app in `stage3_service.py` to collect these findings.
 Set ``STAGE3_URL`` to the endpoint (for the default port use

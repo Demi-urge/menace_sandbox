@@ -18,7 +18,8 @@ from menace.self_learning_coordinator import SelfLearningCoordinator
 from vector_service.context_builder import ContextBuilder
 
 bus = UnifiedEventBus()
-err_bot = ErrorBot(context_builder=ContextBuilder())
+ctx = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+err_bot = ErrorBot(context_builder=ctx)
 builder = CurriculumBuilder(err_bot, bus, threshold=5)
 coord = SelfLearningCoordinator(bus, curriculum_builder=builder)
 coord.start()

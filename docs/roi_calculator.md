@@ -128,7 +128,7 @@ tickets or feed the hints into a Codex prompt.
 from menace_sandbox.error_logger import ErrorLogger
 from vector_service.context_builder import ContextBuilder
 
-builder = ContextBuilder()
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 elog = ErrorLogger(context_builder=builder)
 elog.log_roi_cap(metrics, "scraper_bot")
 ```

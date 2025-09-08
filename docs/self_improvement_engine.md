@@ -9,9 +9,10 @@ from menace.self_improvement.api import SelfImprovementEngine, ImprovementEngine
 from menace.model_automation_pipeline import ModelAutomationPipeline
 from vector_service.context_builder import ContextBuilder
 
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 engine = SelfImprovementEngine(
     bot_name="alpha",
-    pipeline=ModelAutomationPipeline(context_builder=ContextBuilder()),
+    pipeline=ModelAutomationPipeline(context_builder=builder),
     state_path=resolve_path(f"{os.getenv('SANDBOX_DATA_DIR', 'sandbox_data')}/alpha_state.json"),
 )
 registry = ImprovementEngineRegistry()
@@ -563,9 +564,10 @@ from vector_service.context_builder import ContextBuilder
 
 
 def factory(name: str) -> SelfImprovementEngine:
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     return SelfImprovementEngine(
         bot_name=name,
-        pipeline=ModelAutomationPipeline(context_builder=ContextBuilder()),
+        pipeline=ModelAutomationPipeline(context_builder=builder),
     )
 
 registry = ImprovementEngineRegistry()

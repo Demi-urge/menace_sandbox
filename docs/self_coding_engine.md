@@ -11,7 +11,8 @@ from menace.code_database import CodeDB
 from menace.menace_memory_manager import MenaceMemoryManager
 from vector_service.context_builder import ContextBuilder
 
-builder = ContextBuilder()
+# SelfCodingEngine requires an explicit ContextBuilder instance
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 builder.refresh_db_weights()
 engine = SelfCodingEngine(
     CodeDB(resolve_path('code.db')),
@@ -51,7 +52,7 @@ recorded so future patches can reuse relevant context.
 from gpt_memory import GPTMemoryManager
 from vector_service.context_builder import ContextBuilder
 
-builder = ContextBuilder()
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 builder.refresh_db_weights()
 engine = SelfCodingEngine(
     CodeDB("code.db"),

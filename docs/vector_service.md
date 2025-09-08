@@ -43,7 +43,7 @@ an optional `session_id` for tracing queries.
 ```python
 from vector_service.context_builder import ContextBuilder
 
-builder = ContextBuilder()
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 context = builder.build("fix failing tests")
 ```
 
@@ -115,7 +115,8 @@ applied.
 from vector_service import CognitionLayer
 from vector_service.context_builder import ContextBuilder
 
-layer = CognitionLayer(context_builder=ContextBuilder())
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+layer = CognitionLayer(context_builder=builder)
 ctx, sid = layer.query("What is ROI?")
 # ... apply patch ...
 layer.record_patch_outcome(sid, True)

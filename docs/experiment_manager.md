@@ -11,7 +11,7 @@ Example:
 from menace.experiment_manager import ExperimentManager
 from vector_service.context_builder import ContextBuilder
 
-builder = ContextBuilder()
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 manager = ExperimentManager(data_bot, capital_bot, context_builder=builder)
 results = await manager.run_experiments(["bot_v1", "bot_v2"], energy=2)
 best = manager.best_variant(results)
