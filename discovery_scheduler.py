@@ -92,7 +92,9 @@ class DiscoveryScheduler:
             except Exception:
                 self.logger.exception("scraper failed")
             try:
-                asyncio.run(discovery_run_cycle())
+                asyncio.run(
+                    discovery_run_cycle(context_builder=self.context_builder)
+                )
             except Exception:
                 self.logger.exception("discovery run failed")
             try:
