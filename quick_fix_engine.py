@@ -473,7 +473,12 @@ class QuickFixEngine:
             ctx_block = ""
         desc = f"quick fix {etype}"
         if ctx_block:
-            desc += "\n\n" + ctx_block
+            try:
+                ctx_block = compress_snippets({"snippet": ctx_block}).get("snippet", "")
+            except Exception:
+                ctx_block = ""
+            if ctx_block:
+                desc += "\n\n" + ctx_block
         session_id = ""
         vectors: list[tuple[str, str, float]] = []
         retrieval_metadata: dict[str, dict[str, Any]] = {}
