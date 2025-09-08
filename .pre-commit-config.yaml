@@ -42,6 +42,7 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+      # Ensure functions that generate prompts always supply a context_builder.
       - id: check-context-builder-usage
         name: Enforce ContextBuilder usage
         entry: python scripts/check_context_builder_usage.py
