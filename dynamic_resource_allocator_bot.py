@@ -103,11 +103,8 @@ class DynamicResourceAllocator:
         self.ledger = ledger or DecisionLedger()
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("DynamicAllocator")
-        if context_builder is None:
-            raise ValueError("context_builder is required")
-        self.context_builder = context_builder
         self.alloc_bot = alloc_bot or ResourceAllocationBot(
-            AllocationDB(), context_builder=self.context_builder
+            AllocationDB(), context_builder=context_builder
         )
 
         self.pathway_db = pathway_db
