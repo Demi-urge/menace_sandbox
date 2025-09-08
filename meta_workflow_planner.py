@@ -41,9 +41,11 @@ except FileNotFoundError:  # pragma: no cover - file may not exist yet
 
 try:  # pragma: no cover - optional heavy dependency
     from vector_service.retriever import Retriever  # type: ignore
+    from vector_service.context_builder import ContextBuilder  # type: ignore
 except Exception:  # pragma: no cover - allow running without retriever
     logger.warning("vector_service.retriever import failed; similar search disabled")
     Retriever = None  # type: ignore
+    ContextBuilder = None  # type: ignore
 
 try:  # pragma: no cover - optional heavy dependency
     from roi_tracker import ROITracker  # type: ignore
@@ -726,9 +728,10 @@ class MetaWorkflowPlanner:
         self.cluster_map.setdefault(("__domain_transitions__",), {})
         trans_probs = self.transition_probabilities()
 
-        if retriever is None and Retriever is not None:
+        if retriever is None and Retriever is not None and ContextBuilder is not None:
             try:  # pragma: no cover - best effort
-                retriever = Retriever()
+                builder = ContextBuilder()
+                retriever = Retriever(context_builder=builder)
             except Exception:  # pragma: no cover - fallback to exhaustive search
                 retriever = None
 
@@ -2923,9 +2926,10 @@ def find_synergistic_workflows(workflow_id: str, top_k: int = 5) -> List[Dict[st
             )
     except Exception:
         retr: Retriever | None = None
-        if Retriever is not None:
+        if Retriever is not None and ContextBuilder is not None:
             try:  # pragma: no cover - best effort
-                retr = Retriever()
+                builder = ContextBuilder()
+                retr = Retriever(context_builder=builder)
             except Exception:
                 retr = None
         if retr is None:

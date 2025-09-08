@@ -312,7 +312,7 @@ class PromptEngine:
             pass
         if self.retriever is None:
             try:
-                self.retriever = Retriever()
+                self.retriever = Retriever(context_builder=self.context_builder)
             except Exception:
                 self.retriever = None
         if self.patch_retriever is None:
@@ -320,7 +320,9 @@ class PromptEngine:
                 self.patch_retriever = self.retriever  # type: ignore[assignment]
             else:
                 try:
-                    self.patch_retriever = PatchRetriever()
+                    self.patch_retriever = PatchRetriever(
+                        context_builder=self.context_builder
+                    )
                 except Exception:
                     self.patch_retriever = None
         if self.roi_tracker is None:

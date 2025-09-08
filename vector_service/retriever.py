@@ -80,6 +80,7 @@ class Retriever:
     returned containing the reason and heuristic hits.
     """
 
+    context_builder: Any
     retriever: UniversalRetriever | None = None
     top_k: int = 5
     similarity_threshold: float = 0.1
@@ -95,10 +96,13 @@ class Retriever:
     patch_safety: PatchSafety = field(default_factory=PatchSafety)
     risk_penalty: float = 1.0
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
-    context_builder: Any | None = None
 
     def __post_init__(self) -> None:
-        if not self.roi_tag_weights and self.context_builder is not None:
+        if not hasattr(self.context_builder, "roi_tag_penalties"):
+            raise TypeError(
+                "context_builder must define 'roi_tag_penalties' for Retriever"
+            )
+        if not self.roi_tag_weights:
             try:
                 self.roi_tag_weights = getattr(
                     self.context_builder, "roi_tag_penalties", {}
@@ -540,6 +544,7 @@ class PatchRetriever:
     closest patch vectors from the configured :class:`VectorStore`.
     """
 
+    context_builder: Any
     store: VectorStore | None = None
     vector_service: SharedVectorService | None = None
     top_k: int = 5
@@ -547,7 +552,6 @@ class PatchRetriever:
     enhancement_weight: float = 1.0
     vector_metrics: VectorMetricsDB | None = None
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
-    context_builder: Any | None = None
 
     def __post_init__(self) -> None:
         if self.vector_service is None:
@@ -586,7 +590,11 @@ class PatchRetriever:
                 self.vector_metrics = VectorMetricsDB()
             except Exception:
                 self.vector_metrics = None
-        if not self.roi_tag_weights and self.context_builder is not None:
+        if not hasattr(self.context_builder, "roi_tag_penalties"):
+            raise TypeError(
+                "context_builder must define 'roi_tag_penalties' for PatchRetriever"
+            )
+        if not self.roi_tag_weights:
             try:
                 self.roi_tag_weights = getattr(
                     self.context_builder, "roi_tag_penalties", {}
@@ -747,17 +755,21 @@ class PatchRetriever:
 _patch_retriever: PatchRetriever | None = None
 
 
-def _get_patch_retriever() -> PatchRetriever:
+def _get_patch_retriever(builder: Any) -> PatchRetriever:
     """Return a configured :class:`PatchRetriever` instance."""
 
     global _patch_retriever
-    if _patch_retriever is None:
-        _patch_retriever = PatchRetriever()
+    if _patch_retriever is None or _patch_retriever.context_builder is not builder:
+        _patch_retriever = PatchRetriever(context_builder=builder)
     return _patch_retriever
 
 
 def search_patches(
-    query: str, top_k: int = 5, *, exclude_tags: Iterable[str] | None = None
+    query: str,
+    top_k: int = 5,
+    *,
+    exclude_tags: Iterable[str] | None = None,
+    context_builder: Any,
 ) -> List[Dict[str, Any]]:
     """Retrieve patch examples for ``query``.
 
@@ -768,7 +780,7 @@ def search_patches(
     are selected via configuration.
     """
 
-    return _get_patch_retriever().search(
+    return _get_patch_retriever(context_builder).search(
         query, top_k=top_k, exclude_tags=exclude_tags
     )
 

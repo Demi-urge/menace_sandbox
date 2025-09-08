@@ -129,8 +129,8 @@ def handle_patch(args: argparse.Namespace) -> int:
     from vector_service.retriever import Retriever
     import quick_fix_engine
 
-    retriever = Retriever(cache=_get_cache())
     builder = args.builder
+    retriever = Retriever(context_builder=builder, cache=_get_cache())
     builder.retriever = retriever
     builder.refresh_db_weights()
 
@@ -175,7 +175,10 @@ def handle_retrieve(args: argparse.Namespace) -> int:
         print("vector retriever unavailable", file=sys.stderr)
         return 1
 
-    retriever = Retriever(cache=None if args.no_cache else _get_cache())
+    builder = args.builder
+    retriever = Retriever(
+        context_builder=builder, cache=None if args.no_cache else _get_cache()
+    )
 
     if not args.no_cache and not args.rebuild_cache:
         cached = get_cached_chain(args.query, args.dbs)

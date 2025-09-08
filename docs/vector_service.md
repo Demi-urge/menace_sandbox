@@ -27,8 +27,10 @@ endpoints.
 
 ```python
 from vector_service import Retriever
+from vector_service.context_builder import ContextBuilder
 
-r = Retriever()
+builder = ContextBuilder()
+r = Retriever(context_builder=builder)
 results = r.search("upload failed", session_id="abc123")
 ```
 
