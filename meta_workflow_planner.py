@@ -47,6 +47,11 @@ except Exception:  # pragma: no cover - allow running without retriever
     Retriever = None  # type: ignore
     ContextBuilder = None  # type: ignore
 
+try:  # pragma: no cover - best effort to load default context builder
+    from config.create_context_builder import create_context_builder  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    create_context_builder = None  # type: ignore
+
 try:  # pragma: no cover - optional heavy dependency
     from roi_tracker import ROITracker  # type: ignore
 except Exception:  # pragma: no cover - allow running without ROI tracker
@@ -728,9 +733,19 @@ class MetaWorkflowPlanner:
         self.cluster_map.setdefault(("__domain_transitions__",), {})
         trans_probs = self.transition_probabilities()
 
-        if retriever is None and Retriever is not None and ContextBuilder is not None:
+        if (
+            retriever is None
+            and Retriever is not None
+            and (create_context_builder is not None or ContextBuilder is not None)
+        ):
             try:  # pragma: no cover - best effort
-                builder = ContextBuilder()
+                builder = (
+                    create_context_builder()
+                    if create_context_builder is not None
+                    else ContextBuilder(
+                        "bots.db", "code.db", "errors.db", "workflows.db"
+                    )
+                )
                 retriever = Retriever(context_builder=builder)
             except Exception:  # pragma: no cover - fallback to exhaustive search
                 retriever = None
@@ -2926,9 +2941,17 @@ def find_synergistic_workflows(workflow_id: str, top_k: int = 5) -> List[Dict[st
             )
     except Exception:
         retr: Retriever | None = None
-        if Retriever is not None and ContextBuilder is not None:
+        if Retriever is not None and (
+            create_context_builder is not None or ContextBuilder is not None
+        ):
             try:  # pragma: no cover - best effort
-                builder = ContextBuilder()
+                builder = (
+                    create_context_builder()
+                    if create_context_builder is not None
+                    else ContextBuilder(
+                        "bots.db", "code.db", "errors.db", "workflows.db"
+                    )
+                )
                 retr = Retriever(context_builder=builder)
             except Exception:
                 retr = None
