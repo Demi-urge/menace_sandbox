@@ -1294,14 +1294,13 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
         ctx.telem_db.conn.commit()
     except Exception:
         logger.exception("telemetry db commit failed")
-    builder = getattr(ctx, "context_builder", None)
-    if builder is not None:
-        try:
-            close = getattr(builder, "close", None)
-            if callable(close):
-                close()
-        except Exception:
-            logger.exception("context builder close failed")
+    builder = ctx.context_builder
+    try:
+        close = getattr(builder, "close", None)
+        if callable(close):
+            close()
+    except Exception:
+        logger.exception("context builder close failed")
     ctx.event_bus.close()
     shutil.rmtree(ctx.tmp)
     logger.info(
@@ -1712,16 +1711,15 @@ def _sandbox_main(
                     )
                     hist = ctx.conversations.get("brainstorm", [])
                     module = _get_local_knowledge()
-                    builder = getattr(ctx, "context_builder", None)
+                    builder = ctx.context_builder
                     mem_ctx = ""
-                    if builder is not None:
-                        cb_session = uuid.uuid4().hex
-                        try:
-                            mem_ctx = builder.build("brainstorm", session_id=cb_session)
-                            if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
-                                mem_ctx = ""
-                        except Exception:
+                    cb_session = uuid.uuid4().hex
+                    try:
+                        mem_ctx = builder.build("brainstorm", session_id=cb_session)
+                        if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
                             mem_ctx = ""
+                    except Exception:
+                        mem_ctx = ""
                     if mem_ctx:
                         prompt = mem_ctx + "\n\n" + prompt
                     history_text = "\n".join(
