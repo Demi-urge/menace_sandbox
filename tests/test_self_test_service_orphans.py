@@ -8,6 +8,15 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "ctx", "s", {}
+
+
 spec = importlib.util.spec_from_file_location(
     "menace.self_test_service",
     ROOT / "self_test_service.py",  # path-ignore
@@ -16,6 +25,34 @@ mod = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
 if pkg is not None:
     pkg.__path__ = [str(ROOT)]
+settings_mod = types.ModuleType("sandbox_settings")
+settings_mod.SandboxSettings = lambda: types.SimpleNamespace(
+    sandbox_central_logging=False, menace_light_imports=True
+)
+sys.modules["sandbox_settings"] = settings_mod
+sys.modules["menace.sandbox_settings"] = settings_mod
+log_mod = types.ModuleType("logging_utils")
+log_mod.setup_logging = lambda: None
+log_mod.log_record = lambda **k: {}
+log_mod.get_logger = lambda *a, **k: None
+sys.modules["logging_utils"] = log_mod
+sys.modules["menace.logging_utils"] = log_mod
+vec_mod = types.ModuleType("vector_service.context_builder")
+vec_mod.ContextBuilder = DummyBuilder
+sys.modules["vector_service.context_builder"] = vec_mod
+router_mod = types.ModuleType("db_router")
+class _Router:
+    def __init__(self, *a, **k):
+        pass
+
+    def get_connection(self, name):
+        return None
+
+router_mod.DBRouter = _Router
+router_mod.GLOBAL_ROUTER = None
+router_mod.LOCAL_TABLES = {}
+router_mod.init_db_router = lambda *a, **k: _Router()
+sys.modules["db_router"] = router_mod
 from prometheus_client import REGISTRY
 REGISTRY._names_to_collectors.clear()
 db_mod = types.ModuleType("data_bot")
@@ -85,7 +122,6 @@ def test_include_orphans(tmp_path, monkeypatch):
     runner.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
-    svc = mod.SelfTestService()
     svc.run_once()
 
     joined = [" ".join(map(str, c)) for c in calls]
@@ -133,7 +169,7 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -182,7 +218,7 @@ def test_discover_orphans_option(tmp_path, monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
-    svc = mod.SelfTestService(discover_orphans=True)
+    svc = mod.SelfTestService(discover_orphans=True, context_builder=DummyBuilder())
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -236,7 +272,7 @@ def test_discover_isolated_option(tmp_path, monkeypatch):
     runner.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
-    svc = mod.SelfTestService(discover_isolated=True)
+    svc = mod.SelfTestService(discover_isolated=True, context_builder=DummyBuilder())
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -289,7 +325,7 @@ def test_recursive_option_used(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
     svc.run_once(refresh_orphans=True)
 
     assert calls.get("used") is True
@@ -340,7 +376,9 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
     svc = mod.SelfTestService(
-        include_orphans=False, discover_orphans=True
+        include_orphans=False,
+        discover_orphans=True,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -402,7 +440,7 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
-    svc = mod.SelfTestService(discover_orphans=False)
+    svc = mod.SelfTestService(discover_orphans=False, context_builder=DummyBuilder())
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -457,7 +495,7 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
-    svc = mod.SelfTestService(discover_orphans=False)
+    svc = mod.SelfTestService(discover_orphans=False, context_builder=DummyBuilder())
     svc.run_once(refresh_orphans=True)
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -496,7 +534,7 @@ def test_env_disables_recursive_orphans(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts", scripts_pkg)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
     modules = svc._discover_orphans()
     assert modules == ["foo.py"]  # path-ignore
     assert called.get("used") is None
@@ -524,7 +562,7 @@ def test_discover_orphans_skips_redundant(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     modules = svc._discover_orphans()
     assert modules == ["a.py"]  # path-ignore
@@ -538,7 +576,7 @@ def test_env_orphans_disabled(tmp_path, monkeypatch, var):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(var, "1")
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
 
     assert svc.include_orphans is False
 
@@ -589,7 +627,7 @@ def test_recursive_isolated_setting(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "SandboxSettings", lambda: DummySettings())
 
     called = _setup_isolated(monkeypatch)
-    svc = mod.SelfTestService(discover_isolated=True)
+    svc = mod.SelfTestService(discover_isolated=True, context_builder=DummyBuilder())
     svc.run_once()
 
     assert called.get("recursive") is False
@@ -602,7 +640,11 @@ def test_recursive_isolated_arg(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     called = _setup_isolated(monkeypatch)
-    svc = mod.SelfTestService(discover_isolated=True, recursive_isolated=True)
+    svc = mod.SelfTestService(
+        discover_isolated=True,
+        recursive_isolated=True,
+        context_builder=DummyBuilder(),
+    )
     svc.run_once()
 
     assert called.get("recursive") is True
@@ -656,7 +698,11 @@ def test_isolated_cleanup_passed(tmp_path, monkeypatch):
     def integration(mods: list[str]) -> None:
         calls.append(list(mods))
 
-    svc = mod.SelfTestService(integration_callback=integration, clean_orphans=True)
+    svc = mod.SelfTestService(
+        integration_callback=integration,
+        clean_orphans=True,
+        context_builder=DummyBuilder(),
+    )
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -704,7 +750,9 @@ def test_orphan_cleanup_passed(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     svc = mod.SelfTestService(
-        integration_callback=lambda mods: None, clean_orphans=True
+        integration_callback=lambda mods: None,
+        clean_orphans=True,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 
@@ -775,7 +823,7 @@ def test_default_integration_reports(monkeypatch, tmp_path):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(context_builder=DummyBuilder())
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
 
