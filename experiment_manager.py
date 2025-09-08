@@ -42,7 +42,8 @@ class ExperimentManager:
         data_bot: DataBot,
         capital_bot: CapitalManagementBot,
         pipeline: ModelAutomationPipeline | None = None,
-        context_builder: ContextBuilder | None = None,
+        *,
+        context_builder: ContextBuilder,
         prediction_manager: PredictionManager | None = None,
         experiment_db: ExperimentHistoryDB | None = None,
         p_threshold: float = 0.05,
@@ -50,15 +51,18 @@ class ExperimentManager:
     ) -> None:
         self.data_bot = data_bot
         self.capital_bot = capital_bot
+        self.context_builder = context_builder
         if pipeline is None:
-            if context_builder is None:
-                raise ValueError("context_builder is required when pipeline is None")
             self.pipeline = ModelAutomationPipeline(
                 data_bot=self.data_bot,
                 capital_manager=self.capital_bot,
                 context_builder=context_builder,
             )
         else:
+            if not hasattr(pipeline, "context_builder"):
+                raise ValueError("pipeline must expose a context_builder")
+            if pipeline.context_builder is not context_builder:
+                raise ValueError("pipeline and context_builder must match")
             self.pipeline = pipeline
         self.prediction_manager = prediction_manager
         self.experiment_db = experiment_db or ExperimentHistoryDB()
@@ -66,6 +70,10 @@ class ExperimentManager:
         self.lineage = lineage or MutationLineage()
 
     async def _run_variant(self, name: str, energy: int) -> AutomationResult:
+        try:
+            self.context_builder.build_context(name)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("context retrieval failed for %s: %s", name, exc)
         return await asyncio.to_thread(self.pipeline.run, name, energy=energy)
 
     # ------------------------------------------------------------------

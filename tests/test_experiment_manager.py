@@ -12,6 +12,8 @@ class DummyBuilder:
         pass
     def refresh_db_weights(self):
         pass
+    def build_context(self, *a, **k):
+        return {}
 vs.ContextBuilder = DummyBuilder
 vs.CognitionLayer = object
 sys.modules["vector_service"] = vs
@@ -34,7 +36,12 @@ sys.modules.update(dummy_mods)
 
 import importlib
 
+import sqlite3
 import db_router
+db_router.GLOBAL_ROUTER = types.SimpleNamespace(
+    menace_id="test",
+    get_connection=lambda *a, **k: sqlite3.connect(":memory:")
+)
 from menace.experiment_manager import ExperimentManager, ExperimentResult
 from menace import experiment_history_db as exp_hist_mod
 from menace.evolution_history_db import EvolutionHistoryDB, EvolutionEvent
@@ -52,8 +59,15 @@ def test_best_variant_significant(tmp_path):
     )
     importlib.reload(exp_hist_mod)
     db = exp_hist_mod.ExperimentHistoryDB()
-    dummy_pipeline = types.SimpleNamespace(run=lambda *a, **k: None)
-    mgr = ExperimentManager(DummyDataBot(), DummyCapitalBot(), pipeline=dummy_pipeline, experiment_db=db)
+    builder = DummyBuilder()
+    dummy_pipeline = types.SimpleNamespace(run=lambda *a, **k: None, context_builder=builder)
+    mgr = ExperimentManager(
+        DummyDataBot(),
+        DummyCapitalBot(),
+        pipeline=dummy_pipeline,
+        experiment_db=db,
+        context_builder=builder,
+    )
     res = [
         ExperimentResult("A", 1.0, {}, sample_size=30, variance=1.0),
         ExperimentResult("B", 0.0, {}, sample_size=30, variance=1.0),
@@ -67,8 +81,15 @@ def test_best_variant_not_significant(tmp_path):
     )
     importlib.reload(exp_hist_mod)
     db = exp_hist_mod.ExperimentHistoryDB()
-    dummy_pipeline = types.SimpleNamespace(run=lambda *a, **k: None)
-    mgr = ExperimentManager(DummyDataBot(), DummyCapitalBot(), pipeline=dummy_pipeline, experiment_db=db)
+    builder = DummyBuilder()
+    dummy_pipeline = types.SimpleNamespace(run=lambda *a, **k: None, context_builder=builder)
+    mgr = ExperimentManager(
+        DummyDataBot(),
+        DummyCapitalBot(),
+        pipeline=dummy_pipeline,
+        experiment_db=db,
+        context_builder=builder,
+    )
     res = [
         ExperimentResult("A", 1.0, {}, sample_size=30, variance=1.0),
         ExperimentResult("B", 0.99, {}, sample_size=30, variance=1.0),
@@ -84,6 +105,8 @@ def test_run_experiments_from_parent(tmp_path):
     hist.spawn_variant(root_id, "B")
 
     class DummyPipeline:
+        def __init__(self, builder):
+            self.context_builder = builder
         def run(self, name, energy=1):
             return types.SimpleNamespace(roi=types.SimpleNamespace(roi=1.0))
 
@@ -91,12 +114,14 @@ def test_run_experiments_from_parent(tmp_path):
         "test3", local_db_path=str(tmp_path / "l3.db"), shared_db_path=str(tmp_path / "s3.db")
     )
     importlib.reload(exp_hist_mod)
+    builder = DummyBuilder()
     mgr = ExperimentManager(
         DummyDataBot(),
         DummyCapitalBot(),
-        pipeline=DummyPipeline(),
+        pipeline=DummyPipeline(builder),
         experiment_db=exp_hist_mod.ExperimentHistoryDB(),
         lineage=types.SimpleNamespace(history_db=hist),
+        context_builder=builder,
     )
     res = asyncio.run(mgr.run_experiments_from_parent(root_id))
     assert {r.variant for r in res} == {"A", "B"}
