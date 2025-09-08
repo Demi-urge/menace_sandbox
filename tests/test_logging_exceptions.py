@@ -97,12 +97,13 @@ def test_saturate_logs_strategy_error(tmp_path, caplog):
         def receive_niche_info(self, info):
             raise RuntimeError("boom")
 
-    alloc = ResourceAllocationBot(context_builder=_DummyBuilder())
+    builder = _DummyBuilder()
+    alloc = ResourceAllocationBot(context_builder=builder)
     bot = ns.NicheSaturationBot(
         db=ns.NicheDB(tmp_path / "n.db"),
         alloc_bot=alloc,
         strategy_bot=BadStrategy(),
-        context_builder=_DummyBuilder(),
+        context_builder=builder,
     )
     caplog.set_level(logging.ERROR)
     bot.saturate([ns.NicheCandidate("x", 1.0, 0.0)])

@@ -16,10 +16,11 @@ class _DummyBuilder:
 def test_saturate_logs(tmp_path):
     db = nsb.NicheDB(tmp_path / "niche.db")
     alloc_db = rab.AllocationDB(tmp_path / "alloc.db")
+    builder = _DummyBuilder()
     alloc_bot = rab.ResourceAllocationBot(
-        alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=_DummyBuilder()
+        alloc_db, rpb.TemplateDB(tmp_path / "t.csv"), context_builder=builder
     )
-    bot = nsb.NicheSaturationBot(db, alloc_bot, context_builder=_DummyBuilder())
+    bot = nsb.NicheSaturationBot(db, alloc_bot, context_builder=builder)
     cand = nsb.NicheCandidate(name="ai-tools", demand=5.0, competition=1.0, trend=1.0)
     actions = bot.saturate([cand])
     hist = db.history()

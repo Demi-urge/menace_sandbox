@@ -93,15 +93,23 @@ class NicheSaturationBot:
         *,
         prediction_manager: "PredictionManager" | None = None,
         strategy_bot: "StrategyPredictionBot" | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
-        if alloc_bot is None and context_builder is None:
-            raise ValueError("context_builder required when alloc_bot not provided")
+        if context_builder is None:
+            raise TypeError("context_builder is required")
 
         self.db = db or NicheDB()
-        self.alloc_bot = alloc_bot or ResourceAllocationBot(
-            context_builder=context_builder  # type: ignore[arg-type]
-        )
+        if alloc_bot is None:
+            self.alloc_bot = ResourceAllocationBot(context_builder=context_builder)
+        else:
+            self.alloc_bot = alloc_bot
+            # always forward builder to the allocation bot
+            self.alloc_bot.context_builder = context_builder
+            try:
+                self.alloc_bot.context_builder.refresh_db_weights()
+            except Exception as exc:
+                logger.exception("context builder refresh failed: %s", exc)
+                raise RuntimeError("context builder refresh failed") from exc
         self.context_builder = context_builder
         self.prediction_manager = prediction_manager
         self.assigned_prediction_bots = []

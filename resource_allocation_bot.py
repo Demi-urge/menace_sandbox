@@ -23,6 +23,7 @@ from .prediction_manager_bot import PredictionManager
 from .databases import MenaceDB
 from .contrarian_db import ContrarianDB
 from db_router import GLOBAL_ROUTER, init_db_router
+from snippet_compressor import compress_snippets
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .resources_bot import ResourcesBot
@@ -328,8 +329,11 @@ class ResourceAllocationBot:
         except Exception:
             pass
         engine = PromptEngine(context_builder=self.context_builder, llm=llm)
+        retrieval_ctx = compress_snippets({"snippet": context}).get("snippet", context)
         prompt = engine.build_prompt(
-            f"Improve {bot}", context=context, context_builder=self.context_builder
+            f"Improve {bot}",
+            retrieval_context=retrieval_ctx,
+            context_builder=self.context_builder,
         )
         if engine.llm is None:
             return "upgrade"
