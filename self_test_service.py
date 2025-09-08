@@ -36,6 +36,7 @@ from contextlib import AsyncExitStack, contextmanager
 
 from db_router import init_db_router
 from dynamic_path_router import resolve_path, path_for_prompt
+from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional dependency for type hints
     from vector_service.context_builder import ContextBuilder
@@ -513,7 +514,7 @@ class SelfTestService:
         stub_scenarios: Mapping[str, Any] | None = None,
         fixture_hook: str | None = None,
         ephemeral: bool = True,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> None:
         """Create a new service instance.
 
@@ -565,16 +566,20 @@ class SelfTestService:
             environment created via
             :func:`sandbox_runner.environment.create_ephemeral_env`.
         context_builder:
-            Optional :class:`~vector_service.ContextBuilder` instance used by the
-            internal :class:`~error_logger.ErrorLogger`. When omitted a default
-            builder is created.
+            :class:`~vector_service.context_builder.ContextBuilder` instance
+            used by the internal :class:`~error_logger.ErrorLogger` and to
+            gather context for self‑test prompts.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.graph = graph or KnowledgeGraph()
-        builder = context_builder or ContextBuilder()
+        self.context_builder = context_builder
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to refresh context builder db weights")
         self.error_logger = ErrorLogger(
-            db, knowledge_graph=self.graph, context_builder=builder
+            db, knowledge_graph=self.graph, context_builder=self.context_builder
         )
         self.data_bot = data_bot
         self.result_callback = result_callback
@@ -638,6 +643,8 @@ class SelfTestService:
         self._health_server: 'HTTPServer' | None = None
         self._health_thread: threading.Thread | None = None
         self.health_port: int | None = None
+        self._prompt_context: str = ""
+        self._prompt_snippets: dict[str, str] = {}
         env_args = env_settings.self_test_args if pytest_args is None else pytest_args
         self.pytest_args = shlex.split(env_args) if env_args else []
         env_workers = env_settings.self_test_workers if workers is None else workers
@@ -1802,6 +1809,18 @@ class SelfTestService:
 
     # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
+        try:
+            ctx, *meta = self.context_builder.build_context(
+                "self-test execution", return_metadata=True
+            )
+            metadata = meta[-1] if meta and isinstance(meta[-1], dict) else {}
+            self._prompt_context = ctx
+            self._prompt_snippets = compress_snippets(metadata)
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("context retrieval failed")
+            self._prompt_context = ""
+            self._prompt_snippets = {}
+
         other_args = [a for a in self.pytest_args if a.startswith("-")]
         paths = [a for a in self.pytest_args if not a.startswith("-")]
         if not paths:
