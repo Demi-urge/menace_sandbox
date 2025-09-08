@@ -201,7 +201,7 @@ def cluster_and_rank(cands: Iterable[NicheCandidate]) -> List[NicheCandidate]:
     return ranked
 
 
-async def run_cycle() -> None:
+async def run_cycle(*, context_builder: ContextBuilder) -> None:
     logging.basicConfig(level=logging.INFO)
     info_db = InfoDB()
     scraper = TrendingScraper()
@@ -254,7 +254,7 @@ async def run_cycle() -> None:
         )
 
     sat_candidates = convert_for_saturation(candidates)
-    sat_bot = NicheSaturationBot(context_builder=ContextBuilder())
+    sat_bot = NicheSaturationBot(context_builder=context_builder)
     viable = sat_bot.detect(sat_candidates)
 
     mapping = { (cand.product_name or cand.niche or cand.platform): cand for cand in candidates }
@@ -283,4 +283,13 @@ async def run_cycle() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run_cycle())
+    asyncio.run(
+        run_cycle(
+            context_builder=ContextBuilder(
+                bots_db="bots.db",
+                code_db="code.db",
+                errors_db="errors.db",
+                workflows_db="workflows.db",
+            )
+        )
+    )

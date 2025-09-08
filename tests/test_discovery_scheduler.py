@@ -6,7 +6,7 @@ import sys
 
 # Stub heavy modules to keep tests lightweight
 mde = types.ModuleType("menace.menace_discovery_engine")
-async def _stub_run_cycle():
+async def _stub_run_cycle(*, context_builder):
     pass
 mde.run_cycle = _stub_run_cycle
 sys.modules.setdefault("menace.menace_discovery_engine", mde)
@@ -61,6 +61,9 @@ class _ContextBuilder:
         pass
 vs.ContextBuilder = _ContextBuilder
 sys.modules.setdefault("vector_service", vs)
+vs_cb = types.ModuleType("vector_service.context_builder")
+vs_cb.ContextBuilder = _ContextBuilder
+sys.modules.setdefault("vector_service.context_builder", vs_cb)
 
 import menace.discovery_scheduler as ds
 
@@ -101,7 +104,7 @@ class DummyCreator:
         self.called = True
 
 
-async def fake_run_cycle():
+async def fake_run_cycle(*, context_builder):
     pass
 
 
@@ -152,7 +155,11 @@ def test_scheduler_logs_errors(monkeypatch, tmp_path, caplog):
     sched = ds.DiscoveryScheduler(
         scraper=scraper, creation_bot=creator, context_builder=builder, interval=0
     )
-    monkeypatch.setattr(ds, "discovery_run_cycle", lambda: (_ for _ in ()).throw(RuntimeError("fail2")))
+    monkeypatch.setattr(
+        ds,
+        "discovery_run_cycle",
+        lambda **k: (_ for _ in ()).throw(RuntimeError("fail2")),
+    )
     monkeypatch.setattr(scraper, "scrape_reddit", lambda energy=None: (_ for _ in ()).throw(RuntimeError("fail1")))
     async def boom(tasks):
         raise RuntimeError("fail3")

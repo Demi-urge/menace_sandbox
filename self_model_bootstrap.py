@@ -16,11 +16,11 @@ from menace.deployment_bot import DeploymentBot
 from menace.error_bot import ErrorBot
 from menace.data_bot import DataBot, MetricsDB
 from menace.capital_management_bot import CapitalManagementBot
-from vector_service.context_builder import ContextBuilder
 from menace.database_manager import add_model, update_model, DB_PATH
+from types import SimpleNamespace
 
 
-def bootstrap() -> int:
+def bootstrap(context_builder: "ContextBuilder" | None = None) -> int:
     """Create the menace model and populate related tables.
 
     Returns the model identifier from ``models.db``.
@@ -31,7 +31,20 @@ def bootstrap() -> int:
     deployer = DeploymentBot()
     capital_bot = CapitalManagementBot()
     data_bot = DataBot(MetricsDB(), capital_bot=capital_bot)
-    err_bot = ErrorBot(data_bot=data_bot, context_builder=ContextBuilder())
+    cb = context_builder
+    if cb is None:
+        try:
+            from vector_service.context_builder import ContextBuilder
+
+            cb = ContextBuilder(
+                bots_db="bots.db",
+                code_db="code.db",
+                errors_db="errors.db",
+                workflows_db="workflows.db",
+            )
+        except Exception:  # pragma: no cover - best effort fallback
+            cb = SimpleNamespace(refresh_db_weights=lambda: None)
+    err_bot = ErrorBot(data_bot=data_bot, context_builder=cb)
 
     bot_files = sorted(resolve_dir(".").glob("*_bot.py"))
     bot_names = [p.stem for p in bot_files]
