@@ -131,6 +131,7 @@ class ContrarianModelBot:
         innovations_db: Optional[InnovationsDB] = None,
         info_db: Optional[InfoDB] = None,
         enhancements_db: Optional[EnhancementDB] = None,
+        context_builder: Optional[ContextBuilder] = None,
         aggregator: Optional[ResearchAggregatorBot] = None,
         prediction_manager: Optional[PredictionManager] = None,
         data_bot: Optional[DataBot] = None,
@@ -148,21 +149,27 @@ class ContrarianModelBot:
         self.innovations_db = innovations_db or InnovationsDB()
         self.info_db = info_db or InfoDB()
         self.enh_db = enhancements_db or EnhancementDB()
-        builder = ContextBuilder(
-            bot_db="bots.db",
-            code_db="code.db",
-            error_db="errors.db",
-            workflow_db="workflows.db",
-        )
-        builder.refresh_db_weights()
-        self.aggregator = aggregator or ResearchAggregatorBot(
-            [], info_db=self.info_db, enhancements_db=self.enh_db, context_builder=builder
-        )
+        self.context_builder = context_builder
+        if self.context_builder is not None:
+            self.context_builder.refresh_db_weights()
+        if aggregator is None:
+            if self.context_builder is None:
+                raise ValueError("context_builder is required when aggregator is not provided")
+            self.aggregator = ResearchAggregatorBot(
+                [],
+                info_db=self.info_db,
+                enhancements_db=self.enh_db,
+                context_builder=self.context_builder,
+            )
+        else:
+            self.aggregator = aggregator
         self.prediction_manager = prediction_manager
         self.data_bot = data_bot
         self.strategy_bot = strategy_bot or StrategyPredictionBot()
         if allocator is None:
-            allocator = ResourceAllocationBot(context_builder=builder)
+            if self.context_builder is None:
+                raise ValueError("context_builder is required when allocator is not provided")
+            allocator = ResourceAllocationBot(context_builder=self.context_builder)
         self.allocator = allocator
         self.contrarian_db = contrarian_db or ContrarianDB()
         self.capital_manager = capital_manager
