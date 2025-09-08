@@ -131,7 +131,7 @@ class ContrarianModelBot:
         innovations_db: Optional[InnovationsDB] = None,
         info_db: Optional[InfoDB] = None,
         enhancements_db: Optional[EnhancementDB] = None,
-        context_builder: Optional[ContextBuilder] = None,
+        context_builder: Optional[ContextBuilder] = None,  # nocb
         aggregator: Optional[ResearchAggregatorBot] = None,
         prediction_manager: Optional[PredictionManager] = None,
         data_bot: Optional[DataBot] = None,

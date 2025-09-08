@@ -587,7 +587,12 @@ _INPUT_HISTORY_DB: InputHistoryDB | None = None
 KNOWLEDGE_GRAPH = KnowledgeGraph()
 ERROR_LOGGER = ErrorLogger(
     knowledge_graph=KNOWLEDGE_GRAPH,
-    context_builder=ContextBuilder(),
+    context_builder=ContextBuilder(
+        "bots.db",
+        "code.db",
+        "errors.db",
+        "workflows.db",
+    ),
 )
 ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
@@ -1079,7 +1084,14 @@ def _get_history_db() -> InputHistoryDB:
 
 if DiagnosticManager is not None:
     try:
-        _DIAGNOSTIC = DiagnosticManager(context_builder=ContextBuilder())
+        _DIAGNOSTIC = DiagnosticManager(
+            context_builder=ContextBuilder(
+                "bots.db",
+                "code.db",
+                "errors.db",
+                "workflows.db",
+            )
+        )
     except (OSError, RuntimeError) as exc:  # pragma: no cover - diagnostics optional
         logger.warning(
             "diagnostic manager unavailable",
