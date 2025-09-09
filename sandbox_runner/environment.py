@@ -16,7 +16,6 @@ import os
 import sys
 import yaml
 from vector_service.context_builder import ContextBuilder
-from context_builder_util import create_context_builder
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -51,6 +50,7 @@ import signal
 import weakref
 import traceback
 import statistics
+import copy
 from datetime import datetime
 from pathlib import Path
 import importlib
@@ -294,7 +294,12 @@ def _radar_worker(q: "queue.Queue[str]", stop: threading.Event) -> None:
         try:
             _radar_track_module_usage(module)
         except Exception as exc:  # pragma: no cover - best effort
-            record_error(exc, context_builder=create_context_builder())
+            if _ERROR_CONTEXT_BUILDER is not None:
+                record_error(exc, context_builder=_ERROR_CONTEXT_BUILDER)
+            else:
+                logger.exception(
+                    "relevancy radar tracking failed", exc_info=exc
+                )
 
 
 _RADAR_MANAGER = _RadarWorker()
@@ -316,7 +321,12 @@ def _async_radar_track(module: str) -> None:
     try:
         _RADAR_MANAGER.track(module)
     except RuntimeError as exc:  # pragma: no cover - best effort
-        record_error(exc, context_builder=create_context_builder())
+        if _ERROR_CONTEXT_BUILDER is not None:
+            record_error(exc, context_builder=_ERROR_CONTEXT_BUILDER)
+        else:
+            logger.exception(
+                "relevancy radar queue failure", exc_info=exc
+            )
 
 import builtins
 
@@ -327,7 +337,6 @@ def _tracking_import(
     name, globals=None, locals=None, fromlist=(), level=0
 ):  # pragma: no cover - thin wrapper
     mod = _original_import(name, globals, locals, fromlist, level)
-    _async_radar_track(name)
     record_fn = globals().get("record_module_usage")
     module_file = getattr(mod, "__file__", "")
     if record_fn and module_file:
@@ -589,12 +598,14 @@ _INPUT_HISTORY_DB: InputHistoryDB | None = None
 # orchestration code instead of being constructed at import time.
 KNOWLEDGE_GRAPH = KnowledgeGraph()
 ERROR_LOGGER: ErrorLogger | None = None
+_ERROR_CONTEXT_BUILDER: ContextBuilder | None = None
 
 
 def get_error_logger(context_builder: ContextBuilder) -> ErrorLogger:
     """Return a shared :class:`ErrorLogger` instance using ``context_builder``."""
 
-    global ERROR_LOGGER
+    global ERROR_LOGGER, _ERROR_CONTEXT_BUILDER
+    _ERROR_CONTEXT_BUILDER = context_builder
     if ERROR_LOGGER is None:
         ERROR_LOGGER = ErrorLogger(
             knowledge_graph=KNOWLEDGE_GRAPH,
@@ -4366,7 +4377,10 @@ async def _execute_in_container(
                     }
             except Exception as exc:  # pragma: no cover - runtime failures
                 error_msg = str(exc)
-                record_error(exc, context_builder=create_context_builder())
+                if _ERROR_CONTEXT_BUILDER is not None:
+                    record_error(exc, context_builder=_ERROR_CONTEXT_BUILDER)
+                else:
+                    logger.exception("container execution failed", exc_info=exc)
                 _log_diagnostic(error_msg, False)
                 _CREATE_FAILURES[image] += 1
                 fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
@@ -4485,7 +4499,10 @@ async def _execute_in_container(
             }
         except Exception as exc:  # pragma: no cover - runtime failures
             error_msg = str(exc)
-            record_error(exc, context_builder=create_context_builder())
+            if _ERROR_CONTEXT_BUILDER is not None:
+                record_error(exc, context_builder=_ERROR_CONTEXT_BUILDER)
+            else:
+                logger.exception("container execution failed", exc_info=exc)
             _log_diagnostic(error_msg, False)
             _CREATE_FAILURES[image] += 1
             fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
@@ -4546,7 +4563,12 @@ def simulate_execution_environment(
                 _execute_in_container(code_str, input_stub or {})
             )
         except Exception as exc:  # pragma: no cover - best effort
-            record_error(exc, context_builder=create_context_builder())
+            if _ERROR_CONTEXT_BUILDER is not None:
+                record_error(exc, context_builder=_ERROR_CONTEXT_BUILDER)
+            else:
+                logger.exception(
+                    "container execution failed", exc_info=exc
+                )
 
     if runtime_metrics:
         env_result["runtime_metrics"] = runtime_metrics
@@ -5399,7 +5421,10 @@ async def _section_worker(
                 results = [await _run()]
             duration = time.perf_counter() - start
         except Exception as exc:  # pragma: no cover - runtime failures
-            record_error(exc, context_builder=create_context_builder())
+            if _ERROR_CONTEXT_BUILDER is not None:
+                record_error(exc, context_builder=_ERROR_CONTEXT_BUILDER)
+            else:
+                logger.exception("sandbox execution failed", exc_info=exc)
             _log_diagnostic(str(exc), False)
             if attempt >= 2:
                 raise
@@ -7182,8 +7207,7 @@ def run_repo_section_simulations(
             for module, sec_map in sections.items():
                 tmp_dir = tempfile.mkdtemp(prefix="section_")
                 shutil.copytree(repo_path, tmp_dir, dirs_exist_ok=True)
-                builder = create_context_builder()
-                builder.db_weights = base_builder.db_weights
+                builder = copy.deepcopy(base_builder)
                 debugger = SelfDebuggerSandbox(
                     object(),
                     SelfCodingEngine(
@@ -8359,8 +8383,7 @@ def run_workflow_simulations(
         for wf in workflows:
             for step in wf.workflow:
                 snippet = _wf_snippet([step])
-                builder = create_context_builder()
-                builder.db_weights = base_builder.db_weights
+                builder = copy.deepcopy(base_builder)
                 debugger = SelfDebuggerSandbox(
                     object(),
                     SelfCodingEngine(
