@@ -3,6 +3,15 @@
 The `vector_service_api` module exposes a tiny [FastAPI](https://fastapi.tiangolo.com/)
 application that wraps helpers from [`vector_service`](vector_service.md).
 Each endpoint returns a JSON object with a `status` field and timing metrics.
+Before sending requests, initialise the app with an explicit
+`ContextBuilder`:
+
+```python
+from context_builder_util import create_context_builder
+import vector_service_api
+
+vector_service_api.create_app(create_context_builder())
+```
 
 ## `POST /search`
 Run semantic search through `vector_service.Retriever`.

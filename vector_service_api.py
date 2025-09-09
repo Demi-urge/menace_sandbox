@@ -29,7 +29,7 @@ from vector_service import (
     FallbackResult,
 )
 from vector_service.context_builder import ContextBuilder
-from context_builder_util import create_context_builder
+from context_builder_util import ensure_fresh_weights
 from vector_service.patch_logger import RoiTag
 try:  # pragma: no cover - optional dependency
     from roi_tracker import ROITracker
@@ -70,23 +70,24 @@ _backfill: EmbeddingBackfill | None = None
 _ranker_scheduler = None
 
 
-def create_app(builder: ContextBuilder | None = None) -> FastAPI:
+def create_app(builder: ContextBuilder) -> FastAPI:
     """Initialise service dependencies and return the FastAPI app.
 
-    A :class:`ContextBuilder` instance can be supplied to explicitly control
-    how context is assembled.  When omitted a default ``ContextBuilder`` is
-    constructed.  The returned ``FastAPI`` app is ready for use by tests or
-    service start-up scripts.
+    A :class:`ContextBuilder` instance must be supplied to explicitly control
+    how context is assembled.  The returned ``FastAPI`` app is ready for use by
+    tests or service start-up scripts once initialisation completes.
     """
 
     global _builder, _cognition_layer, _patch_logger, _backfill, _ranker_scheduler, _retriever
 
-    _builder = builder or create_context_builder()
-    _retriever = Retriever(context_builder=_builder)
     try:
-        _builder.refresh_db_weights()
-    except Exception:  # pragma: no cover - best effort
-        pass
+        ensure_fresh_weights(builder)
+    except Exception as exc:  # pragma: no cover - validation
+        logging.getLogger(__name__).error("context builder refresh failed: %s", exc)
+        raise RuntimeError("context builder refresh failed") from exc
+
+    _builder = builder
+    _retriever = Retriever(context_builder=_builder)
 
     _cognition_layer = CognitionLayer(
         roi_tracker=_roi_tracker,

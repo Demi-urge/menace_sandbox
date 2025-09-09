@@ -15,7 +15,8 @@ router are no longer supported.
 The `vector_service` package provides retrieval helpers and HTTP endpoints
 (`/search`, `/build-context`, `/track-contributors`,
 `/backfill-embeddings`). Ensure imports use `vector_service` helpers and
-consult `vector_service_api.py` for usage details.
+consult `vector_service_api.py` for usage details. Initialising the HTTP API
+now requires an explicit `ContextBuilder` passed to `create_app`.
 
 ## Recursive orphan scanning default
 
