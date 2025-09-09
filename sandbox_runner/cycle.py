@@ -1425,10 +1425,10 @@ def _sandbox_cycle_runner(
                     prompt = build_section_prompt(
                         mod,
                         tracker,
-                        text,
+                        context_builder=ctx.context_builder,
+                        snippet=text,
                         prior=brainstorm_summary if brainstorm_summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
-                        context_builder=ctx.context_builder,
                     )
                     if insight:
                         prompt = f"{insight}\n\n{prompt}"
@@ -1695,10 +1695,10 @@ def _sandbox_cycle_runner(
                         prompt = build_section_prompt(
                             "overall",
                             tracker,
-                            f"ROI stalled. Current metrics: {summary}",
+                            context_builder=ctx.context_builder,
+                            snippet=f"ROI stalled. Current metrics: {summary}",
                             prior=prior if prior else None,
                             max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
-                            context_builder=ctx.context_builder,
                         )
                         if insight:
                             prompt = f"{insight}\n\n{prompt}"
@@ -1800,10 +1800,10 @@ def _sandbox_cycle_runner(
                     prompt = build_section_prompt(
                         "overall",
                         tracker,
-                        "Brainstorm high level improvements to increase ROI.",
+                        context_builder=ctx.context_builder,
+                        snippet="Brainstorm high level improvements to increase ROI.",
                         prior=summary if summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
-                        context_builder=ctx.context_builder,
                     )
                     if insight:
                         prompt = f"{insight}\n\n{prompt}"
