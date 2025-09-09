@@ -131,7 +131,8 @@ from .prompt_engine import (
     build_prompt,
 )
 from .prompt_memory_trainer import PromptMemoryTrainer
-from chunking import split_into_chunks, get_chunk_summaries, summarize_code
+from chunking import split_into_chunks, get_chunk_summaries
+from code_summarizer import summarize_code
 try:
     from .prompt_optimizer import PromptOptimizer
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1001,7 +1002,6 @@ class SelfCodingEngine:
                     if not (start <= ch.start_line and ch.end_line <= end):
                         summary = summarize_code(
                             ch.text,
-                            self.llm_client,
                             context_builder=self.context_builder,
                         )
                         summaries.append(f"Chunk {i}: {summary}")

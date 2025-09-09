@@ -47,7 +47,7 @@ def test_summarize_code_llm_client(monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def generate(self, prompt):  # pragma: no cover - trivial
+        def generate(self, prompt, context_builder=None):  # pragma: no cover - trivial
             return DummyResult()
 
     monkeypatch.setattr("local_client.OllamaClient", DummyClient)
