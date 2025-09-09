@@ -53,7 +53,11 @@ def test_full_cycle_failure_and_recovery(monkeypatch, tmp_path, caplog):
 
     # ---- SelfTestService: missing dependency then recovery ----
     db = DummyDB()
-    svc = sts.SelfTestService(db=db, history_path=tmp_path / "hist.json")
+    svc = sts.SelfTestService(
+        db=db,
+        history_path=tmp_path / "hist.json",
+        context_builder=DummyBuilder(),
+    )
     mod = tmp_path / "test_mod.py"  # path-ignore
     mod.write_text("def test_a():\n    assert True\n")
 

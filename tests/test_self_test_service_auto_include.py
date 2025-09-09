@@ -55,6 +55,17 @@ def test_auto_include_isolated_settings(monkeypatch):
         recursive_isolated = True
 
     monkeypatch.setattr(mod, "SandboxSettings", lambda: DummySettings())
-    svc = mod.SelfTestService(discover_isolated=False, recursive_isolated=False)
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build_context(self, *a, **k):
+            return "", "", {}
+
+    svc = mod.SelfTestService(
+        discover_isolated=False,
+        recursive_isolated=False,
+        context_builder=DummyBuilder(),
+    )
     assert svc.discover_isolated is True
     assert svc.recursive_isolated is True

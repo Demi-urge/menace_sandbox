@@ -25,6 +25,14 @@ def load_mod(name, file):
 cms = load_mod('cross_model_scheduler', resolve_path('cross_model_scheduler.py'))  # path-ignore
 sts = load_mod('self_test_service', resolve_path('self_test_service.py'))  # path-ignore
 
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
 class DummyThread:
     def __init__(self, target=None, daemon=None):
         self.target = target
@@ -56,7 +64,7 @@ def test_self_test_async_records(monkeypatch):
             self.results.append((p, f))
 
     db = DummyDB()
-    svc = sts.SelfTestService(db=db)
+    svc = sts.SelfTestService(db=db, context_builder=DummyBuilder())
 
     async def fake_run_once():
         db.add_test_result(1, 0)

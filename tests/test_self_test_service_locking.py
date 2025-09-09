@@ -76,6 +76,14 @@ def load_self_test_service():
 sts = load_self_test_service()
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
+
 class DummyLogger:
     def __init__(self, db=None, knowledge_graph=None):
         self.db = types.SimpleNamespace(add_test_result=lambda *a, **k: None)
@@ -130,8 +138,8 @@ def test_container_locking(monkeypatch):
     monkeypatch.setattr(sts, 'ErrorLogger', DummyLogger)
     monkeypatch.setattr(sts.SelfTestService, '_discover_orphans', lambda self: [])
 
-    svc1 = sts.SelfTestService(use_container=True)
-    svc2 = sts.SelfTestService(use_container=True)
+    svc1 = sts.SelfTestService(use_container=True, context_builder=DummyBuilder())
+    svc2 = sts.SelfTestService(use_container=True, context_builder=DummyBuilder())
 
     async def run_svc(svc):
         await svc._run_once()
@@ -211,7 +219,11 @@ def test_container_retries(monkeypatch):
 
     monkeypatch.setattr(asyncio, 'create_subprocess_exec', fake_exec)
 
-    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    svc = sts.SelfTestService(
+        use_container=True,
+        container_retries=1,
+        context_builder=DummyBuilder(),
+    )
     monkeypatch.setattr(sts, 'ErrorLogger', DummyLogger)
     monkeypatch.setattr(sts.SelfTestService, '_discover_orphans', lambda self: [])
     svc.run_once()
@@ -287,7 +299,7 @@ def _proc_run_once(root: str, lock_path: str, q):
             raise RuntimeError('unexpected command')
 
     mod.asyncio.create_subprocess_exec = fake_exec
-    svc = mod.SelfTestService(use_container=True)
+    svc = mod.SelfTestService(use_container=True, context_builder=DummyBuilder())
     svc.run_once()
 
 

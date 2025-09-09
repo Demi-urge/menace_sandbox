@@ -78,6 +78,14 @@ else:
 from prometheus_client import REGISTRY
 REGISTRY._names_to_collectors.clear()
 spec.loader.exec_module(self_test_mod)
+
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
 self_test_mod.analyze_redundancy = lambda p: False
 
 # stub ModuleIndexDB
@@ -259,6 +267,7 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
         discover_isolated=True,
         recursive_isolated=True,
         integration_callback=integration,
+        context_builder=DummyBuilder(),
     )
     asyncio.run(svc._run_once())
 
@@ -388,6 +397,7 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
         recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integration,
+        context_builder=DummyBuilder(),
     )
     asyncio.run(svc._run_once())
 
@@ -422,7 +432,10 @@ def test_generate_stub_with_scenarios(monkeypatch, tmp_path):
     }
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    svc = self_test_mod.SelfTestService(stub_scenarios={str(module_path): scenarios})
+    svc = self_test_mod.SelfTestService(
+        stub_scenarios={str(module_path): scenarios},
+        context_builder=DummyBuilder(),
+    )
     stub = svc._generate_pytest_stub(str(module_path), scenarios)
 
     cmd = [sys.executable, "-m", "pytest", "-q", str(stub)]

@@ -567,15 +567,17 @@ class SelfTestService:
             environment created via
             :func:`sandbox_runner.environment.create_ephemeral_env`.
         context_builder:
-            Optional :class:`~vector_service.context_builder.ContextBuilder`
-            instance used by the internal :class:`~error_logger.ErrorLogger`
-            and to gather context for self‑test prompts.  If ``None``, a
-            builder is created via :func:`create_context_builder`.
+            :class:`~vector_service.context_builder.ContextBuilder` instance
+            used by the internal :class:`~error_logger.ErrorLogger` and to
+            gather context for self‑test prompts. ``None`` is not allowed and
+            will raise :class:`ValueError`.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.graph = graph or KnowledgeGraph()
-        self.context_builder = context_builder or create_context_builder()
+        if context_builder is None:
+            raise ValueError("context_builder is required")
+        self.context_builder = context_builder
         try:
             ensure_fresh_weights(self.context_builder)
         except Exception:  # pragma: no cover - best effort

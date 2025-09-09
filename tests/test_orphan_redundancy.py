@@ -22,6 +22,14 @@ REGISTRY._names_to_collectors.clear()
 spec.loader.exec_module(sts)
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
+
 class DummyLogger:
     def __init__(self) -> None:
         self.info_msgs: list[str] = []
@@ -234,7 +242,7 @@ def test_update_orphan_modules_tests_redundant_when_enabled(monkeypatch, tmp_pat
 
 def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    svc = sts.SelfTestService(discover_isolated=False)
+    svc = sts.SelfTestService(discover_isolated=False, context_builder=DummyBuilder())
     svc.logger = DummyLogger()
 
     sr = types.ModuleType("sandbox_runner")
@@ -260,7 +268,11 @@ def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
 
 def test_discover_isolated_filters(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    svc = sts.SelfTestService(discover_isolated=True, discover_orphans=False)
+    svc = sts.SelfTestService(
+        discover_isolated=True,
+        discover_orphans=False,
+        context_builder=DummyBuilder(),
+    )
     svc.logger = DummyLogger()
 
     mod = types.ModuleType("scripts.discover_isolated_modules")
@@ -291,7 +303,11 @@ def test_discover_isolated_filters(monkeypatch, tmp_path):
 
 def test_discover_orphans_filters_non_recursive(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    svc = sts.SelfTestService(discover_isolated=False, recursive_orphans=False)
+    svc = sts.SelfTestService(
+        discover_isolated=False,
+        recursive_orphans=False,
+        context_builder=DummyBuilder(),
+    )
     svc.logger = DummyLogger()
 
     def fake_find(root: Path):
@@ -318,7 +334,7 @@ def test_discover_orphans_filters_non_recursive(monkeypatch, tmp_path):
 
 def test_discover_orphans_records_redundant_metadata(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    svc = sts.SelfTestService(discover_isolated=False)
+    svc = sts.SelfTestService(discover_isolated=False, context_builder=DummyBuilder())
     svc.logger = DummyLogger()
 
     sr = types.ModuleType("sandbox_runner")

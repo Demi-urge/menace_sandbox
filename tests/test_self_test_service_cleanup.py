@@ -73,6 +73,14 @@ def load_self_test_service():
 sts = load_self_test_service()
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
+
 def test_force_remove_container_retries_and_logs(monkeypatch, caplog):
     calls = []
 
@@ -89,7 +97,11 @@ def test_force_remove_container_retries_and_logs(monkeypatch, caplog):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    svc = sts.SelfTestService(
+        use_container=True,
+        container_retries=1,
+        context_builder=DummyBuilder(),
+    )
     caplog.set_level(logging.WARNING)
     asyncio.run(svc._force_remove_container("cid"))
     assert len(calls) == 2
@@ -121,7 +133,11 @@ def test_remove_stale_containers_retries_and_logs(monkeypatch, caplog):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.setattr(sts.SelfTestService, "_force_remove_container", dummy_force)
-    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    svc = sts.SelfTestService(
+        use_container=True,
+        container_retries=1,
+        context_builder=DummyBuilder(),
+    )
     caplog.set_level(logging.WARNING)
     asyncio.run(svc._remove_stale_containers())
     assert len(ps_calls) == 2
@@ -150,7 +166,11 @@ def test_force_remove_failure_metric(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     sts.self_test_container_failures_total.set(0)
-    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    svc = sts.SelfTestService(
+        use_container=True,
+        container_retries=1,
+        context_builder=DummyBuilder(),
+    )
     asyncio.run(svc._force_remove_container("cid"))
     assert _get(sts.self_test_container_failures_total) == 1
 
@@ -170,7 +190,11 @@ def test_remove_stale_containers_failure_metric(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     sts.self_test_container_failures_total.set(0)
-    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    svc = sts.SelfTestService(
+        use_container=True,
+        container_retries=1,
+        context_builder=DummyBuilder(),
+    )
     asyncio.run(svc._remove_stale_containers())
     assert _get(sts.self_test_container_failures_total) == 1
 
@@ -184,7 +208,7 @@ def test_run_module_harness_cleans_stub(tmp_path, monkeypatch, caplog):
         raise subprocess.CalledProcessError(1, args[0], stderr=b"boom")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    svc = sts.SelfTestService()
+    svc = sts.SelfTestService(context_builder=DummyBuilder())
     with caplog.at_level(logging.ERROR):
         passed, _, _ = svc._run_module_harness(mod_file.as_posix())
     assert not passed
@@ -212,6 +236,10 @@ def test_cleanup_containers_failure_metric(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.setattr(sts.SelfTestService, "_docker_available", avail)
     sts.self_test_container_failures_total.set(0)
-    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    svc = sts.SelfTestService(
+        use_container=True,
+        container_retries=1,
+        context_builder=DummyBuilder(),
+    )
     asyncio.run(svc._cleanup_containers())
     assert _get(sts.self_test_container_failures_total) == 1

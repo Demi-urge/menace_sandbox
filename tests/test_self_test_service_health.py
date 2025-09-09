@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_self_test_service_async import load_self_test_service
+from tests.test_self_test_service_async import load_self_test_service, DummyBuilder
 
 sts = load_self_test_service()
 
@@ -21,7 +21,10 @@ def _free_port() -> int:
 
 @pytest.mark.asyncio
 async def test_health_endpoint(monkeypatch, tmp_path: Path) -> None:
-    svc = sts.SelfTestService(history_path=tmp_path / "hist.json")
+    svc = sts.SelfTestService(
+        history_path=tmp_path / "hist.json",
+        context_builder=DummyBuilder(),
+    )
 
     async def fake_run_once(self) -> None:  # type: ignore[override]
         self.results = {"passed": 2, "failed": 1, "coverage": 100.0, "runtime": 0.05}
