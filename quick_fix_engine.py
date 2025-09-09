@@ -335,7 +335,7 @@ def generate_patch(
             try:
                 from sandbox_runner import post_round_orphan_scan
 
-                post_round_orphan_scan(Path.cwd())
+                post_round_orphan_scan(Path.cwd(), context_builder=builder)
             except Exception:
                 logger.exception(
                     "post_round_orphan_scan after preemptive patch failed"

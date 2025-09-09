@@ -442,7 +442,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     if patch_id is not None:
                         try:
                             post_round_orphan_scan(
-                                Path.cwd(), logger=self.logger, router=router
+                                Path.cwd(),
+                                logger=self.logger,
+                                router=router,
+                                context_builder=self.context_builder,
                             )
                         except Exception:
                             self.logger.exception(
@@ -1951,7 +1954,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     )
                     try:
                         post_round_orphan_scan(
-                            Path.cwd(), logger=self.logger, router=router
+                            Path.cwd(),
+                            logger=self.logger,
+                            router=router,
+                            context_builder=self.context_builder,
                         )
                     except Exception:
                         self.logger.exception(

@@ -12,7 +12,6 @@ import yaml
 
 from logging_utils import get_logger
 from dynamic_path_router import resolve_path, resolve_module_path
-from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - heavy import for type checking only
     from roi_tracker import ROITracker
@@ -24,6 +23,7 @@ def integrate_and_graph_orphans(
     *,
     logger=None,
     router=None,
+    context_builder: "ContextBuilder",
 ) -> Tuple["ROITracker" | None, Dict[str, List[str]], List[int], bool, bool]:
     """Discover and integrate orphan modules into existing workflows.
 
@@ -39,6 +39,9 @@ def integrate_and_graph_orphans(
         Optional logger instance used for diagnostics.
     router:
         Optional database router forwarded to helpers.
+    context_builder:
+        :class:`~vector_service.context_builder.ContextBuilder` used for sandbox
+        interactions.
 
     Returns
     -------
@@ -73,7 +76,7 @@ def integrate_and_graph_orphans(
         log.exception("environment helpers import failed")
         return None, {}, [], False, False
 
-    builder = create_context_builder()
+    builder = context_builder
     try:
         tracker, tested = auto_include_modules(
             paths, recursive=True, router=router, context_builder=builder
@@ -207,6 +210,7 @@ def post_round_orphan_scan(
     *,
     logger=None,
     router=None,
+    context_builder: "ContextBuilder",
 ) -> Tuple[List[str], bool, bool]:
     """Integrate orphan modules discovered after a round of code changes.
 
@@ -215,13 +219,14 @@ def post_round_orphan_scan(
     modules using :func:`auto_include_modules`, update the module synergy graph
     and intent clustering, and finally return the list of newly added module
     paths along with flags indicating whether the synergy graph and intent
-    cluster updates succeeded.
+    cluster updates succeeded. ``context_builder`` is forwarded to the helper
+    to maintain consistent sandbox context.
     """
 
     log = logger or get_logger(__name__)
 
     _tracker, tested, _updated, syn_ok, cl_ok = integrate_and_graph_orphans(
-        repo, modules, logger=log, router=router
+        repo, modules, logger=log, router=router, context_builder=context_builder
     )
     added = tested.get("added", [])
     count = len(added)

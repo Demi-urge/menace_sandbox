@@ -101,7 +101,9 @@ class ModuleRetirementService:
                 try:
                     from sandbox_runner import integrate_new_orphans
 
-                    integrate_new_orphans(self.root)
+                    integrate_new_orphans(
+                        self.root, context_builder=self._context_builder
+                    )
                 except Exception:
                     self.logger.exception(
                         "integrate_new_orphans after compression failed"
@@ -133,7 +135,9 @@ class ModuleRetirementService:
                 try:
                     from sandbox_runner import integrate_new_orphans
 
-                    integrate_new_orphans(self.root)
+                    integrate_new_orphans(
+                        self.root, context_builder=self._context_builder
+                    )
                 except Exception:
                     self.logger.exception(
                         "integrate_new_orphans after replacement failed"

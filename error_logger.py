@@ -755,7 +755,11 @@ class ErrorLogger:
                         try:
                             from sandbox_runner import integrate_new_orphans
 
-                            integrate_new_orphans(Path.cwd(), router=GLOBAL_ROUTER)
+                            integrate_new_orphans(
+                                Path.cwd(),
+                                router=GLOBAL_ROUTER,
+                                context_builder=self.context_builder,
+                            )
                         except Exception as e2:  # pragma: no cover - integration issues
                             self.logger.error(
                                 "integrate_new_orphans after patch for %s failed: %s",

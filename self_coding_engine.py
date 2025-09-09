@@ -2647,7 +2647,9 @@ class SelfCodingEngine:
                     self.logger.exception("git push failed: %s", exc)
             try:
                 from sandbox_runner import post_round_orphan_scan
-                post_round_orphan_scan(Path.cwd(), router=self.router)
+                post_round_orphan_scan(
+                    Path.cwd(), router=self.router, context_builder=self.context_builder
+                )
             except Exception:
                 self.logger.exception(
                     "post_round_orphan_scan after apply_patch failed"
