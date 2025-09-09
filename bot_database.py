@@ -502,6 +502,12 @@ class BotDB(EmbeddableDBMixin):
             if not publish_with_retry(self.event_bus, "bot:update", payload):
                 logger.exception("failed to publish bot:update event")
                 self.failed_events.append(FailedEvent("bot:update", payload))
+            else:
+                publish_with_retry(
+                    self.event_bus,
+                    "embedding:backfill",
+                    {"db": self.__class__.__name__},
+                )
 
     # embedding --------------------------------------------------------
     def iter_records(

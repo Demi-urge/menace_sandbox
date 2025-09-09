@@ -328,6 +328,7 @@ class ErrorDB(EmbeddableDBMixin):
         self._publish(
             "discrepancies:new", {"message": message, "source_menace_id": menace_id}
         )
+        self._publish("embedding:backfill", {"db": self.__class__.__name__})
 
     def discrepancies(
         self,
