@@ -105,8 +105,19 @@ class CandidateResponseScorer:
             except Exception:  # pragma: no cover - fallback to heuristic
                 self._model_loaded = False
 
-        from .sentiment import SentimentAnalyzer
-        from .user_preferences import PreferenceProfile
+        try:  # pragma: no cover - optional dependency
+            from .sentiment import SentimentAnalyzer
+        except Exception:  # pragma: no cover - fallback when sentiment module missing
+            class SentimentAnalyzer:  # type: ignore[misc]
+                def analyse(self, text: str):  # noqa: D401 - simple stub
+                    return 0.0, []
+
+        try:  # pragma: no cover - optional dependency
+            from .user_preferences import PreferenceProfile
+        except Exception:  # pragma: no cover - fallback when preferences missing
+            class PreferenceProfile:  # type: ignore[misc]
+                embedding: List[float] = []
+                archetype: str = ""
 
         self.sentiment = SentimentAnalyzer()
         self.PreferenceProfile = PreferenceProfile

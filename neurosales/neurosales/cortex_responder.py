@@ -10,6 +10,12 @@ from .external_integrations import GPT4Client, PineconeLogger
 from typing import TYPE_CHECKING
 from context_builder_util import create_context_builder
 
+try:  # pragma: no cover - optional dependency
+    from vector_service import ContextBuilder
+except Exception:  # pragma: no cover - fallback when vector service missing
+    class ContextBuilder:  # type: ignore[misc]
+        pass
+
 if TYPE_CHECKING:  # pragma: no cover - hints only
     from .user_preferences import PreferenceProfile
 
@@ -45,15 +51,18 @@ class CortexAwareResponder:
         pinecone_key: str,
         pinecone_env: str,
         pg: Optional[InMemoryResponseDB] = None,
+        context_builder: Optional[ContextBuilder] = None,
     ) -> None:
-        builder = create_context_builder()
+        builder = context_builder or create_context_builder()
         self.client = GPT4Client(openai_key, context_builder=builder)
         self.pinecone = PineconeLogger(
             pinecone_index, api_key=pinecone_key, environment=pinecone_env
         )
         self.pg = pg or InMemoryResponseDB()
+        # allow access to the builder for overrides
+        self.context_builder = self.client.context_builder
         self.generator = ResponseCandidateGenerator(
-            context_builder=builder
+            context_builder=self.client.context_builder
         )
         self.scorer = CandidateResponseScorer()
         self.queue = ResponsePriorityQueue()
@@ -88,7 +97,10 @@ class CortexAwareResponder:
         # candidate generation
         self.generator.add_past_response(first_pass)
         candidates = self.generator.generate_candidates(
-            text, history_texts, profile.archetype
+            text,
+            history_texts,
+            profile.archetype,
+            context_builder=self.client.context_builder,
         )
         if first_pass not in candidates:
             candidates.append(first_pass)
