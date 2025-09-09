@@ -84,7 +84,7 @@ class _ContextClient:
                 tags=prompt.tags,
                 metadata=prompt.metadata,
             )
-        return self._client.generate(prompt)
+        return self._client.generate(prompt)  # nocb
 
 
 def reroute_to_fallback_model(prompt: Prompt, *, context_builder: ContextBuilder) -> LLMResult:

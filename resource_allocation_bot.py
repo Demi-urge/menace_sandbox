@@ -342,7 +342,7 @@ class ResourceAllocationBot:
         if engine.llm is None:
             return "upgrade"
         try:
-            result = engine.llm.generate(prompt)
+            result = engine.llm.generate(prompt, context_builder=builder)
             return (getattr(result, "text", "") or "").strip()
         except Exception:  # pragma: no cover - local LLM failures
             self.logger.exception("Improvement suggestion failed for %s", bot)

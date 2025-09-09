@@ -123,7 +123,7 @@ class ResponseCandidateGenerator:
             try:
                 prompt = " ".join(history + [message, archetype])
                 input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-                outputs = self.model.generate(
+                outputs = self.model.generate(  # nocb
                     input_ids,
                     max_length=input_ids.shape[1] + 20,
                     num_return_sequences=n,

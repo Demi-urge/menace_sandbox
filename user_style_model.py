@@ -86,7 +86,9 @@ class UserStyleModel:
         if not self.model or not self.tokenizer:
             return text
         inputs = self.tokenizer(text, return_tensors="pt")
-        outputs = self.model.generate(**inputs, max_length=50, num_return_sequences=1)
+        outputs = self.model.generate(  # nocb
+            **inputs, max_length=50, num_return_sequences=1
+        )
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 
