@@ -1,6 +1,7 @@
 import json
 
 import action_justifier as aj
+import local_model_wrapper as lmw
 
 
 class DummyTokenizer:
@@ -35,7 +36,7 @@ def _setup(monkeypatch, tmp_path):
     monkeypatch.setattr(aj, "_TRANSFORMERS_AVAILABLE", True)
     monkeypatch.setattr(aj, "AutoTokenizer", DummyTokenizer)
     monkeypatch.setattr(aj, "AutoModelForCausalLM", DummyModel)
-    monkeypatch.setattr(aj, "compress_snippets", lambda meta, **_: meta)
+    monkeypatch.setattr(lmw, "compress_snippets", lambda meta, **_: meta)
     monkeypatch.setattr(aj, "_CACHE_DIR", tmp_path)
 
 

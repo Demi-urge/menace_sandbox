@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import random
 from typing import Dict, List
-import uuid
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -20,14 +19,14 @@ except Exception:  # pragma: no cover - optional heavy dep
     torch = None  # type: ignore
 
 try:
-    from vector_service import ContextBuilder, FallbackResult, ErrorResult
+    from vector_service import ContextBuilder
 except Exception as exc:  # pragma: no cover - explicit failure
     raise ImportError(
         "vector_service is required for response generation; "
         "install via `pip install vector_service`"
     ) from exc
 
-from snippet_compressor import compress_snippets
+from local_model_wrapper import LocalModelWrapper
 
 
 # ---------------------------------------------------------------------------
@@ -94,14 +93,16 @@ class ResponseCandidateGenerator:
         self.past_responses: List[str] = []
         self.past_matrix = None
         self.tokenizer = None
-        self.model = None
+        self.wrapper = None
         if AutoTokenizer and AutoModelForCausalLM and torch is not None:
             try:
-                self.tokenizer = AutoTokenizer.from_pretrained("sshleifer/tiny-gpt2")
-                self.model = AutoModelForCausalLM.from_pretrained("sshleifer/tiny-gpt2")
+                tokenizer = AutoTokenizer.from_pretrained("sshleifer/tiny-gpt2")
+                model = AutoModelForCausalLM.from_pretrained("sshleifer/tiny-gpt2")
+                self.tokenizer = tokenizer
+                self.wrapper = LocalModelWrapper(model, tokenizer)
             except Exception:
                 self.tokenizer = None
-                self.model = None
+                self.wrapper = None
 
     # ------------------------------------------------------------------
     def add_past_response(self, response: str) -> None:
@@ -139,32 +140,21 @@ class ResponseCandidateGenerator:
         *,
         context_builder: ContextBuilder,
     ) -> List[str]:
-        if self.tokenizer and self.model and torch is not None:
+        if self.wrapper and self.tokenizer and torch is not None:
             try:
                 prompt = " ".join(history + [message, archetype])
-                session_id = uuid.uuid4().hex
-                ctx_res = context_builder.build(message, session_id=session_id)
-                ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-                if isinstance(ctx, (FallbackResult, ErrorResult)):
-                    ctx = ""
-                if ctx:
-                    if isinstance(ctx, dict):
-                        ctx = compress_snippets(ctx).get("snippet", "")
-                    else:
-                        ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
-                    if ctx:
-                        prompt = f"{ctx}\n\n{prompt}"
-                input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-                outputs = self.model.generate(  # nocb
-                    input_ids,
-                    max_length=input_ids.shape[1] + 20,
+                max_len = len(self.tokenizer.encode(prompt)) + 20
+                outputs = self.wrapper.generate(
+                    prompt,
+                    context_builder=context_builder,
+                    cb_input=message,
+                    max_length=max_len,
                     num_return_sequences=n,
                     do_sample=True,
                     top_k=50,
                     top_p=0.95,
                 )
-                decoded = [self.tokenizer.decode(o, skip_special_tokens=True) for o in outputs]
-                return decoded
+                return outputs if isinstance(outputs, list) else [outputs]
             except Exception:
                 pass
         base = f"{archetype}: " if archetype else ""

@@ -13,21 +13,12 @@ from string import Template
 from pydantic import BaseModel, ValidationError
 
 from dynamic_path_router import resolve_dir, resolve_path
-from snippet_compressor import compress_snippets
+from local_model_wrapper import LocalModelWrapper
 
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder, FallbackResult
+    from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fall back to minimal stubs
     ContextBuilder = Any  # type: ignore
-
-    class FallbackResult(list):  # type: ignore[misc]
-        pass
-
-try:  # pragma: no cover - optional dependency
-    from vector_service import ErrorResult  # type: ignore
-except Exception:  # pragma: no cover - fallback stub
-    class ErrorResult(Exception):  # type: ignore[override]
-        pass
 
 
 logger = logging.getLogger(__name__)
@@ -163,28 +154,16 @@ def _llm_justification(
         f"Risk score: {risk_score:.2f}\n"
         "Explain briefly why this action was flagged:"
     )
-    vec_ctx = ""
-    try:
-        payload = json.dumps(
-            {
-                "action_log": action_log,
-                "violation_flags": violation_flags,
-                "risk_score": risk_score,
-                "domain": domain,
-            }
-        )
-        ctx_res = context_builder.build(payload)
-        vec_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-        if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
-            vec_ctx = ""
-        elif vec_ctx:
-            vec_ctx = compress_snippets({"snippet": vec_ctx}).get("snippet", vec_ctx)
-    except Exception:
-        vec_ctx = ""
-    prompt = f"{vec_ctx}\n\n{base_prompt}" if vec_ctx else base_prompt
+    payload_dict = {
+        "action_log": action_log,
+        "violation_flags": violation_flags,
+        "risk_score": risk_score,
+        "domain": domain,
+    }
+    payload = json.dumps(payload_dict)
     cache_key = hashlib.sha256(
         json.dumps(
-            {"log": action_log, "v": violation_flags, "r": risk_score, "d": domain},
+            payload_dict,
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
@@ -195,10 +174,14 @@ def _llm_justification(
         except Exception:
             logger.exception("failed reading justification cache")
     try:
-        tokens = tokenizer.encode(prompt, return_tensors="pt")
-        output = model.generate(tokens, max_new_tokens=60, do_sample=False)  # nocb
-        text = tokenizer.decode(output[0], skip_special_tokens=True)
-        explanation = text[len(prompt):].strip()
+        wrapper = LocalModelWrapper(model, tokenizer)
+        explanation = wrapper.generate(
+            base_prompt,
+            context_builder=context_builder,
+            cb_input=payload,
+            max_new_tokens=60,
+            do_sample=False,
+        ).strip()
     except Exception:
         return None
     if explanation:

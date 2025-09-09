@@ -1,12 +1,11 @@
 import os
 import sys
-import types
+import pytest
+import local_model_wrapper as lmw
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import pytest
 try:  # pragma: no cover - skip if vector_service missing
-    import neurosales.response_generation as rg  # noqa: E402
     from neurosales.response_generation import (  # noqa: E402
         ResponseCandidateGenerator,
         redundancy_filter,
@@ -67,12 +66,15 @@ def test_dynamic_candidates_include_context(monkeypatch):
         def refresh_db_weights(self):
             return None
 
+    captured: dict[str, str] = {}
+
     class DummyTokenizer:
         def encode(self, prompt, return_tensors=None):
-            return types.SimpleNamespace(prompt=prompt, shape=(1, len(prompt.split())))
+            captured["prompt"] = prompt
+            return [0] * len(prompt.split())
 
         def decode(self, output, skip_special_tokens=True):
-            return output.prompt
+            return output
 
     class DummyModel:
         def generate(self, input_ids, **_):
@@ -82,15 +84,16 @@ def test_dynamic_candidates_include_context(monkeypatch):
         txt = meta.get("snippet", "")
         return {"snippet": txt.replace("RAW", "COMP")}
 
-    monkeypatch.setattr(rg, "compress_snippets", fake_compress)
+    monkeypatch.setattr(lmw, "compress_snippets", fake_compress)
 
     builder = DummyBuilder()
     gen = ResponseCandidateGenerator(context_builder=builder)
     gen.tokenizer = DummyTokenizer()
-    gen.model = DummyModel()
+    gen.wrapper = lmw.LocalModelWrapper(DummyModel(), gen.tokenizer)
     res = gen.generate_candidates(
         "hello", ["hi"], "arch", context_builder=builder
     )
     assert builder.calls == ["hello"]
-    assert any("COMPCTX" in r for r in res)
-    assert all("RAWCTX" not in r for r in res)
+    assert captured["prompt"].startswith("COMPCTX")
+    assert "RAWCTX" not in captured["prompt"]
+    assert res
