@@ -30,6 +30,17 @@ vector_stub = sys.modules.setdefault("vector_service", types.ModuleType("vector_
 vector_stub.SharedVectorService = object
 vector_stub.CognitionLayer = object
 vector_stub.PatchLogger = object
+class _CB:
+    def __init__(self, *a, **k):
+        pass
+
+    def refresh_db_weights(self, *a, **k):
+        return None
+
+    def build(self, *a, **k):
+        return ""
+
+vector_stub.ContextBuilder = _CB
 vector_stub.VectorServiceError = Exception
 sys.modules.setdefault("menace.vector_service", vector_stub)
 
@@ -64,6 +75,13 @@ def make_engine(mock_llm, monkeypatch):
     engine.simplify_prompt = self_coding_engine.simplify_prompt
     monkeypatch.setattr(
         self_coding_engine, "_settings", types.SimpleNamespace(codex_retry_delays=[2, 5, 10])
+    )
+    monkeypatch.setattr(
+        self_coding_engine,
+        "create_context_builder",
+        lambda: types.SimpleNamespace(
+            refresh_db_weights=lambda *a, **k: None, build=lambda *a, **k: ""
+        ),
     )
     return engine
 
@@ -131,7 +149,7 @@ def test_codex_fallback_queue_on_malformed(monkeypatch):
         raising=False,
     )
 
-    def handle(prompt, reason, **_):
+    def handle(prompt, reason, *, context_builder, **_):
         self_coding_engine.codex_fallback_handler.queue_for_retry(prompt)
         return LLMResult(text="")
 

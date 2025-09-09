@@ -38,6 +38,17 @@ vector_stub = sys.modules.setdefault("vector_service", types.ModuleType("vector_
 vector_stub.SharedVectorService = object
 vector_stub.CognitionLayer = object
 vector_stub.PatchLogger = object
+class _CB:
+    def __init__(self, *a, **k):
+        pass
+
+    def refresh_db_weights(self, *a, **k):
+        return None
+
+    def build(self, *a, **k):
+        return ""
+
+vector_stub.ContextBuilder = _CB
 vector_stub.VectorServiceError = Exception
 sys.modules.setdefault("menace.vector_service", vector_stub)
 
@@ -75,6 +86,9 @@ def make_engine(mock_llm, fallback_model: str = "gpt-3.5-turbo"):
         codex_fallback_model=fallback_model,
         codex_fallback_strategy="reroute",
     )
+    self_coding_engine.create_context_builder = lambda: types.SimpleNamespace(
+        refresh_db_weights=lambda *a, **k: None, build=lambda *a, **k: ""
+    )
     return engine
 
 
@@ -100,7 +114,7 @@ def test_empty_output_triggers_fallback(monkeypatch):
     alt_result = LLMResult(text="print('hi')")
     model_used: dict[str, str] = {}
 
-    def fake_reroute(p: Prompt) -> LLMResult:
+    def fake_reroute(p: Prompt, *, context_builder=None) -> LLMResult:
         model_used["model"] = (
             self_coding_engine.codex_fallback_handler._settings.codex_fallback_model
         )
@@ -157,7 +171,7 @@ def test_malformed_output_triggers_fallback(monkeypatch):
     alt_result = LLMResult(text="print('fixed')")
     model_used: dict[str, str] = {}
 
-    def fake_reroute(p: Prompt) -> LLMResult:
+    def fake_reroute(p: Prompt, *, context_builder=None) -> LLMResult:
         model_used["model"] = (
             self_coding_engine.codex_fallback_handler._settings.codex_fallback_model
         )

@@ -87,6 +87,15 @@ def _ensure_fresh_weights(builder):
     except Exception:
         pass
 context_builder_util_stub.ensure_fresh_weights = _ensure_fresh_weights
+# Provide a minimal create_context_builder used by fallback tests
+class _CB:
+    def refresh_db_weights(self, *a, **k):
+        return None
+
+    def build(self, *a, **k):
+        return ""
+
+context_builder_util_stub.create_context_builder = lambda: _CB()
 sys.modules.setdefault("context_builder_util", context_builder_util_stub)
 
 # Stub synergy_history_db to avoid database router initialisation
