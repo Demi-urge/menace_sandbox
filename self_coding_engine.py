@@ -1486,10 +1486,14 @@ class SelfCodingEngine:
         queue_path = Path(
             getattr(_settings, "codex_retry_queue_path", "codex_retry_queue.jsonl")
         )
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception:
+            self.logger.exception("context builder refresh failed before fallback")
         alt = codex_fallback_handler.handle(
             self.simplify_prompt(prompt),
             reason,
-            context_builder=create_context_builder(),
+            context_builder=self.context_builder,
             queue_path=queue_path,
         )
         if not getattr(alt, "text", "").strip():
