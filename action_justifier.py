@@ -196,7 +196,7 @@ def _llm_justification(
             logger.exception("failed reading justification cache")
     try:
         tokens = tokenizer.encode(prompt, return_tensors="pt")
-        output = model.generate(tokens, max_new_tokens=60, do_sample=False)
+        output = model.generate(tokens, max_new_tokens=60, do_sample=False)  # nocb
         text = tokenizer.decode(output[0], skip_special_tokens=True)
         explanation = text[len(prompt):].strip()
     except Exception:
