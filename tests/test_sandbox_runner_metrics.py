@@ -75,6 +75,17 @@ class DummyDataBot:
     def __init__(self, *a, **k):
         pass
 
+
+class DummyBuilder:
+    def __init__(self, ctx: str = ""):
+        self.ctx = ctx
+
+    def refresh_db_weights(self):
+        pass
+
+    def build(self, query, **kwargs):
+        return self.ctx or f"ctx:{query}"
+
     def collect(self, *a, **k):
         pass
 
@@ -1058,16 +1069,16 @@ def test_auto_prompt_selection(monkeypatch):
             return 0.01
 
     importlib.reload(sandbox_runner)
-    prompt = sandbox_runner.build_section_prompt("a", T(sec_drop=True))
+    prompt = sandbox_runner.build_section_prompt("a", T(sec_drop=True), DummyBuilder())
     assert "SECURITY FOCUS" in prompt
     assert len(sandbox_runner._AUTO_TEMPLATES) >= 3
     cached = sandbox_runner._AUTO_TEMPLATES
 
-    prompt = sandbox_runner.build_section_prompt("a", T(eff_drop=True))
+    prompt = sandbox_runner.build_section_prompt("a", T(eff_drop=True), DummyBuilder())
     assert "EFFICIENCY FOCUS" in prompt
     assert sandbox_runner._AUTO_TEMPLATES is cached
 
-    prompt = sandbox_runner.build_section_prompt("a", T())
+    prompt = sandbox_runner.build_section_prompt("a", T(), DummyBuilder())
     assert "ROI IMPROVEMENT" in prompt
 
 
@@ -1143,6 +1154,7 @@ def test_prompt_truncation_and_metrics(monkeypatch):
     prompt = sandbox_runner.build_section_prompt(
         "mod:sec",
         T(),
+        DummyBuilder(),
         snippet=snippet,
         max_length=50,
         summary_depth=1,
@@ -1228,6 +1240,7 @@ def test_prompt_synergy_and_length(monkeypatch):
     prompt = sandbox_runner.build_section_prompt(
         "mod:sec",
         T(),
+        DummyBuilder(""),
         snippet=snippet,
         max_length=50,
         summary_depth=1,
@@ -1237,6 +1250,21 @@ def test_prompt_synergy_and_length(monkeypatch):
     assert "Synergy" in prompt
     assert "Synergy summary:" in prompt
     assert len(prompt) <= 80
+
+
+def test_build_section_prompt_vector_context():
+    class T:
+        def __init__(self):
+            self.roi_history = [0.0, 0.0]
+            self.metrics_history = {}
+            self.module_deltas = {}
+
+        def diminishing(self):
+            return 0.01
+
+    builder = DummyBuilder("vector ctx")
+    prompt = sandbox_runner.build_section_prompt("mod", T(), builder)
+    assert "vector ctx" in prompt
 
 
 def test_preset_adaptation(monkeypatch, tmp_path):

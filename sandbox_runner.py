@@ -43,6 +43,8 @@ from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
 from vector_service import FallbackResult, ContextBuilder
+from snippet_compressor import compress_snippets
+from context_builder_util import ensure_fresh_weights
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback
@@ -298,6 +300,8 @@ from sandbox_runner.cycle import _sandbox_cycle_runner, map_module_identifier
 from sandbox_runner.cli import _run_sandbox, rank_scenarios, main
 from meta_workflow_planner import simulate_meta_workflow as _simulate_meta_workflow
 
+_REFRESHED_BUILDERS: set[int] = set()
+
 
 # ----------------------------------------------------------------------
 def run_scenarios(workflow, tracker=None, foresight_tracker=None, presets=None):
@@ -467,6 +471,7 @@ def prepare_snippet(
 def build_section_prompt(
     section: str,
     tracker: "ROITracker",
+    context_builder: ContextBuilder,
     snippet: str | None = None,
     prior: str | None = None,
     *,
@@ -497,6 +502,20 @@ def build_section_prompt(
                 "{% if summary %} Purpose: {{ summary }}{% endif %}\n"
                 "Suggest a concise improvement:\n{{ snippet }}"
             )
+
+    builder = context_builder
+    if id(builder) not in _REFRESHED_BUILDERS:
+        ensure_fresh_weights(builder)
+        _REFRESHED_BUILDERS.add(id(builder))
+
+    vec_ctx = ""
+    try:
+        query = snippet or section
+        vec_ctx_raw = builder.build(query)
+        if not isinstance(vec_ctx_raw, (FallbackResult, ErrorResult)):
+            vec_ctx = compress_snippets({"snippet": vec_ctx_raw}).get("snippet", "")
+    except Exception:
+        vec_ctx = ""
 
     hist = tracker.module_deltas.get(section.split(":", 1)[0], [])
     hist_str = ", ".join(f"{v:.2f}" for v in hist[-5:]) if hist else ""
@@ -665,6 +684,11 @@ def build_section_prompt(
                 prior=prior,
             )
         if len(prompt) > max_prompt_length:
+            prompt = prompt[:max_prompt_length]
+
+    if vec_ctx:
+        prompt = f"{prompt}\n{vec_ctx}"
+        if max_prompt_length and len(prompt) > max_prompt_length:
             prompt = prompt[:max_prompt_length]
 
     return prompt
@@ -1705,10 +1729,10 @@ def _sandbox_main(
                     prompt = build_section_prompt(
                         "overall",
                         ctx.tracker,
-                        f"Brainstorm improvements. Current metrics: {summary}",
+                        context_builder=ctx.context_builder,
+                        snippet=f"Brainstorm improvements. Current metrics: {summary}",
                         prior=prior if prior else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
-                        context_builder=ctx.context_builder,
                     )
                     hist = ctx.conversations.get("brainstorm", [])
                     module = _get_local_knowledge()
