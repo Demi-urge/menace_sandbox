@@ -138,12 +138,15 @@ class ResponseCandidateGenerator:
         history: List[str],
         archetype: str,
         n: int = 3,
+        *,
+        context_builder: ContextBuilder | None = None,
     ) -> List[str]:
+        builder = context_builder or self.context_builder
         if self.tokenizer and self.model and torch is not None:
             try:
                 prompt = " ".join(history + [message, archetype])
                 session_id = uuid.uuid4().hex
-                ctx_res = self.context_builder.build(message, session_id=session_id)
+                ctx_res = builder.build(message, session_id=session_id)
                 ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
                 if isinstance(ctx, (FallbackResult, ErrorResult)):
                     ctx = ""
@@ -172,9 +175,15 @@ class ResponseCandidateGenerator:
         message: str,
         history: List[str],
         archetype: str = "",
+        *,
+        context_builder: ContextBuilder | None = None,
     ) -> List[str]:
         candidates: List[str] = []
         candidates.extend(self._static_candidates(message))
-        candidates.extend(self._dynamic_candidates(message, history, archetype))
+        candidates.extend(
+            self._dynamic_candidates(
+                message, history, archetype, context_builder=context_builder
+            )
+        )
         candidates.extend(self._past_candidates(message))
         return redundancy_filter(candidates)
