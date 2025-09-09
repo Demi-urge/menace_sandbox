@@ -52,7 +52,7 @@ class CortexAwareResponder:
         pinecone_key: str,
         pinecone_env: str,
         pg: Optional[InMemoryResponseDB] = None,
-        context_builder: ContextBuilder,  # nocb
+        context_builder: ContextBuilder,
     ) -> None:
         self.client = GPT4Client(openai_key, context_builder=context_builder)
         self.pinecone = PineconeLogger(
@@ -93,7 +93,7 @@ class CortexAwareResponder:
 
         # candidate generation
         self.generator.add_past_response(first_pass)
-        candidates = self.generator.generate_candidates(  # nocb
+        candidates = self.generator.generate_candidates(
             text,
             history_texts,
             profile.archetype,
