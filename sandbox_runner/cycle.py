@@ -752,8 +752,8 @@ def _sandbox_cycle_runner(
     global SANDBOX_ENV_PRESETS
     from sandbox_runner import (
         build_section_prompt,
-        GPT_SECTION_PROMPT_MAX_LENGTH,
         GPT_KNOWLEDGE_SERVICE,
+        GPT_SECTION_PROMPT_MAX_LENGTH,
     )
 
     knowledge_service = GPT_KNOWLEDGE_SERVICE

@@ -471,10 +471,10 @@ def prepare_snippet(
 def build_section_prompt(
     section: str,
     tracker: "ROITracker",
+    *,
     context_builder: ContextBuilder,
     snippet: str | None = None,
     prior: str | None = None,
-    *,
     max_length: int = 1000,
     max_prompt_length: int | None = GPT_SECTION_PROMPT_MAX_LENGTH,
     summary_depth: int = GPT_SECTION_SUMMARY_DEPTH,
@@ -503,15 +503,14 @@ def build_section_prompt(
                 "Suggest a concise improvement:\n{{ snippet }}"
             )
 
-    builder = context_builder
-    if id(builder) not in _REFRESHED_BUILDERS:
-        ensure_fresh_weights(builder)
-        _REFRESHED_BUILDERS.add(id(builder))
+    if id(context_builder) not in _REFRESHED_BUILDERS:
+        ensure_fresh_weights(context_builder)
+        _REFRESHED_BUILDERS.add(id(context_builder))
 
     vec_ctx = ""
     try:
         query = snippet or section
-        vec_ctx_raw = builder.build(query)
+        vec_ctx_raw = context_builder.build(query)
         if not isinstance(vec_ctx_raw, (FallbackResult, ErrorResult)):
             vec_ctx = compress_snippets({"snippet": vec_ctx_raw}).get("snippet", "")
     except Exception:

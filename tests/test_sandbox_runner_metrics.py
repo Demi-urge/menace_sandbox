@@ -1069,16 +1069,22 @@ def test_auto_prompt_selection(monkeypatch):
             return 0.01
 
     importlib.reload(sandbox_runner)
-    prompt = sandbox_runner.build_section_prompt("a", T(sec_drop=True), DummyBuilder())
+    prompt = sandbox_runner.build_section_prompt(
+        "a", T(sec_drop=True), context_builder=DummyBuilder()
+    )
     assert "SECURITY FOCUS" in prompt
     assert len(sandbox_runner._AUTO_TEMPLATES) >= 3
     cached = sandbox_runner._AUTO_TEMPLATES
 
-    prompt = sandbox_runner.build_section_prompt("a", T(eff_drop=True), DummyBuilder())
+    prompt = sandbox_runner.build_section_prompt(
+        "a", T(eff_drop=True), context_builder=DummyBuilder()
+    )
     assert "EFFICIENCY FOCUS" in prompt
     assert sandbox_runner._AUTO_TEMPLATES is cached
 
-    prompt = sandbox_runner.build_section_prompt("a", T(), DummyBuilder())
+    prompt = sandbox_runner.build_section_prompt(
+        "a", T(), context_builder=DummyBuilder()
+    )
     assert "ROI IMPROVEMENT" in prompt
 
 
@@ -1154,7 +1160,7 @@ def test_prompt_truncation_and_metrics(monkeypatch):
     prompt = sandbox_runner.build_section_prompt(
         "mod:sec",
         T(),
-        DummyBuilder(),
+        context_builder=DummyBuilder(),
         snippet=snippet,
         max_length=50,
         summary_depth=1,
@@ -1240,7 +1246,7 @@ def test_prompt_synergy_and_length(monkeypatch):
     prompt = sandbox_runner.build_section_prompt(
         "mod:sec",
         T(),
-        DummyBuilder(""),
+        context_builder=DummyBuilder(""),
         snippet=snippet,
         max_length=50,
         summary_depth=1,
@@ -1263,7 +1269,9 @@ def test_build_section_prompt_vector_context():
             return 0.01
 
     builder = DummyBuilder("vector ctx")
-    prompt = sandbox_runner.build_section_prompt("mod", T(), builder)
+    prompt = sandbox_runner.build_section_prompt(
+        "mod", T(), context_builder=builder
+    )
     assert "vector ctx" in prompt
 
 
