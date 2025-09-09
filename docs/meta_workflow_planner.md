@@ -39,10 +39,14 @@ workflows = {
 # Cluster similar workflow specs
 builder = ContextBuilder()
 retr = Retriever(context_builder=builder)
-clusters = planner.cluster_workflows(workflows, retriever=retr, epsilon=0.8)
+clusters = planner.cluster_workflows(
+    workflows, retriever=retr, epsilon=0.8, context_builder=planner.context_builder
+)
 
 # Build a high‑synergy chain starting from A
-pipeline = planner.compose_pipeline("A", workflows, length=3)
+pipeline = planner.compose_pipeline(
+    "A", workflows, length=3, context_builder=planner.context_builder
+)
 ```
 
 `cluster_workflows` encodes each specification, persists the embedding and
