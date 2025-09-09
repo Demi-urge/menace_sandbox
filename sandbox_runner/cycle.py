@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from logging_utils import get_logger, setup_logging, log_record
+from context_builder_util import ensure_fresh_weights
 import os
 import json
 import subprocess
@@ -393,6 +394,8 @@ async def _collect_plugin_metrics_async(
     prev_roi: float,
     roi: float,
     resources: Dict[str, float] | None,
+    *,
+    context_builder,
 ) -> Dict[str, float]:
     """Gather metrics from plugins asynchronously."""
 
@@ -408,7 +411,7 @@ async def _collect_plugin_metrics_async(
     merged: Dict[str, float] = {}
     for res in await asyncio.gather(*tasks, return_exceptions=True):
         if isinstance(res, Exception):
-            record_error(res)
+            record_error(res, context_builder=context_builder)
             continue
         if isinstance(res, dict):
             for k, v in res.items():
@@ -757,6 +760,7 @@ def _sandbox_cycle_runner(
     )
 
     knowledge_service = GPT_KNOWLEDGE_SERVICE
+    ensure_fresh_weights(ctx.context_builder)
 
     if foresight_tracker is None:
         foresight_tracker = getattr(ctx, "foresight_tracker", None)
@@ -778,7 +782,7 @@ def _sandbox_cycle_runner(
                 data = [data]
             SANDBOX_ENV_PRESETS = [dict(p) for p in data]
         except Exception as exc:
-            record_error(exc)
+            record_error(exc, context_builder=ctx.context_builder)
 
     tuner = ResourceTuner()
     settings = getattr(ctx, "settings", SandboxSettings())
@@ -821,7 +825,7 @@ def _sandbox_cycle_runner(
             SANDBOX_ENV_PRESETS = tuner.adjust(tracker, SANDBOX_ENV_PRESETS)
             os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
         except Exception as exc:
-            record_error(exc)
+            record_error(exc, context_builder=ctx.context_builder)
         logger.info(
             "resource tuning complete",
             extra=log_record(cycle=idx, presets=SANDBOX_ENV_PRESETS),
@@ -831,7 +835,7 @@ def _sandbox_cycle_runner(
         try:
             ctx.orchestrator.run_cycle(ctx.models)
         except Exception as exc:
-            record_error(exc)
+            record_error(exc, context_builder=ctx.context_builder)
         finally:
             # Include any newly discovered modules after orchestrator modifications
             include_orphan_modules(ctx)
@@ -843,7 +847,7 @@ def _sandbox_cycle_runner(
             else:
                 result = ctx.improver.run_cycle()
         except Exception as exc:
-            record_error(exc)
+            record_error(exc, context_builder=ctx.context_builder)
             result = SimpleNamespace(roi=None)
         finally:
             ctx.target_region = None
@@ -871,7 +875,7 @@ def _sandbox_cycle_runner(
                     ctx.last_failure_region = region
                     ctx.target_region = region
         except Exception as exc:
-            record_error(exc)
+            record_error(exc, context_builder=ctx.context_builder)
             results = {}
         tested: list[str] = []
         passed: list[str] = []
@@ -925,9 +929,9 @@ def _sandbox_cycle_runner(
             try:
                 ctx.sandbox.analyse_and_fix()
             except Exception as exc:
-                record_error(exc)
+                record_error(exc, context_builder=ctx.context_builder)
         except Exception as exc:
-            record_error(exc)
+            record_error(exc, context_builder=ctx.context_builder)
         # Re-run orphan discovery after patches have been applied so that any
         # newly generated modules are considered in subsequent metrics.
         include_orphan_modules(ctx)
@@ -1248,7 +1252,7 @@ def _sandbox_cycle_runner(
                 if cq_total:
                     code_quality = cq_total / len(targets)
         except Exception as exc:
-            record_error(exc)
+            record_error(exc, context_builder=ctx.context_builder)
         metrics_dict = {
             "security_score": security_score,
             "safety_rating": safety_rating,
@@ -1279,11 +1283,15 @@ def _sandbox_cycle_runner(
             try:
                 extra = asyncio.run(
                     _collect_plugin_metrics_async(
-                        ctx.plugins, ctx.prev_roi, roi, resources
+                        ctx.plugins,
+                        ctx.prev_roi,
+                        roi,
+                        resources,
+                        context_builder=ctx.context_builder,
                     )
                 )
             except Exception as exc:
-                record_error(exc)
+                record_error(exc, context_builder=ctx.context_builder)
                 extra = None
             if extra:
                 metrics_dict.update(extra)
@@ -1296,7 +1304,7 @@ def _sandbox_cycle_runner(
         try:
             detections = ctx.dd_bot.scan()
         except Exception as exc:
-            record_error(exc)
+            record_error(exc, context_builder=ctx.context_builder)
             detections = []
         metrics_dict["discrepancy_count"] = len(detections)
         scenario_metrics = (

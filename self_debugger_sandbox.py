@@ -664,7 +664,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         failure: ErrorReport | None = None
         cov_details: dict[str, dict[str, float]] = {}
 
-        with create_ephemeral_env(repo_src) as (repo, run):
+        with create_ephemeral_env(
+            repo_src, context_builder=self.context_builder
+        ) as (repo, run):
             repo = resolve_path(repo)
             paths_in_repo: list[Path] = []
             for p in test_paths:
@@ -1557,7 +1559,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
                 async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
                     repo_src = resolve_path(self._settings.sandbox_repo_path or ".")
-                    with create_ephemeral_env(repo_src) as (repo, run):
+                    with create_ephemeral_env(
+                        repo_src, context_builder=self.context_builder
+                    ) as (repo, run):
                         repo = resolve_path(repo)
                         test_path = repo / f"test_auto{os.extsep}py"
                         test_path.write_text(code)
