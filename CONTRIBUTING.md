@@ -112,7 +112,9 @@ pre-commit run check-context-builder-usage --all-files
 ```
 
 Continuous integration runs this hook and fails the build when missing or
-implicit `ContextBuilder` usage is detected.
+implicit `ContextBuilder` usage is detected. The script also flags disallowed
+defaults such as `context_builder=None` or imports of
+`get_default_context_builder`, and CI fails when these patterns appear.
 
 ## Stripe integration
 
