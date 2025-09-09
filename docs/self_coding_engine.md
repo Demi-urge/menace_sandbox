@@ -16,11 +16,14 @@ builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 builder.refresh_db_weights()
 engine = SelfCodingEngine(
     CodeDB(resolve_path('code.db')),
-    MenaceMemoryManager(resolve_path('mem.db')),
+   MenaceMemoryManager(resolve_path('mem.db')),
     context_builder=builder,
 )
 engine.apply_patch(resolve_path('utils.py'), 'normalize text')
 ```
+
+The builder queries `bots.db`, `code.db`, `errors.db` and `workflows.db`, then
+compresses relevant snippets before they are embedded in prompts.
 
 Set `MENACE_ROOT` or `SANDBOX_REPO_PATH` to point the resolver at a different
 clone. For multi-root setups specify `MENACE_ROOTS` or `SANDBOX_REPO_PATHS` and
