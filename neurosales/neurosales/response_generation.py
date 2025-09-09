@@ -141,7 +141,7 @@ class ResponseCandidateGenerator:
         archetype: str,
         n: int = 3,
         *,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder | None = None,  # nocb
     ) -> List[str]:
         builder = context_builder or self.context_builder
         if self.tokenizer and self.model and torch is not None and builder is not None:

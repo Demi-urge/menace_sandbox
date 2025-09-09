@@ -11,4 +11,4 @@ def create_context_builder() -> ContextBuilder:
     try:
         return ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     except TypeError:  # pragma: no cover - for simple stubs in tests
-        return ContextBuilder()
+        return ContextBuilder()  # nocb

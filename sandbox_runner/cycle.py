@@ -1428,6 +1428,7 @@ def _sandbox_cycle_runner(
                         text,
                         prior=brainstorm_summary if brainstorm_summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
+                        context_builder=ctx.context_builder,
                     )
                     if insight:
                         prompt = f"{insight}\n\n{prompt}"
@@ -1697,6 +1698,7 @@ def _sandbox_cycle_runner(
                             f"ROI stalled. Current metrics: {summary}",
                             prior=prior if prior else None,
                             max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
+                            context_builder=ctx.context_builder,
                         )
                         if insight:
                             prompt = f"{insight}\n\n{prompt}"
@@ -1801,6 +1803,7 @@ def _sandbox_cycle_runner(
                         "Brainstorm high level improvements to increase ROI.",
                         prior=summary if summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
+                        context_builder=ctx.context_builder,
                     )
                     if insight:
                         prompt = f"{insight}\n\n{prompt}"

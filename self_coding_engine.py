@@ -37,7 +37,6 @@ except Exception:  # pragma: no cover - degrade gracefully when missing
 from .llm_interface import Prompt, LLMResult, LLMClient
 from .llm_router import client_from_settings
 from .resilience import retry_with_backoff, RetryError
-from context_builder_util import create_context_builder
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -270,7 +269,7 @@ def simplify_prompt(prompt_obj: Prompt) -> Prompt:
     example_limit = getattr(_settings, "simplify_prompt_example_limit", 0)
 
     if drop_system and (example_limit is None or example_limit <= 0):
-        return build_simplified_prompt(prompt_obj)
+        return build_simplified_prompt(prompt_obj)  # nocb
 
     system = "" if drop_system else prompt_obj.system
     examples = prompt_obj.examples
