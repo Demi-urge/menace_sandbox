@@ -246,7 +246,7 @@ def call_codex_with_backoff(
     )
 
 
-def build_simplified_prompt(prompt_obj: Prompt) -> Prompt:  # nocb
+def strip_prompt_context(prompt_obj: Prompt) -> Prompt:
     """Return a copy of *prompt_obj* without system or example context.
 
     This helper is purely structural and does not require database context.
@@ -272,7 +272,7 @@ def simplify_prompt(prompt_obj: Prompt) -> Prompt:
     example_limit = getattr(_settings, "simplify_prompt_example_limit", 0)
 
     if drop_system and (example_limit is None or example_limit <= 0):
-        return build_simplified_prompt(prompt_obj)  # nocb
+        return strip_prompt_context(prompt_obj)
 
     system = "" if drop_system else prompt_obj.system
     examples = prompt_obj.examples
@@ -365,7 +365,7 @@ class SelfCodingEngine:
         self.chunk_summary_cache_dir = resolve_path(cache_dir)
         # backward compatibility
         self.prompt_chunk_cache_dir = self.chunk_summary_cache_dir
-        self.simplify_prompt = prompt_simplifier or build_simplified_prompt
+        self.simplify_prompt = prompt_simplifier or strip_prompt_context
         self._failure_similarity_threshold = failure_similarity_threshold
         self.failure_similarity_limit = failure_similarity_limit
         self.failure_similarity_k = failure_similarity_k

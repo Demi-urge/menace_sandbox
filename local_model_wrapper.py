@@ -24,8 +24,8 @@ except Exception:  # pragma: no cover - fallback stub
 class LocalModelWrapper:
     """Minimal helper adding context retrieval before generation."""
 
-    def __init__(self, model: Any, tokenizer: Any) -> None:
-        self.model = model
+    def __init__(self, hf_model: Any, tokenizer: Any) -> None:
+        self.hf_model = hf_model
         self.tokenizer = tokenizer
 
     def generate(
@@ -58,7 +58,7 @@ class LocalModelWrapper:
 
         final_prompt = f"{ctx_text}\n\n{prompt}" if ctx_text else prompt
         input_ids = self.tokenizer.encode(final_prompt, return_tensors="pt")
-        outputs: Sequence[Any] = self.model.generate(input_ids, **gen_kwargs)  # nocb
+        outputs: Sequence[Any] = self.hf_model.generate(input_ids, **gen_kwargs)
         decoded = [
             self.tokenizer.decode(o, skip_special_tokens=True)
             for o in outputs
