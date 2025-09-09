@@ -88,7 +88,7 @@ def test_generate_workflows_for_modules_auto_indexes(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_discovery", orphan_mod)
 
     auto_called: dict[str, list[str]] = {}
-    def fake_auto(mods, recursive=True, router=None):
+    def fake_auto(mods, recursive=True, router=None, context_builder=None):
         auto_called["mods"] = list(mods)
         return None, {"added": ["extra/mod.py"]}  # path-ignore
     monkeypatch.setattr(env, "auto_include_modules", fake_auto)
@@ -182,7 +182,7 @@ def test_evolve_auto_indexes_promoted_orphans(tmp_path, monkeypatch):
     sys.modules["sandbox_runner"] = sr_pkg
 
     env_mod = types.ModuleType("sandbox_runner.environment")
-    def fake_auto(mods, recursive=True, validate=True, router=None):
+    def fake_auto(mods, recursive=True, validate=True, router=None, context_builder=None):
         auto_called["mods"] = list(mods)
         return None, {"added": ["extra/mod.py"]}  # path-ignore
     env_mod.auto_include_modules = fake_auto
@@ -190,7 +190,9 @@ def test_evolve_auto_indexes_promoted_orphans(tmp_path, monkeypatch):
 
     def integrate_orphans(repo, router=None):
         from sandbox_runner.environment import auto_include_modules
-        auto_include_modules(["extra/mod.py"], recursive=True, router=router)  # path-ignore
+        auto_include_modules(
+            ["extra/mod.py"], recursive=True, router=router, context_builder=None
+        )  # path-ignore
         from module_synergy_grapher import ModuleSynergyGrapher
         ModuleSynergyGrapher(repo).update_graph(["extra.mod"])
         from intent_clusterer import IntentClusterer

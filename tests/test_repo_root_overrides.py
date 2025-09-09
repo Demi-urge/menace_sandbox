@@ -5,6 +5,7 @@ import types
 from pathlib import Path
 
 import pytest
+from context_builder_util import create_context_builder
 
 
 class ContextBuilder:
@@ -68,7 +69,9 @@ def test_environment_respects_sandbox_repo_path(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(env, "integrate_new_orphans", lambda repo, router=None: called.append(repo))
 
-    env.try_integrate_into_workflows([str(mod.resolve())])
+    env.try_integrate_into_workflows(
+        [str(mod.resolve())], context_builder=create_context_builder()
+    )
 
     assert called and called[0] == repo.resolve()
     assert records and records[0].workflow == ["submodule.helper"]

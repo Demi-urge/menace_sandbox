@@ -36,6 +36,7 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
     (data_dir / "module_map.json").write_text("{}")
 
     import sandbox_runner.environment as env
+    from context_builder_util import create_context_builder
 
     class DummySTS:
         def __init__(self, *a, **k):
@@ -50,11 +51,11 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
 
     calls: dict[str, list[str] | bool] = {}
 
-    def fake_generate(mods, workflows_db="workflows.db"):
+    def fake_generate(mods, workflows_db="workflows.db", context_builder=None):
         calls["generate"] = list(mods)
         return [1]
 
-    def fake_integrate(mods):
+    def fake_integrate(mods, context_builder=None):
         calls["integrate"] = list(mods)
         return [1]
 
@@ -76,7 +77,12 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
     monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
 
-    tracker, tested = env.auto_include_modules(["orphan.py"], recursive=True, validate=True)  # path-ignore
+    tracker, tested = env.auto_include_modules(
+        ["orphan.py"],
+        recursive=True,
+        validate=True,
+        context_builder=create_context_builder(),
+    )  # path-ignore
 
     expected = {"orphan.py", "nested/helper.py"}  # path-ignore
     assert set(calls.get("generate", [])) == expected

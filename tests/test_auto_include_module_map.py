@@ -7,6 +7,7 @@ import pytest
 
 import sandbox_runner.environment as env
 from dynamic_path_router import resolve_path
+from context_builder_util import create_context_builder
 
 MOD = resolve_path("mod.py").as_posix()  # path-ignore
 
@@ -59,7 +60,7 @@ def test_auto_include_updates_module_map(monkeypatch, tmp_path):
         ),
     )
 
-    env.auto_include_modules([MOD])
+    env.auto_include_modules([MOD], context_builder=create_context_builder())
 
     map_path = Path(tmp_path, "module_map.json")
     assert map_path.exists()
@@ -118,7 +119,7 @@ def test_auto_include_skips_existing(monkeypatch, tmp_path, existing):
     )
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
 
-    env.auto_include_modules([MOD])
+    env.auto_include_modules([MOD], context_builder=create_context_builder())
 
     assert json.loads(map_path.read_text()) == existing
     assert not called["gen"]
@@ -178,7 +179,9 @@ def test_redundant_module_validated_and_skipped(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules([MOD], validate=True)
+    result, tested = env.auto_include_modules(
+        [MOD], validate=True, context_builder=create_context_builder()
+    )
 
     assert result is tracker
     assert calls.get("selftest") == MOD
@@ -242,7 +245,9 @@ def test_redundant_module_integrated_when_flag_set(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules([MOD], validate=True)
+    result, tested = env.auto_include_modules(
+        [MOD], validate=True, context_builder=create_context_builder()
+    )
 
     assert result is tracker
     assert calls.get("selftest") == MOD
@@ -308,7 +313,9 @@ def test_module_skipped_below_roi_threshold(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules([MOD])
+    result, tested = env.auto_include_modules(
+        [MOD], context_builder=create_context_builder()
+    )
 
     assert calls["integrate"] == []
     map_path = Path(tmp_path, "module_map.json")

@@ -79,16 +79,29 @@ def _setup(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "self_test_service", svc_mod)
 
     import sandbox_runner.environment as env
-    env.generate_workflows_for_modules = lambda mods, workflows_db="workflows.db": None
-    env.try_integrate_into_workflows = lambda mods: None
-    env.run_workflow_simulations = lambda: [types.SimpleNamespace(roi_history=[])]
+    env.generate_workflows_for_modules = (
+        lambda mods, workflows_db="workflows.db", context_builder=None: None
+    )
+    env.try_integrate_into_workflows = (
+        lambda mods, context_builder=None: None
+    )
+    env.run_workflow_simulations = (
+        lambda: [types.SimpleNamespace(roi_history=[])]
+    )
 
     return env, repo, data_dir, classified
 
 
 def test_recursive_helper_execution(_setup):
     env, repo, data_dir, classified = _setup
-    env.auto_include_modules(["main.py"], recursive=True, validate=True)  # path-ignore
+    from context_builder_util import create_context_builder
+
+    env.auto_include_modules(
+        ["main.py"],
+        recursive=True,
+        validate=True,
+        context_builder=create_context_builder(),
+    )  # path-ignore
 
     assert (repo / "helper_ran").exists()
     data = json.loads((data_dir / "module_map.json").read_text())

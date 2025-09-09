@@ -129,14 +129,17 @@ def test_orphan_pipelines_prune_and_record_metrics(tmp_path, monkeypatch):
 
     calls: dict[str, list[list[str]]] = {"include": [], "workflows": []}
 
-    def fake_auto_include(mods, recursive=False, validate=True):
+    def fake_auto_include(mods, recursive=False, validate=True, context_builder=None):
         calls["include"].append(sorted(mods))
         return [1]
 
-    def fake_try(mods):
+    def fake_try(mods, context_builder=None):
         calls["workflows"].append(sorted(mods))
 
-    env = types.SimpleNamespace(auto_include_modules=fake_auto_include, try_integrate_into_workflows=fake_try)
+    env = types.SimpleNamespace(
+        auto_include_modules=fake_auto_include,
+        try_integrate_into_workflows=fake_try,
+    )
     monkeypatch.setattr(sie, "environment", env)
 
     class DummySTS:

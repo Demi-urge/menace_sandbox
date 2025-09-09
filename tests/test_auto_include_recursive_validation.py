@@ -5,6 +5,7 @@ from pathlib import Path
 
 import sandbox_runner.environment as env
 from dynamic_path_router import resolve_path
+from context_builder_util import create_context_builder
 
 
 class DummyTracker:
@@ -61,7 +62,9 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
 
     good = resolve_path(GOOD).as_posix()
     bad = resolve_path(BAD).as_posix()
-    result, tested = env.auto_include_modules([good, bad])
+    result, tested = env.auto_include_modules(
+        [good, bad], context_builder=create_context_builder()
+    )
 
     assert result is tracker
     assert tested == {"added": [bad, good], "failed": [], "redundant": [bad]}
@@ -126,7 +129,9 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
     )
 
     good = resolve_path(GOOD).as_posix()
-    result, tested = env.auto_include_modules([good], validate=True)
+    result, tested = env.auto_include_modules(
+        [good], validate=True, context_builder=create_context_builder()
+    )
 
     assert result is tracker
     assert tested == {"added": [good], "failed": [], "redundant": []}

@@ -139,7 +139,7 @@ def _load_refresh_methods(fake_generate, fake_try, fake_run=lambda *a, **k: None
         "log_record": lambda **k: {},
         "analyze_redundancy": lambda p: False,
     }
-    def auto_include_modules(mods, recursive=False):
+    def auto_include_modules(mods, recursive=False, context_builder=None):
         fake_generate(mods)
         fake_try(mods)
         fake_run()

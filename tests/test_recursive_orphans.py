@@ -50,17 +50,17 @@ def _load_methods():
         ),
         "classify_module": lambda path, include_meta=True: ("candidate", {}),
         "build_module_map": lambda repo, ignore=None: {},
-        "generate_workflows_for_modules": lambda mods: None,
-        "try_integrate_into_workflows": lambda mods: None,
+        "generate_workflows_for_modules": lambda mods, context_builder=None: None,
+        "try_integrate_into_workflows": lambda mods, context_builder=None: None,
         "run_workflow_simulations": lambda *a, **k: None,
         "run_repo_section_simulations": _run_repo_section_simulations,
         "log_record": lambda **k: k,
         "analyze_redundancy": lambda p: False,
     }
-    def auto_include_modules(mods, recursive=False):
-        generate_workflows_for_modules(mods)
-        try_integrate_into_workflows(mods)
-        run_workflow_simulations()
+    def auto_include_modules(mods, recursive=False, context_builder=None):
+        generate_workflows_for_modules(mods, context_builder=context_builder)
+        try_integrate_into_workflows(mods, context_builder=context_builder)
+        run_workflow_simulations(context_builder=context_builder)
     mod_dict["auto_include_modules"] = auto_include_modules
     mod_dict["environment"] = types.SimpleNamespace(
         auto_include_modules=auto_include_modules

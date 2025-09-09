@@ -7,6 +7,7 @@ from pathlib import Path
 import ast
 
 import sandbox_runner.environment as env
+from context_builder_util import create_context_builder
 
 
 class DummyTracker:
@@ -78,11 +79,26 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
         sys.modules, "self_test_service", types.SimpleNamespace(SelfTestService=STS1)
     )
 
-    monkeypatch.setattr(env, "generate_workflows_for_modules", lambda mods: None)
-    monkeypatch.setattr(env, "try_integrate_into_workflows", lambda mods: None)
-    monkeypatch.setattr(env, "run_workflow_simulations", lambda *a, **k: DummyTracker())
+    monkeypatch.setattr(
+        env,
+        "generate_workflows_for_modules",
+        lambda mods, workflows_db="workflows.db", context_builder=None: None,
+    )
+    monkeypatch.setattr(
+        env, "try_integrate_into_workflows", lambda mods, context_builder=None: None
+    )
+    monkeypatch.setattr(
+        env,
+        "run_workflow_simulations",
+        lambda *a, **k: DummyTracker(),
+    )
 
-    env.auto_include_modules(["iso.py"], recursive=True, validate=True)  # path-ignore
+    env.auto_include_modules(
+        ["iso.py"],
+        recursive=True,
+        validate=True,
+        context_builder=create_context_builder(),
+    )  # path-ignore
 
     map_data = json.loads((data_dir / "module_map.json").read_text())
     assert set(map_data) == {"iso.py", "dep.py"}  # path-ignore
@@ -113,7 +129,7 @@ def test_recursive_inclusion_flow(tmp_path, monkeypatch):
 
     recorded: list[list[str]] = []
 
-    def auto_stub(mods, recursive=False, validate=False):
+    def auto_stub(mods, recursive=False, validate=False, context_builder=None):
         recorded.append(sorted(mods))
 
     monkeypatch.setattr(env, "auto_include_modules", auto_stub)

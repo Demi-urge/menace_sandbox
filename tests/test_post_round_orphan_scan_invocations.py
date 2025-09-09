@@ -226,10 +226,10 @@ def test_new_module_included_after_scan(monkeypatch, tmp_path):
 
     workflow_list: list[str] = []
 
-    def auto_include_modules(paths, recursive=True, router=None):
+    def auto_include_modules(paths, recursive=True, router=None, context_builder=None):
         return None, {"added": list(paths)}
 
-    def try_integrate_into_workflows(mods, router=None):
+    def try_integrate_into_workflows(mods, router=None, context_builder=None):
         workflow_list.extend(mods)
 
     env_mod = types.ModuleType("sandbox_runner.environment")
