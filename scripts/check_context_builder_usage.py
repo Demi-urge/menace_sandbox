@@ -19,6 +19,12 @@ directly above.  Assignments or ``functools.partial`` wrappers of such
 ``.generate`` methods are tracked so that subsequent calls through variables or
 partials are likewise validated.
 
+Variables assigned from ``LLMClient``-like classes are now remembered so that
+instance method calls such as ``client.generate()`` also require a
+``context_builder`` keyword.  Common aliases like ``llm`` or ``model`` are
+heuristically treated as potential ``LLMClient`` instances and their
+``.generate()`` calls are checked even without a prior assignment.
+
 Furthermore, the linter searches for imports or calls to
 ``get_default_context_builder`` outside of test directories.  Such usage is
 reported unless the offending line (or the one immediately above it) contains a
@@ -52,6 +58,7 @@ REQUIRED_NAMES = {
 
 GENERATE_WRAPPER_SUFFIXES = ("client", "provider", "wrapper")
 PARTIAL_NAMES = {"partial", "functools.partial"}
+ALIAS_NAMES = {"llm", "model"}
 
 
 def iter_python_files(root: Path):
@@ -107,6 +114,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
     class Visitor(ast.NodeVisitor):
         def __init__(self) -> None:
             self.generate_aliases: set[str] = set()
+            self.llm_instances: set[str] = set()
 
         @staticmethod
         def _has_none_default(arg: ast.arg, default: ast.AST | None) -> bool:
@@ -136,7 +144,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         errors.append(
                             (
                                 line_no,
-                                "context_builder default None disallowed or missing context_builder",
+                                "context_builder default None disallowed or missing "
+                                "context_builder",
                             )
                         )
 
@@ -150,12 +159,17 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         errors.append(
                             (
                                 line_no,
-                                "context_builder default None disallowed or missing context_builder",
+                                "context_builder default None disallowed or missing "
+                                "context_builder",
                             )
                         )
 
         def _record_alias(self, targets: list[ast.expr], value: ast.AST) -> None:
-            names = [t.id for t in targets if isinstance(t, ast.Name)]
+            names = [
+                t.id if isinstance(t, ast.Name) else t.attr
+                for t in targets
+                if isinstance(t, (ast.Name, ast.Attribute))
+            ]
             if not names:
                 return
 
@@ -172,15 +186,35 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         if not any(kw.arg == "context_builder" for kw in value.keywords):
                             self.generate_aliases.update(names)
 
+        def _record_instance(self, targets: list[ast.expr], value: ast.AST) -> None:
+            names = [
+                t.id if isinstance(t, ast.Name) else t.attr
+                for t in targets
+                if isinstance(t, (ast.Name, ast.Attribute))
+            ]
+            if not names:
+                return
+
+            if isinstance(value, ast.Call):
+                call_name = full_name(value.func)
+                if call_name:
+                    cls = call_name.split(".")[-1]
+                    if cls and cls[0].isupper() and any(
+                        cls.lower().endswith(suf) for suf in GENERATE_WRAPPER_SUFFIXES
+                    ):
+                        self.llm_instances.update(names)
+
         def visit_Assign(self, node: ast.Assign) -> None:  # noqa: D401
             self._record_alias(node.targets, node.value)
+            self._record_instance(node.targets, node.value)
             self.generic_visit(node)
 
         def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: D401
             target = node.target
             value = node.value
-            if isinstance(target, ast.Name) and value is not None:
+            if value is not None:
                 self._record_alias([target], value)
+                self._record_instance([target], value)
             self.generic_visit(node)
 
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
@@ -215,7 +249,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         errors.append(
                             (
                                 line_no,
-                                "getattr context_builder default None disallowed or missing context_builder",
+                                "getattr context_builder default None disallowed or missing "
+                                "context_builder",
                             )
                         )
                 self.generic_visit(node)
@@ -260,6 +295,21 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                                 kw.arg == "context_builder" for kw in inner.keywords
                             )
                             target = gen_name
+                elif (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "generate"
+                ):
+                    base = node.func.value
+                    if isinstance(base, ast.Name):
+                        base_name = base.id
+                    elif isinstance(base, ast.Attribute):
+                        base_name = base.attr
+                    else:
+                        base_name = None
+                    if base_name and (
+                        base_name in self.llm_instances or base_name in ALIAS_NAMES
+                    ):
+                        target = f"{base_name}.generate"
 
             if (
                 isinstance(node.func, ast.Name)

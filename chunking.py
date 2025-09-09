@@ -250,7 +250,7 @@ def summarize_code(
     text: str,
     llm: LLMClient | None = None,
     *,
-    context_builder: "ContextBuilder" | None = None,
+    context_builder: "ContextBuilder" | None = None,  # nocb
 ) -> str:
     """Return a short summary for ``text`` using available helpers with caching."""
 
@@ -309,7 +309,7 @@ def summarize_code(
             user=user_text,
         )
         try:  # pragma: no cover - llm failures
-            result = llm.generate(prompt)
+            result = llm.generate(prompt, context_builder=context_builder)
             if getattr(result, "text", "").strip():
                 summary = result.text.strip()
         except Exception:
@@ -368,7 +368,7 @@ def get_chunk_summaries(
     llm: LLMClient | None = None,
     *,
     cache: ChunkSummaryCache | None = None,
-    context_builder: "ContextBuilder" | None = None,
+    context_builder: "ContextBuilder" | None = None,  # nocb
 ) -> List[Dict[str, str]]:
     """Return cached summaries for ``path`` split into ``max_tokens`` chunks."""
 

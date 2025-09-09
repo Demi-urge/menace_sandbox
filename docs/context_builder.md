@@ -173,7 +173,10 @@ inspects direct ``openai.Completion.create`` and ``openai.ChatCompletion.create`
 invocations along with the ``chat_completion_create`` wrapper.  To intentionally
 skip a call, append ``# nocb`` on the call line (or the line above).  Only direct
 ``build_prompt(...)`` calls are checked to avoid warning on unrelated methods
-with the same name.
+with the same name.  Variables assigned from ``LLMClient``-like classes are
+tracked so that subsequent ``instance.generate(...)`` invocations require the
+keyword as well; aliases such as ``llm`` or ``model`` are heuristically checked
+even without a prior assignment.
 
 ```python
 import openai

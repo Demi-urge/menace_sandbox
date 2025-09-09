@@ -52,7 +52,9 @@ def summarize_diff(before: str, after: str, max_new_tokens: int = 128) -> str:
     inputs = tokenizer(prompt, return_tensors="pt")  # type: ignore[call-arg]
     if torch is not None:
         inputs = {k: v.to(model.device) for k, v in inputs.items()}  # type: ignore[attr-defined]
-    output = model.generate(**inputs, max_new_tokens=max_new_tokens)  # type: ignore[call-arg]
+    output = model.generate(  # nocb
+        **inputs, max_new_tokens=max_new_tokens
+    )  # type: ignore[call-arg]
     text = tokenizer.decode(output[0], skip_special_tokens=True)  # type: ignore[call-arg]
     return text.split("Summary:")[-1].strip()
 

@@ -134,7 +134,7 @@ def summarize_code(
                 text += f"\nContext:\n{vec_ctx}\n"
             text += "Summary:"
             prompt = Prompt(text=text, metadata={"small_task": True})
-            result = client.generate(prompt)
+            result = client.generate(prompt, context_builder=context_builder)
             summary = getattr(result, "text", "").strip()
             if summary:
                 return _truncate_tokens(summary, max_summary_tokens)

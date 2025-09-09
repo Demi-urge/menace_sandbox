@@ -143,9 +143,11 @@ planner = Planner(context_builder=builder)
 bot = PromptingBot(planner, context_builder=builder)
 ```
 
-Violations are detected by `scripts/check_context_builder_usage.py`, which flags
-any `_build_prompt`, `build_prompt`, `generate_patch` or `generate` call missing
-`context_builder`:
+Violations are detected by `scripts/check_context_builder_usage.py`, which
+flags any `_build_prompt`, `build_prompt`, `generate_patch` or `.generate()`
+call on `LLMClient`-like instances missing `context_builder`. Variables
+assigned from these classes are tracked and aliases such as `llm` or `model`
+are heuristically inspected:
 
 ```bash
 python scripts/check_context_builder_usage.py
