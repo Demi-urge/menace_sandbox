@@ -22,15 +22,13 @@ from meta_workflow_planner import (
     find_synergy_chain,
 )
 from roi_results_db import module_impact_report
-try:  # pragma: no cover - optional dependency
-    from vector_service.retriever import Retriever  # type: ignore
-except Exception:  # pragma: no cover - allow running without retriever
-    Retriever = None  # type: ignore
+from vector_service.retriever import Retriever  # type: ignore
+from config.create_context_builder import create_context_builder  # type: ignore
 
-try:  # pragma: no cover - best effort to load default context builder
-    from config.create_context_builder import create_context_builder  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    create_context_builder = None  # type: ignore
+try:  # pragma: no cover - instantiate required context builder
+    _CONTEXT_BUILDER = create_context_builder()
+except Exception as exc:  # pragma: no cover - fail fast
+    raise RuntimeError("ContextBuilder is required") from exc
 
 
 def _cmd_encode(args: argparse.Namespace) -> int:
@@ -51,15 +49,17 @@ def _cmd_candidates(args: argparse.Namespace) -> int:
         query: Sequence[float] | str = [float(x) for x in args.embedding.split(",") if x]
     else:
         query = args.workflow_id
-    retr: Retriever | None = None
-    if Retriever is not None and create_context_builder is not None:
-        try:  # pragma: no cover - best effort
-            builder = create_context_builder()
-            retr = Retriever(context_builder=builder)
-        except Exception:
-            retr = None
+    try:
+        retr = Retriever(context_builder=_CONTEXT_BUILDER)
+    except Exception:
+        retr = None
     results = (
-        find_synergy_candidates(query, top_k=args.top_k, retriever=retr)
+        find_synergy_candidates(
+            query,
+            top_k=args.top_k,
+            retriever=retr,
+            context_builder=_CONTEXT_BUILDER,
+        )
         if retr is not None
         else []
     )
@@ -75,7 +75,9 @@ def _cmd_candidates(args: argparse.Namespace) -> int:
 def _cmd_simulate(args: argparse.Namespace) -> int:
     """Generate a high-synergy pipeline and print its workflow identifiers."""
 
-    chain = find_synergy_chain(args.start, length=args.length)
+    chain = find_synergy_chain(
+        args.start, length=args.length, context_builder=_CONTEXT_BUILDER
+    )
     if not chain:
         print("no pipeline generated")
         return 1
