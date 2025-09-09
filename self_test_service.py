@@ -42,7 +42,7 @@ try:  # pragma: no cover - optional dependency for type hints
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback for flat layout
     from vector_service.context_builder import ContextBuilder  # type: ignore
-from context_builder_util import create_context_builder
+from context_builder_util import create_context_builder, ensure_fresh_weights
 MENACE_ID = uuid.uuid4().hex
 
 try:  # pragma: no cover - compatibility with pydantic v1/v2
@@ -515,7 +515,7 @@ class SelfTestService:
         stub_scenarios: Mapping[str, Any] | None = None,
         fixture_hook: str | None = None,
         ephemeral: bool = True,
-        context_builder: ContextBuilder,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         """Create a new service instance.
 
@@ -567,18 +567,17 @@ class SelfTestService:
             environment created via
             :func:`sandbox_runner.environment.create_ephemeral_env`.
         context_builder:
-            Mandatory :class:`~vector_service.context_builder.ContextBuilder`
+            Optional :class:`~vector_service.context_builder.ContextBuilder`
             instance used by the internal :class:`~error_logger.ErrorLogger`
-            and to gather context for self‑test prompts.
+            and to gather context for self‑test prompts.  If ``None``, a
+            builder is created via :func:`create_context_builder`.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.graph = graph or KnowledgeGraph()
-        if context_builder is None:
-            raise ValueError("context_builder is required")
-        self.context_builder = context_builder
+        self.context_builder = context_builder or create_context_builder()
         try:
-            self.context_builder.refresh_db_weights()
+            ensure_fresh_weights(self.context_builder)
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to refresh context builder db weights")
         self.error_logger = ErrorLogger(
@@ -3300,6 +3299,7 @@ def cli(argv: list[str] | None = None) -> int:
             pytest_args.extend(shlex.split(args.pytest_args))
         if args.paths:
             pytest_args.extend(args.paths)
+        builder = create_context_builder()
         service = SelfTestService(
             pytest_args=" ".join(pytest_args) if pytest_args else None,
             workers=args.workers,
@@ -3322,7 +3322,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_redundant=args.include_redundant,
             report_dir=args.report_dir,
             ephemeral=args.ephemeral,
-            context_builder=create_context_builder(),
+            context_builder=builder,
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -3346,6 +3346,7 @@ def cli(argv: list[str] | None = None) -> int:
             pytest_args.extend(shlex.split(args.pytest_args))
         if args.paths:
             pytest_args.extend(args.paths)
+        builder = create_context_builder()
         service = SelfTestService(
             pytest_args=" ".join(pytest_args) if pytest_args else None,
             workers=args.workers,
@@ -3368,7 +3369,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_redundant=args.include_redundant,
             report_dir=args.report_dir,
             ephemeral=args.ephemeral,
-            context_builder=create_context_builder(),
+            context_builder=builder,
         )
         try:
             service.run_scheduled(
@@ -3390,11 +3391,12 @@ def cli(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "cleanup":
+        builder = create_context_builder()
         service = SelfTestService(
             container_runtime=args.container_runtime,
             docker_host=args.docker_host,
             container_retries=args.retries,
-            context_builder=create_context_builder(),
+            context_builder=builder,
         )
         try:
             asyncio.run(service._cleanup_containers())

@@ -7986,12 +7986,13 @@ def try_integrate_into_workflows(
     test_paths = [
         (repo / m).as_posix() for mods in candidates.values() for m in mods
     ]
+    builder = create_context_builder()
     svc = SelfTestService(
         include_orphans=False,
         discover_orphans=False,
         discover_isolated=False,
         integration_callback=None,
-        context_builder=create_context_builder(),
+        context_builder=builder,
     )
     try:
         loop = asyncio.new_event_loop()
@@ -8751,6 +8752,7 @@ def auto_include_modules(
     failed_mods: list[str] = []
     heavy_side_effects: dict[str, float] = {}
 
+    builder = create_context_builder()
     for mod in mods:
         path = repo / mod
         need_validate = validate or mod in new_paths
@@ -8768,7 +8770,7 @@ def auto_include_modules(
                     auto_include_isolated=True,
                     include_redundant=settings.test_redundant_modules,
                     disable_auto_integration=True,
-                    context_builder=create_context_builder(),
+                    context_builder=builder,
                 )
                 res = svc.run_once()
                 result = res[0] if isinstance(res, tuple) else res
