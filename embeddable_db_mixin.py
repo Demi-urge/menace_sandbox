@@ -25,6 +25,7 @@ from security.secret_redactor import redact
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
 from chunking import split_into_chunks, summarize_snippet
+from vector_service.text_preprocessor import generalise
 
 # Lightweight license detection based on SPDX‑style fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
@@ -209,11 +210,12 @@ class EmbeddableDBMixin:
         summaries: List[str] = []
         for ch in chunks:
             try:
-                summaries.append(
-                    summarize_snippet(ch.text, context_builder=builder)
-                )
+                summary = summarize_snippet(ch.text, context_builder=builder)
             except Exception:  # pragma: no cover - summariser issues
-                summaries.append(ch.text)
+                summary = ch.text
+            summary = generalise(summary)
+            if summary:
+                summaries.append(summary)
         return " ".join(s for s in summaries if s)
 
     # ------------------------------------------------------------------
