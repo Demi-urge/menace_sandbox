@@ -1,10 +1,12 @@
 # Self Test Service
 
 `SelfTestService` periodically runs the project's unit tests to catch regressions.
-Specify custom pytest arguments via `SELF_TEST_ARGS` or the constructor. By
-default tests run directly on the host, but enabling `use_container=True`
-executes each provided test path inside a Docker container when available. Each
-container is removed on completion so test runs are isolated.
+It requires a `ContextBuilder` instance which is used to gather prompt context and
+to log errors. Specify custom pytest arguments via `SELF_TEST_ARGS` or the
+constructor. By default tests run directly on the host, but enabling
+`use_container=True` executes each provided test path inside a Docker container
+when available. Each container is removed on completion so test runs are
+isolated.
 
 When multiple test paths are supplied together with the `--workers` option,
 the total worker count is distributed across the spawned containers.  This
