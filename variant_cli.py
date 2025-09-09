@@ -6,7 +6,7 @@ import argparse
 import json
 from typing import Any, Dict
 
-from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 
 from .experiment_manager import ExperimentManager
 from .variant_manager import VariantManager
@@ -19,21 +19,13 @@ def main() -> None:  # pragma: no cover - CLI glue
     parser = argparse.ArgumentParser(description="Spawn and test a variant")
     parser.add_argument("patch_id", type=int, help="Parent patch or event id")
     parser.add_argument("variant", help="Name for the new variant")
-    parser.add_argument("--bots-db", default="bots.db", help="Path to bots DB")
-    parser.add_argument("--code-db", default="code.db", help="Path to code DB")
-    parser.add_argument("--errors-db", default="errors.db", help="Path to errors DB")
-    parser.add_argument(
-        "--workflows-db", default="workflows.db", help="Path to workflows DB"
-    )
     args = parser.parse_args()
 
     lineage = MutationLineage()
     # Clone the branch explicitly so operators can see the new patch id
     new_patch = lineage.clone_branch_for_ab_test(args.patch_id, args.variant)
 
-    builder = ContextBuilder(
-        args.bots_db, args.code_db, args.errors_db, args.workflows_db
-    )
+    builder = create_context_builder()
     exp_mgr = ExperimentManager(
         DataBot(),
         CapitalManagementBot(),
