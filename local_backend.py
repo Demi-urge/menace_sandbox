@@ -17,6 +17,11 @@ import requests
 import rate_limit
 import llm_config
 from llm_interface import Prompt, Completion, LLMBackend, LLMClient
+try:  # pragma: no cover - optional during tests
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - allow stub
+    class ContextBuilder:  # type: ignore
+        pass
 
 try:  # pragma: no cover - optional dependency
     import httpx  # type: ignore
@@ -51,7 +56,9 @@ class _RESTBackend(LLMBackend):
         response.raise_for_status()
         return response.json()
 
-    def generate(self, prompt: Prompt) -> Completion:
+    def generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> Completion:
         payload = {"model": self.model, "prompt": prompt.text}
         if getattr(prompt, "tags", None):
             payload["tags"] = list(prompt.tags)
@@ -117,7 +124,7 @@ class _RESTBackend(LLMBackend):
         )
 
     async def async_generate(
-        self, prompt: Prompt
+        self, prompt: Prompt, *, context_builder: ContextBuilder
     ) -> AsyncGenerator[str, None]:  # type: ignore[override]
         """Asynchronously yield streamed chunks for *prompt*.
 
@@ -195,9 +202,13 @@ class OllamaBackend(_RESTBackend):
         self.backend_name = "ollama"
         super().__init__(model=model, base_url=base_url, endpoint="api/generate")
 
-    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+    async def async_generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> AsyncGenerator[str, None]:
         """Stream a completion from the Ollama server."""
-        async for chunk in super().async_generate(prompt):
+        async for chunk in super().async_generate(
+            prompt, context_builder=context_builder
+        ):
             yield chunk
 
 
@@ -210,9 +221,13 @@ class VLLMBackend(_RESTBackend):
         self.backend_name = "vllm"
         super().__init__(model=model, base_url=base_url, endpoint="generate")
 
-    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+    async def async_generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> AsyncGenerator[str, None]:
         """Stream a completion from the vLLM server."""
-        async for chunk in super().async_generate(prompt):
+        async for chunk in super().async_generate(
+            prompt, context_builder=context_builder
+        ):
             yield chunk
 
 

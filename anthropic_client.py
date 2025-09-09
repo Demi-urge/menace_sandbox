@@ -12,6 +12,11 @@ import llm_config
 import llm_pricing
 
 from llm_interface import Prompt, LLMResult, LLMClient
+try:  # pragma: no cover - optional during tests
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - allow stub
+    class ContextBuilder:  # type: ignore
+        pass
 
 
 class AnthropicClient(LLMClient):
@@ -46,7 +51,9 @@ class AnthropicClient(LLMClient):
         return {"model": self.model, "max_tokens": 1024, "messages": messages}
 
     # ------------------------------------------------------------------
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:
         payload = self._prepare_payload(prompt)
         headers = {
             "x-api-key": self.api_key,

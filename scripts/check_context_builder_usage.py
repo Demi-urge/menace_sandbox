@@ -11,19 +11,21 @@ of whether it is accessed as an attribute.  Additionally, direct calls to
 ``context_builder`` keyword or an inline ``# nocb`` comment will be flagged.  The
 check ignores files located in directories named ``tests`` or ``unit_tests``.
 
-The linter also detects calls to ``LLMClient.generate`` or similar ``.generate``
-wrappers whose class name ends with ``Client``, ``Provider`` or ``Wrapper`` and
-requires a ``context_builder`` keyword.  These calls are reported when the
-argument is absent and no ``# nocb`` marker is present on the line or the one
-directly above.  Assignments or ``functools.partial`` wrappers of such
-``.generate`` methods are tracked so that subsequent calls through variables or
-partials are likewise validated.
+
+The linter also detects calls to ``LLMClient.generate``/``async_generate`` or
+similar ``.generate`` wrappers whose class name ends with ``Client``,
+``Provider`` or ``Wrapper`` and requires a ``context_builder`` keyword.  These
+calls are reported when the argument is absent and no ``# nocb`` marker is
+present on the line or the one directly above.  Assignments or
+``functools.partial`` wrappers of such generate methods are tracked so that
+subsequent calls through variables or partials are likewise validated.
 
 Variables assigned from ``LLMClient``-like classes are now remembered so that
 instance method calls such as ``client.generate()`` also require a
 ``context_builder`` keyword.  Common aliases like ``llm`` or ``model`` are
 heuristically treated as potential ``LLMClient`` instances and their
-``.generate()`` calls are checked even without a prior assignment.
+``.generate()`` or ``.async_generate()`` calls are checked even without a prior
+assignment.
 
 Furthermore, the linter searches for imports or calls to
 ``get_default_context_builder`` outside of test directories.  Such usage is
@@ -57,6 +59,7 @@ REQUIRED_NAMES = {
 }
 
 GENERATE_WRAPPER_SUFFIXES = ("client", "provider", "wrapper")
+GENERATE_METHODS = {"generate", "async_generate"}
 PARTIAL_NAMES = {"partial", "functools.partial"}
 ALIAS_NAMES = {"llm", "model"}
 
@@ -99,9 +102,9 @@ def check_file(path: Path) -> list[tuple[int, str]]:
     }
 
     def is_generate_wrapper(name: str) -> bool:
-        """Return True if *name* looks like an unbound ``.generate`` wrapper."""
+        """Return True if *name* looks like an unbound generate wrapper."""
 
-        if not name.endswith(".generate"):
+        if not any(name.endswith(f".{m}") for m in GENERATE_METHODS):
             return False
         parts = name.split(".")
         if len(parts) != 2:
@@ -297,7 +300,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                             target = gen_name
                 elif (
                     isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "generate"
+                    and node.func.attr in GENERATE_METHODS
                 ):
                     base = node.func.value
                     if isinstance(base, ast.Name):
@@ -309,7 +312,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     if base_name and (
                         base_name in self.llm_instances or base_name in ALIAS_NAMES
                     ):
-                        target = f"{base_name}.generate"
+                        target = f"{base_name}.{node.func.attr}"
 
             if (
                 isinstance(node.func, ast.Name)

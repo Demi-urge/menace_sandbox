@@ -11,6 +11,11 @@ import threading
 import llm_config
 import rate_limit
 from llm_interface import Prompt, LLMResult, LLMBackend, LLMClient
+try:  # pragma: no cover - optional during tests
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - allow stub
+    class ContextBuilder:  # type: ignore
+        pass
 
 try:  # pragma: no cover - optional dependency
     from transformers import (  # type: ignore
@@ -47,7 +52,9 @@ class LocalWeightsBackend(LLMBackend):
         self._rate_limiter = rate_limit.SHARED_TOKEN_BUCKET
         self._rate_limiter.update_rate(getattr(cfg, "tokens_per_minute", 0))
 
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:
         cfg = llm_config.get_config()
         retries = cfg.max_retries
         prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)
@@ -82,7 +89,9 @@ class LocalWeightsBackend(LLMBackend):
 
         raise RuntimeError("Failed to obtain completion from local weights backend")
 
-    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+    async def async_generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> AsyncGenerator[str, None]:
         cfg = llm_config.get_config()
         retries = cfg.max_retries
         prompt_tokens = rate_limit.estimate_tokens(prompt.text, model=self.model)

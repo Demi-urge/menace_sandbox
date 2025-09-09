@@ -39,6 +39,13 @@ try:  # pragma: no cover - package vs module import
 except Exception:  # pragma: no cover - stand-alone usage
     from prompt_types import Prompt
 
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - allow stub during tests
+    class ContextBuilder:  # type: ignore
+        """Fallback stub for typing when context builder is unavailable."""
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Data containers
@@ -76,7 +83,9 @@ class LLMBackend(Protocol):
 
     model: str
 
-    def generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - interface
+    def generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:  # pragma: no cover - interface
         ...
 
 
@@ -145,13 +154,44 @@ class LLMClient:
             pass
 
     # ------------------------------------------------------------------
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _track_usage(self, builder: ContextBuilder, result: LLMResult) -> None:
+        """Record token usage and retrieval metadata via the builder's tracker."""
+
+        tracker = getattr(builder, "roi_tracker", None)
+        if tracker is None:
+            return
+        usage = (result.raw or {}).get("usage") or {}
+        metrics: Dict[str, Any] = {}
+        if result.prompt_tokens is not None:
+            metrics.setdefault("input_tokens", result.prompt_tokens)
+        if result.completion_tokens is not None:
+            metrics.setdefault("output_tokens", result.completion_tokens)
+        if isinstance(usage, dict):
+            metrics.setdefault("input_tokens", usage.get("input_tokens"))
+            metrics.setdefault("output_tokens", usage.get("output_tokens"))
+        retrieval_metrics = (result.raw or {}).get("retrieval_metrics")
+        try:  # pragma: no cover - tracker is optional
+            tracker.update(
+                0.0,
+                0.0,
+                metrics=metrics or None,
+                retrieval_metrics=retrieval_metrics,
+            )
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def _generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:
         """Subclasses must implement this method."""
 
         raise NotImplementedError
 
     # ------------------------------------------------------------------
-    async def _async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+    async def _async_generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> AsyncGenerator[str, None]:
         """Asynchronous variant for streaming backends.
 
         Subclasses providing streaming capabilities should override this
@@ -167,6 +207,7 @@ class LLMClient:
         *,
         parse_fn: Callable[[str], Any] | None = None,
         backend: str | None = None,
+        context_builder: ContextBuilder,
     ) -> LLMResult:
         """Generate a completion for *prompt*.
 
@@ -190,7 +231,9 @@ class LLMClient:
             last_exc: Exception | None = None
             for backend_obj in order:
                 try:
-                    result = backend_obj.generate(prompt)
+                    result = backend_obj.generate(
+                        prompt, context_builder=context_builder
+                    )
                 except Exception as exc:  # pragma: no cover - backend failure
                     last_exc = exc
                     continue
@@ -206,7 +249,7 @@ class LLMClient:
             raise RuntimeError("no backends configured")
 
         # No explicit backends: delegate to subclass implementation
-        result = self._generate(prompt)
+        result = self._generate(prompt, context_builder=context_builder)
         if parse_fn is not None:
             try:
                 result.parsed = parse_fn(result.text)
@@ -214,10 +257,16 @@ class LLMClient:
                 pass
         backend_name = backend or (result.raw or {}).get("backend")
         self._log(prompt, result, backend=backend_name)
+        try:  # pragma: no cover - ROI tracking is best effort
+            self._track_usage(context_builder, result)
+        except Exception:
+            pass
         return result
 
     # ------------------------------------------------------------------
-    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+    async def async_generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> AsyncGenerator[str, None]:
         """Asynchronously yield completion chunks for *prompt* and log the result."""
 
         cfg = llm_config.get_config()
@@ -230,7 +279,13 @@ class LLMClient:
             parts.append(getattr(p, "user", getattr(p, "text", "")))
             return " ".join(parts)
 
-        def _finalize(text: str, *, backend_name: str | None, model: str) -> LLMResult:
+        def _finalize(
+            text: str,
+            *,
+            backend_name: str | None,
+            model: str,
+            builder: ContextBuilder,
+        ) -> LLMResult:
             prompt_tokens = rate_limit.estimate_tokens(_prompt_text(prompt), model=model)
             completion_tokens = rate_limit.estimate_tokens(text, model=model)
             in_rate, out_rate = llm_pricing.get_rates(model, cfg.pricing)
@@ -253,9 +308,19 @@ class LLMClient:
                 cost=cost,
             )
             self._log(prompt, result, backend=backend_name)
+            try:  # pragma: no cover - tracker optional
+                self._track_usage(builder, result)
+            except Exception:
+                pass
             return result
 
-        async def _stream(agen: AsyncGenerator[str, None], *, backend_name: str | None, model: str) -> None:
+        async def _stream(
+            agen: AsyncGenerator[str, None],
+            *,
+            backend_name: str | None,
+            model: str,
+            builder: ContextBuilder,
+        ) -> None:
             parts: List[str] = []
             while True:
                 try:
@@ -265,7 +330,7 @@ class LLMClient:
                 parts.append(chunk)
                 yield chunk
             text = "".join(parts)
-            _finalize(text, backend_name=backend_name, model=model)
+            _finalize(text, backend_name=backend_name, model=model, builder=builder)
 
         if self.backends:
             order = list(self.backends)
@@ -282,8 +347,13 @@ class LLMClient:
                 try:
                     backend_name = getattr(backend, "backend_name", getattr(backend, "model", None))
                     model_name = getattr(backend, "model", self.model)
-                    agen = agen_fn(prompt)
-                    wrapper = _stream(agen, backend_name=backend_name, model=model_name)
+                    agen = agen_fn(prompt, context_builder=context_builder)
+                    wrapper = _stream(
+                        agen,
+                        backend_name=backend_name,
+                        model=model_name,
+                        builder=context_builder,
+                    )
                     async for chunk in wrapper:
                         yield chunk
                     return
@@ -295,8 +365,10 @@ class LLMClient:
             raise RuntimeError("no backends configured")
 
         backend_name = getattr(self, "backend_name", None)
-        agen = self._async_generate(prompt)
-        wrapper = _stream(agen, backend_name=backend_name, model=self.model)
+        agen = self._async_generate(prompt, context_builder=context_builder)
+        wrapper = _stream(
+            agen, backend_name=backend_name, model=self.model, builder=context_builder
+        )
         async for chunk in wrapper:
             yield chunk
         return
@@ -356,7 +428,9 @@ class OpenAIProvider(LLMClient):
         return payload
 
     # ------------------------------------------------------------------
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:
         payload = self._prepare_payload(prompt)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -436,7 +510,9 @@ class OpenAIProvider(LLMClient):
         raise RuntimeError("Failed to obtain completion from OpenAI")
 
     # ------------------------------------------------------------------
-    async def _async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+    async def _async_generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> AsyncGenerator[str, None]:
         if httpx is None:  # pragma: no cover - dependency missing
             raise RuntimeError("httpx is required for async streaming")
 
