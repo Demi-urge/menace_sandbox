@@ -72,6 +72,8 @@ class ResponseCandidateGenerator:
 
     def __init__(self, *, context_builder: ContextBuilder) -> None:
         self.context_builder = context_builder
+        # Ensure ranking weights are loaded before generating any context
+        self.context_builder.refresh_db_weights()
         self.static_scripts: Dict[str, List[str]] = {
             "curiosity": [
                 "Did you know our latest offer?",
@@ -142,7 +144,7 @@ class ResponseCandidateGenerator:
         context_builder: ContextBuilder | None = None,
     ) -> List[str]:
         builder = context_builder or self.context_builder
-        if self.tokenizer and self.model and torch is not None:
+        if self.tokenizer and self.model and torch is not None and builder is not None:
             try:
                 prompt = " ".join(history + [message, archetype])
                 session_id = uuid.uuid4().hex
@@ -151,8 +153,12 @@ class ResponseCandidateGenerator:
                 if isinstance(ctx, (FallbackResult, ErrorResult)):
                     ctx = ""
                 if ctx:
-                    ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
-                    prompt = f"{ctx}\n\n{prompt}"
+                    if isinstance(ctx, dict):
+                        ctx = compress_snippets(ctx).get("snippet", "")
+                    else:
+                        ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
+                    if ctx:
+                        prompt = f"{ctx}\n\n{prompt}"
                 input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
                 outputs = self.model.generate(  # nocb
                     input_ids,
@@ -175,14 +181,16 @@ class ResponseCandidateGenerator:
         message: str,
         history: List[str],
         archetype: str = "",
-        *,
-        context_builder: ContextBuilder | None = None,
     ) -> List[str]:
+        if self.context_builder is None:
+            raise RuntimeError("Context builder is required")
         candidates: List[str] = []
         candidates.extend(self._static_candidates(message))
         candidates.extend(
             self._dynamic_candidates(
-                message, history, archetype, context_builder=context_builder
+                message,
+                history,
+                archetype,
             )
         )
         candidates.extend(self._past_candidates(message))

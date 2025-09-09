@@ -100,7 +100,6 @@ class CortexAwareResponder:
             text,
             history_texts,
             profile.archetype,
-            context_builder=self.client.context_builder,
         )
         if first_pass not in candidates:
             candidates.append(first_pass)

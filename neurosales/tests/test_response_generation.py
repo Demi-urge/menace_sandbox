@@ -22,6 +22,9 @@ def test_generate_candidates_pool():
         def build(self, message, **_):
             return ""
 
+        def refresh_db_weights(self):
+            return None
+
     gen = ResponseCandidateGenerator(context_builder=DummyBuilder())
     gen.add_past_response("Sure, I can assist you.")
     gen.add_past_response("Let me show you how to proceed.")
@@ -38,6 +41,9 @@ def test_dynamic_candidates_include_context(monkeypatch):
         def build(self, message, **_):
             self.calls.append(message)
             return "RAWCTX"
+
+        def refresh_db_weights(self):
+            return None
 
     class DummyTokenizer:
         def encode(self, prompt, return_tensors=None):
