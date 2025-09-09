@@ -3,6 +3,7 @@
 import sys
 import types
 from pathlib import Path
+import importlib
 
 import pytest
 
@@ -26,7 +27,6 @@ transformers_stub = types.SimpleNamespace(AutoTokenizer=None)
 sys.modules.setdefault("transformers", transformers_stub)
 
 # Ensure snippet_compressor resolves relative imports correctly
-import importlib
 sc_mod = importlib.import_module("menace_sandbox.snippet_compressor")
 sys.modules.setdefault("snippet_compressor", sc_mod)
 
@@ -38,7 +38,7 @@ sys.modules.setdefault("vector_service", vector_service_pkg)
 sys.modules.setdefault("vector_service.context_builder", context_builder_mod)
 
 # Micro model stubs
-diff_stub = types.SimpleNamespace(summarize_diff=lambda a, b: "")
+diff_stub = types.SimpleNamespace(summarize_diff=lambda *a, **k: "")
 micro_pkg = types.ModuleType("menace_sandbox.micro_models")
 sys.modules.setdefault("menace_sandbox.micro_models", micro_pkg)
 sys.modules.setdefault("menace_sandbox.micro_models.diff_summarizer", diff_stub)

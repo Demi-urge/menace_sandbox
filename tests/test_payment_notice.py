@@ -113,7 +113,7 @@ chatgpt_enh = types.SimpleNamespace(
 sys.modules.setdefault("chatgpt_enhancement_bot", chatgpt_enh)
 sys.modules.setdefault("menace_sandbox.chatgpt_enhancement_bot", chatgpt_enh)
 
-diff_summarizer = types.SimpleNamespace(summarize_diff=lambda a, b: "")
+diff_summarizer = types.SimpleNamespace(summarize_diff=lambda *a, **k: "")
 prefix_injector = types.SimpleNamespace(
     inject_prefix=lambda msgs, prefix, conf, role="system": msgs
 )

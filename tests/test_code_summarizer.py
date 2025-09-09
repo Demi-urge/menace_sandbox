@@ -14,7 +14,9 @@ class DummyBuilder:
 def test_summarize_code_micro_model(monkeypatch):
     """Ensure the micro-model path is used and honours token limits."""
 
-    def fake_summarize_diff(before: str, after: str, max_new_tokens: int = 128) -> str:
+    def fake_summarize_diff(
+        before: str, after: str, max_new_tokens: int = 128, *, context_builder=None
+    ) -> str:
         assert before == ""
         assert after == "print('hi')"
         return "one two three four five six seven"
