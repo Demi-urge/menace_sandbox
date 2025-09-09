@@ -602,7 +602,13 @@ _ERROR_CONTEXT_BUILDER: ContextBuilder | None = None
 
 
 def get_error_logger(context_builder: ContextBuilder) -> ErrorLogger:
-    """Return a shared :class:`ErrorLogger` instance using ``context_builder``."""
+    """Return a shared :class:`ErrorLogger` instance using ``context_builder``.
+
+    The ``context_builder`` argument is required and must not be ``None``.
+    """
+
+    if context_builder is None:
+        raise ValueError("context_builder must not be None")
 
     global ERROR_LOGGER, _ERROR_CONTEXT_BUILDER
     _ERROR_CONTEXT_BUILDER = context_builder
@@ -763,9 +769,13 @@ def create_ephemeral_env(
     installed. The context manager yields the cloned repository path and a
     ``run`` helper for executing commands inside the isolated environment.
 
-    Environment startup time and installation failures are logged via
+    The provided ``context_builder`` is mandatory and no fallback builder is
+    created. Environment startup time and installation failures are logged via
     :mod:`logging_utils` so metrics can be exported by callers.
     """
+
+    if context_builder is None:
+        raise ValueError("context_builder must not be None")
 
     get_error_logger(context_builder)
     backend = os.getenv("SANDBOX_BACKEND", "venv").lower()
@@ -1086,7 +1096,13 @@ def record_error(
     fatal: bool = False,
     context_builder: ContextBuilder,
 ) -> None:
-    """Log *exc* via :class:`ErrorLogger` and track its category and severity."""
+    """Log *exc* via :class:`ErrorLogger` and track its category and severity.
+
+    The ``context_builder`` argument is mandatory and must not be ``None``.
+    """
+
+    if context_builder is None:
+        raise ValueError("context_builder must not be None")
 
     logger_obj = get_error_logger(context_builder)
     stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
@@ -1118,7 +1134,13 @@ _DIAGNOSTIC: DiagnosticManager | None = None
 def init_diagnostic_manager(
     context_builder: ContextBuilder,
 ) -> None:
-    """Initialise the optional ``DiagnosticManager`` if available."""
+    """Initialise the optional ``DiagnosticManager`` if available.
+
+    The ``context_builder`` argument is required and must not be ``None``.
+    """
+
+    if context_builder is None:
+        raise ValueError("context_builder must not be None")
 
     global _DIAGNOSTIC
     if DiagnosticManager is None or _DIAGNOSTIC is not None:
@@ -7810,6 +7832,8 @@ def try_integrate_into_workflows(
 ) -> list[int]:
     """Append orphan ``modules`` to related workflows if possible.
 
+    The ``context_builder`` argument is mandatory and must not be ``None``.
+    
     Modules are identified by their repository-relative paths to avoid
     filename collisions. Workflows already containing tasks from the same
     module group will receive the orphan module as an additional step. The list
@@ -7824,6 +7848,9 @@ def try_integrate_into_workflows(
     matches are ignored. Synergy neighbourhood size is also recorded using the
     shared :class:`~self_improvement.baseline_tracker.BaselineTracker`.
     """
+
+    if context_builder is None:
+        raise ValueError("context_builder must not be None")
 
     from menace.task_handoff_bot import WorkflowDB
     from module_index_db import ModuleIndexDB
@@ -8606,6 +8633,8 @@ def auto_include_modules(
 ) -> tuple["ROITracker", Dict[str, list[str]]]:
     """Automatically include ``modules`` into the workflow system.
 
+    The ``context_builder`` argument is mandatory and must not be ``None``.
+
     The helper performs three steps:
 
     #. Generate simple workflows for each provided module via
@@ -8645,6 +8674,9 @@ def auto_include_modules(
     are saved to ``SANDBOX_DATA_DIR/roi_history.json`` for later analysis by
     the self-improvement engine.
     """
+
+    if context_builder is None:
+        raise ValueError("context_builder must not be None")
 
     import os
     from pathlib import Path

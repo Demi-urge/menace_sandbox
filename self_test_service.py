@@ -815,7 +815,7 @@ class SelfTestService:
             from sandbox_runner.environment import auto_include_modules
 
             sig = inspect.signature(auto_include_modules)
-            kwargs: dict[str, object] = {}
+            kwargs: dict[str, object] = {"context_builder": self.context_builder}
             if "recursive" in sig.parameters:
                 # Always include dependent helpers when merging modules into
                 # workflows.
