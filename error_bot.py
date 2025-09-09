@@ -274,11 +274,11 @@ class ErrorDB(EmbeddableDBMixin):
             meta = self._metadata.get(str(rec))
             return meta.get("vector") if meta else None
         if isinstance(rec, str):
-            text = rec
+            msg = rec
+            stack = ""
         elif isinstance(rec, dict):
             msg = rec.get("message") or rec.get("cause") or rec.get("root_cause") or ""
             stack = rec.get("stack_trace") or ""
-            text = f"{msg} {stack}".strip()
         else:
             msg = (
                 getattr(rec, "message", "")
@@ -286,8 +286,16 @@ class ErrorDB(EmbeddableDBMixin):
                 or getattr(rec, "root_cause", "")
             )
             stack = getattr(rec, "stack_trace", "")
-            text = f"{msg} {stack}".strip()
-        return self._embed(text) if text else None
+        text_parts: list[str] = []
+        if msg:
+            text_parts.append(f"message: {msg}")
+        if stack:
+            text_parts.append(f"stack_trace: {stack}")
+        text = "\n".join(text_parts)
+        if not text:
+            return None
+        prepared = self._prepare_text_for_embedding(text)
+        return self._embed(prepared) if prepared else None
 
     def _embed(self, text: str) -> list[float]:
         """Encode ``text`` to a vector (overridable for tests)."""

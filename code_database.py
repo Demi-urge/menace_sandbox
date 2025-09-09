@@ -849,14 +849,22 @@ class CodeDB(EmbeddableDBMixin):
             publish_with_retry(self.event_bus, "code:delete", {"code_id": code_id})
 
     # embedding --------------------------------------------------------
-    def _embed_text(self, data: dict[str, Any]) -> str:
-        parts = [
-            str(data.get("summary", "")),
-            str(data.get("code", "")),
-            str(data.get("template_type", "")),
-            str(data.get("language", "")),
-        ]
-        return " ".join(p for p in parts if p)
+    def _record_text(self, data: dict[str, Any]) -> str:
+        """Build a textual representation of ``data`` including metadata."""
+        parts: list[str] = []
+        summary = str(data.get("summary", ""))
+        if summary:
+            parts.append(f"summary: {summary}")
+        code = str(data.get("code", ""))
+        if code:
+            parts.append(code)
+        template = str(data.get("template_type", ""))
+        if template:
+            parts.append(f"template_type: {template}")
+        language = str(data.get("language", ""))
+        if language:
+            parts.append(f"language: {language}")
+        return "\n".join(parts)
 
     def license_text(self, rec: CodeRecord | dict[str, Any]) -> str | None:
         if isinstance(rec, CodeRecord):
@@ -957,16 +965,18 @@ class CodeDB(EmbeddableDBMixin):
                 "template_type": row[2],
                 "language": row[3],
             }
-            text = self._embed_text(data)
-            return self.encode_text(text) if text else None
+            text = self._record_text(data)
+            prepared = self._prepare_text_for_embedding(text)
+            return self.encode_text(prepared) if prepared else None
         if isinstance(rec, CodeRecord):
             data = asdict(rec)
         elif isinstance(rec, dict):
             data = rec
         else:
             return None
-        text = self._embed_text(data)
-        return self.encode_text(text) if text else None
+        text = self._record_text(data)
+        prepared = self._prepare_text_for_embedding(text)
+        return self.encode_text(prepared) if prepared else None
 
     def search_by_vector(
         self,
@@ -1320,15 +1330,22 @@ class PatchHistoryDB:
         return words
 
     # ------------------------------------------------------------------
-    def _embed_text(self, data: dict[str, Any]) -> str:
-        """Return a concatenated text representation for embedding."""
-        parts = [
-            str(data.get("summary", "")),
-            str(data.get("code", "")),
-            str(data.get("template_type", "")),
-            str(data.get("language", "")),
-        ]
-        return " ".join(p for p in parts if p)
+    def _record_text(self, data: dict[str, Any]) -> str:
+        """Return a descriptive text representation for embedding."""
+        parts: list[str] = []
+        summary = str(data.get("summary", ""))
+        if summary:
+            parts.append(f"summary: {summary}")
+        code = str(data.get("code", ""))
+        if code:
+            parts.append(code)
+        template = str(data.get("template_type", ""))
+        if template:
+            parts.append(f"template_type: {template}")
+        language = str(data.get("language", ""))
+        if language:
+            parts.append(f"language: {language}")
+        return "\n".join(parts)
 
     def license_text(self, rec: CodeRecord | dict[str, Any]) -> str | None:
         if isinstance(rec, CodeRecord):
@@ -1385,16 +1402,18 @@ class PatchHistoryDB:
                 "template_type": row[2],
                 "language": row[3],
             }
-            text = self._embed_text(data)
-            return self.encode_text(text) if text else None
+            text = self._record_text(data)
+            prepared = self._prepare_text_for_embedding(text)
+            return self.encode_text(prepared) if prepared else None
         if isinstance(rec, CodeRecord):
             data = asdict(rec)
         elif isinstance(rec, dict):
             data = rec
         else:
             return None
-        text = self._embed_text(data)
-        return self.encode_text(text) if text else None
+        text = self._record_text(data)
+        prepared = self._prepare_text_for_embedding(text)
+        return self.encode_text(prepared) if prepared else None
 
     def search_by_vector(
         self, vector: Sequence[float], top_k: int = 5

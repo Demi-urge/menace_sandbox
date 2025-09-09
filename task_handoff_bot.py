@@ -211,12 +211,22 @@ class WorkflowDB(EmbeddableDBMixin):
         sequence = rec.task_sequence if rec.workflow != rec.task_sequence else []
         parts: list[str] = []
         if actions:
-            parts.append(" -> ".join(actions))
+            parts.append("workflow: " + " -> ".join(actions))
         if sequence:
             parts.append("sequence: " + " -> ".join(sequence))
         if rec.argument_strings:
             parts.append("args: " + ", ".join(rec.argument_strings))
-        return " | ".join(parts)
+        if rec.title:
+            parts.append(f"title: {rec.title}")
+        if rec.description:
+            parts.append(f"description: {rec.description}")
+        if rec.tags:
+            parts.append("tags: " + ", ".join(rec.tags))
+        if rec.category:
+            parts.append(f"category: {rec.category}")
+        if rec.type_:
+            parts.append(f"type: {rec.type_}")
+        return "\n".join(parts)
 
     def usage_rate(self, workflow_id: int) -> int:
         """Return count of bots using a workflow.
@@ -509,7 +519,8 @@ class WorkflowDB(EmbeddableDBMixin):
         elif not isinstance(rec, WorkflowRecord):
             raise TypeError("unsupported record type")
         text = self._vector_text(rec)
-        return self._embed(text)
+        prepared = self._prepare_text_for_embedding(text)
+        return self._embed(prepared)
 
     def _embed(self, text: str) -> list[float]:
         """Encode ``text`` to a vector (overridable for tests)."""
