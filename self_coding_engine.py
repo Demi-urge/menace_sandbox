@@ -246,8 +246,11 @@ def call_codex_with_backoff(
     )
 
 
-def build_simplified_prompt(prompt_obj: Prompt) -> Prompt:
-    """Return a copy of *prompt_obj* without system or example context."""
+def build_simplified_prompt(prompt_obj: Prompt) -> Prompt:  # nocb
+    """Return a copy of *prompt_obj* without system or example context.
+
+    This helper is purely structural and does not require database context.
+    """
 
     return Prompt(
         prompt_obj.text,

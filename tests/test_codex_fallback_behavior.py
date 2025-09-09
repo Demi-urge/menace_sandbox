@@ -143,7 +143,7 @@ def test_timeout_error_prompts_simplified_and_builtin_fallback(monkeypatch):
 
 def test_build_simplified_prompt_clears_context():
     prompt = Prompt('user request', system='sys', examples=['a', 'b'])
-    simplified = self_coding_engine.build_simplified_prompt(prompt)
+    simplified = self_coding_engine.build_simplified_prompt(prompt)  # nocb
     assert simplified.system == ''
     assert simplified.examples == []
     assert simplified.user == 'user request'
