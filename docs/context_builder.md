@@ -178,6 +178,19 @@ tracked so that subsequent ``instance.generate(...)`` invocations require the
 keyword as well; aliases such as ``llm`` or ``model`` are heuristically checked
 even without a prior assignment.
 
+Functions that invoke ``ContextBuilder.build`` must accept an explicit builder
+argument.  A parameter defaulting to ``None`` or falling back to a new builder
+inside the function body triggers an error.  This prevents helpers from silently
+creating builders when callers forget to provide one.
+
+```python
+def demo(builder=None):  # flagged
+    builder.build()
+
+def ok(builder):
+    builder.build()  # passes
+```
+
 ```python
 import openai
 

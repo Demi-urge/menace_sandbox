@@ -156,3 +156,47 @@ def test_allows_getattr_with_nocb(tmp_path):
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == []
+
+
+def test_flags_build_with_optional_builder(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from vector_service.context_builder import ContextBuilder\n"
+        "def demo(builder=None):\n"
+        "    builder.build()\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (3, "builder.build disallowed or missing context_builder")
+    ]
+
+
+def test_flags_build_with_fallback_builder(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from vector_service.context_builder import ContextBuilder\n"
+        "def demo(builder):\n"
+        "    builder = builder or ContextBuilder('bots.db', 'code.db', 'errors.db', 'workflows.db')\n"
+        "    builder.build()\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (4, "builder.build disallowed or missing context_builder")
+    ]
+
+
+def test_allows_build_with_required_builder(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from vector_service.context_builder import ContextBuilder\n"
+        "def demo(builder):\n"
+        "    builder.build()\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == []
