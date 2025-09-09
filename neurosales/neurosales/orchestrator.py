@@ -30,8 +30,9 @@ class SandboxOrchestrator:
         self.memories: Dict[str, DatabaseConversationMemory | EmbeddingConversationMemory] = {}
         self.reactions: Dict[str, ReactionHistory] = {}
         self.preferences = PreferenceEngine()
+        self.context_builder = create_context_builder()
         self.generator = ResponseCandidateGenerator(
-            context_builder=create_context_builder()
+            context_builder=self.context_builder
         )
         self.scorer = CandidateResponseScorer()
         self.ranker = DatabaseRLResponseRanker(

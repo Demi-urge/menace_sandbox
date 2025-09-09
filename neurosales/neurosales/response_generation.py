@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Optional
+from typing import Dict, List
 import uuid
 
 try:
@@ -71,8 +71,6 @@ class ResponseCandidateGenerator:
     """Generate response candidates from scripts, language model, and history."""
 
     def __init__(self, *, context_builder: ContextBuilder) -> None:
-        if context_builder is None:
-            raise ValueError("context_builder must be provided")
         self.context_builder = context_builder
         self.static_scripts: Dict[str, List[str]] = {
             "curiosity": [
@@ -144,15 +142,14 @@ class ResponseCandidateGenerator:
         if self.tokenizer and self.model and torch is not None:
             try:
                 prompt = " ".join(history + [message, archetype])
-                if self.context_builder is not None:
-                    session_id = uuid.uuid4().hex
-                    ctx_res = self.context_builder.build(message, session_id=session_id)
-                    ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-                    if isinstance(ctx, (FallbackResult, ErrorResult)):
-                        ctx = ""
-                    if ctx:
-                        ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
-                        prompt = f"{ctx}\n\n{prompt}"
+                session_id = uuid.uuid4().hex
+                ctx_res = self.context_builder.build(message, session_id=session_id)
+                ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+                if isinstance(ctx, (FallbackResult, ErrorResult)):
+                    ctx = ""
+                if ctx:
+                    ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
+                    prompt = f"{ctx}\n\n{prompt}"
                 input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
                 outputs = self.model.generate(  # nocb
                     input_ids,
@@ -173,10 +170,9 @@ class ResponseCandidateGenerator:
     def generate_candidates(
         self,
         message: str,
-        history: Optional[List[str]] = None,
+        history: List[str],
         archetype: str = "",
     ) -> List[str]:
-        history = history or []
         candidates: List[str] = []
         candidates.extend(self._static_candidates(message))
         candidates.extend(self._dynamic_candidates(message, history, archetype))
