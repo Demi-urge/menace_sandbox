@@ -18,11 +18,22 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
 
-from vector_service import EmbeddableDBMixin
+try:  # pragma: no cover - optional dependency
+    from vector_service import EmbeddableDBMixin
+    from vector_service.context_builder import ContextBuilder
+except Exception as exc:  # pragma: no cover - explicit failure
+    raise ImportError(
+        "vector_service is required for ResourcesBot; install via `pip install vector_service`"
+    ) from exc
+
 from resource_vectorizer import ResourceVectorizer
-from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
+try:
+    from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
+except Exception as exc:  # pragma: no cover - explicit failure
+    raise ImportError(
+        "ResourceAllocationBot depends on vector_service; install it via `pip install vector_service`"
+    ) from exc
 from .resource_prediction_bot import ResourceMetrics
-from vector_service.context_builder import ContextBuilder
 from .prediction_manager_bot import PredictionManager
 from .strategy_prediction_bot import StrategyPredictionBot
 

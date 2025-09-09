@@ -28,16 +28,11 @@ from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder, FallbackResult, ErrorResult
-except Exception:  # pragma: no cover - allow stub in tests
-    class ContextBuilder:  # type: ignore
-        """Fallback stub used when context builder isn't available."""
-        pass
-
-    class FallbackResult(list):  # type: ignore
-        pass
-
-    class ErrorResult(Exception):  # type: ignore
-        pass
+except Exception as exc:  # pragma: no cover - explicit failure
+    raise ImportError(
+        "vector_service is required for ResourceAllocationBot; "
+        "install via `pip install vector_service`"
+    ) from exc
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .resources_bot import ResourcesBot

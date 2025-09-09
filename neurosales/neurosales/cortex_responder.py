@@ -12,9 +12,11 @@ from context_builder_util import create_context_builder
 
 try:  # pragma: no cover - optional dependency
     from vector_service import ContextBuilder
-except Exception:  # pragma: no cover - fallback when vector service missing
-    class ContextBuilder:  # type: ignore[misc]
-        pass
+except Exception as exc:  # pragma: no cover - explicit failure
+    raise ImportError(
+        "vector_service is required for CortexAwareResponder; "
+        "install via `pip install vector_service`"
+    ) from exc
 
 if TYPE_CHECKING:  # pragma: no cover - hints only
     from .user_preferences import PreferenceProfile
