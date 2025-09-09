@@ -39,6 +39,7 @@ from ..lock_utils import SandboxLock, Timeout, LOCK_TIMEOUT
 from .baseline_tracker import BaselineTracker, TRACKER as BASELINE_TRACKER
 from ..error_logger import TelemetryEvent
 from .sandbox_score import get_latest_sandbox_score
+from context_builder_util import create_context_builder
 
 
 _cycle_thread: Any | None = None
@@ -938,7 +939,7 @@ async def self_improvement_cycle(
         logger.warning("MetaWorkflowPlanner unavailable; using fallback planner")
         planner = _FallbackPlanner()
     else:
-        planner = MetaWorkflowPlanner()
+        planner = MetaWorkflowPlanner(context_builder=create_context_builder())
 
     mutation_rate = cfg.meta_mutation_rate
     roi_weight = cfg.meta_roi_weight

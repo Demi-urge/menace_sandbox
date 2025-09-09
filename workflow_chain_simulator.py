@@ -14,6 +14,12 @@ import json
 from pathlib import Path
 import logging
 from dynamic_path_router import resolve_path
+from context_builder_util import create_context_builder
+
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder  # type: ignore
+except Exception:  # pragma: no cover - allow running without builder
+    ContextBuilder = None  # type: ignore
 
 try:  # pragma: no cover - allow import when used as package or module
     from .workflow_chain_suggester import WorkflowChainSuggester
@@ -119,10 +125,12 @@ def run_scheduler(
     roi_delta_threshold: float = 0.01,
     entropy_delta_threshold: float = 0.01,
     runs: int = 3,
+    context_builder: ContextBuilder | None = None,  # nocb - internal default
 ) -> List[Dict[str, Any]]:
     """Execute :class:`MetaWorkflowPlanner` scheduler and persist results."""
 
-    planner = MetaWorkflowPlanner()
+    context_builder = context_builder or create_context_builder()
+    planner = MetaWorkflowPlanner(context_builder=context_builder)
     records = planner.schedule(
         workflows,
         roi_delta_threshold=roi_delta_threshold,

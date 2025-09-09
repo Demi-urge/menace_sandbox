@@ -22,19 +22,22 @@ from meta_workflow_planner import (
     find_synergy_chain,
 )
 from roi_results_db import module_impact_report
-from vector_service.retriever import Retriever  # type: ignore
-from config.create_context_builder import create_context_builder  # type: ignore
+_CONTEXT_BUILDER = None  # type: ignore
 
-try:  # pragma: no cover - instantiate required context builder
-    _CONTEXT_BUILDER = create_context_builder()
-except Exception as exc:  # pragma: no cover - fail fast
-    raise RuntimeError("ContextBuilder is required") from exc
+
+def _require_builder() -> "ContextBuilder":  # type: ignore[name-defined]
+    global _CONTEXT_BUILDER
+    if _CONTEXT_BUILDER is None:  # pragma: no cover - lazy init
+        from context_builder_util import create_context_builder
+
+        _CONTEXT_BUILDER = create_context_builder()
+    return _CONTEXT_BUILDER
 
 
 def _cmd_encode(args: argparse.Namespace) -> int:
     """Encode ``args.workflow`` and print the resulting vector."""
 
-    planner = MetaWorkflowPlanner()
+    planner = MetaWorkflowPlanner(context_builder=_require_builder())
     with Path(args.workflow).open("r", encoding="utf-8") as fh:
         spec = json.load(fh)
     vec = planner.encode(args.workflow_id, spec)
@@ -50,7 +53,9 @@ def _cmd_candidates(args: argparse.Namespace) -> int:
     else:
         query = args.workflow_id
     try:
-        retr = Retriever(context_builder=_CONTEXT_BUILDER)
+        from vector_service.retriever import Retriever  # type: ignore
+
+        retr = Retriever(context_builder=_require_builder())
     except Exception:
         retr = None
     results = (
@@ -76,7 +81,7 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     """Generate a high-synergy pipeline and print its workflow identifiers."""
 
     chain = find_synergy_chain(
-        args.start, length=args.length, context_builder=_CONTEXT_BUILDER
+        args.start, length=args.length, context_builder=_require_builder()
     )
     if not chain:
         print("no pipeline generated")
