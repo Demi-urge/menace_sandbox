@@ -54,7 +54,7 @@ def test_search_success(monkeypatch):
         called['args'] = (query, top_k, min_score, include_confidence, session_id)
         return ["hit"]
 
-    monkeypatch.setattr(api, "_retriever", types.SimpleNamespace(search=fake_search))
+    monkeypatch.setattr(api.app.state, "retriever", types.SimpleNamespace(search=fake_search), raising=False)
     resp = client.post("/search", json={"query": "hello", "session_id": "s"})
     assert resp.status_code == 200
     data = resp.json()
@@ -66,7 +66,7 @@ def test_search_error(monkeypatch):
     def boom(*args, **kwargs):
         raise VectorServiceError("bad")
 
-    monkeypatch.setattr(api, "_retriever", types.SimpleNamespace(search=boom))
+    monkeypatch.setattr(api.app.state, "retriever", types.SimpleNamespace(search=boom), raising=False)
     resp = client.post("/search", json={"query": "x", "session_id": "s"})
     assert resp.status_code == 500
     assert resp.json()["detail"] == "bad"
@@ -76,7 +76,7 @@ def test_query_success(monkeypatch):
     def fake_query(task, **extras):
         return f"ctx:{task}", "sid"
 
-    monkeypatch.setattr(api, "_cognition_layer", types.SimpleNamespace(query=fake_query))
+    monkeypatch.setattr(api.app.state, "cognition_layer", types.SimpleNamespace(query=fake_query), raising=False)
     resp = client.post("/query", json={"task_description": "t"})
     assert resp.status_code == 200
     data = resp.json()
@@ -88,7 +88,7 @@ def test_query_error(monkeypatch):
     def boom(*args, **kwargs):
         raise VectorServiceError("fail")
 
-    monkeypatch.setattr(api, "_cognition_layer", types.SimpleNamespace(query=boom))
+    monkeypatch.setattr(api.app.state, "cognition_layer", types.SimpleNamespace(query=boom), raising=False)
     resp = client.post("/query", json={"task_description": "t"})
     assert resp.status_code == 500
     assert resp.json()["detail"] == "fail"
@@ -100,7 +100,7 @@ def test_track_contributors_success(monkeypatch):
     def fake_track(ids, result, patch_id="", session_id="", **kwargs):
         called['args'] = (ids, result, patch_id, session_id, kwargs.get("roi_tag"))
 
-    monkeypatch.setattr(api, "_patch_logger", types.SimpleNamespace(track_contributors=fake_track))
+    monkeypatch.setattr(api.app.state, "patch_logger", types.SimpleNamespace(track_contributors=fake_track), raising=False)
     resp = client.post(
         "/track-contributors",
         json={
@@ -119,7 +119,7 @@ def test_track_contributors_error(monkeypatch):
     def boom(*args, **kwargs):
         raise VectorServiceError("nope")
 
-    monkeypatch.setattr(api, "_patch_logger", types.SimpleNamespace(track_contributors=boom))
+    monkeypatch.setattr(api.app.state, "patch_logger", types.SimpleNamespace(track_contributors=boom), raising=False)
     resp = client.post(
         "/track-contributors",
         json={"vector_ids": ["a"], "result": False, "session_id": "s"},
@@ -134,7 +134,7 @@ def test_backfill_embeddings_success(monkeypatch):
     def fake_run(session_id="", batch_size=None, backend=None):
         called['args'] = (session_id, batch_size, backend)
 
-    monkeypatch.setattr(api, "_backfill", types.SimpleNamespace(run=fake_run))
+    monkeypatch.setattr(api.app.state, "backfill", types.SimpleNamespace(run=fake_run), raising=False)
     resp = client.post(
         "/backfill-embeddings",
         json={"batch_size": 1, "backend": "annoy", "session_id": "s"},
@@ -147,7 +147,7 @@ def test_backfill_embeddings_error(monkeypatch):
     def boom(*args, **kwargs):
         raise VectorServiceError("oops")
 
-    monkeypatch.setattr(api, "_backfill", types.SimpleNamespace(run=boom))
+    monkeypatch.setattr(api.app.state, "backfill", types.SimpleNamespace(run=boom), raising=False)
     resp = client.post("/backfill-embeddings", json={"session_id": "s"})
     assert resp.status_code == 500
     assert resp.json()["detail"] == "oops"

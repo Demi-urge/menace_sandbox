@@ -230,6 +230,8 @@ python - <<'PY'
 from context_builder_util import create_context_builder
 import vector_service_api
 
+# create_app stores the builder and services on ``app.state`` so the API
+# handlers can access them via ``request.app.state``.
 vector_service_api.create_app(create_context_builder())
 
 import uvicorn

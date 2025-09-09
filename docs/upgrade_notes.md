@@ -16,7 +16,8 @@ The `vector_service` package provides retrieval helpers and HTTP endpoints
 (`/search`, `/build-context`, `/track-contributors`,
 `/backfill-embeddings`). Ensure imports use `vector_service` helpers and
 consult `vector_service_api.py` for usage details. Initialising the HTTP API
-now requires an explicit `ContextBuilder` passed to `create_app`.
+now requires an explicit `ContextBuilder` passed to `create_app` and the
+builder is stored on `app.state` for access via `request.app.state`.
 
 ## Recursive orphan scanning default
 
