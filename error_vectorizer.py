@@ -1,65 +1,97 @@
 from __future__ import annotations
 
-"""Vectoriser for error telemetry records."""
+"""Embedding based vectoriser for error telemetry records."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
+import re
+import numpy as np
 
+from analysis.semantic_diff_filter import find_semantic_risks
+from snippet_compressor import compress_snippets
+from chunking import split_into_chunks
 from vector_utils import persist_embedding
 
-_DEFAULT_BOUNDS = {"stack_len": 200.0}
+try:  # pragma: no cover - heavy dependency
+    from sentence_transformers import SentenceTransformer  # type: ignore
+except Exception:  # pragma: no cover - fallback when package missing
+    SentenceTransformer = None  # type: ignore
 
-def _one_hot(idx: int, length: int) -> List[float]:
-    vec = [0.0] * length
-    if 0 <= idx < length:
-        vec[idx] = 1.0
-    return vec
-
-def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
-    val = str(value).lower().strip() or "other"
-    if val in mapping:
-        return mapping[val]
-    if len(mapping) < max_size:
-        mapping[val] = len(mapping)
-        return mapping[val]
-    return mapping["other"]
-
-def _scale(value: Any, bound: float) -> float:
+_MODEL = None
+_EMBED_DIM = 384
+if SentenceTransformer is not None:  # pragma: no cover - model download may be slow
     try:
-        f = float(value)
+        _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        _EMBED_DIM = int(_MODEL.get_sentence_embedding_dimension())
     except Exception:
-        return 0.0
-    f = max(-bound, min(bound, f))
-    return f / bound if bound else 0.0
+        _MODEL = None
+
+
+def _split_sentences(text: str) -> List[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+
+
+def _embed_texts(texts: List[str]) -> List[List[float]]:
+    if not texts:
+        return []
+    if _MODEL is None:  # pragma: no cover - dependency missing
+        return [[0.0] * _EMBED_DIM for _ in texts]
+    vecs = _MODEL.encode(texts)
+    return [list(map(float, v)) for v in np.atleast_2d(vecs)]
+
 
 @dataclass
 class ErrorVectorizer:
-    """Basic vectoriser for error log entries from ``errors.db``."""
+    """Generate embeddings for error log entries."""
 
-    max_categories: int = 20
-    max_modules: int = 50
-    category_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
-    module_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
+    max_tokens: int = 200
 
-    def fit(self, errors: Iterable[Dict[str, Any]]) -> "ErrorVectorizer":
-        for err in errors:
-            _get_index(err.get("category") or err.get("error_type"), self.category_index, self.max_categories)
-            _get_index(err.get("root_module") or err.get("module"), self.module_index, self.max_modules)
+    def fit(self, errors: Iterable[Dict[str, Any]]) -> "ErrorVectorizer":  # pragma: no cover - compatibility
         return self
 
-    @property
+    @property  # pragma: no cover - compatibility
     def dim(self) -> int:
-        return self.max_categories + self.max_modules + 1
+        return _EMBED_DIM
 
     def transform(self, err: Dict[str, Any]) -> List[float]:
-        c_idx = _get_index(err.get("category") or err.get("error_type"), self.category_index, self.max_categories)
-        m_idx = _get_index(err.get("root_module") or err.get("module"), self.module_index, self.max_modules)
-        stack = err.get("stack_trace") or ""
-        vec: List[float] = []
-        vec.extend(_one_hot(c_idx, self.max_categories))
-        vec.extend(_one_hot(m_idx, self.max_modules))
-        vec.append(_scale(len(str(stack).splitlines()), _DEFAULT_BOUNDS["stack_len"]))
-        return vec
+        chunks: List[str] = []
+
+        msg = err.get("message") or err.get("error") or ""
+        if isinstance(msg, str):
+            for sent in _split_sentences(msg):
+                if find_semantic_risks([sent]):
+                    continue
+                summary = compress_snippets({"snippet": sent}).get("snippet", sent)
+                if summary.strip():
+                    chunks.append(summary)
+
+        stack = err.get("stack_trace") or err.get("stack") or ""
+        if isinstance(stack, str) and stack.strip():
+            for ch in split_into_chunks(stack, self.max_tokens):
+                if find_semantic_risks(ch.text.splitlines()):
+                    continue
+                summary = compress_snippets({"snippet": ch.text}).get(
+                    "snippet", ch.text
+                )
+                if summary.strip():
+                    chunks.append(summary)
+
+        other = [err.get("category"), err.get("module"), err.get("root_module")]
+        for item in other:
+            if isinstance(item, str) and item.strip():
+                sent = item.strip()
+                if find_semantic_risks([sent]):
+                    continue
+                summary = compress_snippets({"snippet": sent}).get("snippet", sent)
+                if summary.strip():
+                    chunks.append(summary)
+
+        if not chunks:
+            return [0.0] * _EMBED_DIM
+
+        vecs = _embed_texts(chunks)
+        agg = np.mean(vecs, axis=0) if vecs else np.zeros(_EMBED_DIM)
+        return [float(x) for x in agg.tolist()]
 
 
 _DEFAULT_VECTORIZER = ErrorVectorizer()
