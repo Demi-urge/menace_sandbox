@@ -35,24 +35,10 @@ jobs:
       - name: Check for dynamic path references
         run: "python tools/check_dynamic_paths.py $(git ls-files '*.py')"
 
-  context-builder-check:
-    runs-on: ubuntu-latest
-    env:
-      MENACE_SAFE: "1"
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - name: Enforce ContextBuilder usage
-        run: python scripts/check_context_builder_usage.py
-        # Fails the build if any prompt-generating call lacks a context_builder.
-
   tests:
     runs-on: ubuntu-latest
     needs:
       - path-checks
-      - context-builder-check
     env:
       MENACE_SAFE: "1"
     steps:
@@ -64,6 +50,8 @@ jobs:
         run: bash ./setup_env.sh
       - name: Install pre-commit
         run: pip install pre-commit
+      - name: Enforce ContextBuilder usage
+        run: pre-commit run check-context-builder-usage --all-files
       - name: Check for ungoverned embedding calls
         run: pre-commit run check-governed-embeddings --all-files
       - name: Check for direct sqlite3 connections
