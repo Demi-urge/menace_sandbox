@@ -4,6 +4,7 @@ import sys
 import types
 from pathlib import Path
 from dynamic_path_router import resolve_path
+from context_builder_util import create_context_builder
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -98,7 +99,10 @@ def test_try_integrate_into_workflows(tmp_path, monkeypatch):
     clusterer = DummyClusterer()
 
     updated = env.try_integrate_into_workflows(
-        [resolve_path("b.py")], workflows_db=db_path, intent_clusterer=clusterer  # path-ignore
+        [resolve_path("b.py")],
+        workflows_db=db_path,
+        intent_clusterer=clusterer,
+        context_builder=create_context_builder(),  # path-ignore
     )
     recs = {r.wid: r for r in wf_db.fetch(limit=10)}
     assert wid1 in updated
@@ -134,7 +138,11 @@ def test_try_integrate_no_match(tmp_path, monkeypatch):
     sts_stub.SelfTestService = DummySTS
     monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
 
-    updated = env.try_integrate_into_workflows([resolve_path("d.py")], workflows_db=db_path)  # path-ignore
+    updated = env.try_integrate_into_workflows(
+        [resolve_path("d.py")],
+        workflows_db=db_path,
+        context_builder=create_context_builder(),
+    )  # path-ignore
     rec = wf_db.fetch(limit=10)[0]
     assert not updated
     assert rec.workflow == ["a"]
@@ -194,7 +202,9 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
     (tmp_path / "pkg2").mkdir()
     (tmp_path / "pkg2" / "orphan.py").write_text("def o2():\n    pass\n")  # path-ignore
     mods = [resolve_path("pkg1/orphan.py"), resolve_path("pkg2/orphan.py")]  # path-ignore
-    updated = env.try_integrate_into_workflows(mods, workflows_db=db_path)
+    updated = env.try_integrate_into_workflows(
+        mods, workflows_db=db_path, context_builder=create_context_builder()
+    )
     rec = {r.wid: r for r in wf_db.fetch(limit=10)}[wid]
     assert wid in updated
     assert set(rec.workflow) == {"existing", "pkg1.orphan", "pkg2.orphan"}
@@ -252,6 +262,7 @@ def test_try_integrate_intent_synergy(tmp_path, monkeypatch):
         [resolve_path("b.py")],  # path-ignore
         workflows_db=db_path,
         intent_clusterer=clusterer,
+        context_builder=create_context_builder(),
     )
     recs = {r.wid: r for r in wf_db.fetch(limit=10)}
     assert wid in updated

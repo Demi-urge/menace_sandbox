@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 
 import sandbox_runner.environment as env
+from context_builder_util import create_context_builder
 
 
 class DummyTracker:
@@ -57,7 +58,9 @@ def test_auto_include_reverts_on_negative_roi(monkeypatch, tmp_path):
         ),
     )
 
-    result, tested = env.auto_include_modules(["mod.py"])  # path-ignore
+    result, tested = env.auto_include_modules(
+        ["mod.py"], context_builder=create_context_builder()
+    )  # path-ignore
 
     map_path = Path(tmp_path, "module_map.json")
     assert not map_path.exists()

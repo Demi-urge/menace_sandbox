@@ -73,7 +73,7 @@ def test_post_synthesis_orphan_inclusion(monkeypatch, tmp_path):
     ic_mod.IntentClusterer = DummyClusterer
     monkeypatch.setitem(sys.modules, "intent_clusterer", ic_mod)
 
-    def auto_include_modules(paths, recursive=True, router=None):
+    def auto_include_modules(paths, recursive=True, router=None, context_builder=None):
         data = json.loads(module_map_path.read_text())
         modules = data.get("modules", data)
         for p in paths:
@@ -92,7 +92,9 @@ def test_post_synthesis_orphan_inclusion(monkeypatch, tmp_path):
 
     def integrate_orphans(repo_path, router=None):
         from sandbox_runner.environment import auto_include_modules
-        auto_include_modules(["helper.py", "new_module.py"])  # path-ignore
+        auto_include_modules(
+            ["helper.py", "new_module.py"], context_builder=None
+        )  # path-ignore
         return ["helper.py", "new_module.py"]  # path-ignore
 
     pkg = types.ModuleType("sandbox_runner")

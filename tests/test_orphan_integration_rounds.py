@@ -152,11 +152,11 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
     # Stub orphan integration utilities
     auto_called: dict[str, list[str]] = {}
 
-    def fake_auto(paths, recursive=True, router=None):
+    def fake_auto(paths, recursive=True, router=None, context_builder=None):
         auto_called["mods"] = list(paths)
         return None, {"added": list(paths)}
 
-    def fake_try(mods, router=None):
+    def fake_try(mods, router=None, context_builder=None):
         auto_called["workflow"] = list(mods)
 
     env_mod = types.ModuleType("sandbox_runner.environment")
@@ -203,12 +203,19 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
             try_integrate_into_workflows,
         )
 
-        auto_include_modules(["extra/mod.py"], recursive=True, router=router)  # path-ignore
+        auto_include_modules(
+            ["extra/mod.py"],
+            recursive=True,
+            router=router,
+            context_builder=None,
+        )  # path-ignore
         from module_synergy_grapher import ModuleSynergyGrapher
         ModuleSynergyGrapher(repo).update_graph(["extra.mod"])
         from intent_clusterer import IntentClusterer
         IntentClusterer(None, None).index_modules([Path(repo) / "extra/mod.py"])  # path-ignore
-        try_integrate_into_workflows(["extra/mod.py"], router=router)  # path-ignore
+        try_integrate_into_workflows(
+            ["extra/mod.py"], router=router, context_builder=None
+        )  # path-ignore
         return ["extra/mod.py"], True, True  # path-ignore
 
     pkg = types.ModuleType("sandbox_runner")

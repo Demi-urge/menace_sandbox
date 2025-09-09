@@ -4484,13 +4484,18 @@ class SelfImprovementEngine:
         added_modules: set[str] = set()
         try:
             _tracker, tested = environment.auto_include_modules(
-                sorted(modules), recursive=True, validate=True
+                sorted(modules),
+                recursive=True,
+                validate=True,
+                context_builder=self.self_coding_engine.context_builder,
             )
             added_modules.update(tested.get("added", []))
         except Exception:
             try:
                 _tracker, tested = environment.auto_include_modules(
-                    sorted(modules), recursive=True
+                    sorted(modules),
+                    recursive=True,
+                    context_builder=self.self_coding_engine.context_builder,
                 )
                 added_modules.update(tested.get("added", []))
             except Exception:
@@ -5377,7 +5382,10 @@ class SelfImprovementEngine:
                     added_modules: set[str] = set()
                     try:
                         _tracker, tested = environment.auto_include_modules(
-                            sorted(safe), recursive=True, validate=True
+                            sorted(safe),
+                            recursive=True,
+                            validate=True,
+                            context_builder=self.self_coding_engine.context_builder,
                         )
                         added_modules.update(tested.get("added", []))
                         try:
@@ -5395,7 +5403,9 @@ class SelfImprovementEngine:
                             except Exception:
                                 logger.exception("Unhandled exception in self_improvement")
                             environment.try_integrate_into_workflows(
-                                sorted(safe), **kwargs
+                                sorted(safe),
+                                **kwargs,
+                                context_builder=self.self_coding_engine.context_builder,
                             )
                         except Exception as exc:  # pragma: no cover - best effort
                             self.logger.exception(
@@ -5595,7 +5605,10 @@ class SelfImprovementEngine:
                 added_modules: set[str] = set()
                 try:
                     _tracker, tested = environment.auto_include_modules(
-                        sorted(safe), recursive=True, validate=True
+                        sorted(safe),
+                        recursive=True,
+                        validate=True,
+                        context_builder=self.self_coding_engine.context_builder,
                     )
                     added_modules.update(tested.get("added", []))
                     try:
@@ -5612,7 +5625,11 @@ class SelfImprovementEngine:
                                 }
                         except Exception:
                             logger.exception("Unhandled exception in self_improvement")
-                        environment.try_integrate_into_workflows(sorted(safe), **kwargs)
+                        environment.try_integrate_into_workflows(
+                            sorted(safe),
+                            **kwargs,
+                            context_builder=self.self_coding_engine.context_builder,
+                        )
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception(
                             "workflow integration failed: %s", exc
@@ -5715,7 +5732,10 @@ class SelfImprovementEngine:
         added_modules: set[str] = set()
         try:
             _tracker, tested = environment.auto_include_modules(
-                sorted(redundant), recursive=True, validate=True
+                sorted(redundant),
+                recursive=True,
+                validate=True,
+                context_builder=self.self_coding_engine.context_builder,
             )
             added_modules.update(tested.get("added", []))
         except Exception as exc:  # pragma: no cover - best effort
@@ -5742,18 +5762,26 @@ class SelfImprovementEngine:
                 added_modules: set[str] = set()
                 try:
                     _tracker, tested = environment.auto_include_modules(
-                        sorted(passing), recursive=True, validate=True
+                        sorted(passing),
+                        recursive=True,
+                        validate=True,
+                        context_builder=self.self_coding_engine.context_builder,
                     )
                     added_modules.update(tested.get("added", []))
                 except Exception:
                     try:
                         _tracker, tested = auto_include_modules(
-                            sorted(passing), recursive=True, validate=True
+                            sorted(passing),
+                            recursive=True,
+                            validate=True,
+                            context_builder=self.self_coding_engine.context_builder,
                         )
                         added_modules.update(tested.get("added", []))
                     except TypeError:
                         _tracker, tested = auto_include_modules(
-                            sorted(passing), recursive=True
+                            sorted(passing),
+                            recursive=True,
+                            context_builder=self.self_coding_engine.context_builder,
                         )
                         added_modules.update(tested.get("added", []))
                     except Exception as exc:  # pragma: no cover - best effort
@@ -5879,7 +5907,10 @@ class SelfImprovementEngine:
                 abs_deps = [str(repo / p) for p in deps]
                 try:
                     _tracker, tested = environment.auto_include_modules(
-                        sorted(deps), recursive=True, validate=True
+                        sorted(deps),
+                        recursive=True,
+                        validate=True,
+                        context_builder=self.self_coding_engine.context_builder,
                     )
                     record_new = getattr(self, "_record_new_modules", None)
                     if record_new:
@@ -6813,7 +6844,10 @@ class SelfImprovementEngine:
                     added_modules: set[str] = set()
                     try:
                         _tracker, tested = environment.auto_include_modules(
-                            sorted(pending), recursive=True, validate=True
+                            sorted(pending),
+                            recursive=True,
+                            validate=True,
+                            context_builder=self.self_coding_engine.context_builder,
                         )
                         added_modules.update(tested.get("added", []))
                     except Exception as exc:  # pragma: no cover - best effort
@@ -6911,7 +6945,10 @@ class SelfImprovementEngine:
                     added_modules: set[str] = set()
                     try:
                         _tracker, tested = environment.auto_include_modules(
-                            sorted(passing), recursive=True, validate=True
+                            sorted(passing),
+                            recursive=True,
+                            validate=True,
+                            context_builder=self.self_coding_engine.context_builder,
                         )
                         added_modules.update(tested.get("added", []))
                     except Exception as exc:  # pragma: no cover - best effort

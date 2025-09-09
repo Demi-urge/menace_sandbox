@@ -506,7 +506,9 @@ class MenaceOrchestrator:
                     added_modules: set[str] = set()
                     try:
                         _, tested = environment.auto_include_modules(
-                            sorted(modules), recursive=True
+                            sorted(modules),
+                            recursive=True,
+                            context_builder=self.context_builder,
                         )
                         added_modules.update(tested.get("added", []))
                     except Exception:

@@ -25,12 +25,12 @@ def _setup_env(monkeypatch, tmp_path, redundant=None):
     integrated: list[str] = []
 
     # Stub out workflow helpers to capture inputs
-    def fake_generate(mods, workflows_db="workflows.db"):
+    def fake_generate(mods, workflows_db="workflows.db", context_builder=None):
         generated.append(sorted(mods))
         (tmp_path / workflows_db).write_text("dummy")
         return [1]
 
-    def fake_integrate(mods):
+    def fake_integrate(mods, context_builder=None):
         integrated.extend(sorted(mods))
         data = json.loads(map_path.read_text())
         for m in mods:
@@ -64,7 +64,9 @@ def test_auto_include_recursive_chain(tmp_path, monkeypatch):
     assert mapping["c"]["parents"] == ["b"]
 
     ctx = types.SimpleNamespace(orphan_traces={})
-    auto_include_modules(["a.py"], recursive=True)  # path-ignore
+    from context_builder_util import create_context_builder
+
+    auto_include_modules(["a.py"], recursive=True, context_builder=create_context_builder())  # path-ignore
 
     assert generated and generated[0] == ["a.py", "b.py", "c.py"]  # path-ignore
     assert integrated == ["a.py", "b.py", "c.py"]  # path-ignore
@@ -85,7 +87,9 @@ def test_auto_include_recursive_skips_redundant(tmp_path, monkeypatch):
     assert mapping["c"]["parents"] == ["b"]
 
     ctx = types.SimpleNamespace(orphan_traces={})
-    auto_include_modules(["a.py"], recursive=True)  # path-ignore
+    from context_builder_util import create_context_builder
+
+    auto_include_modules(["a.py"], recursive=True, context_builder=create_context_builder())  # path-ignore
 
     assert ctx.orphan_traces["b.py"]["parents"] == ["a.py"]  # path-ignore
     assert ctx.orphan_traces["c.py"]["parents"] == ["b.py", "a.py"]  # path-ignore

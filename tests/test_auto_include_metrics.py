@@ -5,6 +5,7 @@ from pathlib import Path
 
 import sandbox_runner.environment as env
 from dynamic_path_router import resolve_path
+from context_builder_util import create_context_builder
 
 
 class DummyTracker:
@@ -45,7 +46,9 @@ def test_auto_include_modules_saves_roi(monkeypatch, tmp_path):
     )
 
     MOD = resolve_path("mod.py").as_posix()  # path-ignore
-    result, tested = env.auto_include_modules([MOD])
+    result, tested = env.auto_include_modules(
+        [MOD], context_builder=create_context_builder()
+    )
 
     assert result is tracker
     assert tested == {"added": [MOD], "failed": [], "redundant": []}

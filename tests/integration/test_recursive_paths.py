@@ -82,7 +82,7 @@ def test_recursive_paths(tmp_path, monkeypatch):
 
     calls: list[list[str]] = []
 
-    def fake_auto_include(mods, recursive=False, validate=False):
+    def fake_auto_include(mods, recursive=False, validate=False, context_builder=None):
         calls.append(sorted(mods))
         return [1]
 
@@ -95,7 +95,7 @@ def test_recursive_paths(tmp_path, monkeypatch):
         for m in mods:
             data["modules"][Path(m).as_posix()] = 1
         map_path.write_text(json.dumps(data))
-        env_mod.auto_include_modules(mods, recursive=True)
+        env_mod.auto_include_modules(mods, recursive=True, context_builder=None)
 
     svc = sts.SelfTestService(
         include_orphans=True,

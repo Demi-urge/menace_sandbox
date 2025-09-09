@@ -35,11 +35,11 @@ def test_orphan_inclusion_after_synthesis(monkeypatch, tmp_path):
 
     auto_called: dict[str, list[str]] = {}
 
-    def fake_auto(paths, recursive=True, router=None):
+    def fake_auto(paths, recursive=True, router=None, context_builder=None):
         auto_called["auto"] = list(paths)
         return None, {"added": list(paths)}
 
-    def fake_try(mods, router=None):
+    def fake_try(mods, router=None, context_builder=None):
         auto_called["workflow"] = list(mods)
 
     env_mod = types.ModuleType("sandbox_runner.environment")
@@ -79,10 +79,14 @@ def test_orphan_inclusion_after_synthesis(monkeypatch, tmp_path):
             try_integrate_into_workflows,
         )
 
-        _, res = auto_include_modules(["extra/mod.py"], recursive=True, router=router)  # path-ignore
+        _, res = auto_include_modules(
+            ["extra/mod.py"], recursive=True, router=router, context_builder=None
+        )  # path-ignore
         added = res.get("added", [])
         if added:
-            try_integrate_into_workflows(sorted(added), router=router)
+            try_integrate_into_workflows(
+                sorted(added), router=router, context_builder=None
+            )
         return added, True, True
 
     pkg = types.ModuleType("sandbox_runner")

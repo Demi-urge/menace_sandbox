@@ -617,7 +617,11 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
 
     try:
         tracker, tested = auto_include_modules(
-            sorted(candidates), recursive=True, validate=True, router=GLOBAL_ROUTER
+            sorted(candidates),
+            recursive=True,
+            validate=True,
+            router=GLOBAL_ROUTER,
+            context_builder=ctx.context_builder,
         )
     except Exception:
         logger.exception("auto include modules failed")

@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 
 import pytest
+from context_builder_util import create_context_builder
 
 
 def _setup(monkeypatch, tmp_path, *, redundant=False):
@@ -58,10 +59,10 @@ def _setup(monkeypatch, tmp_path, *, redundant=False):
     import sandbox_runner.environment as env
     generated: list[list[str]] = []
     integrated: list[str] = []
-    def fake_generate(mods, workflows_db="workflows.db"):
+    def fake_generate(mods, workflows_db="workflows.db", context_builder=None):
         generated.append(sorted(mods))
         return [1]
-    def fake_integrate(mods):
+    def fake_integrate(mods, context_builder=None):
         integrated.extend(sorted(mods))
         data = json.loads(map_path.read_text())
         for m in mods:
@@ -76,7 +77,9 @@ def _setup(monkeypatch, tmp_path, *, redundant=False):
 
 def test_auto_include_isolated_dependency(tmp_path, monkeypatch):
     env, map_path, data_dir, generated, integrated = _setup(monkeypatch, tmp_path)
-    env.auto_include_modules(["iso.py"], recursive=True, validate=True)  # path-ignore
+    env.auto_include_modules(
+        ["iso.py"], recursive=True, validate=True, context_builder=create_context_builder()
+    )  # path-ignore
 
     assert generated and generated[0] == ["dep.py", "iso.py"]  # path-ignore
     assert integrated == ["dep.py", "iso.py"]  # path-ignore
@@ -89,7 +92,9 @@ def test_auto_include_isolated_dependency(tmp_path, monkeypatch):
 
 def test_auto_include_isolated_skips_redundant(tmp_path, monkeypatch):
     env, map_path, data_dir, generated, integrated = _setup(monkeypatch, tmp_path, redundant=True)
-    env.auto_include_modules(["iso.py"], recursive=True, validate=True)  # path-ignore
+    env.auto_include_modules(
+        ["iso.py"], recursive=True, validate=True, context_builder=create_context_builder()
+    )  # path-ignore
 
     assert generated and generated[0] == ["iso.py"]  # path-ignore
     assert integrated == ["iso.py"]  # path-ignore

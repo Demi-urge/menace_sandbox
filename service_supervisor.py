@@ -424,7 +424,9 @@ class ServiceSupervisor:
             if added_modules:
                 try:
                     from sandbox_runner import try_integrate_into_workflows
-                    try_integrate_into_workflows(added_modules)
+                    try_integrate_into_workflows(
+                        added_modules, context_builder=self.context_builder
+                    )
                 except Exception as wf_exc:
                     self.logger.warning(
                         "workflow integration failed after patch: %s", wf_exc

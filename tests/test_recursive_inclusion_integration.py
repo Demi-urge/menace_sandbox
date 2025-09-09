@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 
 import sandbox_runner.environment as env
+from context_builder_util import create_context_builder
 
 
 class DummyTracker:
@@ -78,7 +79,9 @@ def test_recursive_inclusion_integration(tmp_path, monkeypatch):
     monkeypatch.setattr(env, "try_integrate_into_workflows", lambda mods: None)
     monkeypatch.setattr(env, "run_workflow_simulations", lambda *a, **k: DummyTracker())
 
-    env.auto_include_modules(["iso.py"], recursive=True, validate=True)  # path-ignore
+    env.auto_include_modules(
+        ["iso.py"], recursive=True, validate=True, context_builder=create_context_builder()
+    )  # path-ignore
 
     map_data = json.loads((data_dir / "module_map.json").read_text())
     assert set(map_data) == {"iso.py", "helper.py"}  # path-ignore
