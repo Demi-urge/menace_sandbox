@@ -121,8 +121,9 @@ def test_reroute_uses_configured_model(monkeypatch, tmp_path):
             captured["model"] = model
             self.model = model
 
-        def generate(self, prompt: Prompt) -> LLMResult:
+        def generate(self, prompt: Prompt, *, context_builder=None) -> LLMResult:
             captured["prompt"] = prompt.user
+            captured["builder"] = context_builder
             return LLMResult(text="ok", raw={"model": self.model})
 
     monkeypatch.setattr(cf, "LLMClient", DummyClient)
@@ -130,7 +131,37 @@ def test_reroute_uses_configured_model(monkeypatch, tmp_path):
         codex_fallback_model="dummy-model", codex_retry_queue_path=str(tmp_path / "queue.jsonl")
     )
 
-    result = cf.reroute_to_fallback_model(Prompt("hi"), context_builder=DummyBuilder())
+    builder = DummyBuilder()
+    result = cf.reroute_to_fallback_model(Prompt("hi"), context_builder=builder)
     assert captured["model"] == "dummy-model"
     assert captured["prompt"] == "hi"
+    assert captured["builder"] is builder
     assert result.raw["model"] == "dummy-model"
+
+
+def test_reroute_includes_retrieved_context(monkeypatch):
+    captured = {}
+
+    class DummyClient:
+        def __init__(self, *, model: str):
+            self.model = model
+
+        def generate(self, prompt: Prompt, *, context_builder=None) -> LLMResult:
+            captured["prompt"] = prompt.user
+            captured["builder"] = context_builder
+            return LLMResult(text="ok")
+
+    class Builder:
+        def refresh_db_weights(self, *a, **k):
+            return None
+
+        def build(self, _):
+            return "ctx"
+
+    builder = Builder()
+    monkeypatch.setattr(cf, "LLMClient", DummyClient)
+    cf._settings = types.SimpleNamespace(codex_fallback_model="dummy")
+
+    cf.reroute_to_fallback_model(Prompt("hi"), context_builder=builder)
+    assert captured["prompt"] == "ctx\n\nhi"
+    assert captured["builder"] is builder
