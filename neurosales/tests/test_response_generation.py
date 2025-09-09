@@ -66,7 +66,9 @@ def test_dynamic_candidates_include_context(monkeypatch):
     gen = ResponseCandidateGenerator(context_builder=builder)
     gen.tokenizer = DummyTokenizer()
     gen.model = DummyModel()
-    res = gen._dynamic_candidates("hello", ["hi"], "arch", n=1)
+    res = gen._dynamic_candidates(
+        "hello", ["hi"], "arch", n=1, context_builder=builder
+    )
     assert builder.calls == ["hello"]
     assert "COMPCTX" in res[0]
     assert "RAWCTX" not in res[0]
