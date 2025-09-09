@@ -86,6 +86,8 @@ vector_service.__spec__ = types.SimpleNamespace(submodule_search_locations=[])  
 sys.modules["vector_service"] = vector_service
 vec_cb = types.ModuleType("vector_service.context_builder")
 vec_cb.ContextBuilder = _CB
+vec_cb.FallbackResult = list
+vec_cb.ErrorResult = Exception
 sys.modules["vector_service.context_builder"] = vec_cb
 vec_ret = types.ModuleType("vector_service.retriever")
 vec_ret.Retriever = None
@@ -192,10 +194,12 @@ def test_enhancement_bot_injects_notice():
     class DummyLLM(LLMClient):
         def __init__(self):
             self.captured = None
+            self.ctx = None
             super().__init__(model="dummy", backends=[])
 
-        def generate(self, prompt):  # type: ignore[override]
+        def generate(self, prompt, *, context_builder=None):  # type: ignore[override]
             self.captured = prompt
+            self.ctx = context_builder
             return LLMResult(text="")
 
     class DummyBuilder:
@@ -209,6 +213,7 @@ def test_enhancement_bot_injects_notice():
     bot = EnhancementBot(context_builder=DummyBuilder(), llm_client=llm)
     bot._codex_summarize("a", "b", confidence=1.0)
     assert llm.captured and llm.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
+    assert llm.ctx is not None
 
 
 def test_prompt_engine_build_prompt_contains_notice():

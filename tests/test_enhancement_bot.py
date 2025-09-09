@@ -62,10 +62,12 @@ def test_codex_summarize_injects_context():
     class DummyLLM(LLMClient):
         def __init__(self) -> None:
             self.prompt = None
+            self.ctx = None
             super().__init__(model="dummy", backends=[])
 
-        def generate(self, prompt):  # type: ignore[override]
+        def generate(self, prompt, *, context_builder=None):  # type: ignore[override]
             self.prompt = prompt
+            self.ctx = context_builder
             return LLMResult(text="summary")
 
     builder = DummyBuilder()
@@ -76,6 +78,7 @@ def test_codex_summarize_injects_context():
     assert calls["desc"] == "diff"
     assert calls["top_k"] == 5
     assert llm.prompt and "CTX" in llm.prompt.user
+    assert llm.ctx is builder
 
 
 def test_codex_summarize_compresses_context():
@@ -93,10 +96,12 @@ def test_codex_summarize_compresses_context():
     class DummyLLM(LLMClient):
         def __init__(self) -> None:
             self.prompt = None
+            self.ctx = None
             super().__init__(model="dummy", backends=[])
 
-        def generate(self, prompt):  # type: ignore[override]
+        def generate(self, prompt, *, context_builder=None):  # type: ignore[override]
             self.prompt = prompt
+            self.ctx = context_builder
             return LLMResult(text="summary")
 
     bot = EnhancementBot(context_builder=DummyBuilder(), llm_client=DummyLLM())

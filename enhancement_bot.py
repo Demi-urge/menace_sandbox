@@ -8,6 +8,7 @@ informative :class:`ImportError` is raised at import time.
 """
 
 import hashlib
+import logging
 import subprocess
 import time
 from dataclasses import dataclass
@@ -42,6 +43,9 @@ try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -156,9 +160,14 @@ class EnhancementBot:
             return ""
 
         try:
-            result = self.llm_client.generate(prompt)
+            result = self.llm_client.generate(prompt, context_builder=self.context_builder)
             return result.text.strip()
+        except TypeError as exc:
+            raise RuntimeError(
+                "llm_client.generate missing context_builder support"
+            ) from exc
         except Exception:  # pragma: no cover - llm failures are non fatal
+            logger.exception("LLM generation failed")
             return ""
 
     # ------------------------------------------------------------------
