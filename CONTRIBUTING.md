@@ -77,9 +77,10 @@ no hard-coded `.py` paths slip through.
 
 Every constructor or function that assembles prompts must accept a
 `ContextBuilder` and use it for token accounting and ROI tracking. This applies
-to helpers like `_build_prompt`, `build_prompt` and `generate_patch`. Instantiate
-the builder with local database paths at the call site and pass it explicitly;
-components should fail fast when the argument is missing.
+to helpers like `_build_prompt`, `build_prompt`, `generate_patch`, and
+`generate_candidates`. Instantiate the builder with local database paths at the
+call site and pass it explicitly; components should fail fast when the argument
+is missing and must not define a default for the `context_builder` parameter.
 
 ```python
 from vector_service.context_builder import ContextBuilder
@@ -113,8 +114,10 @@ pre-commit run check-context-builder-usage --all-files
 
 Continuous integration runs this hook and fails the build when missing or
 implicit `ContextBuilder` usage is detected. The script also flags disallowed
-defaults such as `context_builder=None` or imports of
-`get_default_context_builder`, and CI fails when these patterns appear.
+defaults for `context_builder` parameters (including sentinel objects), calls to
+helpers like `generate_candidates` that omit a `context_builder` keyword, or
+imports of `get_default_context_builder`, and CI fails when these patterns
+appear.
 
 ## Stripe integration
 
