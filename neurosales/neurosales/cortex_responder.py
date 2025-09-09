@@ -60,6 +60,8 @@ class CortexAwareResponder:
         )
         self.pg = pg or InMemoryResponseDB()
         self.context_builder = context_builder
+        # ResponseCandidateGenerator internally applies LocalModelWrapper to
+        # ensure context-aware generation from local models.
         self.generator = ResponseCandidateGenerator(context_builder=context_builder)
         self.scorer = CandidateResponseScorer()
         self.queue = ResponsePriorityQueue()

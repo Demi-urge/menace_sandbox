@@ -24,22 +24,12 @@ except Exception:  # pragma: no cover - optional dependency
     Trainer = None  # type: ignore
 
 from .mirror_bot import MirrorDB
-from .snippet_compressor import compress_snippets
+from local_model_wrapper import LocalModelWrapper
 
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import (
-        ContextBuilder,
-        FallbackResult,
-        ErrorResult,
-    )
+    from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback stubs
     ContextBuilder = Any  # type: ignore
-
-    class FallbackResult(list):  # type: ignore[misc]
-        pass
-
-    class ErrorResult(Exception):  # type: ignore[override]
-        pass
 
 
 @dataclass
@@ -105,26 +95,14 @@ class UserStyleModel:
         if not self.model or not self.tokenizer:
             return text
 
-        ctx = ""
-        try:
-            ctx_res = context_builder.build(text, include_vectors=False)
-            raw_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-            if isinstance(raw_ctx, (FallbackResult, ErrorResult)):
-                raw_ctx = ""
-            elif raw_ctx:
-                raw_ctx = compress_snippets({"snippet": raw_ctx}).get(
-                    "snippet", raw_ctx
-                )
-            ctx = raw_ctx
-        except Exception:  # pragma: no cover - best effort retrieval
-            ctx = ""
-
-        prompt = f"{ctx}\n\n{text}" if ctx else text
-        inputs = self.tokenizer(prompt, return_tensors="pt")
-        outputs = self.model.generate(  # nocb
-            **inputs, max_length=50, num_return_sequences=1
+        wrapper = LocalModelWrapper(self.model, self.tokenizer)
+        return wrapper.generate(
+            text,
+            context_builder=context_builder,
+            cb_input=text,
+            max_length=50,
+            num_return_sequences=1,
         )
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 
 __all__ = ["StyleModelConfig", "UserStyleModel"]
