@@ -614,11 +614,18 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
 
     calls: list[Path] = []
 
-    def handle(prompt, reason, *, queue_path=None, **_):
+    def handle(prompt, reason, *, context_builder, queue_path=None, **_):
         calls.append(queue_path)
         return LLMResult(text="def good():\n    pass\n")
 
     monkeypatch.setattr(sce.codex_fallback_handler, "handle", handle)
+    monkeypatch.setattr(
+        sce,
+        "create_context_builder",
+        lambda: types.SimpleNamespace(
+            refresh_db_weights=lambda *a, **k: None, build=lambda *a, **k: ""
+        ),
+    )
 
     qpath = tmp_path / "queue.jsonl"
     monkeypatch.setattr(

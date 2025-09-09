@@ -11,12 +11,17 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 try:  # pragma: no cover - allow flat imports
     from .llm_interface import LLMClient, Prompt, LLMResult
 except Exception:  # pragma: no cover - fallback for direct execution
     from llm_interface import LLMClient, Prompt, LLMResult  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - fallback when vector service missing
+    ContextBuilder = Any  # type: ignore
 
 from sandbox_settings import SandboxSettings
 
@@ -56,7 +61,33 @@ def queue_failed(prompt: Prompt, reason: str, *, path: Optional[Path] = None) ->
         handle.write(json.dumps(record) + "\n")
 
 
-def reroute_to_fallback_model(prompt: Prompt) -> LLMResult:
+class _ContextClient:
+    """Lightweight wrapper injecting vector-based context into prompts."""
+
+    def __init__(self, *, model: str, context_builder: ContextBuilder) -> None:
+        self._client = LLMClient(model=model)
+        self._builder = context_builder
+
+    def generate(self, prompt: Prompt) -> LLMResult:
+        context = ""
+        try:
+            ctx_res = self._builder.build(prompt.user)
+            context = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+        except Exception:
+            context = ""
+        if context:
+            prompt = Prompt(
+                f"{context}\n\n{prompt.user}",
+                system=prompt.system,
+                examples=prompt.examples,
+                vector_confidence=prompt.vector_confidence,
+                tags=prompt.tags,
+                metadata=prompt.metadata,
+            )
+        return self._client.generate(prompt)
+
+
+def reroute_to_fallback_model(prompt: Prompt, *, context_builder: ContextBuilder) -> LLMResult:
     """Retry ``prompt`` using the configured fallback model.
 
     The model is taken from :class:`SandboxSettings` via the
@@ -66,12 +97,16 @@ def reroute_to_fallback_model(prompt: Prompt) -> LLMResult:
     """
 
     model = getattr(_settings, "codex_fallback_model", "gpt-3.5-turbo")
-    client = LLMClient(model=model)
+    client = _ContextClient(model=model, context_builder=context_builder)
     return client.generate(prompt)
 
 
 def handle(
-    prompt: Prompt, reason: str, *, queue_path: Optional[Path] = None
+    prompt: Prompt,
+    reason: str,
+    *,
+    context_builder: ContextBuilder,
+    queue_path: Optional[Path] = None,
 ) -> LLMResult:
     """Attempt to reroute ``prompt`` and queue it on persistent failure.
 
@@ -100,7 +135,15 @@ def handle(
         return LLMResult(text="", raw={"reason": reason})
 
     try:
-        result = reroute_to_fallback_model(prompt)
+        try:
+            context_builder.refresh_db_weights()
+        except Exception:
+            pass
+        try:
+            context_builder.build(prompt.user)
+        except Exception:
+            pass
+        result = reroute_to_fallback_model(prompt, context_builder=context_builder)
     except Exception:
         logger.warning(
             "codex fallback reroute failed", exc_info=True, extra={"reason": reason}
