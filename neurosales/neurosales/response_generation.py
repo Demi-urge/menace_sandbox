@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
+import uuid
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -17,6 +18,18 @@ except Exception:  # pragma: no cover - optional heavy dep
     AutoTokenizer = None  # type: ignore
     AutoModelForCausalLM = None  # type: ignore
     torch = None  # type: ignore
+
+try:
+    from vector_service import ContextBuilder, FallbackResult, ErrorResult
+except Exception:  # pragma: no cover - fallback when vector service missing
+    class ContextBuilder:  # type: ignore
+        pass
+
+    class FallbackResult(list):  # type: ignore[misc]
+        pass
+
+    class ErrorResult(Exception):  # type: ignore[misc]
+        pass
 
 from snippet_compressor import compress_snippets
 
@@ -57,7 +70,7 @@ def redundancy_filter(candidates: List[str], threshold: float = 0.7) -> List[str
 class ResponseCandidateGenerator:
     """Generate response candidates from scripts, language model, and history."""
 
-    def __init__(self, *, context_builder: Any | None = None) -> None:
+    def __init__(self, *, context_builder: ContextBuilder | None = None) -> None:
         self.context_builder = context_builder
         self.static_scripts: Dict[str, List[str]] = {
             "curiosity": [
@@ -125,16 +138,16 @@ class ResponseCandidateGenerator:
         history: List[str],
         archetype: str,
         n: int = 3,
-        *,
-        context_builder: Any | None = None,
     ) -> List[str]:
-        builder = context_builder or self.context_builder
         if self.tokenizer and self.model and torch is not None:
             try:
                 prompt = " ".join(history + [message, archetype])
-                if builder is not None:
-                    ctx_res = builder.build(message)
+                if self.context_builder is not None:
+                    session_id = uuid.uuid4().hex
+                    ctx_res = self.context_builder.build(message, session_id=session_id)
                     ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+                    if isinstance(ctx, (FallbackResult, ErrorResult)):
+                        ctx = ""
                     if ctx:
                         ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
                         prompt = f"{ctx}\n\n{prompt}"
@@ -161,14 +174,13 @@ class ResponseCandidateGenerator:
         history: Optional[List[str]] = None,
         archetype: str = "",
         *,
-        context_builder: Any | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> List[str]:
         history = history or []
-        builder = context_builder or self.context_builder
+        if context_builder is not None:
+            self.context_builder = context_builder
         candidates: List[str] = []
         candidates.extend(self._static_candidates(message))
-        candidates.extend(
-            self._dynamic_candidates(message, history, archetype, context_builder=builder)
-        )
+        candidates.extend(self._dynamic_candidates(message, history, archetype))
         candidates.extend(self._past_candidates(message))
         return redundancy_filter(candidates)
