@@ -27,7 +27,6 @@ if not SHARED_DB_PATH:
     SHARED_DB_PATH = os.path.abspath("shared/global.db")
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
-from menace.plugins import load_plugins  # noqa: E402
 
 
 def _run(cmd: list[str]) -> int:
@@ -36,15 +35,29 @@ def _run(cmd: list[str]) -> int:
 
 
 from code_database import PatchHistoryDB  # noqa: E402
-from patch_provenance import (  # noqa: E402
-    PatchLogger,
-    build_chain,
-    search_patches_by_vector,
-    search_patches_by_license,
-)
 from cache_utils import get_cached_chain, set_cached_chain, _get_cache  # noqa: E402
 from cache_utils import clear_cache, show_cache, cache_stats  # noqa: E402
 from workflow_synthesizer_cli import run as handle_workflow  # noqa: E402
+
+PatchLogger = None  # type: ignore
+build_chain = None  # type: ignore
+search_patches_by_vector = None  # type: ignore
+search_patches_by_license = None  # type: ignore
+
+
+def _vector_service_available() -> bool:
+    """Return ``True`` if the vector service responds to ``/health``."""
+    import urllib.request
+
+    base = os.environ.get("VECTOR_SERVICE_URL")
+    if not base:
+        return True
+    url = f"{base.rstrip('/')}/health"
+    try:
+        with urllib.request.urlopen(url, timeout=2):
+            return True
+    except Exception:
+        return False
 
 
 def _normalise_hits(hits, origin=None):
@@ -126,8 +139,17 @@ def handle_new_vector(args: argparse.Namespace) -> int:
 
 def handle_patch(args: argparse.Namespace) -> int:
     """Handle ``patch`` command."""
+    if not _vector_service_available():
+        print("vector service unavailable", file=sys.stderr)
+        return 1
     from vector_service.retriever import Retriever
     import quick_fix_engine
+
+    global PatchLogger
+    if PatchLogger is None:  # pragma: no cover - lazy import
+        from patch_provenance import PatchLogger as _PatchLogger
+
+        PatchLogger = _PatchLogger
 
     builder = args.builder
     retriever = Retriever(context_builder=builder, cache=_get_cache())
@@ -169,6 +191,9 @@ def handle_patch(args: argparse.Namespace) -> int:
 
 def handle_retrieve(args: argparse.Namespace) -> int:
     """Handle ``retrieve`` command."""
+    if not _vector_service_available():
+        print("vector service unavailable", file=sys.stderr)
+        return 1
     try:
         from vector_service.retriever import Retriever, FallbackResult, fts_search
     except Exception:
@@ -235,6 +260,9 @@ def handle_retrieve(args: argparse.Namespace) -> int:
 
 def handle_embed(args: argparse.Namespace) -> int:
     """Handle ``embed`` command."""
+    if not _vector_service_available():
+        print("vector service unavailable", file=sys.stderr)
+        return 1
     import logging
     from vector_service.embedding_backfill import EmbeddingBackfill
     from vector_service.exceptions import VectorServiceError
@@ -425,6 +453,8 @@ def main(argv: list[str] | None = None) -> int:
     p_workflow.set_defaults(func=handle_workflow)
 
     # allow plugins to register additional subcommands
+    from menace.plugins import load_plugins  # type: ignore
+
     load_plugins(sub)
 
     sub.add_parser("branch-log", help="Show patch branch audit trail").set_defaults(
@@ -467,6 +497,17 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     if args.cmd == "patches":
+        global build_chain, search_patches_by_vector, search_patches_by_license
+        if build_chain is None or search_patches_by_vector is None or search_patches_by_license is None:  # pragma: no cover - lazy import
+            from patch_provenance import (
+                build_chain as _build_chain,
+                search_patches_by_vector as _search_patches_by_vector,
+                search_patches_by_license as _search_patches_by_license,
+            )
+            build_chain = _build_chain
+            search_patches_by_vector = _search_patches_by_vector
+            search_patches_by_license = _search_patches_by_license
+
         db = PatchHistoryDB()
         if args.patches_cmd == "list":
             rows = db.list_patches(args.limit)
@@ -482,6 +523,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.patches_cmd == "search":
             if args.vector:
+                if not _vector_service_available():
+                    print("vector service unavailable", file=sys.stderr)
+                    return 1
                 rows = search_patches_by_vector(args.vector, patch_db=db)
                 patches = [
                     {

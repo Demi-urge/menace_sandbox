@@ -243,3 +243,50 @@ curl -H "X-API-Token: secret" -d '{"query": "upload failed"}' \
     http://localhost:8000/search
 ```
 
+## Daemon
+
+The repository ships with `scripts/run_vector_service.py` which creates the
+application via `vector_service_api.create_app(create_context_builder())` and
+launches a Uvicorn server:
+
+```bash
+python scripts/run_vector_service.py
+```
+
+The script honours `VECTOR_SERVICE_HOST` and `VECTOR_SERVICE_PORT` environment
+variables (default `0.0.0.0:8000`).  If `VECTOR_SERVICE_SOCKET` is set the
+daemon binds to the specified Unix domain socket instead.
+
+### systemd
+
+Create a unit file such as `/etc/systemd/system/vector_service.service`:
+
+```ini
+[Unit]
+Description=Menace vector service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python /path/to/scripts/run_vector_service.py
+WorkingDirectory=/path/to/menace_sandbox
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+
+```bash
+sudo systemctl enable --now vector_service.service
+```
+
+### Docker
+
+Build and run the daemon in a container:
+
+```bash
+docker build -t menace-vector .
+docker run -p 8000:8000 menace-vector python scripts/run_vector_service.py
+```
+

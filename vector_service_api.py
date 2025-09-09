@@ -56,6 +56,12 @@ except Exception:  # pragma: no cover - compatibility fallback
 
 app = FastAPI()
 
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Simple liveness probe."""
+    return {"status": "ok"}
+
 # Service instances are stored on ``app.state`` instead of module level globals.
 # This makes dependency injection explicit and avoids side effects when the
 # module is imported without calling :func:`create_app`.
