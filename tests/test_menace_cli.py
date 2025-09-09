@@ -46,11 +46,50 @@ def fts_search(q, dbs=None, limit=None):
 """,
         "vector_service/embedding_backfill.py": """  # path-ignore
 import os
+
+
+class DummyDB:
+    def __init__(self, vector_backend=None):
+        mismatch = os.environ.get('TEST_VECTOR_MISMATCH') == '1'
+        self.records = ['a', 'b']
+        self._id_map = ['a'] if mismatch else ['a', 'b']
+
+    def iter_records(self):
+        for i, r in enumerate(self.records):
+            yield i, r, 'text'
+
+    def needs_refresh(self, record_id, record):
+        return True
+
+    def add_embedding(self, record_id, record, kind):
+        if os.environ.get('TEST_EMBED_RECORD_FAIL') == '1' and record_id == 0:
+            raise RuntimeError('record fail')
+
+
 class EmbeddingBackfill:
+    def __init__(self, batch_size: int = 100, backend: str = "annoy"):
+        self.batch_size = batch_size
+        self.backend = backend
+
     def run(self, session_id=None, dbs=None, batch_size=None, backend=None):
         if os.environ.get('TEST_EMBED_FAIL') == '1':
             from vector_service.exceptions import VectorServiceError
             raise VectorServiceError('embed failure')
+        self._process_db(DummyDB(), batch_size=batch_size or self.batch_size, session_id=session_id)
+
+    def _load_known_dbs(self, names=None):
+        return [DummyDB]
+
+
+_RUN_SKIPPED = type(
+    "G",
+    (),
+    {"labels": lambda *a, **k: type("L", (), {"inc": lambda *a, **k: None})()},
+)()
+
+
+def _log_violation(*args, **kwargs):
+    pass
 """,
         "vector_service/exceptions.py": """  # path-ignore
 class VectorServiceError(Exception):
@@ -68,7 +107,16 @@ class UniversalRetriever:
         "quick_fix_engine.py": """  # path-ignore
 import os
 
-def generate_patch(module, *, context_builder, engine=None, description=None, patch_logger=None, context=None):
+
+def generate_patch(
+    module,
+    *,
+    context_builder,
+    engine=None,
+    description=None,
+    patch_logger=None,
+    context=None,
+):
     if os.environ.get('TEST_PATCH_FAIL') == '1':
         return None
     return 7
@@ -180,6 +228,34 @@ def test_embed_failure(cli_env):
     res = _run(tmp, env, "embed", "--db", "code", extra_env={"TEST_EMBED_FAIL": "1"})
     assert res.returncode == 1
     assert "embed failure" in res.stderr
+
+
+def test_embed_verify_mismatch(cli_env):
+    tmp, env = cli_env
+    res = _run(
+        tmp,
+        env,
+        "embed",
+        "--verify",
+        extra_env={"TEST_VECTOR_MISMATCH": "1"},
+    )
+    assert res.returncode == 0
+    assert "vectors for" in res.stderr
+
+
+def test_embed_log_file(cli_env):
+    tmp, env = cli_env
+    log = tmp / "skip.log"
+    res = _run(
+        tmp,
+        env,
+        "embed",
+        "--log-file",
+        str(log),
+        extra_env={"TEST_EMBED_RECORD_FAIL": "1"},
+    )
+    assert res.returncode == 0
+    assert "embedding error" in log.read_text()
 
 
 def test_new_db_success(cli_env):

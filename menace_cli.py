@@ -28,7 +28,6 @@ if not SHARED_DB_PATH:
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
 
-
 def _run(cmd: list[str]) -> int:
     """Run a subprocess and return its exit code."""
     return subprocess.call(cmd)
@@ -264,23 +263,114 @@ def handle_embed(args: argparse.Namespace) -> int:
         print("vector service unavailable", file=sys.stderr)
         return 1
     import logging
-    from vector_service.embedding_backfill import EmbeddingBackfill
+    from typing import IO
+
+    from tqdm import tqdm
+
+    from compliance.license_fingerprint import (
+        check as license_check,
+        fingerprint as license_fingerprint,
+    )
+    from vector_service.embedding_backfill import (
+        EmbeddingBackfill,
+        _RUN_SKIPPED,
+        _log_violation,
+    )
     from vector_service.exceptions import VectorServiceError
 
+    stream: IO[str] = (
+        open(args.log_file, "a", encoding="utf-8")
+        if getattr(args, "log_file", None)
+        else sys.stdout
+    )
+
+    class _CLIBackfill(EmbeddingBackfill):
+        def __init__(self, *a, log_stream: IO[str], **kw):
+            super().__init__(*a, **kw)
+            self._log_stream = log_stream
+
+        def _process_db(self, db, *, batch_size, session_id=""):
+            processed = 0
+            skipped: list[tuple[str, str]] = []
+            records = list(db.iter_records())
+            for record_id, record, kind in tqdm(
+                records,
+                desc=db.__class__.__name__,
+                disable=not sys.stderr.isatty(),
+            ):
+                if processed >= batch_size:
+                    break
+                if not db.needs_refresh(record_id, record):
+                    continue
+                text = record if isinstance(record, str) else str(record)
+                lic = license_check(text)
+                if lic:
+                    _log_violation(str(record_id), lic, license_fingerprint(text))
+                    _RUN_SKIPPED.labels(db.__class__.__name__, lic).inc()
+                    print(
+                        f"{db.__class__.__name__}:{record_id}:license {lic}",
+                        file=self._log_stream,
+                    )
+                    skipped.append((str(record_id), lic))
+                    continue
+                try:
+                    db.add_embedding(record_id, record, kind)
+                except Exception as exc:  # pragma: no cover - best effort
+                    print(
+                        f"{db.__class__.__name__}:{record_id}:embedding error {exc}",
+                        file=self._log_stream,
+                    )
+                    continue
+                processed += 1
+            return skipped
+
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    backfill = _CLIBackfill(
+        batch_size=args.batch_size if args.batch_size is not None else 100,
+        backend=args.backend or "annoy",
+        log_stream=stream,
+    )
+
     try:
-        EmbeddingBackfill().run(
+        backfill.run(
             session_id="cli",
             dbs=args.dbs,
             batch_size=args.batch_size,
             backend=args.backend,
         )
+        if getattr(args, "verify", False):
+            be = args.backend or backfill.backend
+            subclasses = backfill._load_known_dbs(names=args.dbs)
+            for cls in subclasses:
+                try:
+                    db = cls(vector_backend=be)  # type: ignore[call-arg]
+                except Exception:
+                    try:
+                        db = cls()  # type: ignore[call-arg]
+                    except Exception:
+                        continue
+                try:
+                    record_total = sum(1 for _ in db.iter_records())
+                except Exception:
+                    continue
+                vector_total = len(getattr(db, "_id_map", []))
+                if record_total != vector_total:
+                    print(
+                        (
+                            f"WARNING: {cls.__name__} has {vector_total} "
+                            f"vectors for {record_total} records"
+                        ),
+                        file=sys.stderr,
+                    )
     except VectorServiceError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     except Exception as exc:  # pragma: no cover - defensive
         print(str(exc), file=sys.stderr)
         return 1
+    finally:
+        if stream is not sys.stdout:
+            stream.close()
     return 0
 
 
@@ -415,6 +505,14 @@ def main(argv: list[str] | None = None) -> int:
         "--batch-size", type=int, dest="batch_size", help="Batch size for backfill"
     )
     p_embed.add_argument("--backend", dest="backend", help="Vector backend to use")
+    p_embed.add_argument(
+        "--log-file", dest="log_file", help="Path to log skipped records"
+    )
+    p_embed.add_argument(
+        "--verify",
+        action="store_true",
+        help="Verify vector counts match record totals after backfill",
+    )
     p_embed.set_defaults(func=handle_embed)
 
     p_newdb = sub.add_parser("new-db", help="Scaffold a new database module")
@@ -498,7 +596,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "patches":
         global build_chain, search_patches_by_vector, search_patches_by_license
-        if build_chain is None or search_patches_by_vector is None or search_patches_by_license is None:  # pragma: no cover - lazy import
+        if (
+            build_chain is None
+            or search_patches_by_vector is None
+            or search_patches_by_license is None
+        ):  # pragma: no cover - lazy import
             from patch_provenance import (
                 build_chain as _build_chain,
                 search_patches_by_vector as _search_patches_by_vector,
