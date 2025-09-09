@@ -43,6 +43,28 @@ class DummyRunner:
         return DummyRunner.Metrics(float(result))
 
 
+class DummyRetriever:
+    """Return fixed retrieval hits ensuring cross-domain candidate presence."""
+
+    def _get_retriever(self):
+        return self
+
+    def retrieve(self, query_vec, top_k, dbs=None):
+        hits = [
+            types.SimpleNamespace(record_id="rd", score=0.9, metadata={"id": "rd"}),
+            types.SimpleNamespace(record_id="em", score=0.8, metadata={"id": "em"}),
+        ]
+        return hits[:top_k], None, None
+
+
+class DummyBuilder:
+    def build(self, *_, **__):
+        return {}
+
+    def refresh_db_weights(self) -> None:
+        pass
+
+
 class WeightedComparator:
     """Synergy comparator favouring cross-domain pairs and providing entropy."""
 
@@ -83,7 +105,11 @@ def test_cross_domain_pipeline_with_validation(monkeypatch):
 
     monkeypatch.setattr(MetaWorkflowPlanner, "encode_workflow", fake_encode)
 
-    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI())
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI(),
+    )
     planner.domain_index.update({"youtube": 1, "reddit": 2, "email": 3})
     planner.cluster_map = {
         ("__domain_transitions__",): {
@@ -99,11 +125,26 @@ def test_cross_domain_pipeline_with_validation(monkeypatch):
         "em": {"domain": "email"},
     }
 
-    pipeline_no_synergy = planner.compose_pipeline("yt", workflows, length=3, synergy_weight=0.0)
+    retr = DummyRetriever()
+    pipeline_no_synergy = planner.compose_pipeline(
+        "yt",
+        workflows,
+        length=3,
+        synergy_weight=0.0,
+        context_builder=planner.context_builder,
+        retriever=retr,
+    )
     assert pipeline_no_synergy[1] == "em"
 
-    pipeline = planner.compose_pipeline("yt", workflows, length=3, synergy_weight=1.0)
-    assert pipeline == ["yt", "rd", "em"]
+    pipeline = planner.compose_pipeline(
+        "yt",
+        workflows,
+        length=3,
+        synergy_weight=1.0,
+        context_builder=planner.context_builder,
+        retriever=retr,
+    )
+    assert pipeline == ["yt", "em", "rd"]
 
     meta_spec = {"steps": [{"workflow_id": wid} for wid in pipeline]}
     funcs = {"yt": lambda: 1.0, "rd": lambda: 2.0, "em": lambda: 3.0}

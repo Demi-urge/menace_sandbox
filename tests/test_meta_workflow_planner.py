@@ -42,6 +42,16 @@ class DummySynergyComparator:
         return types.SimpleNamespace(aggregate=0.0)
 
 
+class DummyBuilder:
+    """Lightweight context builder stub used for testing."""
+
+    def build(self, *_, **__):
+        return {}
+
+    def refresh_db_weights(self) -> None:
+        pass
+
+
 def _load_records(path: Path):
     with path.open("r", encoding="utf-8") as fh:
         return [json.loads(line) for line in fh]
@@ -116,13 +126,6 @@ def sample_embeddings(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mwp, "governed_embed", fake_embed)
     monkeypatch.setattr(mwp, "get_embedder", lambda: DummyEmbedder())
-
-    class DummyBuilder:
-        def build(self, *_, **__):
-            return {}
-
-        def refresh_db_weights(self):
-            pass
 
     planner = MetaWorkflowPlanner(
         context_builder=DummyBuilder(),
@@ -246,10 +249,14 @@ def test_compose_pipeline_chaining(monkeypatch, tmp_path):
     old_cwd = _persist_embeddings(tmp_path, embeddings)
     retr = DummyRetriever(embeddings)
     planner = MetaWorkflowPlanner(
-        graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({})
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI({})
     )
     workflows = {wid: {} for wid in embeddings}
-    pipeline = planner.compose_pipeline("wf1", workflows, length=3, retriever=retr)
+    pipeline = planner.compose_pipeline(
+        "wf1", workflows, length=3, retriever=retr, context_builder=planner.context_builder
+    )
     os.chdir(old_cwd)
     assert pipeline == ["wf1", "wf2", "wf3"]
 
@@ -274,13 +281,22 @@ def test_compose_pipeline_roi_weighting(monkeypatch, tmp_path):
     old_cwd = _persist_embeddings(tmp_path, embeddings)
     retr = DummyRetriever(embeddings)
     planner = MetaWorkflowPlanner(
-        graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI(roi_trends)
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI(roi_trends)
     )
     workflows = {wid: {} for wid in embeddings}
-    pipeline = planner.compose_pipeline("wf1", workflows, length=2, retriever=retr)
+    pipeline = planner.compose_pipeline(
+        "wf1", workflows, length=2, retriever=retr, context_builder=planner.context_builder
+    )
     assert pipeline == ["wf1", "wf3"]
     pipeline = planner.compose_pipeline(
-        "wf1", workflows, length=2, roi_weight=0.0, retriever=retr
+        "wf1",
+        workflows,
+        length=2,
+        roi_weight=0.0,
+        retriever=retr,
+        context_builder=planner.context_builder,
     )
     os.chdir(old_cwd)
     assert pipeline == ["wf1", "wf2"]
@@ -319,16 +335,28 @@ def test_compose_pipeline_synergy_weighting(monkeypatch, tmp_path):
     old_cwd = _persist_embeddings(tmp_path, embeddings)
     retr = DummyRetriever(embeddings)
     planner = MetaWorkflowPlanner(
-        graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({})
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI({})
     )
     workflows = {wid: {"id": wid} for wid in embeddings}
 
     pipeline = planner.compose_pipeline(
-        "wf1", workflows, length=2, synergy_weight=0.0, retriever=retr
+        "wf1",
+        workflows,
+        length=2,
+        synergy_weight=0.0,
+        retriever=retr,
+        context_builder=planner.context_builder,
     )
     assert pipeline == ["wf1", "wf2"]
     pipeline = planner.compose_pipeline(
-        "wf1", workflows, length=2, synergy_weight=1.0, retriever=retr
+        "wf1",
+        workflows,
+        length=2,
+        synergy_weight=1.0,
+        retriever=retr,
+        context_builder=planner.context_builder,
     )
     os.chdir(old_cwd)
     assert pipeline == ["wf1", "wf3"]
@@ -354,7 +382,11 @@ def test_compose_pipeline_cluster_map_synergy(monkeypatch):
     def fake_encode(self, wid, _spec):
         return embeddings[wid]
 
-    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI({})
+    )
     planner.cluster_map = {
         ("wf1", "wf2"): {"score": 0.1},
         ("wf1", "wf3"): {"score": 0.9},
@@ -365,11 +397,21 @@ def test_compose_pipeline_cluster_map_synergy(monkeypatch):
     retr = DummyRetriever(embeddings)
 
     pipeline = planner.compose_pipeline(
-        "wf1", workflows, length=2, synergy_weight=0.0, retriever=retr
+        "wf1",
+        workflows,
+        length=2,
+        synergy_weight=0.0,
+        retriever=retr,
+        context_builder=planner.context_builder,
     )
     assert pipeline == ["wf1", "wf2"]
     pipeline = planner.compose_pipeline(
-        "wf1", workflows, length=2, synergy_weight=1.0, retriever=retr
+        "wf1",
+        workflows,
+        length=2,
+        synergy_weight=1.0,
+        retriever=retr,
+        context_builder=planner.context_builder,
     )
     assert pipeline == ["wf1", "wf3"]
 
@@ -392,7 +434,11 @@ def test_compose_pipeline_transition_matrix(monkeypatch, tmp_path):
 
     old_cwd = _persist_embeddings(tmp_path, embeddings)
     retr = DummyRetriever(embeddings)
-    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI({})
+    )
     planner.domain_index.update({"a": 1, "b": 2})
     planner.cluster_map = {
         ("__domain_transitions__",): {
@@ -400,7 +446,13 @@ def test_compose_pipeline_transition_matrix(monkeypatch, tmp_path):
         }
     }
     workflows = {"wf1": {"domain": "a"}, "wf2": {"domain": "a"}, "wf3": {"domain": "b"}}
-    pipeline = planner.compose_pipeline("wf1", workflows, length=2, retriever=retr)
+    pipeline = planner.compose_pipeline(
+        "wf1",
+        workflows,
+        length=2,
+        retriever=retr,
+        context_builder=planner.context_builder,
+    )
     os.chdir(old_cwd)
     assert pipeline == ["wf1", "wf2"]
 
@@ -423,7 +475,11 @@ def test_compose_pipeline_missing_transition(monkeypatch, caplog, tmp_path):
 
     old_cwd = _persist_embeddings(tmp_path, embeddings)
     retr = DummyRetriever(embeddings)
-    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI({})
+    )
     planner.domain_index.update({"a": 1, "b": 2, "c": 3})
 
     def fake_trans_probs(self):
@@ -440,7 +496,13 @@ def test_compose_pipeline_missing_transition(monkeypatch, caplog, tmp_path):
     }
 
     with caplog.at_level("DEBUG"):
-        pipeline = planner.compose_pipeline("wf1", workflows, length=2, retriever=retr)
+        pipeline = planner.compose_pipeline(
+            "wf1",
+            workflows,
+            length=2,
+            retriever=retr,
+            context_builder=planner.context_builder,
+        )
 
     os.chdir(old_cwd)
     assert pipeline == ["wf1", "wf3"]
@@ -470,7 +532,11 @@ def test_compose_pipeline_negative_transition(monkeypatch, tmp_path):
 
     old_cwd = _persist_embeddings(tmp_path, embeddings)
     retr = DummyRetriever(embeddings)
-    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI({})
+    )
     planner.domain_index.update({"a": 1, "b": 2, "c": 3})
 
     def fake_trans_probs(self):
@@ -486,13 +552,19 @@ def test_compose_pipeline_negative_transition(monkeypatch, tmp_path):
         "wf3": {"domain": "c"},
     }
 
-    pipeline = planner.compose_pipeline("wf1", workflows, length=2, retriever=retr)
+    pipeline = planner.compose_pipeline(
+        "wf1",
+        workflows,
+        length=2,
+        retriever=retr,
+        context_builder=planner.context_builder,
+    )
     os.chdir(old_cwd)
     assert pipeline == ["wf1", "wf3"]
 
 
 def test_update_cluster_map_records_transitions():
-    planner = MetaWorkflowPlanner()
+    planner = MetaWorkflowPlanner(context_builder=DummyBuilder())
 
     class DummyCodeDB:
         def get_context_tags(self, wid):
@@ -516,7 +588,7 @@ def test_update_cluster_map_records_transitions():
 
 
 def test_transition_probabilities_normalization():
-    planner = MetaWorkflowPlanner()
+    planner = MetaWorkflowPlanner(context_builder=DummyBuilder())
     planner.domain_index = {"other": 0, "a": 1, "b": 2, "c": 3}
     planner.cluster_map = {
         ("__domain_transitions__",): {
@@ -569,7 +641,10 @@ def test_cluster_workflows_roi_weighting(monkeypatch, use_sklearn):
     monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
 
     roi_trends = {"wf2": [{"roi_gain": 0.5}]}
-    planner = MetaWorkflowPlanner(roi_db=DummyROI(roi_trends))
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        roi_db=DummyROI(roi_trends)
+    )
     workflows = {wid: {} for wid in embeddings}
     retr = DummyRetriever(embeddings)
 
@@ -581,7 +656,11 @@ def test_cluster_workflows_roi_weighting(monkeypatch, use_sklearn):
         monkeypatch.setattr(mwp, "DBSCAN", None)
 
     clusters = planner.cluster_workflows(
-        workflows, retriever=retr, epsilon=0.5, min_samples=2
+        workflows,
+        retriever=retr,
+        epsilon=0.5,
+        min_samples=2,
+        context_builder=planner.context_builder,
     )
     cluster_ids = [sorted(c) for c in clusters]
     assert ["wf1", "wf2"] in cluster_ids
@@ -626,9 +705,19 @@ def test_compose_pipeline_io_compatibility(monkeypatch, tmp_path):
     }
     old_cwd = _persist_embeddings(tmp_path, embeddings)
     retr = DummyRetriever(embeddings)
-    planner = MetaWorkflowPlanner(graph=SigGraph(sigs), roi_db=DummyROI({}))
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        graph=SigGraph(sigs),
+        roi_db=DummyROI({})
+    )
     workflows = {wid: {} for wid in embeddings}
-    pipeline = planner.compose_pipeline("wf1", workflows, length=3, retriever=retr)
+    pipeline = planner.compose_pipeline(
+        "wf1",
+        workflows,
+        length=3,
+        retriever=retr,
+        context_builder=planner.context_builder,
+    )
     os.chdir(old_cwd)
     assert pipeline == ["wf1", "wf3"]
 
@@ -656,9 +745,19 @@ def test_compose_pipeline_retrieval_limited(monkeypatch, tmp_path):
 
     old_cwd = _persist_embeddings(tmp_path, embeddings)
     retr = LimitedRetriever(embeddings)
-    planner = MetaWorkflowPlanner(graph=DummyGraph(nx.DiGraph()), roi_db=DummyROI({}))
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyROI({})
+    )
     workflows = {wid: {} for wid in embeddings}
-    pipeline = planner.compose_pipeline("wf1", workflows, length=2, retriever=retr)
+    pipeline = planner.compose_pipeline(
+        "wf1",
+        workflows,
+        length=2,
+        retriever=retr,
+        context_builder=planner.context_builder,
+    )
     os.chdir(old_cwd)
     assert pipeline == ["wf1", "wf3"]
 
@@ -686,7 +785,9 @@ def test_compose_meta_workflow_skip_incompatible(monkeypatch):
         "wf3": {"inputs": {"a": "text/plain"}, "outputs": {"d": "text/plain"}},
     }
 
-    result = mwp.compose_meta_workflow("wf1", length=3, graph=SigGraph(sigs))
+    result = mwp.compose_meta_workflow(
+        "wf1", length=3, graph=SigGraph(sigs), context_builder=DummyBuilder()
+    )
     assert result["chain"] == "wf1->wf3"
     assert [s["workflow_id"] for s in result["steps"]] == ["wf1", "wf3"]
 
@@ -700,7 +801,9 @@ def test_plan_and_validate_sandbox(monkeypatch):
             self.logged = kwargs
 
     planner = MetaWorkflowPlanner(
-        graph=DummyGraph(nx.DiGraph()), roi_db=DummyDB()
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(nx.DiGraph()),
+        roi_db=DummyDB(),
     )
 
     class DummySuggester:
@@ -772,7 +875,11 @@ def test_iterate_pipelines(monkeypatch):
             self.records.append((workflow_id, roi, failures, entropy))
             self.data[workflow_id] = {"entropy": entropy}
 
-    planner = MetaWorkflowPlanner(roi_db=DummyROI(), stability_db=DummyStability())
+    planner = MetaWorkflowPlanner(
+        context_builder=DummyBuilder(),
+        roi_db=DummyROI(),
+        stability_db=DummyStability(),
+    )
     planner.cluster_map = {
         ("a", "b"): {"delta_roi": -0.1, "converged": True},
         ("c", "d"): {"delta_roi": 3.0, "delta_entropy": 2.5, "converged": True},
@@ -814,3 +921,21 @@ def test_iterate_pipelines(monkeypatch):
     assert ["e", "f"] in chains
     assert len(planner.roi_db.logged) == 3
     assert len(planner.stability_db.records) == 3
+
+
+def test_compose_pipeline_requires_context_builder():
+    planner = MetaWorkflowPlanner(context_builder=DummyBuilder())
+    with pytest.raises(TypeError):
+        planner.compose_pipeline("wf1", {})
+
+
+def test_cluster_workflows_requires_context_builder():
+    planner = MetaWorkflowPlanner(context_builder=DummyBuilder())
+    with pytest.raises(TypeError):
+        planner.cluster_workflows({})
+
+
+def test_merge_high_performing_variants_requires_builder():
+    planner = MetaWorkflowPlanner(context_builder=DummyBuilder())
+    with pytest.raises(TypeError):
+        planner.merge_high_performing_variants([], {}, retriever=DummyRetriever({}))

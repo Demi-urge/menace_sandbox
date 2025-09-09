@@ -21,6 +21,10 @@ from . import workflow_run_summary
 from . import sandbox_runner
 from .workflow_synergy_comparator import WorkflowSynergyComparator
 from .meta_workflow_planner import MetaWorkflowPlanner
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder  # type: ignore
+except Exception:  # pragma: no cover - allow running without builder
+    ContextBuilder = None  # type: ignore
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path, get_project_root  # type: ignore
 except Exception:  # pragma: no cover - fallback when executed directly
@@ -75,6 +79,7 @@ def merge_variant_records(
     failure_threshold: int = 0,
     entropy_threshold: float = 2.0,
     retriever: Retriever | None = None,
+    context_builder: ContextBuilder,
 ) -> list[Dict[str, Any]]:
     """Merge high-performing variants using :class:`MetaWorkflowPlanner`.
 
@@ -83,7 +88,7 @@ def merge_variant_records(
     to combine variant pipelines that individually exceed ``roi_threshold``.
     """
 
-    planner = planner or MetaWorkflowPlanner()
+    planner = planner or MetaWorkflowPlanner(context_builder=context_builder)
     if retriever is None:
         raise ValueError("merge_variant_records requires a Retriever")
     return planner.merge_high_performing_variants(
@@ -93,6 +98,7 @@ def merge_variant_records(
         runner=runner,
         failure_threshold=failure_threshold,
         entropy_threshold=entropy_threshold,
+        context_builder=context_builder,
         retriever=retriever,
     )
 

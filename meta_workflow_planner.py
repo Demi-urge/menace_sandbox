@@ -475,7 +475,7 @@ class MetaWorkflowPlanner:
         self,
         workflows: Mapping[str, Mapping[str, Any]],
         *,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         retriever: Retriever | None = None,
         epsilon: float = 0.5,
         min_samples: int = 2,
@@ -500,7 +500,6 @@ class MetaWorkflowPlanner:
         similarity scores so that the function remains best effort.
         """
 
-        context_builder = context_builder or self.context_builder
         if retriever is None and Retriever is not None:
             try:
                 retriever = Retriever(context_builder=context_builder)
@@ -707,7 +706,7 @@ class MetaWorkflowPlanner:
         similarity_weight: float = 1.0,
         synergy_weight: float = 1.0,
         roi_weight: float = 1.0,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         retriever: Retriever | None = None,
     ) -> List[str]:
         """Compose a workflow pipeline using retrieval to limit candidates.
@@ -747,7 +746,6 @@ class MetaWorkflowPlanner:
         self.cluster_map.setdefault(("__domain_transitions__",), {})
         trans_probs = self.transition_probabilities()
 
-        context_builder = context_builder or self.context_builder
         if retriever is None and Retriever is not None:
             try:  # pragma: no cover - best effort
                 retriever = Retriever(context_builder=context_builder)
@@ -2069,7 +2067,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         retriever: Retriever | None = None,
         max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
@@ -2094,7 +2092,6 @@ class MetaWorkflowPlanner:
             chain_lookup[cid] = rec["chain"]
             specs[cid] = {"steps": [{"module": w} for w in rec["chain"]]}
 
-        context_builder = context_builder or self.context_builder
         if retriever is None and Retriever is not None:
             try:
                 retriever = Retriever(context_builder=context_builder)
@@ -3098,6 +3095,7 @@ def plan_pipeline(
     start_workflow_id: str,
     workflows: Mapping[str, Mapping[str, Any]],
     *,
+    context_builder: ContextBuilder,
     length: int = 5,
 ) -> List[str]:
     """Plan a workflow pipeline biased by domain transition ROI.
@@ -3108,10 +3106,15 @@ def plan_pipeline(
     shifts.
     """
 
-    planner = MetaWorkflowPlanner()
+    planner = MetaWorkflowPlanner(context_builder=context_builder)
     # Ensure transition statistics are loaded before composing the pipeline.
     planner.transition_probabilities()
-    return planner.compose_pipeline(start_workflow_id, workflows, length=length)
+    return planner.compose_pipeline(
+        start_workflow_id,
+        workflows,
+        length=length,
+        context_builder=context_builder,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3167,7 +3170,7 @@ def compose_meta_workflow(
     *,
     length: int = 5,
     graph: WorkflowGraph | None = None,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> Dict[str, Any]:
     """Return ordered meta-workflow specification starting from ``start_workflow_id``.
 

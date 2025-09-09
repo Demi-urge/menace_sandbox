@@ -15,6 +15,14 @@ class DummySynergyComparator:
         return types.SimpleNamespace(aggregate=0.0)
 
 
+class DummyBuilder:
+    def build(self, *_, **__):
+        return {}
+
+    def refresh_db_weights(self) -> None:
+        pass
+
+
 def test_simulate_multi_domain_chain(monkeypatch, capsys):
     monkeypatch.setattr(mwp, "ROITracker", None)
     monkeypatch.setattr(mwp, "WorkflowStabilityDB", None)
@@ -38,11 +46,16 @@ def test_simulate_multi_domain_chain(monkeypatch, capsys):
 
     monkeypatch.setattr(mwp.MetaWorkflowPlanner, "encode_workflow", fake_encode)
 
-    def fake_find_synergy_chain(start, length=5):
-        planner = mwp.MetaWorkflowPlanner(graph=SigGraph())
-        return planner.compose_pipeline(start, workflows, length=length)
+    def fake_find_synergy_chain(start, length=5, context_builder=None):
+        planner = mwp.MetaWorkflowPlanner(
+            graph=SigGraph(), context_builder=context_builder
+        )
+        return planner.compose_pipeline(
+            start, workflows, length=length, context_builder=context_builder
+        )
 
     monkeypatch.setattr(cli, "find_synergy_chain", fake_find_synergy_chain)
+    monkeypatch.setattr(cli, "_CONTEXT_BUILDER", DummyBuilder())
 
     args = types.SimpleNamespace(start="YouTube", length=3)
     cli._cmd_simulate(args)
