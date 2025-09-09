@@ -5,6 +5,7 @@ import rate_limit
 import local_backend
 from local_backend import OllamaBackend
 from llm_interface import Prompt, LLMClient, OpenAIProvider
+from context_builder_util import create_context_builder
 
 
 class DummyResp:
@@ -37,7 +38,8 @@ def test_openai_success_logging_and_parsing(monkeypatch, tmp_path):
         text="hi",
         metadata={"tags": ["t"], "vector_confidences": [0.9]},
     )
-    result = client.generate(prompt, parse_fn=json.loads)
+    builder = create_context_builder()
+    result = client.generate(prompt, parse_fn=json.loads, context_builder=builder)
     assert result.parsed == {"a": 1}
     row = client.db.conn.execute(
         "SELECT response_text, response_parsed FROM prompts",
@@ -70,7 +72,7 @@ def test_openai_rate_limit_retry(monkeypatch, tmp_path):
 
     monkeypatch.setattr(client._session, "post", fake_post)
 
-    res = client.generate(Prompt(text="hi"))
+    res = client.generate(Prompt(text="hi"), context_builder=create_context_builder())
     assert res.text == "ok"
     assert sleeps == [1.0]
     assert not responses
@@ -112,7 +114,10 @@ def test_client_fallback_to_local_backend(monkeypatch, tmp_path):
 
     client = LLMClient(backends=[openai_backend, local])
 
-    result = client.generate(Prompt(text="hi"), parse_fn=json.loads)
+    builder = create_context_builder()
+    result = client.generate(
+        Prompt(text="hi"), parse_fn=json.loads, context_builder=builder
+    )
     assert result.parsed == {"b": 2}
     expected_prompt_tokens = rate_limit.estimate_tokens("hi", model="local")
     expected_completion_tokens = rate_limit.estimate_tokens(

@@ -4,6 +4,7 @@ import os
 
 from prompt_db import PromptDB
 from llm_interface import Prompt, LLMResult, OpenAIProvider, LLMClient
+from context_builder_util import create_context_builder
 
 
 def test_log(tmp_path):
@@ -42,12 +43,13 @@ def test_openai_client_logs_prompt(monkeypatch, tmp_path):
     monkeypatch.setattr(OpenAIProvider, "generate", LLMClient.generate)
     client = OpenAIProvider(model="gpt-test")
 
-    def fake_generate(self, prompt):
+    def fake_generate(self, prompt, *, context_builder):
         return LLMResult(text="world", raw={"choices": [{"message": {"content": "world"}}]})
 
     monkeypatch.setattr(OpenAIProvider, "_generate", fake_generate)
     prompt = Prompt(text="hi", metadata={"tags": ["t"], "vector_confidences": [0.9]})
-    res = client.generate(prompt)
+    builder = create_context_builder()
+    res = client.generate(prompt, context_builder=builder)
     assert res.text == "world"
     row = client.db.conn.execute(
         "SELECT text, outcome_tags, vector_confidences, response_text, model "
