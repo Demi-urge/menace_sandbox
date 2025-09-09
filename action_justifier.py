@@ -22,6 +22,22 @@ try:  # transformers is optional and only used for offline models
 except Exception:  # pragma: no cover - optional dependency
     _TRANSFORMERS_AVAILABLE = False
 
+from snippet_compressor import compress_snippets
+
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder, FallbackResult
+except Exception:  # pragma: no cover - fall back to minimal stubs
+    ContextBuilder = Any  # type: ignore
+
+    class FallbackResult(list):  # type: ignore[misc]
+        pass
+
+try:  # pragma: no cover - optional dependency
+    from vector_service import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - fallback stub
+    class ErrorResult(Exception):  # type: ignore[override]
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -113,7 +129,15 @@ def _template_justification(action_log: Dict[str, Any], violation_flags: List[st
 # ---------------------------------------------------------------------------
 # Helper: LLM-based explanation (offline only)
 
-def _llm_justification(action_log: Dict[str, Any], violation_flags: List[str], risk_score: float, domain: str, settings: Dict[str, Any]) -> str | None:
+def _llm_justification(
+    action_log: Dict[str, Any],
+    violation_flags: List[str],
+    risk_score: float,
+    domain: str,
+    settings: Dict[str, Any],
+    *,
+    context_builder: ContextBuilder,
+) -> str | None:
     """Return a justification using a local language model, if available."""
     if not _TRANSFORMERS_AVAILABLE:
         return None
@@ -125,7 +149,7 @@ def _llm_justification(action_log: Dict[str, Any], violation_flags: List[str], r
         model = AutoModelForCausalLM.from_pretrained(model_path, local_files_only=True)
     except Exception:
         return None
-    prompt = (
+    base_prompt = (
         f"Action type: {action_log.get('action_type', 'unknown')}\n"
         f"Description: {action_log.get('action_description', '')}\n"
         f"Violations: {', '.join(violation_flags) if violation_flags else 'none'}\n"
@@ -133,6 +157,17 @@ def _llm_justification(action_log: Dict[str, Any], violation_flags: List[str], r
         f"Risk score: {risk_score:.2f}\n"
         "Explain briefly why this action was flagged:"
     )
+    vec_ctx = ""
+    try:
+        ctx_res = context_builder.build(json.dumps(action_log))
+        vec_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+        if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
+            vec_ctx = ""
+        elif vec_ctx:
+            vec_ctx = compress_snippets({"snippet": vec_ctx}).get("snippet", vec_ctx)
+    except Exception:
+        vec_ctx = ""
+    prompt = f"{vec_ctx}\n\n{base_prompt}" if vec_ctx else base_prompt
     cache_key = hashlib.sha256(
         json.dumps({"log": action_log, "v": violation_flags, "r": risk_score, "d": domain}, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -144,7 +179,7 @@ def _llm_justification(action_log: Dict[str, Any], violation_flags: List[str], r
             logger.exception("failed reading justification cache")
     try:
         tokens = tokenizer.encode(prompt, return_tensors="pt")
-        output = model.generate(tokens, max_new_tokens=60, do_sample=False)  # nocb
+        output = model.generate(tokens, max_new_tokens=60, do_sample=False)
         text = tokenizer.decode(output[0], skip_special_tokens=True)
         explanation = text[len(prompt):].strip()
     except Exception:
@@ -161,7 +196,14 @@ def _llm_justification(action_log: Dict[str, Any], violation_flags: List[str], r
 # ---------------------------------------------------------------------------
 # Public API
 
-def generate_justification(action_log: Dict[str, Any], violation_flags: List[str], risk_score: float, domain: str) -> str:
+def generate_justification(
+    action_log: Dict[str, Any],
+    violation_flags: List[str],
+    risk_score: float,
+    domain: str,
+    *,
+    context_builder: ContextBuilder,
+) -> str:
     """Return a concise explanation of why an action was flagged."""
     try:
         _ = InputPayload(
@@ -175,7 +217,14 @@ def generate_justification(action_log: Dict[str, Any], violation_flags: List[str
 
     settings = _load_settings()
     if settings.get("llm_mode"):
-        llm_text = _llm_justification(action_log, violation_flags, risk_score, domain, settings)
+        llm_text = _llm_justification(
+            action_log,
+            violation_flags,
+            risk_score,
+            domain,
+            settings,
+            context_builder=context_builder,
+        )
         if llm_text:
             return llm_text
     # Fallback to deterministic template approach
