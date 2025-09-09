@@ -74,6 +74,26 @@ code_db_stub.PatchHistoryDB = object
 sys.modules.setdefault("code_database", code_db_stub)
 sys.modules.setdefault("menace.code_database", code_db_stub)
 
+# Stub retrieval_cache to avoid database initialisation during tests
+retrieval_cache_stub = types.ModuleType("retrieval_cache")
+retrieval_cache_stub.RetrievalCache = object
+sys.modules.setdefault("retrieval_cache", retrieval_cache_stub)
+
+# Provide lightweight ensure_fresh_weights without triggering heavy imports
+context_builder_util_stub = types.ModuleType("context_builder_util")
+def _ensure_fresh_weights(builder):
+    try:
+        builder.refresh_db_weights()
+    except Exception:
+        pass
+context_builder_util_stub.ensure_fresh_weights = _ensure_fresh_weights
+sys.modules.setdefault("context_builder_util", context_builder_util_stub)
+
+# Stub synergy_history_db to avoid database router initialisation
+synergy_history_db_stub = types.ModuleType("synergy_history_db")
+synergy_history_db_stub.SynergyHistoryDB = object
+sys.modules.setdefault("synergy_history_db", synergy_history_db_stub)
+
 # Stub run_autonomous to bypass dependency checks if imported
 run_auto_stub = types.ModuleType("run_autonomous")
 run_auto_stub._verify_required_dependencies = lambda: None

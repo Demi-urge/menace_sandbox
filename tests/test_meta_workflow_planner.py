@@ -117,8 +117,18 @@ def sample_embeddings(tmp_path, monkeypatch):
     monkeypatch.setattr(mwp, "governed_embed", fake_embed)
     monkeypatch.setattr(mwp, "get_embedder", lambda: DummyEmbedder())
 
+    class DummyBuilder:
+        def build(self, *_, **__):
+            return {}
+
+        def refresh_db_weights(self):
+            pass
+
     planner = MetaWorkflowPlanner(
-        graph=DummyGraph(g), roi_db=DummyROI(trends), roi_window=3
+        context_builder=DummyBuilder(),
+        graph=DummyGraph(g),
+        roi_db=DummyROI(trends),
+        roi_window=3,
     )
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
@@ -171,7 +181,14 @@ def test_domain_transition_vector(monkeypatch):
     monkeypatch.setattr(
         mwp, "get_embedder", lambda: type("E", (), {"get_sentence_embedding_dimension": lambda self: 2})()
     )
-    planner = MetaWorkflowPlanner()
+    class DummyBuilder:
+        def build(self, *_, **__):
+            return {}
+
+        def refresh_db_weights(self):
+            pass
+
+    planner = MetaWorkflowPlanner(context_builder=DummyBuilder())
     planner.domain_index = {"other": 0, "alpha": 1, "beta": 2}
     planner.cluster_map[("__domain_transitions__",)] = {
         (1, 2): {"count": 1.0, "delta_roi": 1.0}
@@ -196,7 +213,13 @@ def test_find_synergy_candidates(sample_embeddings):
     planner, _vecs, records, _embed_dim = sample_embeddings
     emb_map = {rec["id"]: rec["vector"] for rec in records}
     retr = DummyRetriever(emb_map)
-    cands = find_synergy_candidates("wf1", top_k=2, retriever=retr, roi_db=planner.roi_db)
+    cands = find_synergy_candidates(
+        "wf1",
+        top_k=2,
+        context_builder=planner.context_builder,
+        retriever=retr,
+        roi_db=planner.roi_db,
+    )
     assert cands
     # wf3 has the highest ROI weight and should therefore rank first
     assert cands[0]["workflow_id"] == "wf3"

@@ -46,11 +46,7 @@ except Exception:  # pragma: no cover - allow running without retriever
     logger.warning("vector_service.retriever import failed; similar search disabled")
     Retriever = None  # type: ignore
     ContextBuilder = None  # type: ignore
-try:  # pragma: no cover - initialise default context builder
-    from config.create_context_builder import create_context_builder  # type: ignore
-    _DEFAULT_CONTEXT_BUILDER = create_context_builder()
-except Exception as exc:  # pragma: no cover - fail fast when unavailable
-    raise RuntimeError("ContextBuilder is required") from exc
+from context_builder_util import ensure_fresh_weights
 
 try:  # pragma: no cover - optional heavy dependency
     from roi_tracker import ROITracker  # type: ignore
@@ -142,6 +138,7 @@ def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
 class MetaWorkflowPlanner:
     """Encode workflows with structural and semantic context."""
 
+    context_builder: ContextBuilder
     max_functions: int = 50
     max_modules: int = 50
     max_tags: int = 50
@@ -153,7 +150,6 @@ class MetaWorkflowPlanner:
     roi_tracker: ROITracker | None = None
     stability_db: WorkflowStabilityDB | None = None
     code_db: CodeDB | None = None
-    context_builder: ContextBuilder | None = None
     # Map of workflow chains to ROI histories for convergence tracking
     cluster_map: Dict[tuple[str, ...], Dict[str, Any]] = field(default_factory=dict)
 
@@ -186,7 +182,14 @@ class MetaWorkflowPlanner:
             except Exception:
                 self.code_db = None
         if self.context_builder is None:
-            self.context_builder = _DEFAULT_CONTEXT_BUILDER
+            raise ValueError("context_builder is required")
+        if not hasattr(self.context_builder, "build"):
+            raise TypeError("context_builder must implement build()")
+        try:
+            ensure_fresh_weights(self.context_builder)
+        except Exception as exc:
+            logger.error("context builder refresh failed: %s", exc)
+            raise RuntimeError("context builder refresh failed") from exc
         self._load_cluster_map()
 
     # ------------------------------------------------------------------
@@ -2842,7 +2845,7 @@ def find_synergy_candidates(
     query: Sequence[float] | str,
     *,
     top_k: int = 5,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     retriever: Retriever | None = None,
     roi_db: ROIResultsDB | None = None,
     roi_window: int = 5,
@@ -2859,7 +2862,10 @@ def find_synergy_candidates(
     boost similarity prior to ranking.
     """
 
-    context_builder = context_builder or _DEFAULT_CONTEXT_BUILDER
+    try:
+        ensure_fresh_weights(context_builder)
+    except Exception:
+        return []
     if retriever is None and Retriever is not None:
         try:
             retriever = Retriever(context_builder=context_builder)
@@ -2928,12 +2934,15 @@ def find_synergistic_workflows(
     workflow_id: str,
     top_k: int = 5,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     retriever: Retriever | None = None,
 ) -> List[Dict[str, Any]]:
     """Return workflows synergistic with ``workflow_id`` ranked by ROI."""
 
-    context_builder = context_builder or _DEFAULT_CONTEXT_BUILDER
+    try:
+        ensure_fresh_weights(context_builder)
+    except Exception:
+        return []
     embeddings = _load_embeddings()
     query_vec = embeddings.get(workflow_id)
     if query_vec is None:
@@ -2990,7 +2999,7 @@ def find_synergy_chain(
     start_workflow_id: str,
     length: int = 5,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
     cluster_map: Mapping[tuple[str, ...], Mapping[str, Any]] | None = None,
 ) -> List[str]:
     """Return high-synergy workflow sequence starting from ``start_workflow_id``.
@@ -3039,7 +3048,6 @@ def find_synergy_chain(
                 "Failed to load ROI history from %s", history_file, exc_info=True
             )
     roi_scores = _roi_scores(tracker)
-
     planner = MetaWorkflowPlanner(context_builder=context_builder)
     if cluster_map is None:
         cluster_map = getattr(planner, "cluster_map", {})
