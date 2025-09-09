@@ -106,6 +106,8 @@ _setmod(
 roi_mod = types.ModuleType("roi_tracker")
 roi_mod.ROITracker = lambda: object()
 _setmod("roi_tracker", roi_mod)
+
+
 class _BT:
     def __init__(self, *a, **k):
         pass
@@ -113,7 +115,10 @@ class _BT:
     def update(self, *a, **k):
         pass
 
+
 baseline_mod = types.SimpleNamespace(BaselineTracker=_BT, TRACKER=_BT())
+
+
 class _FL:
     def __init__(self, *a, **k):
         pass
@@ -124,6 +129,7 @@ class _FL:
     def __exit__(self, *a):
         return False
 
+
 init_mod = types.SimpleNamespace(FileLock=_FL, _atomic_write=lambda *a, **k: None)
 _setmod("self_improvement.baseline_tracker", baseline_mod)
 _setmod("self_improvement.init", init_mod)
@@ -131,9 +137,10 @@ si_pkg = types.ModuleType("self_improvement")
 si_pkg.__path__ = []
 _setmod("self_improvement", si_pkg)
 
+
 import menace_sandbox.self_coding_engine as sce  # noqa: E402
 from chunking import CodeChunk  # noqa: E402
-import ast
+import ast  # noqa: E402
 
 
 class DummyLLM:
@@ -189,7 +196,9 @@ def test_multi_chunk_patch_success(tmp_path, monkeypatch):
     )
     import chunking as pc
 
-    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: text.splitlines()[0])
+    monkeypatch.setattr(
+        pc, "summarize_code", lambda text, llm, context_builder=None: text.splitlines()[0]
+    )
 
     calls = []
 
@@ -228,7 +237,9 @@ def test_multi_chunk_patch_with_rollback(tmp_path, monkeypatch):
     )
     import chunking as pc
 
-    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: text.splitlines()[0])
+    monkeypatch.setattr(
+        pc, "summarize_code", lambda text, llm, context_builder=None: text.splitlines()[0]
+    )
 
     calls = []
 

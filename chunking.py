@@ -149,7 +149,6 @@ def split_into_chunks(
         for start, end, text in segments:
             curr_start = start
             curr_lines = text.splitlines()
-            offset = 0
             for b in (b for b in boundaries if start < b <= end):
                 rel = b - curr_start
                 part = "\n".join(curr_lines[:rel]).rstrip()
@@ -246,7 +245,7 @@ def _split_by_lines(lines: List[str], start: int, limit: int) -> List[CodeChunk]
     return out
 
 
-def summarize_code(
+def summarize_snippet(
     text: str,
     llm: LLMClient | None = None,
     *,
@@ -257,6 +256,9 @@ def summarize_code(
     text = text.strip()
     if not text:
         return ""
+
+    if llm is not None and context_builder is None:
+        raise ValueError("context_builder is required when llm is provided")
 
     digest = _hash_snippet(text)
     cached = _load_snippet_summary(digest)
@@ -348,6 +350,10 @@ def summarize_code(
     return summary
 
 
+# Backwards compatibility alias
+summarize_code = summarize_snippet
+
+
 _SETTINGS = SandboxSettings() if SandboxSettings else None
 
 # Global cache instance used by :func:`get_chunk_summaries`.  The directory can
@@ -405,6 +411,7 @@ __all__ = [
     "CodeChunk",
     "split_into_chunks",
     "chunk_file",
+    "summarize_snippet",
     "summarize_code",
     "get_chunk_summaries",
 ]
