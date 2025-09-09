@@ -6,6 +6,7 @@ from .memory import DatabaseConversationMemory
 from .embedding_memory import EmbeddingConversationMemory
 from .user_preferences import PreferenceEngine, PreferenceProfile
 from .response_generation import ResponseCandidateGenerator
+from context_builder_util import create_context_builder
 from .scoring import CandidateResponseScorer
 from .rl_integration import DatabaseRLResponseRanker
 from .self_learning import SelfLearningEngine
@@ -29,7 +30,9 @@ class SandboxOrchestrator:
         self.memories: Dict[str, DatabaseConversationMemory | EmbeddingConversationMemory] = {}
         self.reactions: Dict[str, ReactionHistory] = {}
         self.preferences = PreferenceEngine()
-        self.generator = ResponseCandidateGenerator()
+        self.generator = ResponseCandidateGenerator(
+            context_builder=create_context_builder()
+        )
         self.scorer = CandidateResponseScorer()
         self.ranker = DatabaseRLResponseRanker(
             session_factory=session_factory, db_url=db_url
@@ -85,7 +88,9 @@ class SandboxOrchestrator:
         state = self._pending_state.pop(user_id)
 
         self._get_reactions(user_id).add_pair(last_reply, followup)
-        self.learner.log_interaction(last_reply, followup, correction=correction, engagement=engagement)
+        self.learner.log_interaction(
+            last_reply, followup, correction=correction, engagement=engagement
+        )
 
         mem = self._get_memory(user_id)
         next_state = (len(mem.get_recent_messages()),)

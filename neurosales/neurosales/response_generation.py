@@ -70,7 +70,9 @@ def redundancy_filter(candidates: List[str], threshold: float = 0.7) -> List[str
 class ResponseCandidateGenerator:
     """Generate response candidates from scripts, language model, and history."""
 
-    def __init__(self, *, context_builder: ContextBuilder | None = None) -> None:
+    def __init__(self, *, context_builder: ContextBuilder) -> None:
+        if context_builder is None:
+            raise ValueError("context_builder must be provided")
         self.context_builder = context_builder
         self.static_scripts: Dict[str, List[str]] = {
             "curiosity": [
@@ -152,7 +154,7 @@ class ResponseCandidateGenerator:
                         ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
                         prompt = f"{ctx}\n\n{prompt}"
                 input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-                outputs = self.model.generate(
+                outputs = self.model.generate(  # nocb
                     input_ids,
                     max_length=input_ids.shape[1] + 20,
                     num_return_sequences=n,
@@ -173,12 +175,8 @@ class ResponseCandidateGenerator:
         message: str,
         history: Optional[List[str]] = None,
         archetype: str = "",
-        *,
-        context_builder: ContextBuilder | None = None,
     ) -> List[str]:
         history = history or []
-        if context_builder is not None:
-            self.context_builder = context_builder
         candidates: List[str] = []
         candidates.extend(self._static_candidates(message))
         candidates.extend(self._dynamic_candidates(message, history, archetype))
