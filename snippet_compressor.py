@@ -10,7 +10,10 @@ compact.
 
 from typing import Any, Dict
 
-from .redaction_utils import redact_text
+try:  # pragma: no cover - allow top-level import
+    from .redaction_utils import redact_text
+except Exception:  # pragma: no cover - fallback for flat layout
+    from redaction_utils import redact_text  # type: ignore
 
 
 def _summarize_diff(before: str, after: str) -> str:

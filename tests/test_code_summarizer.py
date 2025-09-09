@@ -2,6 +2,15 @@ import types
 from code_summarizer import summarize_code
 
 
+class DummyBuilder:
+    def __init__(self):
+        self.calls = 0
+
+    def build_context(self, *args, **kwargs):  # pragma: no cover - simple stub
+        self.calls += 1
+        return ""
+
+
 def test_summarize_code_micro_model(monkeypatch):
     """Ensure the micro-model path is used and honours token limits."""
 
@@ -20,7 +29,7 @@ def test_summarize_code_micro_model(monkeypatch):
 
     monkeypatch.setattr("local_client.OllamaClient", DummyClient)
 
-    summary = summarize_code("print('hi')", max_summary_tokens=5)
+    summary = summarize_code("print('hi')", context_builder=DummyBuilder(), max_summary_tokens=5)
     assert summary.split() == ["one", "two", "three", "four", "five"]
 
 
@@ -43,7 +52,7 @@ def test_summarize_code_llm_client(monkeypatch):
 
     monkeypatch.setattr("local_client.OllamaClient", DummyClient)
 
-    summary = summarize_code("print('hi')", max_summary_tokens=5)
+    summary = summarize_code("print('hi')", context_builder=DummyBuilder(), max_summary_tokens=5)
     assert summary.split() == ["alpha", "beta", "gamma", "delta", "epsilon"]
 
 
@@ -60,5 +69,5 @@ def test_summarize_code_heuristic(monkeypatch):
     monkeypatch.setattr("local_client.OllamaClient", DummyClient)
 
     code = "# header\n\nclass Foo:\n    pass\n"
-    summary = summarize_code(code, max_summary_tokens=10)
+    summary = summarize_code(code, context_builder=DummyBuilder(), max_summary_tokens=10)
     assert summary.startswith("class Foo")
