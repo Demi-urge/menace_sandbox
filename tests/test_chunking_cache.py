@@ -37,7 +37,7 @@ def test_get_chunk_summaries_cache(tmp_path: Path, monkeypatch) -> None:
 
     calls: List[str] = []
 
-    def fake_sum(code: str, llm=None) -> str:
+    def fake_sum(code: str, llm=None, context_builder=None) -> str:
         calls.append(code)
         return f"summary-{len(calls)}"
 
@@ -69,7 +69,7 @@ def test_get_chunk_summaries_concurrent(tmp_path: Path, monkeypatch) -> None:
 
     calls: List[str] = []
 
-    def fake_sum(code: str, llm=None) -> str:
+    def fake_sum(code: str, llm=None, context_builder=None) -> str:
         calls.append(code)
         return "sum"
 
@@ -109,7 +109,7 @@ def test_large_file_chunking_and_cache(tmp_path: Path, monkeypatch) -> None:
 
     calls: List[str] = []
 
-    def fake_sum(code: str, llm=None) -> str:
+    def fake_sum(code: str, llm=None, context_builder=None) -> str:
         calls.append(code)
         return f"summary-{len(calls)}"
 

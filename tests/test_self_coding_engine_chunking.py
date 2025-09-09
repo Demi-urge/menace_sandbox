@@ -199,7 +199,9 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
 
     called: dict[str, int] = {}
 
-    def fake_get_chunk_summaries(path: Path, limit: int, llm=None, cache=None):
+    def fake_get_chunk_summaries(
+        path: Path, limit: int, llm=None, cache=None, context_builder=None
+    ):
         called["limit"] = limit
         return [
             {"start_line": 1, "end_line": 2, "summary": "sum1"},
@@ -386,7 +388,9 @@ def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
 def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
     monkeypatch.setattr(sce, "_count_tokens", lambda text: 1000)
 
-    def fake_get_chunk_summaries(path: Path, limit: int, llm=None, cache=None):
+    def fake_get_chunk_summaries(
+        path: Path, limit: int, llm=None, cache=None, context_builder=None
+    ):
         return [
             {"start_line": 1, "end_line": 1, "summary": "sum1"},
             {"start_line": 2, "end_line": 2, "summary": "sum2"},

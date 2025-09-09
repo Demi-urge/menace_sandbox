@@ -44,8 +44,9 @@ To target other languages or LLMs you can drop in a custom implementation:
 ```python
 from my_llm import client
 
-def summarize_code(code: str) -> str:
-    return client.summarize(code, language="rust")
+def summarize_code(code: str, context_builder) -> str:
+    ctx = context_builder.build(code)
+    return client.summarize(f"{code}\n\nContext:\n{ctx}", language="rust")
 ```
 
 Monkeypatching `chunking.summarize_code` or providing an alternative

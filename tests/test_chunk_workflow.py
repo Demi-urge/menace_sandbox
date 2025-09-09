@@ -113,7 +113,7 @@ def test_prompt_from_summaries_under_limit(tmp_path, monkeypatch):
 
     summaries = [{"summary": "sumA"}, {"summary": "sumB"}]
 
-    def fake_get_chunk_summaries(path: Path, limit: int):
+    def fake_get_chunk_summaries(path: Path, limit: int, **kwargs):
         assert path == file
         assert limit == 20
         return summaries

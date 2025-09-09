@@ -8,6 +8,7 @@ from typing import Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
+    from vector_service.context_builder import ContextBuilder
 import ast
 import hashlib
 import json
@@ -245,7 +246,12 @@ def _split_by_lines(lines: List[str], start: int, limit: int) -> List[CodeChunk]
     return out
 
 
-def summarize_code(text: str, llm: LLMClient | None = None) -> str:
+def summarize_code(
+    text: str,
+    llm: LLMClient | None = None,
+    *,
+    context_builder: "ContextBuilder" | None = None,
+) -> str:
     """Return a short summary for ``text`` using available helpers with caching."""
 
     text = text.strip()
@@ -269,10 +275,38 @@ def summarize_code(text: str, llm: LLMClient | None = None) -> str:
 
     if not summary and llm is not None:
         from prompt_types import Prompt
+        context = ""
+        if context_builder is not None:
+            try:
+                ctx_res = context_builder.build(text)
+                if isinstance(ctx_res, tuple):
+                    context = ctx_res[0]
+                else:
+                    context = ctx_res
+                try:  # pragma: no cover - optional dependency
+                    from vector_service.context_builder import (
+                        FallbackResult,
+                        ErrorResult,
+                    )
 
+                    if isinstance(context, (FallbackResult, ErrorResult)):
+                        context = ""
+                except Exception:
+                    pass
+                if context:
+                    from snippet_compressor import compress_snippets
+
+                    context = compress_snippets({"snippet": context}).get(
+                        "snippet", context
+                    )
+            except Exception:
+                context = ""
+        user_text = text
+        if context:
+            user_text += f"\n\nContext:\n{context}"
         prompt = Prompt(
             system="Summarise the following code snippet in one sentence.",
-            user=text,
+            user=user_text,
         )
         try:  # pragma: no cover - llm failures
             result = llm.generate(prompt)
@@ -334,6 +368,7 @@ def get_chunk_summaries(
     llm: LLMClient | None = None,
     *,
     cache: ChunkSummaryCache | None = None,
+    context_builder: "ContextBuilder" | None = None,
 ) -> List[Dict[str, str]]:
     """Return cached summaries for ``path`` split into ``max_tokens`` chunks."""
 
@@ -352,7 +387,7 @@ def get_chunk_summaries(
         chunks = chunk_file(path, max_tokens)
         summaries: List[Dict[str, str]] = []
         for ch in chunks:
-            summary = summarize_code(ch.text, llm)
+            summary = summarize_code(ch.text, llm, context_builder=context_builder)
             summaries.append(
                 {
                     "start_line": ch.start_line,
