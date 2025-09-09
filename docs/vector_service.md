@@ -226,7 +226,15 @@ Example usage:
 ```bash
 export VECTOR_SERVICE_API_TOKEN="secret"
 export VECTOR_SERVICE_RATE_LIMIT=30
-uvicorn vector_service_api:app
+python - <<'PY'
+from context_builder_util import create_context_builder
+import vector_service_api
+
+vector_service_api.create_app(create_context_builder())
+
+import uvicorn
+uvicorn.run(vector_service_api.app, host="0.0.0.0", port=8000)
+PY
 
 # Authenticated request
 curl -H "X-API-Token: secret" -d '{"query": "upload failed"}' \

@@ -365,9 +365,9 @@ message if installation fails.
   Other modules should interact with embeddings through this layer rather than
   accessing databases or retrievers directly. See
   [docs/vector_service.md](docs/vector_service.md) for detailed API
-  documentation. A lightweight FastAPI app in `vector_service_api.py`
-  provides `/search`, `/build-context`, `/track-contributors` and
-  `/backfill-embeddings` endpoints.
+  documentation. A lightweight FastAPI app in `vector_service_api.py`,
+  initialised via `create_app(ContextBuilder(...))`, provides `/search`,
+  `/build-context`, `/track-contributors` and `/backfill-embeddings` endpoints.
 - Overview of the vectorised cognition pipeline – from embedding backfills to
   ranking with ROI feedback – is available in
   [docs/vectorized_cognition.md](docs/vectorized_cognition.md).
