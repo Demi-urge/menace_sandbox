@@ -69,6 +69,14 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when module unavailable
     VectorMetricsDB = None  # type: ignore
 
+from chunking import split_into_chunks
+from analysis.semantic_diff_filter import find_semantic_risks
+from vector_service.text_preprocessor import generalise
+try:  # pragma: no cover - support both package and flat imports
+    from .menace_memory_manager import _summarise_text  # type: ignore
+except Exception:  # pragma: no cover - fallback for top-level imports
+    from menace_memory_manager import _summarise_text  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 SQL_DIR = resolve_path("sql_templates")
@@ -878,6 +886,39 @@ class CodeDB(EmbeddableDBMixin):
             parts.append(f"language: {language}")
         return "\n".join(parts)
 
+    def _embed_text(self, data: dict[str, Any]) -> str:
+        """Return a condensed, safe representation of code ``data``."""
+        parts: list[str] = []
+        summary = str(data.get("summary", "")).strip()
+        if summary:
+            parts.append(generalise(summary))
+        code = str(data.get("code", ""))
+        if code:
+            try:
+                chunks = split_into_chunks(code, 400)
+            except Exception:  # pragma: no cover - fallback
+                chunks = [type("C", (), {"text": code})()]
+            summaries: list[str] = []
+            for ch in chunks:
+                if find_semantic_risks(ch.text.splitlines()):
+                    continue
+                try:
+                    summ = _summarise_text(ch.text)
+                except Exception:  # pragma: no cover - best effort
+                    summ = ch.text
+                summ = generalise(summ)
+                if summ:
+                    summaries.append(summ)
+            if summaries:
+                parts.append(" ".join(summaries))
+        template = str(data.get("template_type", "")).strip()
+        if template:
+            parts.append(generalise(f"template_type: {template}"))
+        language = str(data.get("language", "")).strip()
+        if language:
+            parts.append(generalise(f"language: {language}"))
+        return "\n".join(parts).strip()
+
     def license_text(self, rec: CodeRecord | dict[str, Any]) -> str | None:
         if isinstance(rec, CodeRecord):
             return rec.code
@@ -977,18 +1018,16 @@ class CodeDB(EmbeddableDBMixin):
                 "template_type": row[2],
                 "language": row[3],
             }
-            text = self._record_text(data)
-            prepared = self._prepare_text_for_embedding(text)
-            return self.encode_text(prepared) if prepared else None
+            text = self._embed_text(data)
+            return self.encode_text(text) if text else None
         if isinstance(rec, CodeRecord):
             data = asdict(rec)
         elif isinstance(rec, dict):
             data = rec
         else:
             return None
-        text = self._record_text(data)
-        prepared = self._prepare_text_for_embedding(text)
-        return self.encode_text(prepared) if prepared else None
+        text = self._embed_text(data)
+        return self.encode_text(text) if text else None
 
     def search_by_vector(
         self,
