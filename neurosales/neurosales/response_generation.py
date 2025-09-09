@@ -141,9 +141,9 @@ class ResponseCandidateGenerator:
         archetype: str,
         n: int = 3,
         *,
-        context_builder: ContextBuilder | None = None,  # nocb
+        context_builder: ContextBuilder,
     ) -> List[str]:
-        builder = context_builder or self.context_builder
+        builder = context_builder
         if self.tokenizer and self.model and torch is not None and builder is not None:
             try:
                 prompt = " ".join(history + [message, archetype])
@@ -191,6 +191,7 @@ class ResponseCandidateGenerator:
                 message,
                 history,
                 archetype,
+                context_builder=self.context_builder,
             )
         )
         candidates.extend(self._past_candidates(message))
