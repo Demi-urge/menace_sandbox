@@ -25,6 +25,7 @@ from .rl_training import schedule_periodic_training, schedule_feedback_export
 from .db_backup import schedule_database_backup
 from .user_preferences import PreferenceProfile
 from .orchestrator import SandboxOrchestrator
+from context_builder_util import create_context_builder
 
 load_dotenv()
 
@@ -156,6 +157,7 @@ def create_app(session_factory=None, memory_session_factory=None) -> FastAPI:
 
     orch_session_factory = memory_session_factory or session_factory
     orchestrator = SandboxOrchestrator(
+        context_builder=create_context_builder(),
         persistent=memory_session_factory is not None,
         session_factory=orch_session_factory,
     )
