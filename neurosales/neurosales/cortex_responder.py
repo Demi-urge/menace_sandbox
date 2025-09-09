@@ -8,7 +8,6 @@ from .response_generation import ResponseCandidateGenerator
 from .scoring import CandidateResponseScorer, ResponsePriorityQueue
 from .external_integrations import GPT4Client, PineconeLogger
 from typing import TYPE_CHECKING
-from context_builder_util import create_context_builder
 
 try:  # pragma: no cover - optional dependency
     from vector_service import ContextBuilder
@@ -53,19 +52,15 @@ class CortexAwareResponder:
         pinecone_key: str,
         pinecone_env: str,
         pg: Optional[InMemoryResponseDB] = None,
-        context_builder: Optional[ContextBuilder] = None,  # nocb
+        context_builder: ContextBuilder,  # nocb
     ) -> None:
-        builder = context_builder or create_context_builder()
-        self.client = GPT4Client(openai_key, context_builder=builder)
+        self.client = GPT4Client(openai_key, context_builder=context_builder)
         self.pinecone = PineconeLogger(
             pinecone_index, api_key=pinecone_key, environment=pinecone_env
         )
         self.pg = pg or InMemoryResponseDB()
-        # allow access to the builder for overrides
-        self.context_builder = self.client.context_builder
-        self.generator = ResponseCandidateGenerator(
-            context_builder=self.client.context_builder
-        )
+        self.context_builder = context_builder
+        self.generator = ResponseCandidateGenerator(context_builder=context_builder)
         self.scorer = CandidateResponseScorer()
         self.queue = ResponsePriorityQueue()
 
@@ -102,6 +97,7 @@ class CortexAwareResponder:
             text,
             history_texts,
             profile.archetype,
+            context_builder=self.context_builder,
         )
         if first_pass not in candidates:
             candidates.append(first_pass)

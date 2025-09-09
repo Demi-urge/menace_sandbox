@@ -139,12 +139,11 @@ class ResponseCandidateGenerator:
         *,
         context_builder: ContextBuilder,
     ) -> List[str]:
-        builder = context_builder
-        if self.tokenizer and self.model and torch is not None and builder is not None:
+        if self.tokenizer and self.model and torch is not None:
             try:
                 prompt = " ".join(history + [message, archetype])
                 session_id = uuid.uuid4().hex
-                ctx_res = builder.build(message, session_id=session_id)
+                ctx_res = context_builder.build(message, session_id=session_id)
                 ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
                 if isinstance(ctx, (FallbackResult, ErrorResult)):
                     ctx = ""
@@ -177,9 +176,9 @@ class ResponseCandidateGenerator:
         message: str,
         history: List[str],
         archetype: str = "",
+        *,
+        context_builder: ContextBuilder,
     ) -> List[str]:
-        if self.context_builder is None:
-            raise RuntimeError("Context builder is required")
         candidates: List[str] = []
         candidates.extend(self._static_candidates(message))
         candidates.extend(
@@ -187,7 +186,7 @@ class ResponseCandidateGenerator:
                 message,
                 history,
                 archetype,
-                context_builder=self.context_builder,
+                context_builder=context_builder,
             )
         )
         candidates.extend(self._past_candidates(message))
