@@ -121,7 +121,7 @@ class UserStyleModel:
 
         prompt = f"{ctx}\n\n{text}" if ctx else text
         inputs = self.tokenizer(prompt, return_tensors="pt")
-        outputs = self.model.generate(
+        outputs = self.model.generate(  # nocb
             **inputs, max_length=50, num_return_sequences=1
         )
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
