@@ -443,7 +443,7 @@ try:
     from sandbox_runner.environment import create_ephemeral_env, generate_edge_cases
 except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
     @contextmanager
-    def create_ephemeral_env(workdir: Path):  # type: ignore[misc]
+    def create_ephemeral_env(workdir: Path, *, context_builder: ContextBuilder):  # type: ignore[misc]
         yield Path(workdir), lambda cmd, **kw: subprocess.run(cmd, **kw)
 
     def generate_edge_cases() -> dict[str, Any]:  # type: ignore[misc]

@@ -88,7 +88,8 @@ except Exception:  # pragma: no cover - test fallback
 try:
     from sandbox_runner.environment import create_ephemeral_env, generate_edge_cases
 except Exception:  # pragma: no cover - test fallback
-    def create_ephemeral_env(*a, **k):
+    @contextmanager
+    def create_ephemeral_env(workdir: Path, *, context_builder: ContextBuilder):
         raise RuntimeError("sandbox_runner unavailable")
 
     def generate_edge_cases() -> dict[str, object]:  # type: ignore

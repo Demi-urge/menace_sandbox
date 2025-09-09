@@ -76,7 +76,7 @@ sys.modules['menace'] = menace_pkg
 sys.modules['menace.logging_utils'] = types.SimpleNamespace(log_record=lambda **kw: None)
 sys.modules['menace.retry_utils'] = types.SimpleNamespace(with_retry=lambda f: f)
 class _ErrLog:
-    def __init__(self, knowledge_graph=None):
+    def __init__(self, knowledge_graph=None, context_builder=None):
         pass
 
 sys.modules['menace.error_logger'] = types.SimpleNamespace(ErrorLogger=_ErrLog, TelemetryEvent=object)
