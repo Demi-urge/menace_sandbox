@@ -591,18 +591,35 @@ class QuickFixEngine:
             meta = {"module": prompt_path, "reason": "preemptive_patch"}
             builder = self.context_builder
             ctx = ""
+            cb_vectors: list[tuple[str, str, float]] = []
             cb_session = uuid.uuid4().hex
-            meta["context_session_id"] = cb_session
             try:
                 query = f"preemptive patch {prompt_path}"
-                ctx = builder.build(query, session_id=cb_session)
+                ctx_res = builder.build(
+                    query, session_id=cb_session, include_vectors=True
+                )
+                if isinstance(ctx_res, tuple):
+                    ctx, cb_session, cb_vectors = ctx_res
+                else:
+                    ctx, cb_session = ctx_res, cb_session
                 if isinstance(ctx, (FallbackResult, ErrorResult)):
                     ctx = ""
+                    cb_vectors = []
             except Exception:
                 ctx = ""
+                cb_vectors = []
+            meta["context_session_id"] = cb_session
+            if cb_vectors:
+                meta["retrieval_vectors"] = cb_vectors
             desc = "preemptive_patch"
             if ctx:
-                desc += "\n\n" + ctx
+                try:
+                    compressed = compress_snippets({"snippet": ctx}).get("snippet", "")
+                except Exception:
+                    compressed = ""
+                if compressed:
+                    desc += "\n\n" + compressed
+                    meta["context"] = compressed
             session_id = ""
             vectors: list[tuple[str, str, float]] = []
             retrieval_metadata: dict[str, dict[str, Any]] = {}
@@ -619,7 +636,7 @@ class QuickFixEngine:
                 }
             if session_id:
                 meta["retrieval_session_id"] = session_id
-                meta["retrieval_vectors"] = vectors
+                meta.setdefault("retrieval_vectors", vectors)
             patch_id = None
             try:
                 try:
@@ -656,14 +673,16 @@ class QuickFixEngine:
                     "failed to record preemptive patch for %s: %s", prompt_path, exc
                 )
             if self.patch_logger is not None:
-                ids = {f"{o}:{v}": s for o, v, s in vectors}
+                ids = {
+                    f"{o}:{v}": s for o, v, s in meta.get("retrieval_vectors", [])
+                }
                 try:
                     result = bool(patch_id)
                     self.patch_logger.track_contributors(
                         ids,
                         result,
                         patch_id=str(patch_id or ""),
-                        session_id=session_id,
+                        session_id=meta.get("context_session_id", ""),
                         contribution=1.0 if result else 0.0,
                         retrieval_metadata=retrieval_metadata,
                     )
