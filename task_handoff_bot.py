@@ -277,6 +277,9 @@ class WorkflowDB(EmbeddableDBMixin):
             try:
                 payload = {"workflow_id": workflow_id, "status": status}
                 self.event_bus.publish("workflows:update", payload)
+                self.event_bus.publish(
+                    "embedding:backfill", {"db": self.__class__.__name__}
+                )
             except Exception as exc:
                 logger.warning(
                     "failed to publish workflow status %s for %s: %s",
@@ -320,6 +323,9 @@ class WorkflowDB(EmbeddableDBMixin):
                 for wid in ids:
                     payload = {"workflow_id": wid, "status": status}
                     self.event_bus.publish("workflows:update", payload)
+                self.event_bus.publish(
+                    "embedding:backfill", {"db": self.__class__.__name__}
+                )
             except Exception as exc:
                 logger.warning(
                     "failed to publish workflow status %s for %s: %s",

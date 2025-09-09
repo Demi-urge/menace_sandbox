@@ -75,6 +75,13 @@ Backfill vector embeddings.
 menace embed --db errors --batch-size 100
 ```
 
+### Automatic vs. manual runs
+
+Most databases trigger embedding backfills automatically when records are
+inserted or updated, so the `embed` subcommand is rarely needed during normal
+operation. Use `menace embed --db <name>` to manually regenerate embeddings when
+automatic hooks are disabled or a bulk rebuild is required.
+
 ## new-db
 Scaffold a new database module. Hooks allow custom registration logic.
 ```bash

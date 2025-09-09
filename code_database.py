@@ -542,6 +542,12 @@ class CodeDB(EmbeddableDBMixin):
         if self.event_bus:
             if not publish_with_retry(self.event_bus, "code:new", asdict(rec)):
                 logger.exception("failed to publish code:new event")
+            else:
+                publish_with_retry(
+                    self.event_bus,
+                    "embedding:backfill",
+                    {"db": self.__class__.__name__},
+                )
         return cid
 
     def update(
@@ -641,6 +647,12 @@ class CodeDB(EmbeddableDBMixin):
             payload = {"code_id": code_id, **fields}
             if not publish_with_retry(self.event_bus, "code:update", payload):
                 logger.exception("failed to publish code:update event")
+            else:
+                publish_with_retry(
+                    self.event_bus,
+                    "embedding:backfill",
+                    {"db": self.__class__.__name__},
+                )
 
     def fetch_all(
         self,
