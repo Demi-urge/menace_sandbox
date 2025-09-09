@@ -20,8 +20,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from snippet_compressor import compress_snippets
+
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from llm_interface import LLMClient  # noqa: F401
+    from vector_service.context_builder import ContextBuilder  # noqa: F401
 
 
 def _truncate_tokens(text: str, limit: int) -> str:
@@ -61,13 +64,17 @@ def _heuristic_summary(code: str, limit: int) -> str:
     return _truncate_tokens(lines[0], limit)
 
 
-def summarize_code(code: str, *, max_summary_tokens: int = 128) -> str:
+def summarize_code(
+    code: str, *, context_builder: "ContextBuilder", max_summary_tokens: int = 128
+) -> str:
     """Return a short description of ``code``.
 
     The function attempts several local summarisation strategies before falling
-    back to a simple heuristic based on the first line of the snippet.
-    ``max_summary_tokens`` bounds the returned summary length to avoid runaway
-    outputs.
+    back to a simple heuristic based on the first line of the snippet.  When the
+    micro-model path is unavailable a provided :class:`ContextBuilder` is used to
+    gather related snippets which are compressed and prepended to the LLM
+    prompt. ``max_summary_tokens`` bounds the returned summary length to avoid
+    runaway outputs.
     """
 
     code = code.strip()
@@ -98,11 +105,35 @@ def summarize_code(code: str, *, max_summary_tokens: int = 128) -> str:
         Prompt = None  # type: ignore[assignment]
     if OllamaClient is not None and Prompt is not None:
         try:  # pragma: no cover - defensive against runtime failures
+            vec_ctx = ""
+            try:
+                ctx_res = context_builder.build_context(code)
+                if isinstance(ctx_res, tuple):
+                    vec_ctx = ctx_res[0]
+                else:
+                    vec_ctx = ctx_res
+                try:  # optional dependency - only for isinstance checks
+                    from vector_service.context_builder import (
+                        FallbackResult,
+                        ErrorResult,
+                    )
+
+                    if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
+                        vec_ctx = ""
+                except Exception:
+                    pass
+                if vec_ctx:
+                    vec_ctx = compress_snippets({"snippet": vec_ctx}).get(
+                        "snippet", vec_ctx
+                    )
+            except Exception:
+                vec_ctx = ""
             client = OllamaClient()  # type: ignore[call-arg]
-            prompt = Prompt(
-                text=f"Summarize the following code:\n{code}\nSummary:",
-                metadata={"small_task": True},
-            )
+            text = f"Summarize the following code:\n{code}\n"
+            if vec_ctx:
+                text += f"\nContext:\n{vec_ctx}\n"
+            text += "Summary:"
+            prompt = Prompt(text=text, metadata={"small_task": True})
             result = client.generate(prompt)
             summary = getattr(result, "text", "").strip()
             if summary:
