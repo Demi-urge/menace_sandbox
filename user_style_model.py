@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 try:  # pragma: no cover - optional dependency
     from transformers import (
@@ -23,6 +24,7 @@ except Exception:  # pragma: no cover - optional dependency
     Trainer = None  # type: ignore
 
 from .mirror_bot import MirrorDB
+from .snippet_compressor import compress_snippets
 
 
 @dataclass
@@ -82,11 +84,26 @@ class UserStyleModel:
         self.model = model
         self.tokenizer = tokenizer
 
-    def generate(self, text: str) -> str:
+    def generate(self, text: str, *, context_builder: Any) -> str:
+        """Generate text in the user's style with contextual snippets."""
+
         if not self.model or not self.tokenizer:
             return text
-        inputs = self.tokenizer(text, return_tensors="pt")
-        outputs = self.model.generate(  # nocb
+
+        ctx = ""
+        try:
+            raw_ctx = context_builder.build(text, include_vectors=False)
+        except Exception:  # pragma: no cover - best effort retrieval
+            raw_ctx = ""
+        if raw_ctx:
+            try:  # pragma: no cover - compression is optional
+                ctx = compress_snippets({"snippet": raw_ctx}).get("snippet", raw_ctx)
+            except Exception:
+                ctx = raw_ctx
+
+        prompt = f"{ctx}\n\n{text}" if ctx else text
+        inputs = self.tokenizer(prompt, return_tensors="pt")
+        outputs = self.model.generate(
             **inputs, max_length=50, num_return_sequences=1
         )
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
