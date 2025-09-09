@@ -5,6 +5,12 @@ import threading
 
 from chunk_summary_cache import ChunkSummaryCache
 import chunking as pc
+import pytest
+
+
+class DummyBuilder:
+    def build(self, text: str) -> str:  # pragma: no cover - simple stub
+        return ""
 
 
 def test_roundtrip_and_invalidation(tmp_path: Path) -> None:
@@ -51,12 +57,12 @@ def test_file_change_invalidates_cache_via_chunking(tmp_path: Path, monkeypatch)
 
     monkeypatch.setattr(pc, "summarize_code", fake_sum)
 
-    first = pc.get_chunk_summaries(file, 20)
+    first = pc.get_chunk_summaries(file, 20, context_builder=DummyBuilder())
     assert len(calls) == len(first)
 
     # Modify file so cached entry becomes stale
     file.write_text("def a():\n    return 2\n")
-    second = pc.get_chunk_summaries(file, 20)
+    second = pc.get_chunk_summaries(file, 20, context_builder=DummyBuilder())
 
     # Cache was invalidated -> summaries recomputed
     assert len(second) == len(first)
@@ -81,7 +87,7 @@ def test_concurrent_requests_use_per_path_lock(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(pc, "summarize_code", fake_sum)
 
     def worker() -> None:
-        pc.get_chunk_summaries(file, 20)
+        pc.get_chunk_summaries(file, 20, context_builder=DummyBuilder())
 
     threads = [threading.Thread(target=worker) for _ in range(4)]
     for t in threads:
@@ -91,3 +97,8 @@ def test_concurrent_requests_use_per_path_lock(tmp_path: Path, monkeypatch) -> N
 
     # summarizer invoked only once per chunk despite concurrent callers
     assert len(calls) == len(pc.chunk_file(file, 20))
+
+
+def test_summarize_code_requires_builder() -> None:
+    with pytest.raises(ValueError):
+        pc.summarize_code("print('x')", context_builder=None)

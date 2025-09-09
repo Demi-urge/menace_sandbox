@@ -4,7 +4,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tiktoken  # noqa: E402
+import pytest
 from chunking import chunk_file, summarize_code  # noqa: E402
+
+
+class DummyBuilder:
+    def build(self, text: str) -> str:  # pragma: no cover - simple stub
+        return ""
 
 
 def test_token_counting_respects_limit(tmp_path):
@@ -44,5 +50,10 @@ def test_ast_boundary_accuracy(tmp_path):
 
 def test_summarize_code_fallback():
     code = '# comment\n\nclass Foo:\n    pass\n'
-    summary = summarize_code(code, None, context_builder=None)
+    summary = summarize_code(code, None, context_builder=DummyBuilder())
     assert summary.startswith('class Foo')
+
+
+def test_summarize_code_requires_builder():
+    with pytest.raises(ValueError):
+        summarize_code("print('x')", None, context_builder=None)

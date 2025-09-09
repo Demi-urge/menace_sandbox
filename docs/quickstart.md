@@ -96,9 +96,12 @@ Populate the summary cache ahead of time to avoid first‑run latency:
 ```python
 from pathlib import Path
 from chunking import get_chunk_summaries
+from vector_service.context_builder import ContextBuilder
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 
 # Populate chunk_summary_cache/ with summaries
-get_chunk_summaries(Path("bots/example.py"), 800)
+get_chunk_summaries(Path("bots/example.py"), 800, context_builder=builder)
 ```
 
 All prompt‑generating bots require an explicit `ContextBuilder`; omitting it
@@ -114,7 +117,9 @@ from vector_service.context_builder import ContextBuilder
 
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 engine = PromptEngine(context_builder=builder)
-chunks = get_chunk_summaries(Path("bots/example.py"), 800)
+chunks = get_chunk_summaries(
+    Path("bots/example.py"), 800, context_builder=builder
+)
 prompt = engine.build_prompt(
     "refactor helper",
     summaries=[c["summary"] for c in chunks],
