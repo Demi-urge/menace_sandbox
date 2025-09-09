@@ -31,7 +31,7 @@ def main() -> None:  # pragma: no cover - CLI glue
     # Clone the branch explicitly so operators can see the new patch id
     new_patch = lineage.clone_branch_for_ab_test(args.patch_id, args.variant)
 
-    builder = ContextBuilder(  # nocb
+    builder = ContextBuilder(
         args.bots_db, args.code_db, args.errors_db, args.workflows_db
     )
     exp_mgr = ExperimentManager(
