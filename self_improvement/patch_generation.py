@@ -49,6 +49,8 @@ def generate_patch(
     :class:`RuntimeError` with logging instead of returning ``None``.
     """
 
+    if context_builder is None:
+        raise TypeError("context_builder is required")
     logger = logging.getLogger(__name__)
     try:
         func = _load_callable("quick_fix_engine", "generate_patch")

@@ -313,8 +313,12 @@ class ResourceAllocationBot:
         return actions
 
     def suggest_improvement(self, bot: str) -> str:
+        builder = self.context_builder
+        if builder is None:
+            self.logger.error("context_builder is required for improvement prompts")
+            return "upgrade"
         try:
-            context = self.context_builder.build(bot)
+            context = builder.build(bot)
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("Context build failed for %s", bot)
             return "upgrade"
@@ -328,12 +332,12 @@ class ResourceAllocationBot:
             llm = mixtral_client()
         except Exception:
             pass
-        engine = PromptEngine(context_builder=self.context_builder, llm=llm)
+        engine = PromptEngine(context_builder=builder, llm=llm)
         retrieval_ctx = compress_snippets({"snippet": context}).get("snippet", context)
         prompt = engine.build_prompt(
             f"Improve {bot}",
             retrieval_context=retrieval_ctx,
-            context_builder=self.context_builder,
+            context_builder=builder,
         )
         if engine.llm is None:
             return "upgrade"

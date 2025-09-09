@@ -1077,6 +1077,9 @@ class SelfCodingEngine:
         resolved = path_for_prompt(path) if path else None
         self._apply_prompt_style(description, module=resolved or "visual_agent")
         retry_trace = self._last_retry_trace
+        builder = self.context_builder
+        if builder is None:
+            raise RuntimeError("context_builder is required for prompt generation")
         try:
             prompt_obj = build_prompt(
                 description,
@@ -1086,7 +1089,7 @@ class SelfCodingEngine:
                 tone=self.prompt_tone,
                 target_region=target_region,
                 strategy=strategy,
-                context_builder=self.context_builder,
+                context_builder=builder,
             )
         except TypeError:
             prompt_obj = build_prompt(
@@ -1094,7 +1097,7 @@ class SelfCodingEngine:
                 context="\n".join([p for p in (context.strip(), repo_layout) if p]),
                 retrieval_context=retrieval_context or "",
                 retry_trace=retry_trace,
-                context_builder=self.context_builder,
+                context_builder=builder,
             )
         self._last_prompt = prompt_obj
         body = prompt_obj.text if isinstance(prompt_obj, Prompt) else str(prompt_obj)

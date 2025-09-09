@@ -1021,6 +1021,8 @@ class BotDevelopmentBot:
         sample_with_vectors:
             Whether to request embedding vectors for the training examples.
         """
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         query = spec.description or spec.purpose or spec.name
         session_id = uuid.uuid4().hex
         ctx_result = context_builder.build(
