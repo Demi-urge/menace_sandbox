@@ -27,19 +27,21 @@ class DiscoveryScheduler:
         context_builder: ContextBuilder,
         interval: int = 3600,
     ) -> None:
+        self.logger = logging.getLogger("DiscoveryScheduler")
+
         self.scraper = scraper or TrendingScraper()
         self.context_builder = context_builder
         try:
             self.context_builder.refresh_db_weights()
         except Exception:
-            pass
+            self.logger.exception("failed to refresh DB weights")
+            raise
         self.creation_bot = creation_bot or BotCreationBot(
             context_builder=self.context_builder
         )
         self.interval = interval
         self.running = False
         self._thread: Optional[threading.Thread] = None
-        self.logger = logging.getLogger("DiscoveryScheduler")
 
     # ------------------------------------------------------------------
     def _save_items(self, db: InfoDB, items: List[TrendingItem]) -> None:
