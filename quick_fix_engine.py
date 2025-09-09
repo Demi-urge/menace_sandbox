@@ -472,23 +472,35 @@ class QuickFixEngine:
         context_meta = {"error_type": etype, "module": prompt_path, "bot": bot}
         builder = self.context_builder
         ctx_block = ""
+        cb_vectors: list[tuple[str, str, float]] = []
         cb_session = uuid.uuid4().hex
         context_meta["context_session_id"] = cb_session
         try:
             query = f"{etype} in {prompt_path}"
-            ctx_block = builder.build(query, session_id=cb_session)
+            ctx_res = builder.build(
+                query, session_id=cb_session, include_vectors=True
+            )
+            if isinstance(ctx_res, tuple):
+                ctx_block, _sid, cb_vectors = ctx_res
+            else:
+                ctx_block = ctx_res
             if isinstance(ctx_block, (FallbackResult, ErrorResult)):
                 ctx_block = ""
         except Exception:
             ctx_block = ""
+            cb_vectors = []
+        if cb_vectors:
+            context_meta["retrieval_vectors"] = cb_vectors
         desc = f"quick fix {etype}"
         if ctx_block:
             try:
-                ctx_block = compress_snippets({"snippet": ctx_block}).get("snippet", "")
+                compressed = compress_snippets({"snippet": ctx_block}).get(
+                    "snippet", ""
+                )
             except Exception:
-                ctx_block = ""
-            if ctx_block:
-                desc += "\n\n" + ctx_block
+                compressed = ""
+            if compressed:
+                desc += "\n\n" + compressed
         session_id = ""
         vectors: list[tuple[str, str, float]] = []
         retrieval_metadata: dict[str, dict[str, Any]] = {}
@@ -505,7 +517,7 @@ class QuickFixEngine:
             }
         if session_id:
             context_meta["retrieval_session_id"] = session_id
-            context_meta["retrieval_vectors"] = vectors
+            context_meta.setdefault("retrieval_vectors", vectors)
         patch_id = None
         try:
             try:
