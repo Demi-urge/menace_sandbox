@@ -10,5 +10,8 @@ def create_context_builder() -> ContextBuilder:
     """Return a :class:`ContextBuilder` wired to the standard local databases."""
     try:
         return ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
-    except TypeError:  # pragma: no cover - for simple stubs in tests
-        return ContextBuilder()  # nocb
+    except TypeError as exc:  # pragma: no cover - for simple stubs in tests
+        raise ValueError(
+            "ContextBuilder requires paths to 'bots.db', 'code.db', 'errors.db', "
+            "and 'workflows.db'"
+        ) from exc
