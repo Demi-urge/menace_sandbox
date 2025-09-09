@@ -1708,6 +1708,7 @@ def _sandbox_main(
                         f"Brainstorm improvements. Current metrics: {summary}",
                         prior=prior if prior else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
+                        context_builder=ctx.context_builder,
                     )
                     hist = ctx.conversations.get("brainstorm", [])
                     module = _get_local_knowledge()

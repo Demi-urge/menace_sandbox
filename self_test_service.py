@@ -515,7 +515,7 @@ class SelfTestService:
         stub_scenarios: Mapping[str, Any] | None = None,
         fixture_hook: str | None = None,
         ephemeral: bool = True,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder | None = None,  # nocb
     ) -> None:
         """Create a new service instance.
 

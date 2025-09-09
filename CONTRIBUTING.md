@@ -81,6 +81,8 @@ to helpers like `_build_prompt`, `build_prompt`, `generate_patch`, and
 `generate_candidates`. Instantiate the builder with local database paths at the
 call site and pass it explicitly; components should fail fast when the argument
 is missing and must not define a default for the `context_builder` parameter.
+In rare cases where a default is unavoidable or a call intentionally omits the
+builder, append `# nocb` to the line to document the exception.
 
 ```python
 from vector_service.context_builder import ContextBuilder

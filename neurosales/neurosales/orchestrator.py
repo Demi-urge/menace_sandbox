@@ -105,7 +105,7 @@ class SandboxOrchestrator:
         self.preferences.add_message(user_id, text)
         profile: PreferenceProfile = self.preferences.get_profile(user_id)
         history = [m.content for m in mem.get_recent_messages()]
-        cands = self.generator.generate_candidates(text, history, profile.archetype)
+        cands = self.generator.generate_candidates(text, history, profile.archetype)  # nocb
         scores = self.scorer.score_candidates(text, cands, profile, history)
 
         self._capture_feedback(user_id, text, list(scores))
