@@ -20,9 +20,11 @@ from typing import Any, Dict, Iterator, List, Sequence, Tuple
 from time import perf_counter
 import json
 import logging
+import re
 from security.secret_redactor import redact
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
+from chunking import split_into_chunks, summarize_snippet
 
 # Lightweight license detection based on SPDX‑style fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
@@ -176,14 +178,57 @@ class EmbeddableDBMixin:
         self._last_embedding_tokens = tokens
         return vec or []
 
+    def _prepare_text_for_embedding(self, text: str, *, chunk_tokens: int = 400) -> str:
+        """Return a condensed representation of ``text`` for embedding.
+
+        The text is split into sentences, grouped into token limited chunks
+        using :mod:`chunking.split_into_chunks`, each chunk is summarised via
+        :func:`chunking.summarize_snippet` and the summaries are concatenated.
+        """
+
+        if not isinstance(text, str):
+            return text
+
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        if not sentences:
+            return ""
+        joined = "\n".join(sentences)
+
+        try:
+            chunks = split_into_chunks(joined, chunk_tokens)
+        except Exception:  # pragma: no cover - fallback if chunking fails
+            chunks = []
+            if joined:
+                chunks.append(type("C", (), {"text": joined})())
+
+        class _DummyBuilder:
+            def build(self, _: str) -> str:  # pragma: no cover - simple stub
+                return ""
+
+        builder = _DummyBuilder()
+        summaries: List[str] = []
+        for ch in chunks:
+            try:
+                summaries.append(
+                    summarize_snippet(ch.text, context_builder=builder)
+                )
+            except Exception:  # pragma: no cover - summariser issues
+                summaries.append(ch.text)
+        return " ".join(s for s in summaries if s)
+
     # ------------------------------------------------------------------
     # methods expected to be overridden
     def vector(self, record: Any) -> List[float]:
         """Return an embedding vector for ``record``.
 
-        Subclasses **must** override this method.
+        If ``record`` is textual it is condensed via
+        :meth:`_prepare_text_for_embedding` before encoding.  Subclasses can
+        override this for non-textual records.
         """
 
+        if isinstance(record, str):
+            prepared = self._prepare_text_for_embedding(record)
+            return self.encode_text(prepared)
         raise NotImplementedError
 
     def iter_records(self) -> Iterator[Tuple[Any, Any, str]]:
@@ -334,6 +379,8 @@ class EmbeddableDBMixin:
                     logger.warning("semantic risk %.2f for %s: %s", score, line, msg)
                 return
         record = redact(record) if isinstance(record, str) else record
+        if isinstance(record, str):
+            record = self._prepare_text_for_embedding(record)
 
         start = perf_counter()
         vec = self.vector(record)
@@ -540,4 +587,6 @@ class EmbeddableDBMixin:
                         logger.warning("semantic risk %.2f for %s: %s", score, line, msg)
                     continue
             record = redact(record) if isinstance(record, str) else record
+            if isinstance(record, str):
+                record = self._prepare_text_for_embedding(record)
             self.add_embedding(record_id, record, kind)
