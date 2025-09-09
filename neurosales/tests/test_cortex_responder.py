@@ -12,6 +12,9 @@ def test_cortex_pipeline_basic(monkeypatch):
         def build(self, query: str) -> str:
             return ""
 
+        def refresh_db_weights(self):
+            return None
+
     dummy_mod = types.SimpleNamespace(ContextBuilder=DummyCB)
     monkeypatch.setitem(sys.modules, "vector_service", types.SimpleNamespace(context_builder=dummy_mod))
     monkeypatch.setitem(sys.modules, "vector_service.context_builder", dummy_mod)
