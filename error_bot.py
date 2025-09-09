@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import dataclasses
 from datetime import datetime
 from pathlib import Path
+import re
 
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
@@ -22,7 +23,7 @@ from .auto_link import auto_link
 from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator, Literal
 
 from .unified_event_bus import EventBus
-from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
+from .menace_memory_manager import MenaceMemoryManager, MemoryEntry, _summarise_text
 from db_router import (
     DBRouter,
     GLOBAL_ROUTER,
@@ -34,6 +35,7 @@ import asyncio
 import threading
 from jinja2 import Template
 import yaml
+from vector_service.text_preprocessor import generalise
 
 try:  # pragma: no cover - optional dependency for type hints
     from vector_service.context_builder import ContextBuilder
@@ -286,15 +288,27 @@ class ErrorDB(EmbeddableDBMixin):
                 or getattr(rec, "root_cause", "")
             )
             stack = getattr(rec, "stack_trace", "")
-        text_parts: list[str] = []
+        lines: list[str] = []
         if msg:
-            text_parts.append(f"message: {msg}")
+            lines.extend(re.split(r"(?<=[.!?])\s+", msg))
         if stack:
-            text_parts.append(f"stack_trace: {stack}")
-        text = "\n".join(text_parts)
-        if not text:
+            lines.extend(stack.splitlines())
+        filtered: list[str] = []
+        seen = set()
+        for line in lines:
+            line = line.strip()
+            low = line.lower()
+            if not line or low.startswith("file ") or "password" in low or "secret" in low:
+                continue
+            if low in seen:
+                continue
+            seen.add(low)
+            filtered.append(line)
+        if not filtered:
             return None
-        prepared = self._prepare_text_for_embedding(text)
+        joined = " ".join(filtered)
+        summary = _summarise_text(joined) or joined
+        prepared = generalise(summary)
         return self._embed(prepared) if prepared else None
 
     def _embed(self, text: str) -> list[float]:

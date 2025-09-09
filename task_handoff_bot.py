@@ -9,11 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Callable, Any, Iterable, Optional, Iterator, Literal
 import logging
+import re
 
 import sqlite3
 from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin
+from vector_service.text_preprocessor import generalise
 from db_router import (
     DBRouter,
     GLOBAL_ROUTER,
@@ -25,6 +27,10 @@ from db_router import (
 from db_dedup import insert_if_unique, ensure_content_hash_column
 from scope_utils import Scope, build_scope_clause
 from dynamic_path_router import resolve_path
+try:
+    from .menace_memory_manager import _summarise_text  # type: ignore
+except Exception:  # pragma: no cover - fallback
+    from menace_memory_manager import _summarise_text  # type: ignore
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -205,17 +211,25 @@ class WorkflowDB(EmbeddableDBMixin):
         )
 
     def _vector_text(self, rec: WorkflowRecord) -> str:
-        """Build a descriptive text representation of ``rec``."""
+        """Build a descriptive, summarised text representation of ``rec``."""
 
         actions = rec.workflow or rec.task_sequence
         sequence = rec.task_sequence if rec.workflow != rec.task_sequence else []
+        boilerplate = {"start", "end", "noop", "return", "pass"}
+        lines: list[str] = []
+        for lst in (actions, sequence, rec.argument_strings or []):
+            for item in lst:
+                if not item or item.strip().lower() in boilerplate:
+                    continue
+                lines.extend(
+                    s.strip()
+                    for s in re.split(r"(?<=[.!?])\s+", item)
+                    if s.strip()
+                )
+        summary = _summarise_text(" ".join(lines)) if lines else ""
         parts: list[str] = []
-        if actions:
-            parts.append("workflow: " + " -> ".join(actions))
-        if sequence:
-            parts.append("sequence: " + " -> ".join(sequence))
-        if rec.argument_strings:
-            parts.append("args: " + ", ".join(rec.argument_strings))
+        if summary:
+            parts.append(summary)
         if rec.title:
             parts.append(f"title: {rec.title}")
         if rec.description:
@@ -226,7 +240,7 @@ class WorkflowDB(EmbeddableDBMixin):
             parts.append(f"category: {rec.category}")
         if rec.type_:
             parts.append(f"type: {rec.type_}")
-        return "\n".join(parts)
+        return "\n".join(generalise(p) for p in parts if p)
 
     def usage_rate(self, workflow_id: int) -> int:
         """Return count of bots using a workflow.

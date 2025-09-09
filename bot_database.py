@@ -10,13 +10,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING, Literal, Sequence
 from time import time
+import re
 
 from .auto_link import auto_link
 
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
 from vector_service import EmbeddableDBMixin
+from vector_service.text_preprocessor import generalise
 import warnings
+try:
+    from .menace_memory_manager import _summarise_text  # type: ignore
+except Exception:  # pragma: no cover - fallback
+    from menace_memory_manager import _summarise_text  # type: ignore
 try:
     from .menace_db import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -562,15 +568,29 @@ class BotDB(EmbeddableDBMixin):
                 if isinstance(tc_val, str)
                 else list(tc_val)
             )
-        parts: list[str] = []
+        lines: list[str] = []
         if purpose:
-            parts.append(f"purpose: {purpose}")
+            lines.extend(re.split(r"(?<=[.!?])\s+", purpose))
         if tags:
-            parts.append("tags: " + ",".join(tags))
+            lines.extend(tags)
         if toolchain:
-            parts.append("toolchain: " + ",".join(toolchain))
-        text = "\n".join(parts)
-        prepared = self._prepare_text_for_embedding(text)
+            lines.extend(toolchain)
+        seen = set()
+        filtered: list[str] = []
+        for line in lines:
+            line = line.strip()
+            if not line or len(line) < 3 or line.lower() in {"n/a", "none", "na"}:
+                continue
+            key = line.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            filtered.append(line)
+        if not filtered:
+            return []
+        joined = " ".join(filtered)
+        summary = _summarise_text(joined) or joined
+        prepared = generalise(summary)
         return self.encode_text(prepared) if prepared else []
 
     def search_by_vector(
