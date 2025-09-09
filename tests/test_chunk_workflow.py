@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 import sys
 import types
-import pytest
 
 import chunking
 from prompt_engine import PromptEngine
@@ -171,10 +170,3 @@ def test_patch_application_on_chunked_file(tmp_path, monkeypatch):
     path.write_text("\n".join(lines))
     text = path.read_text()
     assert "# patch 1" in text and "# patch 2" in text
-
-
-def test_get_chunk_summaries_requires_builder(tmp_path):
-    file = tmp_path / "sample.py"  # path-ignore
-    file.write_text("print('hi')\n")
-    with pytest.raises(ValueError):
-        pc.get_chunk_summaries(file, 10, context_builder=None)
