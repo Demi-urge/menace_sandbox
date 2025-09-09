@@ -20,7 +20,11 @@ from .self_learning import SelfLearningEngine
 from .rlhf import RLHFPolicyManager, DatabaseRLHFPolicyManager
 from .human_feedback import HumanFeedbackManager
 from .adaptive_ranking import AdaptiveRanker
-from .response_generation import ResponseCandidateGenerator, redundancy_filter
+try:  # pragma: no cover - optional dependency
+    from .response_generation import ResponseCandidateGenerator, redundancy_filter
+except Exception:  # pragma: no cover - allow partial import when dependency missing
+    ResponseCandidateGenerator = None  # type: ignore
+    redundancy_filter = None  # type: ignore
 from .influence_graph import InfluenceGraph
 from .psychological_graph import PsychologicalGraph, RuleNode
 from .archetype_graph import ArchetypeGraph, ArchetypeNode, RelationshipEdge

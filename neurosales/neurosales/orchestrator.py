@@ -5,8 +5,13 @@ from typing import Dict, List, Optional, Tuple
 from .memory import DatabaseConversationMemory
 from .embedding_memory import EmbeddingConversationMemory
 from .user_preferences import PreferenceEngine, PreferenceProfile
-from .response_generation import ResponseCandidateGenerator
-from vector_service import ContextBuilder
+try:  # pragma: no cover - optional dependency
+    from .response_generation import ResponseCandidateGenerator
+    from vector_service import ContextBuilder
+except Exception as exc:  # pragma: no cover - explicit failure
+    raise ImportError(
+        "vector_service is required for SandboxOrchestrator; install via `pip install vector_service`"
+    ) from exc
 from .scoring import CandidateResponseScorer
 from .rl_integration import DatabaseRLResponseRanker
 from .self_learning import SelfLearningEngine

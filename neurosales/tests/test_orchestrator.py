@@ -4,9 +4,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from unittest.mock import patch  # noqa: E402
 
-from neurosales.orchestrator import SandboxOrchestrator  # noqa: E402
-from neurosales.sql_db import create_session as create_sql_session  # noqa: E402
-from context_builder_util import create_context_builder  # noqa: E402
+import pytest
+try:  # pragma: no cover - skip if vector_service missing
+    from neurosales.orchestrator import SandboxOrchestrator  # noqa: E402
+    from neurosales.sql_db import create_session as create_sql_session  # noqa: E402
+    from context_builder_util import create_context_builder  # noqa: E402
+except Exception:  # pragma: no cover - dependency missing
+    pytest.skip("vector_service not installed", allow_module_level=True)
 
 
 def test_orchestrator_chat_and_learning():

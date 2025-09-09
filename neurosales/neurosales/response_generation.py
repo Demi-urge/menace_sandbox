@@ -21,15 +21,11 @@ except Exception:  # pragma: no cover - optional heavy dep
 
 try:
     from vector_service import ContextBuilder, FallbackResult, ErrorResult
-except Exception:  # pragma: no cover - fallback when vector service missing
-    class ContextBuilder:  # type: ignore
-        pass
-
-    class FallbackResult(list):  # type: ignore[misc]
-        pass
-
-    class ErrorResult(Exception):  # type: ignore[misc]
-        pass
+except Exception as exc:  # pragma: no cover - explicit failure
+    raise ImportError(
+        "vector_service is required for response generation; "
+        "install via `pip install vector_service`"
+    ) from exc
 
 from snippet_compressor import compress_snippets
 
