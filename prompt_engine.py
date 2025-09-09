@@ -24,7 +24,8 @@ from dynamic_path_router import resolve_path, path_for_prompt
 
 from llm_interface import Prompt, LLMClient
 from snippet_compressor import compress_snippets
-from chunking import split_into_chunks, summarize_code
+from chunking import split_into_chunks
+from code_summarizer import summarize_code
 from target_region import TargetRegion, extract_target_region
 from billing.prompt_notice import prepend_payment_notice
 try:  # pragma: no cover - optional billing integration
@@ -870,7 +871,7 @@ class PromptEngine:
             for i, ch in enumerate(chunks):
                 summary_text = (
                     summarize_code(
-                        ch.text, self.llm, context_builder=self.context_builder
+                        ch.text, context_builder=self.context_builder
                     )
                     if self.llm
                     else ch.text.splitlines()[0][:80]
