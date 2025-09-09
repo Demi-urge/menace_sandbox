@@ -10,11 +10,15 @@ class DummyEscalation:
         self.messages = []
         self.attachments = []
         self.session_ids = []
+        self.vector_meta = []
 
-    def handle(self, msg, attachments=None, session_id=None):
+    def handle(
+        self, msg, attachments=None, session_id=None, vector_metadata=None
+    ):
         self.messages.append(msg)
         self.attachments.append(attachments)
         self.session_ids.append(session_id)
+        self.vector_meta.append(vector_metadata)
 
 
 class DummyDB:
@@ -83,14 +87,16 @@ def _stub_vector_service(monkeypatch):
             return self.context_builder.build(prompt, session_id="s"), "sid"
 
     class ContextBuilder:
-        calls: list[str] = []
+        calls: list[tuple[str, bool]] = []
 
         def __init__(self, *args, **kwargs):
             self.args = args
             self.kwargs = kwargs
 
-        def build(self, prompt, **_):
-            self.__class__.calls.append(prompt)
+        def build(self, prompt, session_id=None, include_vectors=False, **_):
+            self.__class__.calls.append((prompt, include_vectors))
+            if include_vectors:
+                return {"snippet": "ctx"}, session_id, [("obj", "vec", 0.1)]
             return {"snippet": "ctx"}
 
         def refresh_db_weights(self):
@@ -101,6 +107,10 @@ def _stub_vector_service(monkeypatch):
     vs = types.ModuleType("vector_service")
     vs.CognitionLayer = CognitionLayer
     vs.ContextBuilder = ContextBuilder
+    class EmbeddableDBMixin:
+        pass
+
+    vs.EmbeddableDBMixin = EmbeddableDBMixin
     vs.decorators = dec
     monkeypatch.setitem(sys.modules, "vector_service", vs)
     monkeypatch.setitem(sys.modules, "vector_service.decorators", dec)
@@ -126,10 +136,12 @@ def test_escalation_on_critical(monkeypatch):
     )
     reviewer.handle({"bot_id": "7", "severity": "critical"})
     assert vector_service.ContextBuilder.calls
+    assert vector_service.ContextBuilder.calls[0][1] is True
     assert db.updated and db.updated[0][0] == 7
     assert esc.messages and "review for bot 7" in esc.messages[0]
     assert esc.session_ids and esc.session_ids[0]
-    assert esc.attachments and json.loads(esc.attachments[0][0])["snippet"] == "ctx"
+    assert esc.attachments and "ctx" in json.loads(esc.attachments[0][0])["snippet"]
+    assert esc.vector_meta and esc.vector_meta[0] == [("obj", "vec", 0.1)]
 
 
 def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
@@ -183,7 +195,9 @@ def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
     attachments_list: list[str] = []
 
     class Escalator:
-        def handle(self, msg, attachments=None, session_id=None):
+        def handle(
+            self, msg, attachments=None, session_id=None, vector_metadata=None
+        ):
             if attachments:
                 attachments_list.extend(attachments)
 

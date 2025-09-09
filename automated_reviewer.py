@@ -91,24 +91,31 @@ class AutomatedReviewer:
 
             session_id = str(uuid.uuid4())
             ctx: str = ""
+            vectors: list[tuple[str, str, float]] = []
             try:
-                result = self.context_builder.build(
+                ctx_res = self.context_builder.build(
                     json.dumps({"bot_id": bot_id, "severity": severity}),
                     session_id=session_id,
+                    include_vectors=True,
                 )
-                if isinstance(result, (FallbackResult, ErrorResult)):
+                context_obj = ctx_res
+                if isinstance(ctx_res, tuple):
+                    context_obj, session_id, vectors = ctx_res
+                if isinstance(context_obj, (FallbackResult, ErrorResult)):
                     ctx = ""
-                elif isinstance(result, dict):
-                    ctx = json.dumps(compress_snippets(result))
+                elif isinstance(context_obj, dict):
+                    ctx = json.dumps(compress_snippets(context_obj))
                 else:
-                    ctx = result  # type: ignore[assignment]
+                    ctx = context_obj  # type: ignore[assignment]
             except Exception:
                 ctx = ""
+                vectors = []
             try:
                 self.escalation_manager.handle(
                     f"review for bot {bot_id}",
                     attachments=[ctx],
                     session_id=session_id,
+                    vector_metadata=vectors,
                 )
             except Exception:
                 self.logger.exception("escalation failed")

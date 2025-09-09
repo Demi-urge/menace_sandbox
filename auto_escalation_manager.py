@@ -132,6 +132,7 @@ class AutoEscalationManager:
         message: str,
         attachments: Iterable[str] | None = None,
         session_id: str | None = None,
+        vector_metadata: list[tuple[str, str, float]] | None = None,
     ) -> None:
         """Attempt automated recovery actions."""
         try:
