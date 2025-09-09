@@ -14,7 +14,7 @@ from pathlib import Path
 
 from dynamic_path_router import resolve_path
 from db_router import init_db_router
-from vector_service.context_builder import ContextBuilder
+from context_builder_util import create_context_builder
 
 # Expose a DBRouter for CLI operations early so imported modules can rely on
 # ``GLOBAL_ROUTER``.
@@ -432,9 +432,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
-    builder = ContextBuilder(
-        args.bots_db, args.code_db, args.errors_db, args.workflows_db
-    )
+    builder = create_context_builder()
     setattr(args, "builder", builder)
 
     if hasattr(args, "func"):
