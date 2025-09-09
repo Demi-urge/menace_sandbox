@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
+import uuid
 
 try:
     import pandas as pd  # type: ignore
@@ -26,10 +27,16 @@ from db_router import GLOBAL_ROUTER, init_db_router
 from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder
+    from vector_service.context_builder import ContextBuilder, FallbackResult, ErrorResult
 except Exception:  # pragma: no cover - allow stub in tests
     class ContextBuilder:  # type: ignore
         """Fallback stub used when context builder isn't available."""
+        pass
+
+    class FallbackResult(list):  # type: ignore
+        pass
+
+    class ErrorResult(Exception):  # type: ignore
         pass
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
@@ -323,8 +330,14 @@ class ResourceAllocationBot:
         if not isinstance(builder, ContextBuilder):
             self.logger.error("context_builder is required for improvement prompts")
             return "upgrade"
+        session_id = uuid.uuid4().hex
         try:
-            context = builder.build(bot)
+            ctx_res = builder.build(bot, session_id=session_id)
+            context = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+            if isinstance(context, (FallbackResult, ErrorResult)):
+                context = ""
+            elif context:
+                context = compress_snippets({"snippet": context}).get("snippet", context)
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("Context build failed for %s", bot)
             return "upgrade"
@@ -339,12 +352,12 @@ class ResourceAllocationBot:
         except Exception:
             pass
         engine = PromptEngine(context_builder=builder, llm=llm)
-        retrieval_ctx = compress_snippets({"snippet": context}).get("snippet", context)
         prompt = engine.build_prompt(
             f"Improve {bot}",
-            retrieval_context=retrieval_ctx,
+            retrieval_context=context,
             context_builder=builder,
         )
+        prompt.metadata["retrieval_session_id"] = session_id
         if engine.llm is None:
             return "upgrade"
         try:
