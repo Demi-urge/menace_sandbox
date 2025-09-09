@@ -228,31 +228,78 @@ class EmbeddingBackfill:
         batch_size: int,
         session_id: str = "",
     ) -> List[tuple[str, str]]:
-        original_add = getattr(db, "add_embedding", None)
+        if not hasattr(db, "iter_records") or not hasattr(db, "needs_refresh"):
+            try:
+                db.backfill_embeddings(batch_size=batch_size)  # type: ignore[call-arg]
+            except Exception:  # pragma: no cover - defensive fallback
+                try:
+                    db.backfill_embeddings()  # type: ignore[call-arg]
+                except Exception:
+                    pass
+            return []
+
+        processed = 0
         skipped: List[tuple[str, str]] = []
-
-        if callable(original_add):
-            def wrapped_add(record_id, record, kind, *, source_id=""):
-                text = record if isinstance(record, str) else str(record)
-                lic = license_check(text)
-                if lic:
-                    _log_violation(
-                        str(record_id),
-                        lic,
-                        license_fingerprint(text),
-                    )
-                    _RUN_SKIPPED.labels(db.__class__.__name__, lic).inc()
-                    skipped.append((str(record_id), lic))
-                    return
-                return original_add(record_id, record, kind, source_id=source_id)
-
-            db.add_embedding = wrapped_add  # type: ignore[attr-defined]
-
-        try:
-            db.backfill_embeddings(batch_size=batch_size)  # type: ignore[call-arg]
-        except TypeError:
-            db.backfill_embeddings()  # type: ignore[call-arg]
+        for record_id, record, kind in db.iter_records():
+            if processed >= batch_size:
+                break
+            if not db.needs_refresh(record_id, record):
+                continue
+            text = record if isinstance(record, str) else str(record)
+            lic = license_check(text)
+            if lic:
+                _log_violation(
+                    str(record_id), lic, license_fingerprint(text)
+                )
+                _RUN_SKIPPED.labels(db.__class__.__name__, lic).inc()
+                skipped.append((str(record_id), lic))
+                continue
+            try:
+                db.add_embedding(record_id, record, kind)
+            except Exception:  # pragma: no cover - best effort
+                continue
+            processed += 1
         return skipped
+
+    def check_out_of_sync(
+        self,
+        *,
+        dbs: List[str] | None = None,
+        batch_size: int | None = None,
+        backend: str | None = None,
+    ) -> List[str]:
+        """Trigger backfills for databases with stale embeddings.
+
+        The method scans registered :class:`EmbeddableDBMixin` implementations
+        and invokes :meth:`run` for any whose records require re-embedding.  A
+        list of database class names that were found to be out of sync is
+        returned so callers can log or otherwise act upon it.
+        """
+
+        be = backend or self.backend
+        names = dbs
+        out_of_sync: List[str] = []
+        subclasses = self._load_known_dbs(names=names)
+        for cls in subclasses:
+            try:
+                db = cls(vector_backend=be)  # type: ignore[call-arg]
+            except Exception:
+                try:
+                    db = cls()  # type: ignore[call-arg]
+                except Exception:
+                    continue
+            for record_id, record, _ in db.iter_records():
+                if db.needs_refresh(record_id, record):
+                    out_of_sync.append(cls.__name__)
+                    break
+        if out_of_sync:
+            self.run(
+                dbs=out_of_sync,
+                batch_size=batch_size,
+                backend=be,
+                trigger="auto",
+            )
+        return out_of_sync
 
     # ------------------------------------------------------------------
     @log_and_measure

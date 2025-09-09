@@ -218,6 +218,35 @@ class EmbeddableDBMixin:
                 summaries.append(summary)
         return " ".join(s for s in summaries if s)
 
+    def _extract_last_updated(self, record: Any) -> str | None:
+        """Best-effort extraction of a last-updated timestamp from ``record``.
+
+        Many database records expose their modification time under different
+        keys.  This helper normalises a handful of common field names and
+        returns an ISO formatted string when found.  Subclasses can override
+        this method for custom behaviour.
+        """
+
+        if isinstance(record, dict):
+            for key in (
+                "last_updated",
+                "last_modification_date",
+                "updated_at",
+                "updated",
+                "modified_at",
+                "modified",
+            ):
+                val = record.get(key)
+                if not val:
+                    continue
+                if isinstance(val, datetime):
+                    return val.isoformat()
+                try:
+                    return str(val)
+                except Exception:  # pragma: no cover - defensive
+                    return None
+        return None
+
     # ------------------------------------------------------------------
     # methods expected to be overridden
     def vector(self, record: Any) -> List[float]:
@@ -329,6 +358,7 @@ class EmbeddableDBMixin:
         source_id: str = "",
     ) -> None:
         """Embed ``record`` and store the vector and metadata."""
+        last_updated = self._extract_last_updated(record)
         text = self.license_text(record)
         if text is None and isinstance(record, str):
             text = record
@@ -353,6 +383,8 @@ class EmbeddableDBMixin:
                     "redacted": False,
                     "license": lic,
                 }
+                if last_updated:
+                    self._metadata[rid]["last_updated"] = last_updated
                 log_embedding_metrics(
                     self.__class__.__name__, 0, 0.0, 0.0, vector_id=str(record_id)
                 )
@@ -371,6 +403,8 @@ class EmbeddableDBMixin:
                     "redacted": False,
                     "semantic_risks": alerts,
                 }
+                if last_updated:
+                    self._metadata[rid]["last_updated"] = last_updated
                 log_embedding_metrics(
                     self.__class__.__name__, 0, 0.0, 0.0, vector_id=str(record_id)
                 )
@@ -410,6 +444,8 @@ class EmbeddableDBMixin:
             "redacted": True,
             "record": record,
         }
+        if last_updated:
+            self._metadata[rid]["last_updated"] = last_updated
         self._rebuild_index()
         save_start = perf_counter()
         self.save_index()
@@ -479,6 +515,31 @@ class EmbeddableDBMixin:
         if updated:
             self.save_index()
 
+    def needs_refresh(self, record_id: Any, record: Any | None = None) -> bool:
+        """Return ``True`` if ``record_id`` requires re-embedding.
+
+        A record is considered stale when no metadata is stored, the
+        ``embedding_version`` has changed, or the supplied ``record`` carries a
+        different ``last_updated`` timestamp to that stored in metadata.  When
+        ``record`` is ``None`` the check falls back to version mismatches only.
+        """
+
+        rid = str(record_id)
+        meta = self._metadata.get(rid)
+        if not meta:
+            return True
+        try:
+            if int(meta.get("embedding_version", 0)) != int(self.embedding_version):
+                return True
+        except Exception:
+            return True
+        if record is not None:
+            current = self._extract_last_updated(record)
+            stored = meta.get("last_updated")
+            if current and stored != current:
+                return True
+        return False
+
     # internal ---------------------------------------------------------
     def _record_staleness(self, rid: str, created_at: str | None) -> None:
         """Log how stale an embedding is when accessed."""
@@ -543,7 +604,7 @@ class EmbeddableDBMixin:
         """Generate embeddings for all records lacking them."""
         for record_id, record, kind in self.iter_records():
             rid = str(record_id)
-            if rid in self._metadata:
+            if not self.needs_refresh(record_id, record):
                 continue
             text = self.license_text(record)
             if text is None and isinstance(record, str):
@@ -568,6 +629,9 @@ class EmbeddableDBMixin:
                         "redacted": False,
                         "license": lic,
                     }
+                    last_updated = self._extract_last_updated(record)
+                    if last_updated:
+                        self._metadata[rid]["last_updated"] = last_updated
                     logger.warning(
                         "skipping embedding for %s due to license %s", record_id, lic
                     )
@@ -582,6 +646,9 @@ class EmbeddableDBMixin:
                         "redacted": False,
                         "semantic_risks": alerts,
                     }
+                    last_updated = self._extract_last_updated(record)
+                    if last_updated:
+                        self._metadata[rid]["last_updated"] = last_updated
                     logger.warning(
                         "skipping embedding for %s due to semantic risks", record_id
                     )
