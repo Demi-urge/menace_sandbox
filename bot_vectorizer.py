@@ -1,62 +1,84 @@
 from __future__ import annotations
 
-"""Feature vectorisation for bot definitions."""
+"""Embedding based vectoriser for bot definitions."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
+import re
+import numpy as np
 
-_DEFAULT_BOUNDS = {"num_tasks": 20.0, "estimated_profit": 1_000_000.0}
+from analysis.semantic_diff_filter import find_semantic_risks
+from snippet_compressor import compress_snippets
 
-def _one_hot(idx: int, length: int) -> List[float]:
-    vec = [0.0] * length
-    if 0 <= idx < length:
-        vec[idx] = 1.0
-    return vec
+try:  # pragma: no cover - heavy dependency
+    from sentence_transformers import SentenceTransformer  # type: ignore
+except Exception:  # pragma: no cover - fallback when package missing
+    SentenceTransformer = None  # type: ignore
 
-def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
-    val = str(value).lower().strip() or "other"
-    if val in mapping:
-        return mapping[val]
-    if len(mapping) < max_size:
-        mapping[val] = len(mapping)
-        return mapping[val]
-    return mapping["other"]
-
-def _scale(value: Any, bound: float) -> float:
+_MODEL = None
+_EMBED_DIM = 384
+if SentenceTransformer is not None:  # pragma: no cover - model download may be slow
     try:
-        f = float(value)
+        _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        _EMBED_DIM = int(_MODEL.get_sentence_embedding_dimension())
     except Exception:
-        return 0.0
-    f = max(-bound, min(bound, f))
-    return f / bound if bound else 0.0
+        _MODEL = None
+
+
+def _split_sentences(text: str) -> List[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+
+
+def _embed_texts(texts: List[str]) -> List[List[float]]:
+    if not texts:
+        return []
+    if _MODEL is None:  # pragma: no cover - dependency missing
+        return [[0.0] * _EMBED_DIM for _ in texts]
+    vecs = _MODEL.encode(texts)
+    return [list(map(float, v)) for v in np.atleast_2d(vecs)]
+
 
 @dataclass
 class BotVectorizer:
-    """Lightweight vectoriser for :mod:`bot_database` records."""
+    """Generate embeddings for bot configuration records."""
 
-    max_types: int = 20
-    max_status: int = 10
-    type_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
-    status_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
-
-    def fit(self, bots: Iterable[Dict[str, Any]]) -> "BotVectorizer":
-        for b in bots:
-            _get_index(b.get("type") or b.get("type_"), self.type_index, self.max_types)
-            _get_index(b.get("status"), self.status_index, self.max_status)
+    def fit(self, bots: Iterable[Dict[str, Any]]) -> "BotVectorizer":  # pragma: no cover - compatibility
         return self
 
-    @property
+    @property  # pragma: no cover - compatibility
     def dim(self) -> int:
-        return self.max_types + self.max_status + 2
+        return _EMBED_DIM
 
     def transform(self, bot: Dict[str, Any]) -> List[float]:
-        t_idx = _get_index(bot.get("type") or bot.get("type_"), self.type_index, self.max_types)
-        s_idx = _get_index(bot.get("status"), self.status_index, self.max_status)
-        vec: List[float] = []
-        vec.extend(_one_hot(t_idx, self.max_types))
-        vec.extend(_one_hot(s_idx, self.max_status))
-        vec.append(_scale(len(bot.get("tasks", [])), _DEFAULT_BOUNDS["num_tasks"]))
-        vec.append(_scale(bot.get("estimated_profit", 0.0), _DEFAULT_BOUNDS["estimated_profit"]))
-        return vec
+        parts: List[str] = []
+        for key in ("name", "description", "summary", "goal", "status", "type"):
+            val = bot.get(key)
+            if isinstance(val, str):
+                parts.append(val)
+        tasks = bot.get("tasks") or []
+        if isinstance(tasks, Iterable) and not isinstance(tasks, str):
+            parts.extend(str(t) for t in tasks)
+        elif isinstance(tasks, str):
+            parts.append(tasks)
+
+        text = "\n".join(parts)
+        if not text:
+            return [0.0] * _EMBED_DIM
+
+        chunks: List[str] = []
+        for sent in _split_sentences(text):
+            if find_semantic_risks([sent]):
+                continue
+            summary = compress_snippets({"snippet": sent}).get("snippet", sent)
+            if summary.strip():
+                chunks.append(summary)
+
+        if not chunks:
+            return [0.0] * _EMBED_DIM
+
+        vecs = _embed_texts(chunks)
+        agg = np.mean(vecs, axis=0) if vecs else np.zeros(_EMBED_DIM)
+        return [float(x) for x in agg.tolist()]
+
 
 __all__ = ["BotVectorizer"]

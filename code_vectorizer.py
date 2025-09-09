@@ -1,70 +1,70 @@
 from __future__ import annotations
-"""Vectoriser for source code snippets.
 
-Required fields::
-    language: str - programming language of the snippet
-    content: str - source code text
-"""
-from dataclasses import dataclass, field
-import logging
+"""Vectoriser for source code snippets using text embeddings."""
+
+from dataclasses import dataclass
 from typing import Any, Dict, List
+import numpy as np
 
-_DEFAULT_BOUNDS = {"lines": 1_000.0}
+from chunking import split_into_chunks
+from analysis.semantic_diff_filter import find_semantic_risks
+from snippet_compressor import compress_snippets
 
+try:  # pragma: no cover - heavy dependency
+    from sentence_transformers import SentenceTransformer  # type: ignore
+except Exception:  # pragma: no cover - fallback when package missing
+    SentenceTransformer = None  # type: ignore
 
-def _one_hot(idx: int, length: int) -> List[float]:
-    vec = [0.0] * length
-    if 0 <= idx < length:
-        vec[idx] = 1.0
-    return vec
-
-
-def _get_index(value: Any, mapping: Dict[str, int], max_size: int) -> int:
-    val = str(value).lower().strip() or "other"
-    if val in mapping:
-        return mapping[val]
-    if len(mapping) < max_size:
-        mapping[val] = len(mapping)
-        return mapping[val]
-    return mapping["other"]
-
-
-logger = logging.getLogger(__name__)
-
-
-def _scale(value: Any, bound: float) -> float:
-    try:
-        f = float(value)
-    except (TypeError, ValueError) as exc:
-        logger.warning(
-            "Value could not be converted to float for scaling",
-            extra={"value": value},
-            exc_info=exc,
-        )
-        return 0.0
+_MODEL = None
+_EMBED_DIM = 384
+if SentenceTransformer is not None:  # pragma: no cover - model download may be slow
+    try:  # pragma: no cover - defensive
+        _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        _EMBED_DIM = int(_MODEL.get_sentence_embedding_dimension())
     except Exception:
-        logger.exception(
-            "Unexpected error during value scaling", extra={"value": value}
-        )
-        raise
-    f = max(-bound, min(bound, f))
-    return f / bound if bound else 0.0
+        _MODEL = None
+
+
+def _embed_texts(texts: List[str]) -> List[List[float]]:
+    if not texts:
+        return []
+    if _MODEL is None:  # pragma: no cover - dependency missing
+        return [[0.0] * _EMBED_DIM for _ in texts]
+    vecs = _MODEL.encode(texts)
+    return [list(map(float, v)) for v in np.atleast_2d(vecs)]
 
 
 @dataclass
 class CodeVectorizer:
-    """Encodes language and basic size features for code snippets."""
+    """Generate embeddings for code content.
 
-    max_languages: int = 10
-    language_index: Dict[str, int] = field(default_factory=lambda: {"other": 0})
+    The ``transform`` method extracts code, splits it into chunks, filters out
+    risky lines and averages the remaining chunk embeddings.
+    """
+
+    max_tokens: int = 200
 
     def transform(self, rec: Dict[str, Any]) -> List[float]:
-        idx = _get_index(rec.get("language"), self.language_index, self.max_languages)
-        lines = len(str(rec.get("content", "")).splitlines())
-        vec: List[float] = []
-        vec.extend(_one_hot(idx, self.max_languages))
-        vec.append(_scale(lines, _DEFAULT_BOUNDS["lines"]))
-        return vec
+        code = str(rec.get("content") or "")
+        if not code:
+            return [0.0] * _EMBED_DIM
+
+        chunks: List[str] = []
+        for chunk in split_into_chunks(code, self.max_tokens):
+            if find_semantic_risks(chunk.text.splitlines()):
+                continue
+            summary = compress_snippets({"snippet": chunk.text}).get(
+                "snippet", chunk.text
+            )
+            if summary.strip():
+                chunks.append(summary)
+
+        if not chunks:
+            return [0.0] * _EMBED_DIM
+
+        vecs = _embed_texts(chunks)
+        agg = np.mean(vecs, axis=0) if vecs else np.zeros(_EMBED_DIM)
+        return [float(x) for x in agg.tolist()]
 
 
 __all__ = ["CodeVectorizer"]
