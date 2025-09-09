@@ -36,6 +36,10 @@ sys.modules.setdefault(
     "governed_retrieval",
     types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x),
 )
+sys.modules.setdefault(
+    "vector_service",
+    types.SimpleNamespace(SharedVectorService=object),
+)
 
 # stub sentence_transformers to avoid heavy import
 stub_st = types.ModuleType("sentence_transformers")
@@ -77,7 +81,7 @@ def test_build_prompt_injects_summary_and_logs(monkeypatch):
     msgs = client.build_prompt_with_memory(
         ["topic"], "new question", context_builder=client.context_builder
     )
-    assert msgs[0]["role"] == "system"
+    assert msgs[0]["role"] == "user"
     assert "early prompt" in msgs[0]["content"]
 
     client.ask(msgs)

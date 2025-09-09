@@ -36,8 +36,8 @@ sys.modules.setdefault(
     types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x),
 )
 
-import menace_sandbox.chatgpt_idea_bot as cib
-from log_tags import IMPROVEMENT_PATH
+import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
+from log_tags import IMPROVEMENT_PATH  # noqa: E402
 
 
 class DummyMemory:
@@ -72,8 +72,16 @@ def test_memory_based_context(monkeypatch):
     client.session = None  # force offline response
 
     def offline_response(msgs):
-        ctx = msgs[0]["content"] if msgs and msgs[0]["role"] == "system" else ""
-        return {"choices": [{"message": {"content": f"Follow-up: {ctx} now with more details"}}]}
+        ctx = ""
+        if msgs:
+            content = msgs[-1]["content"]
+            if "\n" in content:
+                ctx = content.split("\n", 1)[1]
+        return {
+            "choices": [
+                {"message": {"content": f"Follow-up: {ctx} now with more details"}}
+            ]
+        }
 
     monkeypatch.setattr(client, "_offline_response", offline_response)
 

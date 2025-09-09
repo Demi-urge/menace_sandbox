@@ -35,6 +35,10 @@ sys.modules.setdefault(
     "governed_retrieval",
     types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x),
 )
+sys.modules.setdefault(
+    "vector_service",
+    types.SimpleNamespace(SharedVectorService=object),
+)
 
 import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
 
@@ -63,10 +67,9 @@ def test_build_prompt_with_memory():
     builder = DummyBuilder()
     client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
     msgs = client.build_prompt_with_memory(["ai"], "hello", context_builder=builder)
-    assert msgs[0]["role"] == "system"
+    assert msgs[0]["role"] == "user"
+    assert "hello" in msgs[0]["content"]
     assert "ctx:ai" in msgs[0]["content"]
-    assert msgs[1]["role"] == "user"
-    assert msgs[1]["content"] == "hello"
 
 
 def test_ask_logs_interaction(monkeypatch):

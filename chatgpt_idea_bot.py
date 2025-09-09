@@ -472,13 +472,10 @@ class ChatGPTClient:
                 logger.exception("failed to fetch memory context")
 
         combined_ctx = "\n".join(part for part in [builder_ctx, mem_ctx] if part)
-        system_msgs: List[Dict[str, Any]] = []
         if combined_ctx:
-            system_msgs.append({"role": "system", "content": combined_ctx})
+            prompt = f"{prompt}\n{combined_ctx}"
 
-        messages: List[Dict[str, Any]] = system_msgs + [
-            {"role": "user", "content": prompt}
-        ]
+        messages: List[Dict[str, Any]] = [{"role": "user", "content": prompt}]
         messages[0].setdefault("metadata", {})["retrieval_session_id"] = session_id
         return messages
 
