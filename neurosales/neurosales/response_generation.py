@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -17,6 +17,8 @@ except Exception:  # pragma: no cover - optional heavy dep
     AutoTokenizer = None  # type: ignore
     AutoModelForCausalLM = None  # type: ignore
     torch = None  # type: ignore
+
+from snippet_compressor import compress_snippets
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +57,8 @@ def redundancy_filter(candidates: List[str], threshold: float = 0.7) -> List[str
 class ResponseCandidateGenerator:
     """Generate response candidates from scripts, language model, and history."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, context_builder: Any | None = None) -> None:
+        self.context_builder = context_builder
         self.static_scripts: Dict[str, List[str]] = {
             "curiosity": [
                 "Did you know our latest offer?",
@@ -117,13 +120,26 @@ class ResponseCandidateGenerator:
 
     # ------------------------------------------------------------------
     def _dynamic_candidates(
-        self, message: str, history: List[str], archetype: str, n: int = 3
+        self,
+        message: str,
+        history: List[str],
+        archetype: str,
+        n: int = 3,
+        *,
+        context_builder: Any | None = None,
     ) -> List[str]:
+        builder = context_builder or self.context_builder
         if self.tokenizer and self.model and torch is not None:
             try:
                 prompt = " ".join(history + [message, archetype])
+                if builder is not None:
+                    ctx_res = builder.build(message)
+                    ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+                    if ctx:
+                        ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
+                        prompt = f"{ctx}\n\n{prompt}"
                 input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-                outputs = self.model.generate(  # nocb
+                outputs = self.model.generate(
                     input_ids,
                     max_length=input_ids.shape[1] + 20,
                     num_return_sequences=n,
@@ -140,12 +156,19 @@ class ResponseCandidateGenerator:
 
     # ------------------------------------------------------------------
     def generate_candidates(
-        self, message: str, history: Optional[List[str]] = None, archetype: str = ""
+        self,
+        message: str,
+        history: Optional[List[str]] = None,
+        archetype: str = "",
+        *,
+        context_builder: Any | None = None,
     ) -> List[str]:
         history = history or []
-        candidates = []
+        builder = context_builder or self.context_builder
+        candidates: List[str] = []
         candidates.extend(self._static_candidates(message))
-        candidates.extend(self._dynamic_candidates(message, history, archetype))
+        candidates.extend(
+            self._dynamic_candidates(message, history, archetype, context_builder=builder)
+        )
         candidates.extend(self._past_candidates(message))
         return redundancy_filter(candidates)
-

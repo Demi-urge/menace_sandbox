@@ -1,8 +1,14 @@
 import os
 import sys
+import types
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from neurosales.response_generation import ResponseCandidateGenerator, redundancy_filter
+import neurosales.response_generation as rg  # noqa: E402
+from neurosales.response_generation import (  # noqa: E402
+    ResponseCandidateGenerator,
+    redundancy_filter,
+)
 
 
 def test_redundancy_filter_removes_duplicates():
@@ -18,3 +24,39 @@ def test_generate_candidates_pool():
     candidates = gen.generate_candidates("I need help", ["Hi"], "helper")
     assert candidates
     assert len(candidates) == len(set(candidates))
+
+
+def test_dynamic_candidates_include_context(monkeypatch):
+    class DummyBuilder:
+        def __init__(self):
+            self.calls = []
+
+        def build(self, message, **_):
+            self.calls.append(message)
+            return "RAWCTX"
+
+    class DummyTokenizer:
+        def encode(self, prompt, return_tensors=None):
+            return types.SimpleNamespace(prompt=prompt, shape=(1, len(prompt.split())))
+
+        def decode(self, output, skip_special_tokens=True):
+            return output.prompt
+
+    class DummyModel:
+        def generate(self, input_ids, **_):
+            return [input_ids]
+
+    def fake_compress(meta, **_):
+        txt = meta.get("snippet", "")
+        return {"snippet": txt.replace("RAW", "COMP")}
+
+    monkeypatch.setattr(rg, "compress_snippets", fake_compress)
+
+    builder = DummyBuilder()
+    gen = ResponseCandidateGenerator(context_builder=builder)
+    gen.tokenizer = DummyTokenizer()
+    gen.model = DummyModel()
+    res = gen._dynamic_candidates("hello", ["hi"], "arch", n=1)
+    assert builder.calls == ["hello"]
+    assert "COMPCTX" in res[0]
+    assert "RAWCTX" not in res[0]
