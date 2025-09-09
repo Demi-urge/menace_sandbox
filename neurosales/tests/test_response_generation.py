@@ -18,7 +18,11 @@ def test_redundancy_filter_removes_duplicates():
 
 
 def test_generate_candidates_pool():
-    gen = ResponseCandidateGenerator()
+    class DummyBuilder:
+        def build(self, message, **_):
+            return ""
+
+    gen = ResponseCandidateGenerator(context_builder=DummyBuilder())
     gen.add_past_response("Sure, I can assist you.")
     gen.add_past_response("Let me show you how to proceed.")
     candidates = gen.generate_candidates("I need help", ["Hi"], "helper")

@@ -51,7 +51,9 @@ class CortexAwareResponder:
             pinecone_index, api_key=pinecone_key, environment=pinecone_env
         )
         self.pg = pg or InMemoryResponseDB()
-        self.generator = ResponseCandidateGenerator()
+        self.generator = ResponseCandidateGenerator(
+            context_builder=create_context_builder()
+        )
         self.scorer = CandidateResponseScorer()
         self.queue = ResponsePriorityQueue()
 
