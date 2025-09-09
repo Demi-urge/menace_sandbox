@@ -5,8 +5,13 @@ from __future__ import annotations
 import logging
 import tkinter as tk
 from tkinter import ttk
-from typing import List
+from typing import List, Optional
 from pathlib import Path
+
+try:
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - stub fallback
+    ContextBuilder = object  # type: ignore
 
 from .conversation_manager_bot import ConversationManagerBot, ChatGPTClient
 from .env_config import OPENAI_API_KEY
@@ -28,7 +33,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
 class MenaceGUI(tk.Tk):
     """Main application window with navigation tabs."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, context_builder: Optional[ContextBuilder] = None) -> None:  # nocb
         super().__init__()
         self.title("Menace Interface")
         self.geometry("600x400")
@@ -36,8 +41,12 @@ class MenaceGUI(tk.Tk):
         self.memory = MenaceMemoryManager()
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
-        self.context_builder = create_context_builder()
-        self.context_builder.refresh_db_weights()
+        self.context_builder = context_builder or create_context_builder()
+        try:
+            self.context_builder.refresh_db_weights()
+        except Exception:  # pragma: no cover - log and disable prompts
+            logging.exception("refresh_db_weights failed")
+            self.chatgpt_enabled = False
         if self.chatgpt_enabled:
             client = ChatGPTClient(
                 api_key=OPENAI_API_KEY,
@@ -46,7 +55,12 @@ class MenaceGUI(tk.Tk):
             )
             self.conv_bot = ConversationManagerBot(client, report_bot=self.report_bot)
         else:
-            logging.warning("OPENAI_API_KEY not set. ChatGPT features disabled.")
+            if not OPENAI_API_KEY:
+                logging.warning("OPENAI_API_KEY not set. ChatGPT features disabled.")
+            else:
+                logging.warning(
+                    "Context builder unavailable. Prompt-dependent widgets disabled."
+                )
             self.conv_bot = None
         self.error_bot = ErrorBot(context_builder=self.context_builder)
         self._setup_widgets()
@@ -142,6 +156,16 @@ class MenaceGUI(tk.Tk):
         self.stat_btn.pack(padx=5, pady=5)
         self.stats_text = tk.Text(self.stats_frame, state="disabled")
         self.stats_text.pack(expand=True, fill="both", padx=5, pady=5)
+        if not self.chatgpt_enabled:
+            self.start_entry.configure(state="disabled")
+            self.end_entry.configure(state="disabled")
+            self.stat_btn.configure(state="disabled")
+            self.stats_text.configure(state="normal")
+            self.stats_text.insert(
+                tk.END,
+                "ChatGPT features disabled. Set OPENAI_API_KEY to enable.\n",
+            )
+            self.stats_text.configure(state="disabled")
 
     def _refresh_stats(self) -> None:
         if not self.chatgpt_enabled or self.conv_bot is None:
