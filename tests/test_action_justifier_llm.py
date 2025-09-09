@@ -53,10 +53,16 @@ def test_llm_justification_includes_vector_context(monkeypatch, tmp_path):
     builder = Builder()
     settings = {"model_path": "dummy"}
     action_log = {"action_type": "x", "action_description": "y"}
+    payload = {
+        "action_log": action_log,
+        "violation_flags": [],
+        "risk_score": 0.1,
+        "domain": "dom",
+    }
 
     res = aj._llm_justification(action_log, [], 0.1, "dom", settings, context_builder=builder)
     assert res == "explanation"
-    assert builder.queries == [json.dumps(action_log)]
+    assert builder.queries == [json.dumps(payload)]
     assert DummyTokenizer.last_prompt.startswith("builder-context\n\nAction type:")
 
 

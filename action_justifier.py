@@ -13,15 +13,6 @@ from string import Template
 from pydantic import BaseModel, ValidationError
 
 from dynamic_path_router import resolve_dir, resolve_path
-
-logger = logging.getLogger(__name__)
-
-try:  # transformers is optional and only used for offline models
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    _TRANSFORMERS_AVAILABLE = True
-except Exception:  # pragma: no cover - optional dependency
-    _TRANSFORMERS_AVAILABLE = False
-
 from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional dependency
@@ -37,6 +28,15 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback stub
     class ErrorResult(Exception):  # type: ignore[override]
         pass
+
+
+logger = logging.getLogger(__name__)
+
+try:  # transformers is optional and only used for offline models
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    _TRANSFORMERS_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    _TRANSFORMERS_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +93,7 @@ _TEMPLATES = {
     ),
 }
 
+
 def _severity_tone(score: float) -> str:
     if score > 0.9:
         return "urgent"
@@ -105,7 +106,12 @@ def _sanitize(text: str) -> str:
     return text.replace("\n", " ").replace("\r", " ").strip()
 
 
-def _template_justification(action_log: Dict[str, Any], violation_flags: List[str], risk_score: float, domain: str) -> str:
+def _template_justification(
+    action_log: Dict[str, Any],
+    violation_flags: List[str],
+    risk_score: float,
+    domain: str,
+) -> str:
     """Return a justification string using a static template."""
     reasons: List[str] = []
     if violation_flags:
@@ -159,7 +165,15 @@ def _llm_justification(
     )
     vec_ctx = ""
     try:
-        ctx_res = context_builder.build(json.dumps(action_log))
+        payload = json.dumps(
+            {
+                "action_log": action_log,
+                "violation_flags": violation_flags,
+                "risk_score": risk_score,
+                "domain": domain,
+            }
+        )
+        ctx_res = context_builder.build(payload)
         vec_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
         if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
             vec_ctx = ""
@@ -169,7 +183,10 @@ def _llm_justification(
         vec_ctx = ""
     prompt = f"{vec_ctx}\n\n{base_prompt}" if vec_ctx else base_prompt
     cache_key = hashlib.sha256(
-        json.dumps({"log": action_log, "v": violation_flags, "r": risk_score, "d": domain}, sort_keys=True).encode("utf-8")
+        json.dumps(
+            {"log": action_log, "v": violation_flags, "r": risk_score, "d": domain},
+            sort_keys=True,
+        ).encode("utf-8")
     ).hexdigest()
     cache_file = _CACHE_DIR / f"{cache_key}.txt"
     if cache_file.exists():
@@ -247,4 +264,3 @@ def save_justification_to_log(justification: str, action_id: str) -> None:
 
 
 __all__ = ["generate_justification", "save_justification_to_log"]
-
