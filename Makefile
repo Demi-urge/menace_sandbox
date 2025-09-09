@@ -1,4 +1,4 @@
-.PHONY: mypy synergy-graph install-self-improvement-deps
+.PHONY: mypy synergy-graph install-self-improvement-deps check-context-builder
 mypy:
 	mypy --config mypy.ini self_* sandbox_runner
 	python scripts/check_governed_embeddings.py
@@ -6,7 +6,10 @@ mypy:
 	python scripts/check_context_builder_usage.py
 
 synergy-graph:
-        python module_synergy_grapher.py --build
+	python module_synergy_grapher.py --build
 
 install-self-improvement-deps:
-        python scripts/install_self_improvement_deps.py
+	python scripts/install_self_improvement_deps.py
+
+check-context-builder:
+	python scripts/check_context_builder_usage.py
