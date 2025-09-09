@@ -118,7 +118,7 @@ sys.modules.setdefault("menace.logging_utils", _logging_utils)
 
 
 @contextmanager
-def _fake_env(workdir):
+def _fake_env(workdir, *, context_builder):
     def _run(cmd, *, env=None, capture_output=False, text=False, **_kw):
         stdout = ""
         if (
