@@ -3,6 +3,11 @@ import chunking as pc
 import textwrap
 
 
+class DummyBuilder:
+    def build(self, text: str) -> str:  # pragma: no cover - simple stub
+        return ""
+
+
 def test_token_counting_respects_limit() -> None:
     code = "\n".join(f"print({i})" for i in range(50))
     chunks = pc.split_into_chunks(code, 30)
@@ -53,10 +58,10 @@ def test_get_chunk_summaries_cache_hit(tmp_path, monkeypatch):
     cache_dir.mkdir()
     monkeypatch.setattr(pc, "CHUNK_CACHE", ChunkSummaryCache(cache_dir))
 
-    first = pc.get_chunk_summaries(file, 50)
+    first = pc.get_chunk_summaries(file, 50, context_builder=DummyBuilder())
     assert calls["n"] == len(first)
 
-    second = pc.get_chunk_summaries(file, 50)
+    second = pc.get_chunk_summaries(file, 50, context_builder=DummyBuilder())
     assert second == first
     assert calls["n"] == len(first)  # cache hit
 
@@ -76,13 +81,13 @@ def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "summarize_code", fake_summary)
     monkeypatch.setattr(pc, "CHUNK_CACHE", ChunkSummaryCache(cache_dir))
 
-    first = pc.get_chunk_summaries(file, 50)
+    first = pc.get_chunk_summaries(file, 50, context_builder=DummyBuilder())
     assert calls["n"] == len(first)
     first_files = list(cache_dir.iterdir())
     assert len(first_files) == 1
 
     file.write_text("def a():\n    return 2\n")  # change content -> cache invalidated
-    second = pc.get_chunk_summaries(file, 50)
+    second = pc.get_chunk_summaries(file, 50, context_builder=DummyBuilder())
     assert calls["n"] == len(first) + len(second)
     cache_files = list(cache_dir.iterdir())
     assert len(cache_files) == 1  # file replaced

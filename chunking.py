@@ -249,7 +249,7 @@ def summarize_snippet(
     text: str,
     llm: LLMClient | None = None,
     *,
-    context_builder: "ContextBuilder" | None = None,  # nocb
+    context_builder: "ContextBuilder" | None,
 ) -> str:
     """Return a short summary for ``text`` using available helpers with caching."""
 
@@ -257,8 +257,8 @@ def summarize_snippet(
     if not text:
         return ""
 
-    if llm is not None and context_builder is None:
-        raise ValueError("context_builder is required when llm is provided")
+    if context_builder is None:
+        raise ValueError("context_builder is required")
 
     digest = _hash_snippet(text)
     cached = _load_snippet_summary(digest)
@@ -278,31 +278,30 @@ def summarize_snippet(
     if not summary and llm is not None:
         from prompt_types import Prompt
         context = ""
-        if context_builder is not None:
-            try:
-                ctx_res = context_builder.build(text)
-                if isinstance(ctx_res, tuple):
-                    context = ctx_res[0]
-                else:
-                    context = ctx_res
-                try:  # pragma: no cover - optional dependency
-                    from vector_service.context_builder import (
-                        FallbackResult,
-                        ErrorResult,
-                    )
+        try:
+            ctx_res = context_builder.build(text)
+            if isinstance(ctx_res, tuple):
+                context = ctx_res[0]
+            else:
+                context = ctx_res
+            try:  # pragma: no cover - optional dependency
+                from vector_service.context_builder import (
+                    FallbackResult,
+                    ErrorResult,
+                )
 
-                    if isinstance(context, (FallbackResult, ErrorResult)):
-                        context = ""
-                except Exception:
-                    pass
-                if context:
-                    from snippet_compressor import compress_snippets
-
-                    context = compress_snippets({"snippet": context}).get(
-                        "snippet", context
-                    )
+                if isinstance(context, (FallbackResult, ErrorResult)):
+                    context = ""
             except Exception:
-                context = ""
+                pass
+            if context:
+                from snippet_compressor import compress_snippets
+
+                context = compress_snippets({"snippet": context}).get(
+                    "snippet", context
+                )
+        except Exception:
+            context = ""
         user_text = text
         if context:
             user_text += f"\n\nContext:\n{context}"
@@ -374,9 +373,12 @@ def get_chunk_summaries(
     llm: LLMClient | None = None,
     *,
     cache: ChunkSummaryCache | None = None,
-    context_builder: "ContextBuilder" | None = None,  # nocb
+    context_builder: "ContextBuilder" | None,
 ) -> List[Dict[str, str]]:
     """Return cached summaries for ``path`` split into ``max_tokens`` chunks."""
+
+    if context_builder is None:
+        raise ValueError("context_builder is required")
 
     cache_obj = cache or CHUNK_CACHE
     path_hash = cache_obj.hash_path(path)
