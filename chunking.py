@@ -249,16 +249,13 @@ def summarize_snippet(
     text: str,
     llm: LLMClient | None = None,
     *,
-    context_builder: "ContextBuilder" | None,
+    context_builder: "ContextBuilder",
 ) -> str:
     """Return a short summary for ``text`` using available helpers with caching."""
 
     text = text.strip()
     if not text:
         return ""
-
-    if context_builder is None:
-        raise ValueError("context_builder is required")
 
     digest = _hash_snippet(text)
     cached = _load_snippet_summary(digest)
@@ -373,12 +370,9 @@ def get_chunk_summaries(
     llm: LLMClient | None = None,
     *,
     cache: ChunkSummaryCache | None = None,
-    context_builder: "ContextBuilder" | None,
+    context_builder: "ContextBuilder",
 ) -> List[Dict[str, str]]:
     """Return cached summaries for ``path`` split into ``max_tokens`` chunks."""
-
-    if context_builder is None:
-        raise ValueError("context_builder is required")
 
     cache_obj = cache or CHUNK_CACHE
     path_hash = cache_obj.hash_path(path)

@@ -5,7 +5,6 @@ import threading
 
 from chunk_summary_cache import ChunkSummaryCache
 import chunking as pc
-import pytest
 
 
 class DummyBuilder:
@@ -97,8 +96,3 @@ def test_concurrent_requests_use_per_path_lock(tmp_path: Path, monkeypatch) -> N
 
     # summarizer invoked only once per chunk despite concurrent callers
     assert len(calls) == len(pc.chunk_file(file, 20))
-
-
-def test_summarize_code_requires_builder() -> None:
-    with pytest.raises(ValueError):
-        pc.summarize_code("print('x')", context_builder=None)
