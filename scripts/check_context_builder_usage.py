@@ -62,6 +62,8 @@ GENERATE_WRAPPER_SUFFIXES = ("client", "provider", "wrapper")
 GENERATE_METHODS = {"generate", "async_generate"}
 PARTIAL_NAMES = {"partial", "functools.partial"}
 ALIAS_NAMES = {"llm", "model"}
+PROMPT_HELPER_PREFIXES = ("generate_", "build_", "create_")
+PROMPT_HELPER_KEYWORDS = ("prompt", "candidate")
 
 
 def iter_python_files(root: Path):
@@ -120,13 +122,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             self.llm_instances: set[str] = set()
 
         @staticmethod
-        def _has_none_default(arg: ast.arg, default: ast.AST | None) -> bool:
-            return bool(
-                default
-                and isinstance(default, ast.Constant)
-                and default.value is None
-                and arg.arg == "context_builder"
-            )
+        def _has_default(arg: ast.arg, default: ast.AST | None) -> bool:
+            return bool(default is not None and arg.arg == "context_builder")
 
         def _check_args(self, node: ast.AST) -> None:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -138,7 +135,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 len(pos_args) - len(args.defaults)
             ) + list(args.defaults)
             for arg, default in zip(pos_args, defaults):
-                if self._has_none_default(arg, default):
+                if self._has_default(arg, default):
                     line_no = arg.lineno
                     line = (
                         lines[line_no - 1] if 0 < line_no <= len(lines) else ""
@@ -147,13 +144,13 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         errors.append(
                             (
                                 line_no,
-                                "context_builder default None disallowed or missing "
+                                "context_builder default disallowed or missing "
                                 "context_builder",
                             )
                         )
 
             for arg, default in zip(args.kwonlyargs, args.kw_defaults):
-                if self._has_none_default(arg, default):
+                if self._has_default(arg, default):
                     line_no = arg.lineno
                     line = (
                         lines[line_no - 1] if 0 < line_no <= len(lines) else ""
@@ -162,7 +159,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         errors.append(
                             (
                                 line_no,
-                                "context_builder default None disallowed or missing "
+                                "context_builder default disallowed or missing "
                                 "context_builder",
                             )
                         )
@@ -284,6 +281,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     target = name_full
                 elif name_full and is_generate_wrapper(name_full):
                     target = name_full
+                elif name_simple and any(
+                    name_simple.startswith(prefix)
+                    and any(key in name_simple for key in PROMPT_HELPER_KEYWORDS)
+                    for prefix in PROMPT_HELPER_PREFIXES
+                ):
+                    target = name_simple
                 elif isinstance(node.func, ast.Call):
                     inner = node.func
                     inner_name = full_name(inner.func)
