@@ -7,6 +7,7 @@ from typing import Tuple, TYPE_CHECKING
 
 from dynamic_path_router import resolve_path
 from snippet_compressor import compress_snippets
+from context_builder_util import ensure_fresh_weights
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from vector_service.context_builder import (
@@ -21,7 +22,6 @@ except FileNotFoundError:  # pragma: no cover - model may be absent in tests
     _MODEL_PATH = Path("micro_models/diff_summarizer_model")
 _tokenizer = None
 _hf_model = None
-_CB_SENTINEL = object()
 
 try:  # pragma: no cover - optional heavy dependency
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -50,7 +50,7 @@ def summarize_diff(
     after: str,
     max_new_tokens: int = 128,
     *,
-    context_builder: "ContextBuilder" | None = _CB_SENTINEL,
+    context_builder: "ContextBuilder",
 ) -> str:
     """Return a short description of the code change.
 
@@ -58,35 +58,35 @@ def summarize_diff(
     is returned so callers may fall back to alternative approaches.
     """
 
-    if context_builder is _CB_SENTINEL:
-        context_builder = None
+    if context_builder is None:
+        raise ValueError("context_builder is required")
+    ensure_fresh_weights(context_builder)
 
     tokenizer, hf_model = _load_model()
     if tokenizer is None or hf_model is None:
         return ""
 
     vec_ctx = ""
-    if context_builder is not None:
-        try:
-            ctx_res = context_builder.build_context(before + "\n" + after)
-            if isinstance(ctx_res, tuple):
-                vec_ctx = ctx_res[0]
-            else:
-                vec_ctx = ctx_res
-            try:  # optional dependency - isinstance checks
-                from vector_service.context_builder import (  # pragma: no cover
-                    FallbackResult,
-                    ErrorResult,
-                )
+    try:
+        ctx_res = context_builder.build_context(before + "\n" + after)
+        if isinstance(ctx_res, tuple):
+            vec_ctx = ctx_res[0]
+        else:
+            vec_ctx = ctx_res
+        try:  # optional dependency - isinstance checks
+            from vector_service.context_builder import (  # pragma: no cover
+                FallbackResult,
+                ErrorResult,
+            )
 
-                if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
-                    vec_ctx = ""
-            except Exception:  # pragma: no cover - best effort
-                pass
-        except Exception:
-            vec_ctx = ""
-        if vec_ctx:
-            vec_ctx = compress_snippets({"snippet": vec_ctx}).get("snippet", vec_ctx)
+            if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
+                vec_ctx = ""
+        except Exception:  # pragma: no cover - best effort
+            pass
+    except Exception:
+        vec_ctx = ""
+    if vec_ctx:
+        vec_ctx = compress_snippets({"snippet": vec_ctx}).get("snippet", vec_ctx)
 
     prompt = (
         "Summarize the code change.\nBefore:\n"
@@ -104,7 +104,10 @@ def summarize_diff(
         inputs = {k: v.to(hf_model.device) for k, v in inputs.items()}  # type: ignore[attr-defined]
     output = hf_model.generate(**inputs, max_new_tokens=max_new_tokens)  # type: ignore[call-arg]
     text = tokenizer.decode(output[0], skip_special_tokens=True)  # type: ignore[call-arg]
-    return text.split("Summary:")[-1].strip()
+    summary = text.split("Summary:")[-1].strip()
+    if vec_ctx:
+        summary += f"\n\nContext:\n{vec_ctx}"
+    return summary
 
 
 __all__ = ["summarize_diff"]
