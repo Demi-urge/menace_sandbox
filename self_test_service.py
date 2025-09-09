@@ -515,7 +515,7 @@ class SelfTestService:
         stub_scenarios: Mapping[str, Any] | None = None,
         fixture_hook: str | None = None,
         ephemeral: bool = True,
-        context_builder: ContextBuilder | None = None,  # nocb
+        context_builder: ContextBuilder,
     ) -> None:
         """Create a new service instance.
 
@@ -569,19 +569,20 @@ class SelfTestService:
         context_builder:
             :class:`~vector_service.context_builder.ContextBuilder` instance
             used by the internal :class:`~error_logger.ErrorLogger` and to
-            gather context for self‑test prompts. ``None`` is not allowed and
-            will raise :class:`ValueError`.
+            gather context for self‑test prompts.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.graph = graph or KnowledgeGraph()
-        if context_builder is None:
-            raise ValueError("context_builder is required")
-        self.context_builder = context_builder
+        if not isinstance(context_builder, ContextBuilder):
+            raise TypeError("context_builder must be a ContextBuilder instance")
         try:
-            ensure_fresh_weights(self.context_builder)
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("failed to refresh context builder db weights")
+            ensure_fresh_weights(context_builder)
+        except Exception as exc:  # pragma: no cover - validation
+            raise RuntimeError(
+                "provided ContextBuilder cannot query local databases"
+            ) from exc
+        self.context_builder = context_builder
         self.error_logger = ErrorLogger(
             db, knowledge_graph=self.graph, context_builder=self.context_builder
         )

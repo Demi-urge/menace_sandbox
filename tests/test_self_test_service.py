@@ -79,7 +79,7 @@ class DummyBuilder:
 def test_context_builder_required():
     with pytest.raises(TypeError):
         mod.SelfTestService()
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         mod.SelfTestService(context_builder=None)
 
 
