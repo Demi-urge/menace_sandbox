@@ -46,6 +46,7 @@ def test_cortex_pipeline_basic(monkeypatch):
                 pinecone_key="k",
                 pinecone_env="us-east",
                 pg=db,
+                context_builder=DummyCB(),
             )
             out = responder.generate_response("s1", "u1", "hello", memory, profile)
     assert out

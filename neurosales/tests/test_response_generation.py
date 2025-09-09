@@ -29,12 +29,30 @@ def test_generate_candidates_pool():
         def refresh_db_weights(self):
             return None
 
-    gen = ResponseCandidateGenerator(context_builder=DummyBuilder())
+    builder = DummyBuilder()
+    gen = ResponseCandidateGenerator(context_builder=builder)
     gen.add_past_response("Sure, I can assist you.")
     gen.add_past_response("Let me show you how to proceed.")
-    candidates = gen.generate_candidates("I need help", ["Hi"], "helper")
+    candidates = gen.generate_candidates(
+        "I need help", ["Hi"], "helper", context_builder=builder
+    )
     assert candidates
     assert len(candidates) == len(set(candidates))
+
+
+def test_generate_candidates_requires_builder():
+    class DummyBuilder:
+        def build(self, message, **_):
+            return ""
+
+        def refresh_db_weights(self):
+            return None
+
+    gen = ResponseCandidateGenerator(context_builder=DummyBuilder())
+    gen.add_past_response("Sure, I can assist you.")
+    with pytest.raises(TypeError):
+        # missing context_builder keyword
+        gen.generate_candidates("hi", [], "")
 
 
 def test_dynamic_candidates_include_context(monkeypatch):
@@ -70,9 +88,9 @@ def test_dynamic_candidates_include_context(monkeypatch):
     gen = ResponseCandidateGenerator(context_builder=builder)
     gen.tokenizer = DummyTokenizer()
     gen.model = DummyModel()
-    res = gen._dynamic_candidates(
-        "hello", ["hi"], "arch", n=1, context_builder=builder
+    res = gen.generate_candidates(
+        "hello", ["hi"], "arch", context_builder=builder
     )
     assert builder.calls == ["hello"]
-    assert "COMPCTX" in res[0]
-    assert "RAWCTX" not in res[0]
+    assert any("COMPCTX" in r for r in res)
+    assert all("RAWCTX" not in r for r in res)
