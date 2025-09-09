@@ -26,6 +26,21 @@ except Exception:  # pragma: no cover - optional dependency
 from .mirror_bot import MirrorDB
 from .snippet_compressor import compress_snippets
 
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import (
+        ContextBuilder,
+        FallbackResult,
+        ErrorResult,
+    )
+except Exception:  # pragma: no cover - fallback stubs
+    ContextBuilder = Any  # type: ignore
+
+    class FallbackResult(list):  # type: ignore[misc]
+        pass
+
+    class ErrorResult(Exception):  # type: ignore[override]
+        pass
+
 
 @dataclass
 class StyleModelConfig:
@@ -84,7 +99,7 @@ class UserStyleModel:
         self.model = model
         self.tokenizer = tokenizer
 
-    def generate(self, text: str, *, context_builder: Any) -> str:
+    def generate(self, text: str, *, context_builder: ContextBuilder) -> str:
         """Generate text in the user's style with contextual snippets."""
 
         if not self.model or not self.tokenizer:
@@ -92,14 +107,17 @@ class UserStyleModel:
 
         ctx = ""
         try:
-            raw_ctx = context_builder.build(text, include_vectors=False)
+            ctx_res = context_builder.build(text, include_vectors=False)
+            raw_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
+            if isinstance(raw_ctx, (FallbackResult, ErrorResult)):
+                raw_ctx = ""
+            elif raw_ctx:
+                raw_ctx = compress_snippets({"snippet": raw_ctx}).get(
+                    "snippet", raw_ctx
+                )
+            ctx = raw_ctx
         except Exception:  # pragma: no cover - best effort retrieval
-            raw_ctx = ""
-        if raw_ctx:
-            try:  # pragma: no cover - compression is optional
-                ctx = compress_snippets({"snippet": raw_ctx}).get("snippet", raw_ctx)
-            except Exception:
-                ctx = raw_ctx
+            ctx = ""
 
         prompt = f"{ctx}\n\n{text}" if ctx else text
         inputs = self.tokenizer(prompt, return_tensors="pt")
