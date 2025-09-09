@@ -44,10 +44,8 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      - name: Install pre-commit
-        run: pip install pre-commit
       - name: Enforce ContextBuilder usage
-        run: pre-commit run check-context-builder-usage --all-files
+        run: python scripts/check_context_builder_usage.py
         # Fails the build if any prompt-generating call lacks a context_builder.
 
   tests:
