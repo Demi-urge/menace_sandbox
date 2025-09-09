@@ -15,6 +15,11 @@ import requests
 import rate_limit
 
 from llm_interface import Prompt, LLMResult, LLMClient
+try:  # pragma: no cover - optional during tests
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - allow stub
+    class ContextBuilder:  # type: ignore
+        pass
 
 
 @dataclass
@@ -38,7 +43,9 @@ class OllamaClient(_BaseLocalClient, LLMClient):
         LLMClient.__init__(self, model)
         _BaseLocalClient.__init__(self, model=model, base_url=base_url)
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:
         payload = {"model": self.model, "prompt": prompt.text}
         raw = self._post("api/generate", payload)
         text = raw.get("response", "") or raw.get("text", "")
@@ -63,7 +70,9 @@ class VLLMClient(_BaseLocalClient, LLMClient):
         LLMClient.__init__(self, model)
         _BaseLocalClient.__init__(self, model=model, base_url=base_url)
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:
         payload = {"model": self.model, "prompt": prompt.text}
         raw = self._post("generate", payload)
         text = raw.get("text") or raw.get("generated_text", "")
