@@ -8,7 +8,9 @@ pytest.importorskip("tkinter")
 @pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="requires display")
 def test_gui_init(monkeypatch):
     from menace import menace_gui as mg
-    gui = mg.MenaceGUI()
+    builder = mock.MagicMock()
+    monkeypatch.setattr(mg, "OPENAI_API_KEY", "")
+    gui = mg.MenaceGUI(context_builder=builder)
     names = [gui.notebook.tab(i, "text") for i in gui.notebook.tabs()]
     assert names == [
         "Communication",

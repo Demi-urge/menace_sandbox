@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import tkinter as tk
 from tkinter import ttk
-from typing import List, Optional
+from typing import List
 from pathlib import Path
 
 try:
@@ -22,7 +22,6 @@ from .bot_database import BotDB
 from .resources_bot import ROIHistoryDB
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
-from context_builder_util import create_context_builder
 from .scope_utils import Scope, build_scope_clause, apply_scope
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
@@ -33,7 +32,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
 class MenaceGUI(tk.Tk):
     """Main application window with navigation tabs."""
 
-    def __init__(self, *, context_builder: Optional[ContextBuilder] = None) -> None:  # nocb
+    def __init__(self, *, context_builder: ContextBuilder) -> None:
         super().__init__()
         self.title("Menace Interface")
         self.geometry("600x400")
@@ -41,7 +40,7 @@ class MenaceGUI(tk.Tk):
         self.memory = MenaceMemoryManager()
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
-        self.context_builder = context_builder or create_context_builder()
+        self.context_builder = context_builder
         try:
             self.context_builder.refresh_db_weights()
         except Exception:  # pragma: no cover - log and disable prompts
