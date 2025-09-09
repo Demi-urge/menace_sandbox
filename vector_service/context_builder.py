@@ -29,6 +29,7 @@ from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
 from patch_safety import PatchSafety
 from .ranking_utils import rank_patches
+from .embedding_backfill import ensure_embeddings_fresh
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -1025,6 +1026,7 @@ class ContextBuilder:
             self.refresh_db_weights()
         except Exception:
             pass
+        ensure_embeddings_fresh(self.db_weights.keys())
         try:
             self.patch_safety.load_failures()
         except Exception:

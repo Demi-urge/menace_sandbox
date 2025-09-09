@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import List, Sequence
+from typing import Iterable, List, Sequence
 import importlib
 import asyncio
 from pathlib import Path
@@ -475,10 +475,54 @@ async def schedule_backfill(
     await asyncio.gather(*[_run(name) for name in names])
 
 
+def ensure_embeddings_fresh(
+    dbs: Iterable[str], *, retries: int = 2, delay: float = 0.5
+) -> None:
+    """Ensure embedding metadata is present and up to date for ``dbs``.
+
+    Compares the modification time of each database file with its associated
+    embedding metadata file.  Databases with missing or stale embeddings trigger
+    :func:`schedule_backfill`.  A :class:`RuntimeError` is raised if embeddings
+    remain absent after ``retries`` attempts.
+    """
+
+    names = [d for d in dbs if d]
+    if not names:
+        return
+
+    def _stale(check: Iterable[str]) -> list[str]:
+        pending: list[str] = []
+        for name in check:
+            db_path = resolve_path(f"{name}.db")
+            meta_path = resolve_path(f"{name}_embeddings.json")
+            try:
+                db_mtime = db_path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            meta_mtime = meta_path.stat().st_mtime if meta_path.exists() else 0.0
+            if meta_mtime < db_mtime:
+                pending.append(name)
+        return pending
+
+    pending = _stale(names)
+    if not pending:
+        return
+
+    for _ in range(max(retries, 1)):
+        asyncio.run(schedule_backfill(dbs=pending))
+        time.sleep(delay)
+        pending = _stale(pending)
+        if not pending:
+            return
+
+    raise RuntimeError(f"embeddings missing for: {', '.join(pending)}")
+
+
 __all__ = [
     "EmbeddingBackfill",
     "EmbeddableDBMixin",
     "schedule_backfill",
+    "ensure_embeddings_fresh",
     "KNOWN_DB_KINDS",
     "watch_databases",
     "watch_event_bus",
