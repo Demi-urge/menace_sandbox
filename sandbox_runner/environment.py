@@ -584,12 +584,32 @@ POOL_LOCK_FILE = _env_path("SANDBOX_POOL_LOCK", "sandbox_data/pool.lock")
 
 _INPUT_HISTORY_DB: InputHistoryDB | None = None
 
-# Shared error logger and category counters for sandbox runs
+# Shared error logger and category counters for sandbox runs.  The logger is
+# initialised lazily so a ``ContextBuilder`` can be supplied by higher level
+# orchestration code instead of being constructed at import time.
 KNOWLEDGE_GRAPH = KnowledgeGraph()
-ERROR_LOGGER = ErrorLogger(
-    knowledge_graph=KNOWLEDGE_GRAPH,
-    context_builder=create_context_builder(),
-)
+ERROR_LOGGER: ErrorLogger | None = None
+
+
+def get_error_logger(context_builder: ContextBuilder | None = None) -> ErrorLogger:
+    """Return a shared :class:`ErrorLogger` instance.
+
+    When *context_builder* is ``None`` a new builder will be created on demand.
+    This allows callers to explicitly provide their own builder while keeping a
+    fallback for legacy usages.
+    """
+
+    global ERROR_LOGGER
+    if ERROR_LOGGER is None:
+        if context_builder is None:
+            context_builder = create_context_builder()
+        ERROR_LOGGER = ErrorLogger(
+            knowledge_graph=KNOWLEDGE_GRAPH,
+            context_builder=context_builder,
+        )
+    return ERROR_LOGGER
+
+
 ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
 # Track how many times each module/scenario combination was executed
@@ -728,6 +748,8 @@ def create_ephemeral_repo(
 @contextmanager
 def create_ephemeral_env(
     workdir: Path,
+    *,
+    context_builder: ContextBuilder | None = None,
 ) -> Iterable[tuple[Path, Callable[..., subprocess.CompletedProcess]]]:
     """Prepare an isolated repo copy with dependencies installed.
 
@@ -741,6 +763,7 @@ def create_ephemeral_env(
     :mod:`logging_utils` so metrics can be exported by callers.
     """
 
+    get_error_logger(context_builder)
     backend = os.getenv("SANDBOX_BACKEND", "venv").lower()
     use_docker = backend == "docker" and shutil.which("docker")
 
@@ -1053,11 +1076,18 @@ def load_scenario_summary() -> Dict[str, Any]:
         return {}
 
 
-def record_error(exc: Exception, *, fatal: bool = False) -> None:
+def record_error(
+    exc: Exception,
+    *,
+    fatal: bool = False,
+    context_builder: ContextBuilder | None = None,
+) -> None:
     """Log *exc* via :class:`ErrorLogger` and track its category and severity."""
+
+    logger_obj = get_error_logger(context_builder)
     stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    _, category, _ = ERROR_LOGGER.classifier.classify_details(exc, stack)
-    ERROR_LOGGER.log(exc, None, None)
+    _, category, _ = logger_obj.classifier.classify_details(exc, stack)
+    logger_obj.log(exc, None, None)
     ERROR_CATEGORY_COUNTS[category.value] += 1
     severity = "fatal" if fatal else "recoverable"
     try:
@@ -1078,11 +1108,21 @@ def _get_history_db() -> InputHistoryDB:
     return _INPUT_HISTORY_DB
 
 
-if DiagnosticManager is not None:
+_DIAGNOSTIC: DiagnosticManager | None = None
+
+
+def init_diagnostic_manager(
+    context_builder: ContextBuilder | None = None,
+) -> None:
+    """Initialise the optional ``DiagnosticManager`` if available."""
+
+    global _DIAGNOSTIC
+    if DiagnosticManager is None or _DIAGNOSTIC is not None:
+        return
+    if context_builder is None:
+        context_builder = create_context_builder()
     try:
-        _DIAGNOSTIC = DiagnosticManager(
-            context_builder=create_context_builder()
-        )
+        _DIAGNOSTIC = DiagnosticManager(context_builder=context_builder)
     except (OSError, RuntimeError) as exc:  # pragma: no cover - diagnostics optional
         logger.warning(
             "diagnostic manager unavailable",
@@ -1090,8 +1130,6 @@ if DiagnosticManager is not None:
             exc_info=exc,
         )
         _DIAGNOSTIC = None
-else:
-    _DIAGNOSTIC = None
 
 
 def _log_diagnostic(issue: str, success: bool) -> None:
@@ -6931,6 +6969,7 @@ def run_repo_section_simulations(
         discover_metrics_plugins,
         collect_plugin_metrics,
     )
+    get_error_logger(context_builder)
     try:
         from menace.environment_generator import _PROFILE_ALIASES, CANONICAL_PROFILES
     except Exception:  # pragma: no cover - environment generator optional
@@ -7752,6 +7791,7 @@ def try_integrate_into_workflows(
     intent_clusterer: IntentClusterer | None = None,
     intent_k: float = 0.5,
     synergy_k: float | None = None,
+    context_builder: ContextBuilder | None = None,
 ) -> list[int]:
     """Append orphan ``modules`` to related workflows if possible.
 
@@ -7781,6 +7821,7 @@ def try_integrate_into_workflows(
     import asyncio
 
     repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
+    context_builder = context_builder or create_context_builder()
 
     side_effects = side_effects or {}
     try:
@@ -7986,7 +8027,7 @@ def try_integrate_into_workflows(
     test_paths = [
         (repo / m).as_posix() for mods in candidates.values() for m in mods
     ]
-    builder = create_context_builder()
+    builder = context_builder
     svc = SelfTestService(
         include_orphans=False,
         discover_orphans=False,
@@ -8124,6 +8165,7 @@ def run_workflow_simulations(
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
     from sandbox_settings import SandboxSettings
+    get_error_logger(context_builder)
     tracker = tracker or ROITracker()
     if module_threshold is None:
         k = getattr(SandboxSettings(), "synergy_dev_multiplier", 1.0)
@@ -8547,6 +8589,7 @@ def auto_include_modules(
     validate: bool = False,
     *,
     router: DBRouter | None = None,
+    context_builder: ContextBuilder | None = None,
 ) -> tuple["ROITracker", Dict[str, list[str]]]:
     """Automatically include ``modules`` into the workflow system.
 
@@ -8619,6 +8662,8 @@ def auto_include_modules(
     mod_paths = {Path(m).as_posix() for m in modules}
     isolated_mods: set[str] = set()
 
+    context_builder = context_builder or create_context_builder()
+    get_error_logger(context_builder)
     data_dir = _env_path("SANDBOX_DATA_DIR", "sandbox_data")
     map_file = data_dir / "module_map.json"
     existing_mods: set[str] = set()
@@ -8752,7 +8797,7 @@ def auto_include_modules(
     failed_mods: list[str] = []
     heavy_side_effects: dict[str, float] = {}
 
-    builder = create_context_builder()
+    builder = context_builder
     for mod in mods:
         path = repo / mod
         need_validate = validate or mod in new_paths
@@ -8907,7 +8952,7 @@ def auto_include_modules(
     except Exception:
         logger.exception('unexpected error')
 
-    baseline_result = run_workflow_simulations(router=router, context_builder=create_context_builder())
+    baseline_result = run_workflow_simulations(router=router, context_builder=context_builder)
     baseline_tracker = (
         baseline_result[0] if isinstance(baseline_result, tuple) else baseline_result
     )
@@ -8926,7 +8971,7 @@ def auto_include_modules(
     low_roi_mods: list[str] = []
     for mod in mods:
         ids = generate_workflows_for_modules([mod], router=router)
-        result = run_workflow_simulations(router=router, context_builder=create_context_builder())
+        result = run_workflow_simulations(router=router, context_builder=context_builder)
         tracker = result[0] if isinstance(result, tuple) else result
         new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
         delta = new_roi - baseline_roi
@@ -8968,7 +9013,7 @@ def auto_include_modules(
         return baseline_tracker, tested
 
     pre_integrate_roi = baseline_roi
-    try_integrate_into_workflows(mods, router=router)
+    try_integrate_into_workflows(mods, router=router, context_builder=context_builder)
     for mod in mods:
         if mod in isolated_mods:
             try:
@@ -9007,7 +9052,7 @@ def auto_include_modules(
     except Exception:
         logger.exception('unexpected error')
 
-    result = run_workflow_simulations(router=router, context_builder=create_context_builder())
+    result = run_workflow_simulations(router=router, context_builder=context_builder)
     tracker = result[0] if isinstance(result, tuple) else result
     new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
     if new_roi < pre_integrate_roi:
