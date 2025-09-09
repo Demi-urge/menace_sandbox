@@ -115,7 +115,7 @@ class SandboxOrchestrator:
             history,
             profile.archetype,
             context_builder=self.context_builder,
-        )  # nocb
+        )
         scores = self.scorer.score_candidates(text, cands, profile, history)
 
         self._capture_feedback(user_id, text, list(scores))

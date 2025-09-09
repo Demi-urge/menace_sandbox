@@ -12,6 +12,11 @@ of whether it is accessed as an attribute.  Additionally, direct calls to
 check ignores files located in directories named ``tests`` or ``unit_tests``.
 
 
+Any ``# nocb`` comments found in production modules are likewise reported
+unless the file path has been explicitly whitelisted.  Test directories are
+still excluded from the scan.
+
+
 The linter also detects calls to ``LLMClient.generate``/``async_generate`` or
 similar ``.generate`` wrappers whose class name ends with ``Client``,
 ``Provider`` or ``Wrapper`` and requires a ``context_builder`` keyword.  These
@@ -41,11 +46,16 @@ within the function body are flagged to ensure that callers explicitly inject a
 from __future__ import annotations
 
 import ast
+import io
 import sys
+import tokenize
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 NOCB_MARK = "# nocb"
+
+# Paths relative to repo root where ``# nocb`` markers are permitted.
+NOCB_WHITELIST: set[str] = {"scripts/check_context_builder_usage.py"}
 
 DEFAULT_BUILDER_NAME = "get_default_context_builder"
 HELPER_NAMES = {
@@ -88,6 +98,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
 
     lines = text.splitlines()
     errors: list[tuple[int, str]] = []
+
+    rel = path.relative_to(ROOT).as_posix()
+    if rel not in NOCB_WHITELIST:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT and NOCB_MARK in tok.string:
+                errors.append((tok.start[0], "# nocb marker disallowed"))
 
     def full_name(node: ast.AST) -> str | None:
         if isinstance(node, ast.Name):

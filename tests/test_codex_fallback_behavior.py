@@ -141,9 +141,9 @@ def test_timeout_error_prompts_simplified_and_builtin_fallback(monkeypatch):
     assert mock_llm.generate.call_count == 6
 
 
-def test_build_simplified_prompt_clears_context():
+def test_strip_prompt_context_clears_context():
     prompt = Prompt('user request', system='sys', examples=['a', 'b'])
-    simplified = self_coding_engine.build_simplified_prompt(prompt)  # nocb
+    simplified = self_coding_engine.strip_prompt_context(prompt)
     assert simplified.system == ''
     assert simplified.examples == []
     assert simplified.user == 'user request'
