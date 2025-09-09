@@ -2153,27 +2153,31 @@ def bootstrap(
 
     from vector_service.context_builder import ContextBuilder
 
-    tester = SelfTestService(
-        context_builder=ContextBuilder(
-            "bots.db", "code.db", "errors.db", "workflows.db"
+    builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+    try:
+        builder.refresh_db_weights()
+    except Exception:  # pragma: no cover - log and skip self-test when init fails
+        logger.exception(
+            "ContextBuilder initialisation failed; self-test loop disabled"
         )
-    )
-    test_loop = asyncio.new_event_loop()
+    else:
+        tester = SelfTestService(context_builder=builder)
+        test_loop = asyncio.new_event_loop()
 
-    def _tester_thread() -> None:
-        asyncio.set_event_loop(test_loop)
-        tester.run_continuous(loop=test_loop)
-        test_loop.run_forever()
+        def _tester_thread() -> None:
+            asyncio.set_event_loop(test_loop)
+            tester.run_continuous(loop=test_loop)
+            test_loop.run_forever()
 
-    t = threading.Thread(target=_tester_thread, daemon=True)
-    t.start()
+        t = threading.Thread(target=_tester_thread, daemon=True)
+        t.start()
 
-    def _stop_tests() -> None:
-        test_loop.call_soon_threadsafe(lambda: asyncio.create_task(tester.stop()))
-        test_loop.call_soon_threadsafe(test_loop.stop)
-        t.join(timeout=1.0)
+        def _stop_tests() -> None:
+            test_loop.call_soon_threadsafe(lambda: asyncio.create_task(tester.stop()))
+            test_loop.call_soon_threadsafe(test_loop.stop)
+            t.join(timeout=1.0)
 
-    cleanup_funcs.append(_stop_tests)
+        cleanup_funcs.append(_stop_tests)
 
     def _noop():
         return None
