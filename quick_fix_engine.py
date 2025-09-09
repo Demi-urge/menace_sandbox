@@ -22,6 +22,7 @@ from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 from .snippet_compressor import compress_snippets
 
 from .codebase_diff_checker import generate_code_diff, flag_risky_changes
+from context_builder_util import ensure_fresh_weights
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -35,7 +36,12 @@ from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
 try:  # pragma: no cover - fail fast if vector service missing
-    from vector_service.context_builder import ContextBuilder, Retriever, FallbackResult, EmbeddingBackfill
+    from vector_service.context_builder import (
+        ContextBuilder,
+        Retriever,
+        FallbackResult,
+        EmbeddingBackfill,
+    )
 except Exception as exc:  # pragma: no cover - provide actionable error
     raise RuntimeError(
         "vector_service is required for quick_fix_engine. "
@@ -363,7 +369,7 @@ class QuickFixEngine:
         self.retriever = retriever
         logger = logging.getLogger(self.__class__.__name__)
         try:
-            context_builder.refresh_db_weights()
+            ensure_fresh_weights(context_builder)
         except Exception as exc:  # pragma: no cover - validation
             raise RuntimeError(
                 "provided ContextBuilder cannot query local databases"
