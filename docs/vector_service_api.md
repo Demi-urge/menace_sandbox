@@ -4,7 +4,8 @@ The `vector_service_api` module exposes a tiny [FastAPI](https://fastapi.tiangol
 application that wraps helpers from [`vector_service`](vector_service.md).
 Each endpoint returns a JSON object with a `status` field and timing metrics.
 Before sending requests, initialise the app with an explicit
-`ContextBuilder`:
+`ContextBuilder`.  The builder and related services are stored on
+`app.state` so handlers can access them via `request.app.state`:
 
 ```python
 from context_builder_util import create_context_builder

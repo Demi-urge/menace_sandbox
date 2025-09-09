@@ -366,7 +366,8 @@ message if installation fails.
   accessing databases or retrievers directly. See
   [docs/vector_service.md](docs/vector_service.md) for detailed API
   documentation. A lightweight FastAPI app in `vector_service_api.py`,
-  initialised via `create_app(ContextBuilder(...))`, provides `/search`,
+  initialised via `create_app(ContextBuilder(...))` which stores the builder on
+  `app.state`, provides `/search`,
   `/build-context`, `/track-contributors` and `/backfill-embeddings` endpoints.
 - Overview of the vectorised cognition pipeline – from embedding backfills to
   ranking with ROI feedback – is available in
