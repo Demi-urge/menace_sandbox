@@ -6,7 +6,7 @@ from .memory import DatabaseConversationMemory
 from .embedding_memory import EmbeddingConversationMemory
 from .user_preferences import PreferenceEngine, PreferenceProfile
 from .response_generation import ResponseCandidateGenerator
-from context_builder_util import create_context_builder
+from vector_service import ContextBuilder
 from .scoring import CandidateResponseScorer
 from .rl_integration import DatabaseRLResponseRanker
 from .self_learning import SelfLearningEngine
@@ -20,6 +20,7 @@ class SandboxOrchestrator:
     def __init__(
         self,
         *,
+        context_builder: ContextBuilder,
         persistent: bool = False,
         session_factory: Optional[callable] = None,
         db_url: Optional[str] = None,
@@ -27,10 +28,10 @@ class SandboxOrchestrator:
         self.persistent = persistent
         self.session_factory = session_factory
         self.db_url = db_url
+        self.context_builder = context_builder
         self.memories: Dict[str, DatabaseConversationMemory | EmbeddingConversationMemory] = {}
         self.reactions: Dict[str, ReactionHistory] = {}
         self.preferences = PreferenceEngine()
-        self.context_builder = create_context_builder()
         self.generator = ResponseCandidateGenerator(
             context_builder=self.context_builder
         )
