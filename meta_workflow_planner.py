@@ -46,11 +46,11 @@ except Exception:  # pragma: no cover - allow running without retriever
     logger.warning("vector_service.retriever import failed; similar search disabled")
     Retriever = None  # type: ignore
     ContextBuilder = None  # type: ignore
-
-try:  # pragma: no cover - best effort to load default context builder
+try:  # pragma: no cover - initialise default context builder
     from config.create_context_builder import create_context_builder  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    create_context_builder = None  # type: ignore
+    _DEFAULT_CONTEXT_BUILDER = create_context_builder()
+except Exception as exc:  # pragma: no cover - fail fast when unavailable
+    raise RuntimeError("ContextBuilder is required") from exc
 
 try:  # pragma: no cover - optional heavy dependency
     from roi_tracker import ROITracker  # type: ignore
@@ -153,6 +153,7 @@ class MetaWorkflowPlanner:
     roi_tracker: ROITracker | None = None
     stability_db: WorkflowStabilityDB | None = None
     code_db: CodeDB | None = None
+    context_builder: ContextBuilder | None = None
     # Map of workflow chains to ROI histories for convergence tracking
     cluster_map: Dict[tuple[str, ...], Dict[str, Any]] = field(default_factory=dict)
 
@@ -184,6 +185,8 @@ class MetaWorkflowPlanner:
                 self.code_db = CodeDB()
             except Exception:
                 self.code_db = None
+        if self.context_builder is None:
+            self.context_builder = _DEFAULT_CONTEXT_BUILDER
         self._load_cluster_map()
 
     # ------------------------------------------------------------------
@@ -469,7 +472,8 @@ class MetaWorkflowPlanner:
         self,
         workflows: Mapping[str, Mapping[str, Any]],
         *,
-        retriever: Retriever,
+        context_builder: ContextBuilder | None = None,
+        retriever: Retriever | None = None,
         epsilon: float = 0.5,
         min_samples: int = 2,
     ) -> List[List[str]]:
@@ -493,6 +497,12 @@ class MetaWorkflowPlanner:
         similarity scores so that the function remains best effort.
         """
 
+        context_builder = context_builder or self.context_builder
+        if retriever is None and Retriever is not None:
+            try:
+                retriever = Retriever(context_builder=context_builder)
+            except Exception:
+                retriever = None
         if retriever is None or Retriever is None:
             raise ValueError(
                 "cluster_workflows requires an initialised Retriever"
@@ -694,6 +704,7 @@ class MetaWorkflowPlanner:
         similarity_weight: float = 1.0,
         synergy_weight: float = 1.0,
         roi_weight: float = 1.0,
+        context_builder: ContextBuilder | None = None,
         retriever: Retriever | None = None,
     ) -> List[str]:
         """Compose a workflow pipeline using retrieval to limit candidates.
@@ -733,20 +744,10 @@ class MetaWorkflowPlanner:
         self.cluster_map.setdefault(("__domain_transitions__",), {})
         trans_probs = self.transition_probabilities()
 
-        if (
-            retriever is None
-            and Retriever is not None
-            and (create_context_builder is not None or ContextBuilder is not None)
-        ):
+        context_builder = context_builder or self.context_builder
+        if retriever is None and Retriever is not None:
             try:  # pragma: no cover - best effort
-                builder = (
-                    create_context_builder()
-                    if create_context_builder is not None
-                    else ContextBuilder(
-                        "bots.db", "code.db", "errors.db", "workflows.db"
-                    )
-                )
-                retriever = Retriever(context_builder=builder)
+                retriever = Retriever(context_builder=context_builder)
             except Exception:  # pragma: no cover - fallback to exhaustive search
                 retriever = None
 
@@ -758,6 +759,7 @@ class MetaWorkflowPlanner:
                         current,
                         top_k=len(available),
                         retriever=retriever,
+                        context_builder=context_builder,
                         roi_db=self.roi_db,
                         roi_window=self.roi_window,
                         cluster_map=self.cluster_map,
@@ -2064,6 +2066,7 @@ class MetaWorkflowPlanner:
         failure_threshold: int = 0,
         entropy_threshold: float = 2.0,
         runs: int = 3,
+        context_builder: ContextBuilder | None = None,
         retriever: Retriever | None = None,
         max_workers: int | None = None,
     ) -> List[Dict[str, Any]]:
@@ -2088,10 +2091,17 @@ class MetaWorkflowPlanner:
             chain_lookup[cid] = rec["chain"]
             specs[cid] = {"steps": [{"module": w} for w in rec["chain"]]}
 
+        context_builder = context_builder or self.context_builder
+        if retriever is None and Retriever is not None:
+            try:
+                retriever = Retriever(context_builder=context_builder)
+            except Exception:
+                retriever = None
         if retriever is None:
             raise ValueError("merge_high_performing_variants requires a Retriever")
         clusters = self.cluster_workflows(
             specs,
+            context_builder=context_builder,
             retriever=retriever,
             epsilon=cluster_epsilon,
             min_samples=cluster_min_samples,
@@ -2832,7 +2842,8 @@ def find_synergy_candidates(
     query: Sequence[float] | str,
     *,
     top_k: int = 5,
-    retriever: Retriever,
+    context_builder: ContextBuilder | None = None,
+    retriever: Retriever | None = None,
     roi_db: ROIResultsDB | None = None,
     roi_window: int = 5,
     cluster_map: Mapping[tuple[str, ...], Mapping[str, Any]] | None = None,
@@ -2840,13 +2851,22 @@ def find_synergy_candidates(
     """Return top ``top_k`` workflows similar to ``query`` weighted by ROI.
 
     ``query`` may be either a numeric embedding vector or an identifier of a
-    stored workflow embedding.  ``retriever`` must be provided to fetch
-    candidate workflow identifiers.  Results are ranked by cosine similarity
-    scaled by the average ROI gain from ``roi_db``.  Retrieval failures yield an
-    empty list.  When ``cluster_map`` is provided, historic reinforcement scores
-    for ``(query, candidate)`` pairs are used to boost similarity prior to
-    ranking.
+    stored workflow embedding.  ``context_builder`` is used to create a
+    :class:`Retriever` when one is not supplied explicitly.  Results are ranked
+    by cosine similarity scaled by the average ROI gain from ``roi_db``.
+    Retrieval failures yield an empty list.  When ``cluster_map`` is provided,
+    historic reinforcement scores for ``(query, candidate)`` pairs are used to
+    boost similarity prior to ranking.
     """
+
+    context_builder = context_builder or _DEFAULT_CONTEXT_BUILDER
+    if retriever is None and Retriever is not None:
+        try:
+            retriever = Retriever(context_builder=context_builder)
+        except Exception:
+            retriever = None
+    if retriever is None:
+        return []
 
     roi_db = roi_db or ROIResultsDB()
     embeddings = _load_embeddings()
@@ -2904,9 +2924,16 @@ def find_synergy_candidates(
 
 
 # ---------------------------------------------------------------------------
-def find_synergistic_workflows(workflow_id: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def find_synergistic_workflows(
+    workflow_id: str,
+    top_k: int = 5,
+    *,
+    context_builder: ContextBuilder | None = None,
+    retriever: Retriever | None = None,
+) -> List[Dict[str, Any]]:
     """Return workflows synergistic with ``workflow_id`` ranked by ROI."""
 
+    context_builder = context_builder or _DEFAULT_CONTEXT_BUILDER
     embeddings = _load_embeddings()
     query_vec = embeddings.get(workflow_id)
     if query_vec is None:
@@ -2940,36 +2967,30 @@ def find_synergistic_workflows(workflow_id: str, top_k: int = 5) -> List[Dict[st
                 }
             )
     except Exception:
-        retr: Retriever | None = None
-        if Retriever is not None and (
-            create_context_builder is not None or ContextBuilder is not None
-        ):
+        if retriever is None and Retriever is not None:
             try:  # pragma: no cover - best effort
-                builder = (
-                    create_context_builder()
-                    if create_context_builder is not None
-                    else ContextBuilder(
-                        "bots.db", "code.db", "errors.db", "workflows.db"
-                    )
-                )
-                retr = Retriever(context_builder=builder)
+                retriever = Retriever(context_builder=context_builder)
             except Exception:
-                retr = None
-        if retr is None:
+                retriever = None
+        if retriever is None:
             return []
         return find_synergy_candidates(
-            workflow_id, top_k=top_k, retriever=retr, roi_db=roi_db
+            workflow_id,
+            top_k=top_k,
+            context_builder=context_builder,
+            retriever=retriever,
+            roi_db=roi_db,
         )
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:top_k]
-
 
 # ---------------------------------------------------------------------------
 def find_synergy_chain(
     start_workflow_id: str,
     length: int = 5,
     *,
+    context_builder: ContextBuilder | None = None,
     cluster_map: Mapping[tuple[str, ...], Mapping[str, Any]] | None = None,
 ) -> List[str]:
     """Return high-synergy workflow sequence starting from ``start_workflow_id``.
@@ -3019,7 +3040,7 @@ def find_synergy_chain(
             )
     roi_scores = _roi_scores(tracker)
 
-    planner = MetaWorkflowPlanner()
+    planner = MetaWorkflowPlanner(context_builder=context_builder)
     if cluster_map is None:
         cluster_map = getattr(planner, "cluster_map", {})
     # Ensure the planner's cluster map reflects the provided data so that
@@ -3138,6 +3159,7 @@ def compose_meta_workflow(
     *,
     length: int = 5,
     graph: WorkflowGraph | None = None,
+    context_builder: ContextBuilder | None = None,
 ) -> Dict[str, Any]:
     """Return ordered meta-workflow specification starting from ``start_workflow_id``.
 
@@ -3148,7 +3170,9 @@ def compose_meta_workflow(
     readable ``chain`` string (e.g. ``scrape->analyze->generate``).
     """
 
-    chain = find_synergy_chain(start_workflow_id, length=length)
+    chain = find_synergy_chain(
+        start_workflow_id, length=length, context_builder=context_builder
+    )
     if not chain:
         return {}
 
