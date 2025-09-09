@@ -8,9 +8,13 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from workflow_synergy_comparator import WorkflowSynergyComparator
+try:  # pragma: no cover - optional dependency
+    from workflow_synergy_comparator import WorkflowSynergyComparator
+except Exception:  # pragma: no cover - allow tests to patch comparator
+    WorkflowSynergyComparator = None  # type: ignore
 from meta_workflow_planner import MetaWorkflowPlanner
-from workflow_chain_simulator import simulate_suggested_chains
+
+_CONTEXT_BUILDER = None  # type: ignore
 
 
 def cli(argv: list[str] | None = None) -> int:
@@ -31,6 +35,12 @@ def cli(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.meta_plan:
+        global _CONTEXT_BUILDER
+        if _CONTEXT_BUILDER is None:  # pragma: no cover - lazy init
+            from context_builder_util import create_context_builder
+
+            _CONTEXT_BUILDER = create_context_builder()
+        from workflow_chain_simulator import simulate_suggested_chains
         spec = {}
         path_a = Path(args.workflow_a)
         if path_a.exists():
@@ -38,11 +48,13 @@ def cli(argv: list[str] | None = None) -> int:
                 spec = json.loads(path_a.read_text())
             except Exception:
                 spec = {}
-        planner = MetaWorkflowPlanner()
+        planner = MetaWorkflowPlanner(context_builder=_CONTEXT_BUILDER)
         target = planner.encode(args.workflow_a, spec)
         outcomes = simulate_suggested_chains(target)
         data = json.dumps(outcomes, indent=2)
     else:
+        if WorkflowSynergyComparator is None:  # pragma: no cover - defensive
+            raise RuntimeError("WorkflowSynergyComparator is required")
         scores = WorkflowSynergyComparator.compare(args.workflow_a, args.workflow_b or "")
         duplicate = WorkflowSynergyComparator.is_duplicate(scores)
         data = json.dumps({"duplicate": duplicate, **asdict(scores)}, indent=2)

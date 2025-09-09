@@ -1076,7 +1076,8 @@ class SelfImprovementEngine:
             )
             return []
         try:
-            planner = MetaWorkflowPlanner()
+            builder = create_context_builder()
+            planner = MetaWorkflowPlanner(context_builder=builder)
             schedule_specs: dict[str, dict[str, Any]] = {}
             candidate_ids: list[str] = []
             for sched in Path.cwd().glob("*_schedule.json"):
@@ -1180,7 +1181,8 @@ class SelfImprovementEngine:
             )
             return []
         try:
-            planner = MetaWorkflowPlanner()
+            builder = create_context_builder()
+            planner = MetaWorkflowPlanner(context_builder=builder)
         except Exception:
             self.logger.exception("meta workflow planner instantiation failed")
             return []
@@ -1308,7 +1310,11 @@ class SelfImprovementEngine:
                 "MetaWorkflowPlanner unavailable; using fallback planner"
             )
         try:
-            planner = planner_cls()
+            planner = (
+                planner_cls(context_builder=create_context_builder())
+                if planner_cls is meta_planning.MetaWorkflowPlanner
+                else planner_cls()
+            )
             workflows: dict[str, Callable[[], Any]] = {}
             if WorkflowDB is not None and WorkflowRecord is not None:
                 try:
@@ -2009,7 +2015,11 @@ class SelfImprovementEngine:
             self.logger.debug(
                 "MetaWorkflowPlanner unavailable; using fallback planner"
             )
-        planner = planner_cls()
+        planner = (
+            planner_cls(context_builder=create_context_builder())
+            if planner_cls is meta_planning.MetaWorkflowPlanner
+            else planner_cls()
+        )
 
         while not self._meta_loop_stop.is_set():
             try:
