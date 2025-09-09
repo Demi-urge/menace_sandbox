@@ -24,6 +24,9 @@ All prompt‑constructing bots (e.g., `SelfCodingEngine`, `QuickFixEngine`) must
 provide a `ContextBuilder` via the `context_builder` argument so prompts include
 vector context.
 
+The builder queries `bots.db`, `code.db`, `errors.db` and `workflows.db` and
+compresses any retrieved snippets before embedding them in the final prompt.
+
 A successful lookup yields a prompt such as:
 
 ```

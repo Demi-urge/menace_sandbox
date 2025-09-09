@@ -80,7 +80,9 @@ bot._build_prompt(BotSpec(name="demo", purpose="test"), context_builder=builder)
 
 ```python
 from automated_reviewer import AutomatedReviewer
+from vector_service.context_builder import ContextBuilder
 
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 reviewer = AutomatedReviewer(context_builder=builder)
 reviewer.handle({"bot_id": "1", "severity": "critical"})
 ```
@@ -91,10 +93,31 @@ reviewer.handle({"bot_id": "1", "severity": "critical"})
 from quick_fix_engine import QuickFixEngine, generate_patch
 from error_bot import ErrorDB
 from self_coding_manager import SelfCodingManager
+from vector_service.context_builder import ContextBuilder
 
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 engine = QuickFixEngine(ErrorDB(), SelfCodingManager(), context_builder=builder)
 generate_patch("sandbox_runner", context_builder=builder)
 ```
+
+### SelfCodingEngine
+
+```python
+from self_coding_engine import SelfCodingEngine
+from code_database import CodeDB
+from menace_memory_manager import MenaceMemoryManager
+from vector_service.context_builder import ContextBuilder
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+engine = SelfCodingEngine(
+    CodeDB("code.db"),
+    MenaceMemoryManager("mem.db"),
+    context_builder=builder,
+)
+```
+
+The builder queries `bots.db`, `code.db`, `errors.db`, and `workflows.db` and
+compresses retrieved snippets before embedding them in prompts.
 
 ### Constructor propagation and linting
 
@@ -133,6 +156,13 @@ Example output when the argument is omitted:
 ```
 service_supervisor.py:289 -> ContextBuilder() missing bots.db, code.db, errors.db, workflows.db
 ```
+
+### Troubleshooting
+
+Validation failures such as `ContextBuilder validation failed` usually mean one
+of the database paths is missing or unreadable.  Confirm that `bots.db`,
+`code.db`, `errors.db` and `workflows.db` exist and run
+`builder.validate()` or `builder.refresh_db_weights()` to verify connectivity.
 
 ## Self-Improvement Sandbox Setup
 

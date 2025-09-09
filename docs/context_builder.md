@@ -4,7 +4,9 @@
 helpers see only the most relevant history.  It queries the local error, bot,
 workflow, enhancement, information, discrepancy and code databases through
 [`UniversalRetriever`](universal_retriever.md) and returns a condensed JSON
-block that fits within strict token budgets.
+block that fits within strict token budgets.  Typical usage wires in
+`bots.db`, `code.db`, `errors.db` and `workflows.db` and compresses retrieved
+snippets before embedding them in prompts.
 
 ## Goals
 
@@ -89,6 +91,8 @@ prompts.
 - Optional `prioritise` parameter allows keeping newer or high‑ROI entries
   when trimming.
 - Metrics bias the ranking so only high‑value records reach the final JSON.
+- Retrieved code snippets are compressed with `snippet_compressor` before
+  being embedded in prompts.
 
 ## Offline operation
 
@@ -149,6 +153,13 @@ Leaving out the builder causes helper methods that require contextual snippets
 to either throw a `ValueError("ContextBuilder is required")` or silently fall
 back to empty prompts. The latter severely degrades code generation quality
 because no historical data is supplied to the model.
+
+## Troubleshooting
+
+If you encounter `ContextBuilder validation failed` in logs, verify that
+`bots.db`, `code.db`, `errors.db` and `workflows.db` exist and are readable.
+Running `builder.validate()` or `builder.refresh_db_weights()` can surface
+missing tables or corrupted files.
 
 ## Static enforcement
 
