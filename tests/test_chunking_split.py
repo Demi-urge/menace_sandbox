@@ -44,7 +44,7 @@ def test_get_chunk_summaries_cache_hit(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_summary(code: str, llm=None) -> str:
+    def fake_summary(code: str, llm=None, context_builder=None) -> str:
         calls["n"] += 1
         return "sum"
 
@@ -67,7 +67,7 @@ def test_get_chunk_summaries_cache_invalidation(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_summary(code: str, llm=None) -> str:
+    def fake_summary(code: str, llm=None, context_builder=None) -> str:
         calls["n"] += 1
         return "sum"
 

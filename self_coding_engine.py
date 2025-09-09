@@ -999,7 +999,11 @@ class SelfCodingEngine:
                 summaries: List[str] = []
                 for i, ch in enumerate(chunks):
                     if not (start <= ch.start_line and ch.end_line <= end):
-                        summary = summarize_code(ch.text, self.llm_client)
+                        summary = summarize_code(
+                            ch.text,
+                            self.llm_client,
+                            context_builder=self.context_builder,
+                        )
                         summaries.append(f"Chunk {i}: {summary}")
                 return snippet, summaries or None
             return snippet, None
@@ -1008,7 +1012,10 @@ class SelfCodingEngine:
         if code and threshold and _count_tokens(code) > threshold:
             try:
                 summary_entries = get_chunk_summaries(
-                    path, threshold, self.llm_client
+                    path,
+                    threshold,
+                    self.llm_client,
+                    context_builder=self.context_builder,
                 )
             except Exception:
                 self.logger.exception(

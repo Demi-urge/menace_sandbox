@@ -226,7 +226,9 @@ def generate_patch(
             if get_chunk_summaries is not None:
                 token_limit = getattr(engine, "prompt_chunk_token_threshold", 1000)
                 try:
-                    chunks = get_chunk_summaries(path, token_limit)
+                    chunks = get_chunk_summaries(
+                        path, token_limit, context_builder=builder
+                    )
                 except Exception:
                     chunks = []
             patch_ids: List[int | None] = []

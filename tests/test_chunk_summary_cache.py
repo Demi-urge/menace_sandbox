@@ -45,7 +45,7 @@ def test_file_change_invalidates_cache_via_chunking(tmp_path: Path, monkeypatch)
 
     calls: list[str] = []
 
-    def fake_sum(code: str, llm=None) -> str:
+    def fake_sum(code: str, llm=None, context_builder=None) -> str:
         calls.append(code)
         return "sum"
 
@@ -74,7 +74,7 @@ def test_concurrent_requests_use_per_path_lock(tmp_path: Path, monkeypatch) -> N
 
     calls: list[str] = []
 
-    def fake_sum(code: str, llm=None) -> str:
+    def fake_sum(code: str, llm=None, context_builder=None) -> str:
         calls.append(code)
         return "sum"
 

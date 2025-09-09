@@ -869,7 +869,9 @@ class PromptEngine:
             summaries = []
             for i, ch in enumerate(chunks):
                 summary_text = (
-                    summarize_code(ch.text, self.llm)
+                    summarize_code(
+                        ch.text, self.llm, context_builder=self.context_builder
+                    )
                     if self.llm
                     else ch.text.splitlines()[0][:80]
                 )
