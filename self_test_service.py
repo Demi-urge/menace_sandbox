@@ -2179,7 +2179,10 @@ class SelfTestService:
                         try:
                             async with AsyncExitStack() as env_stack:
                                 _repo, runner = env_stack.enter_context(
-                                    create_ephemeral_env(Path.cwd())
+                                    create_ephemeral_env(
+                                        Path.cwd(),
+                                        context_builder=self.context_builder,
+                                    )
                                 )
                                 edge_env_local = dict(os.environ)
                                 try:
