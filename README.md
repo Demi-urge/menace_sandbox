@@ -145,9 +145,10 @@ bot = PromptingBot(planner, context_builder=builder)
 
 Violations are detected by `scripts/check_context_builder_usage.py`, which
 flags any `_build_prompt`, `build_prompt`, `generate_patch` or `.generate()`
-call on `LLMClient`-like instances missing `context_builder`. Variables
-assigned from these classes are tracked and aliases such as `llm` or `model`
-are heuristically inspected:
+call on `LLMClient`-like instances missing `context_builder`. Functions that
+invoke `ContextBuilder.build` while allowing a `None` default or fallback
+builder are reported as well. Variables assigned from these classes are
+tracked and aliases such as `llm` or `model` are heuristically inspected:
 
 ```bash
 python scripts/check_context_builder_usage.py
@@ -818,7 +819,8 @@ engine = PromptEngine(context_builder=builder)
 prompt = engine.build_prompt("Expand tests", context_builder=builder)
 ```
 
-Internal helpers follow the same pattern:
+Internal helpers follow the same pattern, and any helper that calls
+`ContextBuilder.build` must require an injected builder:
 
 ```python
 from menace.bot_development_bot import BotDevelopmentBot, BotSpec

@@ -32,6 +32,11 @@ Furthermore, the linter searches for imports or calls to
 reported unless the offending line (or the one immediately above it) contains a
 ``# nocb`` marker.  Calls to ``create_context_builder`` are allowed and
 considered valid ``ContextBuilder`` instantiations.
+
+Functions invoking ``ContextBuilder.build`` must accept a non-optional builder
+parameter.  Parameters defaulting to ``None`` or falling back to a new builder
+within the function body are flagged to ensure that callers explicitly inject a
+``ContextBuilder`` instance.
 """
 from __future__ import annotations
 
@@ -204,6 +209,87 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     ):
                         self.llm_instances.update(names)
 
+        def _has_builder_fallback(self, node: ast.AST, name: str) -> bool:
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Assign):
+                    if (
+                        len(inner.targets) == 1
+                        and isinstance(inner.targets[0], ast.Name)
+                        and inner.targets[0].id == name
+                    ):
+                        val = inner.value
+                        if (
+                            isinstance(val, ast.BoolOp)
+                            and isinstance(val.op, ast.Or)
+                            and val.values
+                            and isinstance(val.values[0], ast.Name)
+                            and val.values[0].id == name
+                        ):
+                            return True
+                elif isinstance(inner, ast.If):
+                    test = inner.test
+                    if (
+                        isinstance(test, ast.Compare)
+                        and len(test.ops) == 1
+                        and isinstance(test.left, ast.Name)
+                        and test.left.id == name
+                        and isinstance(test.comparators[0], ast.Constant)
+                        and test.comparators[0].value is None
+                    ):
+                        for stmt in inner.body:
+                            if (
+                                isinstance(stmt, ast.Assign)
+                                and len(stmt.targets) == 1
+                                and isinstance(stmt.targets[0], ast.Name)
+                                and stmt.targets[0].id == name
+                            ):
+                                return True
+            return False
+
+        def _check_build_calls(self, node: ast.AST) -> None:
+            params: dict[str, ast.AST | None] = {}
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                args = node.args
+                pos_args = args.posonlyargs + args.args
+                defaults = [None] * (len(pos_args) - len(args.defaults)) + list(
+                    args.defaults
+                )
+                for arg, default in zip(pos_args, defaults):
+                    if "builder" in arg.arg:
+                        params[arg.arg] = default
+                for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+                    if "builder" in arg.arg:
+                        params[arg.arg] = default
+            else:
+                return
+
+            optional = {
+                name
+                for name, default in params.items()
+                if isinstance(default, ast.Constant) and default.value is None
+            }
+            for inner in ast.walk(node):
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "build"
+                    and isinstance(inner.func.value, ast.Name)
+                ):
+                    base = inner.func.value.id
+                    if base in params and (
+                        base in optional or self._has_builder_fallback(node, base)
+                    ):
+                        line_no = inner.lineno
+                        line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                        prev = lines[line_no - 2] if line_no >= 2 else ""
+                        if NOCB_MARK not in line and NOCB_MARK not in prev:
+                            errors.append(
+                                (
+                                    line_no,
+                                    f"{base}.build disallowed or missing context_builder",
+                                )
+                            )
+
         def visit_Assign(self, node: ast.Assign) -> None:  # noqa: D401
             self._record_alias(node.targets, node.value)
             self._record_instance(node.targets, node.value)
@@ -367,10 +453,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: D401
             self._check_args(node)
+            self._check_build_calls(node)
             self.generic_visit(node)
 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: D401
             self._check_args(node)
+            self._check_build_calls(node)
             self.generic_visit(node)
 
     Visitor().visit(tree)
