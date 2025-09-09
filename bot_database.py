@@ -556,10 +556,16 @@ class BotDB(EmbeddableDBMixin):
                 if isinstance(tc_val, str)
                 else list(tc_val)
             )
-        text = " ".join(
-            filter(None, [purpose, ",".join(tags), ",".join(toolchain)])
-        )
-        return self.encode_text(text)
+        parts: list[str] = []
+        if purpose:
+            parts.append(f"purpose: {purpose}")
+        if tags:
+            parts.append("tags: " + ",".join(tags))
+        if toolchain:
+            parts.append("toolchain: " + ",".join(toolchain))
+        text = "\n".join(parts)
+        prepared = self._prepare_text_for_embedding(text)
+        return self.encode_text(prepared) if prepared else []
 
     def search_by_vector(
         self,
