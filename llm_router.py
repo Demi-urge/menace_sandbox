@@ -11,6 +11,12 @@ from sandbox_settings import SandboxSettings
 from rate_limit import estimate_tokens
 from prompt_db import PromptDB
 
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - allow stub in tests
+    class ContextBuilder:  # type: ignore
+        pass
+
 
 class LLMRouter(LLMClient):
     """Route requests between remote and local backends.
@@ -110,14 +116,16 @@ class LLMRouter(LLMClient):
         fallback = self.local if primary is self.remote else self.remote
         return primary, fallback
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:
         primary, fallback = self._select_backends(prompt)
         chosen = primary
         try:
-            result = primary.generate(prompt)
+            result = primary.generate(prompt, context_builder=context_builder)
         except Exception:
             self._last_failure[primary] = time.time()
-            result = fallback.generate(prompt)
+            result = fallback.generate(prompt, context_builder=context_builder)
             chosen = fallback
         if getattr(self, "db", None):  # pragma: no cover - logging is best effort
             result.raw = dict(result.raw or {})
@@ -133,7 +141,9 @@ class LLMRouter(LLMClient):
                 pass
         return result
 
-    async def async_generate(self, prompt: Prompt) -> AsyncGenerator[str, None]:
+    async def async_generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> AsyncGenerator[str, None]:
         """Asynchronously stream chunks from the chosen backend with fallback."""
 
         primary, fallback = self._select_backends(prompt)
@@ -142,7 +152,7 @@ class LLMRouter(LLMClient):
 
         async def _run(backend: LLMClient):
             agen = backend.async_generate  # type: ignore[attr-defined]
-            async for part in agen(prompt):
+            async for part in agen(prompt, context_builder=context_builder):
                 chunks.append(part)
                 yield part
 

@@ -572,6 +572,7 @@ class OpenAIProvider(LLMClient):
         prompt: Prompt,
         *,
         parse_fn: Callable[[str], Any] | None = None,
+        context_builder: ContextBuilder,
     ) -> LLMResult | asyncio.Task[LLMResult]:
         """Synchronously generate a completion aggregating streamed chunks.
 
@@ -593,7 +594,9 @@ class OpenAIProvider(LLMClient):
         async def collect() -> LLMResult:
             text_parts: List[str] = []
             start = time.perf_counter()
-            async for part in self._async_generate(prompt):
+            async for part in self._async_generate(
+                prompt, context_builder=context_builder
+            ):
                 text_parts.append(part)
             latency_ms = (time.perf_counter() - start) * 1000
             text = "".join(text_parts)
@@ -628,6 +631,10 @@ class OpenAIProvider(LLMClient):
                 cost=cost,
             )
             self._log(prompt, result, backend="openai")
+            try:  # pragma: no cover - ROI tracking is best effort
+                self._track_usage(context_builder, result)
+            except Exception:
+                pass
             return result
 
         try:

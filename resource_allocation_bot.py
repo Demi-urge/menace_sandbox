@@ -25,11 +25,17 @@ from .contrarian_db import ContrarianDB
 from db_router import GLOBAL_ROUTER, init_db_router
 from snippet_compressor import compress_snippets
 
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - allow stub in tests
+    class ContextBuilder:  # type: ignore
+        """Fallback stub used when context builder isn't available."""
+        pass
+
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .resources_bot import ResourcesBot
     from .contrarian_model_bot import ContrarianModelBot
     from .bot_database import BotDB
-    from vector_service.context_builder import ContextBuilder
 
 
 @dataclass
@@ -314,7 +320,7 @@ class ResourceAllocationBot:
 
     def suggest_improvement(self, bot: str) -> str:
         builder = self.context_builder
-        if builder is None:
+        if not isinstance(builder, ContextBuilder):
             self.logger.error("context_builder is required for improvement prompts")
             return "upgrade"
         try:

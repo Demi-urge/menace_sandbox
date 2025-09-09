@@ -8,6 +8,7 @@ from llm_router import LLMRouter
 from prompt_db import PromptDB
 from completion_parsers import parse_json
 import asyncio
+from context_builder_util import create_context_builder
 
 
 def test_promptdb_logs_to_memory(tmp_path):
@@ -234,11 +235,14 @@ def test_generate_applies_parse_fn():
         def __init__(self):
             super().__init__("dummy", log_prompts=False)
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(text="{\"a\":1}")
 
     client = Dummy()
-    res = client.generate(Prompt(text="hi"), parse_fn=parse_json)
+    builder = create_context_builder()
+    res = client.generate(
+        Prompt(text="hi"), parse_fn=parse_json, context_builder=builder
+    )
     assert res.parsed == {"a": 1}
 
 
