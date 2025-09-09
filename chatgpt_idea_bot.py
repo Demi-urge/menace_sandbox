@@ -490,6 +490,8 @@ def build_prompt(
     prior: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Construct a prompt and fetch memory-aware messages via ``client``."""
+    if context_builder is None:
+        raise ValueError("context_builder is required")
     parts = ["Suggest five new online business models"]
     if prior:
         parts.append(f"building on {prior}")

@@ -141,6 +141,8 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
+    if context_builder is None:
+        raise TypeError("context_builder is required")
     builder = context_builder
     try:
         builder.refresh_db_weights()
