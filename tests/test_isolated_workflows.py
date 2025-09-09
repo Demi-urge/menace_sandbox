@@ -144,10 +144,18 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
     index = DummyIndex(map_path)
     eng = SimpleEngine(index, wf_db_path)
 
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build_context(self, *a, **k):
+            return "", "", {}
+
     svc = sts.SelfTestService(
         discover_isolated=True,
         recursive_isolated=True,
         integration_callback=eng.refresh_module_map,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
     passed = svc.results.get("orphan_passed") or []

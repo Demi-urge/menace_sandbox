@@ -16,6 +16,14 @@ sys.path.insert(0, str(repo_root))
 from menace_sandbox.self_test_service import SelfTestService  # noqa: E402
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
+
 class DummySandbox:
     """Minimal stand-in for SelfDebuggerSandbox._history_db."""
 
@@ -57,6 +65,6 @@ def test_state_file_load_failure_logs(tmp_path, caplog):
     bad = resolve_path("state.json", tmp_path)
     bad.write_text("{")
     with caplog.at_level(logging.ERROR):
-        svc = SelfTestService(state_path=bad)
+        svc = SelfTestService(state_path=bad, context_builder=DummyBuilder())
     assert "failed to load state file" in caplog.text
     assert svc._state is None

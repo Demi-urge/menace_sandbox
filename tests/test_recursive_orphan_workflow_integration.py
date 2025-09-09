@@ -39,6 +39,14 @@ sys.modules["menace.self_test_service"] = sts
 spec.loader.exec_module(sts)
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
+
 def test_recursive_orphan_integration(tmp_path, monkeypatch):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
     # create dummy modules: a -> b -> c
@@ -104,7 +112,11 @@ def test_recursive_orphan_integration(tmp_path, monkeypatch):
         environment.generate_workflows_for_modules([Path(m).name for m in mods])
 
     monkeypatch.chdir(tmp_path)
-    svc = sts.SelfTestService(include_orphans=True, integration_callback=integrate)
+    svc = sts.SelfTestService(
+        include_orphans=True,
+        integration_callback=integrate,
+        context_builder=DummyBuilder(),
+    )
     svc.run_once()
 
     assert generated and generated[0] == ["a.py", "b.py", "c.py"]  # path-ignore

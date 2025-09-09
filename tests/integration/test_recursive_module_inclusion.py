@@ -120,9 +120,10 @@ def test_recursive_module_inclusion(tmp_path, monkeypatch):
 
     svc = sts.SelfTestService(
         include_orphans=True,
-       recursive_orphans=True,
+        recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integrate,
+        context_builder=DummyBuilder(),
     )
     svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()

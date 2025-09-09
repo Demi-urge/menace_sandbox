@@ -40,6 +40,14 @@ sys.modules["menace.self_test_service"] = sts
 spec.loader.exec_module(sts)
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
+
 def _setup(monkeypatch, tmp_path, chain_len):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
     monkeypatch.chdir(tmp_path)
@@ -122,7 +130,10 @@ def _run_and_assert(monkeypatch, tmp_path, chain_len):
     commands, generated, map_path, data_dir, integrate = _setup(monkeypatch, tmp_path, chain_len)
 
     svc = sts.SelfTestService(
-        include_orphans=True, integration_callback=integrate, clean_orphans=True
+        include_orphans=True,
+        integration_callback=integrate,
+        clean_orphans=True,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 

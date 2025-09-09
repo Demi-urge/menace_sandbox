@@ -73,6 +73,14 @@ sts = load_self_test_service()
 SelfTestService = sts.SelfTestService
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
+
 def test_cleanup_lock_stress(monkeypatch):
     concurrent = 0
     max_concurrent = 0
@@ -116,8 +124,8 @@ def test_cleanup_lock_stress(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    svc1 = SelfTestService(use_container=True)
-    svc2 = SelfTestService(use_container=True)
+    svc1 = SelfTestService(use_container=True, context_builder=DummyBuilder())
+    svc2 = SelfTestService(use_container=True, context_builder=DummyBuilder())
 
     async def run():
         await asyncio.gather(

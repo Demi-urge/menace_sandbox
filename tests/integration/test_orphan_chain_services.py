@@ -42,6 +42,14 @@ menace_pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
 sys.modules["menace.self_test_service"] = sts
 spec_sts.loader.exec_module(sts)
 
+
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
 env_mod = types.ModuleType("menace.environment_generator")
 env_mod._CPU_LIMITS = {}
 env_mod._MEMORY_LIMITS = {}
@@ -196,6 +204,7 @@ def test_self_test_service_executes_and_cleans(tmp_path, monkeypatch):
         recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integrate,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 

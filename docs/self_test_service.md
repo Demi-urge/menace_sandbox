@@ -83,12 +83,14 @@ modules were incorporated or skipped.
 
 ```python
 from menace.self_test_service import SelfTestService
+from menace.context_builder_util import create_context_builder
 
 def integrate(paths):
     # decide which modules to merge
     return {"integrated": paths, "redundant": []}
 
-svc = SelfTestService(integration_callback=integrate)
+builder = create_context_builder()
+svc = SelfTestService(integration_callback=integrate, context_builder=builder)
 results, passed = svc.run_once()
 print(results["integration"])
 ```

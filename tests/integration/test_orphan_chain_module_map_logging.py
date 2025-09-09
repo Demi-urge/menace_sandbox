@@ -43,6 +43,14 @@ sys.modules["menace.self_test_service"] = sts
 spec.loader.exec_module(sts)
 
 
+class DummyBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_context(self, *a, **k):
+        return "", "", {}
+
+
 # ---------------------------------------------------------------------------
 
 def test_orphan_chain_logging(tmp_path, monkeypatch):
@@ -115,6 +123,7 @@ def test_orphan_chain_logging(tmp_path, monkeypatch):
         recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integrate,
+        context_builder=DummyBuilder(),
     )
     svc.run_once()
 
