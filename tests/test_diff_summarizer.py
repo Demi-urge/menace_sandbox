@@ -40,4 +40,6 @@ def test_context_builder_prepended(monkeypatch):
     res = ds.summarize_diff("before", "after", context_builder=builder)
     assert res == "ok"
     assert builder.calls and builder.calls[0] == "before\nafter"
-    assert tok.prompt.startswith("Context:\nEXTRA\nSummarize")
+    assert tok.prompt.startswith("Context:\n")
+    assert "EXTRA" in tok.prompt
+    assert "Summarize" in tok.prompt
