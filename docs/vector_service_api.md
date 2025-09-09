@@ -86,3 +86,21 @@ Response:
 
 All endpoints return HTTP 500 with a `detail` message if the underlying
 service raises a `VectorServiceError`.
+
+## Vector Database Service
+
+`vector_service.vector_database_service` provides a lightweight daemon for
+embedding records and querying stored vectors. Start it with:
+
+```bash
+python -m vector_service
+```
+
+The service exposes three endpoints:
+
+* `POST /add` – vectorises a record and stores the embedding.
+* `POST /query` – returns the nearest neighbours for a supplied record.
+* `GET /status` – simple health check.
+
+Bots should call the `GET /status` endpoint and ensure the daemon is running
+before invoking `ContextBuilder` or issuing database queries.
