@@ -33,7 +33,7 @@ def test_prompt_engine_auto_summarises_when_limit_exceeded(monkeypatch):
 
     calls: list[str] = []
 
-    def fake_summarize(text: str, llm: object) -> str:
+    def fake_summarize(text: str, llm: object, context_builder=None) -> str:
         calls.append(text)
         return f"sum:{text}"
 

@@ -23,7 +23,9 @@ def _prepare_engine(tmp_path: Path, monkeypatch):
             CodeChunk(4, 5, "def b():\n    pass", "h2", 5),
         ],
     )
-    monkeypatch.setattr(pc, "summarize_code", lambda text, llm: text.splitlines()[0])
+    monkeypatch.setattr(
+        pc, "summarize_code", lambda text, llm, context_builder=None: text.splitlines()[0]
+    )
     return engine, path
 
 

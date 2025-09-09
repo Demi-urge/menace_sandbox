@@ -81,19 +81,25 @@ class DummyLLM:
     def __init__(self):
         self.calls = 0
 
-    def generate(self, prompt):  # pragma: no cover - simple stub
+    def generate(self, prompt, context_builder=None):  # pragma: no cover - simple stub
         self.calls += 1
         return types.SimpleNamespace(text="stub")
+
+
+class DummyBuilder:
+    def build(self, text: str):  # pragma: no cover - simple stub
+        return ""
 
 
 def test_summary_cache_reused(tmp_path, monkeypatch):
     monkeypatch.setattr(chunking, "SNIPPET_CACHE_DIR", tmp_path)
     llm = DummyLLM()
+    builder = DummyBuilder()
     code = "print('hello')"
-    s1 = chunking.summarize_code(code, llm)
+    s1 = chunking.summarize_code(code, llm, context_builder=builder)
     assert s1 == "stub"
     assert llm.calls == 1
-    s2 = chunking.summarize_code(code, llm)
+    s2 = chunking.summarize_code(code, llm, context_builder=builder)
     assert s2 == "stub"
     assert llm.calls == 1
 
