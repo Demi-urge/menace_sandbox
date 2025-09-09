@@ -12,6 +12,7 @@ import yaml
 
 from logging_utils import get_logger
 from dynamic_path_router import resolve_path, resolve_module_path
+from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - heavy import for type checking only
     from roi_tracker import ROITracker
@@ -72,8 +73,11 @@ def integrate_and_graph_orphans(
         log.exception("environment helpers import failed")
         return None, {}, [], False, False
 
+    builder = create_context_builder()
     try:
-        tracker, tested = auto_include_modules(paths, recursive=True, router=router)
+        tracker, tested = auto_include_modules(
+            paths, recursive=True, router=router, context_builder=builder
+        )
     except Exception:  # pragma: no cover - best effort
         log.exception("auto include of discovered orphans failed")
         return None, {}, [], False, False
@@ -118,7 +122,12 @@ def integrate_and_graph_orphans(
             log.warning("intent clustering update failed", exc_info=True)
 
         try:
-            updated = try_integrate_into_workflows(sorted(added), router=router) or []
+            updated = (
+                try_integrate_into_workflows(
+                    sorted(added), router=router, context_builder=builder
+                )
+                or []
+            )
             workflow_ok = True
         except Exception:  # pragma: no cover - best effort
             log.warning("workflow integration failed", exc_info=True)

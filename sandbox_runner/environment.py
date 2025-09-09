@@ -294,7 +294,7 @@ def _radar_worker(q: "queue.Queue[str]", stop: threading.Event) -> None:
         try:
             _radar_track_module_usage(module)
         except Exception as exc:  # pragma: no cover - best effort
-            record_error(exc)
+            record_error(exc, context_builder=create_context_builder())
 
 
 _RADAR_MANAGER = _RadarWorker()
@@ -316,7 +316,7 @@ def _async_radar_track(module: str) -> None:
     try:
         _RADAR_MANAGER.track(module)
     except RuntimeError as exc:  # pragma: no cover - best effort
-        record_error(exc)
+        record_error(exc, context_builder=create_context_builder())
 
 import builtins
 
@@ -591,18 +591,11 @@ KNOWLEDGE_GRAPH = KnowledgeGraph()
 ERROR_LOGGER: ErrorLogger | None = None
 
 
-def get_error_logger(context_builder: ContextBuilder | None = None) -> ErrorLogger:
-    """Return a shared :class:`ErrorLogger` instance.
-
-    When *context_builder* is ``None`` a new builder will be created on demand.
-    This allows callers to explicitly provide their own builder while keeping a
-    fallback for legacy usages.
-    """
+def get_error_logger(context_builder: ContextBuilder) -> ErrorLogger:
+    """Return a shared :class:`ErrorLogger` instance using ``context_builder``."""
 
     global ERROR_LOGGER
     if ERROR_LOGGER is None:
-        if context_builder is None:
-            context_builder = create_context_builder()
         ERROR_LOGGER = ErrorLogger(
             knowledge_graph=KNOWLEDGE_GRAPH,
             context_builder=context_builder,
@@ -749,7 +742,7 @@ def create_ephemeral_repo(
 def create_ephemeral_env(
     workdir: Path,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> Iterable[tuple[Path, Callable[..., subprocess.CompletedProcess]]]:
     """Prepare an isolated repo copy with dependencies installed.
 
@@ -808,7 +801,7 @@ def create_ephemeral_env(
                         "dependency install failed",
                         extra=log_record(rc=exc.returncode, output=exc.stderr),
                     )
-                    record_error(exc)
+                    record_error(exc, context_builder=context_builder)
                     raise
         else:
             venv_dir = Path(td) / "venv"
@@ -829,7 +822,7 @@ def create_ephemeral_env(
                         "dependency install failed",
                         extra=log_record(rc=exc.returncode, output=exc.stderr),
                     )
-                    record_error(exc)
+                    record_error(exc, context_builder=context_builder)
                     raise
 
             def _run(cmd: Sequence[str], *, env: Mapping[str, str] | None = None, **kw: Any):
@@ -1080,7 +1073,7 @@ def record_error(
     exc: Exception,
     *,
     fatal: bool = False,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> None:
     """Log *exc* via :class:`ErrorLogger` and track its category and severity."""
 
@@ -1112,15 +1105,13 @@ _DIAGNOSTIC: DiagnosticManager | None = None
 
 
 def init_diagnostic_manager(
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> None:
     """Initialise the optional ``DiagnosticManager`` if available."""
 
     global _DIAGNOSTIC
     if DiagnosticManager is None or _DIAGNOSTIC is not None:
         return
-    if context_builder is None:
-        context_builder = create_context_builder()
     try:
         _DIAGNOSTIC = DiagnosticManager(context_builder=context_builder)
     except (OSError, RuntimeError) as exc:  # pragma: no cover - diagnostics optional
@@ -4375,7 +4366,7 @@ async def _execute_in_container(
                     }
             except Exception as exc:  # pragma: no cover - runtime failures
                 error_msg = str(exc)
-                record_error(exc)
+                record_error(exc, context_builder=create_context_builder())
                 _log_diagnostic(error_msg, False)
                 _CREATE_FAILURES[image] += 1
                 fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
@@ -4494,7 +4485,7 @@ async def _execute_in_container(
             }
         except Exception as exc:  # pragma: no cover - runtime failures
             error_msg = str(exc)
-            record_error(exc)
+            record_error(exc, context_builder=create_context_builder())
             _log_diagnostic(error_msg, False)
             _CREATE_FAILURES[image] += 1
             fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
@@ -4555,7 +4546,7 @@ def simulate_execution_environment(
                 _execute_in_container(code_str, input_stub or {})
             )
         except Exception as exc:  # pragma: no cover - best effort
-            record_error(exc)
+            record_error(exc, context_builder=create_context_builder())
 
     if runtime_metrics:
         env_result["runtime_metrics"] = runtime_metrics
@@ -5408,7 +5399,7 @@ async def _section_worker(
                 results = [await _run()]
             duration = time.perf_counter() - start
         except Exception as exc:  # pragma: no cover - runtime failures
-            record_error(exc)
+            record_error(exc, context_builder=create_context_builder())
             _log_diagnostic(str(exc), False)
             if attempt >= 2:
                 raise
@@ -7248,7 +7239,7 @@ def run_repo_section_simulations(
                                             runner_config,
                                         )
                                     except Exception as exc:
-                                        record_error(exc)
+                                        record_error(exc, context_builder=builder)
                                         return {}, [], {}
                                     finally:
                                         sem.release()
@@ -7791,7 +7782,7 @@ def try_integrate_into_workflows(
     intent_clusterer: IntentClusterer | None = None,
     intent_k: float = 0.5,
     synergy_k: float | None = None,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> list[int]:
     """Append orphan ``modules`` to related workflows if possible.
 
@@ -7821,7 +7812,6 @@ def try_integrate_into_workflows(
     import asyncio
 
     repo = Path(resolve_path(os.getenv("SANDBOX_REPO_PATH", ".")))
-    context_builder = context_builder or create_context_builder()
 
     side_effects = side_effects or {}
     try:
@@ -8589,7 +8579,7 @@ def auto_include_modules(
     validate: bool = False,
     *,
     router: DBRouter | None = None,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> tuple["ROITracker", Dict[str, list[str]]]:
     """Automatically include ``modules`` into the workflow system.
 
@@ -8662,7 +8652,6 @@ def auto_include_modules(
     mod_paths = {Path(m).as_posix() for m in modules}
     isolated_mods: set[str] = set()
 
-    context_builder = context_builder or create_context_builder()
     get_error_logger(context_builder)
     data_dir = _env_path("SANDBOX_DATA_DIR", "sandbox_data")
     map_file = data_dir / "module_map.json"

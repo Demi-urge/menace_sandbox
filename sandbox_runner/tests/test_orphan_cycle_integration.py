@@ -34,12 +34,12 @@ def test_orphan_cycle_integration(tmp_path, monkeypatch):
     def fake_run_tests():
         calls["tests"] = True
 
-    def auto_include_modules(paths, recursive=True, router=None):
+    def auto_include_modules(paths, recursive=True, router=None, context_builder=None):
         fake_run_tests()
         calls["auto_include"] = list(paths)
         return object(), {"added": list(paths)}
 
-    def try_integrate_into_workflows(mods, router=None):
+    def try_integrate_into_workflows(mods, router=None, context_builder=None):
         calls["workflows"] = list(mods)
         return mods
 
