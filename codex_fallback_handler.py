@@ -38,6 +38,7 @@ def _default_queue_path() -> Path:
 
     return Path(getattr(_settings, "codex_retry_queue_path", "codex_retry_queue.jsonl"))
 
+
 logger = logging.getLogger(__name__)
 
 
