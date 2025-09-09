@@ -51,6 +51,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from context_builder_util import create_context_builder
 
 try:  # pragma: no cover - allow running as script
     from .dynamic_path_router import resolve_path  # type: ignore
@@ -1381,8 +1382,9 @@ class WorkflowSynthesizer:
         try:
             import sandbox_runner
 
+            builder = create_context_builder()
             added, syn_ok, intent_ok = sandbox_runner.post_round_orphan_scan(
-                Path.cwd(), router=GLOBAL_ROUTER
+                Path.cwd(), router=GLOBAL_ROUTER, context_builder=builder
             )
             logger.info(
                 "post_round_orphan_scan added=%d synergy_ok=%s intent_ok=%s",
@@ -1749,8 +1751,9 @@ def generate_workflow_variants(
         try:  # pragma: no cover - optional dependency
             import sandbox_runner
 
+            builder = create_context_builder()
             added, syn_ok, intent_ok = sandbox_runner.post_round_orphan_scan(
-                Path.cwd(), router=GLOBAL_ROUTER
+                Path.cwd(), router=GLOBAL_ROUTER, context_builder=builder
             )
             logger.info(
                 "post_round_orphan_scan added=%d synergy_ok=%s intent_ok=%s",
@@ -1888,8 +1891,9 @@ def generate_variants(
         try:  # pragma: no cover - optional dependency
             import sandbox_runner
 
+            builder = create_context_builder()
             added, syn_ok, intent_ok = sandbox_runner.post_round_orphan_scan(
-                Path.cwd(), router=GLOBAL_ROUTER
+                Path.cwd(), router=GLOBAL_ROUTER, context_builder=builder
             )
             logger.info(
                 "post_round_orphan_scan added=%d synergy_ok=%s intent_ok=%s",

@@ -21,6 +21,7 @@ from . import workflow_run_summary
 from . import sandbox_runner
 from .workflow_synergy_comparator import WorkflowSynergyComparator
 from .meta_workflow_planner import MetaWorkflowPlanner
+from context_builder_util import create_context_builder
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder  # type: ignore
 except Exception:  # pragma: no cover - allow running without builder
@@ -714,7 +715,8 @@ def evolve(
             integrate_orphans = None  # type: ignore
         if integrate_orphans is not None:
             repo = get_project_root()
-            integrate_orphans(repo, router=GLOBAL_ROUTER)
+            builder = create_context_builder()
+            integrate_orphans(repo, router=GLOBAL_ROUTER, context_builder=builder)
 
         # Deduplicate against existing stable workflows
         comparator = WorkflowSynergyComparator()

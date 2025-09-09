@@ -2336,7 +2336,11 @@ class SelfImprovementEngine:
                                     )
                                     try:
                                         repo = resolve_path(".")
-                                        self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
+                                        self._sandbox_integrate(
+                                            repo,
+                                            router=GLOBAL_ROUTER,
+                                            context_builder=self.self_coding_engine.context_builder,
+                                        )
                                     except Exception:
                                         self.logger.exception(
                                             "post_patch_orphan_integration_failed"
@@ -5009,6 +5013,7 @@ class SelfImprovementEngine:
                 modules=sorted(mods),
                 logger=self.logger,
                 router=GLOBAL_ROUTER,
+                context_builder=self.self_coding_engine.context_builder,
             )
             if updated_wfs:
                 try:
@@ -5228,7 +5233,10 @@ class SelfImprovementEngine:
         repo = _repo_path()
         try:
             added, syn_ok, intent_ok = self._post_round_scan(
-                repo, logger=self.logger, router=GLOBAL_ROUTER
+                repo,
+                logger=self.logger,
+                router=GLOBAL_ROUTER,
+                context_builder=self.self_coding_engine.context_builder,
             )
         except RuntimeError as exc:
             self.logger.error("post_round_orphan_scan unavailable: %s", exc)
@@ -6029,7 +6037,11 @@ class SelfImprovementEngine:
                         )
                         try:
                             repo = resolve_path(".")
-                            self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
+                            self._sandbox_integrate(
+                                repo,
+                                router=GLOBAL_ROUTER,
+                                context_builder=self.self_coding_engine.context_builder,
+                            )
                         except Exception:
                             self.logger.exception(
                                 "post_patch_orphan_integration_failed"
@@ -6078,7 +6090,11 @@ class SelfImprovementEngine:
                     extra=log_record(module=mod),
                 )
                 repo = resolve_path(".")
-                self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
+                self._sandbox_integrate(
+                    repo,
+                    router=GLOBAL_ROUTER,
+                    context_builder=self.self_coding_engine.context_builder,
+                )
             except Exception:
                 self.logger.exception(
                     "post_patch_orphan_discovery_failed",
@@ -6179,7 +6195,11 @@ class SelfImprovementEngine:
                             )
                             try:
                                 repo = resolve_path(".")
-                                self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
+                                self._sandbox_integrate(
+                                    repo,
+                                    router=GLOBAL_ROUTER,
+                                    context_builder=self.self_coding_engine.context_builder,
+                                )
                             except Exception:
                                 self.logger.exception(
                                     "post_patch_orphan_integration_failed"
@@ -6228,7 +6248,11 @@ class SelfImprovementEngine:
                         extra=log_record(module=mod),
                     )
                     repo = resolve_path(".")
-                    self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
+                    self._sandbox_integrate(
+                        repo,
+                        router=GLOBAL_ROUTER,
+                        context_builder=self.self_coding_engine.context_builder,
+                    )
                 except Exception:
                     self.logger.exception(
                         "post_patch_orphan_discovery_failed",
@@ -6870,7 +6894,11 @@ class SelfImprovementEngine:
 
                 try:
                     repo = resolve_path(".")
-                    self._sandbox_integrate(repo, router=GLOBAL_ROUTER)
+                    self._sandbox_integrate(
+                        repo,
+                        router=GLOBAL_ROUTER,
+                        context_builder=self.self_coding_engine.context_builder,
+                    )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
                         "recursive orphan inclusion failed: %s", exc

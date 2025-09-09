@@ -7712,6 +7712,7 @@ def generate_workflows_for_modules(
     workflows_db: str | Path = "workflows.db",
     *,
     router: DBRouter | None = None,
+    context_builder: ContextBuilder,
 ) -> list[int]:
     """Create workflows for ``modules`` including their dependencies.
 
@@ -7726,6 +7727,9 @@ def generate_workflows_for_modules(
         into a single workflow.
     workflows_db:
         Path to the workflows database. Defaults to ``"workflows.db"``.
+    context_builder:
+        :class:`~vector_service.context_builder.ContextBuilder` forwarded to
+        orphan integration helpers.
 
     Returns
     -------
@@ -7811,7 +7815,7 @@ def generate_workflows_for_modules(
             logger.exception("failed to store workflow for %s", dotted)
 
     try:
-        integrate_new_orphans(repo, router=router)
+        integrate_new_orphans(repo, router=router, context_builder=context_builder)
     except Exception:
         logger.exception("integrate_new_orphans after workflow generation failed")
     return ids
@@ -9014,7 +9018,7 @@ def auto_include_modules(
     accepted: list[str] = []
     low_roi_mods: list[str] = []
     for mod in mods:
-        ids = generate_workflows_for_modules([mod], router=router)
+        ids = generate_workflows_for_modules([mod], router=router, context_builder=context_builder)
         result = run_workflow_simulations(router=router, context_builder=context_builder)
         tracker = result[0] if isinstance(result, tuple) else result
         new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
@@ -9151,6 +9155,7 @@ def discover_and_integrate_orphans(
     repo: Path,
     *,
     router: DBRouter | None = None,
+    context_builder: ContextBuilder,
 ) -> list[str]:
     """Discover orphan modules and integrate them into the workflow system.
 
@@ -9161,6 +9166,9 @@ def discover_and_integrate_orphans(
     router:
         Optional :class:`db_router.DBRouter` forwarded to
         :func:`auto_include_modules`.
+    context_builder:
+        :class:`~vector_service.context_builder.ContextBuilder` forwarded to
+        :func:`integrate_and_graph_orphans`.
 
     Returns
     -------
@@ -9170,7 +9178,7 @@ def discover_and_integrate_orphans(
 
     try:
         _, tested, _, _, _ = integrate_and_graph_orphans(
-            repo, logger=logger, router=router
+            repo, logger=logger, router=router, context_builder=context_builder
         )
     except Exception:  # pragma: no cover - best effort
         logger.exception("discover_and_integrate_orphans failed")
@@ -9184,6 +9192,7 @@ def integrate_new_orphans(
     repo_path: str | Path,
     *,
     router: DBRouter | None = None,
+    context_builder: ContextBuilder,
 ) -> list[str]:
     """Discover and integrate new orphan modules.
 
@@ -9197,6 +9206,9 @@ def integrate_new_orphans(
     router:
         Optional :class:`db_router.DBRouter` forwarded to
         :func:`auto_include_modules`.
+    context_builder:
+        :class:`~vector_service.context_builder.ContextBuilder` forwarded to
+        :func:`discover_and_integrate_orphans`.
 
     Returns
     -------
@@ -9205,7 +9217,7 @@ def integrate_new_orphans(
     """
 
     return discover_and_integrate_orphans(
-        Path(resolve_path(repo_path)), router=router
+        Path(resolve_path(repo_path)), router=router, context_builder=context_builder
     )
 
 

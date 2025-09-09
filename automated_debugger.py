@@ -208,7 +208,9 @@ class AutomatedDebugger:
                 try:
                     from sandbox_runner import integrate_new_orphans  # type: ignore
 
-                    integrate_new_orphans(Path.cwd())
+                    integrate_new_orphans(
+                        Path.cwd(), context_builder=self.context_builder
+                    )
                 except Exception:
                     self.logger.exception(
                         "integrate_new_orphans after apply_patch failed",
