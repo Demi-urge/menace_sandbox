@@ -19,6 +19,7 @@ import sys
 from dynamic_path_router import resolve_path
 import uuid
 from snippet_compressor import compress_snippets
+from context_builder_util import ensure_fresh_weights
 
 try:
     from packaging.requirements import Requirement  # type: ignore
@@ -337,7 +338,7 @@ class BotDevelopmentBot:
             raise ValueError(msg)
         self.context_builder = context_builder
         try:
-            self.context_builder.refresh_db_weights()
+            ensure_fresh_weights(self.context_builder)
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
@@ -1276,12 +1277,23 @@ class BotDevelopmentBot:
                 with ThreadPoolExecutor(max_workers=self.concurrency) as ex:
                     files = list(
                         ex.map(
-                            lambda s: self.build_bot(s, context_builder=self.context_builder, model_id=model_id),
+                            lambda s: self.build_bot(
+                                s,
+                                context_builder=self.context_builder,
+                                model_id=model_id,
+                            ),
                             specs,
                         )
                     )
             else:
-                files = [self.build_bot(s, context_builder=self.context_builder, model_id=model_id) for s in specs]
+                files = [
+                    self.build_bot(
+                        s,
+                        context_builder=self.context_builder,
+                        model_id=model_id,
+                    )
+                    for s in specs
+                ]
         except Exception as exc:
             msg = f"build_from_plan failed: {exc}"
             self.logger.exception(msg)

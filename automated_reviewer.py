@@ -33,6 +33,7 @@ except Exception:  # pragma: no cover - module missing the attribute
         pass
 
 from snippet_compressor import compress_snippets
+from context_builder_util import ensure_fresh_weights
 
 
 class AutomatedReviewer:
@@ -61,7 +62,7 @@ class AutomatedReviewer:
             raise TypeError("context_builder must implement build()")
         self.context_builder = context_builder
         try:
-            self.context_builder.refresh_db_weights()
+            ensure_fresh_weights(self.context_builder)
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
