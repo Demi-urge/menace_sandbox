@@ -2152,10 +2152,11 @@ def bootstrap(
     cleanup_funcs.append(learn_stop)
 
     from vector_service.context_builder import ContextBuilder
+    from context_builder_util import ensure_fresh_weights
 
     builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     try:
-        builder.refresh_db_weights()
+        ensure_fresh_weights(builder)
     except Exception:  # pragma: no cover - log and skip self-test when init fails
         logger.exception(
             "ContextBuilder initialisation failed; self-test loop disabled"

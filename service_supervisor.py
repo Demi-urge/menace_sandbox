@@ -284,10 +284,9 @@ def _update_worker() -> None:
         stop.set()
 
 
-def _self_test_worker() -> None:
+def _self_test_worker(builder: ContextBuilder) -> None:
     """Execute the self test suite periodically."""
     logger = logging.getLogger("self_test_worker")
-    builder = create_context_builder()
     svc = SelfTestService(context_builder=builder)
     stop = Event()
     interval = float(os.getenv("SELF_TEST_INTERVAL", "86400"))
@@ -527,7 +526,7 @@ def main() -> None:
     sup.register("dependency_monitor", _dependency_monitor_worker)
     sup.register("environment_restoration", _env_restore_worker)
     sup.register("unified_update_service", _update_worker)
-    sup.register("self_test_service", _self_test_worker)
+    sup.register("self_test_service", partial(_self_test_worker, builder))
     if os.getenv("ENABLE_AUTOSCALER") == "1":
         sup.register("autoscaler", _autoscale_worker)
     if os.getenv("AUTO_ROTATE_SECRETS") == "1":
