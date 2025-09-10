@@ -158,14 +158,14 @@ Unset modules are ignored.
 
 `SandboxSettings.sandbox_required_db_files` lists SQLite files that should be
 present inside `sandbox_data_dir`. The bootstrap helper ensures each file
-exists, creating empty databases when necessary. Override the defaults via a
+exists, creating empty databases when necessary. By default the sandbox
+maintains `metrics.db` and `patch_history.db`. Override the defaults via a
 configuration file or the `SANDBOX_REQUIRED_DB_FILES` environment variable:
 
 ```yaml
 sandbox_required_db_files:
   - metrics.db
   - patch_history.db
-  - visual_agent_queue.db
 ```
 
 ```bash

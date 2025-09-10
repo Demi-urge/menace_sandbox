@@ -7,7 +7,6 @@ optional_service_versions:
 sandbox_required_db_files:
   - metrics.db
   - patch_history.db
-  - visual_agent_queue.db
 prompt_chunk_token_threshold: 3500
 prompt_chunk_cache_dir: chunk_summary_cache
 roi:
