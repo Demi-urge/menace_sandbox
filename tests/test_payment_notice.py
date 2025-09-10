@@ -211,7 +211,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
         ],
     )
 
-    assert captured["desc"] == "system: sys\nuser: hi\nuser: again"
+    assert captured["desc"] == "system: sys\nuser: hi\nassistant: there\nuser: again"
     assert result == EngineResult(True, "code", None)
     assert wrapper_called is False
 
@@ -247,12 +247,51 @@ def test_call_codex_api_aggregates_multi_messages(monkeypatch):
             {"role": "system", "content": "s1"},
             {"role": "user", "content": "u1"},
             {"role": "assistant", "content": "a1"},
+            {"role": "tool", "content": "t1"},
             {"role": "system", "content": "s2"},
             {"role": "user", "content": "u2"},
         ],
     )
 
-    assert captured["desc"] == "system: s1\nuser: u1\nsystem: s2\nuser: u2"
+    assert (
+        captured["desc"]
+        == "system: s1\nuser: u1\nassistant: a1\ntool: t1\nsystem: s2\nuser: u2"
+    )
+
+
+def test_call_codex_api_includes_tool_messages(monkeypatch):
+    captured: dict[str, str] = {}
+
+    def fake_generate(desc: str) -> str:
+        captured["desc"] = desc
+        return ""  # pragma: no cover - return value unused
+
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(
+        RetryStrategy, "run", lambda self, func, logger=None: func()
+    )
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": None,
+        errors=[],
+        engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200, raise_errors=False),
+    )
+
+    BotDevelopmentBot._call_codex_api(
+        dummy,
+        [
+            {"role": "user", "content": "u"},
+            {"role": "tool", "content": "t"},
+            {"role": "assistant", "content": "a"},
+        ],
+    )
+
+    assert captured["desc"] == "user: u\ntool: t\nassistant: a"
 
 
 def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
