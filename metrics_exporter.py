@@ -526,17 +526,6 @@ orphan_integration_failure_total = Gauge(
 
 
 # Metrics for visual agent utilisation
-visual_agent_wait_time = Gauge(
-    "visual_agent_wait_time_seconds",
-    "Average wait time for VisualAgentClient tasks",
-)
-visual_agent_queue_depth = Gauge(
-    "visual_agent_queue_depth", "Queue length reported by VisualAgentClient"
-)
-visual_agent_recoveries_total = Gauge(
-    "visual_agent_recoveries_total",
-    "Total number of visual agent queue recoveries",
-)
 visual_agent_watchdog_recoveries_total = Gauge(
     "visual_agent_watchdog_recoveries_total",
     "Recoveries triggered by the internal queue watchdog",
@@ -909,9 +898,6 @@ __all__ = [
     "efficiency_gauge",
     "flexibility_gauge",
     "projected_lucrativity_gauge",
-    "visual_agent_wait_time",
-    "visual_agent_queue_depth",
-    "visual_agent_recoveries_total",
     "visual_agent_watchdog_recoveries_total",
     "isolated_modules_discovered_total",
     "isolated_modules_integrated_total",

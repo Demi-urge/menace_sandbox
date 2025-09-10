@@ -144,8 +144,6 @@ visual agent is contacted. The most relevant are:
   `visual_agent_client.py`).
   - `VISUAL_AGENT_STATUS_INTERVAL` – poll `/status` periodically to record queue
     depth for the dashboard. Set to `0` to disable.
-    When enabled the sandbox dashboard exposes `visual_agent_queue_depth` and
-    `visual_agent_wait_time` metrics.
 
 When `run_autonomous.py` is used a `VisualAgentMonitor` thread keeps the
 service running. It polls the agent's `/health` endpoint and restarts

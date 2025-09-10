@@ -333,7 +333,9 @@ def _log_recovery_metrics(count: int, watchdog: bool = False) -> None:
         RECOVERY_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
         RECOVERY_METRICS_FILE.write_text(json.dumps(metrics))
         try:
-            metrics_exporter.visual_agent_recoveries_total.set(metrics["recovery_count"])
+            gauge = getattr(metrics_exporter, "visual_agent_recoveries_total", None)
+            if gauge is not None:
+                gauge.set(metrics["recovery_count"])
             metrics_exporter.visual_agent_watchdog_recoveries_total.set(
                 metrics["watchdog_recoveries"]
             )
