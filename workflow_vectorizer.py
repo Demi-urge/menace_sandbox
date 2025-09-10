@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List
+import json
+import os
 import re
+import urllib.request
 import numpy as np
 
 from analysis.semantic_diff_filter import find_semantic_risks
@@ -31,6 +34,20 @@ if SentenceTransformer is not None:  # pragma: no cover - model download may be 
     except Exception:
         _MODEL = None
 
+_REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
+
+
+def _remote_embed(text: str) -> List[float]:
+    data = json.dumps({"kind": "text", "record": {"text": text}}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{_REMOTE_URL.rstrip('/')}/vectorise",
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as resp:  # pragma: no cover - network
+        payload = json.loads(resp.read().decode("utf-8"))
+    return payload.get("vector", [])
+
 
 def _split_sentences(text: str) -> List[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
@@ -39,10 +56,30 @@ def _split_sentences(text: str) -> List[str]:
 def _embed_texts(texts: List[str]) -> List[List[float]]:
     if not texts:
         return []
-    if _MODEL is None:  # pragma: no cover - dependency missing
-        return [[0.0] * _EMBED_DIM for _ in texts]
-    vecs = _MODEL.encode(texts)
-    return [list(map(float, v)) for v in np.atleast_2d(vecs)]
+    if _MODEL is not None:
+        vecs = _MODEL.encode(texts)
+        return [list(map(float, v)) for v in np.atleast_2d(vecs)]
+
+    global _DEFAULT_SERVICE
+    if _DEFAULT_SERVICE is not None:
+        try:
+            return [_DEFAULT_SERVICE.vectorise("text", {"text": t}) for t in texts]
+        except Exception:
+            pass
+    elif SharedVectorService is not None:
+        try:
+            _DEFAULT_SERVICE = SharedVectorService()
+            return [_DEFAULT_SERVICE.vectorise("text", {"text": t}) for t in texts]
+        except Exception:
+            _DEFAULT_SERVICE = None
+
+    if _REMOTE_URL:
+        try:
+            return [_remote_embed(t) for t in texts]
+        except Exception:
+            pass
+
+    raise RuntimeError("No embedding backend available")
 
 
 @dataclass
