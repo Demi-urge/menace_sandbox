@@ -194,14 +194,26 @@ Metrics emitted by `EmbeddingBackfill.run`:
 ### Continuous backfills
 
 `EmbeddingBackfill` can run as a long‑lived daemon that watches all registered
-`EmbeddableDBMixin` databases for new or updated records:
+databases for new or updated records.  The module exposes two context managers
+that start background watcher threads and stop them cleanly when the context
+exits:
 
-```bash
-python -m vector_service.embedding_backfill --watch --interval 300
+```python
+from vector_service.embedding_backfill import watch_databases, watch_event_bus
+import time
+
+with watch_databases(interval=300), watch_event_bus():
+    # keep the process alive while background threads monitor for changes
+    while True:
+        time.sleep(60)
 ```
 
-The example above scans every five minutes.  Alternatively, trigger periodic
-backfills with cron:
+Both watchers emit Prometheus counters for processed records, failed
+embeddings and runtime errors.  The example above scans every five minutes.  A
+similar process can be managed via `systemd` by wrapping the snippet in a small
+script and using `Type=simple` so the service shuts down gracefully.
+
+Alternatively, trigger periodic backfills with cron:
 
 ```
 */30 * * * * python -m vector_service.embedding_backfill >> /var/log/embedding_backfill.log 2>&1

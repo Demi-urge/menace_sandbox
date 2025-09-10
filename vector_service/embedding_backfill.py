@@ -13,11 +13,20 @@ import sys
 import hashlib
 import queue
 import threading
+import contextlib
 from datetime import datetime, timedelta
 
 from . import registry as _registry
 
-from .vectorizer import SharedVectorService
+try:  # pragma: no cover - optional heavy dependency
+    from .vectorizer import SharedVectorService
+except Exception:  # pragma: no cover - lightweight fallback
+    class SharedVectorService:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def vectorise_and_store(self, *args, **kwargs):
+            pass
 
 from .decorators import log_and_measure
 from compliance.license_fingerprint import (
@@ -60,6 +69,22 @@ _RUN_SKIPPED = _me.Gauge(
     "embedding_backfill_skipped_total",
     "Records skipped during EmbeddingBackfill due to licensing",
     labelnames=["db", "license"],
+)
+
+_PROCESSED_RECORDS = _me.Gauge(
+    "embedding_watcher_processed_total",
+    "Records processed by embedding watchers",
+    labelnames=["watcher"],
+)
+_FAILED_EMBEDDINGS = _me.Gauge(
+    "embedding_watcher_failed_total",
+    "Failed embedding attempts by watchers",
+    labelnames=["watcher"],
+)
+_RUNTIME_ERRORS = _me.Gauge(
+    "embedding_watcher_errors_total",
+    "Runtime errors encountered by watchers",
+    labelnames=["watcher"],
 )
 
 try:  # pragma: no cover - optional dependency
@@ -405,26 +430,20 @@ class EmbeddingBackfill:
         *,
         interval: float = 60.0,
         dbs: List[str] | None = None,
-    ) -> None:
-        """Continuously monitor databases for new or modified records.
+    ) -> contextlib.AbstractContextManager[None]:
+        """Continuously monitor databases for new or modified records."""
 
-        This method is a thin wrapper around :func:`watch_databases` to retain a
-        backwards compatible API while the implementation lives at module
-        scope.  State is held in memory so restarting the process triggers a
-        full scan again.
-        """
-
-        watch_databases(interval=interval, dbs=dbs, backend=self.backend)
+        return watch_databases(interval=interval, dbs=dbs, backend=self.backend)
 
     def watch_events(
         self,
         *,
         bus: "UnifiedEventBus" | None = None,
         batch_size: int | None = None,
-    ) -> None:
+    ) -> contextlib.AbstractContextManager[None]:
         """Listen for database change events and trigger incremental backfills."""
 
-        watch_event_bus(
+        return watch_event_bus(
             bus=bus,
             backend=self.backend,
             batch_size=batch_size if batch_size is not None else 1,
@@ -469,18 +488,13 @@ def check_staleness(dbs: List[str]) -> List[str]:
     return stale
 
 
-def watch_event_bus(
+def _run_event_bus_watcher(
     *,
-    bus: "UnifiedEventBus" | None = None,
-    backend: str = "annoy",
-    batch_size: int = 1,
+    bus: "UnifiedEventBus",
+    backend: str,
+    batch_size: int,
+    stop: threading.Event,
 ) -> None:
-    """Listen for database change events via :class:`UnifiedEventBus`."""
-
-    if UnifiedEventBus is None:
-        raise RuntimeError("UnifiedEventBus unavailable")
-
-    bus = bus or UnifiedEventBus()
     backfill = EmbeddingBackfill(batch_size=batch_size, backend=backend)
     q: queue.Queue[str] = queue.Queue()
     pending: set[str] = set()
@@ -502,8 +516,12 @@ def watch_event_bus(
     for topic in ("db:record_added", "db:record_updated", "embedding:backfill"):
         bus.subscribe(topic, _handle)
 
-    while True:
-        kind = q.get()
+    logger = logging.getLogger(__name__)
+    while not stop.is_set():
+        try:
+            kind = q.get(timeout=0.5)
+        except queue.Empty:
+            continue
         try:
             backfill.run(
                 dbs=[kind],
@@ -511,32 +529,24 @@ def watch_event_bus(
                 backend=backend,
                 trigger="event",
             )
+            _PROCESSED_RECORDS.labels("event_bus").inc()
         except Exception:  # pragma: no cover - best effort
-            logging.getLogger(__name__).exception(
-                "event-triggered backfill failed for %s", kind
-            )
+            logger.exception("event-triggered backfill failed for %s", kind)
+            _RUNTIME_ERRORS.labels("event_bus").inc()
         finally:
             pending.discard(kind)
 
 
-def watch_databases(
+def _run_databases_watcher(
     *,
-    interval: float = 60.0,
-    dbs: List[str] | None = None,
-    backend: str = "annoy",
+    interval: float,
+    dbs: List[str] | None,
+    backend: str,
+    stop: threading.Event,
 ) -> None:
-    """Continuously monitor databases for new or modified records.
-
-    Every ``interval`` seconds each registered database from
-    ``embedding_registry.json`` is scanned using its :meth:`iter_records`
-    implementation. Records whose content has not been seen before are
-    vectorised via :meth:`SharedVectorService.vectorise_and_store`.
-    """
-
     svc = SharedVectorService()
     seen: dict[str, dict[str, str]] = {}
     backfill = EmbeddingBackfill(backend=backend)
-    # listen for explicit db change events so we can react immediately
     q: queue.Queue[str] = queue.Queue()
     pending: set[str] = set()
 
@@ -545,6 +555,7 @@ def watch_databases(
             pending.add(kind)
             q.put(kind)
 
+    event_thread: threading.Thread | None = None
     if UnifiedEventBus is not None:
         bus = UnifiedEventBus()
 
@@ -563,9 +574,13 @@ def watch_databases(
         for topic in ("db:record_added", "db:record_updated"):
             bus.subscribe(topic, _handle)
 
-        def _worker() -> None:
-            while True:
-                kind = q.get()
+        def _event_worker() -> None:
+            logger = logging.getLogger(__name__)
+            while not stop.is_set():
+                try:
+                    kind = q.get(timeout=0.5)
+                except queue.Empty:
+                    continue
                 try:
                     backfill.run(
                         dbs=[kind],
@@ -573,44 +588,108 @@ def watch_databases(
                         backend=backend,
                         trigger="event",
                     )
+                    _PROCESSED_RECORDS.labels("event_bus").inc()
                 except Exception:  # pragma: no cover - best effort
-                    logging.getLogger(__name__).exception(
+                    logger.exception(
                         "event-triggered backfill failed for %s", kind
                     )
+                    _RUNTIME_ERRORS.labels("event_bus").inc()
                 finally:
                     pending.discard(kind)
 
-        threading.Thread(target=_worker, daemon=True).start()
-    while True:
-        check_staleness(dbs or [])
-        subclasses = backfill._load_known_dbs(names=dbs)
-        for cls in subclasses:
-            try:
-                db = cls(vector_backend=backend)  # type: ignore[call-arg]
-            except Exception:
+        event_thread = threading.Thread(target=_event_worker, daemon=True)
+        event_thread.start()
+
+    logger = logging.getLogger(__name__)
+    try:
+        while not stop.is_set():
+            check_staleness(dbs or [])
+            subclasses = backfill._load_known_dbs(names=dbs)
+            for cls in subclasses:
                 try:
-                    db = cls()  # type: ignore[call-arg]
-                except Exception:  # pragma: no cover - best effort
-                    continue
-            key = cls.__name__
-            cache = seen.setdefault(key, {})
-            for record_id, record, kind in getattr(db, "iter_records", lambda: [])():
-                rid = str(record_id)
-                try:
-                    raw = json.dumps(record, sort_keys=True, default=str)
+                    db = cls(vector_backend=backend)  # type: ignore[call-arg]
                 except Exception:
-                    raw = str(record)
-                digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-                if cache.get(rid) == digest:
-                    continue
-                try:
-                    svc.vectorise_and_store(kind, rid, record)
-                    cache[rid] = digest
-                except Exception:  # pragma: no cover - best effort
-                    logging.getLogger(__name__).exception(
-                        "failed to vectorise record %s from %s", rid, key
-                    )
-        time.sleep(interval)
+                    try:
+                        db = cls()  # type: ignore[call-arg]
+                    except Exception:  # pragma: no cover - best effort
+                        continue
+                key = cls.__name__
+                cache = seen.setdefault(key, {})
+                for record_id, record, kind in getattr(db, "iter_records", lambda: [])():
+                    rid = str(record_id)
+                    try:
+                        raw = json.dumps(record, sort_keys=True, default=str)
+                    except Exception:
+                        raw = str(record)
+                    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+                    if cache.get(rid) == digest:
+                        continue
+                    try:
+                        svc.vectorise_and_store(kind, rid, record)
+                        cache[rid] = digest
+                        _PROCESSED_RECORDS.labels("db").inc()
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception(
+                            "failed to vectorise record %s from %s", rid, key
+                        )
+                        _FAILED_EMBEDDINGS.labels("db").inc()
+            stop.wait(interval)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("database watcher crashed")
+        _RUNTIME_ERRORS.labels("db").inc()
+    finally:
+        if event_thread is not None:
+            event_thread.join()
+
+
+@contextlib.contextmanager
+def watch_event_bus(
+    *,
+    bus: "UnifiedEventBus" | None = None,
+    backend: str = "annoy",
+    batch_size: int = 1,
+):
+    """Listen for database change events via :class:`UnifiedEventBus`."""
+
+    if UnifiedEventBus is None:
+        raise RuntimeError("UnifiedEventBus unavailable")
+
+    bus = bus or UnifiedEventBus()
+    stop = threading.Event()
+    t = threading.Thread(
+        target=_run_event_bus_watcher,
+        kwargs={"bus": bus, "backend": backend, "batch_size": batch_size, "stop": stop},
+        daemon=True,
+    )
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        t.join()
+
+
+@contextlib.contextmanager
+def watch_databases(
+    *,
+    interval: float = 60.0,
+    dbs: List[str] | None = None,
+    backend: str = "annoy",
+):
+    """Continuously monitor databases for new or modified records."""
+
+    stop = threading.Event()
+    t = threading.Thread(
+        target=_run_databases_watcher,
+        kwargs={"interval": interval, "dbs": dbs, "backend": backend, "stop": stop},
+        daemon=True,
+    )
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        t.join()
 
 
 async def schedule_backfill(
@@ -779,7 +858,12 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - CLI e
     if args.verify:
         eb._verify_registry(args.dbs)
     elif args.watch:
-        eb.watch(interval=args.interval, dbs=args.dbs)
+        with eb.watch(interval=args.interval, dbs=args.dbs):
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
     else:
         eb.run(dbs=args.dbs)
 
