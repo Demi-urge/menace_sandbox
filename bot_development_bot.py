@@ -941,10 +941,21 @@ class BotDevelopmentBot:
         """
 
         prompt = ""
+        user_found = False
         for message in reversed(messages):
             if message.get("role") == "user":
                 prompt = message.get("content", "")
+                user_found = True
                 break
+
+        if not user_found:
+            msg = "no user message found"
+            self.logger.warning(msg)
+            self._escalate(msg, level="warning")
+            self.errors.append(msg)
+            if RAISE_ERRORS:
+                raise RuntimeError(msg)
+            return None
 
         try:
             return self.engine_retry.run(

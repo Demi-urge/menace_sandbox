@@ -148,6 +148,7 @@ sys.modules.setdefault("menace_sandbox.self_coding_engine", sce_stub)
 sys.modules.setdefault("self_coding_engine", sce_stub)
 
 from menace_sandbox.bot_development_bot import BotDevelopmentBot, RetryStrategy
+import menace_sandbox.bot_development_bot as bdb
 
 
 def test_payment_router_notice_mentions_central_routing_and_logging():
@@ -202,3 +203,73 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
     assert captured["desc"] == "hi"
     assert result == "code"
     assert wrapper_called is False
+
+
+def test_call_codex_api_no_user_message_returns_none(monkeypatch, caplog):
+    escalated: dict[str, str] = {}
+
+    def fake_escalate(msg: str, level: str = "error") -> None:
+        escalated["msg"] = msg
+        escalated["level"] = level
+
+    engine = sce_stub.SelfCodingEngine()
+
+    def fake_generate(_desc: str) -> str:  # pragma: no cover - should not run
+        raise AssertionError("engine should not be called")
+
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "RAISE_ERRORS", False)
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=fake_escalate,
+        errors=[],
+        engine_retry=RetryStrategy(),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = BotDevelopmentBot._call_codex_api(
+            dummy,
+            "m",
+            [{"role": "assistant", "content": "there"}],
+        )
+
+    assert result is None
+    assert escalated["level"] == "warning"
+    assert "no user message found" in escalated["msg"]
+    assert "no user message found" in caplog.text
+
+
+def test_call_codex_api_no_user_message_raises(monkeypatch):
+    escalated: dict[str, str] = {}
+
+    def fake_escalate(msg: str, level: str = "error") -> None:
+        escalated["level"] = level
+
+    engine = sce_stub.SelfCodingEngine()
+
+    def fake_generate(_desc: str) -> str:  # pragma: no cover - should not run
+        raise AssertionError("engine should not be called")
+
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "RAISE_ERRORS", True)
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=fake_escalate,
+        errors=[],
+        engine_retry=RetryStrategy(),
+    )
+
+    with pytest.raises(RuntimeError):
+        BotDevelopmentBot._call_codex_api(
+            dummy,
+            "m",
+            [{"role": "assistant", "content": "there"}],
+        )
+
+    assert escalated["level"] == "warning"
