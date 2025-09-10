@@ -1,4 +1,12 @@
 # flake8: noqa
+"""Database for storing code snippets and relationships.
+
+Embeddings are refreshed on database events via
+``EmbeddingBackfill.watch_events``. To backfill manually run::
+
+    menace embed --db code
+"""
+
 from __future__ import annotations
 
 import os
@@ -22,13 +30,20 @@ from dataclasses import asdict
 
 import license_detector
 try:  # pragma: no cover - allow running without vector_service
-    from vector_service import EmbeddableDBMixin
+    from vector_service import EmbeddableDBMixin, EmbeddingBackfill
 except Exception:  # pragma: no cover - lightweight stub for tests
+    class EmbeddingBackfill:  # type: ignore
+        def watch_events(self, *a, **k) -> None:
+            return None
+
     class EmbeddableDBMixin:  # type: ignore
         def __init__(self, *a, **k):
             pass
 
         def add_embedding(self, *a, **k):  # pragma: no cover - simple stub
+            pass
+
+        def try_add_embedding(self, *a, **k):  # pragma: no cover - simple stub
             pass
 
         def encode_text(self, text):  # pragma: no cover - simple stub
@@ -78,6 +93,26 @@ except Exception:  # pragma: no cover - fallback for top-level imports
     from menace_memory_manager import _summarise_text  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+_WATCH_THREAD: threading.Thread | None = None
+
+
+def _ensure_backfill_watcher(bus: "UnifiedEventBus" | None) -> None:
+    """Start ``EmbeddingBackfill.watch_events`` once for this module."""
+
+    global _WATCH_THREAD
+    if bus is None or _WATCH_THREAD is not None:
+        return
+    try:
+        thread = threading.Thread(
+            target=EmbeddingBackfill().watch_events,
+            kwargs={"bus": bus},
+            daemon=True,
+        )
+        thread.start()
+        _WATCH_THREAD = thread
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to start embedding watcher")
 
 SQL_DIR = resolve_path("sql_templates")
 
@@ -301,6 +336,7 @@ class CodeDB(EmbeddableDBMixin):
         else:
             self.path = Path("")
         self.event_bus = event_bus
+        _ensure_backfill_watcher(self.event_bus)
         self._lock = threading.Lock()
         self.has_fts = False
         self.fts_retry_limit = 3
@@ -543,10 +579,7 @@ class CodeDB(EmbeddableDBMixin):
             return rec.cid
 
         cid = self._with_retry(lambda: self._conn_wrapper(op))
-        try:
-            self.add_embedding(cid, rec, "code", source_id=str(cid))
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("embedding hook failed for %s: %s", cid, exc)
+        self.try_add_embedding(cid, rec, "code", source_id=str(cid))
         if self.event_bus:
             if not publish_with_retry(self.event_bus, "code:new", asdict(rec)):
                 logger.exception("failed to publish code:new event")
@@ -580,7 +613,7 @@ class CodeDB(EmbeddableDBMixin):
         if not fields:
             return
 
-        def op(conn: Any) -> None:
+        def op(conn: Any) -> CodeRecord | None:
             menace_id = source_menace_id or _current_menace_id(self.router)
             if expected_revision is not None:
                 clause, params = build_scope_clause("code", Scope.LOCAL, menace_id)
@@ -631,26 +664,41 @@ class CodeDB(EmbeddableDBMixin):
                 )
             if not self.has_fts:
                 self._maybe_init_fts(conn)
+            rec_row = None
             if self.has_fts:
                 try:
-                    row = self._execute(
+                    rec_row = self._execute(
                         conn,
-                        "SELECT summary, code FROM code WHERE id=? AND source_menace_id=?",
+                        "SELECT code, template_type, language, version, complexity_score, summary, revision FROM code WHERE id=? AND source_menace_id=?",
                         (code_id, menace_id),
                     ).fetchone()
-                    if row:
+                    if rec_row:
                         self._execute_fts(conn, SQL_DELETE_FTS_ROW, (code_id,))
                         self._execute_fts(
                             conn,
                             SQL_INSERT_FTS,
-                            (code_id, row[0], row[1]),
+                            (code_id, rec_row[5], rec_row[0]),
                         )
                 except Exception as exc:
                     self.has_fts = False
                     self._fts_disabled_until = datetime.utcnow() + timedelta(minutes=5)
                     logger.warning("fts update failed: %s", exc, exc_info=True)
+            if rec_row and isinstance(rec_row, sqlite3.Row):
+                return CodeRecord(
+                    code=rec_row[0],
+                    template_type=rec_row[1],
+                    language=rec_row[2],
+                    version=rec_row[3],
+                    complexity_score=rec_row[4],
+                    summary=rec_row[5],
+                    cid=code_id,
+                    revision=rec_row[6],
+                )
+            return None
 
-        self._with_retry(lambda: self._conn_wrapper(op))
+        rec = self._with_retry(lambda: self._conn_wrapper(op))
+        if rec:
+            self.try_add_embedding(code_id, rec, "code", source_id=str(code_id))
         if self.event_bus:
             payload = {"code_id": code_id, **fields}
             if not publish_with_retry(self.event_bus, "code:update", payload):

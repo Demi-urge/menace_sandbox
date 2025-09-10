@@ -1,5 +1,9 @@
 # flake8: noqa
-"""Error Bot for detecting and resolving system issues."""
+"""Error Bot for detecting and resolving system issues.
+
+Embeddings refresh via ``EmbeddingBackfill.watch_events``.
+Run ``menace embed --db error`` to backfill manually.
+"""
 
 from __future__ import annotations
 
@@ -37,12 +41,34 @@ from jinja2 import Template
 import yaml
 from vector_service.text_preprocessor import generalise
 
+from vector_service import EmbeddableDBMixin, EmbeddingBackfill
+
 try:  # pragma: no cover - optional dependency for type hints
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback for flat layout
     from vector_service.context_builder import ContextBuilder  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+_WATCH_THREAD: threading.Thread | None = None
+
+
+def _ensure_backfill_watcher(bus: "EventBus" | None) -> None:
+    """Start ``EmbeddingBackfill.watch_events`` once for this module."""
+
+    global _WATCH_THREAD
+    if bus is None or _WATCH_THREAD is not None:
+        return
+    try:
+        thread = threading.Thread(
+            target=EmbeddingBackfill().watch_events,
+            kwargs={"bus": bus},
+            daemon=True,
+        )
+        thread.start()
+        _WATCH_THREAD = thread
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to start embedding watcher")
 
 try:
     import pandas as pd  # type: ignore
@@ -58,7 +84,6 @@ from .knowledge_graph import KnowledgeGraph
 from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
-from vector_service import EmbeddableDBMixin
 from .scope_utils import build_scope_clause, Scope, apply_scope
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
@@ -108,6 +133,7 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn = self.router.get_connection("errors")
         self.conn.row_factory = sqlite3.Row
         self.event_bus = event_bus
+        _ensure_backfill_watcher(self.event_bus)
         self.graph = graph
         self.conn.execute(
             """
@@ -501,12 +527,9 @@ class ErrorDB(EmbeddableDBMixin):
                 logger=logger,
             )
         if err_id is not None:
-            try:
-                self.add_embedding(
-                    err_id, {"message": message}, kind="error", source_id=str(err_id)
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception("embedding hook failed for %s: %s", err_id, exc)
+            self.try_add_embedding(
+                err_id, {"message": message}, kind="error", source_id=str(err_id)
+            )
             self._publish(
                 "errors:new",
                 {
@@ -673,15 +696,12 @@ class ErrorDB(EmbeddableDBMixin):
             )
         self.conn.commit()
         rec_id = int(cur.lastrowid)
-        try:
-            self.add_embedding(
-                rec_id,
-                {"message": event.root_cause, "stack_trace": event.stack_trace},
-                kind="error",
-                source_id=event.task_id or event.bot_id or "",
-            )
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("embedding hook failed for %s: %s", rec_id, exc)
+        self.try_add_embedding(
+            rec_id,
+            {"message": event.root_cause, "stack_trace": event.stack_trace},
+            kind="error",
+            source_id=event.task_id or event.bot_id or "",
+        )
         if self.graph:
             try:  # pragma: no cover - best effort
                 self.graph.save(self.graph.path)

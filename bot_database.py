@@ -1,3 +1,9 @@
+"""SQLite database tracking bot definitions and relationships.
+
+Embeddings refresh automatically via ``EmbeddingBackfill.watch_events``.
+Run ``menace embed --db bot`` to backfill manually.
+"""
+
 from __future__ import annotations
 
 import json
@@ -11,12 +17,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING, Literal, Sequence
 from time import time
 import re
+import threading
 
 from .auto_link import auto_link
 
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
-from vector_service import EmbeddableDBMixin
+from vector_service import EmbeddableDBMixin, EmbeddingBackfill
 from vector_service.text_preprocessor import generalise
 import warnings
 try:
@@ -61,6 +68,26 @@ def _safe_json_dumps(data: Any) -> str:
 
 
 logger = logging.getLogger(__name__)
+
+_WATCH_THREAD: threading.Thread | None = None
+
+
+def _ensure_backfill_watcher(bus: "UnifiedEventBus" | None) -> None:
+    """Start ``EmbeddingBackfill.watch_events`` once for this module."""
+
+    global _WATCH_THREAD
+    if bus is None or _WATCH_THREAD is not None:
+        return
+    try:
+        thread = threading.Thread(
+            target=EmbeddingBackfill().watch_events,
+            kwargs={"bus": bus},
+            daemon=True,
+        )
+        thread.start()
+        _WATCH_THREAD = thread
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to start embedding watcher")
 
 
 # Fields that uniquely identify a bot's core identity for deduplication
@@ -150,6 +177,7 @@ class BotDB(EmbeddableDBMixin):
         self.router = GLOBAL_ROUTER
         self.conn = self.router.get_connection("bots")
         self.event_bus = event_bus
+        _ensure_backfill_watcher(self.event_bus)
         self.menace_db = menace_db
         self.failed_events: list[FailedEvent] = []
         self.failed_menace: list[FailedMenace] = []
@@ -339,11 +367,7 @@ class BotDB(EmbeddableDBMixin):
 
     def _embed_record_on_write(self, bot_id: int, rec: BotRecord | dict[str, Any]) -> None:
         """Best-effort embedding hook for inserts and updates."""
-
-        try:
-            self.add_embedding(bot_id, rec, "bot", source_id=str(bot_id))
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("embedding hook failed for %s: %s", bot_id, exc)
+        self.try_add_embedding(bot_id, rec, "bot", source_id=str(bot_id))
 
     def license_text(
         self,
