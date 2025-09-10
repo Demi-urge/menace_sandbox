@@ -1311,7 +1311,11 @@ class ContextBuilder:
         forwards the call so legacy imports continue to function.
         """
 
-        return self.build_context(query, **kwargs)
+        try:
+            return self.build_context(query, **kwargs)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"embedding verification failed: {exc}") from exc
 
     # ------------------------------------------------------------------
     @log_and_measure
