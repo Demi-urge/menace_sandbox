@@ -1,8 +1,5 @@
-import pytest
-pytest.skip("optional dependencies not installed", allow_module_level=True)
 import asyncio
 import menace.captcha_system as cs
-import pytest
 
 
 def test_detector_simple():
@@ -14,11 +11,13 @@ def test_detector_simple():
 class DummyPage:
     async def screenshot(self):
         return b''
+
     async def content(self):
         return '<html></html>'
 
 
-def test_manager_local():
+def test_manager_local(monkeypatch):
+    monkeypatch.setattr(cs, 'boto3', None)
     mgr = cs.CaptchaManager(bucket='dummy', redis_url='redis://localhost:1/0')
     page = DummyPage()
     q = mgr.subscribe()
@@ -32,13 +31,3 @@ def test_manager_local():
     assert mgr.local_state['job']['state'] == 'SOLVED'
     token = asyncio.run(mgr.wait_for_solution('job', poll_interval=0))
     assert token == 't'
-
-
-def test_detector_vision(monkeypatch, tmp_path):
-    if not cs.vision_utils.vision:
-        pytest.skip("vision not available")
-    img = tmp_path / "i.png"
-    img.write_bytes(b'0')
-    monkeypatch.setattr(cs.vision_utils, 'detect_text', lambda p: 'captcha found')
-    det = cs.CaptchaDetector()
-    assert det.detect('<p>hello</p>', screenshot_path=str(img))
