@@ -947,6 +947,7 @@ class BotDevelopmentBot:
                 prompt_parts.append(f"{role}: {message.get('content', '')}")
                 if role == "user":
                     user_found = True
+        prompt = "\n".join(prompt_parts)
 
         if not user_found:
             msg = "no user message found"
@@ -957,7 +958,14 @@ class BotDevelopmentBot:
                 raise ValueError(msg)
             return None
 
-        prompt = "\n".join(prompt_parts)
+        if not prompt.strip():
+            msg = "empty prompt"
+            self.logger.error(msg)
+            self._escalate(msg)
+            self.errors.append(msg)
+            if RAISE_ERRORS:
+                raise ValueError(msg)
+            return None
 
         try:
             return self.engine_retry.run(
