@@ -492,6 +492,43 @@ def handle_embed(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_embed_init(args: argparse.Namespace) -> int:
+    """Handle ``embed init`` command."""
+    if not _require_vector_service():
+        return 1
+    from vector_service.embedding_backfill import EmbeddingBackfill
+
+    backfill = EmbeddingBackfill()
+    for name in ("code", "bot", "error", "workflow"):
+        for _ in range(2):
+            backfill.run(session_id="cli", dbs=[name])
+            subclasses = backfill._load_known_dbs(names=[name])
+            if not subclasses:
+                break
+            cls = subclasses[0]
+            try:
+                db = cls(vector_backend=backfill.backend)  # type: ignore[call-arg]
+            except Exception:
+                try:
+                    db = cls()  # type: ignore[call-arg]
+                except Exception:
+                    break
+            record_total = sum(1 for _ in db.iter_records())
+            vector_total = len(getattr(db, "_id_map", []))
+            print(f"{cls.__name__}: {record_total} records, {vector_total} vectors")
+            try:
+                conn = getattr(db, "conn", None)
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+            if record_total == vector_total:
+                break
+        else:
+            return 1
+    return 0
+
+
 def handle_cache_show(args: argparse.Namespace) -> int:
     """Handle ``cache show`` command."""
     print(json.dumps(show_cache()))
@@ -653,6 +690,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Embed all registered databases",
     )
+    embed_sub = p_embed.add_subparsers(dest="embed_cmd")
+    p_embed_init = embed_sub.add_parser(
+        "init", help="Initialise embeddings for core databases"
+    )
+    p_embed_init.set_defaults(func=handle_embed_init)
     p_embed.set_defaults(func=handle_embed)
 
     p_newdb = sub.add_parser("new-db", help="Scaffold a new database module")

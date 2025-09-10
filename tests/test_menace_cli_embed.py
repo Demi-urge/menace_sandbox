@@ -9,6 +9,7 @@ def _load_cli(monkeypatch, backfill_impl):
     vs.__path__ = []  # type: ignore[attr-defined]
     vs.PatchLogger = object
     monkeypatch.setitem(sys.modules, "vector_service", vs)
+
     class _EB:
         def __init__(self, *a, **k):
             pass
@@ -29,8 +30,19 @@ def _load_cli(monkeypatch, backfill_impl):
         "vector_service.embedding_backfill",
         types.SimpleNamespace(
             EmbeddingBackfill=_EB,
-            _RUN_SKIPPED=types.SimpleNamespace(labels=lambda *a, **k: types.SimpleNamespace(inc=lambda *a, **k: None)),
+            _RUN_SKIPPED=types.SimpleNamespace(
+                labels=lambda *a, **k: types.SimpleNamespace(
+                    inc=lambda *a, **k: None
+                )
+            ),
             _log_violation=lambda *a, **k: None,
+            _load_registry=lambda: {
+                "code": ("m", "C"),
+                "bot": ("m", "C"),
+                "error": ("m", "C"),
+                "workflows": ("m", "C"),
+            },
+            KNOWN_DB_KINDS={"code", "bot", "error", "workflow"},
         ),
     )
     VecErr = type("VecErr", (Exception,), {})
@@ -62,6 +74,7 @@ def _load_cli(monkeypatch, backfill_impl):
     )
     return importlib.import_module("menace_cli")
 
+
 def test_embed_single_db(monkeypatch):
     calls = {}
 
@@ -83,6 +96,7 @@ def test_embed_single_db(monkeypatch):
         "batch_size": 5,
         "backend": "fake",
     }
+
 
 def test_embed_multi_db(monkeypatch):
     calls = {}
@@ -107,7 +121,7 @@ def test_embed_all(monkeypatch):
     menace_cli = _load_cli(monkeypatch, DummyBackfill())
     res = menace_cli.main(["embed", "--all"])
     assert res == 0
-    assert set(calls["dbs"]) == {"code", "bot", "error", "workflow"}
+    assert set(calls["dbs"]) == {"code", "bot", "error", "workflows"}
 
 
 def test_embed_errors(monkeypatch, capsys):
