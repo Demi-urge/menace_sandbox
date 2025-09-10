@@ -137,12 +137,6 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     pre_mod.PreExecutionROIBotStub = PreExecutionROIBotStub
     monkeypatch.setitem(sys.modules, "menace.pre_execution_roi_bot", pre_mod)
 
-    va_mod = types.ModuleType("menace.visual_agent_client")
-    class VisualAgentClientStub:
-        def __init__(self, *a, **k):
-            pass
-    va_mod.VisualAgentClientStub = VisualAgentClientStub
-    monkeypatch.setitem(sys.modules, "menace.visual_agent_client", va_mod)
 
     path = resolve_path("sandbox_runner.py")  # path-ignore
     spec = importlib.util.spec_from_file_location(
@@ -160,7 +154,7 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     )
 
     assert ctx.pre_roi_bot.__class__.__name__ == "PreExecutionROIBotStub"
-    assert ctx.va_client.__class__.__name__ == "VisualAgentClientStub"
+    assert ctx.va_client is None
     assert "PreExecutionROIBotStub" in caplog.text
 
 

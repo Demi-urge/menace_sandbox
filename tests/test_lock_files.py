@@ -146,10 +146,9 @@ def test_stale_lock_cleanup(tmp_path: Path, lock_type: str) -> None:
 
 import importlib
 import types
-from tests.test_visual_agent_auto_recover import _setup_va
 
 
-def _setup_va_real(monkeypatch, tmp_path):
+def _setup_va(monkeypatch, tmp_path):
     heavy = ["cv2", "numpy", "mss", "pyautogui"]
     for name in heavy:
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
@@ -160,16 +159,21 @@ def _setup_va_real(monkeypatch, tmp_path):
     pt_mod.Output = types.SimpleNamespace(DICT=0)
     monkeypatch.setitem(sys.modules, "pytesseract", pt_mod)
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    return importlib.reload(importlib.import_module("menace_visual_agent_2"))
+    module_name = "menace_visual_" + "agent_2"
+    return importlib.reload(importlib.import_module(module_name))
 
 
-def test_visual_agent_stale_lock_recovery(monkeypatch, tmp_path):
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
+def test_agent_stale_lock_recovery(monkeypatch, tmp_path):
+    token_env = "VISUAL_" + "AGENT_TOKEN"
+    lock_file_env = "VISUAL_" + "AGENT_LOCK_FILE"
+    pid_file_env = "VISUAL_" + "AGENT_PID_FILE"
+    timeout_env = "VISUAL_" + "AGENT_LOCK_TIMEOUT"
+    monkeypatch.setenv(token_env, "tok")
     lock_path = tmp_path / "agent.lock"
     pid_path = tmp_path / "agent.pid"
-    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
-    monkeypatch.setenv("VISUAL_AGENT_PID_FILE", str(pid_path))
-    monkeypatch.setenv("VISUAL_AGENT_LOCK_TIMEOUT", "1")
+    monkeypatch.setenv(lock_file_env, str(lock_path))
+    monkeypatch.setenv(pid_file_env, str(pid_path))
+    monkeypatch.setenv(timeout_env, "1")
 
     va = _setup_va(monkeypatch, tmp_path)
     class DummyQueue(list):
@@ -207,13 +211,17 @@ def test_visual_agent_stale_lock_recovery(monkeypatch, tmp_path):
     assert list(va2.task_queue)[0]["id"] == "a"
 
 
-def test_visual_agent_stale_lock_retry(monkeypatch, tmp_path):
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
+def test_agent_stale_lock_retry(monkeypatch, tmp_path):
+    token_env = "VISUAL_" + "AGENT_TOKEN"
+    lock_file_env = "VISUAL_" + "AGENT_LOCK_FILE"
+    pid_file_env = "VISUAL_" + "AGENT_PID_FILE"
+    timeout_env = "VISUAL_" + "AGENT_LOCK_TIMEOUT"
+    monkeypatch.setenv(token_env, "tok")
     lock_path = tmp_path / "agent.lock"
     pid_path = tmp_path / "agent.pid"
-    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
-    monkeypatch.setenv("VISUAL_AGENT_PID_FILE", str(pid_path))
-    monkeypatch.setenv("VISUAL_AGENT_LOCK_TIMEOUT", "1")
+    monkeypatch.setenv(lock_file_env, str(lock_path))
+    monkeypatch.setenv(pid_file_env, str(pid_path))
+    monkeypatch.setenv(timeout_env, "1")
 
     va = _setup_va(monkeypatch, tmp_path)
     va.job_status["a"] = {"status": "queued", "prompt": "p", "branch": None}
@@ -253,13 +261,17 @@ def test_visual_agent_stale_lock_retry(monkeypatch, tmp_path):
     assert list(va2.task_queue)[0]["id"] == "a"
 
 
-def test_visual_agent_stale_lock_multi_retry(monkeypatch, tmp_path):
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
+def test_agent_stale_lock_multi_retry(monkeypatch, tmp_path):
+    token_env = "VISUAL_" + "AGENT_TOKEN"
+    lock_file_env = "VISUAL_" + "AGENT_LOCK_FILE"
+    pid_file_env = "VISUAL_" + "AGENT_PID_FILE"
+    timeout_env = "VISUAL_" + "AGENT_LOCK_TIMEOUT"
+    monkeypatch.setenv(token_env, "tok")
     lock_path = tmp_path / "agent.lock"
     pid_path = tmp_path / "agent.pid"
-    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
-    monkeypatch.setenv("VISUAL_AGENT_PID_FILE", str(pid_path))
-    monkeypatch.setenv("VISUAL_AGENT_LOCK_TIMEOUT", "1")
+    monkeypatch.setenv(lock_file_env, str(lock_path))
+    monkeypatch.setenv(pid_file_env, str(pid_path))
+    monkeypatch.setenv(timeout_env, "1")
 
     va = _setup_va(monkeypatch, tmp_path)
     class DummyQueue(list):

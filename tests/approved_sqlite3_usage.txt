@@ -44,14 +44,11 @@ tests/test_retrieval_ranker.py
 tests/test_retrieval_training_dataset.py
 tests/test_run_autonomous_env_setup.py
 tests/test_run_autonomous_integration_full.py
-tests/test_run_autonomous_visual_agent_history.py
 tests/test_router_initialization.py
 tests/test_self_improvement.py
 tests/test_synergy_auto_trainer.py
 tests/test_synergy_exporter.py
 tests/test_synergy_history_migration.py
-tests/test_visual_agent_concurrency.py
-tests/test_visual_agent_queue_validation.py
 tests/test_db_initialization.py
 tests/test_codex_db_helpers.py
 tests/test_audit_db_log_to_db.py

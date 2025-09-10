@@ -18,4 +18,3 @@ def _stub_deps(monkeypatch):
     uvicorn_mod.Server = type("Server", (), {})
     monkeypatch.setitem(sys.modules, "uvicorn", uvicorn_mod)
 
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
