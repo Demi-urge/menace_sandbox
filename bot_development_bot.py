@@ -260,7 +260,7 @@ class BotDevelopmentBot:
         *,
         config: BotDevConfig | None = None,
         context_builder: ContextBuilder,
-        self_coding_engine: SelfCodingEngine | None = None,
+        engine: SelfCodingEngine | None = None,
     ) -> None:
         self.config = config or BotDevConfig()
         if repo_base is not None:
@@ -338,7 +338,21 @@ class BotDevelopmentBot:
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        self._coding_engine: SelfCodingEngine | None = self_coding_engine
+        if engine is None:
+            try:
+                code_db = CodeDB()
+            except Exception as exc:  # pragma: no cover - allow running without DB
+                self.logger.debug("CodeDB init failed: %s", exc)
+                code_db = None  # type: ignore[arg-type]
+            try:
+                memory_mgr = MenaceMemoryManager()
+            except Exception as exc:  # pragma: no cover - allow running without memory
+                self.logger.debug("Memory manager init failed: %s", exc)
+                memory_mgr = None  # type: ignore[arg-type]
+            engine = SelfCodingEngine(
+                code_db, memory_mgr, context_builder=self.context_builder
+            )
+        self.engine = engine
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
@@ -354,33 +368,12 @@ class BotDevelopmentBot:
                 self.logger.warning("optional dependency %s unavailable", dep_name)
 
     @property
-    def coding_engine(self) -> SelfCodingEngine:
-        """Lazily create and cache :class:`SelfCodingEngine`."""
-
-        if self._coding_engine is None:
-            try:
-                code_db = CodeDB()
-            except Exception as exc:  # pragma: no cover - allow running without DB
-                self.logger.debug("CodeDB init failed: %s", exc)
-                code_db = None  # type: ignore[arg-type]
-            try:
-                memory_mgr = MenaceMemoryManager()
-            except Exception as exc:  # pragma: no cover - allow running without memory
-                self.logger.debug("Memory manager init failed: %s", exc)
-                memory_mgr = None  # type: ignore[arg-type]
-            self._coding_engine = SelfCodingEngine(
-                code_db, memory_mgr, context_builder=self.context_builder
-            )
-        return self._coding_engine
-
-    # backward compatible aliases
-    @property
-    def self_coding_engine(self) -> SelfCodingEngine:  # pragma: no cover - thin wrapper
-        return self.coding_engine
+    def coding_engine(self) -> SelfCodingEngine:  # pragma: no cover - backward compat
+        return self.engine
 
     @property
-    def engine(self) -> SelfCodingEngine:  # pragma: no cover - legacy name
-        return self.coding_engine
+    def self_coding_engine(self) -> SelfCodingEngine:  # pragma: no cover - backward compat
+        return self.engine
 
     def _escalate(self, message: str, level: str = "error") -> None:
         """Send an escalation message to configured sinks."""
@@ -947,14 +940,13 @@ class BotDevelopmentBot:
         made.
         """
 
-        description = ""
+        prompt = ""
         for message in reversed(messages):
             if message.get("role") == "user":
-                description = message.get("content", "")
+                prompt = message.get("content", "")
                 break
 
-        engine = self.coding_engine
-        return engine.generate_helper(description)
+        return self.engine.generate_helper(prompt)
 
     def _internal_fallback(self, prompt: str) -> str:
         """Generate code using the internal Codex API as a fallback."""
@@ -964,8 +956,8 @@ class BotDevelopmentBot:
                 self.config.fallback_model, [{"role": "user", "content": prompt}]
             )
         except Exception as exc:  # pragma: no cover - defensive
-            self.logger.error("internal fallback failed: %s", exc, exc_info=True)
-            self._escalate(f"internal fallback failed: {exc}")
+            self.logger.error("engine fallback failed: %s", exc, exc_info=True)
+            self._escalate(f"engine fallback failed: {exc}")
             if RAISE_ERRORS:
                 raise
             return ""
