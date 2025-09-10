@@ -945,34 +945,10 @@ def _sandbox_init(
     # UnboundLocalError during argument evaluation.
     suggestion_db: PatchSuggestionDB | None = None
 
-    try:
-        from menace.visual_agent_client import VisualAgentClient
-    except Exception as exc:
-        logger.warning("VisualAgentClient import failed: %s", exc)
-        try:
-            from menace.visual_agent_client import (
-                VisualAgentClientStub as VisualAgentClient,
-            )
-        except Exception:
-            VisualAgentClient = None  # type: ignore
-
-    va_client = None
-    if VisualAgentClient:
-        try:
-            va_client = VisualAgentClient()
-        except Exception as exc:
-            logger.warning("VisualAgentClient init failed: %s", exc)
-            try:
-                from menace.visual_agent_client import VisualAgentClientStub
-
-                va_client = VisualAgentClientStub()
-                logger.info("using VisualAgentClientStub due to failure")
-            except Exception:
-                va_client = None
     engine = SelfCodingEngine(
         CodeDB(),
         MenaceMemoryManager(),
-        llm_client=va_client,
+        llm_client=None,
         patch_suggestion_db=suggestion_db,
         gpt_memory=gpt_memory,
         context_builder=context_builder,
