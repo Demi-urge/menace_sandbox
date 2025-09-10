@@ -18,8 +18,6 @@ beautifulsoup4==4.13.4
     # via menace (pyproject.toml)
 billiard==4.2.1
     # via celery
-blinker==1.9.0
-    # via flask
 boto3==1.39.3
     # via menace (pyproject.toml)
 botocore==1.39.3
