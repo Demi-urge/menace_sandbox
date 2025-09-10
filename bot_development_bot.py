@@ -976,19 +976,11 @@ class BotDevelopmentBot:
             sample_sort_by=sample_sort_by,
             sample_with_vectors=sample_with_vectors,
         )
-        try:
-            code = self.engine_retry.run(
-                lambda: self.engine.generate_helper(prompt),
-                logger=self.logger,
-            )
-            if not code:
-                raise RuntimeError("empty response")
-        except Exception as exc:
-            msg = f"engine request failed: {exc}"
-            self.logger.exception(msg)
-            self._escalate(msg)
-            self.errors.append(msg)
-            raise RuntimeError("engine request failed") from exc
+        messages = [{"role": "user", "content": prompt}]
+        result = self._call_codex_api(messages)
+        if not result.success or not result.code:
+            raise RuntimeError(result.error or "engine request failed")
+        code = result.code
 
         file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
         self._write_with_retry(file_path, code)
