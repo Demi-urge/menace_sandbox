@@ -57,12 +57,21 @@ class _WFDB:
     def try_upgrade_schema(self):
         pass
 
+    def try_add_embedding(self, *_a, **_k):
+        pass
+
 
 wf_db_stub.WorkflowDB = _WFDB
 sys.modules["workflow_db"] = wf_db_stub
 sys.modules["menace.workflow_db"] = wf_db_stub
 vec_stub = types.ModuleType("vector_service")
 vec_stub.__path__ = []
+
+class _EmbeddableDBMixin:
+    def try_add_embedding(self, *_a, **_k):
+        pass
+
+vec_stub.EmbeddableDBMixin = _EmbeddableDBMixin
 
 text_pre = types.ModuleType("text_preprocessor")
 text_pre.generalise = lambda *_a, **_k: None
@@ -612,7 +621,7 @@ def test_pipeline_engine_error_not_raised(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.ERROR)
     result = pipeline.run(tasks)
     assert isinstance(result, ip.PipelineResult)
-    assert "engine fallback failed" in developer.errors
+    assert any("engine request failed" in e for e in developer.errors)
 
 
 def test_pipeline_surfaces_build_errors(tmp_path, caplog):
