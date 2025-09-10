@@ -181,6 +181,11 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
     engine = sce_stub.SelfCodingEngine()
     monkeypatch.setattr(engine, "generate_helper", fake_generate)
     monkeypatch.setattr(memory_client, "ask_with_memory", fake_wrapper)
+    monkeypatch.setattr(
+        RetryStrategy,
+        "run",
+        lambda self, func, logger=None: func(),
+    )
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
@@ -215,6 +220,11 @@ def test_call_codex_api_aggregates_multi_messages(monkeypatch):
 
     engine = sce_stub.SelfCodingEngine()
     monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(
+        RetryStrategy,
+        "run",
+        lambda self, func, logger=None: func(),
+    )
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
@@ -253,6 +263,14 @@ def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
 
     monkeypatch.setattr(engine, "generate_helper", fake_generate)
     monkeypatch.setattr(bdb, "RAISE_ERRORS", False)
+    run_called = False
+
+    def fake_run(self, func, logger=None):
+        nonlocal run_called
+        run_called = True
+        return func()
+
+    monkeypatch.setattr(RetryStrategy, "run", fake_run)
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
@@ -273,6 +291,7 @@ def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
     assert escalated["level"] == "warning"
     assert "no user message found" in escalated["msg"]
     assert "no user message found" in caplog.text
+    assert run_called is False
 
 
 def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
@@ -288,6 +307,14 @@ def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
 
     monkeypatch.setattr(engine, "generate_helper", fake_generate)
     monkeypatch.setattr(bdb, "RAISE_ERRORS", True)
+    run_called = False
+
+    def fake_run(self, func, logger=None):
+        nonlocal run_called
+        run_called = True
+        return func()
+
+    monkeypatch.setattr(RetryStrategy, "run", fake_run)
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
@@ -305,6 +332,7 @@ def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
         )
 
     assert escalated["level"] == "warning"
+    assert run_called is False
 
 
 def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog):
@@ -322,6 +350,20 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
     engine = sce_stub.SelfCodingEngine()
     monkeypatch.setattr(engine, "generate_helper", fake_generate)
     monkeypatch.setattr(bdb, "RAISE_ERRORS", False)
+    
+    def fake_run(self, func, logger=None):
+        for i in range(self.attempts):
+            try:
+                return func()
+            except Exception as exc:
+                if logger:
+                    logger.warning(
+                        "retry %s/%s after error: %s", i + 1, self.attempts, exc
+                    )
+                if i == self.attempts - 1:
+                    raise
+
+    monkeypatch.setattr(RetryStrategy, "run", fake_run)
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
@@ -361,6 +403,20 @@ def test_call_codex_api_engine_failure_raises(monkeypatch):
     engine = sce_stub.SelfCodingEngine()
     monkeypatch.setattr(engine, "generate_helper", fake_generate)
     monkeypatch.setattr(bdb, "RAISE_ERRORS", True)
+    
+    def fake_run(self, func, logger=None):
+        for i in range(self.attempts):
+            try:
+                return func()
+            except Exception as exc:
+                if logger:
+                    logger.warning(
+                        "retry %s/%s after error: %s", i + 1, self.attempts, exc
+                    )
+                if i == self.attempts - 1:
+                    raise
+
+    monkeypatch.setattr(RetryStrategy, "run", fake_run)
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
