@@ -1,58 +1,100 @@
-from __future__ import annotations
+"""Async wrapper around :class:`SharedVectorService`.
 
-"""Minimal service exposing vector database operations.
+The module exposes a small HTTP API implemented with :mod:`FastAPI` that
+provides two primary operations:
 
-Provides simple HTTP endpoints for adding records, querying existing
-embeddings and checking service health.  A background thread calls
-:func:`watch_databases` so newly added database records are continuously
-embedded.
+``/vectorise-and-store``
+    Vectorise an arbitrary record and persist the resulting vector in the
+    configured :class:`~vector_service.vector_store.VectorStore`.
 
-The service is intentionally lightweight; it is expected to run as a
-separate daemon which other bots can interact with over HTTP or a UNIX
-domain socket.
+``/search``
+    Vectorise a query record and return the closest matches from the vector
+    store.
+
+The service is intended to run as a lightweight daemon.  The CLI entry
+``python -m vector_service.vector_database_service`` starts a Uvicorn server
+listening on ``VECTOR_SERVICE_HOST``/``VECTOR_SERVICE_PORT`` or on a Unix
+domain socket specified by ``VECTOR_SERVICE_SOCKET``.
 """
 
+from __future__ import annotations
+
 from typing import Any, Dict
+import asyncio
+import os
 import threading
 import logging
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import uvicorn
 
 from .vectorizer import SharedVectorService
 from .embedding_backfill import watch_databases
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Service setup
+# ---------------------------------------------------------------------------
+
 app = FastAPI()
-svc = SharedVectorService()
+_svc = SharedVectorService()
 
 
 def _watcher() -> None:
+    """Background thread embedding newly added database records.
+
+    ``watch_databases`` is blocking and may raise exceptions.  We call it in a
+    daemon thread so the API remains responsive while new records are embedded
+    in the background.
+    """
+
     try:
         watch_databases()
-    except Exception:  # pragma: no cover - best effort
+    except Exception:  # pragma: no cover - best effort logging
         logger.exception("watch_databases terminated unexpectedly")
 
 
 @app.on_event("startup")
-def _start_watcher() -> None:
+async def _start_watcher() -> None:
     thread = threading.Thread(target=_watcher, daemon=True)
     thread.start()
     app.state.watch_thread = thread
 
 
-class AddRequest(BaseModel):
+# ---------------------------------------------------------------------------
+# Request models
+# ---------------------------------------------------------------------------
+
+
+class VectoriseRequest(BaseModel):
     kind: str
-    record_id: str
     record: Dict[str, Any]
+
+
+class AddRequest(VectoriseRequest):
+    record_id: str
     origin_db: str | None = None
     metadata: Dict[str, Any] | None = None
 
 
-@app.post("/add")
-def add(req: AddRequest) -> Dict[str, Any]:
-    vec = svc.vectorise_and_store(
+class SearchRequest(VectoriseRequest):
+    top_k: int = 5
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/vectorise-and-store")
+async def vectorise_and_store(req: AddRequest) -> Dict[str, Any]:
+    """Vectorise ``req.record`` and persist it in the vector store."""
+
+    vec = await asyncio.to_thread(
+        _svc.vectorise_and_store,
         req.kind,
         req.record_id,
         req.record,
@@ -62,24 +104,54 @@ def add(req: AddRequest) -> Dict[str, Any]:
     return {"status": "ok", "vector": vec}
 
 
-class QueryRequest(BaseModel):
-    kind: str
-    record: Dict[str, Any]
-    top_k: int = 5
+@app.post("/vectorise")
+async def vectorise(req: VectoriseRequest) -> Dict[str, Any]:
+    """Return an embedding for ``req.record`` without storing it."""
+
+    vec = await asyncio.to_thread(_svc.vectorise, req.kind, req.record)
+    return {"status": "ok", "vector": vec}
 
 
-@app.post("/query")
-def query(req: QueryRequest) -> Dict[str, Any]:
-    vec = svc.vectorise(req.kind, req.record)
-    if svc.vector_store is None:
+@app.post("/search")
+async def search(req: SearchRequest) -> Dict[str, Any]:
+    """Vectorise ``req.record`` and query the vector store."""
+
+    vec = await asyncio.to_thread(_svc.vectorise, req.kind, req.record)
+    if _svc.vector_store is None:
         raise HTTPException(status_code=500, detail="Vector store not configured")
-    results = svc.vector_store.query(vec, top_k=req.top_k)
+    results = await asyncio.to_thread(_svc.vector_store.query, vec, top_k=req.top_k)
     return {"status": "ok", "data": results}
 
 
 @app.get("/status")
-def status() -> Dict[str, str]:
+async def status() -> Dict[str, str]:  # pragma: no cover - trivial
     return {"status": "ok"}
 
 
-__all__ = ["app"]
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:  # pragma: no cover - simple server runner
+    target = os.environ.get("VECTOR_SERVICE_SOCKET")
+    if target:
+        config = uvicorn.Config("vector_service.vector_database_service:app", uds=target, log_level="info")
+    else:
+        host = os.environ.get("VECTOR_SERVICE_HOST", "127.0.0.1")
+        port = int(os.environ.get("VECTOR_SERVICE_PORT", "8000"))
+        config = uvicorn.Config(
+            "vector_service.vector_database_service:app",
+            host=host,
+            port=port,
+            log_level="info",
+        )
+    uvicorn.Server(config).run()
+
+
+if __name__ == "__main__":  # pragma: no cover - manual execution
+    main()
+
+
+__all__ = ["app", "main"]
+

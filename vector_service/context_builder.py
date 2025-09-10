@@ -14,6 +14,7 @@ import asyncio
 import uuid
 import time
 import threading
+import os
 
 from dynamic_path_router import resolve_path
 
@@ -201,6 +202,7 @@ class ContextBuilder:
                 metric=similarity_metric,
                 enhancement_weight=enhancement_weight,
                 context_builder=self,
+                service_url=os.environ.get("VECTOR_SERVICE_URL"),
             )
         else:
             self.patch_retriever = patch_retriever

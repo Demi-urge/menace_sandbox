@@ -13,8 +13,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
 from pathlib import Path
+import os
 import tarfile
 import tempfile
+import json
+import urllib.request
 
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -34,6 +37,9 @@ except Exception:  # pragma: no cover - avoid hard dependency
 _BUNDLED_MODEL = resolve_path("vector_service/minilm") / "tiny-distilroberta-base.tar.xz"
 _LOCAL_TOKENIZER: AutoTokenizer | None = None
 _LOCAL_MODEL: AutoModel | None = None
+
+
+_REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
 
 
 def _load_local_model() -> tuple[AutoTokenizer, AutoModel]:
@@ -94,6 +100,17 @@ class SharedVectorService:
 
     def vectorise(self, kind: str, record: Dict[str, Any]) -> List[float]:
         """Return an embedding for ``record`` of type ``kind``."""
+        if _REMOTE_URL:
+            data = json.dumps({"kind": kind, "record": record}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{_REMOTE_URL.rstrip('/')}/vectorise",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req) as resp:  # pragma: no cover - network
+                payload = json.loads(resp.read().decode("utf-8"))
+            return payload.get("vector", [])
+
         kind = kind.lower()
         handler = self._handlers.get(kind)
         if handler:
@@ -114,6 +131,25 @@ class SharedVectorService:
         """Vectorise ``record`` and persist the embedding."""
 
         vec = self.vectorise(kind, record)
+        if _REMOTE_URL:
+            data = json.dumps(
+                {
+                    "kind": kind,
+                    "record_id": record_id,
+                    "record": record,
+                    "origin_db": origin_db,
+                    "metadata": metadata,
+                }
+            ).encode("utf-8")
+            req = urllib.request.Request(
+                f"{_REMOTE_URL.rstrip('/')}/vectorise-and-store",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req) as resp:  # pragma: no cover - network
+                payload = json.loads(resp.read().decode("utf-8"))
+            return payload.get("vector", [])
+
         if self.vector_store is None:
             raise RuntimeError("VectorStore not configured")
         self.vector_store.add(
