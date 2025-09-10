@@ -193,7 +193,6 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
 
     result = BotDevelopmentBot._call_codex_api(
         dummy,
-        "m",
         [
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "there"},
@@ -232,7 +231,6 @@ def test_call_codex_api_no_user_message_returns_none(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         result = BotDevelopmentBot._call_codex_api(
             dummy,
-            "m",
             [{"role": "assistant", "content": "there"}],
         )
 
@@ -268,7 +266,6 @@ def test_call_codex_api_no_user_message_raises(monkeypatch):
     with pytest.raises(RuntimeError):
         BotDevelopmentBot._call_codex_api(
             dummy,
-            "m",
             [{"role": "assistant", "content": "there"}],
         )
 
