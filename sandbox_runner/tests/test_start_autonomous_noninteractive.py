@@ -91,7 +91,7 @@ def test_start_autonomous_sandbox_noninteractive(tmp_path, monkeypatch):
     sas.main([])
 
     assert Path(settings.menace_env_file).exists()
-    for name in ("metrics.db", "patch_history.db", "visual_agent_queue.db"):
+    for name in ("metrics.db", "patch_history.db", "agent_queue.db"):
         assert (Path(settings.sandbox_data_dir) / name).exists()
 
     thread = bootstrap._SELF_IMPROVEMENT_THREAD

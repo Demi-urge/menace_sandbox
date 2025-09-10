@@ -10,7 +10,6 @@ from tests.test_run_autonomous_env_vars import _load_module
 def test_metrics_server_started(monkeypatch, tmp_path):
     mod = _load_module(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     called = {}
     monkeypatch.setattr(mod, "start_metrics_server", lambda port: called.setdefault("port", port))
@@ -23,7 +22,6 @@ def test_metrics_server_started(monkeypatch, tmp_path):
 def test_recursive_flags_mirrored(monkeypatch, tmp_path):
     mod = _load_module(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     for key in [
         "SANDBOX_RECURSIVE_ORPHANS",
@@ -44,7 +42,6 @@ def test_recursive_flags_mirrored(monkeypatch, tmp_path):
 def test_auto_include_flag_mirrored(monkeypatch, tmp_path):
     mod = _load_module(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     for key in [
         "SANDBOX_AUTO_INCLUDE_ISOLATED",

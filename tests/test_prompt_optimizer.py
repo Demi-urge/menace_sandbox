@@ -49,7 +49,7 @@ def test_prompt_optimizer_applies_suggestion(tmp_path):
     log_path.write_text(
         json.dumps(
             {
-                "module": "visual_agent",
+                "module": "sample_module",
                 "action": "build",
                 "prompt": "do it",
                 "success": True,
@@ -69,7 +69,7 @@ def test_prompt_optimizer_applies_suggestion(tmp_path):
             self.tone = "negative"
 
     engine = DummyPromptEngine()
-    suggestion = opt.suggest_format("visual_agent", "build")[0]
+    suggestion = opt.suggest_format("sample_module", "build")[0]
     tone = suggestion.get("tone")
     if isinstance(tone, str):
         engine.tone = tone
