@@ -30,7 +30,12 @@ from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
 from patch_safety import PatchSafety
 from .ranking_utils import rank_patches
-from .embedding_backfill import ensure_embeddings_fresh, StaleEmbeddingsError
+from .embedding_backfill import (
+    ensure_embeddings_fresh,
+    StaleEmbeddingsError,
+    EmbeddingBackfill,
+    schedule_backfill,
+)
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -239,6 +244,9 @@ class ContextBuilder:
         max_diff_lines: int = getattr(ContextBuilderConfig(), "max_diff_lines", 200),
         patch_safety: PatchSafety | None = None,
         similarity_metric: str = getattr(ContextBuilderConfig(), "similarity_metric", "cosine"),
+        embedding_check_interval: float = getattr(
+            ContextBuilderConfig(), "embedding_check_interval", 0
+        ),
     ) -> None:
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
@@ -334,6 +342,26 @@ class ContextBuilder:
             self.retriever.license_denylist = self.license_denylist
         except Exception:
             pass
+
+        self._embedding_check_interval = embedding_check_interval
+        if embedding_check_interval > 0:
+            threading.Thread(
+                target=self._embedding_checker, daemon=True
+            ).start()
+
+    # ------------------------------------------------------------------
+    def _embedding_checker(self) -> None:
+        backfill = EmbeddingBackfill()
+        interval = self._embedding_check_interval * 60
+        while True:
+            time.sleep(interval)
+            try:
+                dbs = list(self.db_weights.keys()) or ["code", "bot", "error", "workflow"]
+                out_of_sync = backfill.check_out_of_sync(dbs=dbs)
+                if out_of_sync:
+                    asyncio.run(schedule_backfill(dbs=out_of_sync))
+            except Exception:
+                logger.exception("background embedding check failed")
 
     # ------------------------------------------------------------------
     def exclude_failed_strategies(self, tags: List[str]) -> None:

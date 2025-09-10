@@ -218,6 +218,10 @@ class ContextBuilderConfig(BaseModel):
             " if set to False or the dependency is missing, a regex approximation is used."
         ),
     )
+    embedding_check_interval: float = Field(
+        0,
+        description="Minutes between background embedding freshness checks",
+    )
     max_diff_lines: int = Field(
         200,
         description="Truncate diffs to this many lines before summarisation",
