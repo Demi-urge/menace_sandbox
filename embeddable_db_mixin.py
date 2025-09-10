@@ -442,6 +442,7 @@ class EmbeddableDBMixin:
 
         start = perf_counter()
         vec = self.vector(record)
+        chunk_meta = getattr(self, "_last_chunk_meta", chunk_meta)
         wall_time = perf_counter() - start
         tokens = getattr(self, "_last_embedding_tokens", 0)
         if not tokens and isinstance(record, str):  # pragma: no cover - best effort

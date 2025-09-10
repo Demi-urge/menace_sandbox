@@ -24,7 +24,6 @@ from .auto_link import auto_link
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
 from vector_service import EmbeddableDBMixin, EmbeddingBackfill
-from vector_service.text_preprocessor import generalise
 import warnings
 try:
     from .menace_memory_manager import _summarise_text  # type: ignore
@@ -614,7 +613,7 @@ class BotDB(EmbeddableDBMixin):
             return []
         joined = " ".join(filtered)
         summary = _summarise_text(joined) or joined
-        prepared = generalise(summary)
+        prepared = self._prepare_text_for_embedding(summary)
         return self.encode_text(prepared) if prepared else []
 
     def search_by_vector(
