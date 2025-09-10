@@ -5,6 +5,7 @@
 import sys
 import types
 from pathlib import Path
+import logging
 
 import pytest
 
@@ -83,19 +84,19 @@ vector_service.ErrorResult = Exception
 vector_service.ContextBuilder = _CB
 vector_service.__path__ = []  # type: ignore[attr-defined]
 vector_service.__spec__ = types.SimpleNamespace(submodule_search_locations=[])  # type: ignore[attr-defined]
-sys.modules["vector_service"] = vector_service
+sys.modules.setdefault("vector_service", vector_service)
 vec_cb = types.ModuleType("vector_service.context_builder")
 vec_cb.ContextBuilder = _CB
 vec_cb.FallbackResult = list
 vec_cb.ErrorResult = Exception
-sys.modules["vector_service.context_builder"] = vec_cb
+sys.modules.setdefault("vector_service.context_builder", vec_cb)
 vec_ret = types.ModuleType("vector_service.retriever")
 vec_ret.Retriever = None
 vec_ret.FallbackResult = list
-sys.modules["vector_service.retriever"] = vec_ret
+sys.modules.setdefault("vector_service.retriever", vec_ret)
 vec_roi = types.ModuleType("vector_service.roi_tags")
 vec_roi.RoiTag = type("RoiTag", (), {})
-sys.modules["vector_service.roi_tags"] = vec_roi
+sys.modules.setdefault("vector_service.roi_tags", vec_roi)
 
 governed = types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x)
 sys.modules.setdefault("governed_retrieval", governed)
@@ -126,6 +127,16 @@ sys.modules.setdefault(
     "menace_sandbox.micro_models.prefix_injector", prefix_injector
 )
 
+sce_stub = types.ModuleType("menace_sandbox.self_coding_engine")
+class _DummyEngine:
+    def __init__(self, *a, **k):
+        pass
+    def generate_helper(self, desc: str) -> str:
+        return ""
+sce_stub.SelfCodingEngine = _DummyEngine
+sys.modules.setdefault("menace_sandbox.self_coding_engine", sce_stub)
+sys.modules.setdefault("self_coding_engine", sce_stub)
+
 # Minimal ChatGPTClient stub to avoid heavy imports
 class _ChatGPTClient:
     def __init__(self, session=None, gpt_memory=None, context_builder=None):
@@ -143,7 +154,7 @@ sys.modules.setdefault(
 
 from menace_sandbox.enhancement_bot import EnhancementBot
 from menace_sandbox.chatgpt_idea_bot import ChatGPTClient
-from menace_sandbox.bot_development_bot import BotDevelopmentBot
+from menace_sandbox.bot_development_bot import BotDevelopmentBot, RetryStrategy
 
 
 def test_payment_router_notice_mentions_central_routing_and_logging():
@@ -224,27 +235,32 @@ def test_prompt_engine_build_prompt_contains_notice():
     assert prompt.system.startswith(PAYMENT_ROUTER_NOTICE)
 
 
-def test_bot_development_bot_injects_notice(monkeypatch):
+def test_bot_development_bot_calls_engine():
     captured = {}
 
-    def fake_create(*args, **kwargs):
-        captured["messages"] = kwargs.get("messages")
-        return {}
+    class Engine:
+        def generate_helper(self, desc: str) -> str:
+            captured["desc"] = desc
+            return "code"
 
-    fake_openai = types.SimpleNamespace(
-        ChatCompletion=types.SimpleNamespace(create=fake_create)
-    )
-    monkeypatch.setattr("billing.openai_wrapper.openai", fake_openai, raising=False)
-
-    cb = vector_service.ContextBuilder()
-    dummy = types.SimpleNamespace(context_builder=cb)
-
-    BotDevelopmentBot._call_codex_api(
-        dummy, "m", [{"role": "user", "content": "hi"}]
+    dummy = types.SimpleNamespace(
+        engine=Engine(),
+        fallback_retry=RetryStrategy(attempts=1),
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": None,
     )
 
-    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
-    assert cb.called
+    result = BotDevelopmentBot._call_codex_api(
+        dummy,
+        "m",
+        [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "there"},
+        ],
+    )
+
+    assert captured["desc"] == "hi\nthere"
+    assert result == "code"
 
 
 def test_openai_wrapper_injects_notice():

@@ -42,7 +42,7 @@ from vector_service.context_builder import ContextBuilder, FallbackResult, Error
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from billing.openai_wrapper import chat_completion_create
+from .self_coding_engine import SelfCodingEngine
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -164,9 +164,6 @@ INSTRUCTION_SECTIONS = [
 
 PREVIOUS_FAILURE_TEMPLATE = "Previous failure: {error}"
 
-
-FALLBACK_SYSTEM_PROMPT = "You are fallback mode."
-
 RESPONSE_FORMAT_HINT = (
     "Return JSON like {'status': 'completed', 'message': <optional string>}"
 )
@@ -262,6 +259,7 @@ class BotDevelopmentBot:
         config: BotDevConfig | None = None,
         openai_attempts: int | None = None,
         context_builder: ContextBuilder,
+        engine: SelfCodingEngine | None = None,
     ) -> None:
         self.config = config or BotDevConfig()
         if openai_attempts is not None:
@@ -342,6 +340,9 @@ class BotDevelopmentBot:
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
+        self.engine = engine or SelfCodingEngine(
+            None, None, context_builder=self.context_builder
+        )
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
@@ -913,17 +914,32 @@ class BotDevelopmentBot:
     def _call_codex_api(
         self, model: str, messages: list[dict[str, str]]
     ) -> Any:
-        """Call a configured LLM backend and return a chat-style response.
+        """Generate code using :class:`SelfCodingEngine`.
 
-        The internal :class:`~vector_service.ContextBuilder` is always forwarded
-        to :func:`chat_completion_create`.
+        Parameters
+        ----------
+        model:
+            Ignored; kept for backward compatibility.
+        messages:
+            List of chat messages whose ``content`` values are concatenated and
+            passed to :meth:`SelfCodingEngine.generate_helper`.
         """
 
-        return chat_completion_create(
-            messages,
-            model=model,
-            context_builder=self.context_builder,
-        )
+        description = "\n".join(m.get("content", "") for m in messages)
+
+        def _call() -> Any:
+            return self.engine.generate_helper(description)
+
+        try:
+            return self.fallback_retry.run(_call, logger=self.logger)
+        except Exception as exc:
+            msg = f"helper generation failed: {exc}"
+            self.errors.append(msg)
+            self.logger.error(msg, exc_info=True)
+            self._escalate(msg)
+            if RAISE_ERRORS:
+                raise
+            return ""
 
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
         if not requests:
@@ -969,34 +985,6 @@ class BotDevelopmentBot:
         if last_reason:
             self.errors.append(last_reason)
         return False
-
-    def _openai_fallback(self, prompt: str) -> str:
-        def _call() -> str:
-            model = self.config.openai_fallback_model
-            resp = self._call_codex_api(
-                model,
-                [
-                    {"role": "system", "content": FALLBACK_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-            )
-            if isinstance(resp, dict):
-                return resp["choices"][0]["message"]["content"]
-            return resp.choices[0].message.content  # type: ignore
-
-        try:
-            self.logger.info("Calling OpenAI fallback model %s", self.config.openai_fallback_model)
-            return self.fallback_retry.run(_call, logger=self.logger)
-        except Exception:
-            msg = (
-                f"openai fallback failed after {self.fallback_retry.attempts} attempts"
-            )
-            self.errors.append(msg)
-            self.logger.error(msg, exc_info=True)
-            self._escalate(msg)
-            if RAISE_ERRORS:
-                raise RuntimeError(msg)
-            return ""
 
     def _build_prompt(
         self,
@@ -1246,12 +1234,20 @@ class BotDevelopmentBot:
         self.logger.warning("Visual build failed for %s, switching to fallback", spec.name)
         if not self.errors or not self.errors[-1].startswith("visual"):
             self.errors.append("visual build failed")
-        self.logger.info("Attempting OpenAI fallback for %s", spec.name)
-        oai = self._openai_fallback(prompt)
-        if oai:
-            code = oai
-        else:
-            self.errors.append("openai fallback failed")
+        self.logger.info("Attempting engine fallback for %s", spec.name)
+        try:
+            code = self.fallback_retry.run(
+                lambda: self.engine.generate_helper(prompt),
+                logger=self.logger,
+            )
+            if not code:
+                raise RuntimeError("empty response")
+        except Exception as exc:
+            self.errors.append("engine fallback failed")
+            self.logger.error("engine fallback failed: %s", exc, exc_info=True)
+            self._escalate(f"engine fallback failed: {exc}")
+            if RAISE_ERRORS:
+                raise RuntimeError("engine fallback failed") from exc
             code = self.generate_code(spec, patterns)
 
         file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
