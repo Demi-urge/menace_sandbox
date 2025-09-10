@@ -641,6 +641,21 @@ async def schedule_backfill(
     await asyncio.gather(*[_run(name) for name in names])
 
 
+class StaleEmbeddingsError(RuntimeError):
+    """Raised when embeddings remain stale after refresh attempts.
+
+    Parameters
+    ----------
+    stale_dbs:
+        Mapping of database name to the reason it is considered stale.
+    """
+
+    def __init__(self, stale_dbs: dict[str, str]):
+        self.stale_dbs = stale_dbs
+        detail = ", ".join(f"{n} ({r})" for n, r in stale_dbs.items())
+        super().__init__(f"embeddings missing for: {detail}")
+
+
 def ensure_embeddings_fresh(
     dbs: Iterable[str], *, retries: int = 2, delay: float = 0.5
 ) -> None:
@@ -652,7 +667,7 @@ def ensure_embeddings_fresh(
     with the count of stored embeddings for each
     :class:`EmbeddableDBMixin` instance.  Databases with missing, stale or
     mismatched embeddings trigger :func:`schedule_backfill`.  A
-    :class:`RuntimeError` is raised if embeddings remain absent after
+    :class:`StaleEmbeddingsError` is raised if embeddings remain absent after
     ``retries`` attempts.
     """
 
@@ -660,11 +675,12 @@ def ensure_embeddings_fresh(
     if not names:
         return
 
+    logger = logging.getLogger(__name__)
     timestamps = _load_timestamps()
 
-    def _needs_backfill(check: Iterable[str]) -> list[str]:
+    def _needs_backfill(check: Iterable[str]) -> dict[str, str]:
         registry = _load_registry()
-        pending: list[str] = []
+        pending: dict[str, str] = {}
         for name in check:
             db_file = _DB_FILE_MAP.get(name, f"{name}.db")
             db_path = resolve_path(db_file)
@@ -673,29 +689,35 @@ def ensure_embeddings_fresh(
                 db_mtime = db_path.stat().st_mtime
             except FileNotFoundError:
                 continue
+
             last_vec = float(timestamps.get(name, 0.0))
-            stale = last_vec < db_mtime
-            if not stale:
-                meta_mtime = meta_path.stat().st_mtime if meta_path.exists() else 0.0
-                stale = meta_mtime < db_mtime
-            if not stale:
-                mod_cls = registry.get(name)
-                if mod_cls:
-                    mod_name, cls_name = mod_cls
+            if last_vec < db_mtime:
+                pending[name] = "db modified after last vectorisation"
+                continue
+
+            meta_exists = meta_path.exists()
+            meta_mtime = meta_path.stat().st_mtime if meta_exists else 0.0
+            if meta_mtime < db_mtime:
+                reason = "embedding metadata missing" if not meta_exists else "embedding metadata stale"
+                pending[name] = reason
+                continue
+
+            mod_cls = registry.get(name)
+            if mod_cls:
+                mod_name, cls_name = mod_cls
+                try:
+                    mod = importlib.import_module(mod_name)
+                    cls = getattr(mod, cls_name)
                     try:
-                        mod = importlib.import_module(mod_name)
-                        cls = getattr(mod, cls_name)
-                        try:
-                            db = cls(vector_backend="annoy")  # type: ignore[call-arg]
-                        except Exception:
-                            db = cls()  # type: ignore[call-arg]
-                        record_count = sum(1 for _ in db.iter_records())
-                        vector_count = len(getattr(db, "_metadata", {}))
-                        stale = record_count != vector_count
+                        db = cls(vector_backend="annoy")  # type: ignore[call-arg]
                     except Exception:
-                        pass
-            if stale:
-                pending.append(name)
+                        db = cls()  # type: ignore[call-arg]
+                    record_count = sum(1 for _ in db.iter_records())
+                    vector_count = len(getattr(db, "_metadata", {}))
+                    if record_count != vector_count:
+                        pending[name] = f"record/vector count mismatch {record_count}/{vector_count}"
+                except Exception:
+                    pass
         return pending
 
     pending = _needs_backfill(names)
@@ -707,9 +729,9 @@ def ensure_embeddings_fresh(
         return
 
     for _ in range(max(retries, 1)):
-        asyncio.run(schedule_backfill(dbs=pending))
+        asyncio.run(schedule_backfill(dbs=list(pending)))
         time.sleep(delay)
-        pending = _needs_backfill(pending)
+        pending = _needs_backfill(pending.keys())
         if not pending:
             now = time.time()
             for name in names:
@@ -717,7 +739,11 @@ def ensure_embeddings_fresh(
             _store_timestamps(timestamps)
             return
 
-    raise RuntimeError(f"embeddings missing for: {', '.join(pending)}")
+    logger.error(
+        "embeddings stale after backfill attempts: %s",
+        ", ".join(f"{n} ({r})" for n, r in pending.items()),
+    )
+    raise StaleEmbeddingsError(pending)
 
 
 __all__ = [
@@ -725,6 +751,7 @@ __all__ = [
     "EmbeddableDBMixin",
     "schedule_backfill",
     "ensure_embeddings_fresh",
+    "StaleEmbeddingsError",
     "KNOWN_DB_KINDS",
     "check_staleness",
     "watch_databases",
