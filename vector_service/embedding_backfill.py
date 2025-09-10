@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Iterable, List, Sequence
+from typing import Iterable, List, Sequence, Callable, Any, Dict
 import importlib
 import asyncio
 from pathlib import Path
@@ -100,6 +100,7 @@ _REGISTRY_FILE = DEFAULT_REGISTRY
 
 # Persistent record of last successful vectorisation per database
 _TIMESTAMP_FILE = resolve_path("embedding_timestamps.json")
+_DB_FILE_MAP: Dict[str, str] = {}
 
 
 def _load_timestamps() -> dict[str, float]:
@@ -763,18 +764,30 @@ class StaleEmbeddingsError(RuntimeError):
 
 
 def ensure_embeddings_fresh(
-    dbs: Iterable[str], *, retries: int = 2, delay: float = 0.5
-) -> None:
+    dbs: Iterable[str],
+    *,
+    retries: int = 2,
+    delay: float = 0.5,
+    return_details: bool = False,
+    log_hook: Callable[[Dict[str, Dict[str, Any]]], None] | None = None,
+) -> Dict[str, Dict[str, Any]] | None:
     """Ensure embedding metadata is present and up to date for ``dbs``.
 
-    Compares the modification time of each database file with its associated
-    embedding metadata file and the last recorded vectorisation timestamp.
-    Additionally compares the number of records returned by ``iter_records``
-    with the count of stored embeddings for each
-    :class:`EmbeddableDBMixin` instance.  Databases with missing, stale or
-    mismatched embeddings trigger :func:`schedule_backfill`.  A
-    :class:`StaleEmbeddingsError` is raised if embeddings remain absent after
-    ``retries`` attempts.
+    Parameters
+    ----------
+    dbs:
+        Iterable of database names to check.
+    retries:
+        Number of times to attempt backfilling before raising an error.
+    delay:
+        Delay between backfill attempts.
+    return_details:
+        When ``True``, a mapping of databases requiring backfills and their
+        diagnostics is returned.
+    log_hook:
+        Optional callable invoked with the diagnostics mapping before any
+        backfills are scheduled. This enables external monitoring tools to
+        observe embedding freshness checks.
     """
 
     names = [d for d in dbs if d]
@@ -784,9 +797,9 @@ def ensure_embeddings_fresh(
     logger = logging.getLogger(__name__)
     timestamps = _load_timestamps()
 
-    def _needs_backfill(check: Iterable[str]) -> dict[str, str]:
+    def _needs_backfill(check: Iterable[str]) -> Dict[str, Dict[str, Any]]:
         registry = _load_registry()
-        pending: dict[str, str] = {}
+        pending: Dict[str, Dict[str, Any]] = {}
         for name in check:
             cls = None
             mod_cls = registry.get(name)
@@ -808,15 +821,25 @@ def ensure_embeddings_fresh(
                 continue
 
             last_vec = float(timestamps.get(name, 0.0))
+            info: Dict[str, Any] = {
+                "db_mtime": db_mtime,
+                "last_vectorization": last_vec,
+            }
             if last_vec < db_mtime:
-                pending[name] = "db modified after last vectorisation"
+                info["reason"] = "db modified after last vectorisation"
+                info["meta_mtime"] = meta_path.stat().st_mtime if meta_path.exists() else 0.0
+                pending[name] = info
                 continue
 
             meta_exists = meta_path.exists()
             meta_mtime = meta_path.stat().st_mtime if meta_exists else 0.0
+            info["meta_mtime"] = meta_mtime
             if meta_mtime < db_mtime:
-                reason = "embedding metadata missing" if not meta_exists else "embedding metadata stale"
-                pending[name] = reason
+                reason = (
+                    "embedding metadata missing" if not meta_exists else "embedding metadata stale"
+                )
+                info["reason"] = reason
+                pending[name] = info
                 continue
 
             if cls:
@@ -827,24 +850,46 @@ def ensure_embeddings_fresh(
                         db = cls()  # type: ignore[call-arg]
                     record_count = sum(1 for _ in db.iter_records())
                     vector_count = len(getattr(db, "_metadata", {}))
+                    info["record_count"] = record_count
+                    info["vector_count"] = vector_count
                     if record_count != vector_count:
-                        pending[name] = (
+                        info["reason"] = (
                             f"record/vector count mismatch {record_count}/{vector_count}"
                         )
+                        pending[name] = info
                 except Exception:
                     pass
         return pending
 
-    pending = _needs_backfill(names)
-    if not pending:
+    diagnostics = _needs_backfill(names)
+    if not diagnostics:
         now = time.time()
         for name in names:
             timestamps[name] = now
         _store_timestamps(timestamps)
-        return
+        return {} if return_details else None
 
+    for db_name, info in diagnostics.items():
+        logger.info(
+            "embedding check %s: db_mtime=%s meta_mtime=%s last_vectorization=%s record_count=%s vector_count=%s reason=%s",
+            db_name,
+            info.get("db_mtime"),
+            info.get("meta_mtime"),
+            info.get("last_vectorization"),
+            info.get("record_count"),
+            info.get("vector_count"),
+            info.get("reason"),
+        )
+
+    if log_hook:
+        try:
+            log_hook(diagnostics)
+        except Exception:  # pragma: no cover - monitoring hooks should not fail
+            pass
+
+    pending = diagnostics
     for _ in range(max(retries, 1)):
-        asyncio.run(schedule_backfill(dbs=list(pending)))
+        asyncio.run(schedule_backfill(dbs=list(pending.keys())))
         time.sleep(delay)
         pending = _needs_backfill(pending.keys())
         if not pending:
@@ -852,13 +897,13 @@ def ensure_embeddings_fresh(
             for name in names:
                 timestamps[name] = now
             _store_timestamps(timestamps)
-            return
+            return diagnostics if return_details else None
 
     logger.error(
         "embeddings stale after backfill attempts: %s",
-        ", ".join(f"{n} ({r})" for n, r in pending.items()),
+        ", ".join(f"{n} ({r['reason']})" for n, r in pending.items()),
     )
-    raise StaleEmbeddingsError(pending)
+    raise StaleEmbeddingsError({n: r["reason"] for n, r in pending.items()})
 
 
 __all__ = [
