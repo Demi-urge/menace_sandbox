@@ -26,7 +26,7 @@ from security.secret_redactor import redact
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
 from chunking import split_into_chunks, summarize_snippet
-from vector_service.text_preprocessor import generalise
+from vector_service.text_preprocessor import generalise, PreprocessingConfig
 
 # Lightweight license detection based on SPDX‑style fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
@@ -181,29 +181,46 @@ class EmbeddableDBMixin:
         self._last_embedding_tokens = tokens
         return vec or []
 
-    def _split_and_summarise(self, text: str) -> str:
+    def _split_and_summarise(
+        self,
+        text: str,
+        *,
+        config: "PreprocessingConfig" | None = None,
+        db_key: str | None = None,
+    ) -> str:
         """Split ``text`` into sentences, filter, chunk and summarise.
 
+        ``config`` may override the behaviour for sentence splitting,
+        chunk sizes and semantic risk filtering.  When ``config`` is ``None``
+        a configuration registered for ``db_key`` will be used if available.
         The resulting condensed text is returned while ``self._last_chunk_meta``
         records ``chunk_count`` and ``chunk_hashes`` for traceability.
         """
+
+        from vector_service.text_preprocessor import get_config
+
+        cfg = config or get_config(db_key or self.__class__.__name__.lower())
 
         if not isinstance(text, str):
             self._last_chunk_meta = {"chunk_count": 0, "chunk_hashes": []}
             return text
 
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        if cfg.split_sentences:
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        else:
+            sentences = [text]
         if not sentences:
             self._last_chunk_meta = {"chunk_count": 0, "chunk_hashes": []}
             return ""
 
-        alerts = find_semantic_risks(sentences)
+        alerts = find_semantic_risks(sentences) if cfg.filter_semantic_risks else []
         risky = {line for line, _, _ in alerts}
         filtered = [s for s in sentences if s not in risky]
         joined = "\n".join(filtered)
 
+        size = cfg.chunk_size or 400
         try:
-            chunks = split_into_chunks(joined, 400)
+            chunks = split_into_chunks(joined, size)
         except Exception:  # pragma: no cover - fallback if chunking fails
             chunks = []
             if joined:
@@ -258,7 +275,7 @@ class EmbeddableDBMixin:
             except Exception as exc:  # pragma: no cover - summariser issues
                 logger.exception("summary generation failed for %s", digest, exc_info=exc)
                 summary = ch.text
-            summary = generalise(summary)
+            summary = generalise(summary, config=cfg, db_key=db_key)
             if summary:
                 summaries.append(summary)
 
@@ -268,9 +285,24 @@ class EmbeddableDBMixin:
         }
         return " ".join(s for s in summaries if s)
 
-    def _prepare_text_for_embedding(self, text: str, *, chunk_tokens: int = 400) -> str:
-        """Backward compatible wrapper for older callers."""
-        return self._split_and_summarise(text)
+    def _prepare_text_for_embedding(
+        self,
+        text: str,
+        *,
+        chunk_tokens: int | None = None,
+        config: "PreprocessingConfig" | None = None,
+        db_key: str | None = None,
+    ) -> str:
+        """Backward compatible wrapper for older callers.
+
+        Older callers may still pass ``chunk_tokens`` to specify the desired
+        chunk size.  Newer code should pass a :class:`PreprocessingConfig`
+        instance to fully control splitting behaviour.
+        """
+
+        if config is None and chunk_tokens is not None:
+            config = PreprocessingConfig(chunk_size=chunk_tokens)
+        return self._split_and_summarise(text, config=config, db_key=db_key)
 
     def _extract_last_updated(self, record: Any) -> str | None:
         """Best-effort extraction of a last-updated timestamp from ``record``.

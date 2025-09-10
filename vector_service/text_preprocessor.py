@@ -11,8 +11,14 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Set
+
+try:  # pragma: no cover - optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - yaml may be missing
+    yaml = None  # type: ignore
 
 # A tiny English stop word list.  This keeps the implementation light and
 # avoids pulling in heavy dependencies for the common case.
@@ -79,11 +85,14 @@ _LANG_MAP = {
 
 @dataclass
 class PreprocessingConfig:
-    """Configuration controlling text normalisation."""
+    """Configuration controlling text normalisation and chunking."""
 
     stop_words: Optional[Set[str]] = None
     language: Optional[str] = None
     use_lemmatizer: bool = True
+    split_sentences: bool = True
+    chunk_size: int = 400
+    filter_semantic_risks: bool = True
 
 
 def load_stop_words(source: str | Iterable[str]) -> Set[str]:
@@ -115,6 +124,42 @@ def register_preprocessor(db_key: str, config: PreprocessingConfig) -> None:
     """Register a :class:`PreprocessingConfig` for ``db_key``."""
 
     _CONFIGS[db_key] = config
+
+
+def get_config(db_key: str) -> PreprocessingConfig:
+    """Return the :class:`PreprocessingConfig` for ``db_key`` if registered."""
+
+    return _CONFIGS.get(db_key, PreprocessingConfig())
+
+
+def load_db_configs(path: str) -> None:
+    """Load preprocessing configs from JSON or YAML ``path``."""
+
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf8") as fh:
+        if path.endswith((".yml", ".yaml")) and yaml is not None:
+            data = yaml.safe_load(fh) or {}
+        else:
+            data = json.load(fh)
+    if not isinstance(data, dict):
+        return
+    for key, cfg in data.items():
+        if not isinstance(cfg, dict):
+            continue
+        stop = cfg.get("stop_words")
+        stop_words = set(stop) if isinstance(stop, (list, set, tuple)) else None
+        register_preprocessor(
+            key,
+            PreprocessingConfig(
+                stop_words=stop_words,
+                language=cfg.get("language"),
+                use_lemmatizer=cfg.get("use_lemmatizer", True),
+                split_sentences=cfg.get("split_sentences", True),
+                chunk_size=int(cfg.get("chunk_size", 400)),
+                filter_semantic_risks=cfg.get("filter_semantic_risks", True),
+            ),
+        )
 
 
 def _resolve_config(
@@ -212,5 +257,7 @@ __all__ = [
     "PreprocessingConfig",
     "load_stop_words",
     "register_preprocessor",
+    "get_config",
+    "load_db_configs",
     "generalise",
 ]

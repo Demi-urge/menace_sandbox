@@ -41,6 +41,7 @@ from jinja2 import Template
 import yaml
 
 from vector_service import EmbeddableDBMixin, EmbeddingBackfill
+from vector_service.text_preprocessor import get_config
 
 try:  # pragma: no cover - optional dependency for type hints
     from vector_service.context_builder import ContextBuilder
@@ -339,7 +340,8 @@ class ErrorDB(EmbeddableDBMixin):
         if not filtered:
             return None
         joined = " ".join(filtered)
-        prepared = self._prepare_text_for_embedding(joined)
+        cfg = get_config("error")
+        prepared = self._prepare_text_for_embedding(joined, config=cfg, db_key="error")
         return self._embed(prepared) if prepared else None
 
     def _embed(self, text: str) -> list[float]:
