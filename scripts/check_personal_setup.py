@@ -15,12 +15,6 @@ _VARS = [
     "AUTO_DASHBOARD_PORT",
     "EXPORT_SYNERGY_METRICS",
     "SYNERGY_METRICS_PORT",
-    "VISUAL_AGENT_TOKEN",
-    "VISUAL_AGENT_AUTOSTART",
-    "VISUAL_AGENT_AUTO_RECOVER",
-    "VISUAL_AGENT_TOKEN_ROTATE",
-    "VISUAL_AGENT_SSL_CERT",
-    "VISUAL_AGENT_SSL_KEY",
     "SANDBOX_DATA_DIR",
     "PATCH_SCORE_BACKEND_URL",
     "DATABASE_URL",
@@ -31,7 +25,7 @@ _VARS = [
 ]
 
 # Critical variables that must be set
-_CRITICAL = {"VISUAL_AGENT_TOKEN", "OPENAI_API_KEY"}
+_CRITICAL = {"OPENAI_API_KEY"}
 
 
 def main(argv: list[str] | None = None) -> None:

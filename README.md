@@ -1019,20 +1019,6 @@ scripts/start_autonomous.sh
 The helper creates a `.env` file with safe defaults via `auto_env_setup.ensure_env` and then
 starts `run_autonomous.py`.
 
-To automatically start a local visual agent before running the sandbox use:
-
-```bash
-python scripts/launch_personal.py
-```
-Alternatively start the agent on demand and run the sandbox with:
-```bash
-python "$(python - <<'PY'
-from dynamic_path_router import resolve_path
-print(resolve_path('sandbox_runner.py'))
-PY
-)" --visual-agent
-```
-
 To run the sandbox directly with metrics visualisation, use the convenience
 script which installs dependencies via `setup_env.sh` before launching the
 dashboard:
@@ -1875,13 +1861,6 @@ when instantiating ``SandboxSettings``.
 - ``--module-threshold`` sets the semantic similarity threshold when grouping
   modules.
 - ``--module-semantic`` enables docstring similarity for module clustering.
-- ``menace_visual_agent_2.py --resume`` processes any queued tasks stored in
-  ``visual_agent_queue.db`` without starting the server. Use ``--flush-queue`` to drop
-  stalled entries.
-- ``menace_visual_agent_2.py --repair-running`` requeues any tasks marked as
-  ``running`` then exits.
-- ``menace_visual_agent_2.py --cleanup`` removes stale lock and PID files then
-  exits. Stale locks are also cleared automatically on startup.
 - Inspect sandbox restart metrics via ``sandbox_recovery_manager.py --file
   sandbox_data/recovery.json``.
 
@@ -2036,53 +2015,6 @@ python service_installer.py --orchestrator k8s  # writes menace-deployment.yaml
 python service_installer.py --orchestrator swarm  # writes docker-compose.yml
 # docker stack deploy -c docker-compose.yml menace
 ```
-
-### Visual agent
-
-`menace_visual_agent_2.py` exposes a FastAPI service used during
-development. The service must always run with a single worker:
-
-```python
-uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
-```
-The orchestrator submits requests directly to ``/run`` which always responds with
-HTTP ``202`` and a task id. Submitted tasks are appended to
-``visual_agent_queue.db`` and executed sequentially. Poll ``/status/<id>`` until
-the job completes. This persistent queue allows multiple clients to share the
-agent safely and ensures tasks survive restarts.
-
-The service automatically recovers queued tasks and clears stale locks on
-startup. If the SQLite queue is corrupted the file is renamed to
-``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
-``visual_agent_state.json`` when available. Database errors encountered during normal operation now trigger the same
-recovery automatically, so ``--recover-queue`` is rarely necessary.
-
-These manual tools are mainly useful for troubleshooting when the monitor fails to restart the service.
-
-Running tasks are automatically requeued when the service starts.
-``VisualAgentClient`` keeps a local
-``visual_agent_client_queue.jsonl`` file and retries any entries until they
-complete successfully.  The agent provides several CLI utilities for manual
-recovery:
-
-```bash
-python menace_visual_agent_2.py --flush-queue       # drop all queued tasks
-python menace_visual_agent_2.py --recover-queue     # reload queue from disk
-python menace_visual_agent_2.py --repair-running    # mark running tasks queued
-python menace_visual_agent_2.py --resume            # process queue headlessly
-python menace_visual_agent_2.py --cleanup           # remove stale lock/PID
-```
-
-For example, after an unexpected shutdown you can repair the queue and resume
-processing with:
-
-```bash
-python menace_visual_agent_2.py --repair-running --recover-queue
-python menace_visual_agent_2.py --resume
-```
-
-``menace_visual_agent_2.py`` automatically sets ``pytesseract.tesseract_cmd``
-based on the host OS. Override the path with ``TESSERACT_CMD`` if needed.
 
 ### Topic discovery and clip acquisition
 

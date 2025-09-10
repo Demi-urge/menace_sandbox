@@ -6,9 +6,6 @@ import os
 import run_autonomous
 
 
-_DEF_PORT = "8001"
-
-
 def _ensure_env() -> None:
     try:
         from auto_env_setup import ensure_env
@@ -23,8 +20,6 @@ def _ensure_env() -> None:
 def main(argv: list[str] | None = None) -> None:
     """Run ``run_autonomous`` after ensuring environment configuration."""
     _ensure_env()
-    os.environ.setdefault("MENACE_AGENT_PORT", _DEF_PORT)
-
     run_autonomous.main(argv)
 
 
