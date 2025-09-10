@@ -551,7 +551,7 @@ The generative stub provider exposes several knobs via environment variables:
 
 The `concurrency_spike` failure mode starts bursts of threads and async tasks. The sandbox records how many threads and tasks were spawned in the metrics.
 
-Sections with declining ROI trigger dedicated improvement cycles. Only the flagged section is iteratively modified while metrics are tracked. When progress stalls the sandbox issues a GPT‑4 brainstorming request if `SANDBOX_BRAINSTORM_INTERVAL` is set. Consecutive low‑ROI cycles before brainstorming can be tuned via `SANDBOX_BRAINSTORM_RETRIES`.
+Sections with declining ROI trigger dedicated improvement cycles. Only the flagged section is iteratively modified while metrics are tracked. When progress stalls the sandbox issues a brainstorming request to local models if `SANDBOX_BRAINSTORM_INTERVAL` is set. Consecutive low‑ROI cycles before brainstorming can be tuned via `SANDBOX_BRAINSTORM_RETRIES`.
 
 `_SandboxMetaLogger.diminishing()` evaluates these ROI deltas using a rolling mean and standard deviation over the last `consecutive` cycles. A module is flagged when the mean is within the given threshold and the standard deviation falls below a small epsilon, preventing sporadic fluctuations from triggering improvements.
 
@@ -775,9 +775,9 @@ workflows is trending in a positive or negative direction. The reliability
 score summarises how close recent synergy predictions were to the actual
 measurements; values near `1` suggest highly consistent forecasts.
 
-## GPT‑4 Integration
+## SelfCodingEngine Integration
 
-When `OPENAI_API_KEY` is set the sandbox requests improvements from GPT‑4 after ROI gains diminish. Suggestions are applied via `SelfCodingEngine` and reverted if they fail to increase ROI. Set `SANDBOX_BRAINSTORM_INTERVAL` to a positive integer to periodically ask GPT‑4 for high level ideas during the run. Use `SANDBOX_BRAINSTORM_RETRIES` to specify how many consecutive low‑ROI cycles trigger extra brainstorming.
+The sandbox requests improvements from local models after ROI gains diminish. Suggestions are applied via `SelfCodingEngine` and reverted if they fail to increase ROI. Set `SANDBOX_BRAINSTORM_INTERVAL` to a positive integer to periodically ask the local models for high‑level ideas during the run. Use `SANDBOX_BRAINSTORM_RETRIES` to specify how many consecutive low‑ROI cycles trigger extra brainstorming. No external API keys are required.
 ## Metric Tracking and Prediction Bots
 
 Sandbox cycles record extended metrics such as `security_score`, `safety_rating`,
