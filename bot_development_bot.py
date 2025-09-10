@@ -932,21 +932,21 @@ class BotDevelopmentBot:
     def _call_codex_api(self, messages: list[dict[str, str]]) -> Any:
         """Produce helper code via :class:`SelfCodingEngine`.
 
-        The final user message in ``messages`` is treated as a description of the
-        desired helper.  The description is fed to
-        :meth:`SelfCodingEngine.generate_helper` and no external API calls are
-        made.  If no user message is present, the error is escalated and the
-        method returns ``None`` or raises :class:`ValueError` when
-        :data:`RAISE_ERRORS` is true.
+        All ``system`` and ``user`` messages are concatenated with their role
+        tags to form a single prompt for
+        :meth:`SelfCodingEngine.generate_helper`.  If no user message is
+        present, the error is escalated and the method returns ``None`` or
+        raises :class:`ValueError` when :data:`RAISE_ERRORS` is true.
         """
 
-        prompt = ""
+        prompt_parts: list[str] = []
         user_found = False
-        for message in reversed(messages):
-            if message.get("role") == "user":
-                prompt = message.get("content", "")
-                user_found = True
-                break
+        for message in messages:
+            role = message.get("role")
+            if role in {"system", "user"}:
+                prompt_parts.append(f"{role}: {message.get('content', '')}")
+                if role == "user":
+                    user_found = True
 
         if not user_found:
             msg = "no user message found"
@@ -956,6 +956,8 @@ class BotDevelopmentBot:
             if RAISE_ERRORS:
                 raise ValueError(msg)
             return None
+
+        prompt = "\n".join(prompt_parts)
 
         try:
             return self.engine_retry.run(
