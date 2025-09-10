@@ -258,7 +258,7 @@ class BotDevelopmentBot:
         *,
         config: BotDevConfig | None = None,
         context_builder: ContextBuilder,
-        engine: SelfCodingEngine | None = None,
+        self_coding_engine: SelfCodingEngine | None = None,
     ) -> None:
         self.config = config or BotDevConfig()
         if repo_base is not None:
@@ -332,9 +332,10 @@ class BotDevelopmentBot:
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        self.engine = engine or SelfCodingEngine(
+        self.self_coding_engine = self_coding_engine or SelfCodingEngine(
             None, None, context_builder=self.context_builder
         )
+        self.engine = self.self_coding_engine  # backward compatibility
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
@@ -913,17 +914,18 @@ class BotDevelopmentBot:
         model:
             Ignored; kept for backward compatibility.
         messages:
-            List of chat messages whose ``content`` values are concatenated and
-            passed to :meth:`SelfCodingEngine.generate_helper`.
+            Chat history where the final user message is used as the prompt for
+            :meth:`SelfCodingEngine.generate_helper`.
         """
 
-        description = "\n".join(m.get("content", "") for m in messages)
-
-        def _call() -> Any:
-            return self.engine.generate_helper(description)
+        prompt = ""
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                prompt = message.get("content", "")
+                break
 
         try:
-            return _call()
+            return self.self_coding_engine.generate_helper(prompt)
         except Exception as exc:
             msg = f"helper generation failed: {exc}"
             self.errors.append(msg)
@@ -1228,7 +1230,7 @@ class BotDevelopmentBot:
             self.errors.append("visual build failed")
         self.logger.info("Attempting engine fallback for %s", spec.name)
         try:
-            code = self.engine.generate_helper(prompt)
+            code = self.self_coding_engine.generate_helper(prompt)
             if not code:
                 raise RuntimeError("empty response")
         except Exception as exc:

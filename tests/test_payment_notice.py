@@ -246,7 +246,7 @@ def test_bot_development_bot_calls_engine(monkeypatch):
     monkeypatch.setattr(engine, "generate_helper", fake_generate)
 
     dummy = types.SimpleNamespace(
-        engine=engine,
+        self_coding_engine=engine,
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
@@ -261,7 +261,7 @@ def test_bot_development_bot_calls_engine(monkeypatch):
         ],
     )
 
-    assert captured["desc"] == "hi\nthere"
+    assert captured["desc"] == "hi"
     assert result == "code"
 
 
