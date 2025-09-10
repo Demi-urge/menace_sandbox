@@ -1,7 +1,7 @@
-# Visual Agent Prompt Format
+# Code Generator Prompt Format
 
-`BotDevelopmentBot` sends instructions to visual code generators through the
-local ``SelfCodingEngine``. The prompt is composed of several sections. Each
+`BotDevelopmentBot` sends instructions to local code generators through the
+``SelfCodingEngine``. The prompt is composed of several sections. Each
 section guides the agent to create a
 complete, testable repository. The list below summarises the required headings:
 
@@ -27,7 +27,7 @@ complete, testable repository. The list below summarises the required headings:
 
 This structure helps the agent produce consistent, testable starter
 repositories. The sections must appear in the order listed above so that the
-visual agent can parse them reliably.
+generator can parse them reliably.
 
 ## Prompt sections in detail
 
@@ -112,96 +112,10 @@ my_bot/
 
 ## Running tests
 
-Before executing tests the visual agent must run `scripts/setup_tests.sh` to
-install packages listed in `requirements.txt`. After that execute
-`pytest --cov` inside the repository. Any failing tests must be reported in
-full so they can be fixed before deployment.
-
-## Environment variables
-
-`BotDevConfig` exposes several environment variables that influence how the
-visual agent is contacted. The most relevant are:
-
-- `VISUAL_AGENT_URLS` – semicolon separated list of agent endpoints. If unset
-  the values of `VISUAL_DESKTOP_URL` and `VISUAL_LAPTOP_URL` are used.
-- `VISUAL_AGENT_TOKEN` – authentication token passed to the agent service. The
-  variable is mandatory and the server exits when it is missing.
-- `MENACE_AGENT_PORT` – port where `menace_visual_agent_2.py` listens for HTTP connections.
-- `BOT_DEV_HEADLESS` – set to `1` to disable interactive windows and run in
-  headless mode.
- - `VISUAL_AGENT_AUTOSTART` – set to `0` to prevent `run_autonomous` from
-  launching a local visual agent when none is reachable.
- - `VISUAL_AGENT_AUTO_RECOVER` – `1` by default; set to `0` to disable automatic queue recovery.
-- `VA_PROMPT_TEMPLATE` – path to a template (or inline template string) used to
-  build the visual agent prompt. The template receives `{path}`,
-  `{description}`, `{context}` and `{func}` placeholders.
-- `VA_PROMPT_PREFIX` – additional text prepended before the generated prompt.
-- `VA_REPO_LAYOUT_LINES` – number of repository layout lines to include.
-- `VA_MESSAGE_PREFIX` – overrides the hard-coded prefix used by
-  `VisualAgentClient` when forwarding messages. By default, the client
-  prepends "Improve Menace by enhancing error handling and modifying
-  existing bots." (see `DEFAULT_MESSAGE_PREFIX` in
-  `visual_agent_client.py`).
-  - `VISUAL_AGENT_STATUS_INTERVAL` – poll `/status` periodically to record queue
-    depth for the dashboard. Set to `0` to disable.
-
-When `run_autonomous.py` is used a `VisualAgentMonitor` thread keeps the
-service running. It polls the agent's `/health` endpoint and restarts
-`menace_visual_agent_2.py` with `/recover` if the service stops responding.
-The agent itself runs a queue watchdog that rebuilds the database and restarts
-the worker when corruption or crashes are detected. Manual commands such as
-`--recover-queue` or `--repair-running` are therefore typically unnecessary.
-
-## Visual agent service
-
-The standalone service `menace_visual_agent_2.py` exposes HTTP endpoints on the
-port specified by `MENACE_AGENT_PORT` (default 8001). Requests must include
-`VISUAL_AGENT_TOKEN` for authentication. The `/run` endpoint always returns
-HTTP `202` together with a task id. Submitted jobs are appended to
-`visual_agent_queue.db` and executed sequentially. Poll `/status/<id>` to check
-progress. The queue database is created automatically inside
-`SANDBOX_DATA_DIR` and crash recovery and stale lock handling are automatic as
-detailed above. The queue uses SQLite for persistence and a
-`visual_agent_state.json` file records job status and the timestamp of the last
-completed task.
-
-The `/status` endpoint returns a JSON object with two fields:
-
-- `active` – `true` while a job is running and `false` when idle.
-- `queue` – number of queued jobs waiting for execution.
-
-Jobs are processed sequentially so at most one task runs at a time regardless of how many clients enqueue work.
-If the service fails to start due to a stale lock run `python menace_visual_agent_2.py --cleanup` then repair the queue with `--repair-running --recover-queue`. These commands are mainly for troubleshooting because `run_autonomous.py` automatically restarts the service and triggers recovery. Use `--resume` to process tasks without starting the server.
-
-## Prompt customisation
-
-
-`VA_MESSAGE_PREFIX` overrides the instructions prepended before each message.
-`VA_PROMPT_PREFIX` adds extra text to the start of the prompt while
-`VA_PROMPT_TEMPLATE` replaces the default layout entirely. The template receives
-`{path}`, `{description}`, `{context}` and `{func}` so you can insert snippet
-metadata wherever desired.
-
-A minimal template might look like:
-
-```text
-### Introduction
-Add {func} to {path}. It should {description}.
-
-### Snippet context
-{context}
-```
-
-Save this file as `va.tmpl` and pass it to the sandbox with
-`VA_PROMPT_TEMPLATE=va.tmpl`:
-
-```bash
-VA_PROMPT_PREFIX="[internal]" VA_PROMPT_TEMPLATE=va.tmpl python "$(python - <<'PY'
-from dynamic_path_router import resolve_path
-print(resolve_path('sandbox_runner.py'))
-PY
-)" full-autonomous-run
-```
+Before executing tests run `scripts/setup_tests.sh` to install packages listed
+in `requirements.txt`. After that execute `pytest --cov` inside the repository.
+Any failing tests must be reported in full so they can be fixed before
+deployment.
 
 ## Sample prompt
 

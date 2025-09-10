@@ -151,7 +151,6 @@ environment variables in more detail.
 - **Missing packages** – run `menace setup` again to reinstall requirements.
 - **Tests fail** – ensure optional tools like `ffmpeg` and Docker are installed.
 - **Dashboard not loading** – check that `AUTO_DASHBOARD_PORT` is free.
-- **Visual agent 401 errors** – verify `VISUAL_AGENT_TOKEN` matches your `.env`.
 
 ## Self‑Optimisation Loop
 

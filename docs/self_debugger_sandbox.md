@@ -10,7 +10,6 @@
 
 Essential environment variables:
 
-- `VISUAL_AGENT_TOKEN` – token used when the debugger requests assistance from the visual agent service.
 - `SANDBOX_REPO_PATH` – path to the repository clone being patched.
 - `SANDBOX_DATA_DIR` – directory where sandbox state such as ROI history is stored.
 
@@ -19,7 +18,6 @@ When a backend URL is configured the sandbox sends every patch score to the remo
 ## Troubleshooting
 
 - **Missing dependencies** – run `./setup_env.sh` to install required Python libraries.
-- **Token errors** – ensure `VISUAL_AGENT_TOKEN` matches the secret expected by the visual agent or requests will return HTTP 401.
 
 ## Synergy weights
 

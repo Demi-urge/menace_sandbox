@@ -15,9 +15,7 @@ running the fully autonomous sandbox.
  - `SELF_CODING_INTERVAL`, `SELF_CODING_ROI_DROP` and `SELF_CODING_ERROR_INCREASE`
    – tune the local `SelfCodingEngine`; code generation runs entirely offline and
    requires no API keys.
-- `VISUAL_AGENT_MONITOR_INTERVAL` – seconds between visual agent health checks
-  (default `30`).
-- `LOCAL_KNOWLEDGE_REFRESH_INTERVAL` – refresh interval for the local
+  - `LOCAL_KNOWLEDGE_REFRESH_INTERVAL` – refresh interval for the local
   knowledge module (default `600`).
 - `MENACE_LOCAL_DB_PATH` and `MENACE_SHARED_DB_PATH` – override default SQLite
   database locations.
@@ -459,8 +457,7 @@ Follow these steps when launching the sandbox for the first time:
 
    Edit the resulting `.env` to add missing API keys.
 
-8. **Start the visual agent** in one terminal and the autonomous loop in
-   another as described below.
+8. **Start the autonomous loop** in a terminal as described below.
 
 ## System packages
 
@@ -660,13 +657,6 @@ persisted to `sandbox_data/metrics.db` for later inspection.
 - `SANDBOX_CLEAN_ORPHANS=1` – prune processed names from `orphan_modules.json`
   after successful integration
  - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically discover isolated modules and recurse through them when scanning (`--auto-include-isolated`; set to `0` to disable)
-- `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
- - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
- - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
-- `VISUAL_AGENT_TOKEN_ROTATE` – new token value used to restart the
-  visual agent between sandbox runs
-- `VISUAL_AGENT_SSL_CERT` – optional path to an SSL certificate for HTTPS
-- `VISUAL_AGENT_SSL_KEY` – optional path to the corresponding private key
 - `ROI_THRESHOLD` – override the diminishing ROI threshold
 - `ROI_CONFIDENCE` – t-test confidence when flagging modules
 - `ENTROPY_PLATEAU_THRESHOLD` – entropy delta threshold for plateau detection
@@ -859,30 +849,19 @@ SelfCodingEngine runs locally so no additional API keys are required.
 
 ## Launch sequence
 
-1. Start the visual agent service:
+1. Generate a `.env` file or update an existing one using `auto_env_setup.ensure_env()`:
 
    ```bash
-   python menace_visual_agent_2.py
+   python -c 'import auto_env_setup as a; a.ensure_env()'
    ```
 
-   The server listens on the port defined by `MENACE_AGENT_PORT` (default `8001`). Ensure `VISUAL_AGENT_TOKEN` is exported before running the command.
+   Review the generated file and add any missing secrets.
 
-2. In a separate terminal start the autonomous loop:
+2. Launch the autonomous loop:
 
    ```bash
    python run_autonomous.py
    ```
-
-   Alternatively run `scripts/launch_personal.py` to start the visual agent and
-   autonomous loop sequentially.
-
-  `run_autonomous.py` spawns a background `VisualAgentMonitor` which
-  polls the visual agent's `/health` endpoint. If the service stops
-  responding the monitor restarts it and posts to `/recover` so queued
-  tasks resume automatically. A built in queue watchdog thread also
-  verifies database integrity and restarts the worker if it crashes.
-  Manual recovery is rarely required and the behaviour is controlled by
-  `VISUAL_AGENT_AUTO_RECOVER=1`.
 
    Use `--metrics-port` or `METRICS_PORT` to expose Prometheus metrics from the sandbox.
 
@@ -921,62 +900,15 @@ SelfCodingEngine runs locally so no additional API keys are required.
     immediately. Modules flagged as redundant by
     `orphan_analyzer.analyze_redundancy` are skipped during this integration.
 
-## Visual agent queueing
+## Task processing
 
-`menace_visual_agent_2.py` accepts concurrent requests but `/run` always
-responds with HTTP `202` and a task id. Submitted tasks are appended to
-`SANDBOX_DATA_DIR/visual_agent_queue.db` and processed sequentially. Poll
-`/status/<id>` to monitor progress. The persistent queue avoids race conditions
-and survives restarts. The database is created automatically inside the sandbox
-data directory. A matching `visual_agent_state.json` file records the status of
-each job and when the last task completed. Both are loaded on startup so
-unfinished work continues automatically.
-
-Use `menace_visual_agent_2.py --resume` to process any pending
-entries without launching the HTTP service. Stale lock and PID files are cleaned
-automatically; run `menace_visual_agent_2.py --cleanup` if the service did not
-shut down cleanly.
-
-### Crash recovery
-
-By default the agent requeues tasks marked as `running` on startup. Use
-`--no-auto-recover` or set `VISUAL_AGENT_AUTO_RECOVER=0` to disable this
-behaviour. The queue database is verified on startup; a corrupt file is moved
-aside as ``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
-``visual_agent_state.json`` when possible. The client also writes failed
-requests to `visual_agent_client_queue.jsonl` and retries them periodically.
-Database errors encountered while processing tasks now trigger this recovery
-automatically, so manual ``--recover-queue`` is rarely needed. The commands
-below are mainly useful for troubleshooting when automatic recovery fails.
-Additional CLI helpers simplify manual repairs:
-If the service refuses to start because of a stale lock or PID file use `python menace_visual_agent_2.py --cleanup` first.
-
-```bash
-python menace_visual_agent_2.py --flush-queue       # drop all queued tasks
-python menace_visual_agent_2.py --recover-queue     # reload queue from disk
-python menace_visual_agent_2.py --repair-running    # mark running tasks queued
-python menace_visual_agent_2.py --resume            # process queue headlessly
-python menace_visual_agent_2.py --cleanup           # remove stale lock/PID
-```
-
-To recover manually after an unexpected shutdown:
-```bash
-python menace_visual_agent_2.py --cleanup
-python menace_visual_agent_2.py --resume
-python menace_visual_agent_2.py --repair-running --recover-queue
-python run_autonomous.py --recover
-```
-
+`run_autonomous.py` handles submissions directly and executes them sequentially
+inside the sandbox. State is stored in `SANDBOX_DATA_DIR` so unfinished work
+resumes automatically after restarts.
 ## Local run essentials
 
 The sandbox reads several paths and authentication tokens from environment variables. These defaults are suitable for personal deployments and can be overridden in your `.env`:
 
-- `VISUAL_AGENT_TOKEN` – shared secret for the visual agent service.
-- `VISUAL_AGENT_TOKEN_ROTATE` – when set, the new token used to restart the
-  visual agent between runs.
-- `VISUAL_AGENT_SSL_CERT` – path to the TLS certificate served by
-  `menace_visual_agent_2.py` when running over HTTPS.
-- `VISUAL_AGENT_SSL_KEY` – path to the private key for the certificate.
 - `SANDBOX_DATA_DIR` – directory where ROI history, presets and patch records are stored. Defaults to `sandbox_data`.
  - `SANDBOX_AUTO_MAP` – when set to `1` the sandbox builds or
    refreshes `module_map.json` on startup. The legacy `SANDBOX_AUTODISCOVER_MODULES`
@@ -1002,10 +934,6 @@ python scripts/generate_module_map.py
 ### Example `.env`
 
 ```dotenv
-VISUAL_AGENT_TOKEN=my-secret-token
-#VISUAL_AGENT_TOKEN_ROTATE=new-secret
-VISUAL_AGENT_SSL_CERT=/path/to/cert.pem
-VISUAL_AGENT_SSL_KEY=/path/to/key.pem
 SANDBOX_DATA_DIR=~/menace_data
 PATCH_SCORE_BACKEND_URL=http://example.com/api/scores
 DATABASE_URL=sqlite:///menace.db
@@ -1036,26 +964,11 @@ It assumes the repository is already cloned and all dependencies from
 
    Review the generated file and add any missing API keys.
 
-2. **Start the visual agent** and leave it running:
-
-   ```bash
-   python menace_visual_agent_2.py
-   ```
-
-3. **Launch the autonomous loop** in a second terminal:
+2. **Launch the autonomous loop**:
 
    ```bash
    python run_autonomous.py
    ```
-
-   To start both components sequentially from a single shell you can run:
-
-   ```bash
-   python menace_visual_agent_2.py &
-   python run_autonomous.py
-   ```
-
-   Terminate the backgrounded visual agent when you are done.
 
 ## Logging
 
@@ -1259,11 +1172,10 @@ Adjust `AUTO_TRAIN_INTERVAL` or `SYNERGY_METRICS_PORT` to fit your setup.
 Press <kbd>Ctrl+C</kbd> to stop both services. The same environment variables are
 respected as when running `run_autonomous.py`.
 
-#### Visual agent concurrency
+#### Task concurrency
 
-Requests to `/run` always return HTTP `202` with a task id. The agent processes
-one job at a time from `visual_agent_queue.db`, so you can submit tasks
-concurrently and poll `/status/<id>` until each job completes.
+The sandbox processes one job at a time. Submit tasks sequentially and wait for
+completion before sending the next request.
 
 ### Troubleshooting synergy services
 
@@ -1463,10 +1375,6 @@ local installation.
 - **Missing dependencies** – run `./setup_env.sh` again to ensure all Python
   packages are installed. On bare metal verify that `ffmpeg` and `tesseract`
   are present in your `$PATH`.
-- **Visual agent queue stalled** – tasks are appended to ``visual_agent_queue.db``
-  and processed sequentially. The service automatically cleans stale locks and
-  requeues running tasks on startup. Run ``menace_visual_agent_2.py --cleanup``
-  or ``--repair-running`` if the queue appears stuck.
 - **Dashboard not loading** – confirm that `AUTO_DASHBOARD_PORT` is free and no
   firewall blocks the connection. The dashboard starts automatically once the
   sandbox loop begins.
@@ -1481,9 +1389,6 @@ local installation.
 - **Self tests interrupted** – `SelfTestService` saves its progress to
   `sandbox_data/self_test_state.json` (configurable via `SELF_TEST_STATE`).
   Restarting the sandbox automatically resumes any incomplete test run.
-- **Authentication errors** – HTTP 401 responses from the visual agent usually
-  indicate an invalid token. Confirm that `VISUAL_AGENT_TOKEN` matches the
-  secret configured in `.env` and restart the service when the token changes.
 - **Synergy exporter not running** – ensure `EXPORT_SYNERGY_METRICS=1` is set
   and that `SYNERGY_METRICS_PORT` is free. Successful startup logs the message
   "Synergy metrics exporter running" together with the chosen port.

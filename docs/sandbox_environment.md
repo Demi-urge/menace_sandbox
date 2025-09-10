@@ -9,7 +9,6 @@ The sandbox expects a few variables to be set before launch:
 - `SANDBOX_REPO_PATH` – path to the repository root.
 - `SANDBOX_DATA_DIR` – directory for runtime state and metrics.
 - `DATABASE_URL` – database connection string.
-- `VISUAL_AGENT_TOKEN` – authentication token for visual-agent services.
 
 Run `auto_env_setup.ensure_env()` to generate a `.env` file with these variables when
 missing. Values may also be supplied via the shell environment.
@@ -75,7 +74,6 @@ secrets = SecretsManager()
 settings = SandboxSettings(
     sandbox_repo_path=resolve_path("."),
     sandbox_data_dir=resolve_path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")),
-    visual_agent_token=secrets.get("visual_agent_token"),
 )
 ```
 
