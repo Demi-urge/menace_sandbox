@@ -941,8 +941,8 @@ class BotDevelopmentBot:
     def _call_codex_api(self, messages: list[dict[str, str]]) -> EngineResult:
         """Produce helper code via :class:`SelfCodingEngine`.
 
-        All ``system`` and ``user`` messages are concatenated with their role
-        tags to form a single prompt for
+        All messages are concatenated with their role tags to form a single
+        prompt for
         :meth:`SelfCodingEngine.generate_helper`.  If no user prompt is
         provided, the error is escalated and the method returns an
         :class:`EngineResult` describing the failure or raises
@@ -953,10 +953,11 @@ class BotDevelopmentBot:
         user_found = False
         for message in messages:
             role = message.get("role")
-            if role in {"system", "user"}:
-                prompt_parts.append(f"{role}: {message.get('content', '')}")
-                if role == "user":
-                    user_found = True
+            if not role:
+                continue
+            prompt_parts.append(f"{role}: {message.get('content', '')}")
+            if role == "user":
+                user_found = True
 
         if not user_found:
             msg = "no user prompt provided"
