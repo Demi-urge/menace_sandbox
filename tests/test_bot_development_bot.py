@@ -282,17 +282,26 @@ def test_visual_and_engine_failure_fallback(tmp_path, monkeypatch, caplog):
             return False
 
     dev = FailVisual(repo_base=tmp_path)
+    dev.engine_retry = bdb.RetryStrategy(attempts=3, delay=0)
+
+    calls = {"n": 0}
 
     def boom(_: str) -> str:
+        calls["n"] += 1
         raise RuntimeError("bad")
 
     monkeypatch.setattr(dev.engine, "generate_helper", boom)
+
+    escalated: list[str] = []
+    dev._escalate = lambda msg, level="error": escalated.append(msg)
 
     spec = bdb.BotSpec(name="fallback_bot", purpose="demo", functions=["run"])
     caplog.set_level(logging.ERROR)
     path = dev.build_bot(spec, context_builder=dev.context_builder)
     assert path.exists()
-    assert "engine fallback failed" in dev.errors
+    assert calls["n"] == dev.engine_retry.attempts
+    assert any("engine request failed" in m for m in escalated)
+    assert any("engine request failed" in e for e in dev.errors)
 
 
 def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):

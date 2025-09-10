@@ -1265,15 +1265,19 @@ class BotDevelopmentBot:
             self.errors.append("visual build failed")
         self.logger.info("Attempting engine fallback for %s", spec.name)
         try:
-            code = self.engine.generate_helper(prompt)
+            code = self.engine_retry.run(
+                lambda: self.engine.generate_helper(prompt),
+                logger=self.logger,
+            )
             if not code:
                 raise RuntimeError("empty response")
         except Exception as exc:
-            self.errors.append("engine fallback failed")
-            self.logger.error("engine fallback failed: %s", exc, exc_info=True)
-            self._escalate(f"engine fallback failed: {exc}")
+            msg = f"engine request failed: {exc}"
+            self.logger.exception(msg)
+            self._escalate(msg)
+            self.errors.append(msg)
             if RAISE_ERRORS:
-                raise RuntimeError("engine fallback failed") from exc
+                raise RuntimeError("engine request failed") from exc
             code = self.generate_code(spec, patterns)
 
         file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
