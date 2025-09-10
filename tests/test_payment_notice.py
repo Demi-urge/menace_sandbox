@@ -335,6 +335,48 @@ def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
     assert run_called is False
 
 
+def test_call_codex_api_empty_messages_escalates(monkeypatch, caplog):
+    escalated: dict[str, str] = {}
+
+    def fake_escalate(msg: str, level: str = "error") -> None:
+        escalated["msg"] = msg
+        escalated["level"] = level
+
+    engine = sce_stub.SelfCodingEngine()
+
+    def fake_generate(_desc: str) -> str:  # pragma: no cover - should not run
+        raise AssertionError("engine should not be called")
+
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "RAISE_ERRORS", False)
+    run_called = False
+
+    def fake_run(self, func, logger=None):
+        nonlocal run_called
+        run_called = True
+        return func()
+
+    monkeypatch.setattr(RetryStrategy, "run", fake_run)
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=fake_escalate,
+        errors=[],
+        engine_retry=RetryStrategy(),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = BotDevelopmentBot._call_codex_api(dummy, [])
+
+    assert result is None
+    assert escalated["level"] == "warning"
+    assert "no user message found" in escalated["msg"]
+    assert "no user message found" in caplog.text
+    assert run_called is False
+
+
 def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog):
     calls: dict[str, int] = {"n": 0}
     escalated: dict[str, str] = {}
