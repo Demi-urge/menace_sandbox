@@ -76,6 +76,10 @@ bot = BotDevelopmentBot(context_builder=builder)
 bot._build_prompt(BotSpec(name="demo", purpose="test"), context_builder=builder)
 ```
 
+BotDevelopmentBot now routes generation through the local `SelfCodingEngine`.
+All prompts are processed on your machine and never sent to external
+services.
+
 ### AutomatedReviewer
 
 ```python
@@ -1272,9 +1276,9 @@ Application settings are read from environment variables. ``auto_env_setup.ensur
 creates a ``.env`` file on first run so Menace can start without manual
 configuration. The file contains keys defined in ``env_config.py`` such as
 ``DATABASE_URL`` and credentials for external services like ``SERP_API_KEY``.
-Code generation uses the local ``SelfCodingEngine`` and no ``OPENAI_API_KEY``
-is required. Additional service specific keys (for example
-``REDDIT_CLIENT_SECRET``) can be added to the same file. Stripe keys are
+Code generation uses the local ``SelfCodingEngine``; prompts stay on your
+machine so no external API keys are required. Additional service specific keys
+(for example ``REDDIT_CLIENT_SECRET``) can be added to the same file. Stripe keys are
 handled separately via ``stripe_billing_router`` and should not be stored in
 configuration files.
 Set ``MENACE_ENV_FILE`` to load variables from a different path or call
