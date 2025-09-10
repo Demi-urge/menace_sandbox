@@ -30,7 +30,7 @@ from compliance.license_fingerprint import DENYLIST as _LICENSE_DENYLIST
 from .patch_logger import _VECTOR_RISK  # type: ignore
 from patch_safety import PatchSafety
 from .ranking_utils import rank_patches
-from .embedding_backfill import ensure_embeddings_fresh
+from .embedding_backfill import ensure_embeddings_fresh, StaleEmbeddingsError
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -1074,7 +1074,13 @@ class ContextBuilder:
         except Exception:
             pass
         _ensure_vector_service()
-        ensure_embeddings_fresh(self.db_weights.keys())
+        dbs_to_check = list(self.db_weights.keys()) or ["code", "bot", "error", "workflow"]
+        try:
+            ensure_embeddings_fresh(dbs_to_check)
+        except StaleEmbeddingsError as exc:
+            details = ", ".join(f"{n} ({r})" for n, r in exc.stale_dbs.items())
+            logger.error("embeddings missing or stale: %s", details)
+            raise VectorServiceError(f"embeddings missing or stale: {details}") from exc
         try:
             self.patch_safety.load_failures()
         except Exception:
