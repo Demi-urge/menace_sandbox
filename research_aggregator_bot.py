@@ -104,6 +104,8 @@ class ResearchMemory:
 class InfoDB(EmbeddableDBMixin):
     """SQLite storage for collected research."""
 
+    DB_FILE = "information.db"
+
     def __init__(
         self,
         path: Path = Path("information.db"),

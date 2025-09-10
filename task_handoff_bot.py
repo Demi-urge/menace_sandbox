@@ -133,6 +133,8 @@ _WORKFLOW_HASH_FIELDS = sorted([
 class WorkflowDB(EmbeddableDBMixin):
     """SQLite storage for generated workflows with vector search."""
 
+    DB_FILE = "workflows.db"
+
     def __init__(
         self,
         path: Path | str = resolve_path("workflows.db"),

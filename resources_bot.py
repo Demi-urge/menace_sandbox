@@ -50,6 +50,8 @@ class ROIRecord:
 class ROIHistoryDB(EmbeddableDBMixin):
     """SQLite-backed ROI history storage with embedding support."""
 
+    DB_FILE = "roi_history.db"
+
     def __init__(
         self,
         path: str | Path = "roi_history.db",

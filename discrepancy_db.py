@@ -36,6 +36,8 @@ class DiscrepancyRecord:
 class DiscrepancyDB(EmbeddableDBMixin):
     """SQLite-backed storage for discrepancy messages with embeddings."""
 
+    DB_FILE = "discrepancies.db"
+
     def __init__(
         self,
         path: str | Path = "discrepancies.db",

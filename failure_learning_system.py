@@ -287,6 +287,8 @@ class DiscrepancyDB(EmbeddableDBMixin):
 class FailureDB(DiscrepancyDB):
     """Expose failure embeddings for the vector service."""
 
+    DB_FILE = "failures.db"
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # provide mapping access for ``dict(row)`` calls

@@ -35,6 +35,8 @@ class IntentRecord:
 class IntentDB(EmbeddableDBMixin):
     """Persist intent embeddings for repository modules."""
 
+    DB_FILE = "intent.db"
+
     def __init__(
         self,
         path: str | Path = "intent.db",
