@@ -73,5 +73,3 @@ sys.modules.setdefault(
     ),
 )
 
-os.environ.setdefault("VISUAL_AGENT_URLS", "http://127.0.0.1:8001")
-os.environ.setdefault("VISUAL_AGENT_TOKEN", "test-token")

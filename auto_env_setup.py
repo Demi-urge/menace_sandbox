@@ -27,10 +27,7 @@ RECURSIVE_ISOLATED_VARS = (
     "SELF_TEST_RECURSIVE_ISOLATED",
 )
 
-SENSITIVE_VARS = (
-    "VISUAL_AGENT_TOKEN",
-    "VISUAL_AGENT_URLS",
-)
+SENSITIVE_VARS = ()
 
 # Default environment variables with fallbacks
 # These are persisted to ``.env`` when missing so the application can

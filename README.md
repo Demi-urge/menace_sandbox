@@ -1893,9 +1893,6 @@ Troubleshooting tips:
   restarting unexpectedly.
 - If synergy metrics diverge wildly, verify that ``synergy_history.db`` is
   writable and consider adjusting ``--synergy-threshold-weight``.
-- HTTP 401 errors from the visual agent usually mean ``VISUAL_AGENT_TOKEN`` is
-  missing or mismatched. Confirm the token matches the secret configured in
-  ``menace_visual_agent_2.py``.
 QEMU must be installed separately for cross-platform tests. Place your QCOW2 files in `qemu_images` and reference them via `VM_SETTINGS` so presets with `OS_TYPE` `windows` or `macos` boot automatically.
 
 ### Maintenance logs and audit signing
@@ -1973,7 +1970,6 @@ start unattended.  At minimum the following variables must be defined:
 - ``MENACE_SANITY_OPTIONAL`` – set to any value in development to allow missing
   ``menace_sanity_layer`` modules. Without this the Stripe watchdog raises
   ``SanityLayerUnavailableError`` when feedback hooks are invoked.
-- ``VISUAL_AGENT_TOKEN`` – shared secret used by ``menace_visual_agent_2.py`` for authentication.
 - ``SANDBOX_REPO_PATH`` – path to the local sandbox repository clone processed during self-improvement cycles.
 - ``SANDBOX_DATA_DIR`` – directory storing ROI history, presets and patch metrics.
 
@@ -2055,21 +2051,10 @@ HTTP ``202`` and a task id. Submitted tasks are appended to
 the job completes. This persistent queue allows multiple clients to share the
 agent safely and ensures tasks survive restarts.
 
-Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command returning a fresh token. ``VisualAgentClient`` runs the command automatically when authentication fails.
-
-``VISUAL_AGENT_TOKEN`` **must** be set and is hashed for comparison. Requests may provide a ``Bearer`` token via the ``Authorization`` header or the legacy ``x-token`` field.
-
-When launched via ``run_autonomous.py`` a ``VisualAgentMonitor`` thread keeps
-``menace_visual_agent_2.py`` running. If the process stops responding or the
-queue database disappears the monitor restarts the service and posts to
-``/recover`` so queued tasks resume. This relies on ``VISUAL_AGENT_AUTO_RECOVER=1``.
-
 The service automatically recovers queued tasks and clears stale locks on
-startup. Set ``VISUAL_AGENT_AUTO_RECOVER=0`` or pass ``--no-auto-recover`` to
-disable this behaviour. If the SQLite queue is corrupted the file is renamed
-to ``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
-``visual_agent_state.json`` when available.
-Database errors encountered during normal operation now trigger the same
+startup. If the SQLite queue is corrupted the file is renamed to
+``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
+``visual_agent_state.json`` when available. Database errors encountered during normal operation now trigger the same
 recovery automatically, so ``--recover-queue`` is rarely necessary.
 
 These manual tools are mainly useful for troubleshooting when the monitor fails to restart the service.
