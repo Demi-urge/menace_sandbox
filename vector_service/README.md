@@ -252,9 +252,16 @@ retrain.
 
 ## Embedding backfill daemon
 
-`EmbeddingBackfill` now exposes a lightweight daemon that watches registered
-databases for new or modified records.  Invoke it as a module with the
-`--watch` flag to keep embeddings synchronised:
+Trigger a one-off backfill of the core databases using the Menace CLI:
+
+```bash
+python menace_cli.py embed core
+```
+
+Progress for each database is displayed and any skipped records or licensing
+violations are surfaced. `EmbeddingBackfill` also exposes a lightweight daemon
+that watches registered databases for new or modified records.  Invoke it as a
+module with the `--watch` flag to keep embeddings synchronised:
 
 ```bash
 python -m vector_service.embedding_backfill --watch --interval 30
