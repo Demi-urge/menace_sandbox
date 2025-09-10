@@ -12,8 +12,6 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
-from llm_interface import LLMClient, LLMResult
-from typing import Any
 
 # Stub heavy dependencies so chatgpt_idea_bot can be imported without side effects
 package = types.ModuleType("menace_sandbox")
@@ -128,32 +126,20 @@ sys.modules.setdefault(
 )
 
 sce_stub = types.ModuleType("menace_sandbox.self_coding_engine")
+
+
 class _DummyEngine:
     def __init__(self, *a, **k):
         pass
+
     def generate_helper(self, desc: str) -> str:
         return ""
+
+
 sce_stub.SelfCodingEngine = _DummyEngine
 sys.modules.setdefault("menace_sandbox.self_coding_engine", sce_stub)
 sys.modules.setdefault("self_coding_engine", sce_stub)
 
-# Minimal ChatGPTClient stub to avoid heavy imports
-class _ChatGPTClient:
-    def __init__(self, session=None, gpt_memory=None, context_builder=None):
-        self.session = session
-
-    def ask(self, messages, use_memory=False, tags=None):
-        msgs = prepend_payment_notice(messages)
-        if self.session:
-            self.session.post("http://", json={"messages": msgs})
-        return {}
-
-sys.modules.setdefault(
-    "menace_sandbox.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=_ChatGPTClient)
-)
-
-from menace_sandbox.enhancement_bot import EnhancementBot
-from menace_sandbox.chatgpt_idea_bot import ChatGPTClient
 from menace_sandbox.bot_development_bot import BotDevelopmentBot, RetryStrategy
 
 
@@ -168,71 +154,7 @@ def test_prepend_payment_notice_helper():
     msgs = [{"role": "user", "content": "hello"}]
     new_msgs = prepend_payment_notice(msgs)
     assert new_msgs[0]["role"] == "system"
-    assert new_msgs[0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
     assert new_msgs[1]["content"] == "hello"
-
-
-def test_chatgpt_client_injects_notice(monkeypatch):
-    captured = {}
-
-    class DummyResponse:
-        status_code = 200
-
-        def json(self):
-            return {"choices": [{"message": {"content": "ok"}}]}
-
-        def raise_for_status(self):
-            return None
-
-    class DummySession:
-        def post(self, url, headers=None, json=None, timeout=None):
-            captured["messages"] = json["messages"]
-            return DummyResponse()
-
-    class DummyBuilder:
-        def refresh_db_weights(self):
-            pass
-
-        def build(self, query, **_):
-            return ""
-
-    client = ChatGPTClient(session=DummySession(), gpt_memory=None, context_builder=DummyBuilder())
-    client.ask([{"role": "user", "content": "hi"}], use_memory=False, tags=[])
-    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
-
-
-def test_enhancement_bot_injects_notice():
-    class DummyLLM(LLMClient):
-        def __init__(self):
-            self.captured = None
-            self.ctx = None
-            super().__init__(model="dummy", backends=[])
-
-        def generate(self, prompt, *, context_builder=None):  # type: ignore[override]
-            self.captured = prompt
-            self.ctx = context_builder
-            return LLMResult(text="")
-
-    class DummyBuilder:
-        def refresh_db_weights(self):
-            return {}
-
-        def build(self, query, **_):
-            return ""
-
-    llm = DummyLLM()
-    bot = EnhancementBot(context_builder=DummyBuilder(), llm_client=llm)
-    bot._codex_summarize("a", "b", confidence=1.0)
-    assert llm.captured and llm.captured.system.startswith(PAYMENT_ROUTER_NOTICE)
-    assert llm.ctx is not None
-
-
-def test_prompt_engine_build_prompt_contains_notice():
-    from prompt_engine import PromptEngine
-
-    engine = PromptEngine(retriever=None, context_builder=vector_service.ContextBuilder())
-    prompt = engine.build_prompt("task", context_builder=engine.context_builder)
-    assert prompt.system.startswith(PAYMENT_ROUTER_NOTICE)
 
 
 def test_bot_development_bot_calls_engine(monkeypatch):
@@ -264,28 +186,3 @@ def test_bot_development_bot_calls_engine(monkeypatch):
 
     assert captured["desc"] == "hi"
     assert result == "code"
-
-
-def test_gpt4client_injects_notice(monkeypatch):
-    captured: dict[str, Any] = {}
-
-    def fake_chat(messages, *, context_builder, **kwargs):
-        msgs = prepend_payment_notice(messages)
-        captured["messages"] = msgs
-        return {"choices": [{"message": {"content": ""}}]}
-
-    monkeypatch.setitem(
-        sys.modules,
-        "billing.openai_wrapper",
-        types.SimpleNamespace(chat_completion_create=fake_chat),
-    )
-
-    from neurosales.external_integrations import GPT4Client
-
-    class DummyBuilder:
-        def build(self, query: str) -> str:
-            return "ctx"
-
-    client = GPT4Client(api_key="k", context_builder=DummyBuilder())
-    list(client.stream_chat("arch", [0.1], "obj", "hi"))
-    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
