@@ -9,19 +9,9 @@ path_for_prompt = dpr.path_for_prompt
 clear_cache = dpr.clear_cache
 
 
-def _visual_agent_prompt(path: str) -> str:
-    resolved = str(resolve_path(path))
-    return f"Path:{resolved}"
-
-
 def _error_logger_prompt(module: str, hint: str) -> str:
     resolved = str(resolve_path(module))
     return f"Fix bottleneck in {resolved}: {hint}"
-
-
-def test_visual_agent_prompt_resolves_paths():
-    body = _visual_agent_prompt(path_for_prompt("error_logger.py"))
-    assert str(resolve_path("error_logger.py")) in body
 
 
 def test_error_logger_prompt_resolves_paths():
@@ -35,5 +25,5 @@ def test_prompt_resolves_after_repo_move(tmp_path, monkeypatch):
     (repo / "error_logger.py").write_text("pass", encoding="utf-8")  # path-ignore
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     clear_cache()
-    body = _visual_agent_prompt(path_for_prompt("error_logger.py"))
-    assert str(repo / "error_logger.py") in body  # path-ignore
+    prompt = _error_logger_prompt(path_for_prompt("error_logger.py"), "hint")
+    assert str(repo / "error_logger.py") in prompt  # path-ignore
