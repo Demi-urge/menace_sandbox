@@ -27,7 +27,7 @@ from .auto_link import auto_link
 from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator, Literal
 
 from .unified_event_bus import EventBus
-from .menace_memory_manager import MenaceMemoryManager, MemoryEntry, _summarise_text
+from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
 from db_router import (
     DBRouter,
     GLOBAL_ROUTER,
@@ -39,7 +39,6 @@ import asyncio
 import threading
 from jinja2 import Template
 import yaml
-from vector_service.text_preprocessor import generalise
 
 from vector_service import EmbeddableDBMixin, EmbeddingBackfill
 
@@ -333,8 +332,7 @@ class ErrorDB(EmbeddableDBMixin):
         if not filtered:
             return None
         joined = " ".join(filtered)
-        summary = _summarise_text(joined) or joined
-        prepared = generalise(summary)
+        prepared = self._prepare_text_for_embedding(joined)
         return self._embed(prepared) if prepared else None
 
     def _embed(self, text: str) -> list[float]:
