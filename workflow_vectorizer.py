@@ -14,6 +14,10 @@ from analysis.semantic_diff_filter import find_semantic_risks
 from snippet_compressor import compress_snippets
 from vector_utils import persist_embedding
 from dynamic_path_router import resolve_path
+try:  # pragma: no cover - event bus optional
+    from unified_event_bus import UnifiedEventBus  # type: ignore
+except Exception:  # pragma: no cover - fallback
+    UnifiedEventBus = None  # type: ignore
 
 try:  # pragma: no cover - optional service
     from vector_service.vectorizer import SharedVectorService  # type: ignore
@@ -148,6 +152,8 @@ if SharedVectorService is not None:  # pragma: no cover - best effort
     except Exception:
         _DEFAULT_SERVICE = None
 
+_EVENT_BUS = UnifiedEventBus() if UnifiedEventBus is not None else None
+
 
 def vectorize_and_store(
     record_id: str,
@@ -170,6 +176,11 @@ def vectorize_and_store(
         origin_db=origin_db,
         metadata=meta,
     )
+    if _EVENT_BUS is not None:
+        try:
+            _EVENT_BUS.publish("db:record_updated", {"db": "workflow"})
+        except Exception:
+            pass
     return vec
 
 
@@ -190,6 +201,11 @@ def persist_workflow_embedding(
         metadata=_DEFAULT_VECTORIZER.graph_metrics(),
         path=path,
     )
+    if _EVENT_BUS is not None:
+        try:
+            _EVENT_BUS.publish("db:record_updated", {"db": "workflow"})
+        except Exception:
+            pass
     return vec
 
 

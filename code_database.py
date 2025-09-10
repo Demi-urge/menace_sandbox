@@ -114,6 +114,9 @@ def _ensure_backfill_watcher(bus: "UnifiedEventBus" | None) -> None:
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to start embedding watcher")
 
+
+_ensure_backfill_watcher(UnifiedEventBus())
+
 SQL_DIR = resolve_path("sql_templates")
 
 
@@ -586,6 +589,11 @@ class CodeDB(EmbeddableDBMixin):
             else:
                 publish_with_retry(
                     self.event_bus,
+                    "db:record_added",
+                    {"db": "code"},
+                )
+                publish_with_retry(
+                    self.event_bus,
                     "embedding:backfill",
                     {"db": self.__class__.__name__},
                 )
@@ -704,6 +712,11 @@ class CodeDB(EmbeddableDBMixin):
             if not publish_with_retry(self.event_bus, "code:update", payload):
                 logger.exception("failed to publish code:update event")
             else:
+                publish_with_retry(
+                    self.event_bus,
+                    "db:record_updated",
+                    {"db": "code"},
+                )
                 publish_with_retry(
                     self.event_bus,
                     "embedding:backfill",

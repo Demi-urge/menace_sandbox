@@ -89,6 +89,9 @@ def _ensure_backfill_watcher(bus: "UnifiedEventBus" | None) -> None:
         logger.exception("failed to start embedding watcher")
 
 
+_ensure_backfill_watcher(UnifiedEventBus())
+
+
 # Fields that uniquely identify a bot's core identity for deduplication
 
 _BOT_HASH_FIELDS = sorted([
@@ -482,6 +485,11 @@ class BotDB(EmbeddableDBMixin):
             else:
                 publish_with_retry(
                     self.event_bus,
+                    "db:record_added",
+                    {"db": "bot"},
+                )
+                publish_with_retry(
+                    self.event_bus,
                     "embedding:backfill",
                     {"db": self.__class__.__name__},
                 )
@@ -532,6 +540,11 @@ class BotDB(EmbeddableDBMixin):
                 logger.exception("failed to publish bot:update event")
                 self.failed_events.append(FailedEvent("bot:update", payload))
             else:
+                publish_with_retry(
+                    self.event_bus,
+                    "db:record_updated",
+                    {"db": "bot"},
+                )
                 publish_with_retry(
                     self.event_bus,
                     "embedding:backfill",

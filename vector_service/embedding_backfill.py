@@ -12,6 +12,7 @@ import json
 import sys
 import hashlib
 import queue
+import threading
 from datetime import datetime, timedelta
 
 from . import registry as _registry
@@ -507,6 +508,51 @@ def watch_databases(
     svc = SharedVectorService()
     seen: dict[str, dict[str, str]] = {}
     backfill = EmbeddingBackfill(backend=backend)
+    # listen for explicit db change events so we can react immediately
+    q: queue.Queue[str] = queue.Queue()
+    pending: set[str] = set()
+
+    def _enqueue(kind: str) -> None:
+        if kind not in pending:
+            pending.add(kind)
+            q.put(kind)
+
+    if UnifiedEventBus is not None:
+        bus = UnifiedEventBus()
+
+        def _handle(_topic: str, event: object) -> None:
+            kind = None
+            if isinstance(event, dict):
+                kind = event.get("db") or event.get("kind")
+            elif isinstance(event, str):
+                kind = event
+            if not kind:
+                return
+            name = str(kind).lower().rstrip("s")
+            if name in {"code", "bot", "error", "workflow"}:
+                _enqueue(str(kind))
+
+        for topic in ("db:record_added", "db:record_updated"):
+            bus.subscribe(topic, _handle)
+
+        def _worker() -> None:
+            while True:
+                kind = q.get()
+                try:
+                    backfill.run(
+                        dbs=[kind],
+                        batch_size=1,
+                        backend=backend,
+                        trigger="event",
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logging.getLogger(__name__).exception(
+                        "event-triggered backfill failed for %s", kind
+                    )
+                finally:
+                    pending.discard(kind)
+
+        threading.Thread(target=_worker, daemon=True).start()
     while True:
         check_staleness(dbs or [])
         subclasses = backfill._load_known_dbs(names=dbs)

@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
 from .auto_link import auto_link
 from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator, Literal
 
-from .unified_event_bus import EventBus
+from .unified_event_bus import EventBus, UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
 from db_router import (
     DBRouter,
@@ -68,6 +68,9 @@ def _ensure_backfill_watcher(bus: "EventBus" | None) -> None:
         _WATCH_THREAD = thread
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to start embedding watcher")
+
+
+_ensure_backfill_watcher(UnifiedEventBus())
 
 try:
     import pandas as pd  # type: ignore
@@ -282,6 +285,10 @@ class ErrorDB(EmbeddableDBMixin):
         if self.event_bus:
             try:
                 self.event_bus.publish(topic, payload)
+                if topic.endswith(":new"):
+                    self.event_bus.publish("db:record_added", {"db": "error"})
+                elif topic.endswith(":update"):
+                    self.event_bus.publish("db:record_updated", {"db": "error"})
             except Exception as exc:
                 logger.exception("publish failed: %s", exc)
                 if error_bot_exceptions:
