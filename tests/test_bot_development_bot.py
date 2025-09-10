@@ -66,11 +66,21 @@ sys.modules["menace_memory_manager"] = mm_stub
 sys.modules["menace.menace_memory_manager"] = mm_stub
 
 sce_stub = ModuleType("self_coding_engine")
+
+
 class _DummyEngine:
     def __init__(self, *a, **k):
-        pass
+        self.calls: list[str] = []
+
     def generate_helper(self, desc: str) -> str:
+        self.calls.append(desc)
         return ""
+
+
+def _engine() -> _DummyEngine:
+    return _DummyEngine()
+
+
 sce_stub.SelfCodingEngine = _DummyEngine
 sys.modules.setdefault("self_coding_engine", sce_stub)
 sys.modules.setdefault("menace.self_coding_engine", sce_stub)
@@ -96,7 +106,9 @@ def test_refresh_db_weights_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(bdb, "ensure_fresh_weights", bad)
     with pytest.raises(RuntimeError):
-        bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
+        bdb.BotDevelopmentBot(
+            repo_base=tmp_path, context_builder=_ctx_builder(), engine=_engine()
+        )
 
 
 def _spec_dict():
@@ -125,7 +137,9 @@ def _yaml():
 
 
 def test_parse_plan_json():
-    bot = bdb.BotDevelopmentBot(repo_base="tmp", context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        repo_base="tmp", context_builder=_ctx_builder(), engine=_engine()
+    )
     specs = bot.parse_plan(_json())
     assert specs[0].name == "sample_bot"
     assert specs[0].level == "L1"
@@ -134,7 +148,9 @@ def test_parse_plan_json():
 
 
 def test_parse_plan_yaml():
-    bot = bdb.BotDevelopmentBot(repo_base="tmp", context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        repo_base="tmp", context_builder=_ctx_builder(), engine=_engine()
+    )
     specs = bot.parse_plan(_yaml())
     assert specs[0].name == "sample_bot"
     assert specs[0].level == "L1"
@@ -145,8 +161,15 @@ def test_parse_plan_yaml():
 def test_build_from_plan(tmp_path):
     cfg = cfg_mod.BotDevConfig()
     cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
+    engine = _engine()
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path,
+        config=cfg,
+        context_builder=_ctx_builder(),
+        engine=engine,
+    )
     files = bot.build_from_plan(_json())
+    assert engine.calls, "generate_helper was not called"
     assert (tmp_path / "sample_bot" / "sample_bot.py") in files  # path-ignore
     assert (tmp_path / "sample_bot" / "sample_bot.py").exists()  # path-ignore
     req = tmp_path / "sample_bot" / "requirements.txt"
@@ -158,14 +181,21 @@ def test_build_from_plan(tmp_path):
 def test_config_override(monkeypatch, tmp_path):
     monkeypatch.setenv("BOT_DEV_REPO_BASE", str(tmp_path))
     cfg = cfg_mod.BotDevConfig()
-    bot = bdb.BotDevelopmentBot(config=cfg, context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        config=cfg, context_builder=_ctx_builder(), engine=_engine()
+    )
     assert bot.repo_base == tmp_path
 
 
 def test_build_prompt_with_docs(tmp_path):
     cfg = cfg_mod.BotDevConfig()
     cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path,
+        config=cfg,
+        context_builder=_ctx_builder(),
+        engine=_engine(),
+    )
     spec = bdb.BotSpec(
         name="doc_bot",
         purpose="demo",
@@ -185,7 +215,9 @@ def test_build_prompt_with_docs(tmp_path):
 
 
 def test_prompt_includes_standards(tmp_path):
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path, context_builder=_ctx_builder(), engine=_engine()
+    )
     spec = bdb.BotSpec(name="std_bot", purpose="demo")
     prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert "INSTRUCTION MODE" in prompt
@@ -200,7 +232,9 @@ def test_prompt_includes_standards(tmp_path):
 
 
 def test_prompt_includes_function_guidance(tmp_path):
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path, context_builder=_ctx_builder(), engine=_engine()
+    )
     spec = bdb.BotSpec(name="guide_bot", purpose="demo", functions=["click_target", "ocr_image"])
     prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert "Function Guidance:" in prompt
@@ -220,7 +254,9 @@ def test_prompt_includes_vector_context(tmp_path):
             return "retrieved context", session_id, [("origin", "vid", 0.1)]
 
     builder = DummyBuilder()
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path, context_builder=builder, engine=_engine()
+    )
     spec = bdb.BotSpec(name="ctx_bot", purpose="demo", description="demo")
     prompt = bot._build_prompt(spec, context_builder=builder)
     assert builder.calls, "context_builder.build was not invoked"
@@ -236,7 +272,11 @@ def test_visual_and_engine_failure_fallback(tmp_path, monkeypatch, caplog):
 
     class FailVisual(bdb.BotDevelopmentBot):
         def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, context_builder=_ctx_builder())
+            super().__init__(
+                repo_base=repo_base,
+                context_builder=_ctx_builder(),
+                engine=_engine(),
+            )
 
         def _visual_build(self, prompt: str, name: str) -> bool:  # type: ignore[override]
             return False
@@ -252,7 +292,7 @@ def test_visual_and_engine_failure_fallback(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.ERROR)
     path = dev.build_bot(spec, context_builder=dev.context_builder)
     assert path.exists()
-    assert "engine fallback failed" in caplog.text
+    assert "engine fallback failed" in dev.errors
 
 
 def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):
@@ -277,7 +317,12 @@ def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):
     monkeypatch.setattr(bdb, "Repo", None)
 
     cfg = cfg_mod.BotDevConfig(concurrency_workers=2)
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path,
+        config=cfg,
+        context_builder=_ctx_builder(),
+        engine=_engine(),
+    )
     spec2 = _spec_dict()
     spec2["name"] = "sample_bot2"
     plan = json.dumps([_spec_dict(), spec2])
@@ -298,7 +343,12 @@ def test_token_refresh_failure(monkeypatch, caplog, tmp_path):
     caplog.set_level("WARNING")
     cfg = cfg_mod.BotDevConfig()
     cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path,
+        config=cfg,
+        context_builder=_ctx_builder(),
+        engine=_engine(),
+    )
     assert not bot._refresh_token()
     assert len(calls) == 3
     assert "out" in caplog.text or "err" in caplog.text
@@ -314,7 +364,12 @@ def test_token_refresh_retry_success(monkeypatch, tmp_path):
     monkeypatch.setattr(bdb.time, "sleep", lambda *a: None)
     cfg = cfg_mod.BotDevConfig()
     cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg, context_builder=_ctx_builder())
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path,
+        config=cfg,
+        context_builder=_ctx_builder(),
+        engine=_engine(),
+    )
     assert bot._refresh_token()
     assert bot.visual_token == "NEW"
 
@@ -355,7 +410,9 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
             return self.retriever.search(query, session_id="s")
 
     builder = DummyBuilder()
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path, context_builder=builder, engine=_engine()
+    )
     spec = bdb.BotSpec(name="demo", purpose="demo", description="demo")
     prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert builder.calls == ["demo"]
@@ -366,7 +423,11 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
 def test_build_from_plan_passes_context_builder(tmp_path):
     class CaptureBot(bdb.BotDevelopmentBot):
         def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, context_builder=_ctx_builder())
+            super().__init__(
+                repo_base=repo_base,
+                context_builder=_ctx_builder(),
+                engine=_engine(),
+            )
             self.received = None
 
         def build_bot(
@@ -423,11 +484,17 @@ def test_prompt_context_compression(tmp_path, monkeypatch):
         error_db="errors.db",
         workflow_db="workflows.db",
     )
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path, context_builder=builder, engine=_engine()
+    )
     spec = bdb.BotSpec(name="sentinel", purpose="demo")
     prompt = bot._build_prompt(spec, context_builder=builder)
     assert "COMPRESSED-bots.db,code.db,errors.db,workflows.db" in prompt
     assert "RAW-bots.db,code.db,errors.db,workflows.db" not in prompt
 
     with pytest.raises(ValueError):
-        bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=None)  # type: ignore[arg-type]
+        bdb.BotDevelopmentBot(
+            repo_base=tmp_path,
+            context_builder=None,
+            engine=_engine(),
+        )  # type: ignore[arg-type]
