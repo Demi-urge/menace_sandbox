@@ -311,9 +311,9 @@ class BotDevelopmentBot:
             attempts=self.config.send_prompt_attempts,
             delay=self.config.send_prompt_retry_delay,
         )
-        self.fallback_retry = RetryStrategy(
-            attempts=self.config.fallback_attempts,
-            delay=self.config.fallback_retry_delay,
+        self.engine_retry = RetryStrategy(
+            attempts=self.config.engine_attempts,
+            delay=self.config.engine_retry_delay,
         )
         self.prompt_templates_version = 1
         try:

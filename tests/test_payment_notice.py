@@ -187,7 +187,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
-        fallback_retry=RetryStrategy(),
+        engine_retry=RetryStrategy(),
     )
 
     result = BotDevelopmentBot._call_codex_api(
