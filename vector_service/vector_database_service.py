@@ -31,7 +31,13 @@ from pydantic import BaseModel
 import uvicorn
 
 from .vectorizer import SharedVectorService
-from .embedding_backfill import watch_databases, check_staleness
+from .embedding_backfill import (
+    watch_databases,
+    check_staleness,
+    ensure_embeddings_fresh,
+    schedule_backfill,
+    StaleEmbeddingsError,
+)
 from .embedding_scheduler import start_scheduler_from_env
 
 logger = logging.getLogger(__name__)
@@ -83,6 +89,12 @@ async def _monitor_watcher() -> None:
 
 @app.on_event("startup")
 async def _start_watcher() -> None:
+    dbs = ["code", "bot", "error", "workflow"]
+    try:
+        await asyncio.to_thread(ensure_embeddings_fresh, dbs)
+    except StaleEmbeddingsError as exc:
+        await schedule_backfill(dbs=list(exc.stale_dbs))
+        await asyncio.to_thread(ensure_embeddings_fresh, dbs)
     _spawn_watcher()
     app.state.monitor_task = asyncio.create_task(_monitor_watcher())
     app.state.embedding_scheduler = start_scheduler_from_env()
