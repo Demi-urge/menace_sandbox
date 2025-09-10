@@ -594,6 +594,11 @@ class CodeDB(EmbeddableDBMixin):
                 )
                 publish_with_retry(
                     self.event_bus,
+                    "db.record_changed",
+                    {"db": "code"},
+                )
+                publish_with_retry(
+                    self.event_bus,
                     "embedding:backfill",
                     {"db": self.__class__.__name__},
                 )
@@ -715,6 +720,11 @@ class CodeDB(EmbeddableDBMixin):
                 publish_with_retry(
                     self.event_bus,
                     "db:record_updated",
+                    {"db": "code"},
+                )
+                publish_with_retry(
+                    self.event_bus,
+                    "db.record_changed",
                     {"db": "code"},
                 )
                 publish_with_retry(

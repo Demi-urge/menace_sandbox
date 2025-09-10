@@ -488,6 +488,64 @@ def check_staleness(dbs: List[str]) -> List[str]:
     return stale
 
 
+async def consume_record_changes(
+    *,
+    bus: "UnifiedEventBus",
+    backend: str,
+    batch_size: int,
+    stop_event: asyncio.Event | None = None,
+) -> None:
+    """Consume ``db.record_changed`` events and trigger backfills.
+
+    Events are batched by database name to avoid redundant backfill runs when
+    multiple records change in quick succession. Processing continues until
+    ``stop_event`` is set, allowing callers to cancel the consumer.
+    """
+
+    backfill = EmbeddingBackfill(batch_size=batch_size, backend=backend)
+    q: asyncio.Queue[str] = asyncio.Queue()
+    pending: set[str] = set()
+
+    async def _handle(_topic: str, event: object) -> None:
+        kind = None
+        if isinstance(event, dict):
+            kind = event.get("db") or event.get("kind")
+        elif isinstance(event, str):
+            kind = event
+        if kind:
+            await q.put(str(kind))
+
+    bus.subscribe_async("db.record_changed", _handle)
+    bus.subscribe_async("embedding:backfill", _handle)
+
+    logger = logging.getLogger(__name__)
+    while stop_event is None or not stop_event.is_set():
+        try:
+            name = await asyncio.wait_for(q.get(), timeout=0.5)
+        except asyncio.TimeoutError:
+            continue
+        pending.add(name)
+        try:
+            while True:
+                pending.add(q.get_nowait())
+        except asyncio.QueueEmpty:
+            pass
+        names = list(pending)
+        pending.clear()
+        try:
+            await asyncio.to_thread(
+                backfill.run,
+                dbs=names,
+                batch_size=batch_size,
+                backend=backend,
+                trigger="event",
+            )
+            _PROCESSED_RECORDS.labels("event_bus").inc()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("event-triggered backfill failed for %s", names)
+            _RUNTIME_ERRORS.labels("event_bus").inc()
+
+
 def _run_event_bus_watcher(
     *,
     bus: "UnifiedEventBus",
@@ -495,46 +553,23 @@ def _run_event_bus_watcher(
     batch_size: int,
     stop: threading.Event,
 ) -> None:
-    backfill = EmbeddingBackfill(batch_size=batch_size, backend=backend)
-    q: queue.Queue[str] = queue.Queue()
-    pending: set[str] = set()
+    """Run async ``consume_record_changes`` within bus event loop."""
 
-    def _enqueue(kind: str) -> None:
-        if kind not in pending:
-            pending.add(kind)
-            q.put(kind)
+    loop = bus._loop
+    asyncio.set_event_loop(loop)
+    stop_evt = asyncio.Event()
 
-    def _handle(_topic: str, event: object) -> None:
-        kind = None
-        if isinstance(event, dict):
-            kind = event.get("db") or event.get("kind")
-        elif isinstance(event, str):
-            kind = event
-        if kind:
-            _enqueue(str(kind))
+    def _stopper() -> None:
+        stop.wait()
+        loop.call_soon_threadsafe(stop_evt.set)
 
-    for topic in ("db:record_added", "db:record_updated", "embedding:backfill"):
-        bus.subscribe(topic, _handle)
+    threading.Thread(target=_stopper, daemon=True).start()
 
-    logger = logging.getLogger(__name__)
-    while not stop.is_set():
-        try:
-            kind = q.get(timeout=0.5)
-        except queue.Empty:
-            continue
-        try:
-            backfill.run(
-                dbs=[kind],
-                batch_size=batch_size,
-                backend=backend,
-                trigger="event",
-            )
-            _PROCESSED_RECORDS.labels("event_bus").inc()
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("event-triggered backfill failed for %s", kind)
-            _RUNTIME_ERRORS.labels("event_bus").inc()
-        finally:
-            pending.discard(kind)
+    loop.run_until_complete(
+        consume_record_changes(
+            bus=bus, backend=backend, batch_size=batch_size, stop_event=stop_evt
+        )
+    )
 
 
 def _run_databases_watcher(
@@ -835,6 +870,7 @@ __all__ = [
     "check_staleness",
     "watch_databases",
     "watch_event_bus",
+    "consume_record_changes",
 ]
 
 

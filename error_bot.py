@@ -288,8 +288,10 @@ class ErrorDB(EmbeddableDBMixin):
                 self.event_bus.publish(topic, payload)
                 if topic.endswith(":new"):
                     self.event_bus.publish("db:record_added", {"db": "error"})
+                    self.event_bus.publish("db.record_changed", {"db": "error"})
                 elif topic.endswith(":update"):
                     self.event_bus.publish("db:record_updated", {"db": "error"})
+                    self.event_bus.publish("db.record_changed", {"db": "error"})
             except Exception as exc:
                 logger.exception("publish failed: %s", exc)
                 if error_bot_exceptions:
