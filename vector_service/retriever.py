@@ -12,7 +12,11 @@ from dataclasses import dataclass, field
 import time
 import asyncio
 import math
+import os
+import json
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Sequence
+
+import urllib.request
 
 from retrieval_cache import RetrievalCache
 
@@ -552,9 +556,13 @@ class PatchRetriever:
     enhancement_weight: float = 1.0
     vector_metrics: VectorMetricsDB | None = None
     roi_tag_weights: Dict[str, float] = field(default_factory=dict)
+    service_url: str | None = None
 
     def __post_init__(self) -> None:
-        if self.vector_service is None:
+        if self.service_url is None:
+            self.service_url = os.environ.get("VECTOR_SERVICE_URL")
+
+        if self.vector_service is None and not self.service_url:
             try:
                 from .vectorizer import SharedVectorService  # type: ignore
             except Exception:  # pragma: no cover - fallback to absolute import
@@ -576,16 +584,16 @@ class PatchRetriever:
                 dim = getattr(vec_cfg, "dimensions", dim)
         except Exception:
             pass
-        if self.store is None:
+        if self.store is None and not self.service_url:
             try:
                 from .vector_store import create_vector_store  # type: ignore
             except Exception:  # pragma: no cover - fallback
                 from vector_service.vector_store import create_vector_store  # type: ignore
             self.store = create_vector_store(dim or 0, path, backend=backend)
-        if not self.metric:
+        if not self.metric and not self.service_url:
             self.metric = str(metric).lower()
 
-        if self.vector_metrics is None and VectorMetricsDB is not None:
+        if self.vector_metrics is None and VectorMetricsDB is not None and not self.service_url:
             try:
                 self.vector_metrics = VectorMetricsDB()
             except Exception:
@@ -664,6 +672,37 @@ class PatchRetriever:
         top_k: int | None = None,
         exclude_tags: Iterable[str] | None = None,
     ) -> List[Dict[str, Any]]:
+        if self.service_url:
+            data = json.dumps(
+                {
+                    "kind": "text",
+                    "record": {"text": query},
+                    "top_k": top_k or self.top_k,
+                }
+            ).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.service_url.rstrip('/')}/search",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                hits = payload.get("data", [])
+                results: List[Dict[str, Any]] = []
+                excluded = set(exclude_tags or [])
+                for item in hits:
+                    if not isinstance(item, dict):
+                        continue
+                    md = item.get("metadata") or {}
+                    tags = md.get("roi_tags") if isinstance(md, dict) else None
+                    if isinstance(tags, list) and excluded.intersection(tags):
+                        continue
+                    results.append(item)
+                return results
+            except Exception:
+                return []
+
         if self.store is None or self.vector_service is None:
             return []
         vec = self.vector_service.vectorise("text", {"text": query})
