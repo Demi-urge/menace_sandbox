@@ -20,7 +20,6 @@ def _make_module(name, **attrs):
 def _load_run_autonomous(monkeypatch):
     class SandboxSettings:
         def __init__(self):
-            self.visual_agent_monitor_interval = 0.01
             self.local_knowledge_refresh_interval = 0.01
             self.sandbox_central_logging = False
             self.menace_mode = "test"
@@ -96,11 +95,15 @@ def _load_run_autonomous(monkeypatch):
             connect_locked=lambda *a, **k: None,
         ),
         "sandbox_runner.cli": cli_mod,
-        "sandbox_runner": _make_module("sandbox_runner", _sandbox_main=lambda p, a: None, cli=cli_mod),
+        "sandbox_runner": _make_module(
+            "sandbox_runner", _sandbox_main=lambda p, a: None, cli=cli_mod
+        ),
     }
 
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(ROOT))
 
     spec = importlib.util.spec_from_file_location(
         "run_autonomous",
