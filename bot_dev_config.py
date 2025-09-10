@@ -13,7 +13,9 @@ from typing import List, Callable, Dict, Tuple
 class BotDevConfig:
     """Central configuration for bot development."""
 
-    repo_base: Path = field(default_factory=lambda: Path(os.getenv("BOT_DEV_REPO_BASE", "dev_repos")))
+    repo_base: Path = field(
+        default_factory=lambda: Path(os.getenv("BOT_DEV_REPO_BASE", "dev_repos"))
+    )
     es_url: str | None = os.getenv("BOT_DEV_ES_URL")
     es_index: str = os.getenv("BOT_DEV_ES_INDEX", "patterns")
     desktop_url: str = os.getenv("VISUAL_DESKTOP_URL", "http://127.0.0.1:8001")
@@ -49,9 +51,15 @@ class BotDevConfig:
     file_write_retry_delay: float = float(os.getenv("FILE_WRITE_RETRY_DELAY", "0.5"))
     send_prompt_attempts: int = int(os.getenv("SEND_PROMPT_ATTEMPTS", "3"))
     send_prompt_retry_delay: float = float(os.getenv("SEND_PROMPT_RETRY_DELAY", "1.0"))
-    generation_attempts: int = int(os.getenv("GENERATION_ATTEMPTS", "3"))
-    generation_retry_delay: float = float(os.getenv("GENERATION_RETRY_DELAY", "1.0"))
-    default_model: str = os.getenv("DEFAULT_MODEL", "internal-codex")
+    fallback_attempts: int = int(
+        os.getenv("FALLBACK_ATTEMPTS", os.getenv("GENERATION_ATTEMPTS", "3"))
+    )
+    fallback_retry_delay: float = float(
+        os.getenv("FALLBACK_RETRY_DELAY", os.getenv("GENERATION_RETRY_DELAY", "1.0"))
+    )
+    fallback_model: str = os.getenv(
+        "FALLBACK_MODEL", os.getenv("DEFAULT_MODEL", "internal-codex")
+    )
     visual_agent_poll_interval: float = float(os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5"))
 
     def validate(self) -> None:
@@ -64,4 +72,3 @@ class BotDevConfig:
             self.concurrency_workers = 1
         if not self.es_index:
             self.es_index = "patterns"
-

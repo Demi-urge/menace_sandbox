@@ -311,9 +311,9 @@ class BotDevelopmentBot:
             attempts=self.config.send_prompt_attempts,
             delay=self.config.send_prompt_retry_delay,
         )
-        self.generation_retry = RetryStrategy(
-            attempts=self.config.generation_attempts,
-            delay=self.config.generation_retry_delay,
+        self.fallback_retry = RetryStrategy(
+            attempts=self.config.fallback_attempts,
+            delay=self.config.fallback_retry_delay,
         )
         self.prompt_templates_version = 1
         try:
@@ -961,7 +961,7 @@ class BotDevelopmentBot:
 
         try:
             result = self._call_codex_api(
-                self.config.default_model, [{"role": "user", "content": prompt}]
+                self.config.fallback_model, [{"role": "user", "content": prompt}]
             )
         except Exception as exc:  # pragma: no cover - defensive
             self.logger.error("internal fallback failed: %s", exc, exc_info=True)
