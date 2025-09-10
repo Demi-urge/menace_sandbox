@@ -542,6 +542,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not automatically start the vector service",
     )
+    parser.add_argument(
+        "--check-vector-service",
+        action="store_true",
+        help="Verify vector service readiness before executing commands",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("setup", help="Install dependencies and bootstrap the env")
@@ -697,6 +702,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     global SKIP_VECTOR_AUTOSTART
     SKIP_VECTOR_AUTOSTART = args.no_vector_autostart
+    if args.check_vector_service and not _require_vector_service():
+        return 1
     builder = create_context_builder()
     setattr(args, "builder", builder)
 
