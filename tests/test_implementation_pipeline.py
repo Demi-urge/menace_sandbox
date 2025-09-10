@@ -398,7 +398,7 @@ def test_pipeline_surfaces_openai_errors(tmp_path, monkeypatch, caplog):
 
     class FallbackDev(bdb.BotDevelopmentBot):
         def __init__(self, repo_base: Path, builder) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, openai_attempts=2, context_builder=builder)
+            super().__init__(repo_base=repo_base, context_builder=builder)
 
         def _visual_build(self, prompt: str) -> bool:  # type: ignore[override]
             return False
@@ -508,7 +508,7 @@ def test_pipeline_openai_error_not_raised(tmp_path, monkeypatch, caplog):
 
     class FallbackDev(bdb.BotDevelopmentBot):
         def __init__(self, repo_base: Path, builder) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, openai_attempts=1, context_builder=builder)
+            super().__init__(repo_base=repo_base, context_builder=builder)
 
         def _visual_build(self, prompt: str) -> bool:  # type: ignore[override]
             return False
