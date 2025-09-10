@@ -332,15 +332,20 @@ def handle_embed(args: argparse.Namespace) -> int:
     )
 
     try:
+        out_of_sync = backfill.check_out_of_sync(dbs=args.dbs)
+        if not out_of_sync:
+            logging.info("no databases require re-embedding")
+            return 0
+
         backfill.run(
             session_id="cli",
-            dbs=args.dbs,
+            dbs=out_of_sync,
             batch_size=args.batch_size,
             backend=args.backend,
         )
         if getattr(args, "verify", False):
             be = args.backend or backfill.backend
-            subclasses = backfill._load_known_dbs(names=args.dbs)
+            subclasses = backfill._load_known_dbs(names=out_of_sync)
             for cls in subclasses:
                 try:
                     db = cls(vector_backend=be)  # type: ignore[call-arg]
