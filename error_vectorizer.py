@@ -14,6 +14,11 @@ from analysis.semantic_diff_filter import find_semantic_risks
 from snippet_compressor import compress_snippets
 from chunking import split_into_chunks
 from vector_utils import persist_embedding
+from vector_service.text_preprocessor import (
+    PreprocessingConfig,
+    get_config,
+    generalise,
+)
 
 try:  # pragma: no cover - heavy dependency
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -102,38 +107,61 @@ class ErrorVectorizer:
     def dim(self) -> int:
         return _EMBED_DIM
 
-    def transform(self, err: Dict[str, Any]) -> List[float]:
-        chunks: List[str] = []
+    def transform(
+        self, err: Dict[str, Any], *, config: PreprocessingConfig | None = None
+    ) -> List[float]:
+        cfg = config or get_config("error")
+        filtered: List[str] = []
 
         msg = err.get("message") or err.get("error") or ""
         if isinstance(msg, str):
-            for sent in _split_sentences(msg):
-                if find_semantic_risks([sent]):
+            sentences = _split_sentences(msg) if cfg.split_sentences else [msg]
+            for sent in sentences:
+                if cfg.filter_semantic_risks and find_semantic_risks([sent]):
                     continue
                 summary = compress_snippets({"snippet": sent}).get("snippet", sent)
+                summary = generalise(summary, config=cfg, db_key="error")
                 if summary.strip():
-                    chunks.append(summary)
+                    filtered.append(summary)
 
         stack = err.get("stack_trace") or err.get("stack") or ""
         if isinstance(stack, str) and stack.strip():
-            for ch in split_into_chunks(stack, self.max_tokens):
-                if find_semantic_risks(ch.text.splitlines()):
+            for ch in split_into_chunks(stack, cfg.chunk_size or self.max_tokens):
+                if cfg.filter_semantic_risks and find_semantic_risks(ch.text.splitlines()):
                     continue
                 summary = compress_snippets({"snippet": ch.text}).get(
                     "snippet", ch.text
                 )
+                summary = generalise(summary, config=cfg, db_key="error")
                 if summary.strip():
-                    chunks.append(summary)
+                    filtered.append(summary)
 
         other = [err.get("category"), err.get("module"), err.get("root_module")]
         for item in other:
             if isinstance(item, str) and item.strip():
                 sent = item.strip()
-                if find_semantic_risks([sent]):
+                if cfg.filter_semantic_risks and find_semantic_risks([sent]):
                     continue
                 summary = compress_snippets({"snippet": sent}).get("snippet", sent)
+                summary = generalise(summary, config=cfg, db_key="error")
                 if summary.strip():
-                    chunks.append(summary)
+                    filtered.append(summary)
+
+        chunks: List[str] = []
+        if cfg.chunk_size and cfg.chunk_size > 0:
+            current: List[str] = []
+            count = 0
+            for piece in filtered:
+                count += len(piece.split())
+                current.append(piece)
+                if count >= cfg.chunk_size:
+                    chunks.append(" ".join(current))
+                    current = []
+                    count = 0
+            if current:
+                chunks.append(" ".join(current))
+        else:
+            chunks = filtered
 
         if not chunks:
             return [0.0] * _EMBED_DIM
