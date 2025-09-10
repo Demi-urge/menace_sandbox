@@ -147,7 +147,11 @@ sce_stub.SelfCodingEngine = _DummyEngine
 sys.modules.setdefault("menace_sandbox.self_coding_engine", sce_stub)
 sys.modules.setdefault("self_coding_engine", sce_stub)
 
-from menace_sandbox.bot_development_bot import BotDevelopmentBot, RetryStrategy
+from menace_sandbox.bot_development_bot import (
+    BotDevelopmentBot,
+    RetryStrategy,
+    EngineResult,
+)
 import menace_sandbox.bot_development_bot as bdb
 
 
@@ -208,7 +212,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
     )
 
     assert captured["desc"] == "system: sys\nuser: hi\nuser: again"
-    assert result == "code"
+    assert result == EngineResult(True, "code", None)
     assert wrapper_called is False
 
 
@@ -290,7 +294,7 @@ def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
             [{"role": "assistant", "content": "there"}],
         )
 
-    assert result is None
+    assert result == EngineResult(False, None, "no user prompt provided")
     assert escalated["level"] == "warning"
     assert "no user prompt provided" in escalated["msg"]
     assert "no user prompt provided" in caplog.text
@@ -377,7 +381,7 @@ def test_call_codex_api_empty_messages_escalates(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         result = BotDevelopmentBot._call_codex_api(dummy, [])
 
-    assert result is None
+    assert result == EngineResult(False, None, "no user prompt provided")
     assert escalated["level"] == "warning"
     assert "no user prompt provided" in escalated["msg"]
     assert "no user prompt provided" in caplog.text
@@ -432,7 +436,7 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
         )
 
     assert calls["n"] == 2
-    assert result == {"error": "engine request failed: boom"}
+    assert result == EngineResult(False, None, "engine request failed: boom")
     assert escalated["msg"] == "engine request failed: boom"
     assert escalated["level"] == "error"
     assert dummy.errors == ["engine request failed: boom"]
@@ -468,7 +472,7 @@ def test_call_codex_api_logs_prompt_and_handles_exception(monkeypatch, caplog):
 
     assert "generate_helper prompt" in caplog.text
     assert ("user: " + prompt)[:200] in caplog.text
-    assert result == {"error": "engine request failed: kaboom"}
+    assert result == EngineResult(False, None, "engine request failed: kaboom")
     assert escalated["msg"] == "engine request failed: kaboom"
     assert dummy.errors == ["engine request failed: kaboom"]
 
@@ -609,7 +613,7 @@ def test_call_codex_api_retries_then_succeeds(monkeypatch):
         [{"role": "user", "content": "hi"}],
     )
 
-    assert result == "ok"
+    assert result == EngineResult(True, "ok", None)
     assert calls["n"] == 2
     assert escalated == {}
     assert dummy.errors == []
@@ -652,7 +656,7 @@ def test_call_codex_api_missing_user_message(monkeypatch):
         [{"role": "assistant", "content": "there"}],
     )
 
-    assert result is None
+    assert result == EngineResult(False, None, "no user prompt provided")
     assert escalated["level"] == "warning"
     assert escalated["msg"] == "no user prompt provided"
     assert fake_retry.called is False
@@ -693,7 +697,7 @@ def test_call_codex_api_generate_helper_exception(monkeypatch):
         [{"role": "user", "content": "hi"}],
     )
 
-    assert result == {"error": "engine request failed: boom"}
+    assert result == EngineResult(False, None, "engine request failed: boom")
     assert fake_retry.calls == 1
     assert escalated["msg"] == "engine request failed: boom"
     assert dummy.errors == ["engine request failed: boom"]
@@ -742,6 +746,6 @@ def test_call_codex_api_retry_succeeds(monkeypatch):
         [{"role": "user", "content": "hi"}],
     )
 
-    assert result == "ok"
+    assert result == EngineResult(True, "ok", None)
     assert calls == {"gen": 2, "run": 2}
     assert dummy.errors == []

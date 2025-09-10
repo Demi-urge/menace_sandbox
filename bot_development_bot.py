@@ -206,6 +206,15 @@ class BotSpec:
 
 
 @dataclass
+class EngineResult:
+    """Result from :meth:`_call_codex_api`."""
+
+    success: bool
+    code: str | None = None
+    error: str | None = None
+
+
+@dataclass
 class InstructionTemplate:
     """Representation of a single instruction template."""
 
@@ -929,14 +938,15 @@ class BotDevelopmentBot:
                 self._escalate(f"visual token refresh failed: {output}")
         return False
 
-    def _call_codex_api(self, messages: list[dict[str, str]]) -> Any:
+    def _call_codex_api(self, messages: list[dict[str, str]]) -> EngineResult:
         """Produce helper code via :class:`SelfCodingEngine`.
 
         All ``system`` and ``user`` messages are concatenated with their role
         tags to form a single prompt for
         :meth:`SelfCodingEngine.generate_helper`.  If no user prompt is
-        provided, the error is escalated and the method returns ``None`` or
-        raises :class:`ValueError` when :data:`RAISE_ERRORS` is true.
+        provided, the error is escalated and the method returns an
+        :class:`EngineResult` describing the failure or raises
+        :class:`ValueError` when :data:`RAISE_ERRORS` is true.
         """
 
         prompt_parts: list[str] = []
@@ -955,7 +965,7 @@ class BotDevelopmentBot:
             self.errors.append(msg)
             if RAISE_ERRORS:
                 raise ValueError(msg)
-            return None
+            return EngineResult(False, None, msg)
 
         prompt = "\n".join(prompt_parts)
 
@@ -966,7 +976,7 @@ class BotDevelopmentBot:
             self.errors.append(msg)
             if RAISE_ERRORS:
                 raise ValueError(msg)
-            return None
+            return EngineResult(False, None, msg)
 
         prompt_snippet = prompt[: self.config.max_prompt_log_chars]
         prompt_snippet = re.sub(
@@ -977,10 +987,11 @@ class BotDevelopmentBot:
         self.logger.info("generate_helper prompt: %s", prompt_snippet)
 
         try:
-            return self.engine_retry.run(
+            code = self.engine_retry.run(
                 lambda: self.engine.generate_helper(prompt),
                 logger=self.logger,
             )
+            return EngineResult(True, code, None)
         except Exception as exc:
             msg = f"engine request failed: {exc}"
             self.logger.exception(msg)
@@ -988,7 +999,7 @@ class BotDevelopmentBot:
             self.errors.append(msg)
             if RAISE_ERRORS:
                 raise
-            return {"error": msg}
+            return EngineResult(False, None, msg)
 
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
         if not requests:
