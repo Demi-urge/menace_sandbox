@@ -41,6 +41,11 @@ jinja_mod.Template = lambda *a, **k: None
 sys.modules.setdefault("jinja2", jinja_mod)
 sys.modules.setdefault("requests", types.ModuleType("requests"))
 vec_stub = types.ModuleType("vector_service")
+vec_stub.__path__ = []
+
+text_pre = types.ModuleType("text_preprocessor")
+text_pre.generalise = lambda *_a, **_k: None
+sys.modules.setdefault("vector_service.text_preprocessor", text_pre)
 
 
 class _CB:
@@ -51,9 +56,15 @@ class _CB:
         return ""
 
 
+cb_mod = types.ModuleType("context_builder")
+cb_mod.ContextBuilder = _CB
+cb_mod.FallbackResult = type("FallbackResult", (), {})
+cb_mod.ErrorResult = type("ErrorResult", (), {})
+sys.modules.setdefault("vector_service.context_builder", cb_mod)
+
 vec_stub.ContextBuilder = _CB
-vec_stub.FallbackResult = type("FallbackResult", (), {})
-vec_stub.ErrorResult = type("ErrorResult", (), {})
+vec_stub.FallbackResult = cb_mod.FallbackResult
+vec_stub.ErrorResult = cb_mod.ErrorResult
 vec_stub.EmbeddableDBMixin = object
 vec_stub.CognitionLayer = object
 vec_stub.EmbeddingBackfill = object
@@ -503,13 +514,13 @@ def test_pipeline_engine_error_not_raised(tmp_path, monkeypatch, caplog):
         def _visual_build(self, prompt: str) -> bool:  # type: ignore[override]
             return False
 
-    def bad_api(self, model, messages):
-        raise RuntimeError("bad")
-
-    monkeypatch.setattr(FallbackDev, "_call_codex_api", bad_api)
-
     builder = _ctx_builder()
     developer = FallbackDev(repo_base=tmp_path, builder=builder)
+
+    def bad_generate(*_a, **_k):
+        raise RuntimeError("bad")
+
+    monkeypatch.setattr(developer.engine, "generate_helper", bad_generate)
     pipeline = ip.ImplementationPipeline(builder, developer=developer)
     tasks = [
         thb.TaskInfo(
