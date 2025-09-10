@@ -74,7 +74,7 @@ class _DummyEngine:
 
     def generate_helper(self, desc: str) -> str:
         self.calls.append(desc)
-        return ""
+        return "def run():\n    return None\n"
 
 
 def _engine() -> _DummyEngine:
@@ -287,8 +287,8 @@ def test_engine_failure_fallback(tmp_path, monkeypatch, caplog):
 
     spec = bdb.BotSpec(name="fallback_bot", purpose="demo", functions=["run"])
     caplog.set_level(logging.ERROR)
-    path = dev.build_bot(spec, context_builder=dev.context_builder)
-    assert path.exists()
+    with pytest.raises(RuntimeError):
+        dev.build_bot(spec, context_builder=dev.context_builder)
     assert calls["n"] == dev.engine_retry.attempts
     assert any("engine request failed" in m for m in escalated)
     assert any("engine request failed" in e for e in dev.errors)
