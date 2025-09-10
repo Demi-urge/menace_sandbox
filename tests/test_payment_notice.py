@@ -426,11 +426,44 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
         )
 
     assert calls["n"] == 2
-    assert result == {"error": "engine request failed after retries: boom"}
-    assert escalated["msg"] == "engine request failed after retries: boom"
+    assert result == {"error": "engine request failed: boom"}
+    assert escalated["msg"] == "engine request failed: boom"
     assert escalated["level"] == "error"
-    assert dummy.errors == ["engine request failed after retries: boom"]
+    assert dummy.errors == ["engine request failed: boom"]
     assert "retry 1/2 after error: boom" in caplog.text
+
+
+def test_call_codex_api_logs_prompt_and_handles_exception(monkeypatch, caplog):
+    escalated: dict[str, str] = {}
+
+    def boom(_: str) -> str:
+        raise RuntimeError("kaboom")
+
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", boom)
+    monkeypatch.setattr(bdb, "RAISE_ERRORS", False)
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
+        errors=[],
+        engine_retry=RetryStrategy(attempts=1, delay=0),
+    )
+
+    prompt = "hello " * 50
+
+    with caplog.at_level(logging.INFO):
+        result = BotDevelopmentBot._call_codex_api(
+            dummy, [{"role": "user", "content": prompt}]
+        )
+
+    assert "generate_helper prompt" in caplog.text
+    assert ("user: " + prompt)[:200] in caplog.text
+    assert result == {"error": "engine request failed: kaboom"}
+    assert escalated["msg"] == "engine request failed: kaboom"
+    assert dummy.errors == ["engine request failed: kaboom"]
 
 
 def test_call_codex_api_engine_failure_raises(monkeypatch):
@@ -479,9 +512,9 @@ def test_call_codex_api_engine_failure_raises(monkeypatch):
         )
 
     assert calls["n"] == 2
-    assert escalated["msg"] == "engine request failed after retries: boom"
+    assert escalated["msg"] == "engine request failed: boom"
     assert escalated["level"] == "error"
-    assert dummy.errors == ["engine request failed after retries: boom"]
+    assert dummy.errors == ["engine request failed: boom"]
 
 
 def test_call_codex_api_retries_then_succeeds(monkeypatch):

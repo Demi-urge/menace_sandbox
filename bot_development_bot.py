@@ -968,13 +968,16 @@ class BotDevelopmentBot:
                 raise ValueError(msg)
             return None
 
+        prompt_snippet = prompt[:200]
+        self.logger.info("generate_helper prompt: %s", prompt_snippet)
+
         try:
             return self.engine_retry.run(
                 lambda: self.engine.generate_helper(prompt),
                 logger=self.logger,
             )
         except Exception as exc:
-            msg = f"engine request failed after retries: {exc}"
+            msg = f"engine request failed: {exc}"
             self.logger.exception(msg)
             self._escalate(msg, level="error")
             self.errors.append(msg)
