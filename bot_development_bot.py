@@ -20,6 +20,7 @@ from dynamic_path_router import resolve_path
 import uuid
 from snippet_compressor import compress_snippets
 from context_builder_util import ensure_fresh_weights
+from secret_redactor import redact_secrets
 
 try:
     from packaging.requirements import Requirement  # type: ignore
@@ -980,11 +981,7 @@ class BotDevelopmentBot:
             return EngineResult(False, None, msg)
 
         prompt_snippet = prompt[: self.config.max_prompt_log_chars]
-        prompt_snippet = re.sub(
-            r"(?i)(?:api[_-]?key|token)[=:]\s*[^\s]+",
-            "[REDACTED]",
-            prompt_snippet,
-        )
+        prompt_snippet = redact_secrets(prompt_snippet)
         self.logger.info("generate_helper prompt: %s", prompt_snippet)
 
         try:

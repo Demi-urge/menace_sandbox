@@ -507,3 +507,26 @@ def test_prompt_context_compression(tmp_path, monkeypatch):
             context_builder=None,
             engine=_engine(),
         )  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "api_key=AAAAAAAAAAAAAAAA",
+        "password=abcdefg",
+        "Bearer A1B2C3D4E5",
+        "AKIA0123456789ABCDEF",
+    ],
+)
+def test_call_codex_api_redacts_secrets(secret, caplog, tmp_path):
+    bot = bdb.BotDevelopmentBot(
+        repo_base=tmp_path, context_builder=_ctx_builder(), engine=_engine()
+    )
+    messages = [{"role": "user", "content": f"some {secret} here"}]
+    with caplog.at_level(logging.INFO):
+        bot._call_codex_api(messages)
+    logs = "\n".join(
+        r.getMessage() for r in caplog.records if "generate_helper prompt" in r.getMessage()
+    )
+    assert "[REDACTED]" in logs
+    assert secret not in logs
