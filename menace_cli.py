@@ -344,8 +344,7 @@ def handle_retrieve(args: argparse.Namespace) -> int:
                     f"{r['score']:{score_w}.4f}  {snippet}"
                 )
                 print(line)
-    return 0
-
+            return 0
 
 
 def _db_choices() -> list[str]:
@@ -392,14 +391,11 @@ def handle_embed(args: argparse.Namespace) -> int:
         def _process_db(self, db, *, batch_size, session_id=""):
             processed = 0
             skipped: list[tuple[str, str]] = []
-            records = list(db.iter_records())
             for record_id, record, kind in tqdm(
-                records,
+                db.iter_records(),
                 desc=db.__class__.__name__,
                 disable=not sys.stderr.isatty(),
             ):
-                if processed >= batch_size:
-                    break
                 if not db.needs_refresh(record_id, record):
                     continue
                 text = record if isinstance(record, str) else str(record)
@@ -422,6 +418,8 @@ def handle_embed(args: argparse.Namespace) -> int:
                     )
                     continue
                 processed += 1
+                if processed >= batch_size:
+                    break
             return skipped
 
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
