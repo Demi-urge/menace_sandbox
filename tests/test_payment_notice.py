@@ -183,6 +183,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
+        engine=engine,
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
