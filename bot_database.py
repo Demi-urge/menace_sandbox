@@ -491,6 +491,11 @@ class BotDB(EmbeddableDBMixin):
                 )
                 publish_with_retry(
                     self.event_bus,
+                    "db.record_changed",
+                    {"db": "bot"},
+                )
+                publish_with_retry(
+                    self.event_bus,
                     "embedding:backfill",
                     {"db": self.__class__.__name__},
                 )
@@ -544,6 +549,11 @@ class BotDB(EmbeddableDBMixin):
                 publish_with_retry(
                     self.event_bus,
                     "db:record_updated",
+                    {"db": "bot"},
+                )
+                publish_with_retry(
+                    self.event_bus,
+                    "db.record_changed",
                     {"db": "bot"},
                 )
                 publish_with_retry(

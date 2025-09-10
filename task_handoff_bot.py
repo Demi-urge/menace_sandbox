@@ -414,6 +414,7 @@ class WorkflowDB(EmbeddableDBMixin):
         if self.event_bus:
             try:
                 self.event_bus.publish("workflows:new", asdict(wf))
+                self.event_bus.publish("db.record_changed", {"db": "workflow"})
                 self.event_bus.publish(
                     "embedding:backfill", {"db": self.__class__.__name__}
                 )
