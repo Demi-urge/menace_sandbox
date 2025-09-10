@@ -42,7 +42,9 @@ sys.modules["menace_sandbox.memory_logging"] = memory_logging
 memory_client = types.SimpleNamespace(ask_with_memory=lambda *a, **k: {})
 sys.modules["menace_sandbox.memory_aware_gpt_client"] = memory_client
 
-db_router_stub = types.SimpleNamespace(DBRouter=object(), init_db_router=lambda *a, **k: None)
+db_router_stub = types.SimpleNamespace(
+    DBRouter=object(), init_db_router=lambda *a, **k: None, GLOBAL_ROUTER=None
+)
 sys.modules["db_router"] = db_router_stub
 sys.modules["menace_sandbox.db_router"] = db_router_stub
 sys.modules["menace_sandbox"].db_router = db_router_stub  # type: ignore[attr-defined]
@@ -172,7 +174,7 @@ def test_bot_development_bot_calls_engine(monkeypatch):
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
-        generation_retry=RetryStrategy(),
+        fallback_retry=RetryStrategy(),
     )
 
     result = BotDevelopmentBot._call_codex_api(
