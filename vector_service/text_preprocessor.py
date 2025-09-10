@@ -13,12 +13,17 @@ import os
 import re
 import json
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Set
+from typing import Dict, Iterable, Optional, Set, Union
 
 try:  # pragma: no cover - optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - yaml may be missing
     yaml = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    import spacy  # type: ignore
+except Exception:  # pragma: no cover - spaCy may be missing
+    spacy = None  # type: ignore
 
 # A tiny English stop word list.  This keeps the implementation light and
 # avoids pulling in heavy dependencies for the common case.
@@ -80,6 +85,13 @@ _LANG_MAP = {
     "de": "german",
     "it": "italian",
     "pt": "portuguese",
+    "nl": "dutch",
+    "sv": "swedish",
+    "da": "danish",
+    "no": "norwegian",
+    "fi": "finnish",
+    "ru": "russian",
+    "pl": "polish",
 }
 
 
@@ -87,7 +99,7 @@ _LANG_MAP = {
 class PreprocessingConfig:
     """Configuration controlling text normalisation and chunking."""
 
-    stop_words: Optional[Set[str]] = None
+    stop_words: Optional[Union[Iterable[str], str]] = None
     language: Optional[str] = None
     use_lemmatizer: bool = True
     split_sentences: bool = True
@@ -99,7 +111,7 @@ def load_stop_words(source: str | Iterable[str]) -> Set[str]:
     """Return a set of stop words from ``source``.
 
     ``source`` may be an iterable, a path to a file containing one word per
-    line, or a spaCy language code (when spaCy is available).  The function
+    line, or a language code recognised by spaCy or NLTK.  The function
     gracefully falls back to an empty set when a source cannot be resolved.
     """
 
@@ -107,13 +119,20 @@ def load_stop_words(source: str | Iterable[str]) -> Set[str]:
         if os.path.exists(source):
             with open(source, "r", encoding="utf8") as fh:
                 return {line.strip() for line in fh if line.strip()}
-        try:  # pragma: no cover - spaCy is optional
-            import spacy  # type: ignore
+        try:  # pragma: no cover - NLTK is optional
+            from nltk.corpus import stopwords  # type: ignore
 
-            nlp = spacy.blank(source)
-            return set(nlp.Defaults.stop_words)
+            lang = _LANG_MAP.get(source, source)
+            return set(stopwords.words(lang))
         except Exception:
-            return set()
+            pass
+        try:  # pragma: no cover - spaCy is optional
+            if spacy is not None:
+                nlp = spacy.blank(source)
+                return set(nlp.Defaults.stop_words)
+        except Exception:
+            pass
+        return set()
     return {w.strip() for w in source if isinstance(w, str) and w.strip()}
 
 
@@ -148,7 +167,10 @@ def load_db_configs(path: str) -> None:
         if not isinstance(cfg, dict):
             continue
         stop = cfg.get("stop_words")
-        stop_words = set(stop) if isinstance(stop, (list, set, tuple)) else None
+        if isinstance(stop, (list, set, tuple)):
+            stop_words = set(stop)
+        else:
+            stop_words = stop
         register_preprocessor(
             key,
             PreprocessingConfig(
@@ -232,12 +254,27 @@ def generalise(
             lang = "en"
     lang = lang or "en"
 
-    stop_words = cfg.stop_words or _STOP_WORDS
+    stop_words: Optional[Set[str]]
+    sw_source = cfg.stop_words
+    if isinstance(sw_source, str):
+        stop_words = load_stop_words(sw_source)
+    elif sw_source is not None:
+        stop_words = {w for w in sw_source if isinstance(w, str)}
+    else:
+        stop_words = load_stop_words(lang) or _STOP_WORDS
 
-    tokens = re.findall(r"\b\w+\b", text.lower())
-    processed = []
+    tokens = None
+    if spacy is not None:
+        try:  # pragma: no cover - spaCy tokeniser
+            tokens = [t.text for t in spacy.blank(lang)(text.lower())]
+        except Exception:
+            tokens = None
+    if tokens is None:
+        tokens = re.findall(r"\b\w+\b", text.lower())
+    processed: list[str] = []
 
     stemmer = None
+    lemmatizer = _LEMMATIZER if lang == "en" and cfg.use_lemmatizer else None
     if lang != "en" and _STEMMER_FACTORY is not None and cfg.use_lemmatizer:
         stem_lang = _LANG_MAP.get(lang, lang)
         try:  # pragma: no cover - best effort
@@ -253,7 +290,7 @@ def generalise(
                 tok = stemmer.stem(tok)
             except Exception:
                 pass
-        elif cfg.use_lemmatizer:
+        elif lemmatizer is not None:
             tok = _lemmatise(tok)
         processed.append(tok)
     return " ".join(processed)
