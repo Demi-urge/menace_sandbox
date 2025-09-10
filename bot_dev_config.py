@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
-import logging
 from typing import List, Callable, Dict, Tuple
 
 from . import RAISE_ERRORS
@@ -20,16 +19,6 @@ class BotDevConfig:
     )
     es_url: str | None = os.getenv("BOT_DEV_ES_URL")
     es_index: str = os.getenv("BOT_DEV_ES_INDEX", "patterns")
-    desktop_url: str = os.getenv("VISUAL_DESKTOP_URL", "http://127.0.0.1:8001")
-    laptop_url: str = os.getenv("VISUAL_LAPTOP_URL", "http://127.0.0.1:8002")
-    visual_agent_urls: List[str] = field(
-        default_factory=lambda: (
-            os.getenv("VISUAL_AGENT_URLS")
-            or ""  # sentinel so split works
-        ).split(";")
-    )
-    visual_agent_token: str = field(default_factory=lambda: os.getenv("VISUAL_AGENT_TOKEN", ""))
-    visual_token_refresh_cmd: str | None = os.getenv("VISUAL_TOKEN_REFRESH_CMD")
     denial_phrases: List[str] = field(
         default_factory=lambda: os.getenv(
             "BOT_DEV_DENIAL_PHRASES",
@@ -64,14 +53,9 @@ class BotDevConfig:
         "ENGINE_MODEL", os.getenv("DEFAULT_MODEL", "internal-codex")
     )
     max_prompt_log_chars: int = int(os.getenv("MAX_PROMPT_LOG_CHARS", "200"))
-    visual_agent_poll_interval: float = float(os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5"))
 
     def validate(self) -> None:
         """Warn if important settings are missing."""
-        if not self.visual_agent_token:
-            logging.getLogger("BotDev").warning("VISUAL_AGENT_TOKEN not set")
-        if not any(self.visual_agent_urls):
-            self.visual_agent_urls = [self.desktop_url, self.laptop_url]
         if self.concurrency_workers < 1:
             self.concurrency_workers = 1
         if not self.es_index:

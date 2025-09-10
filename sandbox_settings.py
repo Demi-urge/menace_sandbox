@@ -483,7 +483,6 @@ class SandboxSettings(BaseSettings):
         default_factory=lambda: [
             "metrics.db",
             "patch_history.db",
-            "visual_agent_queue.db",
         ],
         env="SANDBOX_REQUIRED_DB_FILES",
         description="SQLite database files expected in the sandbox data directory.",
@@ -529,9 +528,6 @@ class SandboxSettings(BaseSettings):
         gt=0,
         description="Rotate logs after this many seconds; when set, overrides size-based rotation.",
     )
-    visual_agent_monitor_interval: float = Field(
-        30.0, env="VISUAL_AGENT_MONITOR_INTERVAL"
-    )
     local_knowledge_refresh_interval: float = Field(
         600.0, env="LOCAL_KNOWLEDGE_REFRESH_INTERVAL"
     )
@@ -540,8 +536,6 @@ class SandboxSettings(BaseSettings):
         (resolve_path(".") / "shared" / "global.db").as_posix(),
         env="MENACE_SHARED_DB_PATH",
     )
-    visual_agent_token: str = Field("", env="VISUAL_AGENT_TOKEN")
-    visual_agent_token_rotate: str | None = Field(None, env="VISUAL_AGENT_TOKEN_ROTATE")
     sandbox_volatility_threshold: float = Field(1.0, env="SANDBOX_VOLATILITY_THRESHOLD")
     gpt_memory_compact_interval: float | None = Field(
         None, env="GPT_MEMORY_COMPACT_INTERVAL"
@@ -1568,11 +1562,6 @@ class SandboxSettings(BaseSettings):
         description="Multiplier applied to marginal growth predictions.",
     )
     auto_dashboard_port: int | None = Field(None, env="AUTO_DASHBOARD_PORT")
-    visual_agent_autostart: bool = Field(True, env="VISUAL_AGENT_AUTOSTART")
-    visual_agent_urls: str = Field("", env="VISUAL_AGENT_URLS")
-    va_prompt_template: str | None = Field(None, env="VA_PROMPT_TEMPLATE")
-    va_prompt_prefix: str = Field("", env="VA_PROMPT_PREFIX")
-    va_repo_layout_lines: int = Field(20, env="VA_REPO_LAYOUT_LINES")
     use_memory: bool = Field(
         True,
         env="SANDBOX_USE_MEMORY",
