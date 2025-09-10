@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Sequence, Tuple
 from time import perf_counter
+import hashlib
 import json
 import logging
 import re
@@ -148,6 +149,7 @@ class EmbeddableDBMixin:
         self._metadata: Dict[str, Dict[str, Any]] = {}
         self._last_embedding_tokens = 0
         self._last_embedding_time = 0.0
+        self._last_chunk_meta: Dict[str, Any] = {}
 
         self.load_index()
 
@@ -179,24 +181,29 @@ class EmbeddableDBMixin:
         self._last_embedding_tokens = tokens
         return vec or []
 
-    def _prepare_text_for_embedding(self, text: str, *, chunk_tokens: int = 400) -> str:
-        """Return a condensed representation of ``text`` for embedding.
+    def _split_and_summarise(self, text: str) -> str:
+        """Split ``text`` into sentences, filter, chunk and summarise.
 
-        The text is split into sentences, grouped into token limited chunks
-        using :mod:`chunking.split_into_chunks`, each chunk is summarised via
-        :func:`chunking.summarize_snippet` and the summaries are concatenated.
+        The resulting condensed text is returned while ``self._last_chunk_meta``
+        records ``chunk_count`` and ``chunk_hashes`` for traceability.
         """
 
         if not isinstance(text, str):
+            self._last_chunk_meta = {"chunk_count": 0, "chunk_hashes": []}
             return text
 
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
         if not sentences:
+            self._last_chunk_meta = {"chunk_count": 0, "chunk_hashes": []}
             return ""
-        joined = "\n".join(sentences)
+
+        alerts = find_semantic_risks(sentences)
+        risky = {line for line, _, _ in alerts}
+        filtered = [s for s in sentences if s not in risky]
+        joined = "\n".join(filtered)
 
         try:
-            chunks = split_into_chunks(joined, chunk_tokens)
+            chunks = split_into_chunks(joined, 400)
         except Exception:  # pragma: no cover - fallback if chunking fails
             chunks = []
             if joined:
@@ -208,7 +215,9 @@ class EmbeddableDBMixin:
 
         builder = _DummyBuilder()
         summaries: List[str] = []
+        chunk_hashes: List[str] = []
         for ch in chunks:
+            chunk_hashes.append(hashlib.sha256(ch.text.encode("utf-8")).hexdigest())
             try:
                 summary = summarize_snippet(ch.text, context_builder=builder)
             except Exception:  # pragma: no cover - summariser issues
@@ -216,7 +225,16 @@ class EmbeddableDBMixin:
             summary = generalise(summary)
             if summary:
                 summaries.append(summary)
+
+        self._last_chunk_meta = {
+            "chunk_count": len(chunks),
+            "chunk_hashes": chunk_hashes,
+        }
         return " ".join(s for s in summaries if s)
+
+    def _prepare_text_for_embedding(self, text: str, *, chunk_tokens: int = 400) -> str:
+        """Backward compatible wrapper for older callers."""
+        return self._split_and_summarise(text)
 
     def _extract_last_updated(self, record: Any) -> str | None:
         """Best-effort extraction of a last-updated timestamp from ``record``.
@@ -252,14 +270,13 @@ class EmbeddableDBMixin:
     def vector(self, record: Any) -> List[float]:
         """Return an embedding vector for ``record``.
 
-        If ``record`` is textual it is condensed via
-        :meth:`_prepare_text_for_embedding` before encoding.  Subclasses can
+        Textual records are expected to be preprocessed via
+        :meth:`_split_and_summarise` before being passed here. Subclasses can
         override this for non-textual records.
         """
 
         if isinstance(record, str):
-            prepared = self._prepare_text_for_embedding(record)
-            return self.encode_text(prepared)
+            return self.encode_text(record)
         raise NotImplementedError
 
     def iter_records(self) -> Iterator[Tuple[Any, Any, str]]:
@@ -356,6 +373,7 @@ class EmbeddableDBMixin:
         kind: str,
         *,
         source_id: str = "",
+        chunk_meta: Dict[str, Any] | None = None,
     ) -> None:
         """Embed ``record`` and store the vector and metadata."""
         last_updated = self._extract_last_updated(record)
@@ -416,7 +434,11 @@ class EmbeddableDBMixin:
                 return
         record = redact(record) if isinstance(record, str) else record
         if isinstance(record, str):
-            record = self._prepare_text_for_embedding(record)
+            if chunk_meta is None:
+                record = self._split_and_summarise(record)
+                chunk_meta = getattr(self, "_last_chunk_meta", {})
+        if chunk_meta is None:
+            chunk_meta = {"chunk_count": 0, "chunk_hashes": []}
 
         start = perf_counter()
         vec = self.vector(record)
@@ -443,6 +465,7 @@ class EmbeddableDBMixin:
             "source_id": source_id,
             "redacted": True,
             "record": record,
+            **(chunk_meta or {}),
         }
         if last_updated:
             self._metadata[rid]["last_updated"] = last_updated
@@ -656,6 +679,8 @@ class EmbeddableDBMixin:
                         logger.warning("semantic risk %.2f for %s: %s", score, line, msg)
                     continue
             record = redact(record) if isinstance(record, str) else record
+            chunk_meta: Dict[str, Any] | None = None
             if isinstance(record, str):
-                record = self._prepare_text_for_embedding(record)
-            self.add_embedding(record_id, record, kind)
+                record = self._split_and_summarise(record)
+                chunk_meta = getattr(self, "_last_chunk_meta", {})
+            self.add_embedding(record_id, record, kind, chunk_meta=chunk_meta)
