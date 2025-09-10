@@ -467,6 +467,7 @@ class EmbeddableDBMixin:
             "redacted": True,
             "record": record,
             **(chunk_meta or {}),
+            "_last_chunk_meta": chunk_meta or {},
         }
         if last_updated:
             self._metadata[rid]["last_updated"] = last_updated
