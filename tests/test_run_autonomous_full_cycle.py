@@ -54,21 +54,14 @@ def setup_stubs(monkeypatch, tmp_path):
 
     tracker_mod.ROITracker = DummyTracker
 
-    vac_mod = types.ModuleType("menace.visual_agent_client")
-
-    class DummyClient:
-        def __init__(self, *a, **k):
-            self.calls = []
-
-        def ask(self, messages):
-            self.calls.append(messages)
-            return {"choices": [{"message": {"content": "ok"}}]}
-
-    vac_mod.VisualAgentClient = DummyClient
-    vac_mod.VisualAgentClientStub = DummyClient
-
     sr_stub = types.ModuleType("sandbox_runner")
     cli_stub = types.ModuleType("sandbox_runner.cli")
+    bootstrap_stub = types.ModuleType("sandbox_runner.bootstrap")
+    db_router_stub = types.ModuleType("db_router")
+
+    bootstrap_stub.bootstrap_environment = lambda s, *a, **k: s
+    bootstrap_stub._verify_required_dependencies = lambda *a, **k: None
+    db_router_stub.init_db_router = lambda *a, **k: object()
 
     def fake_run(args, *, synergy_history=None, synergy_ma_history=None):
         data_dir = Path(args.sandbox_data_dir)
@@ -79,7 +72,6 @@ def setup_stubs(monkeypatch, tmp_path):
             "metrics_history": {"synergy_roi": [0.05]},
         }
         (data_dir / "roi_history.json").write_text(json.dumps(hist))
-        DummyClient().ask([{"content": "test"}])
         return DummyTracker()
 
     cli_stub.full_autonomous_run = fake_run
@@ -96,9 +88,10 @@ def setup_stubs(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "menace.startup_checks", sc_mod)
     monkeypatch.setitem(sys.modules, "menace.environment_generator", eg_mod)
     monkeypatch.setitem(sys.modules, "menace.roi_tracker", tracker_mod)
-    monkeypatch.setitem(sys.modules, "menace.visual_agent_client", vac_mod)
+    monkeypatch.setitem(sys.modules, "db_router", db_router_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.bootstrap", bootstrap_stub)
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
 
     if "filelock" not in sys.modules:
@@ -119,10 +112,10 @@ def setup_stubs(monkeypatch, tmp_path):
         monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
 
 
-
 def test_full_cycle(monkeypatch, tmp_path):
     setup_stubs(monkeypatch, tmp_path)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
