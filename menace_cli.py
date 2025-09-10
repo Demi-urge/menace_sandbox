@@ -330,7 +330,10 @@ def handle_embed(args: argparse.Namespace) -> int:
     if not _require_vector_service():
         return 1
     if getattr(args, "all", False):
-        args.dbs = ["code", "bot", "error", "workflow"]
+        from vector_service.embedding_backfill import _load_registry, KNOWN_DB_KINDS
+
+        registry = _load_registry()
+        args.dbs = sorted(registry.keys() or KNOWN_DB_KINDS)
     import logging
     from typing import IO
 
@@ -604,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     p_embed.add_argument(
         "--all",
         action="store_true",
-        help="Embed code, bot, error, and workflow databases",
+        help="Embed all registered databases",
     )
     p_embed.set_defaults(func=handle_embed)
 
