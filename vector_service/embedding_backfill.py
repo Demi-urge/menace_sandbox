@@ -573,16 +573,20 @@ def ensure_embeddings_fresh(
     """Ensure embedding metadata is present and up to date for ``dbs``.
 
     Compares the modification time of each database file with its associated
-    embedding metadata file.  Databases with missing or stale embeddings trigger
-    :func:`schedule_backfill`.  A :class:`RuntimeError` is raised if embeddings
-    remain absent after ``retries`` attempts.
+    embedding metadata file.  Additionally compares the number of records
+    returned by ``iter_records`` with the count of stored embeddings for each
+    :class:`EmbeddableDBMixin` instance.  Databases with missing, stale or
+    mismatched embeddings trigger :func:`schedule_backfill`.  A
+    :class:`RuntimeError` is raised if embeddings remain absent after
+    ``retries`` attempts.
     """
 
     names = [d for d in dbs if d]
     if not names:
         return
 
-    def _stale(check: Iterable[str]) -> list[str]:
+    def _needs_backfill(check: Iterable[str]) -> list[str]:
+        registry = _load_registry()
         pending: list[str] = []
         for name in check:
             db_path = resolve_path(f"{name}.db")
@@ -592,18 +596,35 @@ def ensure_embeddings_fresh(
             except FileNotFoundError:
                 continue
             meta_mtime = meta_path.stat().st_mtime if meta_path.exists() else 0.0
-            if meta_mtime < db_mtime:
+            stale = meta_mtime < db_mtime
+            if not stale:
+                mod_cls = registry.get(name)
+                if mod_cls:
+                    mod_name, cls_name = mod_cls
+                    try:
+                        mod = importlib.import_module(mod_name)
+                        cls = getattr(mod, cls_name)
+                        try:
+                            db = cls(vector_backend="annoy")  # type: ignore[call-arg]
+                        except Exception:
+                            db = cls()  # type: ignore[call-arg]
+                        record_count = sum(1 for _ in db.iter_records())
+                        vector_count = len(getattr(db, "_metadata", {}))
+                        stale = record_count != vector_count
+                    except Exception:
+                        pass
+            if stale:
                 pending.append(name)
         return pending
 
-    pending = _stale(names)
+    pending = _needs_backfill(names)
     if not pending:
         return
 
     for _ in range(max(retries, 1)):
         asyncio.run(schedule_backfill(dbs=pending))
         time.sleep(delay)
-        pending = _stale(pending)
+        pending = _needs_backfill(pending)
         if not pending:
             return
 
