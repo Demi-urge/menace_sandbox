@@ -975,7 +975,7 @@ class BotDevelopmentBot:
         except Exception as exc:
             msg = f"engine request failed after retries: {exc}"
             self.logger.exception(msg)
-            self._escalate(msg)
+            self._escalate(msg, level="error")
             self.errors.append(msg)
             if RAISE_ERRORS:
                 raise
