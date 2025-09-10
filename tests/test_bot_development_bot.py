@@ -53,6 +53,18 @@ sc_stub = ModuleType("snippet_compressor")
 sc_stub.compress_snippets = lambda meta, **k: meta
 sys.modules.setdefault("snippet_compressor", sc_stub)
 
+code_db_stub = ModuleType("code_database")
+code_db_stub.CodeDB = object
+sys.modules["code_database"] = code_db_stub
+sys.modules["menace.code_database"] = code_db_stub
+
+mm_stub = ModuleType("menace_memory_manager")
+class _MM:
+    pass
+mm_stub.MenaceMemoryManager = _MM
+sys.modules["menace_memory_manager"] = mm_stub
+sys.modules["menace.menace_memory_manager"] = mm_stub
+
 sce_stub = ModuleType("self_coding_engine")
 class _DummyEngine:
     def __init__(self, *a, **k):

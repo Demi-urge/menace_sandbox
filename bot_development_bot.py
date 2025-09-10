@@ -43,6 +43,8 @@ from .codex_output_analyzer import (
     validate_stripe_usage,
 )
 from .self_coding_engine import SelfCodingEngine
+from .code_database import CodeDB
+from .menace_memory_manager import MenaceMemoryManager
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -336,10 +338,7 @@ class BotDevelopmentBot:
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        self.self_coding_engine = self_coding_engine or SelfCodingEngine(
-            None, None, context_builder=self.context_builder
-        )
-        self.engine = self.self_coding_engine  # backward compatibility
+        self._coding_engine: SelfCodingEngine | None = self_coding_engine
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
@@ -353,6 +352,35 @@ class BotDevelopmentBot:
         }.items():
             if mod is None:
                 self.logger.warning("optional dependency %s unavailable", dep_name)
+
+    @property
+    def coding_engine(self) -> SelfCodingEngine:
+        """Lazily create and cache :class:`SelfCodingEngine`."""
+
+        if self._coding_engine is None:
+            try:
+                code_db = CodeDB()
+            except Exception as exc:  # pragma: no cover - allow running without DB
+                self.logger.debug("CodeDB init failed: %s", exc)
+                code_db = None  # type: ignore[arg-type]
+            try:
+                memory_mgr = MenaceMemoryManager()
+            except Exception as exc:  # pragma: no cover - allow running without memory
+                self.logger.debug("Memory manager init failed: %s", exc)
+                memory_mgr = None  # type: ignore[arg-type]
+            self._coding_engine = SelfCodingEngine(
+                code_db, memory_mgr, context_builder=self.context_builder
+            )
+        return self._coding_engine
+
+    # backward compatible aliases
+    @property
+    def self_coding_engine(self) -> SelfCodingEngine:  # pragma: no cover - thin wrapper
+        return self.coding_engine
+
+    @property
+    def engine(self) -> SelfCodingEngine:  # pragma: no cover - legacy name
+        return self.coding_engine
 
     def _escalate(self, message: str, level: str = "error") -> None:
         """Send an escalation message to configured sinks."""
@@ -911,39 +939,22 @@ class BotDevelopmentBot:
     def _call_codex_api(
         self, model: str, messages: list[dict[str, str]]
     ) -> Any:
-        """Generate code using :class:`SelfCodingEngine`.
+        """Produce helper code via :class:`SelfCodingEngine`.
 
-        Parameters
-        ----------
-        model:
-            Optional model identifier for internal generation.
-        messages:
-            Chat history where the final user message is used as the prompt for
-            :meth:`SelfCodingEngine.generate_helper`.
+        The final user message in ``messages`` is treated as a description of the
+        desired helper.  The description is fed to
+        :meth:`SelfCodingEngine.generate_helper` and no external API calls are
+        made.
         """
 
-        prompt = ""
+        description = ""
         for message in reversed(messages):
             if message.get("role") == "user":
-                prompt = message.get("content", "")
+                description = message.get("content", "")
                 break
 
-        def _call() -> Any:
-            result = self.self_coding_engine.generate_helper(prompt)
-            if not result:
-                raise RuntimeError("empty response")
-            return result
-
-        try:
-            return self.generation_retry.run(_call, logger=self.logger)
-        except Exception as exc:
-            msg = f"helper generation failed: {exc}"
-            self.errors.append(msg)
-            self.logger.error(msg, exc_info=True)
-            self._escalate(msg)
-            if RAISE_ERRORS:
-                raise
-            return ""
+        engine = self.coding_engine
+        return engine.generate_helper(description)
 
     def _internal_generation_fallback(self, prompt: str) -> str:
         """Generate code using the internal Codex API as a fallback."""
