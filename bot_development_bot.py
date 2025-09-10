@@ -935,6 +935,12 @@ class BotDevelopmentBot:
                 raise
             return ""
 
+    def _internal_generation_fallback(self, prompt: str) -> str:
+        """Generate code using internal Codex API as a fallback."""
+
+        result = self._call_codex_api("", [{"role": "user", "content": prompt}])
+        return result if isinstance(result, str) else str(result)
+
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
         if not requests:
             return False, "requests unavailable"
@@ -1230,7 +1236,7 @@ class BotDevelopmentBot:
             self.errors.append("visual build failed")
         self.logger.info("Attempting engine fallback for %s", spec.name)
         try:
-            code = self.self_coding_engine.generate_helper(prompt)
+            code = self._internal_generation_fallback(prompt)
             if not code:
                 raise RuntimeError("empty response")
         except Exception as exc:
