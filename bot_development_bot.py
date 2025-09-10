@@ -257,13 +257,10 @@ class BotDevelopmentBot:
         watchdog: "Watchdog" | None = None,
         *,
         config: BotDevConfig | None = None,
-        openai_attempts: int | None = None,
         context_builder: ContextBuilder,
         engine: SelfCodingEngine | None = None,
     ) -> None:
         self.config = config or BotDevConfig()
-        if openai_attempts is not None:
-            self.config.openai_attempts = openai_attempts
         if repo_base is not None:
             self.config.repo_base = Path(repo_base)
         else:
@@ -304,7 +301,6 @@ class BotDevelopmentBot:
         self.error_sinks = list(self.config.error_sinks)
         self.concurrency = self.config.concurrency_workers
         self.config.validate()
-        self.openai_attempts = self.config.openai_attempts
         self.file_write_retry = RetryStrategy(
             attempts=self.config.file_write_attempts,
             delay=self.config.file_write_retry_delay,
@@ -312,10 +308,6 @@ class BotDevelopmentBot:
         self.send_prompt_retry = RetryStrategy(
             attempts=self.config.send_prompt_attempts,
             delay=self.config.send_prompt_retry_delay,
-        )
-        self.fallback_retry = RetryStrategy(
-            attempts=self.openai_attempts,
-            delay=self.config.openai_retry_delay,
         )
         self.prompt_templates_version = 1
         try:
@@ -931,7 +923,7 @@ class BotDevelopmentBot:
             return self.engine.generate_helper(description)
 
         try:
-            return self.fallback_retry.run(_call, logger=self.logger)
+            return _call()
         except Exception as exc:
             msg = f"helper generation failed: {exc}"
             self.errors.append(msg)
@@ -1236,10 +1228,7 @@ class BotDevelopmentBot:
             self.errors.append("visual build failed")
         self.logger.info("Attempting engine fallback for %s", spec.name)
         try:
-            code = self.fallback_retry.run(
-                lambda: self.engine.generate_helper(prompt),
-                logger=self.logger,
-            )
+            code = self.engine.generate_helper(prompt)
             if not code:
                 raise RuntimeError("empty response")
         except Exception as exc:

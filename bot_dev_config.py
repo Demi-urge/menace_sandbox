@@ -44,14 +44,11 @@ class BotDevConfig:
     )
     error_sinks: List[Callable[[str, str], None]] = field(default_factory=list)
     concurrency_workers: int = int(os.getenv("BOT_DEV_CONCURRENCY", "1"))
-    openai_attempts: int = int(os.getenv("OPENAI_FALLBACK_ATTEMPTS", "3"))
-    openai_fallback_model: str = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
     # retry/polling configuration
     file_write_attempts: int = int(os.getenv("FILE_WRITE_ATTEMPTS", "3"))
     file_write_retry_delay: float = float(os.getenv("FILE_WRITE_RETRY_DELAY", "0.5"))
     send_prompt_attempts: int = int(os.getenv("SEND_PROMPT_ATTEMPTS", "3"))
     send_prompt_retry_delay: float = float(os.getenv("SEND_PROMPT_RETRY_DELAY", "1.0"))
-    openai_retry_delay: float = float(os.getenv("OPENAI_RETRY_DELAY", "1.0"))
     visual_agent_poll_interval: float = float(os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5"))
 
     def validate(self) -> None:

@@ -224,7 +224,7 @@ def test_visual_and_engine_failure_fallback(tmp_path, monkeypatch, caplog):
 
     class FailVisual(bdb.BotDevelopmentBot):
         def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(repo_base=repo_base, openai_attempts=2, context_builder=_ctx_builder())
+            super().__init__(repo_base=repo_base, context_builder=_ctx_builder())
 
         def _visual_build(self, prompt: str, name: str) -> bool:  # type: ignore[override]
             return False
