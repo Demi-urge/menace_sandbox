@@ -29,14 +29,39 @@ class _CB:
     def refresh_db_weights(self):
         pass
 vec_stub.ContextBuilder = _CB
-vec_stub.FallbackResult = type("FallbackResult", (), {})
+class _FallbackResult:
+    def __init__(self, *a, **k):
+        pass
+vec_stub.FallbackResult = _FallbackResult
 vec_stub.ErrorResult = type("ErrorResult", (), {})
 vec_stub.EmbeddableDBMixin = object
 sys.modules.setdefault("vector_service", vec_stub)
 sys.modules.setdefault("vector_service.context_builder", vec_stub)
+vec_dec = ModuleType("vector_service.decorators")
+def _log_and_measure(fn):
+    def wrapper(*a, **k):
+        if getattr(vec_dec._CALL_COUNT, "inc", None):
+            vec_dec._CALL_COUNT.inc()
+        return fn(*a, **k)
+    return wrapper
+vec_dec.log_and_measure = _log_and_measure
+vec_dec._CALL_COUNT = None
+vec_dec._LATENCY_GAUGE = None
+vec_dec._RESULT_SIZE_GAUGE = None
+sys.modules.setdefault("vector_service.decorators", vec_dec)
 sc_stub = ModuleType("snippet_compressor")
 sc_stub.compress_snippets = lambda meta, **k: meta
 sys.modules.setdefault("snippet_compressor", sc_stub)
+
+sce_stub = ModuleType("self_coding_engine")
+class _DummyEngine:
+    def __init__(self, *a, **k):
+        pass
+    def generate_helper(self, desc: str) -> str:
+        return ""
+sce_stub.SelfCodingEngine = _DummyEngine
+sys.modules.setdefault("self_coding_engine", sce_stub)
+sys.modules.setdefault("menace.self_coding_engine", sce_stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]  # path-ignore
@@ -46,19 +71,20 @@ sys.modules["menace"] = menace_pkg
 pkg_spec.loader.exec_module(menace_pkg)
 bdb = importlib.import_module("menace.bot_development_bot")
 cfg_mod = importlib.import_module("menace.bot_dev_config")
+bdb.BotDevelopmentBot.lint_code = lambda self, path: None
 
 
 def _ctx_builder():
     return vec_stub.ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 
 
-def test_refresh_db_weights_failure(tmp_path):
-    class BadBuilder(_CB):
-        def refresh_db_weights(self):
-            raise RuntimeError("boom")
+def test_refresh_db_weights_failure(tmp_path, monkeypatch):
+    def bad(builder):
+        raise RuntimeError("boom")
 
+    monkeypatch.setattr(bdb, "ensure_fresh_weights", bad)
     with pytest.raises(RuntimeError):
-        bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=BadBuilder())
+        bdb.BotDevelopmentBot(repo_base=tmp_path, context_builder=_ctx_builder())
 
 
 def _spec_dict():
@@ -193,15 +219,7 @@ def test_prompt_includes_vector_context(tmp_path):
     assert "Context Metadata" in prompt
 
 
-def test_visual_and_openai_failure_fallback(tmp_path, monkeypatch, caplog):
-    class DummyOpenAI:
-        class ChatCompletion:
-            @staticmethod
-            def create(*a, **k):
-                raise RuntimeError("bad")
-
-    monkeypatch.setenv("OPENAI_API_KEY", "x")
-    monkeypatch.setattr(bdb, "openai", DummyOpenAI)
+def test_visual_and_engine_failure_fallback(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(bdb, "Repo", None)
 
     class FailVisual(bdb.BotDevelopmentBot):
@@ -212,11 +230,17 @@ def test_visual_and_openai_failure_fallback(tmp_path, monkeypatch, caplog):
             return False
 
     dev = FailVisual(repo_base=tmp_path)
+
+    def boom(_: str) -> str:
+        raise RuntimeError("bad")
+
+    monkeypatch.setattr(dev.engine, "generate_helper", boom)
+
     spec = bdb.BotSpec(name="fallback_bot", purpose="demo", functions=["run"])
     caplog.set_level(logging.ERROR)
     path = dev.build_bot(spec, context_builder=dev.context_builder)
     assert path.exists()
-    assert "openai fallback failed" in caplog.text
+    assert "engine fallback failed" in caplog.text
 
 
 def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):
@@ -310,11 +334,11 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
         def search(self, query, **_):
             return FallbackResult("sentinel_fallback", [])
 
-    class DummyBuilder:
+    class DummyBuilder(_CB):
         def __init__(self):
             self.calls = []
             self.retriever = DummyRetriever()
-        def build(self, query):
+        def build(self, query, **_):
             self.calls.append(query)
             return self.retriever.search(query, session_id="s")
 
