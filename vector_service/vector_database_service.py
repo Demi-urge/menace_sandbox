@@ -48,16 +48,19 @@ _svc = SharedVectorService()
 def _watcher() -> None:
     """Background thread embedding newly added database records.
 
-    ``watch_databases`` is blocking and may raise exceptions.  We call it in a
-    daemon thread so the API remains responsive while new records are embedded
-    in the background.  If the loop terminates unexpectedly we log the error
-    and restart after a short delay.
+    ``watch_databases`` runs in a dedicated thread and blocks until it is
+    stopped.  We wrap it in a loop so any unexpected errors are logged and the
+    watcher is restarted after a short delay.
     """
 
     while True:
         try:
             check_staleness([])
-            watch_databases()
+            with watch_databases():
+                # ``watch_databases`` yields control once the watcher thread is
+                # running; block here until it terminates or raises.
+                while True:
+                    time.sleep(60)
         except Exception:  # pragma: no cover - best effort logging
             logger.exception("watch_databases terminated unexpectedly")
             time.sleep(5)
@@ -173,8 +176,16 @@ async def ready() -> Dict[str, Any]:
 
 
 @app.get("/status")
-async def status() -> Dict[str, str]:  # pragma: no cover - trivial
-    return {"status": "ok"}
+async def status() -> Dict[str, Any]:
+    """Return basic service status information.
+
+    Includes a ``watcher_ok`` flag indicating whether the background database
+    watcher thread is running.
+    """
+
+    thread = getattr(app.state, "watch_thread", None)
+    watcher_ok = bool(thread and thread.is_alive())
+    return {"status": "ok", "watcher_ok": watcher_ok}
 
 
 # ---------------------------------------------------------------------------
