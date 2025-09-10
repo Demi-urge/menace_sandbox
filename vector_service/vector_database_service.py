@@ -167,11 +167,12 @@ async def ready() -> Dict[str, Any]:
     thread = getattr(app.state, "watch_thread", None)
     watcher_alive = bool(thread and thread.is_alive())
     scheduler = getattr(app.state, "embedding_scheduler", None)
-    ready = watcher_alive and scheduler is not None
+    scheduler_running = bool(scheduler and getattr(scheduler, "running", False))
+    ready = watcher_alive and scheduler_running
     return {
         "status": "ok" if ready else "error",
         "watcher_alive": watcher_alive,
-        "scheduler_running": scheduler is not None,
+        "scheduler_running": scheduler_running,
     }
 
 
@@ -179,13 +180,19 @@ async def ready() -> Dict[str, Any]:
 async def status() -> Dict[str, Any]:
     """Return basic service status information.
 
-    Includes a ``watcher_ok`` flag indicating whether the background database
-    watcher thread is running.
+    Includes explicit fields for the background watcher thread and embedding
+    scheduler state.
     """
 
     thread = getattr(app.state, "watch_thread", None)
-    watcher_ok = bool(thread and thread.is_alive())
-    return {"status": "ok", "watcher_ok": watcher_ok}
+    watcher_alive = bool(thread and thread.is_alive())
+    scheduler = getattr(app.state, "embedding_scheduler", None)
+    scheduler_running = bool(scheduler and getattr(scheduler, "running", False))
+    return {
+        "status": "ok",
+        "watcher_alive": watcher_alive,
+        "scheduler_running": scheduler_running,
+    }
 
 
 # ---------------------------------------------------------------------------

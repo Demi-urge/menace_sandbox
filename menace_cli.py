@@ -51,7 +51,9 @@ def _ping_vector_service() -> tuple[bool, dict]:
 
     Returns a tuple ``(ok, details)`` where ``ok`` indicates whether the
     service responded successfully and ``details`` contains diagnostic
-    information useful for logging or automated error handling.
+    information useful for logging or automated error handling. When the
+    service responds with a JSON payload, watcher thread and scheduler state
+    fields are surfaced for easier diagnostics.
     """
     import urllib.request
 
@@ -68,7 +70,11 @@ def _ping_vector_service() -> tuple[bool, dict]:
                     payload = json.loads(body)
                 except Exception:
                     payload = body
-                return True, {"status_code": resp.status, "body": payload, "url": url}
+                details = {"status_code": resp.status, "body": payload, "url": url}
+                if isinstance(payload, dict):
+                    details["watcher_alive"] = payload.get("watcher_alive")
+                    details["scheduler_running"] = payload.get("scheduler_running")
+                return True, details
         except Exception as exc:  # pragma: no cover - best effort diagnostics
             last_error = {"error": str(exc), "url": url}
     return False, last_error
