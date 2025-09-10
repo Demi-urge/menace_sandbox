@@ -347,15 +347,21 @@ def handle_retrieve(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _db_choices() -> list[str]:
+    """Return available embedding database kinds."""
+    from vector_service.embedding_backfill import _load_registry, KNOWN_DB_KINDS
+
+    registry = _load_registry()
+    return sorted(registry.keys() or KNOWN_DB_KINDS)
+
+
 def handle_embed(args: argparse.Namespace) -> int:
     """Handle ``embed`` command."""
     if not _require_vector_service():
         return 1
     if getattr(args, "all", False):
-        from vector_service.embedding_backfill import _load_registry, KNOWN_DB_KINDS
-
-        registry = _load_registry()
-        args.dbs = sorted(registry.keys() or KNOWN_DB_KINDS)
+        args.dbs = _db_choices()
     import logging
     from typing import IO
 
@@ -608,10 +614,12 @@ def main(argv: list[str] | None = None) -> int:
     p_retrieve.set_defaults(func=handle_retrieve)
 
     p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
+    db_choices = _db_choices()
     p_embed.add_argument(
         "--db",
         action="append",
         dest="dbs",
+        choices=db_choices,
         help="Restrict to a specific database class (can be used multiple times)",
     )
     p_embed.add_argument(
