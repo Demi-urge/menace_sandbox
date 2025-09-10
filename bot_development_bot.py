@@ -935,7 +935,9 @@ class BotDevelopmentBot:
         The final user message in ``messages`` is treated as a description of the
         desired helper.  The description is fed to
         :meth:`SelfCodingEngine.generate_helper` and no external API calls are
-        made.
+        made.  If no user message is present, the error is escalated and the
+        method returns ``None`` or raises :class:`ValueError` when
+        :data:`RAISE_ERRORS` is true.
         """
 
         prompt = ""
@@ -952,7 +954,7 @@ class BotDevelopmentBot:
             self._escalate(msg, level="warning")
             self.errors.append(msg)
             if RAISE_ERRORS:
-                raise RuntimeError(msg)
+                raise ValueError(msg)
             return None
 
         try:

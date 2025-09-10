@@ -204,7 +204,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
     assert wrapper_called is False
 
 
-def test_call_codex_api_no_user_message_returns_none(monkeypatch, caplog):
+def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
     escalated: dict[str, str] = {}
 
     def fake_escalate(msg: str, level: str = "error") -> None:
@@ -240,7 +240,7 @@ def test_call_codex_api_no_user_message_returns_none(monkeypatch, caplog):
     assert "no user message found" in caplog.text
 
 
-def test_call_codex_api_no_user_message_raises(monkeypatch):
+def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
     escalated: dict[str, str] = {}
 
     def fake_escalate(msg: str, level: str = "error") -> None:
@@ -263,7 +263,7 @@ def test_call_codex_api_no_user_message_raises(monkeypatch):
         engine_retry=RetryStrategy(),
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         BotDevelopmentBot._call_codex_api(
             dummy,
             [{"role": "assistant", "content": "there"}],
