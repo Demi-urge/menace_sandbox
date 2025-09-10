@@ -1,6 +1,6 @@
 # Models Repository Workflow
 
-`ImplementationPipeline` and `BotDevelopmentBot` share a single git repository where all models are developed. The path defaults to `models_repo` next to the main codebase and is created with `ensure_models_repo()` when missing.
+`ImplementationPipeline` and `BotDevelopmentBot` share a single git repository where all models are developed. The path defaults to `models_repo` next to the main codebase and is created with `ensure_models_repo()` when missing. Code generation runs through the local ``SelfCodingEngine`` so no external API keys are required.
 
 ## Visual agent integration
 

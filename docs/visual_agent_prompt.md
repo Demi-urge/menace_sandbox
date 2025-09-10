@@ -1,7 +1,8 @@
 # Visual Agent Prompt Format
 
-`BotDevelopmentBot` sends instructions to visual code generators. The prompt is
-composed of several sections. Each section guides the agent to create a
+`BotDevelopmentBot` sends instructions to visual code generators through the
+local ``SelfCodingEngine``. The prompt is composed of several sections. Each
+section guides the agent to create a
 complete, testable repository. The list below summarises the required headings:
 
 1. **Introduction** – states the target language, bot name and short

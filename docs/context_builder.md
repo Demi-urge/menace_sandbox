@@ -122,8 +122,12 @@ builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 
 ```python
 from bot_development_bot import BotDevelopmentBot, BotSpec
+from self_coding_engine import SelfCodingEngine
+from menace_memory_manager import MenaceMemoryManager
 
-bot = BotDevelopmentBot(context_builder=builder)
+memory_mgr = MenaceMemoryManager()
+engine = SelfCodingEngine("code.db", memory_mgr, context_builder=builder)
+bot = BotDevelopmentBot(context_builder=builder, engine=engine)
 bot._build_prompt(BotSpec(name="demo", purpose="test"), context_builder=builder)
 ```
 
@@ -169,15 +173,14 @@ to ensure a ``context_builder`` keyword is threaded through common prompt
 helpers.  It flags calls to ``PromptEngine``, ``_build_prompt``,
 ``generate_patch``, bare ``build_prompt(...)`` helpers and methods named
 ``build_prompt_with_memory`` when they omit the keyword. The checker also
-inspects any legacy OpenAI API calls along with the ``chat_completion_create``
-wrapper. SelfCodingEngine now handles code generation locally, but the checker
-retains support for these patterns. To intentionally skip a call, append
-``# nocb`` on the call line (or the line above). Only direct
-``build_prompt(...)`` calls are checked to avoid warning on unrelated methods
-with the same name. Variables assigned from ``LLMClient``-like classes are
-tracked so that subsequent ``instance.generate(...)`` invocations require the
-keyword as well; aliases such as ``llm`` or ``model`` are heuristically checked
-even without a prior assignment.
+inspects any direct chat-completion or other remote LLM calls so that
+generation consistently routes through ``SelfCodingEngine``. To intentionally
+skip a call, append ``# nocb`` on the call line (or the line above). Only
+direct ``build_prompt(...)`` calls are checked to avoid warning on unrelated
+methods with the same name. Variables assigned from ``LLMClient``-like classes
+are tracked so that subsequent ``instance.generate(...)`` invocations require
+the keyword as well; aliases such as ``llm`` or ``model`` are heuristically
+checked even without a prior assignment.
 
 Functions that invoke ``ContextBuilder.build`` must accept an explicit builder
 argument.  A parameter defaulting to ``None`` or falling back to a new builder

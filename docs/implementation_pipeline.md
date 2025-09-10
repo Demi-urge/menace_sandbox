@@ -84,7 +84,18 @@ All repositories are verified by running `scripts/setup_tests.sh` followed by `p
 `BotDevelopmentBot` now generates code locally through `SelfCodingEngine`.
 Configure intervals and thresholds via `SELF_CODING_INTERVAL`,
 `SELF_CODING_ROI_DROP` and `SELF_CODING_ERROR_INCREASE`. All generation runs
-offline and no external API keys are required.
+offline and no external API keys are required. Provide a custom engine by
+instantiating ``SelfCodingEngine`` and passing it to ``BotDevelopmentBot``:
+
+```python
+from bot_development_bot import BotDevelopmentBot
+from self_coding_engine import SelfCodingEngine
+from menace_memory_manager import MenaceMemoryManager
+
+memory_mgr = MenaceMemoryManager()
+engine = SelfCodingEngine("code.db", memory_mgr, context_builder=builder)
+bot = BotDevelopmentBot(context_builder=builder, engine=engine)
+```
 
 `TaskHandoffBot` accepts an `api_url` parameter to change the HTTP endpoint used for Stage 4 handoff. Message queue integration can be enabled by providing a `pika` channel instance.
 

@@ -71,14 +71,22 @@ builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 
 ```python
 from bot_development_bot import BotDevelopmentBot, BotSpec
+from self_coding_engine import SelfCodingEngine
+from menace_memory_manager import MenaceMemoryManager
 
-bot = BotDevelopmentBot(context_builder=builder)
+memory_mgr = MenaceMemoryManager()
+engine = SelfCodingEngine("code.db", memory_mgr, context_builder=builder)
+bot = BotDevelopmentBot(context_builder=builder, engine=engine)
 bot._build_prompt(BotSpec(name="demo", purpose="test"), context_builder=builder)
 ```
 
 BotDevelopmentBot now routes generation through the local `SelfCodingEngine`.
 All prompts are processed on your machine and never sent to external
-services.
+services. Supply your own engine by instantiating
+`SelfCodingEngine` and passing it via the ``engine`` argument. Runtime
+behaviour can be tuned with the ``SELF_CODING_INTERVAL``,
+``SELF_CODING_ROI_DROP`` and ``SELF_CODING_ERROR_INCREASE`` environment
+variables.
 
 ### AutomatedReviewer
 
