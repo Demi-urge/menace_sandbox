@@ -946,7 +946,18 @@ class BotDevelopmentBot:
                 prompt = message.get("content", "")
                 break
 
-        return self.engine.generate_helper(prompt)
+        try:
+            return self.engine_retry.run(
+                lambda: self.engine.generate_helper(prompt),
+                logger=self.logger,
+            )
+        except Exception as exc:
+            self.logger.exception("engine call failed: %s", exc)
+            self._escalate(f"engine request failed: {exc}")
+            self.errors.append(f"engine request failed: {exc}")
+            if RAISE_ERRORS:
+                raise
+            return {"error": f"engine request failed: {exc}"}
 
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
         if not requests:
