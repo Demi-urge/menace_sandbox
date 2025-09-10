@@ -927,8 +927,10 @@ SelfCodingEngine runs locally so no additional API keys are required.
 responds with HTTP `202` and a task id. Submitted tasks are appended to
 `SANDBOX_DATA_DIR/visual_agent_queue.db` and processed sequentially. Poll
 `/status/<id>` to monitor progress. The persistent queue avoids race conditions
-and survives restarts.
-The queue is stored in a SQLite database so tasks persist across restarts. A matching `visual_agent_state.json` file records the status of each job and when the last task completed. Both are loaded on startup so unfinished work continues automatically.
+and survives restarts. The database is created automatically inside the sandbox
+data directory. A matching `visual_agent_state.json` file records the status of
+each job and when the last task completed. Both are loaded on startup so
+unfinished work continues automatically.
 
 Use `menace_visual_agent_2.py --resume` to process any pending
 entries without launching the HTTP service. Stale lock and PID files are cleaned
