@@ -956,12 +956,19 @@ class BotDevelopmentBot:
         engine = self.coding_engine
         return engine.generate_helper(description)
 
-    def _internal_generation_fallback(self, prompt: str) -> str:
+    def _internal_fallback(self, prompt: str) -> str:
         """Generate code using the internal Codex API as a fallback."""
 
-        result = self._call_codex_api(
-            self.config.default_model, [{"role": "user", "content": prompt}]
-        )
+        try:
+            result = self._call_codex_api(
+                self.config.default_model, [{"role": "user", "content": prompt}]
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.logger.error("internal fallback failed: %s", exc, exc_info=True)
+            self._escalate(f"internal fallback failed: {exc}")
+            if RAISE_ERRORS:
+                raise
+            return ""
         return result if isinstance(result, str) else str(result)
 
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
@@ -1257,17 +1264,17 @@ class BotDevelopmentBot:
         self.logger.warning("Visual build failed for %s, switching to fallback", spec.name)
         if not self.errors or not self.errors[-1].startswith("visual"):
             self.errors.append("visual build failed")
-        self.logger.info("Attempting engine fallback for %s", spec.name)
+        self.logger.info("Attempting internal fallback for %s", spec.name)
         try:
-            code = self._internal_generation_fallback(prompt)
+            code = self._internal_fallback(prompt)
             if not code:
                 raise RuntimeError("empty response")
         except Exception as exc:
-            self.errors.append("engine fallback failed")
-            self.logger.error("engine fallback failed: %s", exc, exc_info=True)
-            self._escalate(f"engine fallback failed: {exc}")
+            self.errors.append("internal fallback failed")
+            self.logger.error("internal fallback failed: %s", exc, exc_info=True)
+            self._escalate(f"internal fallback failed: {exc}")
             if RAISE_ERRORS:
-                raise RuntimeError("engine fallback failed") from exc
+                raise RuntimeError("internal fallback failed") from exc
             code = self.generate_code(spec, patterns)
 
         file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
