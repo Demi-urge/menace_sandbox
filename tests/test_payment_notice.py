@@ -1,4 +1,8 @@
-"""Tests for payment notice injection logic."""
+"""Tests for legacy payment notice injection logic.
+
+SelfCodingEngine now handles all code generation locally, but the helper
+is retained for backwards compatibility.
+"""
 
 # flake8: noqa
 

@@ -168,12 +168,13 @@ The repository includes a helper script,
 to ensure a ``context_builder`` keyword is threaded through common prompt
 helpers.  It flags calls to ``PromptEngine``, ``_build_prompt``,
 ``generate_patch``, bare ``build_prompt(...)`` helpers and methods named
-``build_prompt_with_memory`` when they omit the keyword.  The checker also
-inspects direct ``openai.Completion.create`` and ``openai.ChatCompletion.create``
-invocations along with the ``chat_completion_create`` wrapper.  To intentionally
-skip a call, append ``# nocb`` on the call line (or the line above).  Only direct
+``build_prompt_with_memory`` when they omit the keyword. The checker also
+inspects any legacy OpenAI API calls along with the ``chat_completion_create``
+wrapper. SelfCodingEngine now handles code generation locally, but the checker
+retains support for these patterns. To intentionally skip a call, append
+``# nocb`` on the call line (or the line above). Only direct
 ``build_prompt(...)`` calls are checked to avoid warning on unrelated methods
-with the same name.  Variables assigned from ``LLMClient``-like classes are
+with the same name. Variables assigned from ``LLMClient``-like classes are
 tracked so that subsequent ``instance.generate(...)`` invocations require the
 keyword as well; aliases such as ``llm`` or ``model`` are heuristically checked
 even without a prior assignment.
@@ -192,10 +193,10 @@ def ok(builder):
 ```
 
 ```python
-import openai
+from self_coding_engine import SelfCodingEngine
 
-# openai.ChatCompletion.create call is ignored thanks to the marker
-openai.ChatCompletion.create([{"role": "user", "content": "hi"}])  # nocb
+# SelfCodingEngine.generate call is ignored thanks to the marker
+SelfCodingEngine().generate([{"role": "user", "content": "hi"}])  # nocb
 ```
 
 ## Custom prompt builders

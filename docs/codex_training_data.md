@@ -25,7 +25,7 @@ All helpers accept:
 
 ```python
 from codex_db_helpers import aggregate_samples, Scope
-import openai
+from self_coding_engine import SelfCodingEngine
 
 samples = aggregate_samples(sort_by="outcome_score", limit=10, scope=Scope.LOCAL)
 
@@ -33,14 +33,12 @@ prompt = "Examples:\n" + "\n\n".join(
     f"{s.source}: {s.content} (score={s.outcome_score})" for s in samples
 )
 
-completion = openai.Completion.create(
-    model="code-davinci-002",
-    prompt=prompt,
-    max_tokens=200,
-)
-print(completion["choices"][0]["text"])
+engine = SelfCodingEngine()
+code = engine.generate_helper(prompt)
+print(code)
 ```
 
-The snippet aggregates recent records, formats them as a prompt and sends it to a Codex model for completion.
+The snippet aggregates recent records, formats them as a prompt and feeds it
+to SelfCodingEngine for local code generation.
 
 For an API reference and extension guidelines see [codex_db_helpers.md](codex_db_helpers.md).
