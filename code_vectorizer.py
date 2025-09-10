@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List
-import json
-import os
-import urllib.request
 import numpy as np
 
 from chunking import split_into_chunks
@@ -17,75 +14,10 @@ from vector_service.text_preprocessor import (
     get_config,
     generalise,
 )
-
-try:  # pragma: no cover - heavy dependency
-    from sentence_transformers import SentenceTransformer  # type: ignore
-except Exception:  # pragma: no cover - fallback when package missing
-    SentenceTransformer = None  # type: ignore
-
-try:  # pragma: no cover - optional service
-    from vector_service.vectorizer import SharedVectorService  # type: ignore
-except Exception:  # pragma: no cover - dependency may be missing
-    SharedVectorService = None  # type: ignore
-
-_MODEL = None
-_EMBED_DIM = 384
-if SentenceTransformer is not None:  # pragma: no cover - model download may be slow
-    try:  # pragma: no cover - defensive
-        _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-        _EMBED_DIM = int(_MODEL.get_sentence_embedding_dimension())
-    except Exception:
-        _MODEL = None
-
-_SERVICE: SharedVectorService | None = None
-_REMOTE_URL = os.environ.get("VECTOR_SERVICE_URL")
-
-
-def _remote_embed(text: str) -> List[float]:
-    data = json.dumps({"kind": "text", "record": {"text": text}}).encode("utf-8")
-    req = urllib.request.Request(
-        f"{_REMOTE_URL.rstrip('/')}/vectorise",
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req) as resp:  # pragma: no cover - network
-        payload = json.loads(resp.read().decode("utf-8"))
-    return payload.get("vector", [])
-
-
-def _embed_texts(texts: List[str]) -> List[List[float]]:
-    if not texts:
-        return []
-    if _MODEL is not None:
-        vecs = _MODEL.encode(texts)
-        return [list(map(float, v)) for v in np.atleast_2d(vecs)]
-
-    global _SERVICE
-    if SharedVectorService is not None:
-        if _SERVICE is None:
-            try:
-                embedder = None
-                if SentenceTransformer is not None:
-                    try:
-                        embedder = SentenceTransformer("all-MiniLM-L6-v2")
-                    except Exception:
-                        embedder = None
-                _SERVICE = SharedVectorService(embedder)
-            except Exception:
-                _SERVICE = None
-        if _SERVICE is not None:
-            try:
-                return [_SERVICE.vectorise("text", {"text": t}) for t in texts]
-            except Exception:
-                pass
-
-    if _REMOTE_URL:
-        try:
-            return [_remote_embed(t) for t in texts]
-        except Exception:
-            pass
-
-    raise RuntimeError("No embedding backend available")
+from vector_service.embed_utils import (
+    get_text_embeddings as _embed_texts,
+    EMBED_DIM as _EMBED_DIM,
+)
 
 
 @dataclass
