@@ -56,6 +56,7 @@ vec_stub.FallbackResult = type("FallbackResult", (), {})
 vec_stub.ErrorResult = type("ErrorResult", (), {})
 vec_stub.EmbeddableDBMixin = object
 vec_stub.CognitionLayer = object
+vec_stub.EmbeddingBackfill = object
 sys.modules.setdefault("vector_service", vec_stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
@@ -494,16 +495,7 @@ def test_pipeline_uses_local_context_builder(tmp_path, monkeypatch):
     assert developer.used_builder is pipeline_builder
     assert "LOCAL_DB" in developer.prompt
 
-
-def test_pipeline_openai_error_not_raised(tmp_path, monkeypatch, caplog):
-    class DummyOpenAI:
-        class ChatCompletion:
-            @staticmethod
-            def create(*a, **k):
-                raise RuntimeError("bad")
-
-    monkeypatch.setenv("OPENAI_API_KEY", "x")
-    monkeypatch.setattr(bdb, "openai", DummyOpenAI)
+def test_pipeline_engine_error_not_raised(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(bdb, "Repo", None)
 
     class FallbackDev(bdb.BotDevelopmentBot):
@@ -512,6 +504,11 @@ def test_pipeline_openai_error_not_raised(tmp_path, monkeypatch, caplog):
 
         def _visual_build(self, prompt: str) -> bool:  # type: ignore[override]
             return False
+
+    def bad_api(self, model, messages):
+        raise RuntimeError("bad")
+
+    monkeypatch.setattr(FallbackDev, "_call_codex_api", bad_api)
 
     builder = _ctx_builder()
     developer = FallbackDev(repo_base=tmp_path, builder=builder)
@@ -530,7 +527,7 @@ def test_pipeline_openai_error_not_raised(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.ERROR)
     result = pipeline.run(tasks)
     assert isinstance(result, ip.PipelineResult)
-    assert "openai fallback failed" in caplog.text
+    assert "engine fallback failed" in caplog.text
 
 
 def test_pipeline_surfaces_build_errors(tmp_path, caplog):
