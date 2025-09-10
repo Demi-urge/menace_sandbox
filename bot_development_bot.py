@@ -961,12 +961,13 @@ class BotDevelopmentBot:
                 logger=self.logger,
             )
         except Exception as exc:
-            self.logger.exception("engine call failed: %s", exc)
-            self._escalate(f"engine request failed: {exc}")
-            self.errors.append(f"engine request failed: {exc}")
+            msg = f"engine request failed after retries: {exc}"
+            self.logger.exception(msg)
+            self._escalate(msg)
+            self.errors.append(msg)
             if RAISE_ERRORS:
                 raise
-            return {"error": f"engine request failed: {exc}"}
+            return {"error": msg}
 
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
         if not requests:

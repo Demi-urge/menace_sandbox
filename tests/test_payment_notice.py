@@ -304,10 +304,10 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
         )
 
     assert calls["n"] == 2
-    assert result == {"error": "engine request failed: boom"}
-    assert escalated["msg"] == "engine request failed: boom"
+    assert result == {"error": "engine request failed after retries: boom"}
+    assert escalated["msg"] == "engine request failed after retries: boom"
     assert escalated["level"] == "error"
-    assert dummy.errors == ["engine request failed: boom"]
+    assert dummy.errors == ["engine request failed after retries: boom"]
     assert "retry 1/2 after error: boom" in caplog.text
 
 
@@ -343,6 +343,6 @@ def test_call_codex_api_engine_failure_raises(monkeypatch):
         )
 
     assert calls["n"] == 2
-    assert escalated["msg"] == "engine request failed: boom"
+    assert escalated["msg"] == "engine request failed after retries: boom"
     assert escalated["level"] == "error"
-    assert dummy.errors == ["engine request failed: boom"]
+    assert dummy.errors == ["engine request failed after retries: boom"]
