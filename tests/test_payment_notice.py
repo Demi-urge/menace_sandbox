@@ -553,3 +553,132 @@ def test_call_codex_api_retries_then_succeeds(monkeypatch):
     assert calls["n"] == 2
     assert escalated == {}
     assert dummy.errors == []
+
+
+def test_call_codex_api_missing_user_message(monkeypatch):
+    """_call_codex_api should escalate when no user prompt is supplied."""
+
+    escalated: dict[str, str] = {}
+    engine = sce_stub.SelfCodingEngine()
+
+    def fake_generate(_desc: str) -> str:  # pragma: no cover - should not run
+        raise AssertionError("generate_helper should not be called")
+
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+
+    class FakeRetry:
+        def __init__(self) -> None:
+            self.called = False
+
+        def run(self, func, logger=None):  # pragma: no cover - should not run
+            self.called = True
+            return func()
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
+        errors=[],
+        engine_retry=RetryStrategy(),
+    )
+
+    fake_retry = FakeRetry()
+    monkeypatch.setattr(dummy, "engine_retry", fake_retry)
+
+    result = BotDevelopmentBot._call_codex_api(
+        dummy,
+        [{"role": "assistant", "content": "there"}],
+    )
+
+    assert result is None
+    assert escalated["level"] == "warning"
+    assert escalated["msg"] == "no user prompt provided"
+    assert fake_retry.called is False
+
+
+def test_call_codex_api_generate_helper_exception(monkeypatch):
+    """Errors from generate_helper should be captured and returned."""
+
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", lambda _desc: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    class FakeRetry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, func, logger=None):
+            self.calls += 1
+            return func()
+
+    fake_retry = FakeRetry()
+
+    escalated: dict[str, str] = {}
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
+        errors=[],
+        engine_retry=RetryStrategy(),
+    )
+
+    monkeypatch.setattr(dummy, "engine_retry", fake_retry)
+
+    result = BotDevelopmentBot._call_codex_api(
+        dummy,
+        [{"role": "user", "content": "hi"}],
+    )
+
+    assert result == {"error": "engine request failed: boom"}
+    assert fake_retry.calls == 1
+    assert escalated["msg"] == "engine request failed: boom"
+    assert dummy.errors == ["engine request failed: boom"]
+
+
+def test_call_codex_api_retry_succeeds(monkeypatch):
+    """Retrying generate_helper should succeed after an initial failure."""
+
+    engine = sce_stub.SelfCodingEngine()
+    calls: dict[str, int] = {"gen": 0, "run": 0}
+
+    def flaky_generate(_desc: str) -> str:
+        calls["gen"] += 1
+        if calls["gen"] == 1:
+            raise RuntimeError("flaky")
+        return "ok"
+
+    monkeypatch.setattr(engine, "generate_helper", flaky_generate)
+
+    class FakeRetry:
+        def run(self, func, logger=None):
+            for _ in range(2):
+                calls["run"] += 1
+                try:
+                    return func()
+                except Exception:
+                    if _ == 1:
+                        raise
+
+    fake_retry = FakeRetry()
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": None,
+        errors=[],
+        engine_retry=RetryStrategy(),
+    )
+
+    monkeypatch.setattr(dummy, "engine_retry", fake_retry)
+
+    result = BotDevelopmentBot._call_codex_api(
+        dummy,
+        [{"role": "user", "content": "hi"}],
+    )
+
+    assert result == "ok"
+    assert calls == {"gen": 2, "run": 2}
+    assert dummy.errors == []
