@@ -160,7 +160,6 @@ def test_parse_plan_yaml():
 
 def test_build_from_plan(tmp_path):
     cfg = cfg_mod.BotDevConfig()
-    cfg.visual_token_refresh_cmd = "cmd"
     engine = _engine()
     bot = bdb.BotDevelopmentBot(
         repo_base=tmp_path,
@@ -189,7 +188,6 @@ def test_config_override(monkeypatch, tmp_path):
 
 def test_build_prompt_with_docs(tmp_path):
     cfg = cfg_mod.BotDevConfig()
-    cfg.visual_token_refresh_cmd = "cmd"
     bot = bdb.BotDevelopmentBot(
         repo_base=tmp_path,
         config=cfg,
@@ -267,21 +265,14 @@ def test_prompt_includes_vector_context(tmp_path):
     assert "Context Metadata" in prompt
 
 
-def test_visual_and_engine_failure_fallback(tmp_path, monkeypatch, caplog):
+def test_engine_failure_fallback(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(bdb, "Repo", None)
 
-    class FailVisual(bdb.BotDevelopmentBot):
-        def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
-            super().__init__(
-                repo_base=repo_base,
-                context_builder=_ctx_builder(),
-                engine=_engine(),
-            )
-
-        def _visual_build(self, prompt: str, name: str) -> bool:  # type: ignore[override]
-            return False
-
-    dev = FailVisual(repo_base=tmp_path)
+    dev = bdb.BotDevelopmentBot(
+        repo_base=tmp_path,
+        context_builder=_ctx_builder(),
+        engine=_engine(),
+    )
     dev.engine_retry = bdb.RetryStrategy(attempts=3, delay=0)
 
     calls = {"n": 0}
@@ -339,48 +330,6 @@ def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):
     assert (tmp_path / "sample_bot" / "sample_bot.py") in paths  # path-ignore
     assert calls.get("workers") == 2
 
-
-def test_token_refresh_failure(monkeypatch, caplog, tmp_path):
-    calls: list[int] = []
-
-    def fake_run(cmd, shell=True, text=True, capture_output=True):
-        calls.append(1)
-        return types.SimpleNamespace(returncode=1, stdout="out", stderr="err")
-
-    monkeypatch.setattr(bdb.subprocess, "run", fake_run)
-    monkeypatch.setattr(bdb.time, "sleep", lambda *a: None)
-    caplog.set_level("WARNING")
-    cfg = cfg_mod.BotDevConfig()
-    cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(
-        repo_base=tmp_path,
-        config=cfg,
-        context_builder=_ctx_builder(),
-        engine=_engine(),
-    )
-    assert not bot._refresh_token()
-    assert len(calls) == 3
-    assert "out" in caplog.text or "err" in caplog.text
-
-
-def test_token_refresh_retry_success(monkeypatch, tmp_path):
-    results = [
-        types.SimpleNamespace(returncode=1, stdout="", stderr="bad"),
-        types.SimpleNamespace(returncode=0, stdout="NEW", stderr=""),
-    ]
-
-    monkeypatch.setattr(bdb.subprocess, "run", lambda *a, **k: results.pop(0))
-    monkeypatch.setattr(bdb.time, "sleep", lambda *a: None)
-    cfg = cfg_mod.BotDevConfig()
-    cfg.visual_token_refresh_cmd = "cmd"
-    bot = bdb.BotDevelopmentBot(
-        repo_base=tmp_path,
-        config=cfg,
-        context_builder=_ctx_builder(),
-        engine=_engine(),
-    )
-    assert bot._refresh_token()
-    assert bot.visual_token == "NEW"
 
 def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
     from vector_service import FallbackResult

@@ -62,14 +62,8 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 try:  # pragma: no cover - optional dependency
-    import mss  # type: ignore
-    import numpy as np  # type: ignore
-    import pytesseract  # type: ignore
-    import cv2  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
-    mss = np = pytesseract = cv2 = None  # type: ignore
-
-from . import vision_utils
+    pass
 
 try:  # pragma: no cover - optional dependency
     from .micro_models.tool_predictor import predict_tools  # type: ignore
@@ -295,31 +289,16 @@ class BotDevelopmentBot:
             except Exception as exc:  # pragma: no cover - external service
                 self.logger.warning("Elasticsearch unavailable: %s", exc)
                 self.es = None
-        self.visual_token = self.config.visual_agent_token
-        self.token_refresh_cmd = self.config.visual_token_refresh_cmd
-        self.desktop_url = self.config.desktop_url
-        self.laptop_url = self.config.laptop_url
-        self.visual_agents = list(filter(None, self.config.visual_agent_urls)) or [
-            self.desktop_url,
-            self.laptop_url,
-        ]
         self.code_generators = {"python": self._generate_python_code}
-        self.denial_phrases = self.config.denial_phrases
-        self.headless = self.config.headless
         self.errors: List[str] = []
         self.db_steward = db_steward
         self.default_templates = self.config.default_templates
-        self.ocr_region = self.config.ocr_region
         self.error_sinks = list(self.config.error_sinks)
         self.concurrency = self.config.concurrency_workers
         self.config.validate()
         self.file_write_retry = RetryStrategy(
             attempts=self.config.file_write_attempts,
             delay=self.config.file_write_retry_delay,
-        )
-        self.send_prompt_retry = RetryStrategy(
-            attempts=self.config.send_prompt_attempts,
-            delay=self.config.send_prompt_retry_delay,
         )
         self.engine_retry = RetryStrategy(
             attempts=self.config.engine_attempts,
@@ -366,10 +345,6 @@ class BotDevelopmentBot:
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
-            "mss": mss,
-            "numpy": np,
-            "pytesseract": pytesseract,
-            "cv2": cv2,
             "yaml": yaml,
             "Elasticsearch": Elasticsearch,
             "git": Repo,
@@ -849,96 +824,6 @@ class BotDevelopmentBot:
             return False
 
     # ------------------------------------------------------------------
-    # Visual agent helpers
-    def _screen_denied(self) -> bool | None:
-        """Return True if OCR detects refusal text.
-
-        Returns ``None`` when OCR fails so callers can retry.
-        """
-        if self.headless or not (mss and cv2 and np):
-            return False
-        attempts = 0
-        while attempts < 2:
-            try:
-                with mss.mss() as sct:
-                    left, top, width, height = self.ocr_region
-                    img = np.array(
-                        sct.grab(
-                            {"top": top, "left": left, "width": width, "height": height}
-                        )
-                    )
-                _, png = cv2.imencode(".png", img)
-                text = vision_utils.detect_text(png.tobytes())
-                if not text and pytesseract:
-                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                    text = pytesseract.image_to_string(gray)
-                if text:
-                    text = text.lower()
-                    return any(p in text for p in self.denial_phrases)
-                attempts += 1
-                time.sleep(0.5)
-            except Exception as exc:  # pragma: no cover - ocr errors
-                logging.error("screenshot OCR failed: %s", exc)
-                return None
-        return False
-
-    def _poll_agent(self, base: str, name: str) -> tuple[bool, str]:
-        """Poll /status until inactive; returns (ok, reason)."""
-        if not requests:
-            return False, "requests unavailable"
-        while True:
-            denied = self._screen_denied()
-            if denied is True:
-                return False, "denied by visual agent"
-            try:
-                resp = requests.get(f"{base}/status", timeout=10)
-            except Exception as exc:
-                self.logger.exception("status poll failed: %s", exc)
-                self._escalate(f"visual agent status poll failed: {exc}")
-                if RAISE_ERRORS:
-                    raise
-                return False, f"status poll failed: {exc}"
-            if resp.status_code != 200:
-                return False, f"unexpected status {resp.status_code}"
-            data = resp.json()
-            status = str(data.get("status", "")).lower()
-            if status in {"failed", "error"}:
-                snippet = json.dumps(data)[:200]
-                self.logger.error("visual agent error for %s: %s", name, snippet)
-                return False, f"error status {status}"
-            if not data.get("active", False):
-                return (
-                    status in {"completed", "success", "done", ""},
-                    status,
-                )
-            time.sleep(self.config.visual_agent_poll_interval)
-
-    def _refresh_token(self) -> bool:
-        """Refresh visual agent token using configured command."""
-        if not self.token_refresh_cmd:
-            return False
-        for attempt in range(3):
-            proc = subprocess.run(
-                self.token_refresh_cmd,
-                shell=True,
-                text=True,
-                capture_output=True,
-            )
-            output = (proc.stdout + proc.stderr).strip()
-            if proc.returncode == 0 and proc.stdout.strip():
-                self.visual_token = proc.stdout.strip()
-                return True
-            self.logger.warning(
-                "token refresh attempt %s failed: %s",
-                attempt + 1,
-                output,
-            )
-            if attempt < 2:
-                time.sleep(1.0)
-            else:
-                self._escalate(f"visual token refresh failed: {output}")
-        return False
-
     def _call_codex_api(self, messages: list[dict[str, str]]) -> EngineResult:
         """Produce helper code via :class:`SelfCodingEngine`.
 
@@ -999,51 +884,6 @@ class BotDevelopmentBot:
                 raise
             return EngineResult(False, None, msg)
 
-    def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
-        if not requests:
-            return False, "requests unavailable"
-
-        def sender() -> tuple[bool, str]:
-            resp = requests.post(
-                f"{base}/run",
-                headers={"x-token": self.visual_token},
-                json={"prompt": prompt, "branch": None},
-                timeout=10,
-            )
-            if resp.status_code == 401:
-                if self._refresh_token():
-                    return sender()
-                return False, "unauthorized"
-            if resp.status_code == 202:
-                return self._poll_agent(base, name)
-            snippet = resp.text[:200]
-            self.logger.error(
-                "visual agent returned %s for %s: %s", resp.status_code, name, snippet
-            )
-            return False, f"status {resp.status_code}"
-
-        try:
-            return self.send_prompt_retry.run(sender, logger=self.logger)
-        except Exception as exc:
-            self.logger.exception("prompt send failed: %s", exc)
-            self._escalate(f"visual agent request failed: {exc}")
-            if RAISE_ERRORS:
-                raise
-            return False, f"exception {exc}"
-
-    def _visual_build(self, prompt: str, name: str) -> bool:
-        """Attempt building via visual agents."""
-        last_reason = ""
-        for url in self.visual_agents:
-            ok, reason = self._send_prompt(url, prompt, name)
-            if ok:
-                return True
-            last_reason = reason
-            self.logger.error("visual agent %s failed for %s: %s", url, name, reason)
-        if last_reason:
-            self.errors.append(last_reason)
-        return False
-
     def _build_prompt(
         self,
         spec: BotSpec,
@@ -1053,7 +893,7 @@ class BotDevelopmentBot:
         sample_sort_by: str = "confidence",
         sample_with_vectors: bool = True,
     ) -> str:
-        """Return the final prompt for the visual agent or Codex.
+        """Return the final prompt for code generation.
 
         Parameters
         ----------
@@ -1217,7 +1057,7 @@ class BotDevelopmentBot:
         spec:
             Description of the bot to generate.
         model_id:
-            Optional model selector for the visual agent.
+            Optional model selector for code generation.
         sample_limit:
             Maximum number of training samples fetched per source for prompt
             generation.
@@ -1264,37 +1104,6 @@ class BotDevelopmentBot:
             sample_sort_by=sample_sort_by,
             sample_with_vectors=sample_with_vectors,
         )
-        built = self._visual_build(prompt, spec.name)
-
-        if built:
-            # read repo contents back in
-            for p in repo_dir.rglob("*.py"):
-                try:
-                    _ = p.read_text()
-                    self.lint_code(p)
-                except Exception as exc:
-                    self.logger.exception("file read failed for %s: %s", spec.name, exc)
-                    self._escalate(f"bot file read failed for {spec.name}: {exc}")
-                    if RAISE_ERRORS:
-                        raise
-            files = [Path(resolve_path(p)) for p in repo_dir.glob(f"{spec.name}.py")]
-            if files:
-                req = self._create_requirements(repo_dir, spec)
-                tests = self._create_tests(repo_dir, spec)
-                self._validate_repo(repo_dir, spec)
-                paths = files + [meta] + ([req] if req else []) + tests
-                self.version_control(
-                    repo_dir, paths, message=f"Initial version of {spec.name}"
-                )
-                return files[0]
-
-        # visual agent failed -> fallback strategies
-        self.logger.warning(
-            "Visual build failed for %s, switching to fallback", spec.name
-        )
-        if not self.errors or not self.errors[-1].startswith("visual"):
-            self.errors.append("visual build failed")
-        self.logger.info("Attempting engine fallback for %s", spec.name)
         try:
             code = self.engine_retry.run(
                 lambda: self.engine.generate_helper(prompt),

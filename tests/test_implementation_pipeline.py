@@ -481,9 +481,6 @@ def test_pipeline_surfaces_engine_errors(tmp_path, monkeypatch, caplog):
                 engine=_engine(),
             )
 
-        def _visual_build(self, prompt: str) -> bool:  # type: ignore[override]
-            return False
-
     builder = _ctx_builder()
     developer = FallbackDev(repo_base=tmp_path, builder=builder)
 
@@ -595,9 +592,6 @@ def test_pipeline_engine_error_not_raised(tmp_path, monkeypatch, caplog):
                 context_builder=builder,
                 engine=_engine(),
             )
-
-        def _visual_build(self, prompt: str) -> bool:  # type: ignore[override]
-            return False
 
     builder = _ctx_builder()
     developer = FallbackDev(repo_base=tmp_path, builder=builder)
