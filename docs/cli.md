@@ -73,6 +73,8 @@ menace retrieve "rate limiter" --db errors --top-k 5
 Backfill vector embeddings.
 ```bash
 menace embed --db errors --batch-size 100
+# or refresh every registered database
+menace embed --all
 ```
 
 ### Automatic vs. manual runs

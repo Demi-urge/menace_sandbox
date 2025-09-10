@@ -12,7 +12,7 @@ from typing import Optional, Dict, List
 from unified_event_bus import UnifiedEventBus
 
 from patch_safety import PatchSafety
-from .embedding_backfill import EmbeddingBackfill, KNOWN_DB_KINDS
+from .embedding_backfill import EmbeddingBackfill, KNOWN_DB_KINDS, _load_registry
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
@@ -30,7 +30,7 @@ _SCHED_DURATION = _me.Gauge(
 )
 
 # Database kinds recognised for on-demand backfill events.
-_SUPPORTED_SOURCES = set(KNOWN_DB_KINDS)
+_SUPPORTED_SOURCES = set(_load_registry().keys() or KNOWN_DB_KINDS)
 
 
 class EmbeddingScheduler:
@@ -53,7 +53,7 @@ class EmbeddingScheduler:
         self.interval = interval
         self.batch_size = batch_size
         self.backend = backend
-        self.sources = sources or ["code", "bot", "error", "workflow"]
+        self.sources = sources or sorted(_SUPPORTED_SOURCES)
         self.stale_threshold = stale_threshold
         self.event_bus = event_bus or UnifiedEventBus()
         self.event_topic = event_topic

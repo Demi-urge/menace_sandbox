@@ -40,7 +40,7 @@ record-to-vector logic:
 
 Use `scripts/backfill_embeddings.py` to generate embeddings for existing
 records. Pass `--db` multiple times to target specific stores or `--all` to
-refresh every registered database:
+refresh every database discovered in the runtime registry:
 
 ```bash
 python scripts/backfill_embeddings.py --db bot --db workflow --backend annoy --batch-size 200
