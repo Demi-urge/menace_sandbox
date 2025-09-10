@@ -51,14 +51,14 @@ class BotDevConfig:
     file_write_retry_delay: float = float(os.getenv("FILE_WRITE_RETRY_DELAY", "0.5"))
     send_prompt_attempts: int = int(os.getenv("SEND_PROMPT_ATTEMPTS", "3"))
     send_prompt_retry_delay: float = float(os.getenv("SEND_PROMPT_RETRY_DELAY", "1.0"))
-    fallback_attempts: int = int(
-        os.getenv("FALLBACK_ATTEMPTS", os.getenv("GENERATION_ATTEMPTS", "3"))
+    engine_attempts: int = int(
+        os.getenv("ENGINE_ATTEMPTS", os.getenv("GENERATION_ATTEMPTS", "3"))
     )
-    fallback_retry_delay: float = float(
-        os.getenv("FALLBACK_RETRY_DELAY", os.getenv("GENERATION_RETRY_DELAY", "1.0"))
+    engine_retry_delay: float = float(
+        os.getenv("ENGINE_RETRY_DELAY", os.getenv("GENERATION_RETRY_DELAY", "1.0"))
     )
-    fallback_model: str = os.getenv(
-        "FALLBACK_MODEL", os.getenv("DEFAULT_MODEL", "internal-codex")
+    engine_model: str = os.getenv(
+        "ENGINE_MODEL", os.getenv("DEFAULT_MODEL", "internal-codex")
     )
     visual_agent_poll_interval: float = float(os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5"))
 
