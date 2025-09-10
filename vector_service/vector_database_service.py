@@ -30,7 +30,7 @@ from pydantic import BaseModel
 import uvicorn
 
 from .vectorizer import SharedVectorService
-from .embedding_backfill import watch_databases
+from .embedding_backfill import watch_databases, check_staleness
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ def _watcher() -> None:
     """
 
     try:
+        check_staleness([])
         watch_databases()
     except Exception:  # pragma: no cover - best effort logging
         logger.exception("watch_databases terminated unexpectedly")
@@ -136,7 +137,9 @@ async def status() -> Dict[str, str]:  # pragma: no cover - trivial
 def main() -> None:  # pragma: no cover - simple server runner
     target = os.environ.get("VECTOR_SERVICE_SOCKET")
     if target:
-        config = uvicorn.Config("vector_service.vector_database_service:app", uds=target, log_level="info")
+        config = uvicorn.Config(
+            "vector_service.vector_database_service:app", uds=target, log_level="info"
+        )
     else:
         host = os.environ.get("VECTOR_SERVICE_HOST", "127.0.0.1")
         port = int(os.environ.get("VECTOR_SERVICE_PORT", "8000"))
@@ -151,7 +154,4 @@ def main() -> None:  # pragma: no cover - simple server runner
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
     main()
-
-
 __all__ = ["app", "main"]
-

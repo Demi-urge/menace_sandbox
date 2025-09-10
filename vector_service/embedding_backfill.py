@@ -11,8 +11,8 @@ from pathlib import Path
 import json
 import sys
 import hashlib
-import pkgutil
 import queue
+from datetime import datetime, timedelta
 
 from . import registry as _registry
 
@@ -26,12 +26,14 @@ from compliance.license_fingerprint import (
 
 from dynamic_path_router import resolve_path
 
+
 def _log_violation(path: str, lic: str, hash_: str) -> None:
     try:  # pragma: no cover - best effort
         CodeDB = importlib.import_module("code_database").CodeDB
         CodeDB().log_license_violation(path, lic, hash_)
     except Exception:
         pass
+
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
@@ -86,6 +88,10 @@ KNOWN_DB_KINDS = {
     "research",
     "resource",
 }
+
+# Staleness detection thresholds
+_STALE_RECORD_THRESHOLD = 10
+_STALE_AGE = timedelta(days=30)
 
 
 def _load_registry(path: Path | None = None) -> dict[str, tuple[str, str]]:
@@ -396,6 +402,44 @@ class EmbeddingBackfill:
         )
 
 
+def check_staleness(dbs: List[str]) -> List[str]:
+    """Check embedding metadata for staleness and backfill when necessary."""
+
+    backfill = EmbeddingBackfill()
+    subclasses = backfill._load_known_dbs(names=dbs)
+    stale: List[str] = []
+    cutoff = datetime.utcnow() - _STALE_AGE
+    for cls in subclasses:
+        try:
+            db = cls(vector_backend=backfill.backend)  # type: ignore[call-arg]
+        except Exception:
+            try:
+                db = cls()  # type: ignore[call-arg]
+            except Exception:
+                continue
+        count = 0
+        for meta in getattr(db, "_metadata", {}).values():
+            version = meta.get("embedding_version")
+            created = meta.get("created_at")
+            try:
+                outdated_version = int(version) != int(db.embedding_version)
+            except Exception:
+                outdated_version = True
+            try:
+                created_time = datetime.fromisoformat(str(created)) if created else None
+            except Exception:
+                created_time = None
+            old = created_time is None or created_time < cutoff
+            if outdated_version or old:
+                count += 1
+                if count > _STALE_RECORD_THRESHOLD:
+                    stale.append(cls.__name__)
+                    break
+    if stale:
+        backfill.run(dbs=stale, trigger="stale")
+    return stale
+
+
 def watch_event_bus(
     *,
     bus: "UnifiedEventBus" | None = None,
@@ -464,6 +508,7 @@ def watch_databases(
     seen: dict[str, dict[str, str]] = {}
     backfill = EmbeddingBackfill(backend=backend)
     while True:
+        check_staleness(dbs or [])
         subclasses = backfill._load_known_dbs(names=dbs)
         for cls in subclasses:
             try:
@@ -571,6 +616,7 @@ __all__ = [
     "schedule_backfill",
     "ensure_embeddings_fresh",
     "KNOWN_DB_KINDS",
+    "check_staleness",
     "watch_databases",
     "watch_event_bus",
 ]
@@ -603,4 +649,3 @@ def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - CLI e
 
 if __name__ == "__main__":
     main()
-
