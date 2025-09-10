@@ -55,12 +55,6 @@ except Exception:  # pragma: no cover - optional dependency
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
 
-try:
-    import requests  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    requests = None  # type: ignore
-
-
 try:  # pragma: no cover - optional dependency
     from .micro_models.tool_predictor import predict_tools  # type: ignore
     from .micro_models.prefix_injector import inject_prefix  # type: ignore
@@ -334,7 +328,6 @@ class BotDevelopmentBot:
         self.engine = engine
         # warn about missing optional dependencies
         for dep_name, mod in {
-            "requests": requests,
             "yaml": yaml,
             "Elasticsearch": Elasticsearch,
             "git": Repo,
