@@ -38,6 +38,7 @@ tests/test_patch_outcome_negatives.py
 tests/test_patch_outcome_skipped.py
 tests/test_patch_safety_db_refresh.py
 tests/test_relevancy_radar.py
+tests/test_menace_cli_embed_init.py
 tests/test_research_aggregator_bot.py
 tests/test_retrieval_ranker.py
 tests/test_retrieval_training_dataset.py
