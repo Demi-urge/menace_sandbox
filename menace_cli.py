@@ -393,6 +393,7 @@ def handle_embed(args: argparse.Namespace) -> int:
         def __init__(self, *a, log_stream: IO[str], **kw):
             super().__init__(*a, **kw)
             self._log_stream = log_stream
+            self.skipped_records: list[tuple[str, str, str]] = []
 
         def _process_db(self, db, *, batch_size, session_id=""):
             processed = 0
@@ -426,6 +427,9 @@ def handle_embed(args: argparse.Namespace) -> int:
                 processed += 1
                 if processed >= batch_size:
                     break
+            self.skipped_records.extend(
+                (db.__class__.__name__, rid, lic) for rid, lic in skipped
+            )
             return skipped
 
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -456,6 +460,10 @@ def handle_embed(args: argparse.Namespace) -> int:
             batch_size=args.batch_size,
             backend=args.backend,
         )
+        if backfill.skipped_records:
+            print("Skipped records due to licensing:", file=sys.stderr)
+            for db_name, rec_id, lic in backfill.skipped_records:
+                print(f"{db_name}:{rec_id}:license {lic}", file=sys.stderr)
         if getattr(args, "verify", False):
             be = args.backend or backfill.backend
             subclasses = backfill._load_known_dbs(names=out_of_sync)
@@ -527,6 +535,12 @@ def handle_embed_init(args: argparse.Namespace) -> int:
         else:
             return 1
     return 0
+
+
+def handle_embed_core(args: argparse.Namespace) -> int:
+    """Handle ``embed core`` command."""
+    args.dbs = ["code", "bot", "error", "workflow"]
+    return handle_embed(args)
 
 
 def handle_cache_show(args: argparse.Namespace) -> int:
@@ -691,6 +705,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Embed all registered databases",
     )
     embed_sub = p_embed.add_subparsers(dest="embed_cmd")
+    p_embed_core = embed_sub.add_parser(
+        "core", help="Embed core databases (code, bot, error, workflow)"
+    )
+    p_embed_core.set_defaults(func=handle_embed_core)
     p_embed_init = embed_sub.add_parser(
         "init", help="Initialise embeddings for core databases"
     )

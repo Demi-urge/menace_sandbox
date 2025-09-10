@@ -782,6 +782,16 @@ limit processing to a single class:
 python menace_cli.py embed --db workflows --batch-size 100 --backend faiss
 ```
 
+To embed the core databases (`code`, `bot`, `error` and `workflow`) in one go,
+run:
+
+```bash
+python menace_cli.py embed core
+```
+
+Progress for each database is reported and any skipped records or licensing
+issues are printed to the console or log file.
+
 ### New database scaffold
 
 Generate a database module skeleton:
