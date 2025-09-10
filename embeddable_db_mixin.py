@@ -209,18 +209,54 @@ class EmbeddableDBMixin:
             if joined:
                 chunks.append(type("C", (), {"text": joined})())
 
-        class _DummyBuilder:
-            def build(self, _: str) -> str:  # pragma: no cover - simple stub
-                return ""
+        # ``ContextBuilder`` is a heavy dependency so we import lazily and fall
+        # back to a tiny stub when unavailable.  The builder is cached on the
+        # instance to avoid repeated initialisation across calls.
+        builder = getattr(self, "_summary_builder", None)
+        if builder is None:
+            try:  # pragma: no cover - best effort builder creation
+                from context_builder_util import create_context_builder
 
-        builder = _DummyBuilder()
+                builder = create_context_builder()
+            except Exception as exc:  # pragma: no cover - builder unavailable
+                logger.warning("context builder unavailable: %s", exc)
+
+                class _DummyBuilder:
+                    def build(self, _: str) -> str:
+                        return ""
+
+                builder = _DummyBuilder()
+            self._summary_builder = builder
+
+        # Try to initialise a lightweight local LLM client.  This is optional
+        # and failures are logged but otherwise ignored.
+        llm = getattr(self, "_summary_llm", None)
+        if llm is None:
+            try:  # pragma: no cover - optional dependency
+                from local_client import OllamaClient
+
+                llm = OllamaClient()
+            except Exception:
+                try:  # pragma: no cover - secondary fallback
+                    from local_client import VLLMClient
+
+                    llm = VLLMClient()
+                except Exception as exc:
+                    logger.debug("no local LLM available: %s", exc)
+                    llm = None
+            self._summary_llm = llm
+
         summaries: List[str] = []
         chunk_hashes: List[str] = []
         for ch in chunks:
-            chunk_hashes.append(hashlib.sha256(ch.text.encode("utf-8")).hexdigest())
+            digest = hashlib.sha256(ch.text.encode("utf-8")).hexdigest()
+            chunk_hashes.append(digest)
             try:
-                summary = summarize_snippet(ch.text, context_builder=builder)
-            except Exception:  # pragma: no cover - summariser issues
+                summary = summarize_snippet(ch.text, llm, context_builder=builder)
+                if not summary:
+                    raise ValueError("empty summary")
+            except Exception as exc:  # pragma: no cover - summariser issues
+                logger.exception("summary generation failed for %s", digest, exc_info=exc)
                 summary = ch.text
             summary = generalise(summary)
             if summary:
