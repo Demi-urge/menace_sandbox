@@ -14,6 +14,7 @@ from analysis.semantic_diff_filter import find_semantic_risks
 from snippet_compressor import compress_snippets
 from vector_utils import persist_embedding
 from dynamic_path_router import resolve_path
+from vector_service.text_preprocessor import PreprocessingConfig, get_config
 try:  # pragma: no cover - event bus optional
     from unified_event_bus import UnifiedEventBus  # type: ignore
 except Exception:  # pragma: no cover - fallback
@@ -102,7 +103,14 @@ class WorkflowVectorizer:
     def graph_metrics(self) -> Dict[str, Any]:  # pragma: no cover - compatibility
         return self._last_metrics
 
-    def transform(self, wf: Dict[str, Any], workflow_id: str | None = None) -> List[float]:
+    def transform(
+        self,
+        wf: Dict[str, Any],
+        workflow_id: str | None = None,
+        *,
+        config: PreprocessingConfig | None = None,
+    ) -> List[float]:
+        cfg = config or get_config("workflow")
         parts: List[str] = []
         for key in ("name", "description", "category", "status"):
             val = wf.get(key)
@@ -121,13 +129,31 @@ class WorkflowVectorizer:
                     parts.append(str(step))
 
         text = "\n".join(parts)
-        chunks: List[str] = []
-        for sent in _split_sentences(text):
-            if find_semantic_risks([sent]):
+        sentences = _split_sentences(text) if cfg.split_sentences else [text]
+        filtered: List[str] = []
+        for sent in sentences:
+            if cfg.filter_semantic_risks and find_semantic_risks([sent]):
                 continue
             summary = compress_snippets({"snippet": sent}).get("snippet", sent)
             if summary.strip():
-                chunks.append(summary)
+                filtered.append(summary)
+
+        # chunk by approximate token counts
+        chunks: List[str] = []
+        if cfg.chunk_size and cfg.chunk_size > 0:
+            current: List[str] = []
+            count = 0
+            for piece in filtered:
+                count += len(piece.split())
+                current.append(piece)
+                if count >= cfg.chunk_size:
+                    chunks.append(" ".join(current))
+                    current = []
+                    count = 0
+            if current:
+                chunks.append(" ".join(current))
+        else:
+            chunks = filtered
 
         if not chunks:
             vec = [0.0] * _EMBED_DIM

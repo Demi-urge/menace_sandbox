@@ -86,7 +86,7 @@ except Exception:  # pragma: no cover - fallback when module unavailable
 
 from chunking import split_into_chunks
 from analysis.semantic_diff_filter import find_semantic_risks
-from vector_service.text_preprocessor import generalise
+from vector_service.text_preprocessor import generalise, get_config, PreprocessingConfig
 try:  # pragma: no cover - support both package and flat imports
     from .menace_memory_manager import _summarise_text  # type: ignore
 except Exception:  # pragma: no cover - fallback for top-level imports
@@ -947,37 +947,44 @@ class CodeDB(EmbeddableDBMixin):
             parts.append(f"language: {language}")
         return "\n".join(parts)
 
-    def _embed_text(self, data: dict[str, Any]) -> str:
+    def _embed_text(
+        self,
+        data: dict[str, Any],
+        *,
+        config: PreprocessingConfig | None = None,
+    ) -> str:
         """Return a condensed, safe representation of code ``data``."""
+
+        cfg = config or get_config("code")
         parts: list[str] = []
         summary = str(data.get("summary", "")).strip()
         if summary:
-            parts.append(generalise(summary))
+            parts.append(generalise(summary, config=cfg))
         code = str(data.get("code", ""))
         if code:
             try:
-                chunks = split_into_chunks(code, 400)
+                chunks = split_into_chunks(code, cfg.chunk_size or 400)
             except Exception:  # pragma: no cover - fallback
                 chunks = [type("C", (), {"text": code})()]
             summaries: list[str] = []
             for ch in chunks:
-                if find_semantic_risks(ch.text.splitlines()):
+                if cfg.filter_semantic_risks and find_semantic_risks(ch.text.splitlines()):
                     continue
                 try:
                     summ = _summarise_text(ch.text)
                 except Exception:  # pragma: no cover - best effort
                     summ = ch.text
-                summ = generalise(summ)
+                summ = generalise(summ, config=cfg)
                 if summ:
                     summaries.append(summ)
             if summaries:
                 parts.append(" ".join(summaries))
         template = str(data.get("template_type", "")).strip()
         if template:
-            parts.append(generalise(f"template_type: {template}"))
+            parts.append(generalise(f"template_type: {template}", config=cfg))
         language = str(data.get("language", "")).strip()
         if language:
-            parts.append(generalise(f"language: {language}"))
+            parts.append(generalise(f"language: {language}", config=cfg))
         return "\n".join(parts).strip()
 
     def license_text(self, rec: CodeRecord | dict[str, Any]) -> str | None:
