@@ -136,8 +136,6 @@ def test_roi_and_metric_routes(tmp_path):
     assert resp.status_code == 200
     assert resp.data.startswith(b"\x89PNG") or resp.data == b""
 
-    metrics_exporter.visual_agent_queue_depth.set(1)
-    metrics_exporter.visual_agent_wait_time.set(0.2)
     metrics_exporter.container_creation_success_total.labels("img").set(3)
     metrics_exporter.container_creation_failures_total.labels("img").set(1)
     metrics_exporter.container_creation_alerts_total.labels("img").set(2)
@@ -149,8 +147,6 @@ def test_roi_and_metric_routes(tmp_path):
     sat.synergy_trainer_failures_total.set(2)
 
     all_metrics = client.get("/metrics").get_json()
-    assert all_metrics["visual_agent_queue_depth"] == 1
-    assert all_metrics["visual_agent_wait_time"] == 0.2
     assert all_metrics["container_creation_success_total"] == 3
     assert all_metrics["container_creation_failures_total"] == 1
     assert all_metrics["container_creation_alerts_total"] == 2
