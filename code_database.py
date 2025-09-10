@@ -300,6 +300,8 @@ class CodeRecord:
 class CodeDB(EmbeddableDBMixin):
     """SQLite storage for code templates and relationships."""
 
+    DB_FILE = "code.db"
+
     def __init__(
         self,
         path: Path | str | None = None,

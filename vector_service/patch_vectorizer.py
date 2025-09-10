@@ -13,6 +13,8 @@ from dynamic_path_router import resolve_path
 class PatchVectorizer(EmbeddableDBMixin):
     """Embed patches by concatenating description, diff and summary."""
 
+    DB_FILE = "patch_history.db"
+
     DB_MODULE = "vector_service.patch_vectorizer"
     DB_CLASS = "PatchVectorizer"
 

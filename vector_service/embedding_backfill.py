@@ -98,14 +98,6 @@ except Exception:  # pragma: no cover
 DEFAULT_REGISTRY = resolve_path("vector_service/embedding_registry.json")
 _REGISTRY_FILE = DEFAULT_REGISTRY
 
-# Map logical database names to their on-disk filename for staleness checks
-_DB_FILE_MAP = {
-    "code": "code.db",
-    "bot": "bots.db",
-    "error": "errors.db",
-    "workflow": "workflows.db",
-}
-
 # Persistent record of last successful vectorisation per database
 _TIMESTAMP_FILE = resolve_path("embedding_timestamps.json")
 
@@ -796,7 +788,18 @@ def ensure_embeddings_fresh(
         registry = _load_registry()
         pending: dict[str, str] = {}
         for name in check:
-            db_file = _DB_FILE_MAP.get(name, f"{name}.db")
+            cls = None
+            mod_cls = registry.get(name)
+            db_file = f"{name}.db"
+            if mod_cls:
+                mod_name, cls_name = mod_cls
+                try:
+                    mod = importlib.import_module(mod_name)
+                    cls = getattr(mod, cls_name)
+                    db_file = getattr(cls, "DB_FILE", getattr(cls, "DB_PATH", db_file))
+                except Exception:
+                    cls = None
+
             db_path = resolve_path(db_file)
             meta_path = resolve_path(f"{name}_embeddings.json")
             try:
@@ -816,12 +819,8 @@ def ensure_embeddings_fresh(
                 pending[name] = reason
                 continue
 
-            mod_cls = registry.get(name)
-            if mod_cls:
-                mod_name, cls_name = mod_cls
+            if cls:
                 try:
-                    mod = importlib.import_module(mod_name)
-                    cls = getattr(mod, cls_name)
                     try:
                         db = cls(vector_backend="annoy")  # type: ignore[call-arg]
                     except Exception:
@@ -829,7 +828,9 @@ def ensure_embeddings_fresh(
                     record_count = sum(1 for _ in db.iter_records())
                     vector_count = len(getattr(db, "_metadata", {}))
                     if record_count != vector_count:
-                        pending[name] = f"record/vector count mismatch {record_count}/{vector_count}"
+                        pending[name] = (
+                            f"record/vector count mismatch {record_count}/{vector_count}"
+                        )
                 except Exception:
                     pass
         return pending

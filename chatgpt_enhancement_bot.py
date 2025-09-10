@@ -111,6 +111,8 @@ class EnhancementHistory:
 class EnhancementDB(EmbeddableDBMixin):
     """SQLite storage for enhancement logs with vector embeddings."""
 
+    DB_FILE = "enhancements.db"
+
     def __init__(
         self,
         path: Optional[Path] = None,

@@ -163,6 +163,8 @@ class FailedMenace:
 class BotDB(EmbeddableDBMixin):
     """SQLite database tracking bots and relationships."""
 
+    DB_FILE = "bots.db"
+
     MAX_RETRIES = 5
 
     def __init__(

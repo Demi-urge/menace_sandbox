@@ -46,6 +46,8 @@ class InformationRecord:
 class InformationDB(EmbeddableDBMixin):
     """SQLite-backed store for static information with embeddings."""
 
+    DB_FILE = "information.db"
+
     def __init__(
         self,
         path: str = "information.db",

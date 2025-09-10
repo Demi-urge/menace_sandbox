@@ -1,4 +1,5 @@
 import json
+import importlib
 import logging
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ def test_ensure_embeddings_fresh_logs_and_raises(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr("dynamic_path_router.resolve_path", lambda p: Path(tmp_path / p))
 
     import vector_service.embedding_backfill as eb
+    eb = importlib.reload(eb)
 
     monkeypatch.setattr(eb, "_TIMESTAMP_FILE", Path(tmp_path / "ts.json"))
     monkeypatch.setattr(eb, "_load_registry", lambda path=None: {})

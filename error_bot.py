@@ -118,6 +118,8 @@ class ErrorRecord:
 class ErrorDB(EmbeddableDBMixin):
     """SQLite-backed storage for known errors and discrepancies."""
 
+    DB_FILE = "errors.db"
+
     def __init__(
         self,
         path: Path | str | None = None,
