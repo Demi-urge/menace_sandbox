@@ -27,6 +27,8 @@ if not SHARED_DB_PATH:
     SHARED_DB_PATH = os.path.abspath("shared/global.db")
 GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 
+SKIP_VECTOR_AUTOSTART = False
+
 
 def _run(cmd: list[str]) -> int:
     """Run a subprocess and return its exit code."""
@@ -56,21 +58,26 @@ def _ping_vector_service() -> tuple[bool, dict]:
     base = os.environ.get("VECTOR_SERVICE_URL")
     if not base:
         return True, {"detail": "VECTOR_SERVICE_URL not set"}
-    url = f"{base.rstrip('/')}/health/ready"
-    try:
-        with urllib.request.urlopen(url, timeout=2) as resp:
-            body = resp.read().decode("utf-8", "replace")
-            try:
-                payload = json.loads(body)
-            except Exception:
-                payload = body
-            return True, {"status_code": resp.status, "body": payload}
-    except Exception as exc:  # pragma: no cover - best effort diagnostics
-        return False, {"error": str(exc), "url": url}
+    last_error: dict = {}
+    for path in ("/status", "/health", "/health/ready"):
+        url = f"{base.rstrip('/')}{path}"
+        try:
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                body = resp.read().decode("utf-8", "replace")
+                try:
+                    payload = json.loads(body)
+                except Exception:
+                    payload = body
+                return True, {"status_code": resp.status, "body": payload, "url": url}
+        except Exception as exc:  # pragma: no cover - best effort diagnostics
+            last_error = {"error": str(exc), "url": url}
+    return False, last_error
 
 
 def _start_vector_service() -> tuple[bool, str]:
-    """Attempt to start ``vector_database_service`` in a background process."""
+    """Attempt to start ``vector_database_service`` and wait for readiness."""
+    if SKIP_VECTOR_AUTOSTART:
+        return False, "auto-start disabled"
     try:
         subprocess.Popen(
             [sys.executable, "-m", "vector_service.vector_database_service"],
@@ -78,12 +85,22 @@ def _start_vector_service() -> tuple[bool, str]:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        return True, ""
     except Exception as exc:  # pragma: no cover - best effort
         return False, str(exc)
 
+    import time
 
-def _vector_service_available(retries: int = 3, delay: float = 1.0) -> tuple[bool, dict]:
+    delay = 0.5
+    for _ in range(5):
+        ok, _ = _ping_vector_service()
+        if ok:
+            return True, ""
+        time.sleep(delay)
+        delay *= 2
+    return False, "service failed to start within timeout"
+
+
+def _vector_service_available(retries: int = 3, delay: float = 0.5) -> tuple[bool, dict]:
     """Ensure the vector service is reachable and return diagnostics."""
     attempts: list[dict] = []
     for attempt in range(retries):
@@ -91,15 +108,17 @@ def _vector_service_available(retries: int = 3, delay: float = 1.0) -> tuple[boo
         attempts.append(info)
         if ok:
             return True, {"attempts": attempts}
-        if attempt == 0:
+        if attempt == 0 and not SKIP_VECTOR_AUTOSTART:
             started, err = _start_vector_service()
             info["start_attempted"] = True
             if not started:
                 info["start_error"] = err
                 return False, {"attempts": attempts}
+            continue
         import time
 
         time.sleep(delay)
+        delay *= 2
     return False, {"attempts": attempts}
 
 
@@ -115,6 +134,9 @@ def _require_vector_service(retries: int = 3) -> bool:
     )
     if attempts:
         last = attempts[-1]
+        start_err = last.get("start_error")
+        if start_err:
+            print(f"Failed to start vector service: {start_err}", file=sys.stderr)
         err = last.get("error") or last.get("body")
         if err:
             print(f"Last attempt: {err}", file=sys.stderr)
@@ -505,6 +527,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--workflows-db", default="workflows.db", help="Path to workflows DB"
     )
+    parser.add_argument(
+        "--no-vector-autostart",
+        action="store_true",
+        help="Do not automatically start the vector service",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("setup", help="Install dependencies and bootstrap the env")
@@ -656,6 +683,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    global SKIP_VECTOR_AUTOSTART
+    SKIP_VECTOR_AUTOSTART = args.no_vector_autostart
     builder = create_context_builder()
     setattr(args, "builder", builder)
 
