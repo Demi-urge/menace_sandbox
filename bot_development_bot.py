@@ -309,6 +309,10 @@ class BotDevelopmentBot:
             attempts=self.config.send_prompt_attempts,
             delay=self.config.send_prompt_retry_delay,
         )
+        self.generation_retry = RetryStrategy(
+            attempts=self.config.generation_attempts,
+            delay=self.config.generation_retry_delay,
+        )
         self.prompt_templates_version = 1
         try:
             with PROMPT_TEMPLATES_PATH.open() as fh:
@@ -912,7 +916,7 @@ class BotDevelopmentBot:
         Parameters
         ----------
         model:
-            Ignored; kept for backward compatibility.
+            Optional model identifier for internal generation.
         messages:
             Chat history where the final user message is used as the prompt for
             :meth:`SelfCodingEngine.generate_helper`.
@@ -924,8 +928,14 @@ class BotDevelopmentBot:
                 prompt = message.get("content", "")
                 break
 
+        def _call() -> Any:
+            result = self.self_coding_engine.generate_helper(prompt)
+            if not result:
+                raise RuntimeError("empty response")
+            return result
+
         try:
-            return self.self_coding_engine.generate_helper(prompt)
+            return self.generation_retry.run(_call, logger=self.logger)
         except Exception as exc:
             msg = f"helper generation failed: {exc}"
             self.errors.append(msg)
@@ -936,9 +946,11 @@ class BotDevelopmentBot:
             return ""
 
     def _internal_generation_fallback(self, prompt: str) -> str:
-        """Generate code using internal Codex API as a fallback."""
+        """Generate code using the internal Codex API as a fallback."""
 
-        result = self._call_codex_api("", [{"role": "user", "content": prompt}])
+        result = self._call_codex_api(
+            self.config.default_model, [{"role": "user", "content": prompt}]
+        )
         return result if isinstance(result, str) else str(result)
 
     def _send_prompt(self, base: str, prompt: str, name: str) -> tuple[bool, str]:
@@ -1297,4 +1309,4 @@ class BotDevelopmentBot:
         return files
 
 
-__all__ = ["BotSpec", "BotDevelopmentBot"]
+__all__ = ["BotSpec", "BotDevelopmentBot", "RetryStrategy"]

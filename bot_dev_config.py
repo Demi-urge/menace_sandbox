@@ -49,6 +49,9 @@ class BotDevConfig:
     file_write_retry_delay: float = float(os.getenv("FILE_WRITE_RETRY_DELAY", "0.5"))
     send_prompt_attempts: int = int(os.getenv("SEND_PROMPT_ATTEMPTS", "3"))
     send_prompt_retry_delay: float = float(os.getenv("SEND_PROMPT_RETRY_DELAY", "1.0"))
+    generation_attempts: int = int(os.getenv("GENERATION_ATTEMPTS", "3"))
+    generation_retry_delay: float = float(os.getenv("GENERATION_RETRY_DELAY", "1.0"))
+    default_model: str = os.getenv("DEFAULT_MODEL", "internal-codex")
     visual_agent_poll_interval: float = float(os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5"))
 
     def validate(self) -> None:
