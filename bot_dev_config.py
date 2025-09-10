@@ -56,7 +56,6 @@ class BotDevConfig:
 
     def validate(self) -> None:
         """Warn if important settings are missing."""
-        if self.concurrency_workers < 1:
-            self.concurrency_workers = 1
+        self.concurrency_workers = max(1, self.concurrency_workers)
         if not self.es_index:
             self.es_index = "patterns"
