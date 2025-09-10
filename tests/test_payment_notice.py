@@ -270,3 +270,79 @@ def test_call_codex_api_no_user_message_raises(monkeypatch):
         )
 
     assert escalated["level"] == "warning"
+
+
+def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog):
+    calls: dict[str, int] = {"n": 0}
+    escalated: dict[str, str] = {}
+
+    def fake_generate(_desc: str) -> str:
+        calls["n"] += 1
+        raise RuntimeError("boom")
+
+    def fake_escalate(msg: str, level: str = "error") -> None:
+        escalated["msg"] = msg
+        escalated["level"] = level
+
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "RAISE_ERRORS", False)
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=fake_escalate,
+        errors=[],
+        engine_retry=RetryStrategy(attempts=2, delay=0),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = BotDevelopmentBot._call_codex_api(
+            dummy,
+            [{"role": "user", "content": "hi"}],
+        )
+
+    assert calls["n"] == 2
+    assert result == {"error": "engine request failed: boom"}
+    assert escalated["msg"] == "engine request failed: boom"
+    assert escalated["level"] == "error"
+    assert dummy.errors == ["engine request failed: boom"]
+    assert "retry 1/2 after error: boom" in caplog.text
+
+
+def test_call_codex_api_engine_failure_raises(monkeypatch):
+    calls: dict[str, int] = {"n": 0}
+    escalated: dict[str, str] = {}
+
+    def fake_generate(_desc: str) -> str:
+        calls["n"] += 1
+        raise RuntimeError("boom")
+
+    def fake_escalate(msg: str, level: str = "error") -> None:
+        escalated["msg"] = msg
+        escalated["level"] = level
+
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "RAISE_ERRORS", True)
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=fake_escalate,
+        errors=[],
+        engine_retry=RetryStrategy(attempts=2, delay=0),
+    )
+
+    with pytest.raises(RuntimeError):
+        BotDevelopmentBot._call_codex_api(
+            dummy,
+            [{"role": "user", "content": "hi"}],
+        )
+
+    assert calls["n"] == 2
+    assert escalated["msg"] == "engine request failed: boom"
+    assert escalated["level"] == "error"
+    assert dummy.errors == ["engine request failed: boom"]
