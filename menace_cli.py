@@ -44,19 +44,80 @@ search_patches_by_vector = None  # type: ignore
 search_patches_by_license = None  # type: ignore
 
 
-def _vector_service_available() -> bool:
-    """Return ``True`` if the vector service responds to ``/health``."""
+def _ping_vector_service() -> tuple[bool, dict]:
+    """Ping the vector service ``/status`` endpoint.
+
+    Returns a tuple ``(ok, details)`` where ``ok`` indicates whether the
+    service responded successfully and ``details`` contains diagnostic
+    information useful for logging or automated error handling.
+    """
     import urllib.request
 
     base = os.environ.get("VECTOR_SERVICE_URL")
     if not base:
-        return True
-    url = f"{base.rstrip('/')}/health"
+        return True, {"detail": "VECTOR_SERVICE_URL not set"}
+    url = f"{base.rstrip('/')}/status"
     try:
-        with urllib.request.urlopen(url, timeout=2):
-            return True
-    except Exception:
-        return False
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            body = resp.read().decode("utf-8", "replace")
+            try:
+                payload = json.loads(body)
+            except Exception:
+                payload = body
+            return True, {"status_code": resp.status, "body": payload}
+    except Exception as exc:  # pragma: no cover - best effort diagnostics
+        return False, {"error": str(exc), "url": url}
+
+
+def _start_vector_service() -> tuple[bool, str]:
+    """Attempt to start ``vector_database_service`` in a background process."""
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "vector_service.vector_database_service"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True, ""
+    except Exception as exc:  # pragma: no cover - best effort
+        return False, str(exc)
+
+
+def _vector_service_available() -> tuple[bool, dict]:
+    """Ensure the vector service is reachable and return diagnostics."""
+    ok, info = _ping_vector_service()
+    if ok:
+        return True, info
+    started, err = _start_vector_service()
+    info["start_attempted"] = True
+    if not started:
+        info["start_error"] = err
+        return False, info
+    # Give the service a moment to start then retry
+    import time
+
+    time.sleep(1)
+    ok, retry = _ping_vector_service()
+    if ok:
+        return True, retry
+    info.update(retry)
+    return False, info
+
+
+def _require_vector_service() -> bool:
+    """Ensure the vector service is available, logging diagnostics on failure."""
+    ok, info = _vector_service_available()
+    if ok:
+        return True
+    print(
+        json.dumps({"code": "VECTOR_SERVICE_UNAVAILABLE", "diagnostics": info}),
+        file=sys.stderr,
+    )
+    print(
+        "Run `python -m vector_service.vector_database_service` to start the service.",
+        file=sys.stderr,
+    )
+    return False
 
 
 def _normalise_hits(hits, origin=None):
@@ -138,8 +199,7 @@ def handle_new_vector(args: argparse.Namespace) -> int:
 
 def handle_patch(args: argparse.Namespace) -> int:
     """Handle ``patch`` command."""
-    if not _vector_service_available():
-        print("vector service unavailable", file=sys.stderr)
+    if not _require_vector_service():
         return 1
     from vector_service.retriever import Retriever
     import quick_fix_engine
@@ -190,8 +250,7 @@ def handle_patch(args: argparse.Namespace) -> int:
 
 def handle_retrieve(args: argparse.Namespace) -> int:
     """Handle ``retrieve`` command."""
-    if not _vector_service_available():
-        print("vector service unavailable", file=sys.stderr)
+    if not _require_vector_service():
         return 1
     try:
         from vector_service.retriever import Retriever, FallbackResult, fts_search
@@ -259,8 +318,7 @@ def handle_retrieve(args: argparse.Namespace) -> int:
 
 def handle_embed(args: argparse.Namespace) -> int:
     """Handle ``embed`` command."""
-    if not _vector_service_available():
-        print("vector service unavailable", file=sys.stderr)
+    if not _require_vector_service():
         return 1
     import logging
     from typing import IO
@@ -630,8 +688,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.patches_cmd == "search":
             if args.vector:
-                if not _vector_service_available():
-                    print("vector service unavailable", file=sys.stderr)
+                if not _require_vector_service():
                     return 1
                 rows = search_patches_by_vector(args.vector, patch_db=db)
                 patches = [
