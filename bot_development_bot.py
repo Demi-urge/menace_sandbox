@@ -929,9 +929,7 @@ class BotDevelopmentBot:
                 self._escalate(f"visual token refresh failed: {output}")
         return False
 
-    def _call_codex_api(
-        self, model: str, messages: list[dict[str, str]]
-    ) -> Any:
+    def _call_codex_api(self, messages: list[dict[str, str]]) -> Any:
         """Produce helper code via :class:`SelfCodingEngine`.
 
         The final user message in ``messages`` is treated as a description of the
