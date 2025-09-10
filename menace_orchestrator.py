@@ -46,82 +46,9 @@ from .autoscaler import Autoscaler
 from .trend_predictor import TrendPredictor
 from .identity_seeder import seed_identity
 from .session_vault import SessionVault
-import requests
 from .cognition_layer import build_cognitive_context, log_feedback
 import db_router
 from db_router import DBRouter
-
-
-class _RemoteVisualAgent:
-    """Minimal client polling the remote visual agent service."""
-
-    def __init__(
-        self,
-        url: str | None = None,
-        token: str | None = None,
-        poll_interval: float | None = None,
-    ) -> None:
-        default_url = os.getenv("VISUAL_DESKTOP_URL", "http://127.0.0.1:8001")
-        self.url = (url or default_url).rstrip("/")
-        self.token = token or os.getenv("VISUAL_AGENT_TOKEN", "")
-        self.poll_interval = poll_interval or float(
-            os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5")
-        )
-        self.logger = logging.getLogger("RemoteVisualAgent")
-
-    def _poll_status(self, tid: str) -> str:
-        while True:
-            try:
-                resp = requests.get(f"{self.url}/status/{tid}", timeout=10)
-                if resp.status_code == 200:
-                    status = resp.json().get("status", "")
-                    if status not in {"queued", "running"}:
-                        return status
-            except Exception as exc:
-                self.logger.warning("status poll failed for %s: %s", tid, exc)
-            time.sleep(self.poll_interval)
-
-    def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, object]:
-        prompt = "\n".join(m.get("content", "") for m in messages)
-        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
-        try:
-            resp = requests.post(
-                f"{self.url}/run",
-                json={"prompt": prompt, "branch": None},
-                headers=headers,
-                timeout=10,
-            )
-        except Exception as exc:
-            raise RuntimeError(f"visual agent request failed: {exc}") from exc
-
-        if resp.status_code == 202:
-            data = resp.json()
-            tid = data.get("id")
-            status = data.get("status", "")
-            if tid:
-                status = self._poll_status(str(tid))
-            return {"choices": [{"message": {"content": status}}]}
-        if resp.status_code == 409:
-            # wait until idle then retry
-            while True:
-                try:
-                    sresp = requests.get(f"{self.url}/status", timeout=10)
-                    if sresp.status_code == 200 and not sresp.json().get("active", False):
-                        break
-                except Exception:
-                    pass
-                time.sleep(self.poll_interval)
-            return self.ask(messages)
-        raise RuntimeError(f"status {resp.status_code}: {resp.text}")
-
-    def revert(self) -> bool:
-        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
-        try:
-            resp = requests.post(f"{self.url}/revert", headers=headers, timeout=10)
-            return resp.status_code == 202
-        except Exception as exc:
-            self.logger.warning("revert failed: %s", exc)
-            return False
 
 
 class _SimpleScheduler:
@@ -214,7 +141,6 @@ class MenaceOrchestrator:
         context_builder: ContextBuilder,
         on_restart: Callable[[str], None] | None = None,
         auto_bootstrap: bool | None = None,
-        visual_agent_client: object | None = None,
     ) -> None:
         menace_id = menace_id or uuid.uuid4().hex
         self.menace_id = menace_id
@@ -298,7 +224,6 @@ class MenaceOrchestrator:
         self.last_plan: str | None = None
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
-        self.visual_client = visual_agent_client or _RemoteVisualAgent()
 
     # ------------------------------------------------------------------
     def status_summary(self) -> Dict[str, object]:
@@ -349,8 +274,6 @@ class MenaceOrchestrator:
 
     def register_engine(self, name: str, engine: SelfCodingEngine) -> None:
         """Associate a :class:`SelfCodingEngine` with an oversight node."""
-        if getattr(engine, "llm_client", None) is None and self.visual_client:
-            engine.llm_client = self.visual_client
         self.engines[name] = engine
 
     # ------------------------------------------------------------------
