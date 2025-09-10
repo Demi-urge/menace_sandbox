@@ -60,6 +60,7 @@ class BotDevConfig:
     engine_model: str = os.getenv(
         "ENGINE_MODEL", os.getenv("DEFAULT_MODEL", "internal-codex")
     )
+    max_prompt_log_chars: int = int(os.getenv("MAX_PROMPT_LOG_CHARS", "200"))
     visual_agent_poll_interval: float = float(os.getenv("VISUAL_AGENT_POLL_INTERVAL", "5"))
 
     def validate(self) -> None:

@@ -194,6 +194,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
         _escalate=lambda msg, level="error": None,
         errors=[],
         engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     result = BotDevelopmentBot._call_codex_api(
@@ -233,6 +234,7 @@ def test_call_codex_api_aggregates_multi_messages(monkeypatch):
         _escalate=lambda msg, level="error": None,
         errors=[],
         engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     BotDevelopmentBot._call_codex_api(
@@ -279,6 +281,7 @@ def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
         _escalate=fake_escalate,
         errors=[],
         engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     with caplog.at_level(logging.WARNING):
@@ -324,6 +327,7 @@ def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
         _escalate=fake_escalate,
         errors=[],
         engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     with pytest.raises(ValueError):
@@ -367,6 +371,7 @@ def test_call_codex_api_empty_messages_escalates(monkeypatch, caplog):
         _escalate=fake_escalate,
         errors=[],
         engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     with caplog.at_level(logging.WARNING):
@@ -417,6 +422,7 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
         _escalate=fake_escalate,
         errors=[],
         engine_retry=RetryStrategy(attempts=2, delay=0),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     with caplog.at_level(logging.WARNING):
@@ -450,6 +456,7 @@ def test_call_codex_api_logs_prompt_and_handles_exception(monkeypatch, caplog):
         _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
         errors=[],
         engine_retry=RetryStrategy(attempts=1, delay=0),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     prompt = "hello " * 50
@@ -464,6 +471,57 @@ def test_call_codex_api_logs_prompt_and_handles_exception(monkeypatch, caplog):
     assert result == {"error": "engine request failed: kaboom"}
     assert escalated["msg"] == "engine request failed: kaboom"
     assert dummy.errors == ["engine request failed: kaboom"]
+
+
+def test_call_codex_api_scrubs_secrets_from_prompt(monkeypatch, caplog):
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", lambda _: "ok")
+    monkeypatch.setattr(RetryStrategy, "run", lambda self, func, logger=None: func())
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": None,
+        errors=[],
+        engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
+    )
+
+    prompt = "api_key=SECRET token=VALUE"
+    with caplog.at_level(logging.INFO):
+        BotDevelopmentBot._call_codex_api(
+            dummy, [{"role": "user", "content": prompt}]
+        )
+
+    assert "[REDACTED]" in caplog.text
+    assert "SECRET" not in caplog.text
+    assert "VALUE" not in caplog.text
+
+
+def test_call_codex_api_respects_log_limit(monkeypatch, caplog):
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", lambda _: "ok")
+    monkeypatch.setattr(RetryStrategy, "run", lambda self, func, logger=None: func())
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": None,
+        errors=[],
+        engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=10),
+    )
+
+    prompt = "x" * 50
+    with caplog.at_level(logging.INFO):
+        BotDevelopmentBot._call_codex_api(
+            dummy, [{"role": "user", "content": prompt}]
+        )
+
+    assert "user: " + "x" * 4 in caplog.text
+    assert "user: " + "x" * 5 not in caplog.text
 
 
 def test_call_codex_api_engine_failure_raises(monkeypatch):
@@ -503,6 +561,7 @@ def test_call_codex_api_engine_failure_raises(monkeypatch):
         _escalate=fake_escalate,
         errors=[],
         engine_retry=RetryStrategy(attempts=2, delay=0),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     with pytest.raises(RuntimeError):
@@ -542,6 +601,7 @@ def test_call_codex_api_retries_then_succeeds(monkeypatch):
         _escalate=fake_escalate,
         errors=[],
         engine_retry=RetryStrategy(attempts=2, delay=0),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     result = BotDevelopmentBot._call_codex_api(
@@ -581,6 +641,7 @@ def test_call_codex_api_missing_user_message(monkeypatch):
         _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
         errors=[],
         engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     fake_retry = FakeRetry()
@@ -622,6 +683,7 @@ def test_call_codex_api_generate_helper_exception(monkeypatch):
         _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
         errors=[],
         engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     monkeypatch.setattr(dummy, "engine_retry", fake_retry)
@@ -670,6 +732,7 @@ def test_call_codex_api_retry_succeeds(monkeypatch):
         _escalate=lambda msg, level="error": None,
         errors=[],
         engine_retry=RetryStrategy(),
+        config=types.SimpleNamespace(max_prompt_log_chars=200),
     )
 
     monkeypatch.setattr(dummy, "engine_retry", fake_retry)
