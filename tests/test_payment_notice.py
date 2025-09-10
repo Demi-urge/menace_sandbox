@@ -154,7 +154,7 @@ sys.modules.setdefault(
 
 from menace_sandbox.enhancement_bot import EnhancementBot
 from menace_sandbox.chatgpt_idea_bot import ChatGPTClient
-from menace_sandbox.bot_development_bot import BotDevelopmentBot
+from menace_sandbox.bot_development_bot import BotDevelopmentBot, RetryStrategy
 
 
 def test_payment_router_notice_mentions_central_routing_and_logging():
@@ -250,6 +250,7 @@ def test_bot_development_bot_calls_engine(monkeypatch):
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
+        generation_retry=RetryStrategy(),
     )
 
     result = BotDevelopmentBot._call_codex_api(
