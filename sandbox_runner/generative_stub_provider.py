@@ -689,7 +689,11 @@ class ModelLoadError(RuntimeError):
 
 
 async def _load_openai_generator() -> Any:
-    """Load and return the OpenAI client if available."""
+    """Load and return the OpenAI client if available.
+
+    SelfCodingEngine now performs generation locally; this loader is kept for
+    legacy paths that still rely on OpenAI.
+    """
 
     if not _feature_enabled("SANDBOX_ENABLE_OPENAI"):
         raise ModelLoadError(

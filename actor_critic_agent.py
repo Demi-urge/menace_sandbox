@@ -252,7 +252,7 @@ class ActorCriticAgent:
         Parameters
         ----------
         env:
-            Environment exposing ``reset`` and ``step`` similar to OpenAI Gym.
+            Environment exposing ``reset`` and ``step`` similar to the classic Gym API.
         episodes:
             Number of evaluation episodes.
 

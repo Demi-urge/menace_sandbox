@@ -105,13 +105,15 @@ for metric, hint in fixes:
     create_issue(title=f"Improve {metric}", body=hint)
 ```
 
-Using Codex to draft a patch can reuse the same hints:
+Using SelfCodingEngine to draft a patch can reuse the same hints:
 
 ```python
 prompt = """Optimize the following aspect:
 {metric}: {hint}
 """
-code = openai.Completion.create(model="codex", prompt=prompt.format(metric=metric, hint=hint))
+from self_coding_engine import SelfCodingEngine
+engine = SelfCodingEngine()
+code = engine.generate_helper(prompt.format(metric=metric, hint=hint))
 ```
 
 This feedback loop ensures that low-scoring metrics quickly result in concrete

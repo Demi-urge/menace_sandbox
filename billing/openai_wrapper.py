@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-"""Lightweight OpenAI wrapper that injects the payment notice.
+"""Legacy wrapper for OpenAI chat completions.
 
-This module exposes :func:`chat_completion_create` which mirrors
-``openai.ChatCompletion.create`` but automatically prepends
-:data:`~stripe_policy.PAYMENT_ROUTER_NOTICE` to the ``messages`` list and
-appends compressed retrieval context.  The wrapper requires a
-``ContextBuilder`` instance and will raise a descriptive error when one is
-not supplied.  A custom ``openai_client`` can be provided for easy testing.
+SelfCodingEngine now handles all code generation locally, removing the need
+for remote payment notices. This module still exposes
+:func:`chat_completion_create`, which mirrors
+``openai.ChatCompletion.create`` for components that have not yet migrated.
+It prepends :data:`~stripe_policy.PAYMENT_ROUTER_NOTICE` to the ``messages``
+list and appends compressed retrieval context. A ``ContextBuilder``
+instance is required and a custom ``openai_client`` can be supplied for
+testing.
 """
 
 import json
@@ -33,7 +35,11 @@ def chat_completion_create(
     context_builder: ContextBuilder,
     **kwargs: Any,
 ) -> Any:
-    """Proxy ``openai.ChatCompletion.create`` with payment notice injection."""
+    """Proxy ``openai.ChatCompletion.create`` for legacy callers.
+
+    SelfCodingEngine performs generation locally, but this helper remains for
+    backward compatibility.
+    """
 
     if context_builder is None:
         raise TypeError("context_builder is required for chat_completion_create")

@@ -114,7 +114,10 @@ IDEA_DB_PATH = Path(resolve_path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA
 
 @dataclass
 class ChatGPTClient:
-    """Simple wrapper for the OpenAI chat completion API with offline fallback."""
+    """Wrapper for SelfCodingEngine-driven chat completion with offline fallback.
+
+    The former OpenAI-based approach is retained for legacy compatibility.
+    """
 
     api_key: str = field(default_factory=lambda: os.environ.get("OPENAI_API_KEY", ""))
     model: str = field(default_factory=lambda: os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo"))

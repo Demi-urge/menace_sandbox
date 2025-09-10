@@ -390,7 +390,11 @@ __all__ = [
 
 
 class OpenAIProvider(LLMClient):
-    """Minimal OpenAI Chat Completions client with retry/backoff."""
+    """Legacy OpenAI Chat Completions client with retry/backoff.
+
+    SelfCodingEngine now performs code generation locally, but this provider
+    remains for components that still interact with the OpenAI service.
+    """
 
     api_url = "https://api.openai.com/v1/chat/completions"
 

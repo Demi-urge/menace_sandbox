@@ -23,7 +23,11 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 def _online_transcribe(audio_path: str, api_key: str) -> Optional[str]:
-    """Attempt remote transcription using OpenAI's Whisper API."""
+    """Attempt remote transcription using OpenAI's Whisper API.
+
+    SelfCodingEngine handles code generation locally; this remote call is a
+    fallback for transcription when local resources are unavailable.
+    """
     if requests is None:
         return None
     try:

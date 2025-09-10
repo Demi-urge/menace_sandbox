@@ -15,7 +15,7 @@ Configuration sources (in order of precedence):
   ``enabled`` and ``threshold`` keys.
 
 This lightweight module avoids importing heavy dependencies so it can be used
-by any component that prepares prompts for Codex or OpenAI APIs.
+by any component that prepares prompts for the SelfCodingEngine's local APIs.
 """
 
 import os
