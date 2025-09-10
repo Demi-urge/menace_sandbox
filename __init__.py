@@ -21,6 +21,7 @@ sys.modules.setdefault(
         resolve_dir=lambda p: Path(p),
         resolve_module_path=lambda m: Path(m.replace(".", "/") + ".py"),
         path_for_prompt=lambda p: Path(p).as_posix(),
+        get_project_root=lambda: Path("."),
     ),
 )
 
@@ -34,8 +35,12 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
 from .truth_adapter import TruthAdapter
 from .foresight_tracker import ForesightTracker
 from .upgrade_forecaster import UpgradeForecaster
-from .workflow_synthesizer import WorkflowSynthesizer
-from .workflow_synergy_comparator import WorkflowSynergyComparator
+try:  # pragma: no cover - optional heavy dependency
+    from .workflow_synthesizer import WorkflowSynthesizer
+    from .workflow_synergy_comparator import WorkflowSynergyComparator
+except Exception:  # pragma: no cover - degrade gracefully for tests
+    WorkflowSynthesizer = None  # type: ignore
+    WorkflowSynergyComparator = None  # type: ignore
 from .llm_interface import LLMClient, LLMResult, Prompt
 
 from . import metrics_exporter

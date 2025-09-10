@@ -57,6 +57,11 @@ neo4j_stub.GraphDatabase = type(
 )
 sys.modules.setdefault("neo4j", neo4j_stub)
 
+# Stub unified_event_bus to avoid heavy dependencies
+bus_stub = types.ModuleType("unified_event_bus")
+bus_stub.UnifiedEventBus = lambda *a, **k: None
+sys.modules.setdefault("unified_event_bus", bus_stub)
+
 # Provide a lightweight dynamic_path_router to satisfy imports during tests
 sys.modules.setdefault(
     "dynamic_path_router",
@@ -64,6 +69,7 @@ sys.modules.setdefault(
         resolve_path=lambda p: Path(p),
         resolve_dir=lambda p: Path(p),
         path_for_prompt=lambda p: Path(p).as_posix(),
+        get_project_root=lambda: Path(")."),
     ),
 )
 
