@@ -289,8 +289,9 @@ def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
 
     assert result is None
     assert escalated["level"] == "warning"
-    assert "no user message found" in escalated["msg"]
-    assert "no user message found" in caplog.text
+    assert "no user prompt provided" in escalated["msg"]
+    assert "no user prompt provided" in caplog.text
+    assert dummy.errors == ["no user prompt provided"]
     assert run_called is False
 
 
@@ -332,6 +333,7 @@ def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
         )
 
     assert escalated["level"] == "warning"
+    assert dummy.errors == ["no user prompt provided"]
     assert run_called is False
 
 
@@ -372,8 +374,9 @@ def test_call_codex_api_empty_messages_escalates(monkeypatch, caplog):
 
     assert result is None
     assert escalated["level"] == "warning"
-    assert "no user message found" in escalated["msg"]
-    assert "no user message found" in caplog.text
+    assert "no user prompt provided" in escalated["msg"]
+    assert "no user prompt provided" in caplog.text
+    assert dummy.errors == ["no user prompt provided"]
     assert run_called is False
 
 

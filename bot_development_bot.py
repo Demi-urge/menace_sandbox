@@ -934,8 +934,8 @@ class BotDevelopmentBot:
 
         All ``system`` and ``user`` messages are concatenated with their role
         tags to form a single prompt for
-        :meth:`SelfCodingEngine.generate_helper`.  If no user message is
-        present, the error is escalated and the method returns ``None`` or
+        :meth:`SelfCodingEngine.generate_helper`.  If no user prompt is
+        provided, the error is escalated and the method returns ``None`` or
         raises :class:`ValueError` when :data:`RAISE_ERRORS` is true.
         """
 
@@ -947,16 +947,17 @@ class BotDevelopmentBot:
                 prompt_parts.append(f"{role}: {message.get('content', '')}")
                 if role == "user":
                     user_found = True
-        prompt = "\n".join(prompt_parts)
 
         if not user_found:
-            msg = "no user message found"
+            msg = "no user prompt provided"
             self.logger.warning(msg)
             self._escalate(msg, level="warning")
             self.errors.append(msg)
             if RAISE_ERRORS:
                 raise ValueError(msg)
             return None
+
+        prompt = "\n".join(prompt_parts)
 
         if not prompt.strip():
             msg = "empty prompt"
