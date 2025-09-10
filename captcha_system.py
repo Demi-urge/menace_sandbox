@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Captcha handling utilities for Menace."""
 
 import asyncio
@@ -22,15 +20,6 @@ try:  # optional
 except Exception:  # pragma: no cover - optional
     redis = None  # type: ignore
 
-try:  # optional OCR
-    from PIL import Image
-    import pytesseract  # type: ignore
-except Exception:  # pragma: no cover - optional
-    Image = None  # type: ignore
-    pytesseract = None  # type: ignore
-
-from .. import vision_utils
-
 try:
     from bs4 import BeautifulSoup  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -51,7 +40,7 @@ def _valid_token(token: str) -> bool:
 
 # ---------------------------------------------------------------------------
 class CaptchaDetector:
-    """Detect CAPTCHA challenges using DOM patterns or OCR."""
+    """Detect CAPTCHA challenges using DOM patterns."""
 
     def __init__(self, patterns: Optional[list[str]] = None) -> None:
         self.patterns = [re.compile(p, re.I) for p in (patterns or ["captcha"])]
@@ -72,17 +61,6 @@ class CaptchaDetector:
                 return True
         if soup.find("iframe", src=re.compile("(recaptcha|hcaptcha)", re.I)):
             return True
-
-        # OCR on screenshot
-        if screenshot_path:
-            try:
-                txt = vision_utils.detect_text(screenshot_path)
-                if txt:
-                    for pat in self.patterns:
-                        if pat.search(txt):
-                            return True
-            except Exception as exc:  # pragma: no cover - I/O failures
-                logging.error("screenshot OCR failed: %s", exc)
         return False
 
 
@@ -118,7 +96,6 @@ class CaptchaManager:
         self.local_state: dict[str, dict[str, str]] = {}
         self.subscribers: List[asyncio.Queue] = []
         key = anticaptcha_api_key or os.getenv("ANTICAPTCHA_API_KEY")
-        # Instantiate a solver even without an API key so local OCR can be used.
         self.anticaptcha_client: AntiCaptchaClient | None = AntiCaptchaClient(key)
         cfg = config or {}
         self.config = {
@@ -208,12 +185,12 @@ class CaptchaManager:
             self.metrics["total_captchas_solved"].inc()
 
     def _solve_snapshot(self, key_base: str) -> str | None:
-        """Attempt to solve the CAPTCHA snapshot remotely then locally.
+        """Attempt to solve the CAPTCHA snapshot using a remote solver.
 
-        Remote solving may be retried a few times before falling back to OCR
-        because transient network issues are fairly common. The number of
-        attempts and initial backoff delay can be tweaked via the environment
-        variables ``CAPTCHA_REMOTE_ATTEMPTS`` and ``CAPTCHA_REMOTE_BACKOFF``.
+        Remote solving may be retried a few times because transient network
+        issues are fairly common. The number of attempts and initial backoff
+        delay can be tweaked via the environment variables
+        ``CAPTCHA_REMOTE_ATTEMPTS`` and ``CAPTCHA_REMOTE_BACKOFF``.
         """
         if not self.anticaptcha_client:
             return None
@@ -252,26 +229,6 @@ class CaptchaManager:
         else:
             if "remote_failures" in self.metrics:
                 self.metrics["remote_failures"].inc()
-
-        # Fallback to local OCR if remote didn't produce a token
-        if not token:
-            try:
-                from PIL import Image  # type: ignore
-                import pytesseract  # type: ignore
-
-                img = Image.open(path)
-                if hasattr(self.anticaptcha_client, "_preprocess"):
-                    img = self.anticaptcha_client._preprocess(img)
-                txt = pytesseract.image_to_string(
-                    img,
-                    lang=getattr(self.anticaptcha_client, "language", "eng"),
-                )
-                if txt and txt.strip():
-                    guess = txt.strip()
-                    if _valid_token(guess):
-                        token = guess
-            except Exception as exc:  # pragma: no cover - optional path
-                logging.error("local OCR failed: %s", exc)
 
         return token
 

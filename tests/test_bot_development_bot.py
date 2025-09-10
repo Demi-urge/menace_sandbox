@@ -233,11 +233,10 @@ def test_prompt_includes_function_guidance(tmp_path):
     bot = bdb.BotDevelopmentBot(
         repo_base=tmp_path, context_builder=_ctx_builder(), engine=_engine()
     )
-    spec = bdb.BotSpec(name="guide_bot", purpose="demo", functions=["click_target", "ocr_image"])
+    spec = bdb.BotSpec(name="guide_bot", purpose="demo", functions=["click_target"])
     prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert "Function Guidance:" in prompt
     assert "click_target:" in prompt
-    assert "ocr_image:" in prompt
 
 
 def test_prompt_includes_vector_context(tmp_path):

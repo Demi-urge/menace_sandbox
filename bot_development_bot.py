@@ -62,10 +62,6 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 try:  # pragma: no cover - optional dependency
-except Exception:  # pragma: no cover - optional dependency
-    pass
-
-try:  # pragma: no cover - optional dependency
     from .micro_models.tool_predictor import predict_tools  # type: ignore
     from .micro_models.prefix_injector import inject_prefix  # type: ignore
 except Exception:  # pragma: no cover - allow running without predictor
@@ -170,10 +166,6 @@ FUNCTION_IMPLEMENTATION_MAP: Dict[str, str] = {
     "click_target": (
         "Use an automation library to click the given coordinates or selector "
         "and return None"
-    ),
-    "ocr_image": (
-        "Call vision_utils.detect_text on the image path or bytes and return "
-        "the extracted text"
     ),
     "type_text": (
         "Send keyboard input to the active field using an automation library"
