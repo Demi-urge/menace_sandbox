@@ -82,6 +82,7 @@ vector_service.Retriever = None
 vector_service.FallbackResult = list
 vector_service.ErrorResult = Exception
 vector_service.ContextBuilder = _CB
+vector_service.CognitionLayer = object
 vector_service.__path__ = []  # type: ignore[attr-defined]
 vector_service.__spec__ = types.SimpleNamespace(submodule_search_locations=[])  # type: ignore[attr-defined]
 sys.modules.setdefault("vector_service", vector_service)
@@ -159,18 +160,25 @@ def test_prepend_payment_notice_helper():
     assert new_msgs[1]["content"] == "hello"
 
 
-def test_bot_development_bot_calls_engine(monkeypatch):
-    captured = {}
+def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
+    captured: dict[str, str] = {}
+    wrapper_called = False
 
     def fake_generate(desc: str) -> str:
         captured["desc"] = desc
         return "code"
 
+    def fake_wrapper(*a, **k):
+        nonlocal wrapper_called
+        wrapper_called = True
+        return {}
+
     engine = sce_stub.SelfCodingEngine()
     monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(memory_client, "ask_with_memory", fake_wrapper)
 
     dummy = types.SimpleNamespace(
-        self_coding_engine=engine,
+        coding_engine=engine,
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
@@ -188,3 +196,4 @@ def test_bot_development_bot_calls_engine(monkeypatch):
 
     assert captured["desc"] == "hi"
     assert result == "code"
+    assert wrapper_called is False
