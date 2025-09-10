@@ -57,12 +57,17 @@ def _load_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_recovery_manager", srm)
 
     sr_mod = types.ModuleType("sandbox_runner")
+    sr_mod.__path__ = []
     cli_mod = types.ModuleType("sandbox_runner.cli")
     cli_mod.full_autonomous_run = lambda args, **k: None
     sr_mod.cli = cli_mod
     sr_mod._sandbox_main = lambda p, a: None
+    br_mod = types.ModuleType("sandbox_runner.bootstrap")
+    br_mod.bootstrap_environment = lambda s, v: s
+    br_mod._verify_required_dependencies = lambda: None
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_mod)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_mod)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.bootstrap", br_mod)
 
     if "filelock" not in sys.modules:
         fl = types.ModuleType("filelock")
@@ -175,12 +180,10 @@ def test_invalid_synergy_cycles_warns(monkeypatch, caplog):
 def test_main_exits_when_required_env_missing(monkeypatch, tmp_path):
     mod = _load_module(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VISUAL_AGENT_TOKEN", raising=False)
     monkeypatch.delenv("SANDBOX_REPO_PATH", raising=False)
     with pytest.raises(SystemExit) as exc:
         mod.main(["--runs", "0"])
     msg = str(exc.value)
-    assert "VISUAL_AGENT_TOKEN" in msg
     assert "SANDBOX_REPO_PATH" in msg
 
 

@@ -137,6 +137,10 @@ def load_module(monkeypatch=None):
             ps_mod = types.ModuleType("pydantic_settings")
             ps_mod.BaseSettings = BaseSettings
             monkeypatch.setitem(sys.modules, "pydantic_settings", ps_mod)
+        br_mod = types.ModuleType("sandbox_runner.bootstrap")
+        br_mod.bootstrap_environment = lambda s, v: s
+        br_mod._verify_required_dependencies = lambda: None
+        monkeypatch.setitem(sys.modules, "sandbox_runner.bootstrap", br_mod)
     spec.loader.exec_module(mod)
     return mod
 
@@ -234,108 +238,4 @@ def test_autonomous_full_loop(monkeypatch, tmp_path):
     assert run_calls
     assert not popen_calls
 
-
-def test_visual_agent_monitor_restart(monkeypatch, tmp_path):
-    _setup_mm_stubs(monkeypatch)
-
-    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
-    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
-    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=_Audit)
-    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
-    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
-    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
-    _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
-
-    eg_mod = types.ModuleType("menace.environment_generator")
-    eg_mod.generate_presets = lambda n=None: [{"CPU_LIMIT": "1"}]
-    eg_mod.adapt_presets = lambda t, p: p
-    monkeypatch.setitem(sys.modules, "menace.environment_generator", eg_mod)
-
-    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
-
-    sr_stub = types.ModuleType("sandbox_runner")
-    cli_stub = types.ModuleType("sandbox_runner.cli")
-    cli_stub.full_autonomous_run = lambda args, **k: None
-    cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
-    cli_stub._ema = lambda seq: (0.0, [])
-    cli_stub._adaptive_threshold = lambda *a, **k: 0.0
-    cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
-    cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
-    sr_stub._sandbox_main = lambda p, a: None
-    sr_stub.cli = cli_stub
-    sys.modules["sandbox_runner"] = sr_stub
-    sys.modules["sandbox_runner.cli"] = cli_stub
-
-    class DummyProcess:
-        def poll(self):
-            return None
-        @property
-        def returncode(self):
-            return 0
-
-    class DummyManager:
-        def __init__(self):
-            self.process = DummyProcess()
-            self.start_calls = 0
-            self.restart_calls = 0
-        def start(self, token):
-            self.start_calls += 1
-            return self.process
-        def restart_with_token(self, token):
-            self.restart_calls += 1
-            return self.process
-        def shutdown(self, timeout=5.0):
-            pass
-
-    mgr = DummyManager()
-    vamod = types.ModuleType("visual_agent_manager")
-    vamod.VisualAgentManager = lambda *a, **k: mgr
-    monkeypatch.setitem(sys.modules, "visual_agent_manager", vamod)
-
-    mod = load_module(monkeypatch)
-    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
-    class DummySettings:
-        def __init__(self) -> None:
-            self.sandbox_data_dir = str(tmp_path)
-            self.sandbox_env_presets = None
-            self.auto_dashboard_port = None
-            self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
-            self.roi_cycles = None
-            self.synergy_cycles = None
-            self.roi_threshold = None
-            self.synergy_threshold = None
-            self.roi_confidence = None
-            self.synergy_confidence = None
-            self.synergy_threshold_window = None
-            self.synergy_threshold_weight = None
-            self.synergy_ma_window = None
-            self.synergy_stationarity_confidence = None
-            self.synergy_std_threshold = None
-            self.synergy_variance_confidence = None
-
-    monkeypatch.setattr(mod, "SandboxSettings", DummySettings)
-    monkeypatch.setattr(mod.sandbox_runner.cli, "adaptive_synergy_convergence", lambda *a, **k: (True, 0.0, {}))
-    monkeypatch.setattr(mod, "_visual_agent_running", lambda urls: False)
-    monkeypatch.setattr(mod.time, "sleep", lambda *_a, **_k: None)
-
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "1")
-    monkeypatch.setenv("VISUAL_AGENT_MONITOR_INTERVAL", "0.01")
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
-    monkeypatch.chdir(tmp_path)
-
-    mod.main([
-        "--max-iterations",
-        "1",
-        "--runs",
-        "1",
-        "--preset-count",
-        "1",
-        "--sandbox-data-dir",
-        str(tmp_path),
-    ])
-
-    assert mgr.start_calls == 1
-    assert mgr.restart_calls >= 1
 

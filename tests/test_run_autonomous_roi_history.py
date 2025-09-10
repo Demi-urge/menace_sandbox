@@ -377,7 +377,6 @@ def test_threshold_gauges_updated(monkeypatch, tmp_path):
     mod = _load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "validate_presets", lambda p: p)
-    monkeypatch.setattr(mod, "_visual_agent_running", lambda u: True)
     cli_stub = mod.sandbox_runner.cli
     cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
     cli_stub._ema = lambda seq: (0.0, 0.0)

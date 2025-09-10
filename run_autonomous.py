@@ -25,7 +25,6 @@ import sys
 import threading
 import _thread
 import time
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List
@@ -45,7 +44,6 @@ logger = logging.getLogger(__name__)
 settings = SandboxSettings()
 settings = bootstrap_environment(settings, _verify_required_dependencies)
 os.environ["SANDBOX_CENTRAL_LOGGING"] = "1" if settings.sandbox_central_logging else "0"
-AGENT_MONITOR_INTERVAL = settings.visual_agent_monitor_interval
 LOCAL_KNOWLEDGE_REFRESH_INTERVAL = settings.local_knowledge_refresh_interval
 _LKM_REFRESH_STOP = threading.Event()
 _LKM_REFRESH_THREAD: threading.Thread | None = None
@@ -87,50 +85,6 @@ if "menace" not in sys.modules:
 # directory containing this file.  ``SANDBOX_REPO_PATH`` is required in most
 # environments but this fallback keeps unit tests and ad-hoc scripts working.
 REPO_ROOT = resolve_path(settings.sandbox_repo_path or ".")
-
-
-def _visual_agent_running(urls: str) -> bool:
-    """Return ``True`` if any visual agent endpoint responds to ``/health``.
-
-    ``urls`` may contain multiple base URLs separated by semicolons. Each
-    entry can optionally specify a custom timeout using ``","`` as the
-    separator (``"http://host:port,5"`` sets a five second timeout). The
-    function returns as soon as one endpoint reports a healthy status. It
-    logs the result for each endpoint to aid troubleshooting.
-    """
-
-    try:
-        import requests  # type: ignore
-    except Exception:
-        logger.exception("failed to import requests module for visual agent check")
-        return False
-
-    for entry in (u.strip() for u in urls.split(";")):
-        if not entry:
-            continue
-
-        base, timeout = entry, 3.0
-        if "," in entry:
-            base, to_str = entry.split(",", 1)
-            try:
-                timeout = float(to_str)
-            except Exception:
-                logger.warning(
-                    "invalid timeout '%s' for visual agent URL '%s'", to_str, base
-                )
-
-        try:
-            resp = requests.get(f"{base}/health", timeout=timeout)
-            if resp.status_code == 200:
-                logger.info("visual agent healthy at %s", base)
-                return True
-            logger.warning(
-                "visual agent unhealthy at %s: status %s", base, resp.status_code
-            )
-        except Exception as exc:
-            logger.warning("visual agent check failed for %s: %s", base, exc)
-
-    return False
 
 
 spec = importlib.util.spec_from_file_location("menace", resolve_path("__init__.py"))
@@ -276,105 +230,6 @@ def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> N
             _LKM_REFRESH_STOP.clear()
 
         cleanup_funcs.append(_stop)
-
-
-class VisualAgentMonitor:
-    """Background monitor that restarts the visual agent if it stops responding."""
-
-    def __init__(
-        self, manager, urls: str, *, interval: float = AGENT_MONITOR_INTERVAL
-    ) -> None:
-        self.manager = manager
-        self.urls = urls
-        self.interval = float(interval)
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self.run_idx = 0
-
-    def start(self) -> None:
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        self._thread.is_alive() and self._thread.join(timeout=1.0)
-        try:
-            self.manager.shutdown()
-        except Exception:
-            logger.exception("failed to shutdown visual agent")
-
-    def _loop(self) -> None:
-        base = self.urls.split(";")[0]
-        queue_path = (
-            Path(resolve_path(settings.sandbox_data_dir)) / "visual_agent_queue.db"
-        )
-        while not self._stop.is_set():
-            running = _visual_agent_running(self.urls)
-            tok = settings.visual_agent_token
-            if not running:
-                try:
-                    self.manager.restart_with_token(tok)
-                    logger.info(
-                        "visual agent restarted",
-                        extra=log_record(run=self.run_idx),
-                    )
-                    for _ in range(10):
-                        time.sleep(0.5)
-                        if _visual_agent_running(self.urls):
-                            break
-                except Exception:
-                    logger.exception("failed to restart visual agent")
-                    self._stop.wait(self.interval)
-                    continue
-            healthy = True
-            try:
-                import requests  # type: ignore
-
-                resp = requests.get(f"{base}/health", timeout=5)
-                healthy = resp.status_code == 200
-            except Exception:
-                healthy = False
-            logger.debug(
-                "visual agent /health responded: %s",
-                healthy,
-                extra=log_record(run=self.run_idx),
-            )
-            if not healthy:
-                if queue_path.exists():
-                    logger.debug(
-                        "skipping visual agent recovery; queue database present",
-                        extra=log_record(run=self.run_idx),
-                    )
-                else:
-                    try:
-                        import requests  # type: ignore
-
-                        requests.post(
-                            f"{base}/recover",
-                            headers={"Authorization": f"Bearer {tok}"},
-                            timeout=5,
-                        )
-                        logger.info(
-                            "visual agent recovery triggered",
-                            extra=log_record(run=self.run_idx),
-                        )
-                    except Exception:
-                        logger.exception("failed to trigger agent recovery")
-            elif not queue_path.exists():
-                try:
-                    import requests  # type: ignore
-
-                    requests.post(
-                        f"{base}/recover",
-                        headers={"Authorization": f"Bearer {tok}"},
-                        timeout=5,
-                    )
-                    logger.info(
-                        "visual agent recovery triggered",
-                        extra=log_record(run=self.run_idx),
-                    )
-                except Exception:
-                    logger.exception("failed to trigger agent recovery")
-            self._stop.wait(self.interval)
 
 
 class PresetModel(BaseModel):
@@ -524,8 +379,6 @@ def check_env() -> None:
     missing = [
         name
         for name, val in (
-            ("VISUAL_AGENT_TOKEN", settings.visual_agent_token),
-            ("VISUAL_AGENT_URLS", settings.visual_agent_urls),
             ("SANDBOX_REPO_PATH", settings.sandbox_repo_path),
         )
         if not val
@@ -1684,52 +1537,6 @@ def main(argv: List[str] | None = None) -> None:
             cleanup_funcs.append(s_dash.stop)
             cleanup_funcs.append(lambda: dash_t.is_alive() and dash_t.join(0.1))
 
-    agent_proc = None
-    agent_mgr = None
-    agent_monitor = None
-    autostart = settings.visual_agent_autostart
-    if autostart:
-        from visual_agent_manager import VisualAgentManager
-
-        agent_mgr = VisualAgentManager(str(resolve_path("menace_visual_agent_2.py")))
-        if not _visual_agent_running(settings.visual_agent_urls):
-            try:
-                logger.info("starting visual agent")
-                agent_mgr.start(settings.visual_agent_token)
-                logger.info("visual agent started")
-                agent_proc = agent_mgr.process
-            except Exception:  # pragma: no cover - runtime dependent
-                logger.exception("failed to launch visual agent")
-                sys.exit(1)
-
-            started = False
-            for _ in range(5):
-                time.sleep(1)
-                if agent_mgr.process and agent_mgr.process.poll() is not None:
-                    logger.error(
-                        "visual agent exited with code %s", agent_mgr.process.returncode
-                    )
-                    sys.exit(1)
-                if _visual_agent_running(settings.visual_agent_urls):
-                    started = True
-                    break
-            if not started:
-                logger.error(
-                    "visual agent failed to start at %s", settings.visual_agent_urls
-                )
-                try:
-                    agent_mgr.shutdown()
-                except Exception as exc:
-                    logger.exception(
-                        "failed to shutdown visual agent after startup failure: %s",
-                        exc,
-                    )
-                sys.exit(1)
-
-        agent_monitor = VisualAgentMonitor(agent_mgr, settings.visual_agent_urls)
-        agent_monitor.start()
-        cleanup_funcs.append(agent_monitor.stop)
-
     relevancy_radar = None
     if (
         settings.enable_relevancy_radar
@@ -1839,35 +1646,11 @@ def main(argv: List[str] | None = None) -> None:
     while args.runs is None or run_idx < args.runs:
         run_idx += 1
         set_correlation_id(f"run-{run_idx}")
-        if agent_monitor is not None:
-            agent_monitor.run_idx = run_idx
-        if run_idx > 1:
-            new_tok = settings.visual_agent_token_rotate
-            if (
-                new_tok
-                and agent_mgr
-                and _visual_agent_running(settings.visual_agent_urls)
-            ):
-                try:
-                    agent_mgr.restart_with_token(new_tok)
-                    os.environ["VISUAL_AGENT_TOKEN"] = new_tok
-                    os.environ.pop("VISUAL_AGENT_TOKEN_ROTATE", None)
-                    logger.info("visual agent token rotated")
-                except Exception:
-                    logger.exception("failed to rotate visual agent token")
-
         logger.info(
             "Starting autonomous run %d/%s",
             run_idx,
             args.runs if args.runs is not None else "?",
         )
-        if agent_mgr and agent_mgr.process and agent_mgr.process.poll() is not None:
-            logger.error(
-                "visual agent process terminated with code %s",
-                agent_mgr.process.returncode,
-            )
-            sys.exit(1)
-
         presets, preset_source = prepare_presets(run_idx, args, settings, preset_log)
         logger.info(
             "using presets from %s",
