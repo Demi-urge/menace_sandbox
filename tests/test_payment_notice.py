@@ -479,3 +479,41 @@ def test_call_codex_api_engine_failure_raises(monkeypatch):
     assert escalated["msg"] == "engine request failed after retries: boom"
     assert escalated["level"] == "error"
     assert dummy.errors == ["engine request failed after retries: boom"]
+
+
+def test_call_codex_api_retries_then_succeeds(monkeypatch):
+    calls: dict[str, int] = {"n": 0}
+    escalated: dict[str, str] = {}
+
+    def flaky_generate(_desc: str) -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("flaky")
+        return "ok"
+
+    def fake_escalate(msg: str, level: str = "error") -> None:
+        escalated["msg"] = msg
+        escalated["level"] = level
+
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", flaky_generate)
+    monkeypatch.setattr(bdb, "RAISE_ERRORS", False)
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=fake_escalate,
+        errors=[],
+        engine_retry=RetryStrategy(attempts=2, delay=0),
+    )
+
+    result = BotDevelopmentBot._call_codex_api(
+        dummy,
+        [{"role": "user", "content": "hi"}],
+    )
+
+    assert result == "ok"
+    assert calls["n"] == 2
+    assert escalated == {}
+    assert dummy.errors == []
