@@ -194,14 +194,49 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
     result = BotDevelopmentBot._call_codex_api(
         dummy,
         [
+            {"role": "system", "content": "sys"},
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "there"},
+            {"role": "user", "content": "again"},
         ],
     )
 
-    assert captured["desc"] == "hi"
+    assert captured["desc"] == "system: sys\nuser: hi\nuser: again"
     assert result == "code"
     assert wrapper_called is False
+
+
+def test_call_codex_api_aggregates_multi_messages(monkeypatch):
+    captured: dict[str, str] = {}
+
+    def fake_generate(desc: str) -> str:
+        captured["desc"] = desc
+        return ""  # pragma: no cover - return value unused
+
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+
+    dummy = types.SimpleNamespace(
+        coding_engine=engine,
+        engine=engine,
+        logger=logging.getLogger("test"),
+        _escalate=lambda msg, level="error": None,
+        errors=[],
+        engine_retry=RetryStrategy(),
+    )
+
+    BotDevelopmentBot._call_codex_api(
+        dummy,
+        [
+            {"role": "system", "content": "s1"},
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "system", "content": "s2"},
+            {"role": "user", "content": "u2"},
+        ],
+    )
+
+    assert captured["desc"] == "system: s1\nuser: u1\nsystem: s2\nuser: u2"
 
 
 def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
