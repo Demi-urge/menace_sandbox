@@ -7,7 +7,7 @@ import os
 import threading
 import time
 from collections import defaultdict
-from typing import Optional
+from typing import Optional, Dict, List
 
 from unified_event_bus import UnifiedEventBus
 
@@ -43,6 +43,7 @@ class EmbeddingScheduler:
         batch_size: Optional[int] = None,
         backend: Optional[str] = None,
         sources: Optional[list[str]] = None,
+        stale_threshold: float = 0.0,
         event_bus: Optional[UnifiedEventBus] = None,
         event_topic: str = "db:new_record",
         event_batch: int = 1,
@@ -52,7 +53,8 @@ class EmbeddingScheduler:
         self.interval = interval
         self.batch_size = batch_size
         self.backend = backend
-        self.sources = sources
+        self.sources = sources or ["code", "bot", "error", "workflow"]
+        self.stale_threshold = stale_threshold
         self.event_bus = event_bus or UnifiedEventBus()
         self.event_topic = event_topic
         self.event_batch = max(1, event_batch)
@@ -104,6 +106,38 @@ class EmbeddingScheduler:
         except Exception:  # pragma: no cover - best effort
             logging.getLogger(__name__).exception("on-demand embedding backfill failed")
 
+    def _collect_status(self, db_names: List[str]) -> Dict[str, Dict[str, float]]:
+        """Gather counts and staleness metrics for ``db_names``."""
+
+        report: Dict[str, Dict[str, float]] = {}
+        subclasses = self.backfill._load_known_dbs(names=db_names)
+        for cls in subclasses:
+            try:
+                db = cls(vector_backend=self.backend) if self.backend else cls()  # type: ignore[call-arg]
+            except Exception:
+                try:
+                    db = cls()  # type: ignore[call-arg]
+                except Exception:
+                    continue
+            records = 0
+            stale = 0
+            for rid, record, _ in db.iter_records():
+                records += 1
+                if db.needs_refresh(rid, record):
+                    stale += 1
+            vectors = len(getattr(db, "_id_map", []))
+            kind = cls.__name__.lower()
+            if kind.endswith("db"):
+                kind = kind[:-2]
+            ratio = stale / records if records else 0.0
+            report[kind] = {
+                "records": records,
+                "vectors": vectors,
+                "stale": stale,
+                "stale_ratio": ratio,
+            }
+        return report
+
     # ------------------------------------------------------------------
     def _loop(self) -> None:
         logger = logging.getLogger(__name__)
@@ -111,21 +145,34 @@ class EmbeddingScheduler:
             start = time.time()
             status = "success"
             try:
+                db_names = self.sources or []
+                report = self._collect_status(db_names)
                 logger.info(
-                    "embedding scheduler triggering backfill",
-                    extra={"backend": self.backend},
+                    "embedding scheduler report",
+                    extra={"embedding_report": report},
                 )
-                self.backfill.run(
-                    batch_size=self.batch_size,
-                    backend=self.backend,
-                    dbs=self.sources,
-                )
-                try:
-                    self.patch_safety.load_failures(force=True)
-                except Exception:  # pragma: no cover - best effort
-                    logging.getLogger(__name__).exception(
-                        "patch safety refresh failed"
+                to_backfill = [
+                    name
+                    for name, stats in report.items()
+                    if stats["records"] != stats["vectors"]
+                    or stats["stale_ratio"] > self.stale_threshold
+                ]
+                if to_backfill:
+                    logger.info(
+                        "embedding scheduler triggering backfill",
+                        extra={"backend": self.backend, "dbs": to_backfill},
                     )
+                    self.backfill.run(
+                        batch_size=self.batch_size,
+                        backend=self.backend,
+                        dbs=to_backfill,
+                    )
+                    try:
+                        self.patch_safety.load_failures(force=True)
+                    except Exception:  # pragma: no cover - best effort
+                        logging.getLogger(__name__).exception(
+                            "patch safety refresh failed",
+                        )
             except Exception:  # pragma: no cover - best effort
                 status = "failure"
                 logging.exception("embedding backfill run failed")
@@ -134,7 +181,6 @@ class EmbeddingScheduler:
             end = time.time() + self.interval
             while self.running and time.time() < end:
                 time.sleep(1)
-
     # ------------------------------------------------------------------
     def start(self) -> None:
         if self.running:
@@ -166,11 +212,13 @@ def start_scheduler_from_env() -> EmbeddingScheduler | None:
         sources = None
     event_batch = os.getenv("EMBEDDING_SCHEDULER_EVENT_BATCH")
     event_throttle = os.getenv("EMBEDDING_SCHEDULER_EVENT_THROTTLE")
+    stale_threshold = os.getenv("EMBEDDING_SCHEDULER_STALE_THRESHOLD")
     scheduler = EmbeddingScheduler(
         interval=interval,
         batch_size=int(batch) if batch else None,
         backend=backend,
         sources=sources,
+        stale_threshold=float(stale_threshold) if stale_threshold else 0.0,
         event_batch=int(event_batch) if event_batch else 1,
         event_throttle=float(event_throttle) if event_throttle else 0.0,
     )
