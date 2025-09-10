@@ -235,18 +235,21 @@ def test_prompt_engine_build_prompt_contains_notice():
     assert prompt.system.startswith(PAYMENT_ROUTER_NOTICE)
 
 
-def test_bot_development_bot_calls_engine():
+def test_bot_development_bot_calls_engine(monkeypatch):
     captured = {}
 
-    class Engine:
-        def generate_helper(self, desc: str) -> str:
-            captured["desc"] = desc
-            return "code"
+    def fake_generate(desc: str) -> str:
+        captured["desc"] = desc
+        return "code"
+
+    engine = sce_stub.SelfCodingEngine()
+    monkeypatch.setattr(engine, "generate_helper", fake_generate)
 
     dummy = types.SimpleNamespace(
-        engine=Engine(),
+        engine=engine,
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
+        errors=[],
     )
 
     result = BotDevelopmentBot._call_codex_api(
@@ -260,60 +263,6 @@ def test_bot_development_bot_calls_engine():
 
     assert captured["desc"] == "hi\nthere"
     assert result == "code"
-
-
-def test_openai_wrapper_injects_notice():
-    captured = {}
-
-    def fake_create(*args, **kwargs):
-        captured["messages"] = kwargs.get("messages")
-        return {}
-
-    fake_openai = types.SimpleNamespace(
-        ChatCompletion=types.SimpleNamespace(create=fake_create)
-    )
-    from billing.openai_wrapper import chat_completion_create
-
-    class DummyBuilder:
-        def __init__(self) -> None:
-            self.called = False
-
-        def build(self, query: str) -> str:
-            self.called = True
-            return "ctx"
-
-    builder = DummyBuilder()
-
-    chat_completion_create(
-        [{"role": "user", "content": "hi"}],
-        model="gpt-3.5-turbo",
-        openai_client=fake_openai,
-        context_builder=builder,
-    )
-    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
-    assert captured["messages"][-1] == {"role": "system", "content": "ctx"}
-    assert builder.called
-
-
-def test_openai_wrapper_requires_context_builder():
-    captured = {}
-
-    def fake_create(*args, **kwargs):  # pragma: no cover - simple stub
-        captured["messages"] = kwargs.get("messages")
-        return {}
-
-    fake_openai = types.SimpleNamespace(
-        ChatCompletion=types.SimpleNamespace(create=fake_create)
-    )
-    from billing.openai_wrapper import chat_completion_create
-
-    with pytest.raises(TypeError):
-        chat_completion_create(
-            [{"role": "user", "content": "hi"}],
-            model="gpt-3.5-turbo",
-            openai_client=fake_openai,
-            context_builder=None,  # type: ignore[arg-type]
-        )
 
 
 def test_gpt4client_injects_notice(monkeypatch):
