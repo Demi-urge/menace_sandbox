@@ -1,4 +1,8 @@
-"""Task Handoff Bot for packaging and sending tasks to Stage 4."""
+"""Task Handoff Bot for packaging and sending tasks to Stage 4.
+
+Embeddings auto-refresh via ``EmbeddingBackfill.watch_events``.
+Run ``menace embed --db workflow`` to backfill manually.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ import re
 import sqlite3
 from .unified_event_bus import UnifiedEventBus
 from .workflow_graph import WorkflowGraph
-from vector_service import EmbeddableDBMixin
+from vector_service import EmbeddableDBMixin, EmbeddingBackfill
 from vector_service.text_preprocessor import generalise
 from db_router import (
     DBRouter,
@@ -43,8 +47,29 @@ try:
     import pika  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     pika = None  # type: ignore
+import threading
 
 logger = logging.getLogger(__name__)
+
+_WATCH_THREAD: threading.Thread | None = None
+
+
+def _ensure_backfill_watcher(bus: "UnifiedEventBus" | None) -> None:
+    """Start ``EmbeddingBackfill.watch_events`` once for this module."""
+
+    global _WATCH_THREAD
+    if bus is None or _WATCH_THREAD is not None:
+        return
+    try:
+        thread = threading.Thread(
+            target=EmbeddingBackfill().watch_events,
+            kwargs={"bus": bus},
+            daemon=True,
+        )
+        thread.start()
+        _WATCH_THREAD = thread
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to start embedding watcher")
 
 
 @dataclass
@@ -121,6 +146,7 @@ class WorkflowDB(EmbeddableDBMixin):
     ) -> None:
         self.path = Path(path).resolve()
         self.event_bus = event_bus
+        _ensure_backfill_watcher(self.event_bus)
         self.graph = workflow_graph
         self.vector_backend = vector_backend  # kept for compatibility
         LOCAL_TABLES.add("workflows")
@@ -281,12 +307,7 @@ class WorkflowDB(EmbeddableDBMixin):
         ).fetchone()
         if row:
             rec = self._row_to_record(row)
-            try:
-                self.add_embedding(workflow_id, rec, "workflow", source_id=str(workflow_id))
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception(
-                    "embedding hook failed for %s: %s", workflow_id, exc
-                )
+            self.try_add_embedding(workflow_id, rec, "workflow", source_id=str(workflow_id))
         if self.event_bus:
             try:
                 payload = {"workflow_id": workflow_id, "status": status}
@@ -323,10 +344,7 @@ class WorkflowDB(EmbeddableDBMixin):
             ).fetchone()
             if row:
                 rec = self._row_to_record(row)
-                try:
-                    self.add_embedding(wid, rec, "workflow", source_id=str(wid))
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("embedding hook failed for %s: %s", wid, exc)
+                self.try_add_embedding(wid, rec, "workflow", source_id=str(wid))
                 if self.graph:
                     try:
                         self.graph.update(str(wid), "update")
@@ -391,10 +409,7 @@ class WorkflowDB(EmbeddableDBMixin):
                 )
 
         if wf.wid:
-            try:
-                self.add_embedding(wf.wid, wf, "workflow", source_id=str(wf.wid))
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception("embedding hook failed for %s: %s", wf.wid, exc)
+            self.try_add_embedding(wf.wid, wf, "workflow", source_id=str(wf.wid))
 
         if self.event_bus:
             try:
