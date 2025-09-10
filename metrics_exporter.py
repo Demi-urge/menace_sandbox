@@ -525,12 +525,6 @@ orphan_integration_failure_total = Gauge(
 )
 
 
-# Metrics for visual agent utilisation
-visual_agent_watchdog_recoveries_total = Gauge(
-    "visual_agent_watchdog_recoveries_total",
-    "Recoveries triggered by the internal queue watchdog",
-)
-
 # Gauges for workflow benchmarking
 workflow_duration_gauge = Gauge(
     "workflow_duration_seconds",
@@ -898,7 +892,6 @@ __all__ = [
     "efficiency_gauge",
     "flexibility_gauge",
     "projected_lucrativity_gauge",
-    "visual_agent_watchdog_recoveries_total",
     "isolated_modules_discovered_total",
     "isolated_modules_integrated_total",
     "sandbox_restart_total",
