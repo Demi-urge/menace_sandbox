@@ -12,6 +12,11 @@ import numpy as np
 
 from analysis.semantic_diff_filter import find_semantic_risks
 from snippet_compressor import compress_snippets
+from vector_service.text_preprocessor import (
+    PreprocessingConfig,
+    get_config,
+    generalise,
+)
 
 try:  # pragma: no cover - heavy dependency
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -98,7 +103,9 @@ class BotVectorizer:
     def dim(self) -> int:
         return _EMBED_DIM
 
-    def transform(self, bot: Dict[str, Any]) -> List[float]:
+    def transform(
+        self, bot: Dict[str, Any], *, config: PreprocessingConfig | None = None
+    ) -> List[float]:
         parts: List[str] = []
         for key in ("name", "description", "summary", "goal", "status", "type"):
             val = bot.get(key)
@@ -114,13 +121,33 @@ class BotVectorizer:
         if not text:
             return [0.0] * _EMBED_DIM
 
-        chunks: List[str] = []
-        for sent in _split_sentences(text):
-            if find_semantic_risks([sent]):
+        cfg = config or get_config("bot")
+
+        sentences = _split_sentences(text) if cfg.split_sentences else [text]
+        filtered: List[str] = []
+        for sent in sentences:
+            if cfg.filter_semantic_risks and find_semantic_risks([sent]):
                 continue
             summary = compress_snippets({"snippet": sent}).get("snippet", sent)
+            summary = generalise(summary, config=cfg, db_key="bot")
             if summary.strip():
-                chunks.append(summary)
+                filtered.append(summary)
+
+        chunks: List[str] = []
+        if cfg.chunk_size and cfg.chunk_size > 0:
+            current: List[str] = []
+            count = 0
+            for piece in filtered:
+                count += len(piece.split())
+                current.append(piece)
+                if count >= cfg.chunk_size:
+                    chunks.append(" ".join(current))
+                    current = []
+                    count = 0
+            if current:
+                chunks.append(" ".join(current))
+        else:
+            chunks = filtered
 
         if not chunks:
             return [0.0] * _EMBED_DIM

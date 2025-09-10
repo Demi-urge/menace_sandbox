@@ -14,7 +14,7 @@ from analysis.semantic_diff_filter import find_semantic_risks
 from snippet_compressor import compress_snippets
 from vector_utils import persist_embedding
 from dynamic_path_router import resolve_path
-from vector_service.text_preprocessor import PreprocessingConfig, get_config
+from vector_service.text_preprocessor import PreprocessingConfig, get_config, generalise
 try:  # pragma: no cover - event bus optional
     from unified_event_bus import UnifiedEventBus  # type: ignore
 except Exception:  # pragma: no cover - fallback
@@ -135,6 +135,7 @@ class WorkflowVectorizer:
             if cfg.filter_semantic_risks and find_semantic_risks([sent]):
                 continue
             summary = compress_snippets({"snippet": sent}).get("snippet", sent)
+            summary = generalise(summary, config=cfg, db_key="workflow")
             if summary.strip():
                 filtered.append(summary)
 

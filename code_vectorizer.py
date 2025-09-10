@@ -12,6 +12,11 @@ import numpy as np
 from chunking import split_into_chunks
 from analysis.semantic_diff_filter import find_semantic_risks
 from snippet_compressor import compress_snippets
+from vector_service.text_preprocessor import (
+    PreprocessingConfig,
+    get_config,
+    generalise,
+)
 
 try:  # pragma: no cover - heavy dependency
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -93,18 +98,24 @@ class CodeVectorizer:
 
     max_tokens: int = 200
 
-    def transform(self, rec: Dict[str, Any]) -> List[float]:
+    def transform(
+        self, rec: Dict[str, Any], *, config: PreprocessingConfig | None = None
+    ) -> List[float]:
         code = str(rec.get("content") or "")
         if not code:
             return [0.0] * _EMBED_DIM
 
+        cfg = config or get_config("code")
+        token_limit = cfg.chunk_size or self.max_tokens
+
         chunks: List[str] = []
-        for chunk in split_into_chunks(code, self.max_tokens):
-            if find_semantic_risks(chunk.text.splitlines()):
+        for chunk in split_into_chunks(code, token_limit):
+            if cfg.filter_semantic_risks and find_semantic_risks(chunk.text.splitlines()):
                 continue
             summary = compress_snippets({"snippet": chunk.text}).get(
                 "snippet", chunk.text
             )
+            summary = generalise(summary, config=cfg, db_key="code")
             if summary.strip():
                 chunks.append(summary)
 

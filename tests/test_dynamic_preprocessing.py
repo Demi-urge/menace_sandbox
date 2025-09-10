@@ -48,7 +48,7 @@ def test_workflow_transform_respects_config(monkeypatch):
 
     wf = {"name": "", "description": "A. B."}
     WorkflowVectorizer().transform(wf, config=cfg)
-    assert captured["texts"] == ["\nA. B."]
+    assert captured["texts"] == ["b"]
 
     cfg2 = tp.PreprocessingConfig(split_sentences=True, filter_semantic_risks=True)
     tp.register_preprocessor("workflow", cfg2)
@@ -56,6 +56,7 @@ def test_workflow_transform_respects_config(monkeypatch):
         "workflow_vectorizer.find_semantic_risks",
         lambda lines: [1] if "B" in lines[0] else [],
     )
+    captured["texts"] = None
     WorkflowVectorizer().transform(wf, config=cfg2)
-    assert captured["texts"] == ["A."]
+    assert captured["texts"] is None
 
