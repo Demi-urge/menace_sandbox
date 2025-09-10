@@ -175,8 +175,9 @@ configuration. The generated file includes stub values for critical settings:
 
 - `DATABASE_URL` defaults to `sqlite:///menace.db`
 - `MODELS` resolves to the bundled `micro_models` directory when set to `demo`
-- `OPENAI_API_KEY` placeholder (Stripe keys are resolved by
-  `stripe_billing_router` and are not written to this file)
+ - Self-coding settings such as `SELF_CODING_INTERVAL` are included with
+   sensible defaults so the local `SelfCodingEngine` can generate code without
+   any external API keys
 - `SANDBOX_DATA_DIR` defaults to `sandbox_data` (use `resolve_path` when
   referencing files under this directory)
 - `SANDBOX_LOG_LEVEL` defaults to `INFO` (use `--log-level` to override)
@@ -1270,8 +1271,9 @@ delegates to ``AutoEscalationManager`` and disables the bot.
 Application settings are read from environment variables. ``auto_env_setup.ensure_env``
 creates a ``.env`` file on first run so Menace can start without manual
 configuration. The file contains keys defined in ``env_config.py`` such as
-``DATABASE_URL`` and various API credentials like ``OPENAI_API_KEY`` or
-``SERP_API_KEY``. Additional service specific keys (for example
+``DATABASE_URL`` and credentials for external services like ``SERP_API_KEY``.
+Code generation uses the local ``SelfCodingEngine`` and no ``OPENAI_API_KEY``
+is required. Additional service specific keys (for example
 ``REDDIT_CLIENT_SECRET``) can be added to the same file. Stripe keys are
 handled separately via ``stripe_billing_router`` and should not be stored in
 configuration files.
@@ -1303,16 +1305,20 @@ The deployment helpers use the following variables:
 - `METRICS_PORT` – start the internal metrics exporter on this port (same as `--metrics-port`).
 - `AUTO_DASHBOARD_PORT` – start the metrics dashboard automatically on this port.
 - `SANDBOX_RESOURCE_DB` – path to a `ROIHistoryDB` for resource-aware forecasts.
-- `SANDBOX_BRAINSTORM_INTERVAL` – request GPT-4 brainstorming ideas every N cycles.
-- `SANDBOX_BRAINSTORM_RETRIES` – consecutive low-ROI cycles before brainstorming.
-- `SANDBOX_OFFLINE_SUGGESTIONS` – enable heuristic patches when GPT is unavailable.
-- `SANDBOX_SUGGESTION_CACHE` – JSON file with cached suggestions.
-- `PATCH_SCORE_BACKEND_URL` – optional patch score storage. Use `file://path` to
-  save scores locally.
-- `SANDBOX_PRESET_RL_STRATEGY` – RL algorithm used by `AdaptivePresetAgent` (default `q_learning`).
-- `OPENAI_FALLBACK_MODEL` – fallback GPT model name.
-- `OPENAI_FALLBACK_ATTEMPTS` – retry count for OpenAI calls.
-- `OPENAI_RETRY_DELAY` – delay in seconds between OpenAI retries.
+ - `SANDBOX_BRAINSTORM_INTERVAL` – request brainstorming ideas from local models
+   every N cycles.
+ - `SANDBOX_BRAINSTORM_RETRIES` – consecutive low-ROI cycles before brainstorming.
+ - `SANDBOX_OFFLINE_SUGGESTIONS` – enable heuristic patches when brainstorming is
+   unavailable.
+ - `SANDBOX_SUGGESTION_CACHE` – JSON file with cached suggestions.
+ - `PATCH_SCORE_BACKEND_URL` – optional patch score storage. Use `file://path` to
+   save scores locally.
+ - `SANDBOX_PRESET_RL_STRATEGY` – RL algorithm used by `AdaptivePresetAgent`
+   (default `q_learning`).
+ - `SELF_CODING_INTERVAL` – run `SelfCodingEngine` every N cycles.
+ - `SELF_CODING_ROI_DROP` – trigger self-coding when ROI drops below this fraction.
+ - `SELF_CODING_ERROR_INCREASE` – trigger self-coding when error rate increases by
+   this factor.
 
 
 `auto_env_setup.ensure_env` writes sensible defaults when these variables are
@@ -1350,9 +1356,9 @@ missing. Notable defaults include:
 - `SANDBOX_OFFLINE_SUGGESTIONS=0`
 - `SANDBOX_SUGGESTION_CACHE=`
 - `PATCH_SCORE_BACKEND_URL=`
-- `OPENAI_FALLBACK_MODEL=gpt-4o-mini`
-- `OPENAI_FALLBACK_ATTEMPTS=3`
-- `OPENAI_RETRY_DELAY=1.0`
+ - `SELF_CODING_INTERVAL=300`
+ - `SELF_CODING_ROI_DROP=-0.1`
+ - `SELF_CODING_ERROR_INCREASE=1.0`
 - `AD_API_URL=` (unset or empty disables ad network integration)
 - `SELF_TEST_DISABLE_ORPHANS=0`
 - `SELF_TEST_DISCOVER_ORPHANS=1`
@@ -1371,7 +1377,8 @@ or by editing the generated ``.env`` file.
 ``SecretsManager`` and optional vault providers. It loads defaults from the file
 referenced by ``MENACE_DEFAULTS_FILE`` and only prompts for values that remain
 unset. Answers can be pre-filled with environment variables named
-``MENACE_SETUP_<KEY>`` (e.g. ``MENACE_SETUP_OPENAI_API_KEY``).
+``MENACE_SETUP_<KEY>`` (e.g. ``MENACE_SETUP_SERP_API_KEY``). Self-coding
+settings are configured locally and require no API keys.
 
 ### First-run sandbox
 
@@ -1945,8 +1952,9 @@ start unattended.  At minimum the following variables must be defined:
   rather than the default SQLite file.
 - ``CELERY_BROKER_URL`` – message broker used by asynchronous maintenance tasks.
   Required when running with Celery in production.
-- ``OPENAI_API_KEY`` – API key enabling language model features used by
-  ``BotDevelopmentBot`` and other helpers.
+ - ``SELF_CODING_INTERVAL``, ``SELF_CODING_ROI_DROP`` and
+   ``SELF_CODING_ERROR_INCREASE`` – configure the local ``SelfCodingEngine``
+   that powers code generation without requiring external API keys.
 - Stripe billing is configured via ``stripe_billing_router``, which retrieves
   the required keys from a secure vault provider or uses baked‑in production
   values. Avoid storing these keys in the repository or configuration files.

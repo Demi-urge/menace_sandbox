@@ -37,7 +37,8 @@ flowchart TD
 - **Handoff failure** – network errors when contacting Stage 4 cause retries. After two failed attempts the pipeline aborts.
 - **IPO plan failure** – if `IPOBot.generate_plan` raises an exception twice, the run stops.
 - **Research failure** – problems while invoking the researcher are logged and cause the pipeline to raise.
-- **Build failure** – the developer bot may fail to generate code (e.g. due to OpenAI errors) leading to a runtime error.
+- **Build failure** – the developer bot may fail to generate code, leading to a
+  runtime error.
 - **Test failure** – if `pytest` fails for a generated repository the pipeline raises an error and logs the output.
 
 ## Usage
@@ -75,15 +76,15 @@ All repositories are verified by running `scripts/setup_tests.sh` followed by `p
 - `VISUAL_AGENT_TOKEN` – API token for visual agent helpers.
 - `VISUAL_AGENT_URLS` – semicolon separated list of visual agent endpoints.
 - `BOT_DEV_HEADLESS` – set to `1` to disable visual agent interaction.
-- `BOT_DEV_CONCURRENCY` – number of concurrent workers used during code generation.
-- `OPENAI_FALLBACK_ATTEMPTS` – attempts for OpenAI fallback when generation fails.
+ - `BOT_DEV_CONCURRENCY` – number of concurrent workers used during code generation.
+ - `SELF_CODING_INTERVAL` – run `SelfCodingEngine` after this many cycles (default `5`).
 
-### OpenAI fallback
+### SelfCodingEngine
 
-`BotDevelopmentBot` contacts the OpenAI API as a last resort when the visual
-agents cannot build a repository. The API key is read from `OPENAI_API_KEY` and
-the number of retries is determined by `OPENAI_FALLBACK_ATTEMPTS` (default 3).
-If the key is absent the fallback is skipped entirely.
+`BotDevelopmentBot` now generates code locally through `SelfCodingEngine`.
+Configure intervals and thresholds via `SELF_CODING_INTERVAL`,
+`SELF_CODING_ROI_DROP` and `SELF_CODING_ERROR_INCREASE`. All generation runs
+offline and no external API keys are required.
 
 `TaskHandoffBot` accepts an `api_url` parameter to change the HTTP endpoint used for Stage 4 handoff. Message queue integration can be enabled by providing a `pika` channel instance.
 

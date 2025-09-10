@@ -12,7 +12,9 @@ running the fully autonomous sandbox.
 - `DATABASE_URL` – database connection string.
 - `SANDBOX_REPO_PATH` – repository root used by background services.
 - `SANDBOX_DATA_DIR` – directory where sandbox state and metrics are stored.
-- `OPENAI_API_KEY` – API key for model access.
+ - `SELF_CODING_INTERVAL`, `SELF_CODING_ROI_DROP` and `SELF_CODING_ERROR_INCREASE`
+   – tune the local `SelfCodingEngine`; code generation runs entirely offline and
+   requires no API keys.
 - `VISUAL_AGENT_MONITOR_INTERVAL` – seconds between visual agent health checks
   (default `30`).
 - `LOCAL_KNOWLEDGE_REFRESH_INTERVAL` – refresh interval for the local
@@ -853,7 +855,7 @@ python run_autonomous.py --include-orphans
 # util.py is merged into module_map.json and metrics reflect the reintroduction
 ```
 
-Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` file.
+SelfCodingEngine runs locally so no additional API keys are required.
 
 ## Launch sequence
 
@@ -1012,7 +1014,7 @@ SELF_TEST_DISABLE_ORPHANS=0
 SELF_TEST_DISCOVER_ORPHANS=1
 SANDBOX_RECURSIVE_ORPHANS=1
 SANDBOX_RECURSIVE_ISOLATED=1
-OPENAI_API_KEY=sk-xxxxx
+SELF_CODING_INTERVAL=5
 ```
 
 Edit the resulting `.env` to override any defaults as needed.
