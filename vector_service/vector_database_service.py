@@ -31,6 +31,7 @@ import uvicorn
 
 from .vectorizer import SharedVectorService
 from .embedding_backfill import watch_databases, check_staleness
+from .embedding_scheduler import start_scheduler_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,14 @@ async def _start_watcher() -> None:
     thread = threading.Thread(target=_watcher, daemon=True)
     thread.start()
     app.state.watch_thread = thread
+    app.state.embedding_scheduler = start_scheduler_from_env()
+
+
+@app.on_event("shutdown")
+async def _stop_scheduler() -> None:
+    scheduler = getattr(app.state, "embedding_scheduler", None)
+    if scheduler is not None:
+        scheduler.stop()
 
 
 # ---------------------------------------------------------------------------
