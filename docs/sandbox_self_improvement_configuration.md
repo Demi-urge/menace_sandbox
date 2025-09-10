@@ -32,9 +32,9 @@ advice for common setup problems.
   `SECURITY_LEVEL` and `THREAT_INTENSITY` tune the simulated security posture,
   while `SANDBOX_REPO_PATH` and `SANDBOX_DATA_DIR` isolate repository and
   metrics storage locations.
-- Keep tokens such as `VISUAL_AGENT_TOKEN` secret and run the sandbox under an
-  unprivileged user to reduce risk. Apply OS-level isolation (containers or
-  virtual machines) when evaluating untrusted code.
+- Keep API tokens secret and run the sandbox under an unprivileged user to
+  reduce risk. Apply OS-level isolation (containers or virtual machines) when
+  evaluating untrusted code.
 
 ## Troubleshooting
 ### Missing modules

@@ -73,9 +73,8 @@ All repositories are verified by running `scripts/setup_tests.sh` followed by `p
 
 - `BOT_DEV_REPO_BASE` – directory where generated repos are created (default `dev_repos`).
 - `BOT_DEV_ES_URL` – optional Elasticsearch instance used for pattern suggestions.
-- `VISUAL_AGENT_TOKEN` – API token for visual agent helpers.
-- `VISUAL_AGENT_URLS` – semicolon separated list of visual agent endpoints.
-- `BOT_DEV_HEADLESS` – set to `1` to disable visual agent interaction.
+- `BOT_DEV_HEADLESS` – set to `1` to disable interactive windows and run in
+  headless mode.
  - `BOT_DEV_CONCURRENCY` – number of concurrent workers used during code generation.
  - `SELF_CODING_INTERVAL` – run `SelfCodingEngine` after this many cycles (default `5`).
 
