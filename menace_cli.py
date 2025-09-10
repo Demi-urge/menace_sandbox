@@ -402,6 +402,15 @@ def handle_embed(args: argparse.Namespace) -> int:
 
     try:
         out_of_sync = backfill.check_out_of_sync(dbs=args.dbs)
+        if getattr(args, "verify_only", False):
+            if out_of_sync:
+                logging.warning(
+                    "databases out of sync: %s", ", ".join(sorted(out_of_sync))
+                )
+                return 1
+            logging.info("no databases require re-embedding")
+            return 0
+
         if not out_of_sync:
             logging.info("no databases require re-embedding")
             return 0
@@ -586,6 +595,11 @@ def main(argv: list[str] | None = None) -> int:
         "--verify",
         action="store_true",
         help="Verify vector counts match record totals after backfill",
+    )
+    p_embed.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Only check for out-of-sync databases without running a backfill",
     )
     p_embed.add_argument(
         "--all",

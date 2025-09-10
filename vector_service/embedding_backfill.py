@@ -73,6 +73,34 @@ except Exception:  # pragma: no cover
 DEFAULT_REGISTRY = resolve_path("vector_service/embedding_registry.json")
 _REGISTRY_FILE = DEFAULT_REGISTRY
 
+# Map logical database names to their on-disk filename for staleness checks
+_DB_FILE_MAP = {
+    "code": "code.db",
+    "bot": "bots.db",
+    "error": "errors.db",
+    "workflow": "workflows.db",
+}
+
+# Persistent record of last successful vectorisation per database
+_TIMESTAMP_FILE = resolve_path("embedding_timestamps.json")
+
+
+def _load_timestamps() -> dict[str, float]:
+    if _TIMESTAMP_FILE.exists():
+        try:  # pragma: no cover - best effort
+            return json.loads(_TIMESTAMP_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _store_timestamps(data: dict[str, float]) -> None:
+    try:  # pragma: no cover - best effort
+        _TIMESTAMP_FILE.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
 # Minimum set of database kinds expected to support embeddings. These are
 # used by :func:`_verify_registry` and other modules to recognise valid
 # backfill targets. New kinds such as ``failure`` and ``research`` are
@@ -619,8 +647,9 @@ def ensure_embeddings_fresh(
     """Ensure embedding metadata is present and up to date for ``dbs``.
 
     Compares the modification time of each database file with its associated
-    embedding metadata file.  Additionally compares the number of records
-    returned by ``iter_records`` with the count of stored embeddings for each
+    embedding metadata file and the last recorded vectorisation timestamp.
+    Additionally compares the number of records returned by ``iter_records``
+    with the count of stored embeddings for each
     :class:`EmbeddableDBMixin` instance.  Databases with missing, stale or
     mismatched embeddings trigger :func:`schedule_backfill`.  A
     :class:`RuntimeError` is raised if embeddings remain absent after
@@ -631,18 +660,24 @@ def ensure_embeddings_fresh(
     if not names:
         return
 
+    timestamps = _load_timestamps()
+
     def _needs_backfill(check: Iterable[str]) -> list[str]:
         registry = _load_registry()
         pending: list[str] = []
         for name in check:
-            db_path = resolve_path(f"{name}.db")
+            db_file = _DB_FILE_MAP.get(name, f"{name}.db")
+            db_path = resolve_path(db_file)
             meta_path = resolve_path(f"{name}_embeddings.json")
             try:
                 db_mtime = db_path.stat().st_mtime
             except FileNotFoundError:
                 continue
-            meta_mtime = meta_path.stat().st_mtime if meta_path.exists() else 0.0
-            stale = meta_mtime < db_mtime
+            last_vec = float(timestamps.get(name, 0.0))
+            stale = last_vec < db_mtime
+            if not stale:
+                meta_mtime = meta_path.stat().st_mtime if meta_path.exists() else 0.0
+                stale = meta_mtime < db_mtime
             if not stale:
                 mod_cls = registry.get(name)
                 if mod_cls:
@@ -665,6 +700,10 @@ def ensure_embeddings_fresh(
 
     pending = _needs_backfill(names)
     if not pending:
+        now = time.time()
+        for name in names:
+            timestamps[name] = now
+        _store_timestamps(timestamps)
         return
 
     for _ in range(max(retries, 1)):
@@ -672,6 +711,10 @@ def ensure_embeddings_fresh(
         time.sleep(delay)
         pending = _needs_backfill(pending)
         if not pending:
+            now = time.time()
+            for name in names:
+                timestamps[name] = now
+            _store_timestamps(timestamps)
             return
 
     raise RuntimeError(f"embeddings missing for: {', '.join(pending)}")
