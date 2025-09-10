@@ -24,6 +24,7 @@ import asyncio
 import os
 import threading
 import logging
+import time
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -49,21 +50,38 @@ def _watcher() -> None:
 
     ``watch_databases`` is blocking and may raise exceptions.  We call it in a
     daemon thread so the API remains responsive while new records are embedded
-    in the background.
+    in the background.  If the loop terminates unexpectedly we log the error
+    and restart after a short delay.
     """
 
-    try:
-        check_staleness([])
-        watch_databases()
-    except Exception:  # pragma: no cover - best effort logging
-        logger.exception("watch_databases terminated unexpectedly")
+    while True:
+        try:
+            check_staleness([])
+            watch_databases()
+        except Exception:  # pragma: no cover - best effort logging
+            logger.exception("watch_databases terminated unexpectedly")
+            time.sleep(5)
+
+
+def _spawn_watcher() -> None:
+    thread = threading.Thread(target=_watcher, daemon=True)
+    thread.start()
+    app.state.watch_thread = thread
+
+
+async def _monitor_watcher() -> None:
+    while True:  # pragma: no cover - best effort monitoring
+        await asyncio.sleep(5)
+        thread = getattr(app.state, "watch_thread", None)
+        if thread is None or not thread.is_alive():
+            logger.warning("watch_databases thread stopped; restarting")
+            _spawn_watcher()
 
 
 @app.on_event("startup")
 async def _start_watcher() -> None:
-    thread = threading.Thread(target=_watcher, daemon=True)
-    thread.start()
-    app.state.watch_thread = thread
+    _spawn_watcher()
+    app.state.monitor_task = asyncio.create_task(_monitor_watcher())
     app.state.embedding_scheduler = start_scheduler_from_env()
 
 
@@ -72,6 +90,9 @@ async def _stop_scheduler() -> None:
     scheduler = getattr(app.state, "embedding_scheduler", None)
     if scheduler is not None:
         scheduler.stop()
+    monitor = getattr(app.state, "monitor_task", None)
+    if monitor is not None:
+        monitor.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +152,24 @@ async def search(req: SearchRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Vector store not configured")
     results = await asyncio.to_thread(_svc.vector_store.query, vec, top_k=req.top_k)
     return {"status": "ok", "data": results}
+
+
+@app.get("/health/live")
+async def live() -> Dict[str, str]:  # pragma: no cover - trivial
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def ready() -> Dict[str, Any]:
+    thread = getattr(app.state, "watch_thread", None)
+    watcher_alive = bool(thread and thread.is_alive())
+    scheduler = getattr(app.state, "embedding_scheduler", None)
+    ready = watcher_alive and scheduler is not None
+    return {
+        "status": "ok" if ready else "error",
+        "watcher_alive": watcher_alive,
+        "scheduler_running": scheduler is not None,
+    }
 
 
 @app.get("/status")

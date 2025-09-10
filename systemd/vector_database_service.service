@@ -1,0 +1,13 @@
+[Unit]
+Description=Vector Database Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/menace
+ExecStart=/usr/bin/python -m vector_service.vector_database_service
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+

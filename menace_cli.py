@@ -45,7 +45,7 @@ search_patches_by_license = None  # type: ignore
 
 
 def _ping_vector_service() -> tuple[bool, dict]:
-    """Ping the vector service ``/status`` endpoint.
+    """Ping the vector service readiness endpoint.
 
     Returns a tuple ``(ok, details)`` where ``ok`` indicates whether the
     service responded successfully and ``details`` contains diagnostic
@@ -56,7 +56,7 @@ def _ping_vector_service() -> tuple[bool, dict]:
     base = os.environ.get("VECTOR_SERVICE_URL")
     if not base:
         return True, {"detail": "VECTOR_SERVICE_URL not set"}
-    url = f"{base.rstrip('/')}/status"
+    url = f"{base.rstrip('/')}/health/ready"
     try:
         with urllib.request.urlopen(url, timeout=2) as resp:
             body = resp.read().decode("utf-8", "replace")
@@ -83,34 +83,43 @@ def _start_vector_service() -> tuple[bool, str]:
         return False, str(exc)
 
 
-def _vector_service_available() -> tuple[bool, dict]:
+def _vector_service_available(retries: int = 3, delay: float = 1.0) -> tuple[bool, dict]:
     """Ensure the vector service is reachable and return diagnostics."""
-    ok, info = _ping_vector_service()
-    if ok:
-        return True, info
-    started, err = _start_vector_service()
-    info["start_attempted"] = True
-    if not started:
-        info["start_error"] = err
-        return False, info
-    # Give the service a moment to start then retry
-    import time
+    attempts: list[dict] = []
+    for attempt in range(retries):
+        ok, info = _ping_vector_service()
+        attempts.append(info)
+        if ok:
+            return True, {"attempts": attempts}
+        if attempt == 0:
+            started, err = _start_vector_service()
+            info["start_attempted"] = True
+            if not started:
+                info["start_error"] = err
+                return False, {"attempts": attempts}
+        import time
 
-    time.sleep(1)
-    ok, retry = _ping_vector_service()
-    if ok:
-        return True, retry
-    info.update(retry)
-    return False, info
+        time.sleep(delay)
+    return False, {"attempts": attempts}
 
 
-def _require_vector_service() -> bool:
+def _require_vector_service(retries: int = 3) -> bool:
     """Ensure the vector service is available, logging diagnostics on failure."""
-    ok, info = _vector_service_available()
+    ok, info = _vector_service_available(retries=retries)
     if ok:
         return True
+    attempts = info.get("attempts", [])
     print(
-        json.dumps({"code": "VECTOR_SERVICE_UNAVAILABLE", "diagnostics": info}),
+        json.dumps({"code": "VECTOR_SERVICE_UNAVAILABLE", "attempts": attempts}),
+        file=sys.stderr,
+    )
+    if attempts:
+        last = attempts[-1]
+        err = last.get("error") or last.get("body")
+        if err:
+            print(f"Last attempt: {err}", file=sys.stderr)
+    print(
+        f"Vector service unreachable after {len(attempts)} attempts.",
         file=sys.stderr,
     )
     print(
