@@ -8,6 +8,8 @@ import os
 import logging
 from typing import List, Callable, Dict, Tuple
 
+from . import RAISE_ERRORS
+
 
 @dataclass
 class BotDevConfig:
@@ -46,6 +48,7 @@ class BotDevConfig:
     )
     error_sinks: List[Callable[[str, str], None]] = field(default_factory=list)
     concurrency_workers: int = int(os.getenv("BOT_DEV_CONCURRENCY", "1"))
+    raise_errors: bool = RAISE_ERRORS
     # retry/polling configuration
     file_write_attempts: int = int(os.getenv("FILE_WRITE_ATTEMPTS", "3"))
     file_write_retry_delay: float = float(os.getenv("FILE_WRITE_RETRY_DELAY", "0.5"))

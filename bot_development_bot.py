@@ -946,7 +946,7 @@ class BotDevelopmentBot:
         :meth:`SelfCodingEngine.generate_helper`.  If no user prompt is
         provided, the error is escalated and the method returns an
         :class:`EngineResult` describing the failure or raises
-        :class:`ValueError` when :data:`RAISE_ERRORS` is true.
+        :class:`ValueError` when :attr:`BotDevConfig.raise_errors` is true.
         """
 
         prompt_parts: list[str] = []
@@ -963,7 +963,7 @@ class BotDevelopmentBot:
             self.logger.warning(msg)
             self._escalate(msg, level="warning")
             self.errors.append(msg)
-            if RAISE_ERRORS:
+            if self.config.raise_errors:
                 raise ValueError(msg)
             return EngineResult(False, None, msg)
 
@@ -974,7 +974,7 @@ class BotDevelopmentBot:
             self.logger.error(msg)
             self._escalate(msg)
             self.errors.append(msg)
-            if RAISE_ERRORS:
+            if self.config.raise_errors:
                 raise ValueError(msg)
             return EngineResult(False, None, msg)
 
@@ -997,7 +997,7 @@ class BotDevelopmentBot:
             self.logger.exception(msg)
             self._escalate(msg, level="error")
             self.errors.append(msg)
-            if RAISE_ERRORS:
+            if self.config.raise_errors:
                 raise
             return EngineResult(False, None, msg)
 
