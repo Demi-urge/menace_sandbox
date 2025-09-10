@@ -390,9 +390,7 @@ def test_embedding_backfill_run_with_dbs(monkeypatch, tmp_path):
 
 
 def test_watch_event_bus_triggers_backfill(monkeypatch):
-    from vector_service.embedding_backfill import watch_event_bus
-    from unified_event_bus import UnifiedEventBus
-    import threading
+    from vector_service.embedding_backfill import watch_event_bus, EmbeddingBackfill
     import time
 
     calls: list[tuple[list[str] | None, int | None, str]] = []
@@ -402,12 +400,21 @@ def test_watch_event_bus_triggers_backfill(monkeypatch):
 
     monkeypatch.setattr(EmbeddingBackfill, "run", fake_run)
 
-    bus = UnifiedEventBus()
-    t = threading.Thread(target=watch_event_bus, kwargs={"bus": bus, "batch_size": 1}, daemon=True)
-    t.start()
+    class DummyBus:
+        def __init__(self) -> None:
+            self._subs = []
 
-    bus.publish("db:record_added", {"db": "info"})
-    time.sleep(0.1)
+        def subscribe(self, _topic, cb):
+            self._subs.append(cb)
+
+        def publish(self, topic, event):
+            for cb in list(self._subs):
+                cb(topic, event)
+
+    bus = DummyBus()
+    with watch_event_bus(bus=bus, batch_size=1):
+        bus.publish("db:record_added", {"db": "info"})
+        time.sleep(0.1)
 
     assert calls and calls[0][0] == ["info"]
     assert calls[0][1] == 1
