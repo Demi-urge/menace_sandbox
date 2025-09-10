@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 from pathlib import Path
+import pytest
 
 
 # Import module directly to avoid executing heavy package-level imports
@@ -14,7 +15,6 @@ sys.modules[spec.name] = text_preprocessor
 spec.loader.exec_module(text_preprocessor)
 generalise = text_preprocessor.generalise
 PreprocessingConfig = text_preprocessor.PreprocessingConfig
-load_stop_words = text_preprocessor.load_stop_words
 register_preprocessor = text_preprocessor.register_preprocessor
 
 
@@ -37,14 +37,13 @@ def test_generalise_shorter_and_semantic():
 def test_load_stop_words_and_config(tmp_path):
     stop_file = tmp_path / "stop.txt"
     stop_file.write_text("hello\n")
-    stop_words = load_stop_words(str(stop_file))
-    cfg = PreprocessingConfig(stop_words=stop_words)
+    cfg = PreprocessingConfig(stop_words=str(stop_file))
 
     assert generalise("Hello world", config=cfg) == "world"
 
 
 def test_language_detection_and_stemming():
-    cfg = PreprocessingConfig(stop_words={"los"})
+    cfg = PreprocessingConfig(language="es", stop_words={"los"})
     text = "Los gatos corriendo perezosos eran"
     result = generalise(text, config=cfg)
     assert set(result.split()) == {"gat", "corr", "perez", "eran"}
@@ -54,3 +53,14 @@ def test_database_specific_configuration():
     cfg = PreprocessingConfig(stop_words={"alpha"})
     register_preprocessor("db1", cfg)
     assert generalise("alpha beta", db_key="db1") == "beta"
+
+
+def test_spanish_stop_words_auto_load():
+    nltk = pytest.importorskip("nltk")
+    nltk.download("stopwords", quiet=True)
+    cfg = PreprocessingConfig(language="es")
+    text = "Los gatos estaban corriendo y saltando"
+    result = generalise(text, config=cfg)
+    tokens = set(result.split())
+    assert {"gat", "corr", "salt"} <= tokens
+    assert not tokens.intersection({"los", "estaban", "y"})
