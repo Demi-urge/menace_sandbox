@@ -968,7 +968,12 @@ class BotDevelopmentBot:
                 raise ValueError(msg)
             return None
 
-        prompt_snippet = prompt[:200]
+        prompt_snippet = prompt[: self.config.max_prompt_log_chars]
+        prompt_snippet = re.sub(
+            r"(?i)(?:api[_-]?key|token)[=:]\s*[^\s]+",
+            "[REDACTED]",
+            prompt_snippet,
+        )
         self.logger.info("generate_helper prompt: %s", prompt_snippet)
 
         try:
