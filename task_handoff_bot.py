@@ -555,7 +555,7 @@ class WorkflowDB(EmbeddableDBMixin):
         elif not isinstance(rec, WorkflowRecord):
             raise TypeError("unsupported record type")
         text = self._vector_text(rec)
-        prepared = self._prepare_text_for_embedding(text)
+        prepared = self._prepare_text_for_embedding(text, db_key="workflow")
         return self._embed(prepared)
 
     def _embed(self, text: str) -> list[float]:

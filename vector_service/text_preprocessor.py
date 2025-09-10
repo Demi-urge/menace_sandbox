@@ -162,6 +162,12 @@ def load_db_configs(path: str) -> None:
         )
 
 
+# Load default preprocessing configs from the packaged ``preprocess.yml`` at import
+# time so databases automatically pick up their settings without manual
+# registration.
+load_db_configs(os.path.join(os.path.dirname(__file__), "preprocess.yml"))
+
+
 def _resolve_config(
     db_key: Optional[str], config: Optional[PreprocessingConfig]
 ) -> PreprocessingConfig:

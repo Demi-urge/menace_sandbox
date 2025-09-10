@@ -1532,7 +1532,7 @@ class PatchHistoryDB:
                 "language": row[3],
             }
             text = self._record_text(data)
-            prepared = self._prepare_text_for_embedding(text)
+            prepared = self._prepare_text_for_embedding(text, db_key="code")
             return self.encode_text(prepared) if prepared else None
         if isinstance(rec, CodeRecord):
             data = asdict(rec)
@@ -1541,7 +1541,7 @@ class PatchHistoryDB:
         else:
             return None
         text = self._record_text(data)
-        prepared = self._prepare_text_for_embedding(text)
+        prepared = self._prepare_text_for_embedding(text, db_key="code")
         return self.encode_text(prepared) if prepared else None
 
     def search_by_vector(

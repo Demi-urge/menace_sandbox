@@ -1,0 +1,16 @@
+code:
+  chunk_size: 50
+  split_sentences: false
+  filter_semantic_risks: true
+bot:
+  chunk_size: 60
+  split_sentences: true
+  filter_semantic_risks: true
+error:
+  chunk_size: 70
+  split_sentences: true
+  filter_semantic_risks: false
+workflow:
+  chunk_size: 80
+  split_sentences: false
+  filter_semantic_risks: true
