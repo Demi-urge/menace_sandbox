@@ -12,13 +12,16 @@ import vector_service_api
 def main() -> None:
     """Initialise the app and start Uvicorn."""
     vector_service_api.create_app(create_context_builder())
-    uds = os.environ.get("VECTOR_SERVICE_SOCKET")
-    if uds:
-        uvicorn.run(vector_service_api.app, uds=uds, log_level="info")
-    else:
-        host = os.environ.get("VECTOR_SERVICE_HOST", "0.0.0.0")
-        port = int(os.environ.get("VECTOR_SERVICE_PORT", "8000"))
-        uvicorn.run(vector_service_api.app, host=host, port=port, log_level="info")
+    from vector_service.embedding_backfill import watch_databases
+
+    with watch_databases(dbs=["code", "bot", "error", "workflow"], backend="annoy"):
+        uds = os.environ.get("VECTOR_SERVICE_SOCKET")
+        if uds:
+            uvicorn.run(vector_service_api.app, uds=uds, log_level="info")
+        else:
+            host = os.environ.get("VECTOR_SERVICE_HOST", "0.0.0.0")
+            port = int(os.environ.get("VECTOR_SERVICE_PORT", "8000"))
+            uvicorn.run(vector_service_api.app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
