@@ -385,16 +385,8 @@ def test_researcher_invoked_for_missing_info(tmp_path):
     assert researcher.called
 
 
-def test_pipeline_surfaces_openai_errors(tmp_path, monkeypatch, caplog):
-    class DummyOpenAI:
-        class ChatCompletion:
-            @staticmethod
-            def create(*a, **k):
-                raise RuntimeError("bad")
-
-    monkeypatch.setenv("OPENAI_API_KEY", "x")
+def test_pipeline_surfaces_engine_errors(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(bdb, "RAISE_ERRORS", True)
-    monkeypatch.setattr(bdb, "openai", DummyOpenAI)
     monkeypatch.setattr(bdb, "Repo", None)
 
     class FallbackDev(bdb.BotDevelopmentBot):
@@ -406,6 +398,12 @@ def test_pipeline_surfaces_openai_errors(tmp_path, monkeypatch, caplog):
 
     builder = _ctx_builder()
     developer = FallbackDev(repo_base=tmp_path, builder=builder)
+
+    def bad_generate(_desc: str) -> str:
+        raise RuntimeError("bad")
+
+    monkeypatch.setattr(developer.self_coding_engine, "generate_helper", bad_generate)
+
     pipeline = ip.ImplementationPipeline(builder, developer=developer)
     tasks = [
         thb.TaskInfo(
