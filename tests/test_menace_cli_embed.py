@@ -9,10 +9,29 @@ def _load_cli(monkeypatch, backfill_impl):
     vs.__path__ = []  # type: ignore[attr-defined]
     vs.PatchLogger = object
     monkeypatch.setitem(sys.modules, "vector_service", vs)
+    class _EB:
+        def __init__(self, *a, **k):
+            pass
+
+        def check_out_of_sync(self, dbs=None):
+            return dbs or ["dummy"]
+
+        def run(self, session_id="cli", dbs=None, batch_size=None, backend=None):
+            backfill_impl.run(
+                session_id=session_id,
+                dbs=dbs,
+                batch_size=batch_size,
+                backend=backend,
+            )
+
     monkeypatch.setitem(
         sys.modules,
         "vector_service.embedding_backfill",
-        types.SimpleNamespace(EmbeddingBackfill=lambda: backfill_impl),
+        types.SimpleNamespace(
+            EmbeddingBackfill=_EB,
+            _RUN_SKIPPED=types.SimpleNamespace(labels=lambda *a, **k: types.SimpleNamespace(inc=lambda *a, **k: None)),
+            _log_violation=lambda *a, **k: None,
+        ),
     )
     VecErr = type("VecErr", (Exception,), {})
     monkeypatch.setitem(
@@ -35,6 +54,11 @@ def _load_cli(monkeypatch, backfill_impl):
             get_patch_provenance=lambda pid: [],
             PatchLogger=object,
         ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace.plugins",
+        types.SimpleNamespace(load_plugins=lambda sub: None),
     )
     return importlib.import_module("menace_cli")
 
@@ -71,6 +95,19 @@ def test_embed_multi_db(monkeypatch):
     res = menace_cli.main(["embed", "--db", "code", "--db", "workflows"])
     assert res == 0
     assert calls["dbs"] == ["code", "workflows"]
+
+
+def test_embed_all(monkeypatch):
+    calls = {}
+
+    class DummyBackfill:
+        def run(self, session_id="cli", dbs=None, batch_size=None, backend=None):
+            calls["dbs"] = dbs
+
+    menace_cli = _load_cli(monkeypatch, DummyBackfill())
+    res = menace_cli.main(["embed", "--all"])
+    assert res == 0
+    assert set(calls["dbs"]) == {"code", "bot", "error", "workflow"}
 
 
 def test_embed_errors(monkeypatch, capsys):

@@ -320,6 +320,8 @@ def handle_embed(args: argparse.Namespace) -> int:
     """Handle ``embed`` command."""
     if not _require_vector_service():
         return 1
+    if getattr(args, "all", False):
+        args.dbs = ["code", "bot", "error", "workflow"]
     import logging
     from typing import IO
 
@@ -575,6 +577,11 @@ def main(argv: list[str] | None = None) -> int:
         "--verify",
         action="store_true",
         help="Verify vector counts match record totals after backfill",
+    )
+    p_embed.add_argument(
+        "--all",
+        action="store_true",
+        help="Embed code, bot, error, and workflow databases",
     )
     p_embed.set_defaults(func=handle_embed)
 
