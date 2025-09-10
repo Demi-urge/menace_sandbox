@@ -129,13 +129,7 @@ except Exception:
 
 
 def _ensure_vector_service() -> None:
-    """Ensure the configured vector service is reachable.
-
-    When ``VECTOR_SERVICE_URL`` is set the endpoint is probed and a local
-    service is started on demand if the check fails.  A
-    :class:`VectorServiceError` is raised when the service remains
-    unavailable.
-    """
+    """Ensure the configured vector service is reachable."""
 
     base = os.environ.get("VECTOR_SERVICE_URL")
     if not base:
@@ -145,17 +139,24 @@ def _ensure_vector_service() -> None:
     import subprocess
     import sys
 
-    def _available() -> bool:
-        for path in ("/status", "/health"):
-            url = f"{base.rstrip('/')}{path}"
-            try:
-                with urllib.request.urlopen(url, timeout=2):
-                    return True
-            except Exception:
-                continue
+    def _ready() -> bool:
+        url = f"{base.rstrip('/')}/health/ready"
+        try:
+            with urllib.request.urlopen(url, timeout=2):
+                return True
+        except Exception:
+            return False
+
+    def _wait_ready(tries: int = 5, delay: float = 0.5, backoff: float = 2.0) -> bool:
+        wait = delay
+        for _ in range(tries):
+            if _ready():
+                return True
+            time.sleep(wait)
+            wait *= backoff
         return False
 
-    if _available():
+    if _wait_ready():
         return
 
     script = resolve_path("scripts/run_vector_service.py")
@@ -165,11 +166,10 @@ def _ensure_vector_service() -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        time.sleep(1)
     except Exception as exc:  # pragma: no cover - best effort
         raise VectorServiceError(f"vector service unavailable at {base}") from exc
 
-    if not _available():
+    if not _wait_ready():
         raise VectorServiceError(f"vector service unavailable at {base}")
 
 
