@@ -128,6 +128,51 @@ except Exception:
     pass
 
 
+def _ensure_vector_service() -> None:
+    """Ensure the configured vector service is reachable.
+
+    When ``VECTOR_SERVICE_URL`` is set the endpoint is probed and a local
+    service is started on demand if the check fails.  A
+    :class:`VectorServiceError` is raised when the service remains
+    unavailable.
+    """
+
+    base = os.environ.get("VECTOR_SERVICE_URL")
+    if not base:
+        return
+
+    import urllib.request
+    import subprocess
+    import sys
+
+    def _available() -> bool:
+        for path in ("/status", "/health"):
+            url = f"{base.rstrip('/')}{path}"
+            try:
+                with urllib.request.urlopen(url, timeout=2):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    if _available():
+        return
+
+    script = resolve_path("scripts/run_vector_service.py")
+    try:
+        subprocess.Popen(
+            [sys.executable, str(script)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(1)
+    except Exception as exc:  # pragma: no cover - best effort
+        raise VectorServiceError(f"vector service unavailable at {base}") from exc
+
+    if not _available():
+        raise VectorServiceError(f"vector service unavailable at {base}")
+
+
 try:  # pragma: no cover - optional dependency
     from . import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when undefined
@@ -1028,6 +1073,7 @@ class ContextBuilder:
             self.refresh_db_weights()
         except Exception:
             pass
+        _ensure_vector_service()
         ensure_embeddings_fresh(self.db_weights.keys())
         try:
             self.patch_safety.load_failures()
