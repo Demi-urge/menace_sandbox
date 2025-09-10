@@ -144,15 +144,28 @@ def _ensure_vector_service() -> None:
     import subprocess
     import sys
 
+    # Configuration hooks ---------------------------------------------------
+    ready_tries = int(os.environ.get("VECTOR_SERVICE_RETRY_COUNT", "5"))
+    ready_delay = float(os.environ.get("VECTOR_SERVICE_RETRY_DELAY", "0.5"))
+    ready_backoff = float(os.environ.get("VECTOR_SERVICE_RETRY_BACKOFF", "2.0"))
+    start_tries = int(os.environ.get("VECTOR_SERVICE_START_RETRIES", "3"))
+    start_delay = float(os.environ.get("VECTOR_SERVICE_START_DELAY", "1.0"))
+    start_backoff = float(os.environ.get("VECTOR_SERVICE_START_BACKOFF", "2.0"))
+    verify_embeddings = (
+        os.environ.get("VECTOR_SERVICE_VERIFY_EMBEDDINGS", "").lower()
+        in {"1", "true", "yes"}
+    )
+
     def _ready() -> bool:
         url = f"{base.rstrip('/')}/health/ready"
         try:
             with urllib.request.urlopen(url, timeout=2):
                 return True
-        except Exception:
+        except Exception as exc:
+            logger.debug("vector service health check failed: %s", exc)
             return False
 
-    def _wait_ready(tries: int = 5, delay: float = 0.5, backoff: float = 2.0) -> bool:
+    def _wait_ready(tries: int, delay: float, backoff: float) -> bool:
         wait = delay
         for _ in range(tries):
             if _ready():
@@ -161,21 +174,58 @@ def _ensure_vector_service() -> None:
             wait *= backoff
         return False
 
-    if _wait_ready():
+    def _verify_embedding_endpoint() -> None:
+        if not verify_embeddings:
+            return
+        url = f"{base.rstrip('/')}/search"
+        payload = json.dumps({"query": "ping"}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                return
+        except Exception as exc:
+            logger.error("embedding endpoint check failed: %s", exc)
+            raise VectorServiceError(
+                f"embedding endpoint unavailable at {url}") from exc
+
+    if _wait_ready(ready_tries, ready_delay, ready_backoff):
+        _verify_embedding_endpoint()
         return
 
     script = resolve_path("scripts/run_vector_service.py")
-    try:
-        subprocess.Popen(
-            [sys.executable, str(script)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+    last_error: Exception | None = None
+    wait = start_delay
+    for attempt in range(1, start_tries + 1):
+        logger.info(
+            "starting vector service attempt %s/%s", attempt, start_tries
         )
-    except Exception as exc:  # pragma: no cover - best effort
-        raise VectorServiceError(f"vector service unavailable at {base}") from exc
+        try:
+            subprocess.Popen(
+                [sys.executable, str(script)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            last_error = exc
+            logger.error("failed to launch vector service: %s", exc)
+        if _wait_ready(ready_tries, ready_delay, ready_backoff):
+            _verify_embedding_endpoint()
+            return
+        logger.error(
+            "vector service not ready after attempt %s/%s", attempt, start_tries
+        )
+        time.sleep(wait)
+        wait *= start_backoff
 
-    if not _wait_ready():
-        raise VectorServiceError(f"vector service unavailable at {base}")
+    message = f"vector service unavailable at {base} after {start_tries} attempts"
+    logger.error(message)
+    if last_error is not None:
+        raise VectorServiceError(message) from last_error
+    raise VectorServiceError(message)
 
 
 try:  # pragma: no cover - optional dependency
