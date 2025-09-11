@@ -188,11 +188,19 @@ def log_context(
         after_metric=after_metric if after_metric is not None else before_metric,
         parent_id=parent_id,
     )
-    data: Dict[str, float | int] = {"event_id": event_id, "before_metric": before_metric}
+    data: Dict[str, float | int] = {
+        "event_id": event_id,
+        "before_metric": before_metric,
+    }
     try:
         yield data
     finally:
-        after = float(data.get("after_metric", after_metric if after_metric is not None else before_metric))
+        after = float(
+            data.get(
+                "after_metric",
+                after_metric if after_metric is not None else before_metric,
+            )
+        )
         perf = float(data.get("performance", after - before_metric))
         roi = float(data.get("roi", after - before_metric))
         record_mutation_outcome(
@@ -201,6 +209,22 @@ def log_context(
             roi=roi,
             performance=perf,
         )
+
+
+def flag_untracked_commit(commit: str) -> None:
+    """Flag a commit that bypassed provenance checks."""
+    if _event_bus is None:
+        _logger.warning("untracked commit %s", commit)
+        return
+    payload = {"commit": commit}
+
+    def _publish() -> None:
+        try:
+            publish_with_retry(_event_bus, "untracked_commit", payload, delay=0.1)
+        except Exception as exc:  # pragma: no cover - best effort
+            _logger.error("failed publishing untracked_commit: %s", exc)
+
+    Thread(target=_publish, daemon=True).start()
 
 
 def build_lineage(workflow_id: int) -> list[dict]:
@@ -216,4 +240,5 @@ __all__ = [
     "set_event_bus",
     "log_context",
     "log_workflow_evolution",
+    "flag_untracked_commit",
 ]

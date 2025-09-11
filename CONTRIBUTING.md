@@ -131,6 +131,31 @@ system to track and improve the bot over time. Bot constructors **must** accept
 them to the decorator to ensure proper registration. Avoid instantiating new
 coding bots without this decorator.
 
+## Patch provenance
+
+Commits that modify self-coding infrastructure (`self_coding_manager.py`,
+`self_coding_engine.py`, `quick_fix_engine.py`, or `coding_bot_interface.py`)
+must include a `patch <id>` tag and provenance metadata. Install the
+`commit-msg` hook to enforce this policy:
+
+```bash
+ln -s ../../scripts/check_patch_provenance.py .git/hooks/commit-msg
+```
+
+The hook rejects commits touching these files when the tag is missing or when
+the self-coding manager fails to provide provenance via the
+`PATCH_PROVENANCE_FILE` environment variable.
+
+In continuous integration environments where hooks may be skipped, run the
+verification script:
+
+```bash
+python scripts/check_patch_provenance.py --ci
+```
+
+The script records `untracked_commit` events through `MutationLogger` so the
+`EvolutionOrchestrator` can trigger rollback if manual commits slip through.
+
 ## Stripe integration
 
 To centralize billing logic and API configuration, the `stripe` Python package

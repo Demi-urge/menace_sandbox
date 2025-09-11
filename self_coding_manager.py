@@ -15,6 +15,7 @@ import time
 import re
 import json
 import uuid
+import os
 from dataclasses import asdict
 from typing import Dict, Any, TYPE_CHECKING
 
@@ -287,7 +288,11 @@ class SelfCodingManager:
             try:
                 conn = patch_db.router.get_connection("patch_history")
                 conn.execute(
-                    "INSERT INTO patch_contributors(patch_id, vector_id, influence, session_id) VALUES(?,?,?,?)",
+                    (
+                        "INSERT INTO patch_contributors("
+                        "patch_id, vector_id, influence, session_id"
+                        ") VALUES(?,?,?,?)"
+                    ),
                     (None, "", 0.0, session_id),
                 )
                 conn.commit()
@@ -964,11 +969,23 @@ class SelfCodingManager:
                     cwd=str(clone_root),
                 )
                 subprocess.run(["git", "add", "-A"], check=True, cwd=str(clone_root))
+                prov_path = Path(tmp) / "patch_provenance.json"
+                try:
+                    prov_path.write_text(json.dumps({"patch_id": patch_id}))
+                except Exception:
+                    self.logger.error("failed to write provenance file")
+                env = os.environ.copy()
+                env["PATCH_PROVENANCE_FILE"] = str(prov_path)
                 subprocess.run(
                     ["git", "commit", "-m", f"patch {patch_id}: {description}"],
                     check=True,
                     cwd=str(clone_root),
+                    env=env,
                 )
+                try:
+                    prov_path.unlink()
+                except Exception:
+                    pass
                 try:
                     commit_hash = (
                         subprocess.check_output(
