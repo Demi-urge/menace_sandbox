@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-"""Utilities for registering coding bots with the central registries."""
+"""Utilities for registering coding bots with the central registries.
+
+Note:
+    Always decorate new coding bot classes with ``@self_coding_managed`` so
+    they are automatically registered with the system's helpers.
+"""
 
 from functools import wraps
 import inspect
