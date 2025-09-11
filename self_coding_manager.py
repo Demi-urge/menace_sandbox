@@ -46,6 +46,17 @@ from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings
 from .patch_attempt_tracker import PatchAttemptTracker
 
+try:  # pragma: no cover - optional dependency
+    from . import quick_fix_engine
+    from .quick_fix_engine import QuickFixEngine
+except Exception:  # pragma: no cover - optional dependency
+    quick_fix_engine = None  # type: ignore
+
+    class QuickFixEngine:  # type: ignore
+        """Fallback QuickFixEngine when optional dependency missing."""
+
+        pass
+
 try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -115,6 +126,7 @@ class SelfCodingManager:
         skip_similarity: float | None = None,
         baseline_window: int | None = None,
         bot_registry: BotRegistry | None = None,
+        quick_fix_engine: QuickFixEngine | None = None,
     ) -> None:
         self.engine = self_coding_engine
         self.pipeline = pipeline
@@ -131,6 +143,7 @@ class SelfCodingManager:
         )
         self.failure_store = failure_store
         self.skip_similarity = skip_similarity
+        self.quick_fix_engine = quick_fix_engine
         if baseline_window is None:
             try:
                 baseline_window = getattr(SandboxSettings(), "baseline_window", 5)
@@ -460,6 +473,34 @@ class SelfCodingManager:
                 )
                 harness_result: TestHarnessResult = _run(clone_root, cloned_path)
                 if harness_result.success:
+                    if self.quick_fix_engine is not None and quick_fix_engine is not None:
+                        try:
+                            quick_fix_engine.generate_patch(
+                                path_for_prompt(cloned_path),
+                                self.engine,
+                                context_builder=self.quick_fix_engine.context_builder,
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "quick fix validation failed"
+                            )
+                            try:
+                                subprocess.run(
+                                    ["git", "checkout", "--", str(cloned_path)],
+                                    check=True,
+                                    cwd=str(clone_root),
+                                )
+                            except Exception:
+                                self.logger.exception("failed to revert patch")
+                            try:
+                                RollbackManager().rollback(
+                                    str(patch_id), requesting_bot=self.bot_name
+                                )
+                            except Exception:
+                                self.logger.exception("rollback failed")
+                            if target_region is not None and func_region is not None:
+                                tracker.record_failure(level, target_region, func_region)
+                            continue
                     coverage_after = _coverage_ratio(
                         harness_result.stdout, harness_result.success
                     )
