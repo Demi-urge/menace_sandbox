@@ -96,6 +96,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback for flat layout
     from unified_event_bus import UnifiedEventBus  # type: ignore
 
+try:  # pragma: no cover - allow package/flat imports
+    from .code_database import PatchRecord
+except Exception:  # pragma: no cover - fallback for flat layout
+    from code_database import PatchRecord  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from .enhancement_classifier import EnhancementClassifier
 
@@ -349,6 +354,76 @@ class SelfCodingManager:
             or delta_err >= self.error_rate_threshold
             or delta_fail >= self.test_failure_threshold
         )
+
+    # ------------------------------------------------------------------
+    def register_patch_cycle(
+        self,
+        description: str,
+        context_meta: Dict[str, Any] | None = None,
+    ) -> None:
+        """Log baseline metrics for an upcoming patch cycle.
+
+        The baseline ROI and error rates for ``bot_name`` are stored in
+        :class:`PatchHistoryDB` and a ``self_coding:cycle_registered`` event is
+        emitted on the configured event bus.  The generated record and event
+        identifiers are stored for linking with subsequent patch events.
+        """
+
+        roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
+        errors = (
+            self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
+        )
+        patch_db = getattr(self.engine, "patch_db", None)
+        patch_id: int | None = None
+        if patch_db:
+            try:
+                rec = PatchRecord(
+                    filename=f"{self.bot_name}.cycle",
+                    description=description,
+                    roi_before=roi,
+                    roi_after=roi,
+                    errors_before=int(errors),
+                    errors_after=int(errors),
+                    source_bot=self.bot_name,
+                    reason=context_meta.get("reason") if context_meta else None,
+                    trigger=context_meta.get("trigger") if context_meta else None,
+                )
+                patch_id = patch_db.add(rec)
+                self._last_patch_id = patch_id
+            except Exception:
+                self.logger.exception("failed to log patch cycle to DB")
+        event_id: int | None = None
+        try:
+            trigger = (
+                context_meta.get("trigger") if context_meta else "degradation"
+            )
+            event_id = MutationLogger.log_mutation(
+                change="patch_cycle_start",
+                reason=description,
+                trigger=trigger,
+                performance=0.0,
+                workflow_id=0,
+                before_metric=roi,
+                after_metric=roi,
+                parent_id=self._last_event_id,
+            )
+            self._last_event_id = event_id
+        except Exception:
+            self.logger.exception("failed to log patch cycle event")
+        if self.event_bus:
+            try:
+                payload = {
+                    "bot": self.bot_name,
+                    "patch_id": patch_id,
+                    "roi_before": roi,
+                    "errors_before": errors,
+                    "description": description,
+                }
+                if context_meta:
+                    payload.update(context_meta)
+                self.event_bus.publish("self_coding:cycle_registered", payload)
+            except Exception:
+                self.logger.exception("failed to publish cycle_registered event")
 
     # ------------------------------------------------------------------
     def generate_and_patch(
