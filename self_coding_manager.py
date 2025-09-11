@@ -286,14 +286,13 @@ class SelfCodingManager:
             except Exception:
                 self.logger.exception("failed to record context builder session")
 
-    def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
+    def _ensure_quick_fix_engine(self) -> QuickFixEngine:
         """Initialise :class:`QuickFixEngine` on demand.
 
-        Raises
-        ------
-        RuntimeError
-            If the optional ``quick_fix_engine`` dependency is missing or
-            initialisation fails.
+        The quick fix engine performs validation before patches are applied.
+        It is an optional dependency for the wider system but mandatory for
+        this method.  A :class:`RuntimeError` is raised if the engine or its
+        prerequisites cannot be created.
         """
 
         if self.quick_fix is not None:
@@ -309,7 +308,10 @@ class SelfCodingManager:
                 "engine.cognition_layer must provide a context_builder"
             )
         self._prepare_context_builder(builder)
-        self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
+        try:
+            self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
+        except Exception as exc:  # pragma: no cover - instantiation errors
+            raise RuntimeError("failed to initialise QuickFixEngine") from exc
         return self.quick_fix
 
     # ------------------------------------------------------------------
@@ -463,6 +465,16 @@ class SelfCodingManager:
         """Patch ``path`` using :meth:`run_patch` with fresh context."""
 
         builder = context_builder or ContextBuilder()
+        clayer = getattr(self.engine, "cognition_layer", None)
+        if clayer is None:
+            raise AttributeError(
+                "engine.cognition_layer must provide a context_builder"
+            )
+        clayer.context_builder = builder
+        try:
+            self._ensure_quick_fix_engine()
+        except Exception as exc:
+            raise RuntimeError("QuickFixEngine validation unavailable") from exc
         return self.run_patch(
             path,
             description,
@@ -551,11 +563,9 @@ class SelfCodingManager:
                     "engine.cognition_layer must provide a context_builder",
                 )
             self._prepare_context_builder(builder)
-            self._ensure_quick_fix_engine()
-            if self.quick_fix is None:
-                raise RuntimeError("QuickFixEngine validation unavailable")
+            quick_fix = self._ensure_quick_fix_engine()
             try:
-                self.quick_fix.context_builder = builder
+                quick_fix.context_builder = builder
             except Exception:
                 self.logger.exception(
                     "failed to update QuickFixEngine context builder",

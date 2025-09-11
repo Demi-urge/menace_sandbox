@@ -438,6 +438,7 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mgr, "run_patch", fake_run_patch)
     builder = object()
+    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda: object())
     mgr.generate_and_patch(file_path, "fix", context_builder=builder)
     assert any(c[0] == "patch" and c[1] == file_path and c[3] is builder for c in calls)
 
@@ -466,6 +467,7 @@ def test_generate_and_patch_failure(monkeypatch, tmp_path):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(mgr, "run_patch", bad_run_patch)
+    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda: object())
     with pytest.raises(RuntimeError):
         mgr.generate_and_patch(file_path, "fix")
 
