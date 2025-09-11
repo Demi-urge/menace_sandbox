@@ -67,20 +67,9 @@ from .sandbox_settings import SandboxSettings
 from .patch_attempt_tracker import PatchAttemptTracker
 
 try:  # pragma: no cover - optional dependency
-    from . import quick_fix_engine
     from .quick_fix_engine import QuickFixEngine
-except Exception as exc:  # pragma: no cover - optional dependency
-    quick_fix_engine = None  # type: ignore
-
-    class QuickFixEngine:  # type: ignore
-        """Placeholder when :mod:`quick_fix_engine` is unavailable."""
-
-        def __init__(
-            self, *a: object, _exc: Exception = exc, **k: object
-        ) -> None:  # noqa: D401
-            raise RuntimeError(
-                "QuickFixEngine is required but could not be imported"
-            ) from _exc
+except Exception:  # pragma: no cover - optional dependency
+    QuickFixEngine = None  # type: ignore
 
 from context_builder_util import ensure_fresh_weights
 
@@ -299,7 +288,7 @@ class SelfCodingManager:
 
         if self.quick_fix is not None:
             return self.quick_fix
-        if quick_fix_engine is None:
+        if QuickFixEngine is None:
             raise RuntimeError(
                 "QuickFixEngine is required but could not be imported"
             )
@@ -565,7 +554,12 @@ class SelfCodingManager:
                     "engine.cognition_layer must provide a context_builder",
                 )
             self._prepare_context_builder(builder)
-            quick_fix = self._ensure_quick_fix_engine()
+            try:
+                quick_fix = self._ensure_quick_fix_engine()
+            except Exception as exc:
+                raise RuntimeError(
+                    "QuickFixEngine validation unavailable"
+                ) from exc
             try:
                 quick_fix.context_builder = builder
             except Exception:

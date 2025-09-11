@@ -199,7 +199,6 @@ def test_failed_tags_recorded(monkeypatch, tmp_path):
         data_bot=scm.DataBot(),
         bot_registry=scm.BotRegistry(),
     )
-    monkeypatch.setattr(scm.SelfCodingManager, "_ensure_quick_fix_engine", lambda self: None)
 
     # ensure clone path exists and file copied during git clone
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
@@ -238,3 +237,70 @@ def test_failed_tags_recorded(monkeypatch, tmp_path):
         mgr.run_patch(file_path, "add", max_attempts=2)
 
     assert "value_error" in engine.patch_suggestion_db.failed_strategy_tags()
+
+
+def test_patch_requires_quick_fix_engine(monkeypatch, tmp_path):
+    file_path = tmp_path / resolve_path("sample.py")
+    file_path.write_text("def x():\n    pass\n")
+
+    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
+
+    class Engine:
+        def __init__(self):
+            self.patch_suggestion_db = PatchSuggestionDB(tmp_path / "s.db")
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+            self.last_prompt_text = ""
+
+        def apply_patch(self, path: Path, desc: str, **kwargs):
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("# patched\n")
+            return 1, False, 0.0
+
+    engine = Engine()
+    pipeline = ModelAutomationPipeline(context_builder=builder)
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        data_bot=scm.DataBot(),
+        bot_registry=scm.BotRegistry(),
+    )
+
+    monkeypatch.setattr(scm, "QuickFixEngine", None, raising=False)
+
+    # ensure clone path exists and file copied during git clone
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **k):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    success_result = HarnessResultClass(
+        success=True,
+        failure=None,
+        stdout="",
+        stderr="",
+        duration=0.0,
+    )
+    monkeypatch.setattr(
+        scm, "run_tests", lambda repo, path, *, backend="venv": success_result
+    )
+
+    with pytest.raises(RuntimeError):
+        mgr.run_patch(file_path, "add")
