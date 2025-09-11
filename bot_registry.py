@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-"""Graph based registry capturing bot interactions."""
+"""Graph based registry capturing bot interactions.
 
-from typing import Iterable, List, Tuple, Union, Optional, Dict
+The registry persists bot connections to a database and allows bots to be
+hot swapped at runtime. Updating a bot's backing module via ``update_bot``
+broadcasts a ``bot:updated`` event so other components can react to the
+change.
+"""
+
+from typing import List, Tuple, Union, Optional, Dict
 from pathlib import Path
 import time
 
@@ -18,17 +24,22 @@ except Exception:  # pragma: no cover - optional dependency
 import networkx as nx
 import logging
 
-logger = logging.getLogger(__name__)
-
 from .unified_event_bus import UnifiedEventBus
 import db_router
 from db_router import DBRouter, init_db_router
+
+logger = logging.getLogger(__name__)
 
 
 class BotRegistry:
     """Store connections between bots using a directed graph."""
 
-    def __init__(self, *, persist: Optional[Path | str] = None, event_bus: Optional["UnifiedEventBus"] = None) -> None:
+    def __init__(
+        self,
+        *,
+        persist: Optional[Path | str] = None,
+        event_bus: Optional["UnifiedEventBus"] = None,
+    ) -> None:
         self.graph = nx.DiGraph()
         self.persist_path = Path(persist) if persist else None
         self.event_bus = event_bus
@@ -58,6 +69,28 @@ class BotRegistry:
                     "Failed to save bot registry to %s: %s", self.persist_path, exc
                 )
 
+    def update_bot(self, name: str, module_path: str) -> None:
+        """Update stored module path for ``name`` and emit ``bot:updated``."""
+
+        # Ensure the bot exists in the graph.
+        self.register_bot(name)
+        self.graph.nodes[name]["module"] = module_path
+
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "bot:updated", {"name": name, "module": module_path}
+                )
+            except Exception as exc:
+                logger.error("Failed to publish bot:updated event: %s", exc)
+        if self.persist_path:
+            try:
+                self.save(self.persist_path)
+            except Exception as exc:
+                logger.error(
+                    "Failed to save bot registry to %s: %s", self.persist_path, exc
+                )
+
     def register_interaction(self, from_bot: str, to_bot: str, weight: float = 1.0) -> None:
         """Record that *from_bot* interacted with *to_bot*."""
         self.register_bot(from_bot)
@@ -66,7 +99,9 @@ class BotRegistry:
             self.graph[from_bot][to_bot]["weight"] += weight
         else:
             self.graph.add_edge(from_bot, to_bot, weight=weight)
-        self.interactions_meta.append({"from": from_bot, "to": to_bot, "weight": weight, "ts": time.time()})
+        self.interactions_meta.append(
+            {"from": from_bot, "to": to_bot, "weight": weight, "ts": time.time()}
+        )
         if self.event_bus:
             try:
                 self.event_bus.publish(
@@ -189,8 +224,16 @@ class BotRegistry:
 
         cur = conn.cursor()
         cur.execute(
-            "CREATE TABLE IF NOT EXISTS bot_nodes(name TEXT PRIMARY KEY)"
+            "CREATE TABLE IF NOT EXISTS bot_nodes(name TEXT PRIMARY KEY, module TEXT)"
         )
+        # Ensure the ``module`` column exists for databases created before it
+        # was introduced.
+        try:  # pragma: no cover - only executed on legacy schemas
+            cols = [r[1] for r in cur.execute("PRAGMA table_info(bot_nodes)").fetchall()]
+            if "module" not in cols:
+                cur.execute("ALTER TABLE bot_nodes ADD COLUMN module TEXT")
+        except Exception:
+            pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS bot_edges(
@@ -202,7 +245,11 @@ class BotRegistry:
             """
         )
         for node in self.graph.nodes:
-            cur.execute("INSERT OR IGNORE INTO bot_nodes(name) VALUES(?)", (node,))
+            module = self.graph.nodes[node].get("module")
+            cur.execute(
+                "INSERT OR REPLACE INTO bot_nodes(name, module) VALUES(?, ?)",
+                (node, module),
+            )
         for u, v, data in self.graph.edges(data=True):
             cur.execute(
                 "REPLACE INTO bot_edges(from_bot,to_bot,weight) VALUES(?,?,?)",
@@ -239,11 +286,27 @@ class BotRegistry:
         self.graph.clear()
         cur = conn.cursor()
         try:
-            node_rows = cur.execute("SELECT name FROM bot_nodes").fetchall()
+            cols = [r[1] for r in cur.execute("PRAGMA table_info(bot_nodes)").fetchall()]
         except Exception:
-            node_rows = []
-        for (name,) in node_rows:
-            self.graph.add_node(name)
+            cols = []
+
+        if "module" in cols:
+            try:
+                node_rows = cur.execute("SELECT name, module FROM bot_nodes").fetchall()
+            except Exception:  # pragma: no cover - corrupted table
+                node_rows = []
+            for name, module in node_rows:
+                if module is None:
+                    self.graph.add_node(name)
+                else:
+                    self.graph.add_node(name, module=module)
+        else:
+            try:
+                node_rows = cur.execute("SELECT name FROM bot_nodes").fetchall()
+            except Exception:  # pragma: no cover - corrupted table
+                node_rows = []
+            for (name,) in node_rows:
+                self.graph.add_node(name)
 
         try:
             edge_rows = cur.execute(
