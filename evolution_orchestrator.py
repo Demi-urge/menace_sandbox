@@ -122,6 +122,7 @@ class EvolutionOrchestrator:
         self._last_mutation_id: int | None = None
         self._workflow_event_ids: dict[int | str, int] = {}
         self.roi_history: list[float] = []
+        self._registered_bots: set[str] = set()
         if not self.dataset_path.exists():
             try:
                 self.dataset_path.write_text(
@@ -143,13 +144,34 @@ class EvolutionOrchestrator:
         if bus:
             try:
                 bus.subscribe("bot:degraded", lambda _t, e: self._on_bot_degraded(e))
+                self._degradation_subscribed = True
             except Exception:
                 self.logger.exception("bot degraded subscription failed")
         else:
             try:
                 self.data_bot.subscribe_degradation(self._on_bot_degraded)
+                self._degradation_subscribed = True
             except Exception:
                 self.logger.exception("failed to attach degradation callback")
+                self._degradation_subscribed = False
+
+    # ------------------------------------------------------------------
+    def register_bot(self, bot: str) -> None:
+        """Subscribe to DataBot metrics for *bot* to receive degradation events."""
+        if not bot:
+            return
+        if bot in self._registered_bots:
+            return
+        self._registered_bots.add(bot)
+        try:
+            if not getattr(self, "_degradation_subscribed", False):
+                self.data_bot.subscribe_degradation(self._on_bot_degraded)
+                self._degradation_subscribed = True
+            if getattr(self.data_bot, "check_degradation", None):
+                # seed baseline metrics so future deltas are meaningful
+                self.data_bot.check_degradation(bot, roi=0.0, errors=0.0)
+        except Exception:
+            self.logger.exception("failed to register bot %s for metrics", bot)
 
     # ------------------------------------------------------------------
     def _on_patch_applied(self, _topic: str, event: object) -> None:
