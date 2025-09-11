@@ -28,7 +28,38 @@ scm_stub = types.ModuleType("menace.self_coding_manager")
 
 
 class SelfCodingManager:  # pragma: no cover - stub
-    pass
+    def __init__(self, engine=None, pipeline=None, *, bot_name="bot", data_bot=None, event_bus=None):
+        self.engine = engine
+        self.pipeline = pipeline
+        self.bot_name = bot_name
+        self.data_bot = data_bot
+        self.event_bus = event_bus
+        self._last_patch_id = None
+
+    def register_patch_cycle(self, description, context_meta=None):
+        roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
+        errors = self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
+        patch_db = getattr(self.engine, "patch_db", None)
+        if patch_db:
+            self._last_patch_id = patch_db.add(
+                filename=f"{self.bot_name}.cycle",
+                description=description,
+                roi_before=roi,
+                roi_after=roi,
+                errors_before=int(errors),
+                errors_after=int(errors),
+                source_bot=self.bot_name,
+            )
+        if self.event_bus:
+            self.event_bus.publish(
+                "self_coding:cycle_registered",
+                {
+                    "bot": self.bot_name,
+                    "description": description,
+                    "roi_before": roi,
+                    "errors_before": errors,
+                },
+            )
 
 
 scm_stub.SelfCodingManager = SelfCodingManager
@@ -142,3 +173,76 @@ def test_resolve_path_missing_file_raises(monkeypatch, tmp_path):
     dpr.clear_cache()
     with pytest.raises(FileNotFoundError):
         dpr.resolve_path("not_here.txt")
+
+
+# ---------------------------------------------------------------------------
+def test_register_patch_cycle_logs_history(tmp_path):
+    class StubPatchDB:
+        def __init__(self, path):
+            import sqlite3
+
+            self.conn = sqlite3.connect(path)
+            self.conn.execute(
+                """
+                CREATE TABLE patch_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    description TEXT,
+                    roi_before REAL,
+                    roi_after REAL,
+                    errors_before INTEGER,
+                    errors_after INTEGER,
+                    source_bot TEXT
+                )
+                """
+            )
+
+        def add(self, **rec):
+            cur = self.conn.execute(
+                """
+                INSERT INTO patch_history (
+                    description, roi_before, roi_after, errors_before, errors_after, source_bot
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    rec["description"],
+                    rec["roi_before"],
+                    rec["roi_after"],
+                    rec["errors_before"],
+                    rec["errors_after"],
+                    rec["source_bot"],
+                ),
+            )
+            self.conn.commit()
+            return cur.lastrowid
+
+    patch_db = StubPatchDB(tmp_path / "p.db")
+    engine = types.SimpleNamespace(patch_db=patch_db)
+
+    class DummyDataBot:
+        def roi(self, name: str) -> float:
+            return 1.5
+
+        def average_errors(self, name: str) -> float:
+            return 2.5
+
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, topic: str, payload: dict) -> None:
+            events.append((topic, payload))
+
+    mgr = SelfCodingManager(
+        engine, None, bot_name="bot", data_bot=DummyDataBot(), event_bus=Bus()
+    )
+    mgr.register_patch_cycle("cycle", {})
+
+    rows = list(
+        patch_db.conn.execute(
+            "SELECT description, roi_before, errors_before, source_bot FROM patch_history"
+        )
+    )
+    assert rows and rows[0][0] == "cycle"
+    assert rows[0][1] == pytest.approx(1.5)
+    assert rows[0][2] == 2
+    assert rows[0][3] == "bot"
+    assert events and events[0][0] == "self_coding:cycle_registered"

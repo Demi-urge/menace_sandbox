@@ -232,6 +232,7 @@ class EvolutionOrchestrator:
                 or getattr(self.data_bot, "event_bus", None)
             )
             try:
+                self.selfcoding_manager.register_patch_cycle(desc, context_meta)
                 self.selfcoding_manager.generate_and_patch(
                     module_path,
                     desc,
