@@ -55,6 +55,12 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
+      - id: check-self-coding-registration
+        name: Ensure coding bots are registered
+        entry: python tools/check_self_coding_registration.py
+        language: system
+        pass_filenames: false
+        files: '\.py$'
       - id: check-engine-generate-helper
         name: Prevent unwrapped engine.generate_helper usage
         entry: python tools/check_engine_generate_helper_wrapping.py
