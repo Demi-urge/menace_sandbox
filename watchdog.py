@@ -471,6 +471,8 @@ class Watchdog:
         try:
             from .automated_debugger import AutomatedDebugger
             from .self_coding_engine import SelfCodingEngine
+            from .self_coding_manager import SelfCodingManager
+            from .model_automation_pipeline import ModelAutomationPipeline
             from .code_database import CodeDB
             from .menace_memory_manager import MenaceMemoryManager
 
@@ -478,8 +480,20 @@ class Watchdog:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
+            try:
+                pipeline = ModelAutomationPipeline(context_builder=self.context_builder)
+                manager = SelfCodingManager(engine, pipeline)
+            except Exception:
+                class _Mgr:
+                    def run_patch(self, *a, **k):
+                        return None
+
+                manager = _Mgr()
             dbg = AutomatedDebugger(
-                _Proxy(self.error_db), engine, context_builder=self.context_builder
+                _Proxy(self.error_db),
+                engine,
+                self.context_builder,
+                manager=manager,
             )
             dbg.analyse_and_fix()
             if self.event_bus:

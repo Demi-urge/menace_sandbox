@@ -32,7 +32,7 @@ class AutomatedDebugger:
         engine: SelfCodingEngine | None = None,
         context_builder: ContextBuilder | None = None,
         *,
-        manager: SelfCodingManager | None = None,
+        manager: SelfCodingManager,
     ) -> None:
         if not isinstance(context_builder, ContextBuilder):
             raise TypeError("context_builder must be a ContextBuilder instance")
@@ -200,17 +200,7 @@ class AutomatedDebugger:
                 kwargs: dict[str, Any] = {}
                 if retrieval_context is not None:
                     kwargs["context_meta"] = {"retrieval_context": retrieval_context}
-                if self.manager is not None:
-                    self.manager.run_patch(path, "auto_debug", **kwargs)
-                elif self.engine is not None:
-                    self.engine.apply_patch(
-                        path,
-                        "auto_debug",
-                        reason="auto_debug",
-                        trigger="automated_debugger",
-                        target_region=region,
-                        **kwargs,
-                    )
+                self.manager.run_patch(path, "auto_debug", **kwargs)
 
             try:
                 _apply(module_path, target)
