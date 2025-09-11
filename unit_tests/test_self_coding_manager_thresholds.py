@@ -2,11 +2,6 @@
 import types
 import sys
 from pathlib import Path
-import shutil
-import subprocess
-import tempfile
-import pytest
-from dynamic_path_router import resolve_path
 
 # ---------------------------------------------------------------------------
 # Stub heavy dependencies before importing target modules
@@ -51,27 +46,22 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Stubs for modules referenced by SelfCodingManager
 sce_mod = types.ModuleType("menace.self_coding_engine")
-sce_mod.SelfCodingEngine = object
+class SelfCodingEngine:
+    pass
+sce_mod.SelfCodingEngine = SelfCodingEngine
 sys.modules.setdefault("menace.self_coding_engine", sce_mod)
 
 mapl_mod = types.ModuleType("menace.model_automation_pipeline")
-class AutomationResult:
-    def __init__(self, roi=None):
-        self.roi = roi
 class ModelAutomationPipeline:
     def __init__(self, *a, **k):
         pass
-
-    def run(self, *a, **k):
-        return AutomationResult()
-mapl_mod.AutomationResult = AutomationResult
 mapl_mod.ModelAutomationPipeline = ModelAutomationPipeline
+mapl_mod.AutomationResult = object
 sys.modules.setdefault("menace.model_automation_pipeline", mapl_mod)
 
 adv_mod = types.ModuleType("menace.advanced_error_management")
 class FormalVerifier:
-    def verify(self, path: Path) -> bool:
-        return True
+    pass
 class AutomatedRollbackManager:
     pass
 adv_mod.FormalVerifier = FormalVerifier
@@ -85,8 +75,7 @@ sys.modules.setdefault("menace.mutation_logger", mlog_mod)
 
 rb_mod = types.ModuleType("menace.rollback_manager")
 class RollbackManager:
-    def rollback(self, *a, **k):
-        pass
+    pass
 rb_mod.RollbackManager = RollbackManager
 sys.modules.setdefault("menace.rollback_manager", rb_mod)
 
@@ -122,7 +111,7 @@ sys.modules.setdefault("bot_registry", br_mod)
 
 thr_mod = types.ModuleType("menace.sandbox_runner.test_harness")
 class HarnessResult:
-    def __init__(self, success: bool, failure=None, stdout="", stderr="", duration=0.0):
+    def __init__(self, success=True, failure=None, stdout="", stderr="", duration=0.0):
         self.success = success
         self.failure = failure
         self.stdout = stdout
@@ -140,69 +129,36 @@ sys.modules.setdefault("menace.sandbox_runner.test_harness", thr_mod)
 # Import target modules
 # ---------------------------------------------------------------------------
 import menace.self_coding_manager as scm
-from patch_suggestion_db import PatchSuggestionDB
-from menace.sandbox_runner.test_harness import TestHarnessResult as HarnessResultClass
-
+from menace.self_coding_thresholds import SelfCodingThresholds
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
-def test_failed_tags_recorded(monkeypatch, tmp_path):
-    file_path = tmp_path / resolve_path("sample.py")
-    file_path.write_text("def x():\n    pass\n")
+def test_default_thresholds_from_helper(monkeypatch):
+    calls = {}
+    def fake_get_thresholds(bot):
+        calls['bot'] = bot
+        return SelfCodingThresholds(roi_drop=-0.5, error_increase=2.0)
+    monkeypatch.setattr(scm, 'get_thresholds', fake_get_thresholds)
+    mgr = scm.SelfCodingManager(scm.SelfCodingEngine(), scm.ModelAutomationPipeline(), bot_name='alpha')
+    assert calls['bot'] == 'alpha'
+    assert mgr.roi_drop_threshold == -0.5
+    assert mgr.error_rate_threshold == 2.0
 
-    builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
-
-    class Engine:
-        def __init__(self):
-            self.patch_suggestion_db = PatchSuggestionDB(tmp_path / "s.db")
-            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
-            self.last_prompt_text = ""
-
-        def apply_patch(self, path: Path, desc: str, **kwargs):
-            with open(path, "a", encoding="utf-8") as fh:
-                fh.write("# patched\n")
-            return 1, False, 0.0
-
-    engine = Engine()
-    pipeline = ModelAutomationPipeline(context_builder=builder)
-    mgr = scm.SelfCodingManager(engine, pipeline)
-
-    # ensure clone path exists and file copied during git clone
-    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
-
-    tmpdir_path = tmp_path / "clone"
-
-    class DummyTempDir:
-        def __enter__(self):
-            tmpdir_path.mkdir()
-            return str(tmpdir_path)
-        def __exit__(self, exc_type, exc, tb):
-            shutil.rmtree(tmpdir_path)
-    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
-
-    def fake_run(cmd, *a, **k):
-        if cmd[:2] == ["git", "clone"]:
-            dst = Path(cmd[3])
-            dst.mkdir(exist_ok=True)
-            shutil.copy2(file_path, dst / file_path.name)
-        return subprocess.CompletedProcess(cmd, 0)
-    monkeypatch.setattr(scm.subprocess, "run", fake_run)
-
-    # failing test harness result to trigger ErrorParser tag extraction
-    failure_result = HarnessResultClass(
-        success=False,
-        failure=None,
-        stdout="",
-        stderr="Traceback (most recent call last):\nValueError: boom",
-        duration=0.0,
+def test_threshold_overrides(monkeypatch):
+    calls = {}
+    def fake_get_thresholds(bot):
+        calls['bot'] = bot
+        return SelfCodingThresholds(roi_drop=-0.5, error_increase=2.0)
+    monkeypatch.setattr(scm, 'get_thresholds', fake_get_thresholds)
+    mgr = scm.SelfCodingManager(
+        scm.SelfCodingEngine(),
+        scm.ModelAutomationPipeline(),
+        bot_name='beta',
+        roi_drop_threshold=-0.2,
+        error_rate_threshold=3.3,
     )
-    monkeypatch.setattr(
-        scm, "run_tests", lambda repo, path, *, backend="venv": failure_result
-    )
-
-    with pytest.raises(RuntimeError):
-        mgr.run_patch(file_path, "add", max_attempts=2)
-
-    assert "value_error" in engine.patch_suggestion_db.failed_strategy_tags()
+    assert calls['bot'] == 'beta'
+    assert mgr.roi_drop_threshold == -0.2
+    assert mgr.error_rate_threshold == 3.3

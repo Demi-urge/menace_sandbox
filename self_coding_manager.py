@@ -53,11 +53,8 @@ from . import mutation_logger as MutationLogger
 from .rollback_manager import RollbackManager
 from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
-from .sandbox_settings import (
-    SandboxSettings,
-    SELF_CODING_ERROR_INCREASE,
-    SELF_CODING_ROI_DROP,
-)
+from .sandbox_settings import SandboxSettings
+from .self_coding_thresholds import get_thresholds
 from .patch_attempt_tracker import PatchAttemptTracker
 
 try:  # pragma: no cover - optional dependency
@@ -159,15 +156,16 @@ class SelfCodingManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
+        thresholds = get_thresholds(bot_name)
         self.roi_drop_threshold = (
             roi_drop_threshold
             if roi_drop_threshold is not None
-            else SELF_CODING_ROI_DROP
+            else thresholds.roi_drop
         )
         self.error_rate_threshold = (
             error_rate_threshold
             if error_rate_threshold is not None
-            else SELF_CODING_ERROR_INCREASE
+            else thresholds.error_increase
         )
         self._refresh_thresholds()
         self._last_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
