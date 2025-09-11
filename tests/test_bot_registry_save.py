@@ -1,9 +1,8 @@
 import pytest
-
-pytest.importorskip("networkx")
-
 from menace.bot_registry import BotRegistry
 from db_router import init_db_router
+
+pytest.importorskip("networkx")
 
 
 def test_registry_save_roundtrip(tmp_path):
@@ -35,6 +34,26 @@ def test_registry_load(tmp_path):
     assert reg2.graph.has_edge("a", "b")
     assert float(reg2.graph["a"]["b"].get("weight")) == 2.0
     assert router._access_counts["shared"]["bots"] >= 1
+    router.close()
+
+
+def test_update_bot_persists_module(tmp_path):
+    path = tmp_path / "g.db"
+    router = init_db_router("br3", str(path), str(path))
+    reg = BotRegistry()
+    reg.update_bot("x", "/mod/x")
+    reg.save(router)
+    router.close()
+
+    router = init_db_router("br3", str(path), str(path))
+    reg2 = BotRegistry()
+    reg2.load(router)
+    assert reg2.graph.nodes["x"].get("module") == "/mod/x"
+    with router.get_connection("bots") as conn:
+        row = conn.execute(
+            "SELECT module FROM bot_nodes WHERE name='x'",
+        ).fetchone()
+    assert row and row[0] == "/mod/x"
     router.close()
 
 
