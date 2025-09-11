@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 import time
 import inspect
+import importlib
 
 import numpy as np
 
@@ -183,26 +184,62 @@ class EvolutionOrchestrator:
         """Handle bot degradation events by triggering a self patch."""
         if not self.selfcoding_manager:
             return
+        bot = str(event.get("bot", ""))
         try:
+            registry = getattr(self.selfcoding_manager, "bot_registry", None)
+            degraded_path: Path | None = None
+            if registry and bot:
+                try:
+                    node = registry.graph.nodes[bot]
+                    mod_path = node.get("module")
+                    if isinstance(mod_path, str):
+                        p = Path(mod_path)
+                        if p.exists():
+                            degraded_path = p
+                except Exception:
+                    self.logger.exception(
+                        "bot registry lookup failed for %s", bot
+                    )
+            if (not degraded_path or not degraded_path.exists()) and bot:
+                try:
+                    mod = importlib.import_module(bot)
+                    mod_file = getattr(mod, "__file__", "")
+                    if mod_file:
+                        p = Path(mod_file)
+                        if p.exists():
+                            degraded_path = p
+                except Exception:
+                    self.logger.exception("import failed for %s", bot)
+            if not degraded_path or not degraded_path.exists():
+                self.logger.warning("degraded bot path not found for %s", bot)
+                return
+
             builder = ContextBuilder()
             try:
-                self.selfcoding_manager.engine.generate_helper(builder)
+                self.selfcoding_manager.engine.context_builder = builder
             except Exception:
-                self.logger.exception("helper generation failed")
-            mod = inspect.getmodule(self.data_bot.__class__)
-            path = Path(getattr(mod, "__file__", "")) if mod else None
-            if not path or not path.exists():
-                return
+                self.logger.exception(
+                    "failed to refresh context builder for %s", bot
+                )
+            try:
+                self.selfcoding_manager.engine.generate_helper("warmup")
+            except Exception:
+                self.logger.exception("helper generation failed for %s", bot)
+
             context_meta = {
                 "delta_roi": event.get("delta_roi"),
                 "delta_errors": event.get("delta_errors"),
                 "roi_threshold": event.get("roi_threshold"),
                 "error_threshold": event.get("error_threshold"),
             }
-            desc = f"auto_patch_due_to_degradation:{event.get('bot')}"
-            self.selfcoding_manager.run_patch(path, desc, context_meta=context_meta)
+            desc = f"auto_patch_due_to_degradation:{bot}"
+            self.selfcoding_manager.run_patch(
+                degraded_path, desc, context_meta=context_meta
+            )
         except Exception:
-            self.logger.exception("failed to self patch after degradation")
+            self.logger.exception(
+                "failed to self patch after degradation of %s", bot
+            )
 
     # ------------------------------------------------------------------
     def _latest_roi(self) -> float:
