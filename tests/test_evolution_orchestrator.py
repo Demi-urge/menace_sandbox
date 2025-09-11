@@ -72,6 +72,30 @@ stub.LogisticRegression = type("LogisticRegression", (), {"__init__": lambda sel
 sys.modules.setdefault("sklearn.ensemble", stub)
 stub.RandomForestClassifier = type("RandomForestClassifier", (), {"__init__": lambda self, *a, **k: None})
 
+error_bot_stub = types.ModuleType("menace.error_bot")
+error_bot_stub.ErrorDB = object
+sys.modules.setdefault("menace.error_bot", error_bot_stub)
+aem_stub = types.ModuleType("menace.advanced_error_management")
+aem_stub.FormalVerifier = object
+aem_stub.AutomatedRollbackManager = object
+sys.modules.setdefault("menace.advanced_error_management", aem_stub)
+rm_stub = types.ModuleType("menace.rollback_manager")
+rm_stub.RollbackManager = object
+sys.modules.setdefault("menace.rollback_manager", rm_stub)
+mutation_logger_stub = types.ModuleType("menace.mutation_logger")
+mutation_logger_stub.log_mutation = lambda *a, **k: None
+sys.modules.setdefault("menace.mutation_logger", mutation_logger_stub)
+
+sr_pkg = types.ModuleType("menace.sandbox_runner")
+th_stub = types.ModuleType("menace.sandbox_runner.test_harness")
+th_stub.run_tests = lambda *a, **k: types.SimpleNamespace(
+    success=True, failure=None, stdout="", stderr="", duration=0.0
+)
+th_stub.TestHarnessResult = types.SimpleNamespace
+sr_pkg.test_harness = th_stub
+sys.modules.setdefault("menace.sandbox_runner", sr_pkg)
+sys.modules.setdefault("menace.sandbox_runner.test_harness", th_stub)
+
 from menace.evolution_orchestrator import EvolutionOrchestrator, EvolutionTrigger
 from menace.evolution_history_db import EvolutionHistoryDB
 
@@ -178,4 +202,92 @@ def test_reason_and_parent_lineage(monkeypatch, tmp_path):
         'SELECT parent_event_id FROM evolution_history WHERE rowid=?', (second_id,)
     ).fetchone()
     assert row2[0] == first_id
+
+
+def test_on_bot_degraded_invokes_manager(monkeypatch, tmp_path):
+    mod_path = tmp_path / "dmod.py"
+    mod_path.write_text("pass\n")
+    mod_name = "dmod"
+    module = types.ModuleType(mod_name)
+    module.__file__ = str(mod_path)
+    sys.modules[mod_name] = module
+
+    calls: list[tuple] = []
+
+    class Manager:
+        bot_name = "bot"
+
+        def __init__(self) -> None:
+            self.event_bus = types.SimpleNamespace(publish=lambda *a, **k: None)
+
+        def generate_and_patch(self, path, desc, **kwargs):
+            calls.append((path, desc, kwargs))
+
+    data_bot = types.SimpleNamespace(
+        db=types.SimpleNamespace(fetch=lambda limit=50: []),
+        subscribe_degradation=lambda cb: None,
+    )
+    cap_bot = types.SimpleNamespace(energy_score=lambda **k: 1.0)
+    improver = types.SimpleNamespace()
+    evolver = types.SimpleNamespace()
+    manager = Manager()
+    hist_stub = types.SimpleNamespace(add=lambda *a, **k: None)
+    orch = EvolutionOrchestrator(
+        data_bot,
+        cap_bot,
+        improver,
+        evolver,
+        history_db=hist_stub,
+        selfcoding_manager=manager,
+    )
+
+    orch._on_bot_degraded({"bot": mod_name})
+    assert calls and calls[0][0] == mod_path
+
+
+def test_on_bot_degraded_generation_failure(tmp_path):
+    mod_path = tmp_path / "dmod_fail.py"
+    mod_path.write_text("pass\n")
+    mod_name = "dmod_fail"
+    module = types.ModuleType(mod_name)
+    module.__file__ = str(mod_path)
+    sys.modules[mod_name] = module
+
+    published: list[tuple] = []
+
+    class Bus:
+        def publish(self, topic, event):
+            published.append((topic, event))
+
+    from menace.self_coding_manager import HelperGenerationError
+
+    class Manager:
+        bot_name = "bot"
+
+        def __init__(self) -> None:
+            self.event_bus = Bus()
+
+        def generate_and_patch(self, *a, **k):
+            raise HelperGenerationError("boom")
+
+    data_bot = types.SimpleNamespace(
+        db=types.SimpleNamespace(fetch=lambda limit=50: []),
+        subscribe_degradation=lambda cb: None,
+    )
+    cap_bot = types.SimpleNamespace(energy_score=lambda **k: 1.0)
+    improver = types.SimpleNamespace()
+    evolver = types.SimpleNamespace()
+    manager = Manager()
+    hist_stub = types.SimpleNamespace(add=lambda *a, **k: None)
+    orch = EvolutionOrchestrator(
+        data_bot,
+        cap_bot,
+        improver,
+        evolver,
+        history_db=hist_stub,
+        selfcoding_manager=manager,
+    )
+
+    orch._on_bot_degraded({"bot": mod_name})
+    assert any(t == "bot:patch_failed" and e["stage"] == "context" for t, e in published)
 

@@ -21,6 +21,7 @@ from .trend_predictor import TrendPredictor
 from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
 from .self_coding_thresholds import get_thresholds
+from .self_coding_manager import HelperGenerationError
 try:  # pragma: no cover - optional dependency
     from . import mutation_logger as MutationLogger
 except Exception:  # pragma: no cover - best effort
@@ -181,7 +182,7 @@ class EvolutionOrchestrator:
 
     # ------------------------------------------------------------------
     def _on_bot_degraded(self, event: dict) -> None:
-        """Handle bot degradation events by triggering a self patch."""
+        """Handle bot degradation events by generating and applying a patch."""
         if not self.selfcoding_manager:
             return
         bot = str(event.get("bot", ""))
@@ -216,18 +217,6 @@ class EvolutionOrchestrator:
 
             module_path = degraded_path
             builder = ContextBuilder()
-            engine = self.selfcoding_manager.engine
-            try:
-                engine.context_builder = builder
-                clayer = getattr(engine, "cognition_layer", None)
-                if clayer is not None:
-                    clayer.context_builder = builder
-            except Exception:
-                self.logger.error(
-                    "context_builder_refresh_failed",
-                    exc_info=True,
-                    extra={"bot": bot},
-                )
             context_meta = {
                 "delta_roi": event.get("delta_roi"),
                 "delta_errors": event.get("delta_errors"),
@@ -243,14 +232,13 @@ class EvolutionOrchestrator:
                 or getattr(self.data_bot, "event_bus", None)
             )
             try:
-                engine.generate_helper(
+                self.selfcoding_manager.generate_and_patch(
+                    module_path,
                     desc,
-                    path=module_path,
-                    metadata=context_meta,
-                    strategy=None,
-                    target_region=None,
+                    context_meta=context_meta,
+                    context_builder=builder,
                 )
-            except Exception as exc:
+            except HelperGenerationError as exc:
                 self.logger.error(
                     "context_build_failed",
                     exc_info=True,
@@ -266,14 +254,6 @@ class EvolutionOrchestrator:
                         self.logger.exception(
                             "failed to publish patch_failed for %s", bot
                         )
-                return
-            try:
-                self.selfcoding_manager.run_patch(
-                    module_path,
-                    desc,
-                    context_meta=context_meta,
-                    context_builder=builder,
-                )
             except Exception as exc:
                 self.logger.error(
                     "patch_failed",
