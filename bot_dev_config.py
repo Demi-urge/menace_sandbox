@@ -51,3 +51,5 @@ class BotDevConfig:
         self.concurrency_workers = max(1, self.concurrency_workers)
         if not self.es_index:
             self.es_index = "patterns"
+        if "visual_agents" in self.__dict__:
+            raise ValueError("visual_agents configuration is no longer supported")
