@@ -49,6 +49,9 @@ class SelfCodingManager:
             self.bot_name, str(path), patch_id=patch_id, commit="deadbeef"
         )
 
+    def register_patch_cycle(self, *_, **__):  # noqa: D401,D403 - test stub
+        """No-op hook for patch cycle registration."""
+
 
 scm_mod.SelfCodingManager = SelfCodingManager
 scm_mod.HelperGenerationError = HelperGenerationError

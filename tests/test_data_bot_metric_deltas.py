@@ -1,6 +1,7 @@
 import types
 import sys
 
+
 # provide minimal stubs for optional dependencies
 class DummyGauge:
     def __init__(self, *a, **k):
@@ -12,6 +13,7 @@ class DummyGauge:
     def set(self, value):
         pass
 
+
 prom = types.SimpleNamespace(Gauge=DummyGauge, CollectorRegistry=lambda: object())
 psutil = types.SimpleNamespace(
     disk_io_counters=lambda: types.SimpleNamespace(read_bytes=0, write_bytes=0),
@@ -22,8 +24,8 @@ psutil = types.SimpleNamespace(
 sys.modules.setdefault("prometheus_client", prom)
 sys.modules.setdefault("psutil", psutil)
 
-from menace import data_bot as db
-from menace.self_coding_thresholds import SelfCodingThresholds
+from menace import data_bot as db  # noqa: E402
+from menace.self_coding_thresholds import SelfCodingThresholds  # noqa: E402
 db.load_sc_thresholds = lambda bot=None, settings=None: SelfCodingThresholds(
     roi_drop=-0.1, error_increase=1.0, test_failure_increase=0.0
 )
@@ -51,3 +53,6 @@ def test_metric_delta_events():
     assert second["delta_roi"] == -5.0
     assert second["delta_errors"] == 3.0
     assert second["delta_tests_failed"] == 2.0
+    assert second["roi_baseline"] == 10.0
+    assert second["errors_baseline"] == 0.0
+    assert second["tests_failed_baseline"] == 0.0
