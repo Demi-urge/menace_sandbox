@@ -257,7 +257,9 @@ class SelfCodingManager:
         if not self.data_bot:
             return
         try:
-            t = self.data_bot.get_thresholds(self.bot_name)
+            # Ensure the DataBot refreshes its view of the configuration so
+            # manager decisions use the most recent thresholds.
+            t = self.data_bot.reload_thresholds(self.bot_name)
             self.roi_drop_threshold = t.roi_drop
             self.error_rate_threshold = t.error_threshold
             self.test_failure_threshold = t.test_failure_threshold
