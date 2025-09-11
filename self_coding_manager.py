@@ -83,6 +83,11 @@ try:  # pragma: no cover - allow package/flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from bot_registry import BotRegistry  # type: ignore
 
+try:  # pragma: no cover - allow package/flat imports
+    from .patch_provenance import record_patch_metadata
+except Exception:  # pragma: no cover - fallback for flat layout
+    from patch_provenance import record_patch_metadata  # type: ignore
+
 try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -950,12 +955,28 @@ class SelfCodingManager:
                 if not builder or not tags:
                     raise RuntimeError("patch tests failed")
                 try:
-                    ctx, sid = builder.query(desc, exclude_tags=tags)
+                    ctx_result = builder.query(
+                        desc,
+                        exclude_tags=tags,
+                        include_vectors=True,
+                        return_metadata=True,
+                    )
+                    if isinstance(ctx_result, (list, tuple)):
+                        ctx = ctx_result[0]
+                        sid = ctx_result[1] if len(ctx_result) > 1 else ""
+                        vectors = ctx_result[2] if len(ctx_result) > 2 else []
+                        meta = ctx_result[3] if len(ctx_result) > 3 else {}
+                    else:
+                        ctx, sid, vectors, meta = ctx_result, "", [], {}
                     ctx_meta = {
                         "retrieval_context": ctx,
                         "retrieval_session_id": sid,
                         "escalation_level": level,
                     }
+                    if vectors:
+                        ctx_meta["vectors"] = vectors
+                    if meta:
+                        ctx_meta["retrieval_metadata"] = meta
                     if patch_region is not None:
                         ctx_meta["target_region"] = asdict(patch_region)
                 except Exception as exc:  # pragma: no cover - best effort
@@ -1036,16 +1057,32 @@ class SelfCodingManager:
                 },
             )
             patch_logger = getattr(self.engine, "patch_logger", None)
+            vectors = ctx_meta.get("vectors", []) if ctx_meta else []
+            retrieval_metadata = (
+                ctx_meta.get("retrieval_metadata", {}) if ctx_meta else {}
+            )
             if patch_logger is not None:
                 try:
                     patch_logger.track_contributors(
-                        {},
+                        vectors,
                         True,
                         patch_id=str(patch_id or ""),
                         contribution=roi_delta,
+                        retrieval_metadata=retrieval_metadata,
                     )
                 except Exception:
                     self.logger.exception("track_contributors failed")
+            if commit_hash and patch_id:
+                try:
+                    record_patch_metadata(
+                        int(patch_id),
+                        {
+                            "commit": commit_hash,
+                            "vectors": list(vectors),
+                        },
+                    )
+                except Exception:
+                    self.logger.exception("failed to record patch metadata")
             session_id = ""
             if ctx_meta:
                 session_id = ctx_meta.get("retrieval_session_id", "")

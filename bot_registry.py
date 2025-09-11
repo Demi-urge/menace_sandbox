@@ -14,6 +14,7 @@ import time
 import importlib
 import importlib.util
 import sys
+import subprocess
 
 try:
     from .databases import MenaceDB
@@ -126,6 +127,32 @@ class BotRegistry:
         if not node or "module" not in node:
             raise KeyError(f"bot {name!r} has no module path")
         module_path = node["module"]
+        commit = node.get("commit")
+        patch_id = node.get("patch_id")
+        if not commit or patch_id is None:
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "bot:manual_change",
+                        {"name": name, "module": module_path, "reason": "missing_provenance"},
+                    )
+                except Exception as exc:
+                    logger.error("Failed to publish bot:manual_change event: %s", exc)
+            raise RuntimeError("missing provenance metadata")
+        try:
+            status = subprocess.check_output(
+                ["git", "status", "--porcelain", module_path]
+            ).decode()
+            if status.strip() and self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "bot:manual_change",
+                        {"name": name, "module": module_path, "reason": "uncommitted_changes"},
+                    )
+                except Exception as exc:
+                    logger.error("Failed to publish bot:manual_change event: %s", exc)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("Failed to check manual changes for %s: %s", module_path, exc)
         try:
             path_obj = Path(module_path)
             if path_obj.suffix == ".py" or "/" in module_path:
