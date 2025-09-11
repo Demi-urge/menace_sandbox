@@ -33,9 +33,6 @@ def generate_event_id(event_type: str) -> str:
 
 def log_event(event_type: str, data: Dict[str, Any], jsonl_path: Path = JSONL_PATH) -> str:
     """Append an event record to the JSONL audit log."""
-    if event_type.startswith("visual_agent"):
-        # These events are deprecated and should no longer be logged
-        return ""
     _ensure_log_dir()
     event_id = generate_event_id(event_type)
     record = {
@@ -102,9 +99,6 @@ def _ensure_db(conn: sqlite3.Connection) -> None:
 
 def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_PATH) -> str:
     """Store an event in the SQLite log."""
-    if event_type.startswith("visual_agent"):
-        # Skip legacy visual agent events entirely
-        return ""
     _ensure_log_dir()
     event_id = generate_event_id(event_type)
     ts = datetime.utcnow().isoformat()
