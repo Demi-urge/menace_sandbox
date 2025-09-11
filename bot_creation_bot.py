@@ -128,6 +128,8 @@ class BotCreationBot(AdminBotBase):
         self.cognition_layer = CognitionLayer(
             roi_tracker=self.roi_tracker, context_builder=self.context_builder
         )
+        self.name = getattr(self, "name", self.__class__.__name__)
+        self.data_bot = DataBot(self.metrics_db)
 
     def prime(self) -> None:
         """Prime the bot for upcoming creation tasks."""
@@ -543,9 +545,18 @@ class BotCreationBot(AdminBotBase):
         contrarian_id: Optional[int] = None,
     ) -> List[int]:
         """Plan, develop, test and deploy bots for tasks."""
-
+        start_time = time.time()
         if self._rate_limited():
             self._log(logging.WARNING, "bot creation rate limit reached")
+            self.data_bot.collect(
+                bot=self.name,
+                response_time=time.time() - start_time,
+                errors=0,
+                tests_failed=0,
+                tests_run=0,
+                revenue=0.0,
+                expense=0.0,
+            )
             return []
 
         plans = self.planner.plan_bots(list(tasks))
@@ -869,6 +880,15 @@ class BotCreationBot(AdminBotBase):
             spec = BotSpec(name=sanitized_super, purpose="manage bots", functions=["run"])
             file_path = await self._develop_test(spec)
             if self.safety_monitor and not self.safety_monitor.validate_bot(spec.name):
+                self.data_bot.collect(
+                    bot=self.name,
+                    response_time=time.time() - start_time,
+                    errors=len(error_ids),
+                    tests_failed=0,
+                    tests_run=0,
+                    revenue=0.0,
+                    expense=0.0,
+                )
                 return ids
             for msg in self.developer.errors:
                 if msg not in error_msgs:
@@ -947,7 +967,15 @@ class BotCreationBot(AdminBotBase):
                 list(enhancements or []),
                 error_ids,
             )
-
+        self.data_bot.collect(
+            bot=self.name,
+            response_time=time.time() - start_time,
+            errors=len(error_ids),
+            tests_failed=0,
+            tests_run=0,
+            revenue=0.0,
+            expense=0.0,
+        )
         return ids
 
 

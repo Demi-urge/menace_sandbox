@@ -23,6 +23,7 @@ import time
 
 from .bot_testing_config import BotTestingSettings
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from .data_bot import DataBot
 
 logger = logging.getLogger("BotTester")
 
@@ -227,6 +228,8 @@ class BotTestingBot:
             if not self.settings.allow_unrandomized:
                 raise ImportError("Faker not installed and allow_unrandomized is False")
             self.logger.warning("Faker not installed; randomized testing disabled")
+        self.name = getattr(self, "name", self.__class__.__name__)
+        self.data_bot = DataBot()
 
     def _random_arg(self, param: inspect.Parameter) -> Any:
         ann = param.annotation
@@ -394,6 +397,7 @@ class BotTestingBot:
         parallel: bool | None = None,
         random_runs: Optional[int] = None,
     ) -> List[TestResult]:
+        start_time = time.time()
         results: List[TestResult] = []
         if parallel is None:
             parallel = self.settings.parallel
@@ -482,9 +486,21 @@ class BotTestingBot:
             with ThreadPoolExecutor(max_workers=os.cpu_count() or 1) as executor:
                 for res in executor.map(lambda fn: fn(), tasks):
                     results.append(res)
+        tests_run = len(results)
+        tests_failed = sum(1 for r in results if not r.passed)
+        self.data_bot.collect(
+            bot=self.name,
+            response_time=time.time() - start_time,
+            errors=tests_failed,
+            tests_failed=tests_failed,
+            tests_run=tests_run,
+            revenue=0.0,
+            expense=0.0,
+        )
         return results
 
     def run_integration_tests(self, blueprint: str) -> List[TestResult]:
+        start_time = time.time()
         try:
             data = json.loads(blueprint)
             tasks_data = data.get("tasks", [])
@@ -501,6 +517,17 @@ class BotTestingBot:
                 mods, name_prefix=task.function, random_runs=self.random_runs
             )
             results.extend(res)
+        tests_run = len(results)
+        tests_failed = sum(1 for r in results if not r.passed)
+        self.data_bot.collect(
+            bot=self.name,
+            response_time=time.time() - start_time,
+            errors=tests_failed,
+            tests_failed=tests_failed,
+            tests_run=tests_run,
+            revenue=0.0,
+            expense=0.0,
+        )
         return results
 
 

@@ -9,8 +9,10 @@ from typing import List
 from .self_coding_manager import SelfCodingManager
 import ast
 import logging
+import time
 from vector_service.context_builder import ContextBuilder
 from .coding_bot_interface import self_coding_managed
+from .data_bot import DataBot
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,8 @@ class ImplementationOptimiserBot:
                         cb.refresh_db_weights()  # type: ignore[attr-defined]
             except Exception:
                 pass
+        self.name = getattr(self, "name", self.__class__.__name__)
+        self.data_bot = DataBot()
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -259,12 +263,22 @@ class ImplementationOptimiserBot:
 
     def process(self, package: TaskPackage) -> List[ImplementationAdvice]:
         """Record the package and return basic optimisation advice."""
+        start_time = time.time()
         self.history.append(package)
         advice: List[ImplementationAdvice] = []
         for t in package.tasks:
             code = t.code or ""
             optimised = self._optimise_python(code)
             advice.append(ImplementationAdvice(name=t.name, optimised_code=optimised))
+        self.data_bot.collect(
+            bot=self.name,
+            response_time=time.time() - start_time,
+            errors=0,
+            tests_failed=0,
+            tests_run=0,
+            revenue=0.0,
+            expense=0.0,
+        )
         return advice
 
     def fill_missing(
@@ -286,6 +300,7 @@ class ImplementationOptimiserBot:
             Template style to use for Python code (``"logging"`` or ``"minimal"``).
         """
 
+        start_time = time.time()
         tasks: List[TaskInfo] = []
         for t in package.tasks:
             if t.code:
@@ -349,7 +364,17 @@ class ImplementationOptimiserBot:
                 )
             )
 
-        return TaskPackage(tasks=tasks, version=package.version)
+        result = TaskPackage(tasks=tasks, version=package.version)
+        self.data_bot.collect(
+            bot=self.name,
+            response_time=time.time() - start_time,
+            errors=0,
+            tests_failed=0,
+            tests_run=0,
+            revenue=0.0,
+            expense=0.0,
+        )
+        return result
 
 
 __all__ = ["ImplementationAdvice", "ImplementationOptimiserBot"]
