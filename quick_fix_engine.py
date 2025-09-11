@@ -35,6 +35,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
+from .coding_bot_interface import self_coding_managed
 try:  # pragma: no cover - fail fast if vector service missing
     from vector_service.context_builder import (
         ContextBuilder,
@@ -346,6 +347,7 @@ def generate_patch(
         return None
 
 
+@self_coding_managed
 class QuickFixEngine:
     """Analyse frequent errors and trigger small patches."""
 

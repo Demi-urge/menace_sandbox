@@ -39,6 +39,7 @@ from .models_repo import (
     ACTIVE_MODEL_FILE,
     ensure_models_repo,
 )
+from .coding_bot_interface import self_coding_managed
 from vector_service.context_builder import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
@@ -235,6 +236,7 @@ class PromptTemplateEngine:
         return rendered
 
 
+@self_coding_managed
 class BotDevelopmentBot:
     """Receive bot specs and generate starter code repositories."""
 

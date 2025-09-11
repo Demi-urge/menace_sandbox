@@ -15,11 +15,13 @@ from .retry_utils import retry
 from .self_improvement.target_region import TargetRegion, extract_target_region
 from .patch_attempt_tracker import PatchAttemptTracker
 from .vector_service.context_builder import ContextBuilder
+from .coding_bot_interface import self_coding_managed
 
 
 _FRAME_RE = re.compile(r"File \"([^\"]+)\", line (\d+), in ([^\n]+)")
 
 
+@self_coding_managed
 class AutomatedDebugger:
     """Analyse telemetry logs and trigger self-coding fixes."""
 
