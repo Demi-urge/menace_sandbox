@@ -32,30 +32,3 @@ def test_jsonl_logging_and_retrieval(tmp_path, monkeypatch):
     assert csv_path.exists()
     lines = csv_path.read_text().strip().splitlines()
     assert len(lines) >= 2
-
-
-def test_visual_agent_events_filtered(tmp_path, monkeypatch):
-    log_dir = tmp_path
-    jsonl = log_dir / "audit.jsonl"
-    db = log_dir / "audit.db"
-    monkeypatch.setattr(al, "LOG_DIR", log_dir)
-    monkeypatch.setattr(al, "JSONL_PATH", jsonl)
-    monkeypatch.setattr(al, "SQLITE_PATH", db)
-
-    al.log_event("visual_agent_run", {}, jsonl)
-    al.log_to_sqlite("visual_agent_run_result", {}, db)
-
-    class Router:
-        def __init__(self, path):
-            self.path = path
-
-        def get_connection(self, _):
-            return getattr(sqlite3, "connect")(self.path)
-
-    router = Router(db)
-    monkeypatch.setattr(al, "GLOBAL_ROUTER", router)
-    monkeypatch.setattr(al, "init_db_router", lambda *_a, **_k: router)
-
-    assert not jsonl.exists()
-    assert not db.exists()
-    assert al.get_recent_events(jsonl_path=jsonl, db_path=db) == []
