@@ -34,9 +34,22 @@ vec_mod.CognitionLayer = object
 vec_mod.PatchLogger = object
 vec_mod.VectorServiceError = _VSError
 vec_mod.SharedVectorService = object
+vec_mod.ContextBuilder = object
 _setmod("vector_service", vec_mod)
 _setmod("vector_service.retriever", types.ModuleType("vector_service.retriever"))
 _setmod("vector_service.decorators", types.ModuleType("vector_service.decorators"))
+_setmod(
+    "vector_service.text_preprocessor",
+    types.SimpleNamespace(
+        PreprocessingConfig=object,
+        get_config=lambda *a, **k: None,
+        generalise=lambda *a, **k: "",
+    ),
+)
+_setmod(
+    "vector_service.embed_utils",
+    types.SimpleNamespace(get_text_embeddings=lambda *a, **k: [], EMBED_DIM=0),
+)
 
 builder = types.SimpleNamespace(
     build_context=lambda *a, **k: {},
@@ -57,6 +70,7 @@ _setmod("safety_monitor", types.SimpleNamespace(SafetyMonitor=object))
 _setmod("advanced_error_management", types.SimpleNamespace(FormalVerifier=object))
 _setmod("shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None))
 _setmod("gpt_memory", types.SimpleNamespace(GPTMemoryManager=object))
+_setmod("menace_sanity_layer", types.SimpleNamespace(fetch_recent_billing_issues=lambda: []))
 log_tags_mod = types.SimpleNamespace(
     FEEDBACK="feedback",
     ERROR_FIX="error_fix",
@@ -104,9 +118,7 @@ _setmod(
     "sandbox_settings",
     types.SimpleNamespace(
         SandboxSettings=lambda: types.SimpleNamespace(
-            va_prompt_template="",
-            va_prompt_prefix="",
-            va_repo_layout_lines=0,
+            prompt_repo_layout_lines=0,
             prompt_chunk_token_threshold=20,
             chunk_summary_cache_dir="cache",
             prompt_chunk_cache_dir="cache",
@@ -116,9 +128,7 @@ _setmod(
             prompt_failure_log_path="f.log",
         ),
         load_sandbox_settings=lambda: types.SimpleNamespace(
-            va_prompt_template="",
-            va_prompt_prefix="",
-            va_repo_layout_lines=0,
+            prompt_repo_layout_lines=0,
             prompt_chunk_token_threshold=20,
             chunk_summary_cache_dir="cache",
             prompt_chunk_cache_dir="cache",

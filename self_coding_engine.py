@@ -200,9 +200,7 @@ if TYPE_CHECKING:  # pragma: no cover - type hints
 
 # Load prompt configuration from settings instead of environment variables
 _settings = SandboxSettings()
-VA_PROMPT_TEMPLATE = getattr(_settings, "va_prompt_template", "")
-VA_PROMPT_PREFIX = getattr(_settings, "va_prompt_prefix", "")
-VA_REPO_LAYOUT_LINES = getattr(_settings, "va_repo_layout_lines", 200)
+PROMPT_REPO_LAYOUT_LINES = getattr(_settings, "prompt_repo_layout_lines", 200)
 
 # Reuse prompt encoder for token counting if available
 
@@ -1065,90 +1063,6 @@ class SelfCodingEngine:
         # store metadata so that failures before prompt construction can be logged
         self._last_prompt_metadata = dict(getattr(self.prompt_engine, "last_metadata", {}))
 
-    def build_visual_agent_prompt(
-        self,
-        path: str | None,
-        description: str,
-        context: str,
-        retrieval_context: str | None = None,
-        repo_layout: str | None = None,
-        target_region: TargetRegion | None = None,
-        strategy: str | None = None,
-    ) -> str:
-        """Return a prompt formatted for :class:`VisualAgentClient`.
-
-        When ``target_region`` is provided the line range metadata is embedded in
-        the prompt so downstream components can reason about the intended scope.
-        ``strategy`` selects an optional instruction block from the strategy
-        templates.
-        """
-        func = f"auto_{description.replace(' ', '_')}"
-        repo_layout = repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES)
-        resolved = path_for_prompt(path) if path else None
-        self._apply_prompt_style(description, module=resolved or "visual_agent")
-        retry_trace = self._last_retry_trace
-        builder = self.context_builder
-        if builder is None:
-            raise RuntimeError("context_builder is required for prompt generation")
-        try:
-            prompt_obj = build_prompt(
-                description,
-                context="\n".join([p for p in (context.strip(), repo_layout) if p]),
-                retrieval_context=retrieval_context or "",
-                retry_trace=retry_trace,
-                tone=self.prompt_tone,
-                target_region=target_region,
-                strategy=strategy,
-                context_builder=builder,
-            )
-        except TypeError:
-            prompt_obj = build_prompt(
-                description,
-                context="\n".join([p for p in (context.strip(), repo_layout) if p]),
-                retrieval_context=retrieval_context or "",
-                retry_trace=retry_trace,
-                context_builder=builder,
-            )
-        self._last_prompt = prompt_obj
-        body = prompt_obj.text if isinstance(prompt_obj, Prompt) else str(prompt_obj)
-        meta = dict(getattr(self.prompt_engine, "last_metadata", {}))
-        meta.update(
-            {
-                "system": getattr(prompt_obj, "system", ""),
-                "examples": getattr(prompt_obj, "examples", []),
-            }
-        )
-        self._last_prompt_metadata = meta
-        if VA_PROMPT_TEMPLATE:
-            try:
-                text = resolve_path(VA_PROMPT_TEMPLATE).read_text()
-            except Exception:
-                text = VA_PROMPT_TEMPLATE
-            data = {
-                "path": resolved or "unknown file",
-                "description": description,
-                "context": context.strip(),
-                "retrieval_context": retrieval_context or "",
-                "func": func,
-                "prompt": body,
-            }
-            try:
-                rendered = text.format(**data)
-            except Exception:
-                rendered = text
-            if "prompt" in text:
-                body = rendered
-            else:
-                if not rendered.endswith("\n"):
-                    rendered += "\n"
-                body = rendered + body
-        prefix = VA_PROMPT_PREFIX
-        if prefix:
-            if not prefix.endswith("\n"):
-                prefix += "\n"
-            body = prefix + body
-        return body
-
     def generate_helper(
         self,
         description: str,
@@ -1241,7 +1155,7 @@ class SelfCodingEngine:
                 }
             except Exception:
                 metadata = None
-        repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
+        repo_layout = self._get_repo_layout(PROMPT_REPO_LAYOUT_LINES)
         context_block = "\n".join([p for p in (context, repo_layout) if p])
         module_name = path_for_prompt(path) if path else "generate_helper"
         self._apply_prompt_style(description, module=module_name)

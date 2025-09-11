@@ -89,9 +89,6 @@ _setmod(
     "sandbox_settings",
     types.SimpleNamespace(
         SandboxSettings=lambda: types.SimpleNamespace(
-            va_prompt_template="",
-            va_prompt_prefix="",
-            va_repo_layout_lines=0,
             prompt_chunk_token_threshold=20,
             chunk_summary_cache_dir="cache",
             prompt_chunk_cache_dir="cache",
@@ -102,6 +99,10 @@ _setmod(
         ),
         load_sandbox_settings=lambda: None,
     ),
+)
+_setmod(
+    "menace_sanity_layer",
+    types.SimpleNamespace(fetch_recent_billing_issues=lambda: []),
 )
 roi_mod = types.ModuleType("roi_tracker")
 roi_mod.ROITracker = lambda: object()

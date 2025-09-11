@@ -75,12 +75,13 @@ sys.modules.setdefault(
     "sandbox_settings",
     types.SimpleNamespace(
         SandboxSettings=lambda: types.SimpleNamespace(
-            va_prompt_template="",
-            va_prompt_prefix="",
-            va_repo_layout_lines=0,
+            prompt_repo_layout_lines=0,
         )
     ),
 )
+_msl_stub = types.SimpleNamespace(fetch_recent_billing_issues=lambda: [])
+sys.modules.setdefault("menace_sanity_layer", _msl_stub)
+sys.modules.setdefault("menace.menace_sanity_layer", _msl_stub)
 roi_mod = types.ModuleType("roi_tracker")
 roi_mod.ROITracker = lambda: object()
 sys.modules.setdefault("roi_tracker", roi_mod)
@@ -159,7 +160,11 @@ def test_knowledge_service_logging(monkeypatch, caplog):
     monkeypatch.setattr(sce, "recent_improvement_path", boom)
     monkeypatch.setattr(sce, "recent_error_fix", boom)
     monkeypatch.setattr(sce.SelfCodingEngine, "_get_repo_layout", lambda self, lines: "")
-    monkeypatch.setattr(sce.PromptEngine, "build_prompt", staticmethod(lambda *a, **k: ""))
+    monkeypatch.setattr(
+        sce.PromptEngine,
+        "build_prompt",
+        staticmethod(lambda *a, **k: sce.Prompt("")),
+    )
     monkeypatch.setattr(
         sce.SelfCodingEngine, "suggest_snippets", lambda self, desc, limit=3: []
     )
@@ -193,7 +198,7 @@ def test_tempfile_cleanup_logging(monkeypatch, caplog, tmp_path):
     monkeypatch.setattr(
         engine,
         "generate_helper",
-        lambda description, path=None, metadata=None: "x = 1\n",
+        lambda description, path=None, metadata=None, **kw: "x = 1\n",
     )
 
     def bad_unlink(self):
