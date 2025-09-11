@@ -159,7 +159,8 @@ calls slip into the codebase.
 Commits that modify self-coding infrastructure (`self_coding_manager.py`,
 `self_coding_engine.py`, `quick_fix_engine.py`, or `coding_bot_interface.py`)
 must include a `patch <id>` tag and provenance metadata. Install the
-`commit-msg` hook to enforce this policy:
+`commit-msg` hook to enforce this policy by creating a symlink from the
+repository root:
 
 ```bash
 ln -s ../../scripts/check_patch_provenance.py .git/hooks/commit-msg
