@@ -110,6 +110,15 @@ def self_coding_managed(cls: type) -> type:
             )
         except RuntimeError as exc:
             raise RuntimeError(f"{cls.__name__}: {exc}") from exc
+        if orchestrator is None:
+            orchestrator = getattr(self, "evolution_orchestrator", None)
+            if orchestrator is None:
+                manager_for_orch = getattr(self, "manager", None)
+                orchestrator = getattr(manager_for_orch, "evolution_orchestrator", None)
+        if orchestrator is None:
+            raise RuntimeError(
+                f"{cls.__name__}: EvolutionOrchestrator is required but was not provided"
+            )
         manager = getattr(self, "manager", None)
         name = getattr(self, "name", getattr(self, "bot_name", cls.__name__))
         if not isinstance(manager, SelfCodingManager):
@@ -126,24 +135,12 @@ def self_coding_managed(cls: type) -> type:
                 raise RuntimeError(
                     "failed to initialise SelfCodingManager; provide a manager"
                 ) from exc
-        if registry:
-            try:
-                registry.register_bot(name)
-                try:
-                    registry.update_bot(name, module_path)
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("bot update failed for %s", name)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("bot registration failed for %s", name)
-        if orchestrator is None:
-            orchestrator = getattr(self, "evolution_orchestrator", None)
-            if orchestrator is None:
-                orchestrator = getattr(manager, "evolution_orchestrator", None)
-        if orchestrator:
-            try:
-                orchestrator.register_bot(name)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("failed evolution registration for %s", name)
+        registry.register_bot(name)
+        try:
+            registry.update_bot(name, module_path)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("bot update failed for %s", name)
+        orchestrator.register_bot(name)
         if data_bot and getattr(data_bot, "db", None):
             try:
                 roi = float(data_bot.roi(name)) if hasattr(data_bot, "roi") else 0.0
