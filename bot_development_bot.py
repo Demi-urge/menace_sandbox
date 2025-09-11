@@ -50,6 +50,8 @@ from .model_automation_pipeline import ModelAutomationPipeline
 from .data_bot import DataBot
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
+from .unified_event_bus import UnifiedEventBus
+from .bot_registry import BotRegistry
 
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
@@ -329,8 +331,20 @@ class BotDevelopmentBot:
                 engine = SelfCodingEngine(
                     code_db, memory_mgr, context_builder=self.context_builder
                 )
-            pipeline = ModelAutomationPipeline(context_builder=self.context_builder)
-            manager = SelfCodingManager(engine, pipeline, data_bot=DataBot())
+            bus = UnifiedEventBus()
+            registry = BotRegistry(event_bus=bus)
+            pipeline = ModelAutomationPipeline(
+                context_builder=self.context_builder,
+                event_bus=bus,
+                bot_registry=registry,
+            )
+            manager = SelfCodingManager(
+                engine,
+                pipeline,
+                data_bot=DataBot(),
+                bot_registry=registry,
+                event_bus=bus,
+            )
         self.manager = manager
         self.engine = getattr(self.manager, "engine", engine)
         # warn about missing optional dependencies
@@ -1000,7 +1014,6 @@ class BotDevelopmentBot:
         result = self._call_codex_api(messages, path=file_path)
         if not result.success or not result.code:
             raise RuntimeError(result.error or "engine request failed")
-        code = result.code
         file_path = Path(resolve_path(file_path))
         self.lint_code(file_path)
         req = self._create_requirements(repo_dir, spec)

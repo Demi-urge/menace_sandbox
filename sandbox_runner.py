@@ -954,9 +954,19 @@ def _sandbox_init(
     )
     from menace.self_coding_manager import SelfCodingManager
     from menace.model_automation_pipeline import ModelAutomationPipeline
+    from menace.unified_event_bus import UnifiedEventBus
+    from menace.bot_registry import BotRegistry
 
+    bus = UnifiedEventBus()
+    registry = BotRegistry(event_bus=bus)
     quick_manager = SelfCodingManager(
-        engine, ModelAutomationPipeline(context_builder=context_builder), bot_name="menace"
+        engine,
+        ModelAutomationPipeline(
+            context_builder=context_builder, event_bus=bus, bot_registry=registry
+        ),
+        bot_name="menace",
+        bot_registry=registry,
+        event_bus=bus,
     )
     quick_fix_engine = QuickFixEngine(
         telem_db, quick_manager, graph=graph, context_builder=context_builder

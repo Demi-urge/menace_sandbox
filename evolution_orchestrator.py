@@ -20,6 +20,10 @@ from .trend_predictor import TrendPredictor
 from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
 from .self_coding_thresholds import get_thresholds
+try:  # pragma: no cover - optional dependency
+    from . import mutation_logger as MutationLogger
+except Exception:  # pragma: no cover - best effort
+    MutationLogger = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - for type checkers only
     from .adaptive_roi_predictor import AdaptiveROIPredictor
@@ -115,6 +119,7 @@ class EvolutionOrchestrator:
         self._workflow_roi_history: dict[str, list[float]] = {}
         self._last_mutation_id: int | None = None
         self._workflow_event_ids: dict[int | str, int] = {}
+        self.roi_history: list[float] = []
         if not self.dataset_path.exists():
             try:
                 self.dataset_path.write_text(
@@ -126,6 +131,9 @@ class EvolutionOrchestrator:
         if self.event_bus:
             try:
                 self.event_bus.subscribe("evolve:system", lambda *_: self.run_cycle())
+                self.event_bus.subscribe(
+                    "self_coding:patch_applied", self._on_patch_applied
+                )
             except Exception:
                 self.logger.exception("event bus subscription failed")
 
@@ -140,6 +148,35 @@ class EvolutionOrchestrator:
                 self.data_bot.subscribe_degradation(self._on_bot_degraded)
             except Exception:
                 self.logger.exception("failed to attach degradation callback")
+
+    # ------------------------------------------------------------------
+    def _on_patch_applied(self, _topic: str, event: object) -> None:
+        """Update history and ROI when a self-coding patch is applied."""
+        if not isinstance(event, dict):
+            return
+        try:
+            before = float(event.get("roi_before", 0.0))
+            after = float(event.get("roi_after", before))
+            delta = float(event.get("roi_delta", after - before))
+            patch_id = event.get("patch_id")
+            desc = event.get("description", "")
+            path = event.get("path", "")
+            self.history.add(
+                EvolutionEvent(
+                    action=f"patch:{Path(path).name}" if path else "patch",
+                    before_metric=before,
+                    after_metric=after,
+                    roi=delta,
+                    patch_id=patch_id,
+                    reason=desc,
+                    trigger="self_coding",
+                    performance=delta,
+                )
+            )
+            self.prev_roi = after
+            self.roi_history.append(after)
+        except Exception:
+            self.logger.exception("failed to record patch_applied event")
 
     # ------------------------------------------------------------------
     def _on_bot_degraded(self, event: dict) -> None:

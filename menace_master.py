@@ -65,6 +65,8 @@ from menace.auto_env_setup import ensure_env, interactive_setup  # noqa: E402
 from menace.auto_resource_setup import ensure_proxies, ensure_accounts  # noqa: E402
 from menace.external_dependency_provisioner import ExternalDependencyProvisioner  # noqa: E402
 from menace.unified_event_bus import UnifiedEventBus  # noqa: E402
+from menace.bot_registry import BotRegistry  # noqa: E402
+from vector_service.context_builder import ContextBuilder  # noqa: E402
 from menace.retry_utils import retry  # noqa: E402
 from menace.disaster_recovery import DisasterRecovery  # noqa: E402
 try:
@@ -512,7 +514,7 @@ def _mark_first_run(path: str) -> None:
 
 
 def deploy_patch(
-    path: Path, description: str, context_builder: "ContextBuilder"
+    path: Path, description: str, context_builder: ContextBuilder
 ) -> None:
     """Apply a patch using approval policy before deployment."""
     rb = AutomatedRollbackManager()
@@ -527,8 +529,18 @@ def deploy_patch(
     engine = SelfCodingEngine(
         CodeDB(), MenaceMemoryManager(), context_builder=builder
     )
-    pipeline = ModelAutomationPipeline(context_builder=builder)
-    manager = SelfCodingManager(engine, pipeline, approval_policy=policy)
+    bus = UnifiedEventBus()
+    registry = BotRegistry(event_bus=bus)
+    pipeline = ModelAutomationPipeline(
+        context_builder=builder, event_bus=bus, bot_registry=registry
+    )
+    manager = SelfCodingManager(
+        engine,
+        pipeline,
+        approval_policy=policy,
+        bot_registry=registry,
+        event_bus=bus,
+    )
     manager.context_builder = builder
     try:
         manager.run_patch(path, description)
