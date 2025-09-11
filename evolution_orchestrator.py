@@ -13,21 +13,24 @@ import numpy as np
 
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
-from .self_improvement import SelfImprovementEngine
 from .system_evolution_manager import SystemEvolutionManager
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .evaluation_history_db import EvaluationHistoryDB
 from .trend_predictor import TrendPredictor
-from .bot_creation_bot import BotCreationBot
-from .resource_allocation_optimizer import ResourceAllocationOptimizer
-from .workflow_evolution_bot import WorkflowEvolutionBot
-from .experiment_manager import ExperimentManager
-from .evolution_analysis_bot import EvolutionAnalysisBot
-from .self_coding_manager import SelfCodingManager
-from .evolution_predictor import EvolutionPredictor
-from .unified_event_bus import UnifiedEventBus
-from . import mutation_logger as MutationLogger
-from .adaptive_roi_predictor import AdaptiveROIPredictor
+from vector_service.context_builder import ContextBuilder
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - for type checkers only
+    from .adaptive_roi_predictor import AdaptiveROIPredictor
+    from .self_coding_manager import SelfCodingManager
+    from .self_improvement import SelfImprovementEngine
+    from .bot_creation_bot import BotCreationBot
+    from .resource_allocation_optimizer import ResourceAllocationOptimizer
+    from .workflow_evolution_bot import WorkflowEvolutionBot
+    from .experiment_manager import ExperimentManager
+    from .evolution_analysis_bot import EvolutionAnalysisBot
+    from .evolution_predictor import EvolutionPredictor
+    from .unified_event_bus import UnifiedEventBus
 
 
 @dataclass
@@ -61,7 +64,7 @@ class EvolutionOrchestrator:
         workflow_evolver: WorkflowEvolutionBot | None = None,
         experiment_manager: ExperimentManager | None = None,
         analysis_bot: EvolutionAnalysisBot | None = None,
-        self_coding_manager: SelfCodingManager | None = None,
+        self_manager: SelfCodingManager | None = None,
         trend_predictor: TrendPredictor | None = None,
         predictor: EvolutionPredictor | None = None,
         multi_predictor: object | None = None,
@@ -76,11 +79,14 @@ class EvolutionOrchestrator:
         self.evolution_manager = evolution_manager
         self.history = history_db or EvolutionHistoryDB()
         if triggers is None:
-            bot = self_coding_manager.bot_name if self_coding_manager else None
-            t = data_bot.get_thresholds(bot)
-            self.triggers = EvolutionTrigger(
-                error_rate=t.error_threshold, roi_drop=t.roi_drop
-            )
+            bot = self_manager.bot_name if self_manager else None
+            if hasattr(data_bot, "get_thresholds"):
+                t = data_bot.get_thresholds(bot)
+                self.triggers = EvolutionTrigger(
+                    error_rate=t.error_threshold, roi_drop=t.roi_drop
+                )
+            else:
+                self.triggers = EvolutionTrigger()
         else:
             self.triggers = triggers
         self.bot_creator = bot_creator
@@ -88,12 +94,12 @@ class EvolutionOrchestrator:
         self.workflow_evolver = workflow_evolver
         self.experiment_manager = experiment_manager
         self.analysis_bot = analysis_bot
-        self.self_coding_manager = self_coding_manager
+        self.self_manager = self_manager
         self.predictor = predictor
         self.multi_predictor = multi_predictor
         self.trend_predictor = trend_predictor
         self.event_bus = event_bus
-        self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
+        self.roi_predictor = roi_predictor
         self.dataset_path = Path(dataset_path)
         self.retrain_interval = retrain_interval
         if self.capital_bot and getattr(self.capital_bot, "trend_predictor", None) is None:
@@ -123,6 +129,44 @@ class EvolutionOrchestrator:
                 self.event_bus.subscribe("evolve:system", lambda *_: self.run_cycle())
             except Exception:
                 self.logger.exception("event bus subscription failed")
+
+        bus = getattr(self.data_bot, "event_bus", None) or self.event_bus
+        if bus:
+            try:
+                bus.subscribe("bot:degraded", lambda _t, e: self._on_bot_degraded(e))
+            except Exception:
+                self.logger.exception("bot degraded subscription failed")
+        else:
+            try:
+                self.data_bot.degradation_callback = self._on_bot_degraded  # type: ignore[attr-defined]
+            except Exception:
+                self.logger.exception("failed to attach degradation callback")
+
+    # ------------------------------------------------------------------
+    def _on_bot_degraded(self, event: dict) -> None:
+        """Handle bot degradation events by triggering a self patch."""
+        if not self.self_manager:
+            return
+        try:
+            builder = ContextBuilder()
+            try:
+                self.self_manager.engine.generate_helper(builder)
+            except Exception:
+                self.logger.exception("helper generation failed")
+            mod = inspect.getmodule(self.data_bot.__class__)
+            path = Path(getattr(mod, "__file__", "")) if mod else None
+            if not path or not path.exists():
+                return
+            context_meta = {
+                "delta_roi": event.get("delta_roi"),
+                "delta_errors": event.get("delta_errors"),
+                "roi_threshold": event.get("roi_threshold"),
+                "error_threshold": event.get("error_threshold"),
+            }
+            desc = f"auto_patch_due_to_degradation:{event.get('bot')}"
+            self.self_manager.run_patch(path, desc, context_meta=context_meta)
+        except Exception:
+            self.logger.exception("failed to self patch after degradation")
 
     # ------------------------------------------------------------------
     def _latest_roi(self) -> float:
@@ -215,20 +259,24 @@ class EvolutionOrchestrator:
         delta_roi = before_roi - self.prev_roi
         self.prev_roi = before_roi
         error_rate = self._error_rate()
+        try:
+            from . import mutation_logger as MutationLogger
+        except Exception:  # pragma: no cover - best effort
+            MutationLogger = None  # type: ignore
 
         def _self_patch(module: object, reason: str, trigger: str) -> None:
-            if not self.self_coding_manager:
+            if not self.self_manager:
                 return
-            if not self.self_coding_manager.should_refactor():
+            if not self.self_manager.should_refactor():
                 return
             try:
                 mod = inspect.getmodule(module.__class__)
                 path = Path(getattr(mod, "__file__", "")) if mod else None
                 if not path or not path.exists():
                     return
-                self.self_coding_manager.run_patch(path, reason)
+                self.self_manager.run_patch(path, reason)
                 after = self._latest_roi()
-                patch_id = getattr(self.self_coding_manager, "_last_patch_id", None)
+                patch_id = getattr(self.self_manager, "_last_patch_id", None)
                 self.history.add(
                     EvolutionEvent(
                         action=f"patch:{path.name}",
@@ -256,13 +304,19 @@ class EvolutionOrchestrator:
                 "roi_drop",
             )
 
-        try:
-            seq, _, _, _ = self.roi_predictor.predict(
-                [[before_roi, error_rate]], horizon=1
-            )
-            model_pred = float(seq[-1]) if seq else 0.0
-        except TypeError:
-            model_pred, _, _, _ = self.roi_predictor.predict([[before_roi, error_rate]])
+        if self.roi_predictor:
+            try:
+                seq, _, _, _ = self.roi_predictor.predict(
+                    [[before_roi, error_rate]], horizon=1
+                )
+                model_pred = float(seq[-1]) if seq else 0.0
+            except TypeError:
+                model_pred, _, _, _ = self.roi_predictor.predict(
+                    [[before_roi, error_rate]]
+                )
+        else:
+            seq = []
+            model_pred = 0.0
         pred_roi = before_roi
         pred_err = error_rate
         if self.trend_predictor:
@@ -432,7 +486,7 @@ class EvolutionOrchestrator:
                 trending_topic = getattr(res, "trending_topic", trending_topic)
                 if res.roi:
                     result_values.append(res.roi.roi)
-                if self.self_coding_manager:
+                if self.self_manager:
                     failing = (
                         getattr(res, "failing_path", None)
                         or getattr(res, "failing_module", None)
@@ -450,6 +504,7 @@ class EvolutionOrchestrator:
                                 path = Path(getattr(mod, "__file__", ""))
                     if path and path.exists():
                         try:
+                            from . import mutation_logger as MutationLogger
                             event_id = MutationLogger.log_mutation(
                                 change=f"patch:{path.name}",
                                 reason="self_improvement",
@@ -458,8 +513,8 @@ class EvolutionOrchestrator:
                                 workflow_id=0,
                                 before_metric=before_roi,
                             )
-                            if self.self_coding_manager.should_refactor():
-                                self.self_coding_manager.run_patch(
+                            if self.self_manager.should_refactor():
+                                self.self_manager.run_patch(
                                     path, f"auto_patch:{path.name}"
                                 )
                             after_patch = self._latest_roi()
@@ -471,12 +526,12 @@ class EvolutionOrchestrator:
                                 performance=delta,
                             )
                             registry = getattr(
-                                self.self_coding_manager, "bot_registry", None
+                                self.self_manager, "bot_registry", None
                             )
                             if registry:
                                 try:
                                     registry.register_interaction(
-                                        self.self_coding_manager.bot_name, path.stem
+                                        self.self_manager.bot_name, path.stem
                                     )
                                 except Exception:
                                     self.logger.exception(
@@ -608,18 +663,19 @@ class EvolutionOrchestrator:
                     evolution_cycle_count.inc()
             except Exception:
                 self.logger.exception("metrics export failed")
-            with MutationLogger.log_context(
-                change=action_seq,
-                reason=reason_str,
-                trigger=trigger_str,
-                workflow_id=0,
-                before_metric=before_roi,
-                parent_id=event_id,
-            ) as mutation:
-                mutation["after_metric"] = after_roi
-                mutation["performance"] = after_roi - before_roi
-                mutation["roi"] = result_roi
-            self._last_mutation_id = int(mutation["event_id"])
+            if MutationLogger:
+                with MutationLogger.log_context(
+                    change=action_seq,
+                    reason=reason_str,
+                    trigger=trigger_str,
+                    workflow_id=0,
+                    before_metric=before_roi,
+                    parent_id=event_id,
+                ) as mutation:
+                    mutation["after_metric"] = after_roi
+                    mutation["performance"] = after_roi - before_roi
+                    mutation["roi"] = result_roi
+                    self._last_mutation_id = int(mutation["event_id"])
         self._run_bot_experiments()
         self._run_workflow_experiments()
         self._cycles += 1
