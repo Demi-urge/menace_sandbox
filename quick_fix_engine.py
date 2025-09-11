@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import self_coding_managed, manager_generate_helper
 try:  # pragma: no cover - fail fast if vector service missing
     from vector_service.context_builder import (
         ContextBuilder,
@@ -97,6 +97,7 @@ _VEC_METRICS = None
 def generate_patch(
     module: str,
     engine: "SelfCodingEngine" | None = None,
+    manager: SelfCodingManager | None = None,
     *,
     context_builder: ContextBuilder,
     description: str | None = None,
@@ -120,6 +121,9 @@ def generate_patch(
         Optional :class:`~self_coding_engine.SelfCodingEngine` instance.  If not
         provided, a minimal engine is instantiated on demand.  The function
         tolerates missing dependencies and simply returns ``None`` on failure.
+    manager:
+        Optional :class:`~self_coding_manager.SelfCodingManager` providing
+        helper generation context and telemetry hooks.
     context_builder:
         :class:`vector_service.ContextBuilder` instance used to retrieve
         contextual information from local databases. The builder must be able
@@ -195,12 +199,22 @@ def generate_patch(
         context_meta["prompt_strategy"] = str(strategy)
     base_description = description
 
+    if manager is not None:
+        try:
+            meta = dict(context_meta)
+            meta.setdefault("trigger", "quick_fix_engine")
+            manager.register_patch_cycle(description, meta)
+        except Exception:
+            logger.exception("failed to register patch cycle")
+
     if patch_logger is None:
         try:
             patch_logger = PatchLogger()
         except Exception:
             patch_logger = None
 
+    if engine is None and manager is not None:
+        engine = getattr(manager, "engine", None)
     if engine is None:
         try:  # pragma: no cover - heavy dependencies
             from .self_coding_engine import SelfCodingEngine
@@ -238,6 +252,14 @@ def generate_patch(
             def _gen(desc: str) -> str:
                 """Generate helper code for *desc* using the current context."""
                 try:
+                    if manager is not None:
+                        return manager_generate_helper(
+                            manager,
+                            desc,
+                            path=path,
+                            metadata=context_meta,
+                            target_region=target_region,
+                        )
                     return engine.generate_helper(
                         desc,
                         path=path,
@@ -246,6 +268,8 @@ def generate_patch(
                     )
                 except TypeError:
                     try:
+                        if manager is not None:
+                            return manager_generate_helper(manager, desc)
                         return engine.generate_helper(desc)
                     except Exception:
                         return ""
@@ -391,6 +415,17 @@ def generate_patch(
                         )
                     except BaseException:  # pragma: no cover - best effort
                         logger.debug("embedding backfill failed", exc_info=True)
+            if manager is not None and patch_id is not None:
+                registry = getattr(manager, "bot_registry", None)
+                if registry is not None:
+                    try:
+                        registry.update_bot(
+                            getattr(manager, "bot_name", ""),
+                            path.as_posix(),
+                            patch_id=patch_id,
+                        )
+                    except Exception:
+                        logger.exception("failed to update bot registry")
             try:
                 from sandbox_runner import post_round_orphan_scan
 
@@ -785,6 +820,7 @@ class QuickFixEngine:
                     patch_id = generate_patch(
                         prompt_path,
                         getattr(self.manager, "engine", None),
+                        self.manager,
                         context_builder=self.context_builder,
                     )
                 except Exception:
@@ -844,6 +880,7 @@ class QuickFixEngine:
             patch_id, flags = generate_patch(
                 str(module_path),
                 getattr(self.manager, "engine", None),
+                self.manager,
                 context_builder=self.context_builder,
                 description=description,
                 context=ctx,
@@ -880,6 +917,7 @@ class QuickFixEngine:
             _pid, flags = generate_patch(
                 module_name,
                 getattr(self.manager, "engine", None),
+                self.manager,
                 context_builder=self.context_builder,
                 description=description,
                 target_region=target_region,
