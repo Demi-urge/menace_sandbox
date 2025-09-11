@@ -369,6 +369,7 @@ class SelfCodingManager:
             prompt_path = path_for_prompt(path)
             attempt = 0
             patch_id: int | None = None
+            commit_hash: str | None = None
             reverted = False
             ctx_meta = context_meta or {}
             clayer = self.engine.cognition_layer
@@ -792,6 +793,16 @@ class SelfCodingManager:
                     check=True,
                     cwd=str(clone_root),
                 )
+                try:
+                    commit_hash = (
+                        subprocess.check_output(
+                            ["git", "rev-parse", "HEAD"], cwd=str(clone_root)
+                        )
+                        .decode()
+                        .strip()
+                    )
+                except Exception:
+                    commit_hash = None
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.error("git commit failed: %s", exc)
                 try:
@@ -966,7 +977,7 @@ class SelfCodingManager:
                     "failed to log evolution cycle: %s", exc
                 )
         if self.bot_registry:
-            module_path = path_for_prompt(path)
+            module_path = path_for_prompt(cloned_path)
             try:
                 self.bot_registry.record_heartbeat(self.bot_name)
                 self.bot_registry.register_interaction(self.bot_name, "patched")
@@ -987,7 +998,12 @@ class SelfCodingManager:
                     success=True,
                     resources=f"patch_id:{patch_id}",
                 )
-                self.bot_registry.update_bot(self.bot_name, module_path)
+                self.bot_registry.update_bot(
+                    self.bot_name,
+                    module_path,
+                    patch_id=patch_id,
+                    commit=commit_hash,
+                )
                 version = None
                 try:
                     version = self.bot_registry.graph.nodes[self.bot_name].get(
