@@ -127,6 +127,17 @@ If the optional `QuickFixEngine` dependency is unavailable, initialise
 validation. The manager will emit a warning and continue running without
 pre-validation until the dependency is installed.
 
+Custom commands can be provided for testing and repository cloning:
+
+```python
+from pathlib import Path
+from self_coding_manager import PatchApprovalPolicy
+
+policy = PatchApprovalPolicy(test_command=["pytest", "-q"])
+manager.approval_policy = policy
+manager.run_patch(Path("sandbox_runner.py"), "tweak", clone_command=["git", "clone", "--depth", "1"])
+```
+
 ### SelfCodingEngine
 
 ```python

@@ -98,7 +98,10 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only
 
 
 class PatchApprovalPolicy:
-    """Run formal verification and tests before patching."""
+    """Run formal verification and tests before patching.
+
+    The test runner command can be customised via ``test_command``.
+    """
 
     def __init__(
         self,
@@ -106,11 +109,13 @@ class PatchApprovalPolicy:
         verifier: FormalVerifier | None = None,
         rollback_mgr: AutomatedRollbackManager | None = None,
         bot_name: str = "menace",
+        test_command: list[str] | None = None,
     ) -> None:
         self.verifier = verifier or FormalVerifier()
         self.rollback_mgr = rollback_mgr
         self.bot_name = bot_name
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.test_command = test_command or ["pytest", "-q"]
 
     def approve(self, path: Path) -> bool:
         ok = True
@@ -121,7 +126,7 @@ class PatchApprovalPolicy:
             self.logger.error("verification failed: %s", exc)
             ok = False
         try:
-            subprocess.run(["pytest", "-q"], check=True)
+            subprocess.run(self.test_command, check=True)
         except Exception as exc:  # pragma: no cover - test runner issues
             self.logger.error("self tests failed: %s", exc)
             ok = False
@@ -492,6 +497,7 @@ class SelfCodingManager:
         review_branch: str | None = None,
         auto_merge: bool = False,
         backend: str = "venv",
+        clone_command: list[str] | None = None,
     ) -> AutomationResult:
         """Patch *path* then deploy using the automation pipeline.
 
@@ -502,7 +508,8 @@ class SelfCodingManager:
         into ``main`` when ``auto_merge`` is ``True`` and the confidence score
         exceeds ``confidence_threshold``.  ``backend`` selects the test
         execution environment; ``"venv"`` uses a virtual environment while
-        ``"docker"`` runs tests inside a Docker container.  When
+        ``"docker"`` runs tests inside a Docker container. ``clone_command``
+        customises the VCS command used to clone the repository. When
         ``context_builder`` is supplied the engine and quick fix components use
         it for validation.
         """
@@ -530,7 +537,8 @@ class SelfCodingManager:
         after_roi = before_roi
         roi_delta = 0.0
         with tempfile.TemporaryDirectory() as tmp:
-            subprocess.run(["git", "clone", str(repo_root), tmp], check=True)
+            cmd = (clone_command or ["git", "clone"]) + [str(repo_root), tmp]
+            subprocess.run(cmd, check=True)
             clone_root = resolve_path(tmp)
             cloned_path = clone_root / path.resolve().relative_to(repo_root)
             prompt_path = path_for_prompt(path)
