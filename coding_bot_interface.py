@@ -3,6 +3,7 @@ from __future__ import annotations
 """Utilities for registering coding bots with the central registries."""
 
 from functools import wraps
+import inspect
 import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 
@@ -19,8 +20,15 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def _resolve_helpers(obj: Any, registry: BotRegistry | None, data_bot: DataBot | None) -> tuple[BotRegistry | None, DataBot | None]:
-    """Helper to resolve BotRegistry and DataBot from args or object attributes."""
+def _resolve_helpers(
+    obj: Any, registry: BotRegistry | None, data_bot: DataBot | None
+) -> tuple[BotRegistry | None, DataBot | None, str]:
+    """Resolve ``BotRegistry``/``DataBot`` and return defining module path.
+
+    ``inspect.getfile(obj.__class__)`` is used to determine the file where the
+    class of ``obj`` is defined.  This path is returned alongside the resolved
+    helpers so callers can update the registry with accurate module metadata.
+    """
     if registry is None:
         registry = getattr(obj, "bot_registry", None)
         if registry is None:
@@ -31,7 +39,11 @@ def _resolve_helpers(obj: Any, registry: BotRegistry | None, data_bot: DataBot |
         if data_bot is None:
             manager = getattr(obj, "manager", None)
             data_bot = getattr(manager, "data_bot", None)
-    return registry, data_bot
+    try:
+        module_path = inspect.getfile(obj.__class__)
+    except Exception:  # pragma: no cover - best effort
+        module_path = ""
+    return registry, data_bot, module_path
 
 
 def self_coding_managed(cls: type) -> type:
@@ -52,11 +64,17 @@ def self_coding_managed(cls: type) -> type:
         registry = kwargs.pop("bot_registry", None)
         data_bot = kwargs.pop("data_bot", None)
         orig_init(self, *args, **kwargs)
-        registry, data_bot = _resolve_helpers(self, registry, data_bot)
+        registry, data_bot, module_path = _resolve_helpers(
+            self, registry, data_bot
+        )
         name = getattr(self, "name", getattr(self, "bot_name", cls.__name__))
         if registry:
             try:
                 registry.register_bot(name)
+                try:
+                    registry.update_bot(name, module_path)
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("bot update failed for %s", name)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("bot registration failed for %s", name)
         if data_bot and getattr(data_bot, "db", None):
@@ -72,4 +90,3 @@ def self_coding_managed(cls: type) -> type:
 
     cls.__init__ = wrapped_init  # type: ignore[assignment]
     return cls
-
