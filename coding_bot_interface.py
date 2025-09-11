@@ -7,6 +7,8 @@ import inspect
 import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 
+from .self_coding_manager import SelfCodingManager
+
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .bot_registry import BotRegistry
     from .data_bot import DataBot
@@ -54,7 +56,10 @@ def self_coding_managed(cls: type) -> type:
     baseline ROI/error metrics are logged via :class:`DataBot` on construction.
     The decorator looks for ``bot_registry`` and ``data_bot`` either passed as
     keyword arguments during initialisation or available on the instance or its
-    ``manager`` attribute.
+    ``manager`` attribute.  A ``manager`` attribute of type
+    :class:`SelfCodingManager` is required; if missing the decorator will attempt
+    to construct one from the resolved helpers and otherwise raise a
+    :class:`RuntimeError`.
     """
 
     orig_init = cls.__init__  # type: ignore[attr-defined]
@@ -67,7 +72,28 @@ def self_coding_managed(cls: type) -> type:
         registry, data_bot, module_path = _resolve_helpers(
             self, registry, data_bot
         )
+        manager = getattr(self, "manager", None)
         name = getattr(self, "name", getattr(self, "bot_name", cls.__name__))
+        if not isinstance(manager, SelfCodingManager):
+            if registry and data_bot:
+                try:
+                    manager = SelfCodingManager(
+                        getattr(self, "engine", None),
+                        getattr(self, "pipeline", None),
+                        bot_name=name,
+                        bot_registry=registry,
+                        data_bot=data_bot,
+                    )
+                    self.manager = manager
+                except Exception as exc:  # pragma: no cover - best effort
+                    raise RuntimeError(
+                        "failed to initialise SelfCodingManager; provide a manager"
+                    ) from exc
+            else:
+                raise RuntimeError(
+                    "SelfCodingManager required: provide 'manager' or both"
+                    " 'bot_registry' and 'data_bot'"
+                )
         if registry:
             try:
                 registry.register_bot(name)
