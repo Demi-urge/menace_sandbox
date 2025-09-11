@@ -74,12 +74,19 @@ class BotRegistry:
 
         # Ensure the bot exists in the graph.
         self.register_bot(name)
-        self.graph.nodes[name]["module"] = module_path
+        node = self.graph.nodes[name]
+        node["module"] = module_path
+        node["version"] = int(node.get("version", 0)) + 1
 
         if self.event_bus:
             try:
                 self.event_bus.publish(
-                    "bot:updated", {"name": name, "module": module_path}
+                    "bot:updated",
+                    {
+                        "name": name,
+                        "module": module_path,
+                        "version": node["version"],
+                    },
                 )
             except Exception as exc:
                 logger.error("Failed to publish bot:updated event: %s", exc)
@@ -224,14 +231,17 @@ class BotRegistry:
 
         cur = conn.cursor()
         cur.execute(
-            "CREATE TABLE IF NOT EXISTS bot_nodes(name TEXT PRIMARY KEY, module TEXT)"
+            "CREATE TABLE IF NOT EXISTS bot_nodes(" "name TEXT PRIMARY KEY, "
+            "module TEXT, "
+            "version INTEGER)"
         )
-        # Ensure the ``module`` column exists for databases created before it
-        # was introduced.
+        # Ensure columns exist for databases created before they were introduced.
         try:  # pragma: no cover - only executed on legacy schemas
             cols = [r[1] for r in cur.execute("PRAGMA table_info(bot_nodes)").fetchall()]
             if "module" not in cols:
                 cur.execute("ALTER TABLE bot_nodes ADD COLUMN module TEXT")
+            if "version" not in cols:
+                cur.execute("ALTER TABLE bot_nodes ADD COLUMN version INTEGER")
         except Exception:
             pass
         cur.execute(
@@ -245,10 +255,12 @@ class BotRegistry:
             """
         )
         for node in self.graph.nodes:
-            module = self.graph.nodes[node].get("module")
+            data = self.graph.nodes[node]
+            module = data.get("module")
+            version = data.get("version")
             cur.execute(
-                "INSERT OR REPLACE INTO bot_nodes(name, module) VALUES(?, ?)",
-                (node, module),
+                "INSERT OR REPLACE INTO bot_nodes(name, module, version) VALUES(?, ?, ?)",
+                (node, module, version),
             )
         for u, v, data in self.graph.edges(data=True):
             cur.execute(
@@ -290,23 +302,41 @@ class BotRegistry:
         except Exception:
             cols = []
 
-        if "module" in cols:
-            try:
-                node_rows = cur.execute("SELECT name, module FROM bot_nodes").fetchall()
-            except Exception:  # pragma: no cover - corrupted table
-                node_rows = []
-            for name, module in node_rows:
-                if module is None:
-                    self.graph.add_node(name)
-                else:
-                    self.graph.add_node(name, module=module)
-        else:
-            try:
+        module_col = "module" in cols
+        version_col = "version" in cols
+        try:
+            if module_col and version_col:
+                node_rows = cur.execute(
+                    "SELECT name, module, version FROM bot_nodes"
+                ).fetchall()
+            elif module_col:
+                node_rows = cur.execute(
+                    "SELECT name, module FROM bot_nodes"
+                ).fetchall()
+            elif version_col:
+                node_rows = cur.execute(
+                    "SELECT name, version FROM bot_nodes"
+                ).fetchall()
+            else:
                 node_rows = cur.execute("SELECT name FROM bot_nodes").fetchall()
-            except Exception:  # pragma: no cover - corrupted table
-                node_rows = []
-            for (name,) in node_rows:
-                self.graph.add_node(name)
+        except Exception:  # pragma: no cover - corrupted table
+            node_rows = []
+
+        for row in node_rows:
+            name = row[0]
+            module = None
+            version = None
+            if module_col and version_col and len(row) >= 3:
+                _, module, version = row
+            elif module_col:
+                _, module = row
+            elif version_col:
+                _, version = row
+            self.graph.add_node(name)
+            if module is not None:
+                self.graph.nodes[name]["module"] = module
+            if version is not None:
+                self.graph.nodes[name]["version"] = int(version)
 
         try:
             edge_rows = cur.execute(
