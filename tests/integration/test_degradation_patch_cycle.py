@@ -3,8 +3,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 package = types.ModuleType("menace")
 package.__path__ = [str(ROOT)]
@@ -31,6 +29,7 @@ sys.modules.setdefault("menace.coding_bot_interface", cbi)
 
 scm_mod = types.ModuleType("menace.self_coding_manager")
 
+
 class HelperGenerationError(RuntimeError):
     pass
 
@@ -41,6 +40,7 @@ class SelfCodingManager:
         self.bot_name = kwargs.get("bot_name", "")
         self.bot_registry = kwargs.get("bot_registry")
         self.called = False
+        self.event_bus = kwargs.get("event_bus")
 
     def generate_and_patch(
         self, path: Path, description: str, *, context_meta=None, context_builder=None
@@ -53,8 +53,13 @@ class SelfCodingManager:
             self.bot_name, str(path), patch_id=patch_id, commit="deadbeef"
         )
 
-    def register_patch_cycle(self, *_, **__):  # noqa: D401,D403 - test stub
-        """No-op hook for patch cycle registration."""
+    def register_patch_cycle(self, description, context_meta=None):  # noqa: D401,D403
+        """Publish registration event for assertions."""
+        if self.event_bus:
+            self.event_bus.publish(
+                "self_coding:cycle_registered",
+                {"bot": self.bot_name, "description": description},
+            )
 
     def should_refactor(self) -> bool:  # noqa: D401 - simple always-true stub
         return True
@@ -75,11 +80,13 @@ BotRegistry = importlib.import_module("menace.bot_registry").BotRegistry
 class DummyBus:
     def __init__(self):
         self.subs = {}
+        self.events = []
 
     def subscribe(self, topic, fn):
         self.subs.setdefault(topic, []).append(fn)
 
     def publish(self, topic, payload):
+        self.events.append((topic, payload))
         for fn in self.subs.get(topic, []):
             fn(topic, payload)
 
@@ -151,9 +158,10 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
         quick_fix=quick_fix,
         bot_name="dummy_module",
         bot_registry=registry,
+        event_bus=bus,
     )
 
-    orch = EvolutionOrchestrator(
+    EvolutionOrchestrator(
         data_bot,
         DummyCapital(),
         DummyImprovement(),
@@ -171,6 +179,10 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
     node = registry.graph.nodes["dummy_module"]
     assert node["module"] == str(mod_path)
     assert node["patch_id"] == 123
+
+    topics = [t for t, _ in bus.events]
+    assert "self_coding:cycle_registered" in topics
+    assert "bot:hot_swapped" in topics
 
 
 def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
@@ -195,6 +207,7 @@ def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
         quick_fix=quick_fix,
         bot_name="dummy_module",
         bot_registry=registry,
+        event_bus=bus,
     )
 
     calls: list[str] = []
@@ -222,6 +235,10 @@ def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
     assert manager.called
     assert calls and calls[0] == str(mod_path)
 
+    topics = [t for t, _ in bus.events]
+    assert "self_coding:cycle_registered" in topics
+    assert "bot:hot_swapped" in topics
+
 
 def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(tmp_path)
@@ -231,7 +248,8 @@ def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
         "@self_coding_managed\n"
         "class DummyBot:\n"
         "    name = 'dummy_module'\n"
-        "    def __init__(self, manager=None, evolution_orchestrator=None, bot_registry=None, data_bot=None):\n"
+        "    def __init__(self, manager=None, evolution_orchestrator=None,\n"
+        "                 bot_registry=None, data_bot=None):\n"
         "        pass\n"
     )
 
@@ -252,6 +270,7 @@ def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
     monkeypatch.setattr(cbi, "self_coding_managed", _decorator)
 
     importlib.invalidate_caches()
+    sys.modules.pop("dummy_module", None)
     dummy_module = importlib.import_module("dummy_module")
 
     bus = DummyBus()
@@ -264,6 +283,7 @@ def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
         quick_fix=quick_fix,
         bot_name="dummy_module",
         bot_registry=registry,
+        event_bus=bus,
     )
 
     orch = EvolutionOrchestrator(
@@ -288,3 +308,6 @@ def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
 
     assert manager.called
     assert quick_fix.calls
+    topics = [t for t, _ in bus.events]
+    assert "self_coding:cycle_registered" in topics
+    assert "bot:hot_swapped" in topics
