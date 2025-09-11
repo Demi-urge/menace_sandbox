@@ -160,6 +160,7 @@ class SelfCodingManager:
             if error_rate_threshold is not None
             else SELF_CODING_ERROR_INCREASE
         )
+        self._refresh_thresholds()
         self._last_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         self._last_errors = (
             self.data_bot.average_errors(self.bot_name) - self.error_rate_threshold
@@ -197,8 +198,8 @@ class SelfCodingManager:
         if self.bot_registry:
             try:
                 self.bot_registry.register_bot(self.bot_name)
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to register bot in registry")
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to register bot in registry")
 
     def register_bot(self, name: str) -> None:
         """Register *name* with the underlying :class:`BotRegistry`."""
@@ -208,6 +209,17 @@ class SelfCodingManager:
             self.bot_registry.register_bot(name)
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to register bot in registry")
+
+    def _refresh_thresholds(self) -> None:
+        """Fetch ROI and error thresholds from :class:`DataBot`."""
+        if not self.data_bot:
+            return
+        try:
+            t = self.data_bot.get_thresholds(self.bot_name)
+            self.roi_drop_threshold = t.roi_drop
+            self.error_rate_threshold = t.error_threshold
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to load thresholds for %s", self.bot_name)
 
     def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
         """Initialise QuickFixEngine on demand."""
@@ -273,6 +285,7 @@ class SelfCodingManager:
 
         if not self.data_bot:
             return False
+        self._refresh_thresholds()
         roi = self.data_bot.roi(self.bot_name)
         errors = self.data_bot.average_errors(self.bot_name)
         delta_roi = roi - self._last_roi
@@ -311,6 +324,8 @@ class SelfCodingManager:
         """
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
+        if self.data_bot:
+            self._refresh_thresholds()
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         errors = (
             self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0

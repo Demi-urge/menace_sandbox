@@ -11,3 +11,11 @@ bots:
     roi_drop: -0.2
     error_increase: 2.0
     test_failure_increase: 0.0
+  research_aggregator:
+    roi_drop: -0.15
+    error_increase: 1.5
+    test_failure_increase: 0.1
+  finance_router:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
