@@ -19,6 +19,7 @@ from .evaluation_history_db import EvaluationHistoryDB
 from .trend_predictor import TrendPredictor
 from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
+from .self_coding_thresholds import get_thresholds
 
 if TYPE_CHECKING:  # pragma: no cover - for type checkers only
     from .adaptive_roi_predictor import AdaptiveROIPredictor
@@ -46,8 +47,8 @@ class EvolutionOrchestrator:
     """Monitor metrics and coordinate improvement and evolution cycles.
 
     When ``triggers`` are not provided the ROI and error thresholds are
-    obtained from :class:`DataBot.get_thresholds` to ensure consistent behaviour
-    with other components.
+    loaded via :func:`self_coding_thresholds.get_thresholds` to ensure
+    consistent behaviour with other components.
     """
 
     def __init__(
@@ -80,13 +81,10 @@ class EvolutionOrchestrator:
         self.history = history_db or EvolutionHistoryDB()
         if triggers is None:
             bot = self_manager.bot_name if self_manager else None
-            if hasattr(data_bot, "get_thresholds"):
-                t = data_bot.get_thresholds(bot)
-                self.triggers = EvolutionTrigger(
-                    error_rate=t.error_threshold, roi_drop=t.roi_drop
-                )
-            else:
-                self.triggers = EvolutionTrigger()
+            t = get_thresholds(bot)
+            self.triggers = EvolutionTrigger(
+                error_rate=t.error_increase, roi_drop=t.roi_drop
+            )
         else:
             self.triggers = triggers
         self.bot_creator = bot_creator

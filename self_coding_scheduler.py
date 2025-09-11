@@ -17,6 +17,7 @@ from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
 from .self_coding_manager import SelfCodingManager
 from .data_bot import DataBot
+from .self_coding_thresholds import get_thresholds
 from .advanced_error_management import AutomatedRollbackManager
 from .sandbox_settings import SandboxSettings
 from .error_parser import ErrorParser
@@ -32,7 +33,7 @@ class SelfCodingScheduler:
     """Trigger :class:`SelfCodingManager` based on ROI and error metrics.
 
     Defaults for ``interval`` are sourced from :class:`SandboxSettings` while
-    ROI and error thresholds are sourced via :class:`DataBot.get_thresholds`.
+    ROI and error thresholds are sourced via :func:`self_coding_thresholds.get_thresholds`.
     All values can be overridden via constructor arguments.
     """
 
@@ -60,19 +61,26 @@ class SelfCodingScheduler:
         self.patch_path = Path(patch_path) if patch_path else resolve_path("auto_helpers.py")
         self.description = description
         self.last_roi = self.data_bot.roi(self.manager.bot_name)
-        self.last_errors = self.data_bot.average_errors(self.manager.bot_name)
-        t = self.data_bot.get_thresholds(self.manager.bot_name)
+        self.last_errors = self._current_errors()
+        t = get_thresholds(self.manager.bot_name, self.settings)
         self._roi_override = roi_drop
         self._err_override = error_increase
         self.roi_drop = self._roi_override if self._roi_override is not None else t.roi_drop
         self.error_increase = (
-            self._err_override if self._err_override is not None else t.error_threshold
+            self._err_override if self._err_override is not None else t.error_increase
         )
         self.running = False
         self.logger = logging.getLogger(self.__class__.__name__)
         self._thread: Optional[threading.Thread] = None
         self.scan_interval = scan_interval
         self._scan_scheduler: object | None = None
+
+    def _current_errors(self) -> float:
+        """Return average error count for the managed bot."""
+
+        return getattr(self.data_bot, "average_errors", lambda _: 0.0)(
+            self.manager.bot_name
+        )
 
     def _latest_patch_id(self) -> str | None:
         patch_db = getattr(self.manager.engine, "patch_db", None)
@@ -147,14 +155,14 @@ class SelfCodingScheduler:
     def _loop(self) -> None:
         while self.running:
             try:
-                t = self.data_bot.get_thresholds(self.manager.bot_name)
+                t = get_thresholds(self.manager.bot_name, self.settings)
                 roi = self.data_bot.roi(self.manager.bot_name)
-                errors = self.data_bot.average_errors(self.manager.bot_name)
+                errors = self._current_errors()
                 roi_drop = (
                     self._roi_override if self._roi_override is not None else t.roi_drop
                 )
                 err_increase = (
-                    self._err_override if self._err_override is not None else t.error_threshold
+                    self._err_override if self._err_override is not None else t.error_increase
                 )
                 if roi - self.last_roi <= roi_drop or errors - self.last_errors >= err_increase:
                     before = roi
