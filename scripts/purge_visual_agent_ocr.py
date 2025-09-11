@@ -4,14 +4,12 @@ from dynamic_path_router import resolve_path
 
 
 def purge(db_path: str) -> None:
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path)  # noqa: SQL001
     cur = conn.cursor()
     cur.execute(
         (
             "DELETE FROM code WHERE code LIKE '%visual_agent%'"
-            " OR code LIKE '%vision_utils.detect_text%'"
             " OR summary LIKE '%visual_agent%'"
-            " OR summary LIKE '%vision_utils.detect_text%'"
         )
     )
     conn.commit()
@@ -21,7 +19,7 @@ def purge(db_path: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Purge visual agent and OCR hooks from a code database",
+        description="Purge visual agent hooks from a code database",
     )
     parser.add_argument(
         "db",
