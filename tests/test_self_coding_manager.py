@@ -68,6 +68,12 @@ th_stub.TestHarnessResult = types.SimpleNamespace
 sr_pkg.test_harness = th_stub
 sys.modules.setdefault("menace.sandbox_runner", sr_pkg)
 sys.modules.setdefault("menace.sandbox_runner.test_harness", th_stub)
+code_db_stub = types.ModuleType("menace.code_database")
+class PatchRecord:
+    pass
+code_db_stub.PatchRecord = PatchRecord
+sys.modules["menace.code_database"] = code_db_stub
+sys.modules["code_database"] = code_db_stub
 import menace.self_coding_manager as scm
 import menace.model_automation_pipeline as mapl
 import menace.pre_execution_roi_bot as prb
@@ -358,3 +364,38 @@ def test_generate_and_patch_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(mgr, "run_patch", bad_run_patch)
     with pytest.raises(RuntimeError):
         mgr.generate_and_patch(file_path, "fix")
+
+
+def test_should_refactor_on_test_failures_only(monkeypatch):
+    class DummyEngine:
+        patch_suggestion_db = None
+
+    class DummyPipeline:
+        pass
+
+    class DummyDataBot:
+        def __init__(self) -> None:
+            self.failures = 0
+
+        def roi(self, _bot: str) -> float:
+            return 1.0
+
+        def average_errors(self, _bot: str) -> float:
+            return 0.0
+
+        def average_test_failures(self, _bot: str) -> float:
+            return self.failures
+
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(
+                roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
+            )
+
+    data_bot = DummyDataBot()
+    mgr = scm.SelfCodingManager(
+        DummyEngine(), DummyPipeline(), bot_name="bot", data_bot=data_bot
+    )
+    mgr._last_errors = data_bot.average_errors("bot")
+    assert not mgr.should_refactor()
+    data_bot.failures = 5
+    assert mgr.should_refactor()

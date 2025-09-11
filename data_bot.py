@@ -1558,6 +1558,27 @@ class DataBot:
             return 0.0
         return 0.0
 
+    def average_test_failures(self, bot: str, limit: int = 10) -> float:
+        """Return average failed test count for ``bot`` over recent records."""
+
+        try:
+            df = self.db.fetch(limit)
+            if hasattr(df, "empty"):
+                df = df[df["bot"] == bot]
+                if df.empty:
+                    return 0.0
+                return float(df["tests_failed"].mean())
+            if isinstance(df, list):
+                rows = [r for r in df if r.get("bot") == bot]
+                if not rows:
+                    return 0.0
+                return float(
+                    sum(r.get("tests_failed", 0.0) for r in rows) / len(rows)
+                )
+        except Exception:
+            return 0.0
+        return 0.0
+
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
         """Load ROI, error and test failure thresholds for ``bot``."""
 

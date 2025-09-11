@@ -133,6 +133,12 @@ thr_mod.TestHarnessResult = HarnessResult
 thr_mod.run_tests = run_tests
 sys.modules.setdefault("menace.sandbox_runner", types.ModuleType("menace.sandbox_runner"))
 sys.modules.setdefault("menace.sandbox_runner.test_harness", thr_mod)
+code_db_mod = types.ModuleType("menace.code_database")
+class PatchRecord:
+    pass
+code_db_mod.PatchRecord = PatchRecord
+sys.modules["menace.code_database"] = code_db_mod
+sys.modules["code_database"] = code_db_mod
 
 # ---------------------------------------------------------------------------
 # Import target modules
