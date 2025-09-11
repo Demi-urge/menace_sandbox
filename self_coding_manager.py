@@ -15,7 +15,7 @@ import time
 import re
 import json
 from dataclasses import asdict
-from typing import Dict, Any, TYPE_CHECKING, Tuple
+from typing import Dict, Any, TYPE_CHECKING
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
 from .failure_fingerprint_store import (
@@ -50,6 +50,11 @@ try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
 except Exception:  # pragma: no cover - fallback for flat layout
     from patch_suggestion_db import PatchSuggestionDB  # type: ignore
+
+try:  # pragma: no cover - allow package/flat imports
+    from .bot_registry import BotRegistry
+except Exception:  # pragma: no cover - fallback for flat layout
+    from bot_registry import BotRegistry  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from .enhancement_classifier import EnhancementClassifier
@@ -109,6 +114,7 @@ class SelfCodingManager:
         failure_store: FailureFingerprintStore | None = None,
         skip_similarity: float | None = None,
         baseline_window: int | None = None,
+        bot_registry: BotRegistry | None = None,
     ) -> None:
         self.engine = self_coding_engine
         self.pipeline = pipeline
@@ -143,6 +149,7 @@ class SelfCodingManager:
                     exc,
                 )
                 self.enhancement_classifier = None
+        self.bot_registry = bot_registry
 
     # ------------------------------------------------------------------
     def scan_repo(self) -> None:
@@ -284,7 +291,11 @@ class SelfCodingManager:
                         if latest_fp is not None:
                             provisional_fp = FailureFingerprint.from_failure(
                                 prompt_path,
-                                getattr(latest_fp, "function_name", getattr(latest_fp, "function", "")),
+                                getattr(
+                                    latest_fp,
+                                    "function_name",
+                                    getattr(latest_fp, "function", ""),
+                                ),
                                 latest_fp.stack_trace,
                                 latest_fp.error_message,
                                 desc,
@@ -323,7 +334,11 @@ class SelfCodingManager:
                             details = {
                                 "fingerprint_hash": getattr(provisional_fp, "hash", ""),
                                 "similarity": best,
-                                "cluster_id": getattr(matches[0], "cluster_id", None) if matches else None,
+                                "cluster_id": (
+                                    getattr(matches[0], "cluster_id", None)
+                                    if matches
+                                    else None
+                                ),
                                 "reason": "retry_skipped_due_to_similarity",
                             }
                             audit = getattr(self.engine, "audit_trail", None)
@@ -337,8 +352,16 @@ class SelfCodingManager:
                                 try:
                                     conn = pdb.router.get_connection("patch_history")
                                     conn.execute(
-                                        "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
-                                        (prompt_path, json.dumps(details), "retry_skipped"),
+                                        (
+                                            "INSERT INTO patch_history("
+                                            "filename, description, outcome"
+                                            ") VALUES(?,?,?)"
+                                        ),
+                                        (
+                                            prompt_path,
+                                            json.dumps(details),
+                                            "retry_skipped",
+                                        ),
                                     )
                                     conn.commit()
                                 except Exception:
@@ -376,7 +399,11 @@ class SelfCodingManager:
                         details = {
                             "fingerprint_hash": getattr(last_fp, "hash", ""),
                             "similarity": best,
-                            "cluster_id": getattr(matches[0], "cluster_id", None) if matches else None,
+                            "cluster_id": (
+                                getattr(matches[0], "cluster_id", None)
+                                if matches
+                                else None
+                            ),
                             "reason": "retry_skipped_due_to_similarity",
                         }
                         audit = getattr(self.engine, "audit_trail", None)
@@ -390,8 +417,16 @@ class SelfCodingManager:
                             try:
                                 conn = pdb.router.get_connection("patch_history")
                                 conn.execute(
-                                    "INSERT INTO patch_history(filename, description, outcome) VALUES(?,?,?)",
-                                    (prompt_path, json.dumps(details), "retry_skipped"),
+                                    (
+                                        "INSERT INTO patch_history("
+                                        "filename, description, outcome"
+                                        ") VALUES(?,?,?)"
+                                    ),
+                                    (
+                                        prompt_path,
+                                        json.dumps(details),
+                                        "retry_skipped",
+                                    ),
                                 )
                                 conn.commit()
                             except Exception:
@@ -475,10 +510,18 @@ class SelfCodingManager:
                 if target_region is None and region_obj is not None:
                     try:
                         target_region = TargetRegion(
-                            file=getattr(region_obj, "file", getattr(region_obj, "filename", "")),
-                            start_line=getattr(region_obj, "start_line", 0),
-                            end_line=getattr(region_obj, "end_line", 0),
-                            function=getattr(region_obj, "function", getattr(region_obj, "func_name", "")),
+                              file=getattr(
+                                  region_obj,
+                                  "file",
+                                  getattr(region_obj, "filename", ""),
+                              ),
+                              start_line=getattr(region_obj, "start_line", 0),
+                              end_line=getattr(region_obj, "end_line", 0),
+                              function=getattr(
+                                  region_obj,
+                                  "function",
+                                  getattr(region_obj, "func_name", ""),
+                              ),
                         )
                     except Exception:
                         target_region = None
@@ -732,6 +775,21 @@ class SelfCodingManager:
                 self.logger.exception(
                     "failed to log evolution cycle: %s", exc
                 )
+        if self.bot_registry:
+            try:
+                self.bot_registry.register_bot(self.bot_name)
+                self.bot_registry.record_heartbeat(self.bot_name)
+                self.bot_registry.record_interaction_metadata(
+                    self.bot_name,
+                    self.bot_name,
+                    duration=runtime_after,
+                    success=True,
+                    resources=(
+                        f"hot_swap:{int(time.time())},patch_id:{patch_id}"
+                    ),
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to update bot registry")
         self.scan_repo()
         try:
             load_failed_tags()
