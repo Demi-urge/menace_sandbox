@@ -49,6 +49,12 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+      - id: check-self-coding-integrity
+        name: Prevent direct SelfCodingEngine patch usage
+        entry: python tools/check_self_coding_integrity.py
+        language: system
+        pass_filenames: true
+        files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:

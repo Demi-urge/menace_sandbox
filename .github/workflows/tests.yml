@@ -36,6 +36,8 @@ jobs:
         run: "python tools/check_dynamic_paths.py $(git ls-files '*.py')"
       - name: Enforce ContextBuilder usage
         run: python scripts/check_context_builder_usage.py
+      - name: Check for direct SelfCodingEngine patch usage
+        run: "python tools/check_self_coding_integrity.py $(git ls-files '*.py')"
 
   tests:
     runs-on: ubuntu-latest
@@ -62,6 +64,8 @@ jobs:
         run: pre-commit run forbid-stripe-imports --all-files
       - name: Prevent Stripe live keys or endpoints
         run: pre-commit run forbid-stripe-keys --all-files
+      - name: Prevent direct SelfCodingEngine patch usage
+        run: pre-commit run check-self-coding-integrity --all-files
       - name: Run flake8
         run: pre-commit run flake8 --all-files
       - name: Enforce DB router usage
