@@ -18,8 +18,10 @@ def test_purge_visual_agent_run(tmp_path):
     assert remaining[0]["event_type"] == "other_event"
 
 
-def test_log_event_blocks_visual_agent(tmp_path):
+def test_log_event_logs_visual_agent(tmp_path):
     log = tmp_path / "audit_log.jsonl"
     event_id = log_event("visual_agent_run", {}, jsonl_path=log)
-    assert event_id == ""
-    assert not log.exists()
+    assert event_id != ""
+    assert log.exists()
+    entry = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["event_type"] == "visual_agent_run"
