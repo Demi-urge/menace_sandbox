@@ -1,4 +1,4 @@
-"""CAPTCHA solving helper with local OCR and optional remote fallback."""
+"""CAPTCHA solving helper that delegates to a remote service."""
 
 from __future__ import annotations
 
@@ -7,11 +7,6 @@ import os
 import base64
 import time
 from dataclasses import dataclass
-
-class PreprocessError(RuntimeError):
-    """Raised when image preprocessing fails."""
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -32,65 +27,10 @@ class AntiCaptchaClient:
         self.language = language
 
     def solve(self, image_path: str, *, language: str | None = None) -> SolveResult:
-        """Attempt to extract text from ``image_path``.
-
-        When ``pytesseract`` is unavailable or OCR fails, a remote service is
-        consulted if an ``api_key`` has been provided.
-        """
-        lang = language or self.language
+        """Attempt to extract text from ``image_path`` using a remote service."""
         logger.debug("AntiCaptchaClient.solve called with %s", image_path)
-        try:
-            from PIL import Image  # type: ignore
-            import pytesseract  # type: ignore
-        except Exception:
-            logger.warning("pytesseract not installed; falling back to remote")
-            text, err = self._remote_with_retry(image_path)
-            return SolveResult(text, bool(self.api_key), err)
-
-        try:
-            img = Image.open(image_path)
-            try:
-                img = self._preprocess(img)
-            except PreprocessError:
-                logger.info("Local preprocessing failed; using remote solver")
-                text, err = self._remote_with_retry(image_path)
-                return SolveResult(text, bool(self.api_key), err)
-            text = pytesseract.image_to_string(img, lang=lang)
-            if not text.strip():
-                # Try to detect orientation and rerun OCR
-                try:
-                    osd = pytesseract.image_to_osd(img)
-                    if "180" in osd:
-                        img = img.rotate(180)
-                        text = pytesseract.image_to_string(img, lang=lang)
-                except Exception as exc:  # pragma: no cover - optional improvement
-                    logger.exception("Orientation detection failed: %s", exc)
-            if text.strip():
-                return SolveResult(text.strip(), False)
-        except Exception as exc:  # pragma: no cover - runtime issues
-            logger.error("OCR failed: %s", exc)
-        logger.info("Local OCR failed; using remote solver")
         text, err = self._remote_with_retry(image_path)
         return SolveResult(text, bool(self.api_key), err)
-
-    def _preprocess(self, img):
-        """Basic image cleanup to improve OCR accuracy."""
-
-        try:
-            from PIL import ImageOps, ImageFilter  # type: ignore
-        except Exception as exc:  # pragma: no cover - optional dependency
-            logger.exception("PIL filter import failed: %s", exc)
-            raise PreprocessError("import failed") from exc
-
-        try:
-            img = ImageOps.grayscale(img)
-            img = img.filter(ImageFilter.MedianFilter())
-            img = ImageOps.invert(img)
-            img = img.point(lambda x: 0 if x < 128 else 255, "1")
-        except Exception as exc:  # pragma: no cover - optional path
-            logger.exception("Applying PIL filters failed: %s", exc)
-            raise PreprocessError("filter failure") from exc
-        return img
 
     def _remote_with_retry(self, image_path: str) -> tuple[str | None, str | None]:
         """Attempt remote solving with retries and report the last error."""
@@ -172,4 +112,4 @@ class AntiCaptchaClient:
         return None, "unsolved"
 
 
-__all__ = ["AntiCaptchaClient", "SolveResult", "PreprocessError"]
+__all__ = ["AntiCaptchaClient", "SolveResult"]

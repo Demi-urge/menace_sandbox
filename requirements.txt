@@ -250,7 +250,6 @@ packaging==25.0
     #   huggingface-hub
     #   kombu
     #   matplotlib
-    #   pytesseract
     #   transformers
 pandas==2.3.0
     # via
@@ -264,7 +263,6 @@ pillow==11.3.0
     #   matplotlib
     #   moviepy
     #   pyscreeze
-    #   pytesseract
     #   sentence-transformers
 playwright==1.53.0
     # via menace (pyproject.toml)
@@ -316,8 +314,6 @@ pyscreeze==1.0.1
 pysocks==1.7.1
     # via urllib3
 pyspark==4.0.0
-    # via menace (pyproject.toml)
-pytesseract==0.3.13
     # via menace (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via
