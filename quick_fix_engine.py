@@ -693,6 +693,45 @@ class QuickFixEngine:
                     self.logger.debug("patch logging failed", exc_info=True)
 
     # ------------------------------------------------------------------
+    def validate_patch(
+        self,
+        module_name: str,
+        description: str = "",
+        *,
+        target_region: "TargetRegion | None" = None,
+        repo_root: Path | str | None = None,
+    ) -> Tuple[bool, List[str]]:
+        """Run quick-fix validation on ``module_name`` without applying it."""
+        flags: List[str]
+        try:
+            _pid, flags = generate_patch(
+                module_name,
+                getattr(self.manager, "engine", None),
+                context_builder=self.context_builder,
+                description=description,
+                target_region=target_region,
+                return_flags=True,
+            )
+        except Exception:
+            self.logger.exception("quick fix validation failed")
+            flags = ["validation_error"]
+        finally:
+            try:
+                if repo_root is not None:
+                    rel = Path(module_name).resolve().relative_to(Path(repo_root).resolve())
+                    subprocess.run(
+                        ["git", "checkout", "--", str(rel)],
+                        check=True,
+                        cwd=str(repo_root),
+                    )
+                else:
+                    path = resolve_path(module_name)
+                    subprocess.run(["git", "checkout", "--", str(path)], check=True)
+            except Exception:
+                self.logger.exception("failed to revert validation patch")
+        return (not bool(flags), flags)
+
+    # ------------------------------------------------------------------
     def run_and_validate(self, bot: str) -> None:
         """Run :meth:`run` then execute the test suite."""
         self.run(bot)

@@ -126,6 +126,8 @@ class SelfCodingManager:
         failure_store: FailureFingerprintStore | None = None,
         skip_similarity: float | None = None,
         baseline_window: int | None = None,
+        registry: BotRegistry | None = None,
+        quick_fix: QuickFixEngine | None = None,
         bot_registry: BotRegistry | None = None,
         quick_fix_engine: QuickFixEngine | None = None,
     ) -> None:
@@ -148,7 +150,7 @@ class SelfCodingManager:
         )
         self.failure_store = failure_store
         self.skip_similarity = skip_similarity
-        self.quick_fix_engine = quick_fix_engine
+        self.quick_fix = quick_fix or quick_fix_engine
         if baseline_window is None:
             try:
                 baseline_window = getattr(SandboxSettings(), "baseline_window", 5)
@@ -167,24 +169,24 @@ class SelfCodingManager:
                     exc,
                 )
                 self.enhancement_classifier = None
-        self.bot_registry = bot_registry
-        if self.bot_registry:
+        self.registry = registry or bot_registry
+        if self.registry:
             try:
-                self.bot_registry.register_bot(self.bot_name)
+                self.registry.register_bot(self.bot_name)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
 
     def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
         """Initialise QuickFixEngine on demand."""
-        if self.quick_fix_engine is None and quick_fix_engine is not None:
+        if self.quick_fix is None and quick_fix_engine is not None:
             try:
                 clayer = getattr(self.engine, "cognition_layer", None)
                 builder = getattr(clayer, "context_builder", None)
                 if builder is not None:
-                    self.quick_fix_engine = QuickFixEngine(ErrorDB(), self, context_builder=builder)
+                    self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
             except Exception:
                 self.logger.exception("failed to initialise QuickFixEngine")
-        return self.quick_fix_engine
+        return self.quick_fix
 
     # ------------------------------------------------------------------
     def scan_repo(self) -> None:
@@ -499,31 +501,15 @@ class SelfCodingManager:
                 else:
                     ctx_meta.pop("target_region", None)
 
-                if self.quick_fix_engine is not None and quick_fix_engine is not None:
+                if self.quick_fix is not None:
+                    module_path = str(cloned_path)
                     module_name = path_for_prompt(cloned_path)
-                    flags: list[str]
-                    try:
-                        _pid, flags = quick_fix_engine.generate_patch(
-                            module_name,
-                            self.engine,
-                            context_builder=self.quick_fix_engine.context_builder,
-                            description=desc,
-                            target_region=patch_region,
-                            return_flags=True,
-                        )
-                    except Exception:
-                        self.logger.exception("quick fix validation failed")
-                        flags = ["validation_error"]
-                    finally:
-                        try:
-                            subprocess.run(
-                                ["git", "checkout", "--", str(cloned_path)],
-                                check=True,
-                                cwd=str(clone_root),
-                            )
-                        except Exception:
-                            self.logger.exception("failed to revert validation patch")
-                    passed = not bool(flags)
+                    passed, flags = self.quick_fix.validate_patch(
+                        module_path,
+                        desc,
+                        target_region=patch_region,
+                        repo_root=clone_root,
+                    )
                     if self.data_bot:
                         try:
                             self.data_bot.record_validation(
@@ -531,9 +517,9 @@ class SelfCodingManager:
                             )
                         except Exception:
                             self.logger.exception("failed to record validation in DataBot")
-                    if self.bot_registry:
+                    if self.registry:
                         try:
-                            self.bot_registry.record_validation(self.bot_name, module_name, passed)
+                            self.registry.record_validation(self.bot_name, module_name, passed)
                         except Exception:
                             self.logger.exception("failed to record validation in registry")
                     if not passed:
@@ -868,11 +854,11 @@ class SelfCodingManager:
                 self.logger.exception(
                     "failed to log evolution cycle: %s", exc
                 )
-        if self.bot_registry:
+        if self.registry:
             try:
-                self.bot_registry.record_heartbeat(self.bot_name)
-                self.bot_registry.register_interaction(self.bot_name, "patched")
-                self.bot_registry.record_interaction_metadata(
+                self.registry.record_heartbeat(self.bot_name)
+                self.registry.register_interaction(self.bot_name, "patched")
+                self.registry.record_interaction_metadata(
                     self.bot_name,
                     "patched",
                     duration=runtime_after,
@@ -881,9 +867,17 @@ class SelfCodingManager:
                         f"hot_swap:{int(time.time())},patch_id:{patch_id}"
                     ),
                 )
-                target = getattr(self.bot_registry, "persist_path", None)
+                self.registry.register_bot(self.bot_name)
+                self.registry.record_interaction_metadata(
+                    self.bot_name,
+                    "evolution",
+                    duration=runtime_after,
+                    success=True,
+                    resources=f"patch_id:{patch_id}",
+                )
+                target = getattr(self.registry, "persist_path", None)
                 if target:
-                    self.bot_registry.save(target)
+                    self.registry.save(target)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to update bot registry")
         self.scan_repo()
