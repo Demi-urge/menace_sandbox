@@ -36,6 +36,7 @@ from .sandbox_runner.scoring import record_run
 from db_router import GLOBAL_ROUTER, init_db_router
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
+from .self_coding_manager import SelfCodingManager
 from .audit_trail import AuditTrail
 from patch_attempt_tracker import PatchAttemptTracker
 try:
@@ -158,9 +159,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     def __init__(
         self,
         telemetry_db: object,
-        engine: SelfCodingEngine,
+        engine: SelfCodingEngine | None = None,
         *,
         context_builder: ContextBuilder,
+        manager: SelfCodingManager | None = None,
         audit_trail: AuditTrail | None = None,
         policy: SelfImprovementPolicy | None = None,
         state_getter: Callable[[], tuple[int, ...]] | None = None,
@@ -177,8 +179,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     ) -> None:
         if context_builder is None:
             raise ValueError("SelfDebuggerSandbox requires a ContextBuilder instance")
-        super().__init__(telemetry_db, engine, context_builder)
-        self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
+        super().__init__(telemetry_db, engine, context_builder, manager=manager)
+        eng_or_mgr = manager or engine
+        self.audit_trail = audit_trail or getattr(eng_or_mgr, "audit_trail", None)
         self.policy = policy
         self.state_getter = state_getter
         self.error_predictor = error_predictor

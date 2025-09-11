@@ -44,7 +44,10 @@ from vector_service.context_builder import ContextBuilder, FallbackResult, Error
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
+from .self_coding_manager import SelfCodingManager
 from .self_coding_engine import SelfCodingEngine
+from .model_automation_pipeline import ModelAutomationPipeline
+from .data_bot import DataBot
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 
@@ -249,6 +252,7 @@ class BotDevelopmentBot:
         *,
         config: BotDevConfig | None = None,
         context_builder: ContextBuilder,
+        manager: SelfCodingManager | None = None,
         engine: SelfCodingEngine | None = None,
     ) -> None:
         self.config = config or BotDevConfig()
@@ -310,21 +314,25 @@ class BotDevelopmentBot:
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        if engine is None:
-            try:
-                code_db = CodeDB()
-            except Exception as exc:  # pragma: no cover - allow running without DB
-                self.logger.debug("CodeDB init failed: %s", exc)
-                code_db = None  # type: ignore[arg-type]
-            try:
-                memory_mgr = MenaceMemoryManager()
-            except Exception as exc:  # pragma: no cover - allow running without memory
-                self.logger.debug("Memory manager init failed: %s", exc)
-                memory_mgr = None  # type: ignore[arg-type]
-            engine = SelfCodingEngine(
-                code_db, memory_mgr, context_builder=self.context_builder
-            )
-        self.engine = engine
+        if manager is None:
+            if engine is None:
+                try:
+                    code_db = CodeDB()
+                except Exception as exc:  # pragma: no cover
+                    self.logger.debug("CodeDB init failed: %s", exc)
+                    code_db = None  # type: ignore[arg-type]
+                try:
+                    memory_mgr = MenaceMemoryManager()
+                except Exception as exc:  # pragma: no cover
+                    self.logger.debug("Memory manager init failed: %s", exc)
+                    memory_mgr = None  # type: ignore[arg-type]
+                engine = SelfCodingEngine(
+                    code_db, memory_mgr, context_builder=self.context_builder
+                )
+            pipeline = ModelAutomationPipeline(context_builder=self.context_builder)
+            manager = SelfCodingManager(engine, pipeline, data_bot=DataBot())
+        self.manager = manager
+        self.engine = getattr(self.manager, "engine", engine)
         # warn about missing optional dependencies
         for dep_name, mod in {
             "yaml": yaml,
@@ -689,12 +697,13 @@ class BotDevelopmentBot:
             return False
 
     # ------------------------------------------------------------------
-    def _call_codex_api(self, messages: list[dict[str, str]]) -> EngineResult:
-        """Produce helper code via :class:`SelfCodingEngine`.
+    def _call_codex_api(
+        self, messages: list[dict[str, str]], path: Path | None = None
+    ) -> EngineResult:
+        """Produce helper code via :class:`SelfCodingManager`.
 
         All messages are concatenated with their role tags to form a single
-        prompt for
-        :meth:`SelfCodingEngine.generate_helper`.  If no user prompt is
+        prompt for :meth:`SelfCodingManager.run_patch`.  If no user prompt is
         provided, the error is escalated and the method returns an
         :class:`EngineResult` describing the failure or raises
         :class:`ValueError` when :attr:`BotDevConfig.raise_errors` is true.
@@ -734,6 +743,22 @@ class BotDevelopmentBot:
         prompt_snippet = redact_secrets(prompt_snippet)
         self.logger.info("generate_helper prompt: %s", prompt_snippet)
 
+        if getattr(self, "manager", None) is not None and path is not None:
+            try:
+                self.engine_retry.run(
+                    lambda: self.manager.run_patch(path, prompt),
+                    logger=self.logger,
+                )
+                code = path.read_text()
+                return EngineResult(True, code, None)
+            except Exception as exc:
+                msg = f"engine request failed: {exc}"
+                self.logger.exception(msg)
+                self._escalate(msg, level="error")
+                self.errors.append(msg)
+                if self.config.raise_errors:
+                    raise
+                return EngineResult(False, None, msg)
         try:
             code = self.engine_retry.run(
                 lambda: self.engine.generate_helper(prompt),
@@ -969,13 +994,13 @@ class BotDevelopmentBot:
             sample_with_vectors=sample_with_vectors,
         )
         messages = [{"role": "user", "content": prompt}]
-        result = self._call_codex_api(messages)
+        file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.touch(exist_ok=True)
+        result = self._call_codex_api(messages, path=file_path)
         if not result.success or not result.code:
             raise RuntimeError(result.error or "engine request failed")
         code = result.code
-
-        file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
-        self._write_with_retry(file_path, code)
         file_path = Path(resolve_path(file_path))
         self.lint_code(file_path)
         req = self._create_requirements(repo_dir, spec)
