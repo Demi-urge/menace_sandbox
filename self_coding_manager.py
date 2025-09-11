@@ -187,17 +187,6 @@ class SelfCodingManager:
         )
         self.test_failure_threshold = thresholds.test_failure_threshold
         self._refresh_thresholds()
-        self._last_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
-        self._last_errors = (
-            self.data_bot.average_errors(self.bot_name) - self.error_rate_threshold
-            if self.data_bot
-            else 0.0
-        )
-        self._last_test_failures = (
-            self.data_bot.average_test_failures(self.bot_name)
-            if self.data_bot and hasattr(self.data_bot, "average_test_failures")
-            else 0.0
-        )
         self._failure_cache = FailureCache()
         self.suggestion_db = suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
         self.enhancement_classifier = (
@@ -361,16 +350,8 @@ class SelfCodingManager:
         roi = self.data_bot.roi(self.bot_name)
         errors = self.data_bot.average_errors(self.bot_name)
         failures = self.data_bot.average_test_failures(self.bot_name)
-        delta_roi = roi - self._last_roi
-        delta_err = errors - self._last_errors
-        delta_fail = failures - self._last_test_failures
-        self._last_roi = roi
-        self._last_errors = errors
-        self._last_test_failures = failures
-        return (
-            delta_roi <= self.roi_drop_threshold
-            or delta_err >= self.error_rate_threshold
-            or delta_fail >= self.test_failure_threshold
+        return self.data_bot.check_degradation(
+            self.bot_name, roi, errors, failures
         )
 
     # ------------------------------------------------------------------
@@ -510,16 +491,16 @@ class SelfCodingManager:
         errors = (
             self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
         )
-        if self.data_bot:
-            delta_roi = roi - self._last_roi
-            delta_err = errors - self._last_errors
-            if delta_roi > self.roi_drop_threshold and delta_err < self.error_rate_threshold:
-                self.logger.info(
-                    "ROI and error thresholds not met; skipping patch"
-                )
-                self._last_roi = roi
-                self._last_errors = errors
-                return AutomationResult(None, None)
+        failures = (
+            self.data_bot.average_test_failures(self.bot_name) if self.data_bot else 0.0
+        )
+        if self.data_bot and not self.data_bot.check_degradation(
+            self.bot_name, roi, errors, failures
+        ):
+            self.logger.info(
+                "ROI and error thresholds not met; skipping patch"
+            )
+            return AutomationResult(None, None)
         before_roi = roi
         repo_root = Path.cwd().resolve()
         result: AutomationResult | None = None
@@ -1263,9 +1244,6 @@ class SelfCodingManager:
             load_failed_tags()
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to refresh failed tags")
-        if self.data_bot:
-            self._last_roi = self.data_bot.roi(self.bot_name)
-            self._last_errors = self.data_bot.average_errors(self.bot_name)
         return result
 
     # ------------------------------------------------------------------
