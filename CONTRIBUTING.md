@@ -141,6 +141,19 @@ system to track and improve the bot over time. Bot constructors **must** accept
 them to the decorator to ensure proper registration. Avoid instantiating new
 coding bots without this decorator.
 
+## Helper generation wrappers
+
+Calls to `SelfCodingEngine.generate_helper` must go through
+`manager_generate_helper` so a `SelfCodingManager` context is established. A
+pre-commit hook enforces this rule:
+
+```bash
+pre-commit run check-engine-generate-helper --all-files
+```
+
+Run the hook before committing to ensure no direct `engine.generate_helper`
+calls slip into the codebase.
+
 ## Patch provenance
 
 Commits that modify self-coding infrastructure (`self_coding_manager.py`,

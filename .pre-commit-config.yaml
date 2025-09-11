@@ -55,6 +55,12 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
+      - id: check-engine-generate-helper
+        name: Prevent unwrapped engine.generate_helper usage
+        entry: python tools/check_engine_generate_helper_wrapping.py
+        language: system
+        pass_filenames: true
+        files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:

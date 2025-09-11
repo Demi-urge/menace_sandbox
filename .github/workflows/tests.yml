@@ -66,6 +66,8 @@ jobs:
         run: pre-commit run forbid-stripe-keys --all-files
       - name: Prevent direct SelfCodingEngine patch usage
         run: pre-commit run check-self-coding-integrity --all-files
+      - name: Prevent unwrapped engine.generate_helper usage
+        run: pre-commit run check-engine-generate-helper --all-files
       - name: Run flake8
         run: pre-commit run flake8 --all-files
       - name: Enforce DB router usage
