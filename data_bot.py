@@ -19,11 +19,11 @@ Example ``self_coding_thresholds.yaml``::
 
     default:
       roi_drop: -0.1
-      error_threshold: 1.0
+      error_increase: 1.0
     bots:
       example-bot:
         roi_drop: -0.2
-        error_threshold: 2.0
+        error_increase: 2.0
 """
 
 from __future__ import annotations
@@ -42,11 +42,13 @@ from .scope_utils import Scope, build_scope_clause, apply_scope
 
 from .unified_event_bus import UnifiedEventBus
 from .roi_thresholds import ROIThresholds
+from .self_coding_thresholds import (
+    get_thresholds as load_sc_thresholds,
+    update_thresholds as save_sc_thresholds,
+)
 from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
-import yaml
-from .dynamic_path_router import resolve_path
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -968,7 +970,6 @@ class DataBot:
         self.error_threshold = error_threshold
         self.degradation_callback = degradation_callback
         self.logger = logger
-        self.thresholds_path = resolve_path("config/self_coding_thresholds.yaml")
         self._current_cycle_id: int | None = None
         self.gauges: Dict[str, Gauge] = {}
         self._last_roi: Dict[str, float] = {}
@@ -1460,32 +1461,17 @@ class DataBot:
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
         """Load ROI and error thresholds for ``bot``."""
 
+        t = load_sc_thresholds(bot, self.settings)
         roi_drop = (
             self.roi_drop_threshold
             if self.roi_drop_threshold is not None
-            else self.settings.self_coding_roi_drop
+            else t.roi_drop
         )
         error_thresh = (
             self.error_threshold
             if self.error_threshold is not None
-            else self.settings.self_coding_error_increase
+            else t.error_increase
         )
-        try:
-            data = yaml.safe_load(self.thresholds_path.read_text()) or {}
-        except Exception:
-            data = {}
-        default = data.get("default", {})
-        bots = data.get("bots", {})
-        if "roi_drop" in default:
-            roi_drop = float(default["roi_drop"])
-        if "error_threshold" in default:
-            error_thresh = float(default["error_threshold"])
-        if bot and bot in bots:
-            cfg = bots[bot] or {}
-            if "roi_drop" in cfg:
-                roi_drop = float(cfg["roi_drop"])
-            if "error_threshold" in cfg:
-                error_thresh = float(cfg["error_threshold"])
         return ROIThresholds(roi_drop=roi_drop, error_threshold=error_thresh)
 
     def update_thresholds(
@@ -1496,27 +1482,19 @@ class DataBot:
         error_threshold: float | None = None,
     ) -> None:
         """Persist new thresholds for ``bot`` and optionally notify API."""
-
-        try:
-            data = yaml.safe_load(self.thresholds_path.read_text()) or {}
-        except Exception:
-            data = {}
-        bots = data.setdefault("bots", {})
-        cfg = bots.setdefault(bot, {})
-        if roi_drop is not None:
-            cfg["roi_drop"] = float(roi_drop)
-        if error_threshold is not None:
-            cfg["error_threshold"] = float(error_threshold)
-        try:
-            self.thresholds_path.write_text(
-                yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
-            )
-        except Exception:
-            self.logger.exception("failed to write thresholds config")
+        save_sc_thresholds(
+            bot,
+            roi_drop=roi_drop,
+            error_increase=error_threshold,
+        )
 
         api_url = os.getenv("SELF_CODING_THRESHOLD_API")
         if api_url:
-            payload = {"bot": bot, "roi_drop": cfg.get("roi_drop"), "error_threshold": cfg.get("error_threshold")}
+            payload = {
+                "bot": bot,
+                "roi_drop": roi_drop,
+                "error_threshold": error_threshold,
+            }
             try:
                 import requests
 
