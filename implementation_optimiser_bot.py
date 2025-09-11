@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List
 
-from .self_coding_engine import SelfCodingEngine
+from .self_coding_manager import SelfCodingManager
 import ast
 import logging
 from vector_service.context_builder import ContextBuilder
+from .coding_bot_interface import self_coding_managed
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ class ImplementationAdvice:
     optimised_code: str
 
 
+@self_coding_managed
 class ImplementationOptimiserBot:
     """Receive ``TaskPackage`` objects and refine them.
 
@@ -34,25 +37,28 @@ class ImplementationOptimiserBot:
 
     def __init__(
         self,
-        engine: SelfCodingEngine | None = None,
+        manager: SelfCodingManager | None = None,
         *,
         context_builder: ContextBuilder,
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.history: List[TaskPackage] = []
-        self.engine = engine
+        self.manager = manager
         self.context_builder = context_builder
         try:
             self.context_builder.refresh_db_weights()
         except Exception as exc:
             logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        if self.engine is not None:
+        if self.manager is not None:
             try:
-                self.engine.context_builder = context_builder  # type: ignore[attr-defined]
-                if hasattr(self.engine.context_builder, "refresh_db_weights"):
-                    self.engine.context_builder.refresh_db_weights()  # type: ignore[attr-defined]
+                eng = getattr(self.manager, "engine", None)
+                if eng is not None:
+                    eng.context_builder = context_builder  # type: ignore[attr-defined]
+                    cb = getattr(eng, "context_builder", None)
+                    if cb and hasattr(cb, "refresh_db_weights"):
+                        cb.refresh_db_weights()  # type: ignore[attr-defined]
             except Exception:
                 pass
 
@@ -295,11 +301,15 @@ class ImplementationOptimiserBot:
                 )
 
                 generated = ""
-                if self.engine is not None:
-                    try:
-                        generated = self.engine.generate_helper(desc).rstrip()
-                    except Exception:
-                        generated = ""
+                if self.manager is not None and isinstance(t.metadata, dict):
+                    path_str = t.metadata.get("path")
+                    if path_str:
+                        try:
+                            path = Path(path_str)
+                            self.manager.run_patch(path, desc)
+                            generated = path.read_text().rstrip()
+                        except Exception:
+                            generated = ""
 
                 if generated:
                     code = generated

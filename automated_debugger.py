@@ -11,6 +11,7 @@ import traceback
 from typing import Any, Iterable
 
 from .self_coding_engine import SelfCodingEngine
+from .self_coding_manager import SelfCodingManager
 from .retry_utils import retry
 from .self_improvement.target_region import TargetRegion, extract_target_region
 from .patch_attempt_tracker import PatchAttemptTracker
@@ -28,14 +29,17 @@ class AutomatedDebugger:
     def __init__(
         self,
         telemetry_db: object,
-        engine: SelfCodingEngine,
-        context_builder: ContextBuilder,
+        engine: SelfCodingEngine | None = None,
+        context_builder: ContextBuilder | None = None,
+        *,
+        manager: SelfCodingManager | None = None,
     ) -> None:
         if not isinstance(context_builder, ContextBuilder):
             raise TypeError("context_builder must be a ContextBuilder instance")
         context_builder.refresh_db_weights()
         self.telemetry_db = telemetry_db
         self.engine = engine
+        self.manager = manager
         self.context_builder = context_builder
         self.logger = logging.getLogger("AutomatedDebugger")
         self._tracker = PatchAttemptTracker()
@@ -196,14 +200,17 @@ class AutomatedDebugger:
                 kwargs: dict[str, Any] = {}
                 if retrieval_context is not None:
                     kwargs["context_meta"] = {"retrieval_context": retrieval_context}
-                self.engine.apply_patch(
-                    path,
-                    "auto_debug",
-                    reason="auto_debug",
-                    trigger="automated_debugger",
-                    target_region=region,
-                    **kwargs,
-                )
+                if self.manager is not None:
+                    self.manager.run_patch(path, "auto_debug", **kwargs)
+                elif self.engine is not None:
+                    self.engine.apply_patch(
+                        path,
+                        "auto_debug",
+                        reason="auto_debug",
+                        trigger="automated_debugger",
+                        target_region=region,
+                        **kwargs,
+                    )
 
             try:
                 _apply(module_path, target)
