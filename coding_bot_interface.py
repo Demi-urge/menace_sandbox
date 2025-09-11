@@ -6,16 +6,22 @@ from functools import wraps
 import inspect
 import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
+import contextvars
 
 from .self_coding_manager import SelfCodingManager
-from .self_coding_engine import MANAGER_CONTEXT
+try:  # pragma: no cover - allow tests to stub engine
+    from .self_coding_engine import MANAGER_CONTEXT
+except Exception:  # pragma: no cover - fallback when engine unavailable
+    MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT")
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .bot_registry import BotRegistry
     from .data_bot import DataBot
+    from .evolution_orchestrator import EvolutionOrchestrator
 else:  # pragma: no cover - runtime placeholders
     BotRegistry = Any  # type: ignore
     DataBot = Any  # type: ignore
+    EvolutionOrchestrator = Any  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -89,6 +95,9 @@ def self_coding_managed(cls: type) -> type:
     def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
         registry = kwargs.pop("bot_registry", None)
         data_bot = kwargs.pop("data_bot", None)
+        orchestrator: EvolutionOrchestrator | None = kwargs.pop(
+            "evolution_orchestrator", None
+        )
         orig_init(self, *args, **kwargs)
         try:
             registry, data_bot, module_path = _resolve_helpers(
@@ -121,6 +130,15 @@ def self_coding_managed(cls: type) -> type:
                     logger.exception("bot update failed for %s", name)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("bot registration failed for %s", name)
+        if orchestrator is None:
+            orchestrator = getattr(self, "evolution_orchestrator", None)
+            if orchestrator is None:
+                orchestrator = getattr(manager, "evolution_orchestrator", None)
+        if orchestrator:
+            try:
+                orchestrator.register_bot(name)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed evolution registration for %s", name)
         if data_bot and getattr(data_bot, "db", None):
             try:
                 roi = float(data_bot.roi(name)) if hasattr(data_bot, "roi") else 0.0
