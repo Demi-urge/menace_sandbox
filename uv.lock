@@ -41,13 +41,12 @@ outcome==1.3.0.post0
     #   trio
     #   trio-websocket
 packaging==25.0
-    # via pytesseract
+    # via
 pillow==11.2.1
     # via
     #   imageio
     #   moviepy
     #   pyscreeze
-    #   pytesseract
 proglog==0.1.12
     # via moviepy
 pyautogui==0.9.54
@@ -64,8 +63,6 @@ pyscreeze==1.0.1
     # via pyautogui
 pysocks==1.7.1
     # via urllib3
-pytesseract==0.3.13
-    # via menace (pyproject.toml)
 python-dotenv==1.1.0
     # via moviepy
 python3-xlib==0.15

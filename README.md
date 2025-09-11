@@ -1091,7 +1091,6 @@ moviepy
 pytube
 selenium
 pyautogui
-pytesseract
 requests
 opencv-python
 numpy

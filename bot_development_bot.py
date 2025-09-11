@@ -84,13 +84,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     Repo = None  # type: ignore
 
-try:  # pragma: no cover - optional dependency
-    import pytesseract  # type: ignore
-    from PIL import Image  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    pytesseract = None  # type: ignore
-    Image = None  # type: ignore
-
 
 @dataclass
 class RetryStrategy:
@@ -407,28 +400,6 @@ class BotDevelopmentBot:
             if info:
                 lines.append(f"{func}: {info}")
         return lines
-
-    def _screen_denied(self, image: str | bytes) -> bool:
-        """Return ``True`` if OCR detects a denial message in ``image``.
-
-        The method relies solely on ``pytesseract`` for OCR.  When the
-        dependency is missing or an error occurs during processing, the method
-        falls back to ``False`` without raising an exception.
-        """
-
-        if not (pytesseract and Image):
-            return False
-        try:
-            if isinstance(image, (str, Path)):
-                img = Image.open(image)
-            else:  # bytes
-                from io import BytesIO
-
-                img = Image.open(BytesIO(image))
-            text = pytesseract.image_to_string(img)
-        except Exception:
-            return False
-        return "denied" in text.lower()
 
     def decide_instructions(self, spec: BotSpec) -> Dict[str, List[str]]:
         """Return rendered instruction templates for ``spec``."""
