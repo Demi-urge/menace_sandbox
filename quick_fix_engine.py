@@ -693,6 +693,47 @@ class QuickFixEngine:
                     self.logger.debug("patch logging failed", exc_info=True)
 
     # ------------------------------------------------------------------
+    def apply_validated_patch(
+        self,
+        module_path: str | Path,
+        description: str = "",
+        context_meta: Dict[str, Any] | None = None,
+    ) -> Tuple[bool, int | None]:
+        """Generate and apply a patch returning its success status and id.
+
+        The patch is first generated via :func:`generate_patch` which performs
+        internal risk checks.  When any validation flags are raised the change
+        is reverted and ``False`` is returned along with ``None`` for the
+        ``patch_id``.
+        """
+
+        ctx = context_meta or {}
+        try:
+            patch_id, flags = generate_patch(
+                str(module_path),
+                getattr(self.manager, "engine", None),
+                context_builder=self.context_builder,
+                description=description,
+                context=ctx,
+                return_flags=True,
+            )
+        except Exception:
+            self.logger.exception("quick fix patch failed")
+            return False, None
+        if flags:
+            try:
+                subprocess.run([
+                    "git",
+                    "checkout",
+                    "--",
+                    str(module_path),
+                ], check=True)
+            except Exception:
+                self.logger.exception("failed to revert invalid patch")
+            return False, None
+        return True, patch_id
+
+    # ------------------------------------------------------------------
     def validate_patch(
         self,
         module_name: str,

@@ -544,16 +544,16 @@ class SelfCodingManager:
                 if self.quick_fix is not None:
                     module_path = str(cloned_path)
                     module_name = path_for_prompt(cloned_path)
-                    passed, flags = self.quick_fix.validate_patch(
+                    passed, patch_id = self.quick_fix.apply_validated_patch(
                         module_path,
                         desc,
-                        target_region=patch_region,
-                        repo_root=clone_root,
+                        ctx_meta,
                     )
+                    reverted = not passed
                     if self.data_bot:
                         try:
                             self.data_bot.record_validation(
-                                self.bot_name, module_name, passed, None if passed else flags
+                                self.bot_name, module_name, passed, None
                             )
                         except Exception:
                             self.logger.exception("failed to record validation in DataBot")
@@ -566,17 +566,18 @@ class SelfCodingManager:
                         if target_region is not None and func_region is not None:
                             tracker.record_failure(level, target_region, func_region)
                         raise RuntimeError("quick fix validation failed")
-                patch_id, reverted, _ = self.engine.apply_patch(
-                    cloned_path,
-                    desc,
-                    parent_patch_id=self._last_patch_id,
-                    reason=desc,
-                    trigger=prompt_path,
-                    context_meta=ctx_meta,
-                    baseline_coverage=coverage_before,
-                    baseline_runtime=runtime_before,
-                    target_region=patch_region,
-                )
+                else:
+                    patch_id, reverted, _ = self.engine.apply_patch(
+                        cloned_path,
+                        desc,
+                        parent_patch_id=self._last_patch_id,
+                        reason=desc,
+                        trigger=prompt_path,
+                        context_meta=ctx_meta,
+                        baseline_coverage=coverage_before,
+                        baseline_runtime=runtime_before,
+                        target_region=patch_region,
+                    )
                 harness_result: TestHarnessResult = _run(clone_root, cloned_path)
                 if harness_result.success:
                     coverage_after = _coverage_ratio(
