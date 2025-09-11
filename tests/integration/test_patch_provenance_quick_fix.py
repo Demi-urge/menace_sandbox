@@ -50,7 +50,7 @@ def test_quick_fix_records_license_and_alerts(tmp_path, monkeypatch):
     patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))  # path-ignore
 
     class Manager:
-        def run_patch(self, path, desc, context_meta=None):
+        def run_patch(self, path, desc, context_meta=None, **kw):
             return types.SimpleNamespace(patch_id=patch_id)
 
     class Retriever:

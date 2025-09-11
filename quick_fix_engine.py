@@ -473,7 +473,12 @@ class QuickFixEngine:
             return
         prompt_path = path_for_prompt(path)
         context_meta = {"error_type": etype, "module": prompt_path, "bot": bot}
-        builder = self.context_builder
+        builder = ContextBuilder()
+        try:
+            ensure_fresh_weights(builder)
+        except Exception:
+            self.logger.debug("context builder refresh failed", exc_info=True)
+        self.context_builder = builder
         ctx_block = ""
         cb_vectors: list[tuple[str, str, float]] = []
         cb_session = uuid.uuid4().hex
@@ -522,14 +527,47 @@ class QuickFixEngine:
             context_meta["retrieval_session_id"] = session_id
             context_meta.setdefault("retrieval_vectors", vectors)
         patch_id = None
+        event_bus = getattr(self.manager, "event_bus", None)
+        if event_bus:
+            try:
+                event_bus.publish(
+                    "quick_fix:patch_start",
+                    {"module": prompt_path, "bot": bot, "description": desc},
+                )
+            except Exception:
+                self.logger.exception("failed to publish patch_start event")
         try:
             try:
-                result = self.manager.run_patch(path, desc, context_meta=context_meta)
+                result = self.manager.run_patch(
+                    path,
+                    desc,
+                    context_meta=context_meta,
+                    context_builder=builder,
+                )
             except TypeError:
-                result = self.manager.run_patch(path, desc)
+                result = self.manager.run_patch(
+                    path,
+                    desc,
+                    context_meta=context_meta,
+                )
             patch_id = getattr(result, "patch_id", None)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.error("quick fix failed for %s: %s", bot, exc)
+            if event_bus:
+                try:
+                    event_bus.publish(
+                        "quick_fix:patch_failed",
+                        {
+                            "module": prompt_path,
+                            "bot": bot,
+                            "description": desc,
+                            "error": str(exc),
+                        },
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to publish patch_failed event",
+                    )
         tests_ok = True
         try:
             subprocess.run(["pytest", "-q"], check=True)
@@ -592,7 +630,11 @@ class QuickFixEngine:
                 continue
             prompt_path = path_for_prompt(path)
             meta = {"module": prompt_path, "reason": "preemptive_patch"}
-            builder = self.context_builder
+            builder = ContextBuilder()
+            try:
+                ensure_fresh_weights(builder)
+            except Exception:
+                self.logger.debug("context builder refresh failed", exc_info=True)
             ctx = ""
             cb_vectors: list[tuple[str, str, float]] = []
             cb_session = uuid.uuid4().hex
@@ -641,14 +683,47 @@ class QuickFixEngine:
                 meta["retrieval_session_id"] = session_id
                 meta.setdefault("retrieval_vectors", vectors)
             patch_id = None
+            event_bus = getattr(self.manager, "event_bus", None)
+            if event_bus:
+                try:
+                    event_bus.publish(
+                        "quick_fix:patch_start",
+                        {"module": prompt_path, "bot": "predictor", "description": desc},
+                    )
+                except Exception:
+                    self.logger.exception("failed to publish patch_start event")
             try:
                 try:
-                    result = self.manager.run_patch(path, desc, context_meta=meta)
+                    result = self.manager.run_patch(
+                        path,
+                        desc,
+                        context_meta=meta,
+                        context_builder=builder,
+                    )
                 except TypeError:
-                    result = self.manager.run_patch(path, desc)
+                    result = self.manager.run_patch(
+                        path,
+                        desc,
+                        context_meta=meta,
+                    )
                 patch_id = getattr(result, "patch_id", None)
             except Exception as exc:  # pragma: no cover - runtime issues
                 self.logger.error("preemptive patch failed for %s: %s", prompt_path, exc)
+                if event_bus:
+                    try:
+                        event_bus.publish(
+                            "quick_fix:patch_failed",
+                            {
+                                "module": prompt_path,
+                                "bot": "predictor",
+                                "description": desc,
+                                "error": str(exc),
+                            },
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish patch_failed event",
+                        )
                 try:
                     patch_id = generate_patch(
                         prompt_path,

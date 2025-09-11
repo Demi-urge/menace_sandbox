@@ -319,10 +319,6 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
     class Engine:
         def __init__(self) -> None:
             self.cognition_layer = types.SimpleNamespace(context_builder=None)
-
-        def generate_helper(self, *a, **k):
-            calls.append(("gen", a, k))
-
         def apply_patch(self, path: Path, desc: str, **_: object):
             return 1, False, 0.0
 
@@ -339,25 +335,26 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
     monkeypatch.setattr(mgr, "run_patch", fake_run_patch)
     builder = object()
     mgr.generate_and_patch(file_path, "fix", context_builder=builder)
-    assert any(c[0] == "gen" for c in calls)
     assert any(c[0] == "patch" and c[1] == file_path and c[3] is builder for c in calls)
 
 
-def test_generate_and_patch_failure(tmp_path):
-    class BadEngine:
+def test_generate_and_patch_failure(monkeypatch, tmp_path):
+    class Engine:
         def __init__(self) -> None:
             self.cognition_layer = types.SimpleNamespace(context_builder=None)
-
-        def generate_helper(self, *a, **k):
-            raise RuntimeError("boom")
 
         def apply_patch(self, path: Path, desc: str, **_: object):
             return 1, False, 0.0
 
-    engine = BadEngine()
+    engine = Engine()
     pipeline = DummyPipeline()
     mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
     file_path = tmp_path / "sample.py"
     file_path.write_text("pass\n")
-    with pytest.raises(scm.HelperGenerationError):
+
+    def bad_run_patch(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mgr, "run_patch", bad_run_patch)
+    with pytest.raises(RuntimeError):
         mgr.generate_and_patch(file_path, "fix")

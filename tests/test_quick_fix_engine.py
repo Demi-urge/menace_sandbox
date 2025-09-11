@@ -96,6 +96,10 @@ sys.modules.setdefault(
     "menace.codebase_diff_checker",
     types.SimpleNamespace(generate_code_diff=lambda *a, **k: "", flag_risky_changes=lambda *a, **k: False),
 )
+sys.modules.setdefault(
+    "menace.coding_bot_interface",
+    types.SimpleNamespace(self_coding_managed=lambda f: f),
+)
 
 # Load QuickFixEngine without importing the full package
 spec = importlib.util.spec_from_file_location(
@@ -109,9 +113,9 @@ QuickFixEngine = quick_fix.QuickFixEngine
 
 
 class DummyManager:
-    def run_patch(self, path, desc):
+    def run_patch(self, path, desc, **kw):
         self.calls = getattr(self, "calls", [])
-        self.calls.append((path, desc))
+        self.calls.append((path, desc, kw.get("context_builder")))
 
 
 class FailingGraph:
@@ -143,7 +147,7 @@ def test_telemetry_error_logged(monkeypatch, tmp_path, caplog):
 
 
 class DummyErrorDB:
-    def top_error_module(self, bot):
+    def top_error_module(self, bot, scope=None):
         return ("runtime_fault", "b", {"a": 1, "b": 2}, 2, bot)
 
 
@@ -174,7 +178,7 @@ def test_run_targets_frequent_module(tmp_path, monkeypatch):
     monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
     engine.run("bot")
     assert engine.manager.calls[0][0] == dynamic_path_router.resolve_path("b.py")  # path-ignore
-    assert engine.graph.events[0][0][2] == "b"
+    assert Path(engine.graph.events[0][0][2]).stem == "b"
     assert engine.graph.events[0][1]["resolved"] is True
     assert engine.graph.updated is engine.db
 
@@ -197,8 +201,8 @@ class DummyManager2:
         self.fail = fail
         self.calls = []
 
-    def run_patch(self, path, desc):
-        self.calls.append((path, desc))
+    def run_patch(self, path, desc, **kw):
+        self.calls.append((path, desc, kw.get("context_builder")))
         if self.fail:
             raise RuntimeError("boom")
         return DummyResult(123)
@@ -220,10 +224,13 @@ def test_preemptive_patch_modules(tmp_path, monkeypatch):
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     modules = [("mod", 0.9), ("low", 0.1)]
     engine.preemptive_patch_modules(modules, risk_threshold=0.5)
-    assert mgr.calls == [
+    assert [
+        (p, d) for p, d, _ in mgr.calls
+    ] == [
         (dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")
     ]  # path-ignore
-    assert db.records == [("mod", 0.9, 123)]
+    assert Path(db.records[0][0]).stem == "mod"
+    assert db.records[0][1:] == (0.9, 123)
 
 
 def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
@@ -280,7 +287,7 @@ def test_run_records_retrieval_metadata(tmp_path, monkeypatch):
     patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))  # path-ignore
 
     class Manager:
-        def run_patch(self, path, desc, context_meta=None):
+        def run_patch(self, path, desc, context_meta=None, **kw):
             return types.SimpleNamespace(patch_id=patch_id)
 
     class Retriever:
@@ -329,7 +336,7 @@ def test_run_records_ancestry_without_logger(tmp_path, monkeypatch):
         def __init__(self):
             self.engine = types.SimpleNamespace(patch_db=db)
 
-        def run_patch(self, path, desc, context_meta=None):
+        def run_patch(self, path, desc, context_meta=None, **kw):
             return types.SimpleNamespace(patch_id=patch_id)
 
     class Retriever:
