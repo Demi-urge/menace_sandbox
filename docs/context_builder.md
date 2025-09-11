@@ -8,6 +8,12 @@ block that fits within strict token budgets.  Typical usage wires in
 `bots.db`, `code.db`, `errors.db` and `workflows.db` and compresses retrieved
 snippets before embedding them in prompts.
 
+When used via :class:`SelfCodingManager` the builder is refreshed automatically
+before every patch.  The manager calls ``refresh_db_weights`` to ensure scoring
+weights are up to date and logs each retrieval ``session_id`` to
+``PatchHistoryDB`` so subsequent metrics can be correlated with the context
+that produced them.
+
 ## Goals
 
 - Gather related records from multiple sources for a given free‑form query.
