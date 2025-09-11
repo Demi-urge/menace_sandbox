@@ -24,8 +24,17 @@ from .failure_fingerprint_store import (
 )
 from .failure_retry_utils import check_similarity_and_warn, record_failure
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import record_failed_tags, load_failed_tags
+    from vector_service.context_builder import (
+        record_failed_tags,
+        load_failed_tags,
+        ContextBuilder,
+    )
 except Exception:  # pragma: no cover - optional dependency
+
+    class ContextBuilder:  # type: ignore
+        """Fallback ContextBuilder when vector service is unavailable."""
+
+        pass
 
     def record_failed_tags(_tags: list[str]) -> None:  # type: ignore
         return None
@@ -198,8 +207,8 @@ class SelfCodingManager:
         if self.bot_registry:
             try:
                 self.bot_registry.register_bot(self.bot_name)
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("failed to register bot in registry")
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to register bot in registry")
 
     def register_bot(self, name: str) -> None:
         """Register *name* with the underlying :class:`BotRegistry`."""
@@ -305,6 +314,7 @@ class SelfCodingManager:
         energy: int = 1,
         *,
         context_meta: Dict[str, Any] | None = None,
+        context_builder: ContextBuilder | None = None,
         max_attempts: int = 3,
         confidence_threshold: float = 0.5,
         review_branch: str | None = None,
@@ -320,7 +330,9 @@ class SelfCodingManager:
         into ``main`` when ``auto_merge`` is ``True`` and the confidence score
         exceeds ``confidence_threshold``.  ``backend`` selects the test
         execution environment; ``"venv"`` uses a virtual environment while
-        ``"docker"`` runs tests inside a Docker container.
+        ``"docker"`` runs tests inside a Docker container.  When
+        ``context_builder`` is supplied the engine and quick fix components use
+        it for validation.
         """
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
@@ -355,12 +367,31 @@ class SelfCodingManager:
             reverted = False
             ctx_meta = context_meta or {}
             clayer = self.engine.cognition_layer
-            if clayer is None or clayer.context_builder is None:
+            if clayer is None:
                 raise AttributeError(
-                    "engine.cognition_layer must provide a context_builder"
+                    "engine.cognition_layer must provide a context_builder",
                 )
-            builder = clayer.context_builder
+            if context_builder is not None:
+                clayer.context_builder = context_builder
+                try:
+                    self.engine.context_builder = context_builder
+                except Exception:
+                    self.logger.exception(
+                        "failed to refresh engine context builder",
+                    )
+            builder = getattr(clayer, "context_builder", None)
+            if builder is None:
+                raise AttributeError(
+                    "engine.cognition_layer must provide a context_builder",
+                )
             self._ensure_quick_fix_engine()
+            if self.quick_fix is not None:
+                try:
+                    self.quick_fix.context_builder = builder
+                except Exception:
+                    self.logger.exception(
+                        "failed to update QuickFixEngine context builder",
+                    )
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None

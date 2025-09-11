@@ -214,18 +214,20 @@ class EvolutionOrchestrator:
                 self.logger.warning("degraded bot path not found for %s", bot)
                 return
 
+            module_path = degraded_path
             builder = ContextBuilder()
+            engine = self.selfcoding_manager.engine
             try:
-                self.selfcoding_manager.engine.context_builder = builder
+                engine.context_builder = builder
+                clayer = getattr(engine, "cognition_layer", None)
+                if clayer is not None:
+                    clayer.context_builder = builder
             except Exception:
-                self.logger.exception(
-                    "failed to refresh context builder for %s", bot
+                self.logger.error(
+                    "context_builder_refresh_failed",
+                    exc_info=True,
+                    extra={"bot": bot},
                 )
-            try:
-                self.selfcoding_manager.engine.generate_helper("warmup")
-            except Exception:
-                self.logger.exception("helper generation failed for %s", bot)
-
             context_meta = {
                 "delta_roi": event.get("delta_roi"),
                 "delta_errors": event.get("delta_errors"),
@@ -233,9 +235,59 @@ class EvolutionOrchestrator:
                 "error_threshold": event.get("error_threshold"),
             }
             desc = f"auto_patch_due_to_degradation:{bot}"
-            self.selfcoding_manager.run_patch(
-                degraded_path, desc, context_meta=context_meta
+            bus = (
+                getattr(self.selfcoding_manager, "event_bus", None)
+                or self.event_bus
+                or getattr(self.data_bot, "event_bus", None)
             )
+            try:
+                engine.generate_helper(
+                    desc,
+                    path=module_path,
+                    metadata=context_meta,
+                    strategy=None,
+                    target_region=None,
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "context_build_failed",
+                    exc_info=True,
+                    extra={"bot": bot},
+                )
+                if bus:
+                    try:
+                        bus.publish(
+                            "bot:patch_failed",
+                            {"bot": bot, "stage": "context", "error": str(exc)},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish patch_failed for %s", bot
+                        )
+                return
+            try:
+                self.selfcoding_manager.run_patch(
+                    module_path,
+                    desc,
+                    context_meta=context_meta,
+                    context_builder=builder,
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "patch_failed",
+                    exc_info=True,
+                    extra={"bot": bot},
+                )
+                if bus:
+                    try:
+                        bus.publish(
+                            "bot:patch_failed",
+                            {"bot": bot, "stage": "patch", "error": str(exc)},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish patch_failed for %s", bot
+                        )
         except Exception:
             self.logger.exception(
                 "failed to self patch after degradation of %s", bot
