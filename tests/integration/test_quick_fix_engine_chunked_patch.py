@@ -95,10 +95,13 @@ def test_chunked_patch_generation(tmp_path, monkeypatch):
         def __init__(self):
             self.calls = []
 
-        def apply_patch(self, p, desc, **kw):
-            self.calls.append(desc)
+        def generate_helper(self, desc, **kwargs):
+            return f"# patch {len(self.calls) + 1}"
+
+        def apply_patch(self, p, helper, **kw):
+            self.calls.append(helper)
             with open(p, "a", encoding="utf-8") as fh:
-                fh.write(f"# patch {len(self.calls)}\n")
+                fh.write(helper + "\n")
             return len(self.calls), False, ""
 
     engine = Engine()

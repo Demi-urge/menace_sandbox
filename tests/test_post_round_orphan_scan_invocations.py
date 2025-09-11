@@ -103,7 +103,10 @@ def test_generate_patch_triggers_scan_once_success(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
 
     class Engine:
-        def apply_patch(self, p, *a, **k):
+        def generate_helper(self, desc, **kwargs):
+            return "code"
+
+        def apply_patch(self, p, helper, **k):
             return 1, "", ""
 
     monkeypatch.setattr(qfe, "generate_code_diff", lambda *a, **k: [])
@@ -133,7 +136,10 @@ def test_generate_patch_scan_failure_handled(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
 
     class Engine:
-        def apply_patch(self, p, *a, **k):
+        def generate_helper(self, desc, **kwargs):
+            return "code"
+
+        def apply_patch(self, p, helper, **k):
             return 1, "", ""
 
     monkeypatch.setattr(qfe, "generate_code_diff", lambda *a, **k: [])

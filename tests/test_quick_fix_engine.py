@@ -262,9 +262,12 @@ def test_generate_patch_blocks_risky(monkeypatch, tmp_path):
     path.write_text("x=1\n")
 
     class DummyEngine:
-        def apply_patch(self, p, *a, **k):
+        def generate_helper(self, desc, **kwargs):
+            return "eval('2')\n"
+
+        def apply_patch(self, p, helper, **k):
             with open(p, "a", encoding="utf-8") as f:
-                f.write("eval('2')\n")
+                f.write(helper)
             return 1, "", ""
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     dynamic_path_router.clear_cache()
@@ -380,7 +383,10 @@ def test_generate_patch_resolves_module_path(tmp_path, monkeypatch):
         def __init__(self):
             self.calls = []
 
-        def apply_patch(self, path, *a, **k):
+        def generate_helper(self, desc, **kwargs):
+            return "# patch"
+
+        def apply_patch(self, path, helper, **k):
             self.calls.append(path)
             return 1, "", 0.0
 
@@ -435,8 +441,16 @@ def test_generate_patch_uses_context_builder(tmp_path, monkeypatch):
             return "snippet"
 
     class DummyEngine:
-        def apply_patch(self, path, desc, **kw):
-            captured["patched_desc"] = desc
+        def __init__(self):
+            self.helper_calls: list[str] = []
+
+        def generate_helper(self, desc, **kwargs):
+            self.helper_calls.append(desc)
+            return "helper"
+
+        def apply_patch(self, path, helper, **kw):
+            captured["patched_helper"] = helper
+            captured["patched_desc"] = kw.get("description")
             return 1, "", 0.0
 
     monkeypatch.setattr(quick_fix, "generate_code_diff", lambda a, b: {})
@@ -467,6 +481,8 @@ def test_generate_patch_uses_context_builder(tmp_path, monkeypatch):
     assert build_args and build_args[0] == "fix bug"
     assert build_args[2] is True
     assert "snippet" in captured.get("patched_desc", "")
+    assert captured.get("patched_helper") == "helper"
+    assert engine.helper_calls == [captured.get("patched_desc")]
     assert builder.refreshed is True
 
 
@@ -529,9 +545,12 @@ def test_generate_patch_context_compression(monkeypatch, tmp_path):
     class DummyEngine:
         def __init__(self):
             self.descs = []
+        
+        def generate_helper(self, desc, **kwargs):
+            return desc
 
-        def apply_patch_with_retry(self, path, desc, **_):
-            self.descs.append(desc)
+        def apply_patch_with_retry(self, path, helper, **_):
+            self.descs.append(helper if isinstance(helper, str) else str(helper))
             return 1, "", ""
 
     eng = DummyEngine()
