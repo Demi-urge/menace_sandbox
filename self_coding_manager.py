@@ -181,18 +181,34 @@ class SelfCodingManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
-        thresholds = get_thresholds(bot_name)
-        self.roi_drop_threshold = (
-            roi_drop_threshold
-            if roi_drop_threshold is not None
-            else thresholds.roi_drop
-        )
-        self.error_rate_threshold = (
-            error_rate_threshold
-            if error_rate_threshold is not None
-            else thresholds.error_increase
-        )
-        self.test_failure_threshold = thresholds.test_failure_increase
+        if data_bot and hasattr(data_bot, "get_thresholds"):
+            thresholds = data_bot.get_thresholds(bot_name)
+            self.roi_drop_threshold = (
+                roi_drop_threshold
+                if roi_drop_threshold is not None
+                else thresholds.roi_drop
+            )
+            self.error_rate_threshold = (
+                error_rate_threshold
+                if error_rate_threshold is not None
+                else thresholds.error_threshold
+            )
+            self.test_failure_threshold = thresholds.test_failure_threshold
+        else:
+            thresholds = get_thresholds(bot_name)
+            self.roi_drop_threshold = (
+                roi_drop_threshold
+                if roi_drop_threshold is not None
+                else thresholds.roi_drop
+            )
+            self.error_rate_threshold = (
+                error_rate_threshold
+                if error_rate_threshold is not None
+                else thresholds.error_increase
+            )
+            self.test_failure_threshold = getattr(
+                thresholds, "test_failure_increase", 0.0
+            )
         self._refresh_thresholds()
         self._last_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         self._last_errors = (
@@ -359,11 +375,7 @@ class SelfCodingManager:
         self._refresh_thresholds()
         roi = self.data_bot.roi(self.bot_name)
         errors = self.data_bot.average_errors(self.bot_name)
-        failures = (
-            self.data_bot.average_test_failures(self.bot_name)
-            if hasattr(self.data_bot, "average_test_failures")
-            else 0.0
-        )
+        failures = self.data_bot.average_test_failures(self.bot_name)
         delta_roi = roi - self._last_roi
         delta_err = errors - self._last_errors
         delta_fail = failures - self._last_test_failures
