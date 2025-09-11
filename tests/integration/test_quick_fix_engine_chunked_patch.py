@@ -120,7 +120,7 @@ def test_patch_fails_without_validation(monkeypatch):
         def _ensure_quick_fix_engine(self):
             return None
 
-        def run_patch(self, path, desc):
+        def run_patch(self, path, desc, **kw):
             self._ensure_quick_fix_engine()
             if self.quick_fix is None:
                 raise RuntimeError("QuickFixEngine validation unavailable")
