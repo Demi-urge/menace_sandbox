@@ -905,6 +905,7 @@ class SelfCodingManager:
                     "failed to log evolution cycle: %s", exc
                 )
         if self.bot_registry:
+            module_path = path_for_prompt(path)
             try:
                 self.bot_registry.record_heartbeat(self.bot_name)
                 self.bot_registry.register_interaction(self.bot_name, "patched")
@@ -925,11 +926,35 @@ class SelfCodingManager:
                     success=True,
                     resources=f"patch_id:{patch_id}",
                 )
-                target = getattr(self.bot_registry, "persist_path", None)
-                if target:
-                    self.bot_registry.save(target)
+                self.bot_registry.update_bot(self.bot_name, module_path)
+                version = None
+                try:
+                    version = self.bot_registry.graph.nodes[self.bot_name].get(
+                        "version"
+                    )
+                except Exception:
+                    version = None
+                self.logger.info(
+                    "bot registry updated",
+                    extra={
+                        "bot": self.bot_name,
+                        "module": module_path,
+                        "version": version,
+                    },
+                )
             except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to update bot registry")
+                self.logger.exception(
+                    "failed to update bot registry",
+                    extra={"bot": self.bot_name, "module": module_path},
+                )
+            target = getattr(self.bot_registry, "persist_path", None)
+            if target:
+                try:
+                    self.bot_registry.save(target)
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "failed to persist bot registry", extra={"path": str(target)}
+                    )
         if self.event_bus:
             try:
                 payload = {
