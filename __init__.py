@@ -346,7 +346,6 @@ __all__ = [
     "replay_engine",
     "proxy_broker",
     "whisper_utils",
-    "vision_utils",
     "oversight_bots",
     "self_improvement",
     "self_model_bootstrap",
