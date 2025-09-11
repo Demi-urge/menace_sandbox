@@ -566,7 +566,7 @@ bucket is configured or run as a limited pilot.
   creates a `ContextBuilder` with local database paths by default, but callers
   may supply custom builders if needed.
 - Automated implementation pipeline turning tasks into runnable bots ([docs/implementation_pipeline.md](docs/implementation_pipeline.md))
-- Models repository workflow. Visual agent support has been removed; use the standard code generation pipeline instead ([docs/models_repo_workflow.md](docs/models_repo_workflow.md))
+- Models repository workflow. The visual-agent pathway has been fully decommissioned; use the standard code generation pipeline instead ([docs/models_repo_workflow.md](docs/models_repo_workflow.md))
 - Retirement of underperforming models by `ModelPerformanceMonitor`
 - External dependency monitoring and failover via `DependencyWatchdog`
 - Hardware discovery sets `NUM_GPUS` and `GPU_AVAILABLE` automatically

@@ -18,7 +18,7 @@ LOG_DIR = resolve_dir("logs")
 JSONL_PATH = LOG_DIR / "audit_log.jsonl"
 SQLITE_PATH = LOG_DIR / "audit_log.db"
 
-# Event types produced by visual agents that should never be persisted.
+# Legacy event types that should never be persisted.
 _BLOCKED_EVENT_TYPES = {
     "visual_agent_run",
     "visual_agent_run_result",
