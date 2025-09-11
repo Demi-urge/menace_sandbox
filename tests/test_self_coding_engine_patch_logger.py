@@ -41,8 +41,8 @@ class RecordingPatchLogger:
 
 def load_engine_module():
     def add_stub(name: str, obj: types.ModuleType | object) -> None:
-        sys.modules.setdefault(name, obj)
-        sys.modules.setdefault(f"menace.{name}", obj)
+        sys.modules[name] = obj
+        sys.modules[f"menace.{name}"] = obj
 
     pkg = types.ModuleType("menace")
     pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
@@ -51,12 +51,17 @@ def load_engine_module():
     vec_mod.CognitionLayer = object
     vec_mod.PatchLogger = object
     vec_mod.VectorServiceError = Exception
+    vec_mod.ContextBuilder = object
     add_stub("vector_service", vec_mod)
     add_stub(
         "vector_service.decorators",
         types.SimpleNamespace(log_and_measure=lambda f: f, _CALL_COUNT=None, _LATENCY_GAUGE=None, _RESULT_SIZE_GAUGE=None),
     )
-    code_db_stub = types.SimpleNamespace(CodeDB=object, CodeRecord=object, PatchHistoryDB=object, PatchRecord=object)
+    code_db_stub = types.ModuleType("code_database")
+    code_db_stub.CodeDB = object
+    code_db_stub.CodeRecord = object
+    code_db_stub.PatchHistoryDB = object
+    code_db_stub.PatchRecord = object
     add_stub("code_database", code_db_stub)
     add_stub("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
     add_stub("trend_predictor", types.SimpleNamespace(TrendPredictor=object))
@@ -66,6 +71,7 @@ def load_engine_module():
     add_stub("chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
     add_stub("memory_aware_gpt_client", types.SimpleNamespace(ask_with_memory=lambda *a, **k: None))
     add_stub("shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None))
+    add_stub("menace_sanity_layer", types.SimpleNamespace(fetch_recent_billing_issues=lambda: []))
     add_stub(
         "log_tags",
         types.SimpleNamespace(FEEDBACK="feedback", ERROR_FIX="error_fix", IMPROVEMENT_PATH="imp", INSIGHT="insight"),
@@ -95,9 +101,7 @@ def load_engine_module():
         "sandbox_settings",
         types.SimpleNamespace(
             SandboxSettings=lambda: types.SimpleNamespace(
-                va_prompt_template="",
-                va_prompt_prefix="",
-                va_repo_layout_lines=0,
+                prompt_repo_layout_lines=0,
                 openai_api_key=None,
                 audit_log_path="",
                 audit_privkey=None,
