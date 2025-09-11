@@ -233,6 +233,8 @@ class EvolutionOrchestrator:
                 "delta_errors": event.get("delta_errors"),
                 "roi_threshold": event.get("roi_threshold"),
                 "error_threshold": event.get("error_threshold"),
+                "test_failures": event.get("test_failures"),
+                "test_failure_threshold": event.get("test_failure_threshold"),
             }
             desc = f"auto_patch_due_to_degradation:{bot}"
             bus = (

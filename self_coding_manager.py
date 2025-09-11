@@ -425,6 +425,13 @@ class SelfCodingManager:
                 except Exception:
                     return 1.0 if success else 0.0
 
+            def _failed_tests(output: str) -> int:
+                try:
+                    m = re.search(r"(\d+)\s+failed", output)
+                    return int(m.group(1)) if m else 0
+                except Exception:
+                    return 0
+
             def _run(repo: Path, changed: Path | None) -> TestHarnessResult:
                 try:
                     res = run_tests(repo, changed, backend=backend)
@@ -435,6 +442,17 @@ class SelfCodingManager:
                 return res
 
             baseline = _run(clone_root, cloned_path)
+            if (
+                self.data_bot
+                and hasattr(self.data_bot, "record_test_failure")
+                and not baseline.success
+            ):
+                try:
+                    self.data_bot.record_test_failure(
+                        self.bot_name, _failed_tests(baseline.stdout)
+                    )
+                except Exception:
+                    self.logger.exception("failed to record baseline test failures")
             coverage_before = _coverage_ratio(baseline.stdout, baseline.success)
             runtime_before = baseline.duration
             coverage_after = coverage_before
@@ -650,6 +668,17 @@ class SelfCodingManager:
                         target_region=patch_region,
                     )
                 harness_result: TestHarnessResult = _run(clone_root, cloned_path)
+                if (
+                    self.data_bot
+                    and hasattr(self.data_bot, "record_test_failure")
+                    and not harness_result.success
+                ):
+                    try:
+                        self.data_bot.record_test_failure(
+                            self.bot_name, _failed_tests(harness_result.stdout)
+                        )
+                    except Exception:
+                        self.logger.exception("failed to record test failures")
                 if harness_result.success:
                     coverage_after = _coverage_ratio(
                         harness_result.stdout, harness_result.success
