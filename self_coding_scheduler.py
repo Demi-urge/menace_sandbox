@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from __future__ import annotations
+
 """Scheduler running self-coding when metrics degrade."""
 
 import threading
 import time
 import logging
 from pathlib import Path
-from typing import Iterable, Optional, List, Dict, TYPE_CHECKING
+from typing import Iterable, Optional, List, Dict
 
 import yaml
 from dynamic_path_router import resolve_path, path_for_prompt
@@ -18,7 +20,6 @@ from .data_bot import DataBot
 from .advanced_error_management import AutomatedRollbackManager
 from .sandbox_settings import SandboxSettings
 from .error_parser import ErrorParser
-from .roi_thresholds import load_thresholds
 
 try:  # pragma: no cover - optional dependency
     from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler
@@ -26,15 +27,12 @@ except Exception:  # pragma: no cover - scheduler utilities may be missing
     _SimpleScheduler = None  # type: ignore[misc]
     BackgroundScheduler = None  # type: ignore[misc]
 
-if TYPE_CHECKING:  # pragma: no cover - type hints only
-    from .unified_event_bus import UnifiedEventBus
-
 
 class SelfCodingScheduler:
     """Trigger :class:`SelfCodingManager` based on ROI and error metrics.
 
     Defaults for ``interval`` are sourced from :class:`SandboxSettings` while
-    ROI and error thresholds are provided by :func:`roi_thresholds.load_thresholds`.
+    ROI and error thresholds are sourced via :class:`DataBot.get_thresholds`.
     All values can be overridden via constructor arguments.
     """
 
@@ -58,36 +56,23 @@ class SelfCodingScheduler:
         self.rollback_mgr = rollback_mgr
         self.nodes: List[str] = list(nodes or [])
         self.settings = settings or SandboxSettings()
-        thresholds = load_thresholds(self.settings)
         self.interval = interval if interval is not None else self.settings.self_coding_interval
-        self.roi_drop = roi_drop if roi_drop is not None else thresholds.roi_drop
-        self.error_increase = (
-            error_increase if error_increase is not None else thresholds.error_threshold
-        )
         self.patch_path = Path(patch_path) if patch_path else resolve_path("auto_helpers.py")
         self.description = description
         self.last_roi = self.data_bot.roi(self.manager.bot_name)
-        self.last_errors = 0.0
+        self.last_errors = self.data_bot.average_errors(self.manager.bot_name)
+        t = self.data_bot.get_thresholds(self.manager.bot_name)
+        self._roi_override = roi_drop
+        self._err_override = error_increase
+        self.roi_drop = self._roi_override if self._roi_override is not None else t.roi_drop
+        self.error_increase = (
+            self._err_override if self._err_override is not None else t.error_threshold
+        )
         self.running = False
         self.logger = logging.getLogger(self.__class__.__name__)
         self._thread: Optional[threading.Thread] = None
         self.scan_interval = scan_interval
         self._scan_scheduler: object | None = None
-
-    # ------------------------------------------------------------------
-    def _current_errors(self) -> float:
-        df = self.data_bot.db.fetch(10)
-        if hasattr(df, "empty"):
-            df = df[df["bot"] == self.manager.bot_name]
-            if df.empty:
-                return 0.0
-            return float(df["errors"].mean())
-        if isinstance(df, list):
-            rows = [r for r in df if r.get("bot") == self.manager.bot_name]
-            if not rows:
-                return 0.0
-            return float(sum(r.get("errors", 0.0) for r in rows) / len(rows))
-        return 0.0
 
     def _latest_patch_id(self) -> str | None:
         patch_db = getattr(self.manager.engine, "patch_db", None)
@@ -162,12 +147,16 @@ class SelfCodingScheduler:
     def _loop(self) -> None:
         while self.running:
             try:
+                t = self.data_bot.get_thresholds(self.manager.bot_name)
                 roi = self.data_bot.roi(self.manager.bot_name)
-                errors = self._current_errors()
-                if (
-                    roi - self.last_roi <= self.roi_drop
-                    or errors - self.last_errors >= self.error_increase
-                ):
+                errors = self.data_bot.average_errors(self.manager.bot_name)
+                roi_drop = (
+                    self._roi_override if self._roi_override is not None else t.roi_drop
+                )
+                err_increase = (
+                    self._err_override if self._err_override is not None else t.error_threshold
+                )
+                if roi - self.last_roi <= roi_drop or errors - self.last_errors >= err_increase:
                     before = roi
                     runner = WorkflowSandboxRunner()
                     attempt = 0

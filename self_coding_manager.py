@@ -38,6 +38,7 @@ from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
 from .data_bot import DataBot
+from .error_bot import ErrorDB
 from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
 from . import mutation_logger as MutationLogger
 from .rollback_manager import RollbackManager
@@ -136,6 +137,10 @@ class SelfCodingManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
+        self._last_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
+        self._last_errors = (
+            self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
+        )
         self._failure_cache = FailureCache()
         self.suggestion_db = suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
         self.enhancement_classifier = (
@@ -226,6 +231,21 @@ class SelfCodingManager:
                     self.logger.exception("scheduled repo scan failed")
 
         threading.Thread(target=_loop, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    def should_refactor(self) -> bool:
+        """Return ``True`` when ROI or error metrics breach thresholds."""
+
+        if not self.data_bot:
+            return False
+        t = self.data_bot.get_thresholds(self.bot_name)
+        roi = self.data_bot.roi(self.bot_name)
+        errors = self.data_bot.average_errors(self.bot_name)
+        delta_roi = roi - self._last_roi
+        delta_err = errors - self._last_errors
+        self._last_roi = roi
+        self._last_errors = errors
+        return delta_roi <= t.roi_drop or delta_err >= t.error_threshold
 
     # ------------------------------------------------------------------
     def run_patch(
