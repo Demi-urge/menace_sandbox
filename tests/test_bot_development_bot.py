@@ -35,6 +35,7 @@ class _FallbackResult:
 vec_stub.FallbackResult = _FallbackResult
 vec_stub.ErrorResult = type("ErrorResult", (), {})
 vec_stub.EmbeddableDBMixin = object
+vec_stub.SharedVectorService = object
 sys.modules.setdefault("vector_service", vec_stub)
 sys.modules.setdefault("vector_service.context_builder", vec_stub)
 vec_dec = ModuleType("vector_service.decorators")
@@ -57,6 +58,25 @@ code_db_stub = ModuleType("code_database")
 code_db_stub.CodeDB = object
 sys.modules["code_database"] = code_db_stub
 sys.modules["menace.code_database"] = code_db_stub
+
+scm_stub = ModuleType("self_coding_manager")
+class _SCM:
+    def __init__(self, *a, **k):
+        pass
+    def run_patch(self, path, prompt):
+        path.write_text("")
+scm_stub.SelfCodingManager = _SCM
+sys.modules.setdefault("self_coding_manager", scm_stub)
+sys.modules.setdefault("menace.self_coding_manager", scm_stub)
+
+sys.modules.setdefault("error_vectorizer", types.SimpleNamespace(ErrorVectorizer=object))
+sys.modules.setdefault("failure_fingerprint", types.SimpleNamespace(FailureFingerprint=object))
+sys.modules.setdefault(
+    "failure_fingerprint_store", types.SimpleNamespace(FailureFingerprintStore=object)
+)
+sys.modules.setdefault(
+    "vector_utils", types.SimpleNamespace(cosine_similarity=lambda *a, **k: 0.0)
+)
 
 mm_stub = ModuleType("menace_memory_manager")
 class _MM:
@@ -466,10 +486,12 @@ def test_prompt_context_compression(tmp_path, monkeypatch):
         "AKIA0123456789ABCDEF",
     ],
 )
-def test_call_codex_api_redacts_secrets(secret, caplog, tmp_path):
+def test_call_codex_api_redacts_secrets(secret, caplog, tmp_path, monkeypatch):
     bot = bdb.BotDevelopmentBot(
         repo_base=tmp_path, context_builder=_ctx_builder(), engine=_engine()
     )
+    bot.manager = types.SimpleNamespace(engine=_engine())
+    monkeypatch.setattr(bdb, "manager_generate_helper", lambda _mgr, _d: "")
     messages = [{"role": "user", "content": f"some {secret} here"}]
     with caplog.at_level(logging.INFO):
         bot._call_codex_api(messages)

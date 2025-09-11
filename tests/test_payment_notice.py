@@ -46,9 +46,12 @@ sys.modules["menace_sandbox.memory_logging"] = memory_logging
 memory_client = types.SimpleNamespace(ask_with_memory=lambda *a, **k: {})
 sys.modules["menace_sandbox.memory_aware_gpt_client"] = memory_client
 
-db_router_stub = types.SimpleNamespace(
-    DBRouter=object(), init_db_router=lambda *a, **k: None, GLOBAL_ROUTER=None
-)
+db_router_stub = types.ModuleType("db_router")
+db_router_stub.DBRouter = object
+db_router_stub.init_db_router = lambda *a, **k: None
+db_router_stub.GLOBAL_ROUTER = None
+db_router_stub.SHARED_TABLES = {}
+db_router_stub.queue_insert = lambda *a, **k: None
 sys.modules["db_router"] = db_router_stub
 sys.modules["menace_sandbox.db_router"] = db_router_stub
 sys.modules["menace_sandbox"].db_router = db_router_stub  # type: ignore[attr-defined]
@@ -86,6 +89,7 @@ vector_service.Retriever = None
 vector_service.FallbackResult = list
 vector_service.ErrorResult = Exception
 vector_service.ContextBuilder = _CB
+vector_service.SharedVectorService = object
 vector_service.CognitionLayer = object
 vector_service.__path__ = []  # type: ignore[attr-defined]
 vector_service.__spec__ = types.SimpleNamespace(submodule_search_locations=[])  # type: ignore[attr-defined]
@@ -111,13 +115,20 @@ code_db = types.SimpleNamespace(CodeDB=type("CodeDB", (), {}))
 sys.modules.setdefault("code_database", code_db)
 sys.modules.setdefault("menace_sandbox.code_database", code_db)
 
-chatgpt_enh = types.SimpleNamespace(
-    EnhancementDB=type("EnhancementDB", (), {}),
-    EnhancementHistory=type("EnhancementHistory", (), {}),
-    Enhancement=type("Enhancement", (), {}),
-)
+chatgpt_enh = types.ModuleType("chatgpt_enhancement_bot")
+chatgpt_enh.EnhancementDB = type("EnhancementDB", (), {})
+chatgpt_enh.EnhancementHistory = type("EnhancementHistory", (), {})
+chatgpt_enh.Enhancement = type("Enhancement", (), {})
 sys.modules.setdefault("chatgpt_enhancement_bot", chatgpt_enh)
 sys.modules.setdefault("menace_sandbox.chatgpt_enhancement_bot", chatgpt_enh)
+sys.modules.setdefault("error_vectorizer", types.SimpleNamespace(ErrorVectorizer=object))
+sys.modules.setdefault("failure_fingerprint", types.SimpleNamespace(FailureFingerprint=object))
+sys.modules.setdefault(
+    "failure_fingerprint_store", types.SimpleNamespace(FailureFingerprintStore=object)
+)
+sys.modules.setdefault(
+    "vector_utils", types.SimpleNamespace(cosine_similarity=lambda *a, **k: 0.0)
+)
 
 diff_summarizer = types.SimpleNamespace(summarize_diff=lambda *a, **k: "")
 prefix_injector = types.SimpleNamespace(
@@ -147,6 +158,17 @@ sce_stub.SelfCodingEngine = _DummyEngine
 sys.modules.setdefault("menace_sandbox.self_coding_engine", sce_stub)
 sys.modules.setdefault("self_coding_engine", sce_stub)
 
+scm_stub = types.ModuleType("menace_sandbox.self_coding_manager")
+class SelfCodingManager:
+    def __init__(self, *a, **k):
+        pass
+
+    def run_patch(self, path, prompt):
+        path.write_text("")
+scm_stub.SelfCodingManager = SelfCodingManager
+sys.modules.setdefault("menace_sandbox.self_coding_manager", scm_stub)
+sys.modules.setdefault("self_coding_manager", scm_stub)
+
 from menace_sandbox.bot_development_bot import (
     BotDevelopmentBot,
     RetryStrategy,
@@ -173,7 +195,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
     captured: dict[str, str] = {}
     wrapper_called = False
 
-    def fake_generate(desc: str) -> str:
+    def fake_generate(_mgr, desc: str) -> str:
         captured["desc"] = desc
         return "code"
 
@@ -183,7 +205,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
         return {}
 
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
     monkeypatch.setattr(memory_client, "ask_with_memory", fake_wrapper)
     monkeypatch.setattr(
         RetryStrategy,
@@ -194,6 +216,7 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
@@ -219,12 +242,12 @@ def test_call_codex_api_forwards_prompt_to_engine(monkeypatch):
 def test_call_codex_api_aggregates_multi_messages(monkeypatch):
     captured: dict[str, str] = {}
 
-    def fake_generate(desc: str) -> str:
+    def fake_generate(_mgr, desc: str) -> str:
         captured["desc"] = desc
         return ""  # pragma: no cover - return value unused
 
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
     monkeypatch.setattr(
         RetryStrategy,
         "run",
@@ -234,6 +257,7 @@ def test_call_codex_api_aggregates_multi_messages(monkeypatch):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
@@ -262,12 +286,12 @@ def test_call_codex_api_aggregates_multi_messages(monkeypatch):
 def test_call_codex_api_includes_tool_messages(monkeypatch):
     captured: dict[str, str] = {}
 
-    def fake_generate(desc: str) -> str:
+    def fake_generate(_mgr, desc: str) -> str:
         captured["desc"] = desc
         return ""  # pragma: no cover - return value unused
 
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
     monkeypatch.setattr(
         RetryStrategy, "run", lambda self, func, logger=None: func()
     )
@@ -275,6 +299,7 @@ def test_call_codex_api_includes_tool_messages(monkeypatch):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
@@ -303,10 +328,10 @@ def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
 
     engine = sce_stub.SelfCodingEngine()
 
-    def fake_generate(_desc: str) -> str:  # pragma: no cover - should not run
+    def fake_generate(_mgr, _desc: str) -> str:  # pragma: no cover - should not run
         raise AssertionError("engine should not be called")
 
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
     run_called = False
 
     def fake_run(self, func, logger=None):
@@ -319,6 +344,7 @@ def test_call_codex_api_no_user_message_escalates(monkeypatch, caplog):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=fake_escalate,
         errors=[],
@@ -348,10 +374,10 @@ def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
 
     engine = sce_stub.SelfCodingEngine()
 
-    def fake_generate(_desc: str) -> str:  # pragma: no cover - should not run
+    def fake_generate(_mgr, _desc: str) -> str:  # pragma: no cover - should not run
         raise AssertionError("engine should not be called")
 
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
     run_called = False
 
     def fake_run(self, func, logger=None):
@@ -364,6 +390,7 @@ def test_call_codex_api_no_user_message_raises_value_error(monkeypatch):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=fake_escalate,
         errors=[],
@@ -391,10 +418,10 @@ def test_call_codex_api_empty_messages_escalates(monkeypatch, caplog):
 
     engine = sce_stub.SelfCodingEngine()
 
-    def fake_generate(_desc: str) -> str:  # pragma: no cover - should not run
+    def fake_generate(_mgr, _desc: str) -> str:  # pragma: no cover - should not run
         raise AssertionError("engine should not be called")
 
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
     run_called = False
 
     def fake_run(self, func, logger=None):
@@ -407,6 +434,7 @@ def test_call_codex_api_empty_messages_escalates(monkeypatch, caplog):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=fake_escalate,
         errors=[],
@@ -429,7 +457,7 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
     calls: dict[str, int] = {"n": 0}
     escalated: dict[str, str] = {}
 
-    def fake_generate(_desc: str) -> str:
+    def fake_generate(_mgr, _desc: str) -> str:
         calls["n"] += 1
         raise RuntimeError("boom")
 
@@ -438,7 +466,7 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
         escalated["level"] = level
 
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
     def fake_run(self, func, logger=None):
         for i in range(self.attempts):
             try:
@@ -456,6 +484,7 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=fake_escalate,
         errors=[],
@@ -480,15 +509,16 @@ def test_call_codex_api_engine_failure_retries_and_escalates(monkeypatch, caplog
 def test_call_codex_api_logs_prompt_and_handles_exception(monkeypatch, caplog):
     escalated: dict[str, str] = {}
 
-    def boom(_: str) -> str:
+    def boom(_mgr, _desc: str) -> str:
         raise RuntimeError("kaboom")
 
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", boom)
+    monkeypatch.setattr(bdb, "manager_generate_helper", boom)
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
         errors=[],
@@ -512,12 +542,13 @@ def test_call_codex_api_logs_prompt_and_handles_exception(monkeypatch, caplog):
 
 def test_call_codex_api_scrubs_secrets_from_prompt(monkeypatch, caplog):
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", lambda _: "ok")
+    monkeypatch.setattr(bdb, "manager_generate_helper", lambda _mgr, _d: "ok")
     monkeypatch.setattr(RetryStrategy, "run", lambda self, func, logger=None: func())
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
@@ -538,12 +569,13 @@ def test_call_codex_api_scrubs_secrets_from_prompt(monkeypatch, caplog):
 
 def test_call_codex_api_respects_log_limit(monkeypatch, caplog):
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", lambda _: "ok")
+    monkeypatch.setattr(bdb, "manager_generate_helper", lambda _mgr, _d: "ok")
     monkeypatch.setattr(RetryStrategy, "run", lambda self, func, logger=None: func())
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],
@@ -565,7 +597,7 @@ def test_call_codex_api_engine_failure_raises(monkeypatch):
     calls: dict[str, int] = {"n": 0}
     escalated: dict[str, str] = {}
 
-    def fake_generate(_desc: str) -> str:
+    def fake_generate(_mgr, _desc: str) -> str:
         calls["n"] += 1
         raise RuntimeError("boom")
 
@@ -574,8 +606,8 @@ def test_call_codex_api_engine_failure_raises(monkeypatch):
         escalated["level"] = level
 
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
-    
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
+
     def fake_run(self, func, logger=None):
         for i in range(self.attempts):
             try:
@@ -593,6 +625,7 @@ def test_call_codex_api_engine_failure_raises(monkeypatch):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=fake_escalate,
         errors=[],
@@ -616,7 +649,7 @@ def test_call_codex_api_retries_then_succeeds(monkeypatch):
     calls: dict[str, int] = {"n": 0}
     escalated: dict[str, str] = {}
 
-    def flaky_generate(_desc: str) -> str:
+    def flaky_generate(_mgr, _desc: str) -> str:
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("flaky")
@@ -627,11 +660,12 @@ def test_call_codex_api_retries_then_succeeds(monkeypatch):
         escalated["level"] = level
 
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", flaky_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", flaky_generate)
 
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=fake_escalate,
         errors=[],
@@ -656,10 +690,10 @@ def test_call_codex_api_missing_user_message(monkeypatch):
     escalated: dict[str, str] = {}
     engine = sce_stub.SelfCodingEngine()
 
-    def fake_generate(_desc: str) -> str:  # pragma: no cover - should not run
+    def fake_generate(_mgr, _desc: str) -> str:  # pragma: no cover - should not run
         raise AssertionError("generate_helper should not be called")
 
-    monkeypatch.setattr(engine, "generate_helper", fake_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", fake_generate)
 
     class FakeRetry:
         def __init__(self) -> None:
@@ -672,6 +706,7 @@ def test_call_codex_api_missing_user_message(monkeypatch):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
         errors=[],
@@ -697,7 +732,11 @@ def test_call_codex_api_generate_helper_exception(monkeypatch):
     """Errors from generate_helper should be captured and returned."""
 
     engine = sce_stub.SelfCodingEngine()
-    monkeypatch.setattr(engine, "generate_helper", lambda _desc: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        bdb,
+        "manager_generate_helper",
+        lambda _mgr, _desc: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
 
     class FakeRetry:
         def __init__(self) -> None:
@@ -714,6 +753,7 @@ def test_call_codex_api_generate_helper_exception(monkeypatch):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": escalated.update({"msg": msg, "level": level}),
         errors=[],
@@ -740,13 +780,13 @@ def test_call_codex_api_retry_succeeds(monkeypatch):
     engine = sce_stub.SelfCodingEngine()
     calls: dict[str, int] = {"gen": 0, "run": 0}
 
-    def flaky_generate(_desc: str) -> str:
+    def flaky_generate(_mgr, _desc: str) -> str:
         calls["gen"] += 1
         if calls["gen"] == 1:
             raise RuntimeError("flaky")
         return "ok"
 
-    monkeypatch.setattr(engine, "generate_helper", flaky_generate)
+    monkeypatch.setattr(bdb, "manager_generate_helper", flaky_generate)
 
     class FakeRetry:
         def run(self, func, logger=None):
@@ -763,6 +803,7 @@ def test_call_codex_api_retry_succeeds(monkeypatch):
     dummy = types.SimpleNamespace(
         coding_engine=engine,
         engine=engine,
+        manager=types.SimpleNamespace(engine=engine),
         logger=logging.getLogger("test"),
         _escalate=lambda msg, level="error": None,
         errors=[],

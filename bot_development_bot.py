@@ -39,7 +39,7 @@ from .models_repo import (
     ACTIVE_MODEL_FILE,
     ensure_models_repo,
 )
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import self_coding_managed, manager_generate_helper
 from vector_service.context_builder import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
@@ -780,27 +780,27 @@ class BotDevelopmentBot:
         prompt_snippet = redact_secrets(prompt_snippet)
         self.logger.info("generate_helper prompt: %s", prompt_snippet)
 
-        if getattr(self, "manager", None) is not None and path is not None:
-            try:
+        manager = getattr(self, "manager", None)
+        if manager is None:
+            msg = "SelfCodingManager is required"
+            self.logger.error(msg)
+            self._escalate(msg)
+            self.errors.append(msg)
+            if self.config.raise_errors:
+                raise RuntimeError(msg)
+            return EngineResult(False, None, msg)
+        try:
+            if path is not None:
                 self.engine_retry.run(
-                    lambda: self.manager.run_patch(path, prompt),
+                    lambda: manager.run_patch(path, prompt),
                     logger=self.logger,
                 )
                 code = path.read_text()
-                return EngineResult(True, code, None)
-            except Exception as exc:
-                msg = f"engine request failed: {exc}"
-                self.logger.exception(msg)
-                self._escalate(msg, level="error")
-                self.errors.append(msg)
-                if self.config.raise_errors:
-                    raise
-                return EngineResult(False, None, msg)
-        try:
-            code = self.engine_retry.run(
-                lambda: self.engine.generate_helper(prompt),
-                logger=self.logger,
-            )
+            else:
+                code = self.engine_retry.run(
+                    lambda: manager_generate_helper(manager, prompt),
+                    logger=self.logger,
+                )
             return EngineResult(True, code, None)
         except Exception as exc:
             msg = f"engine request failed: {exc}"
