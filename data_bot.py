@@ -1163,6 +1163,14 @@ class DataBot:
         """Register *callback* for bot degradation notifications."""
         if self.event_bus:
             self.event_bus.subscribe("bot:degraded", lambda _t, e: callback(e))
+            try:
+                cb_name = getattr(
+                    callback, "__qualname__", getattr(callback, "__name__", str(callback))
+                )
+                logger.info("degradation monitoring enabled via %s", cb_name)
+                self.event_bus.publish("bot:registered", {"callback": cb_name})
+            except Exception:
+                logger.exception("failed to emit bot:registered event")
         else:
             self._degradation_callbacks.append(callback)
             self.degradation_callback = callback

@@ -221,3 +221,70 @@ def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
 
     assert manager.called
     assert calls and calls[0] == str(mod_path)
+
+
+def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(tmp_path)
+    mod_path = tmp_path / "dummy_module.py"
+    mod_path.write_text(
+        "from menace.coding_bot_interface import self_coding_managed\n"
+        "@self_coding_managed\n"
+        "class DummyBot:\n"
+        "    name = 'dummy_module'\n"
+        "    def __init__(self, manager=None, evolution_orchestrator=None, bot_registry=None, data_bot=None):\n"
+        "        pass\n"
+    )
+
+    import importlib
+
+    def _decorator(cls):
+        orig_init = cls.__init__
+
+        def _wrapped(self, *a, **kw):
+            orch = kw.get("evolution_orchestrator")
+            orig_init(self, *a, **kw)
+            if orch:
+                orch.register_bot(self.name)
+
+        cls.__init__ = _wrapped
+        return cls
+
+    monkeypatch.setattr(cbi, "self_coding_managed", _decorator)
+
+    importlib.invalidate_caches()
+    dummy_module = importlib.import_module("dummy_module")
+
+    bus = DummyBus()
+    monkeypatch.setattr(eo_mod, "ContextBuilder", DummyContextBuilder)
+
+    data_bot = DataBot(MetricsDB(tmp_path / "metrics.db"), event_bus=bus)
+    registry = BotRegistry(event_bus=bus)
+    quick_fix = DummyQuickFix()
+    manager = SelfCodingManager(
+        quick_fix=quick_fix,
+        bot_name="dummy_module",
+        bot_registry=registry,
+    )
+
+    orch = EvolutionOrchestrator(
+        data_bot,
+        DummyCapital(),
+        DummyImprovement(),
+        DummyEvolution(),
+        selfcoding_manager=manager,
+        event_bus=bus,
+        history_db=DummyHistoryDB(),
+    )
+
+    dummy_module.DummyBot(
+        manager=manager,
+        bot_registry=registry,
+        data_bot=data_bot,
+        evolution_orchestrator=orch,
+    )
+
+    data_bot.check_degradation("dummy_module", roi=1.0, errors=0.0)
+    data_bot.check_degradation("dummy_module", roi=0.0, errors=2.0)
+
+    assert manager.called
+    assert quick_fix.calls
