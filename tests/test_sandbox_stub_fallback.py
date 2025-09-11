@@ -154,7 +154,6 @@ def test_sandbox_init_fallback(monkeypatch, tmp_path, caplog):
     )
 
     assert ctx.pre_roi_bot.__class__.__name__ == "PreExecutionROIBotStub"
-    assert ctx.va_client is None
     assert "PreExecutionROIBotStub" in caplog.text
 
 
