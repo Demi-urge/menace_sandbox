@@ -188,3 +188,7 @@ roi_events.db
 # Placeholder for local embedding model archive
 vector_service/minilm/*
 !vector_service/minilm/.gitkeep
+
+# Ignore code database
+code.db
+
