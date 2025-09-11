@@ -162,3 +162,43 @@ def test_threshold_overrides(monkeypatch):
     assert calls['bot'] == 'beta'
     assert mgr.roi_drop_threshold == -0.2
     assert mgr.error_rate_threshold == 3.3
+
+
+def test_should_refactor_on_failed_tests(monkeypatch):
+    def fake_get_thresholds(bot):
+        return SelfCodingThresholds(
+            roi_drop=-999.0, error_increase=999.0, test_failure_increase=2.0
+        )
+
+    monkeypatch.setattr(scm, "get_thresholds", fake_get_thresholds)
+
+    class DummyDataBot:
+        def __init__(self) -> None:
+            self.failures = 0
+
+        def roi(self, bot):
+            return 1.0
+
+        def average_errors(self, bot):
+            return 0.0
+
+        def average_test_failures(self, bot):
+            return self.failures
+
+        def get_thresholds(self, bot):
+            return types.SimpleNamespace(
+                roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=2.0
+            )
+
+    data_bot = DummyDataBot()
+    mgr = scm.SelfCodingManager(
+        scm.SelfCodingEngine(),
+        scm.ModelAutomationPipeline(),
+        bot_name="alpha",
+        data_bot=data_bot,
+    )
+    mgr._last_errors = data_bot.average_errors("alpha")
+    data_bot.failures = 1
+    assert not mgr.should_refactor()
+    data_bot.failures = 5
+    assert mgr.should_refactor()
