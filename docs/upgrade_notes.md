@@ -1,5 +1,10 @@
 # Upgrade Notes
 
+## Visual agent interface removed
+
+The visual agent interface and related configuration variables (e.g. `VISUAL_AGENT_AUTOSTART`, `VISUAL_AGENT_TOKEN`) have been deprecated. Migrate workflows to use `SelfCodingEngine` and remove any visual-agent settings.
+
+
 ## Stripe per-bot keys removed
 
 Legacy per-bot Stripe secret and public keys have been retired. Bots now route
