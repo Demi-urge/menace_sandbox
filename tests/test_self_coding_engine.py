@@ -82,6 +82,10 @@ builder = types.SimpleNamespace(
     refresh_db_weights=lambda *a, **k: None,
 )
 
+scm_stub = types.ModuleType("menace.self_coding_manager")
+scm_stub.SelfCodingManager = object  # type: ignore[attr-defined]
+sys.modules.setdefault("menace.self_coding_manager", scm_stub)
+
 # Stub chunking module to provide expected settings
 chunking_stub = types.ModuleType("chunking")
 chunking_stub.split_into_chunks = lambda *a, **k: []
@@ -130,7 +134,9 @@ sys.modules["menace.code_database"] = cd_stub
 msl_stub = types.SimpleNamespace(fetch_recent_billing_issues=lambda *a, **k: [])
 sys.modules["menace.menace_sanity_layer"] = msl_stub
 sys.modules["sandbox_settings"] = types.SimpleNamespace(
-    SandboxSettings=lambda: types.SimpleNamespace(prompt_chunk_token_threshold=1000)
+    SandboxSettings=lambda: types.SimpleNamespace(
+        prompt_chunk_token_threshold=1000, codex_retry_delays=[2, 5, 10]
+    )
 )
 sys.modules.setdefault(
     "gpt_memory",
@@ -192,6 +198,9 @@ db_stub = types.ModuleType("data_bot")
 class _MetricsDB:
     def __init__(self, *_a, **_k):
         pass
+
+    def fetch(self, *a, **k):  # pragma: no cover - simple stub
+        return []
 
 
 class _DataBot:
@@ -481,7 +490,11 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     engine.llm_client = DummyClient()
     monkeypatch.setattr(engine, "suggest_snippets", lambda d, limit=3: [])
 
-    code = engine.generate_helper("test helper")
+    token = sce.MANAGER_CONTEXT.set(object())
+    try:
+        code = engine.generate_helper("test helper")
+    finally:
+        sce.MANAGER_CONTEXT.reset(token)
     assert engine.context_builder.calls, "context_builder.build was not invoked"
     assert "### Retrieval context" in DummyClient.prompt
     assert context_json in DummyClient.prompt
@@ -492,8 +505,12 @@ def test_generate_helper_requires_context_builder(tmp_path):
     mem = mm.MenaceMemoryManager(tmp_path / "m.db")
     engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, context_builder=builder)
     engine.context_builder = None
-    with pytest.raises(RuntimeError):
-        engine.generate_helper("demo task")
+    token = sce.MANAGER_CONTEXT.set(object())
+    try:
+        with pytest.raises(RuntimeError):
+            engine.generate_helper("demo task")
+    finally:
+        sce.MANAGER_CONTEXT.reset(token)
 
 
 def test_patch_logger_vector_service_error(tmp_path):
@@ -570,7 +587,11 @@ def test_vector_service_metrics_and_fallback(tmp_path, monkeypatch):
         context_builder=builder,
         llm_client=DummyClient2(),
     )
-    code = engine.generate_helper("demo task")
+    token = sce.MANAGER_CONTEXT.set(object())
+    try:
+        code = engine.generate_helper("demo task")
+    finally:
+        sce.MANAGER_CONTEXT.reset(token)
     assert builder.calls == ["demo task"]
     assert g1.inc_calls == 1
     assert "sentinel_fallback" not in code
@@ -643,7 +664,11 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
         "_settings",
         types.SimpleNamespace(codex_retry_delays=[2, 5, 10], codex_retry_queue_path=str(qpath)),
     )
-    code = engine.generate_helper("demo")
+    token = sce.MANAGER_CONTEXT.set(object())
+    try:
+        code = engine.generate_helper("demo")
+    finally:
+        sce.MANAGER_CONTEXT.reset(token)
     assert "def good" in code
     assert calls == [qpath]
 
@@ -687,8 +712,40 @@ def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
     engine._last_retry_trace = None
     engine.simplify_prompt = sce.simplify_prompt
 
-    code = engine.generate_helper("demo")
+    token = sce.MANAGER_CONTEXT.set(object())
+    try:
+        code = engine.generate_helper("demo")
+    finally:
+        sce.MANAGER_CONTEXT.reset(token)
     assert "def ok" in code
     assert len(calls) == 2
     assert calls[0].system == "orig" and len(calls[0].examples) == 2
     assert calls[1].system == "" and len(calls[1].examples) == 0
+
+
+def test_generate_helper_requires_manager_token(tmp_path):
+    import menace.self_coding_engine as sce
+
+    class DummyManager:
+        def __init__(self, engine):
+            self.engine = engine
+
+    memory = types.SimpleNamespace()
+    engine = sce.SelfCodingEngine(
+        cd_stub.CodeDB(tmp_path / "c.db"),
+        memory,
+        context_builder=builder,
+    )
+
+    with pytest.raises(RuntimeError):
+        engine.generate_helper("demo")
+
+    mgr_mod = types.ModuleType("menace.self_coding_manager")
+    mgr_mod.SelfCodingManager = DummyManager
+    sys.modules["menace.self_coding_manager"] = mgr_mod
+
+    from menace.coding_bot_interface import manager_generate_helper
+
+    manager = DummyManager(engine)
+    code = manager_generate_helper(manager, "demo")
+    assert "def" in code

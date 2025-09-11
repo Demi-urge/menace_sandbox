@@ -8,6 +8,7 @@ import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 
 from .self_coding_manager import SelfCodingManager
+from .self_coding_engine import MANAGER_CONTEXT
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .bot_registry import BotRegistry
@@ -20,6 +21,17 @@ else:  # pragma: no cover - runtime placeholders
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def manager_generate_helper(
+    manager: SelfCodingManager, description: str, **kwargs: Any
+) -> str:
+    """Invoke :meth:`SelfCodingEngine.generate_helper` under a manager token."""
+    token = MANAGER_CONTEXT.set(manager)
+    try:
+        return manager.engine.generate_helper(description, **kwargs)
+    finally:
+        MANAGER_CONTEXT.reset(token)
 
 
 def _resolve_helpers(
