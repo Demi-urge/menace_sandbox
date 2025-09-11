@@ -75,7 +75,6 @@ class DummyCtx:
             apply_patch=lambda *a, **k: (1, False, 0.0),
             rollback_patch=lambda *a, **k: None,
         )
-        self.va_client = None
         self.offline_suggestions = False
         self.brainstorm_history = []
         self.conversations = {}

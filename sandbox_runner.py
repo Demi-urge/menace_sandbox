@@ -719,7 +719,6 @@ class SandboxContext:
     changed_modules: Any
     res_db: Any
     pre_roi_bot: Any
-    va_client: Any
     gpt_client: Any
     engine: Any
     dd_bot: DiscrepancyDetectionBot
@@ -1230,7 +1229,6 @@ def _sandbox_init(
         changed_modules=_changed_modules,
         res_db=res_db,
         pre_roi_bot=pre_roi_bot,
-        va_client=va_client,
         gpt_client=gpt_client,
         engine=engine,
         dd_bot=dd_bot,

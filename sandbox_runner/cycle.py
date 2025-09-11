@@ -1009,20 +1009,6 @@ def _sandbox_cycle_runner(
             tracker.record_metric_prediction(
                 "projected_lucrativity", ctx.predicted_lucrativity, roi
             )
-        if ctx.va_client and getattr(ctx.va_client, "open_run_id", None):
-            if roi >= ctx.prev_roi:
-                try:
-                    ctx.va_client.resolve_run_log("roi_increased")
-                except Exception:
-                    logger.exception("visual agent log resolution failed")
-            else:
-                try:
-                    ctx.va_client.resolve_run_log("reverted")
-                    ctx.va_client.revert()
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("visual agent revert failed: %s", exc)
-        elif roi < ctx.prev_roi and ctx.va_client:
-            logger.info("ROI decreased but no unresolved /run logs; skipping revert")
         recovery_time = 0.0
         if roi < ctx.prev_roi:
             if failure_start is None:
