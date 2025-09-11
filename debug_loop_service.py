@@ -11,6 +11,9 @@ from pathlib import Path
 from .telemetry_feedback import TelemetryFeedback
 from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine
+from .self_coding_manager import SelfCodingManager
+from .model_automation_pipeline import ModelAutomationPipeline
+from .unified_event_bus import UnifiedEventBus
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .knowledge_graph import KnowledgeGraph
@@ -55,11 +58,21 @@ class DebugLoopService:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=context_builder
             )
+            bus = UnifiedEventBus()
+            registry = bot_registry or BotRegistry(event_bus=bus)
+            pipeline = ModelAutomationPipeline(
+                context_builder=context_builder, event_bus=bus, bot_registry=registry
+            )
+            manager = SelfCodingManager(
+                engine,
+                pipeline,
+                bot_registry=registry,
+                data_bot=data_bot,
+                event_bus=bus,
+            )
             feedback = TelemetryFeedback(
                 logger,
-                engine,
-                bot_registry=bot_registry,
-                data_bot=data_bot,
+                manager,
             )
         self.feedback = feedback
         self.logger = logging.getLogger(self.__class__.__name__)

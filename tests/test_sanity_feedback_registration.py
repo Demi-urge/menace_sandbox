@@ -29,9 +29,19 @@ class DummyDataBot:
         return 0.0
 
 
+class DummyManager:
+    def __init__(self, engine, registry, data_bot):
+        self.engine = engine
+        self.bot_registry = registry
+        self.data_bot = data_bot
+    def run_patch(self, *a, **k):
+        return None
+
+
 def test_sanity_feedback_registers():
     registry = DummyRegistry()
     data_bot = DummyDataBot()
-    sf.SanityFeedback(DummyEngine(), bot_registry=registry, data_bot=data_bot)
+    manager = DummyManager(DummyEngine(), registry, data_bot)
+    sf.SanityFeedback(manager, outcome_db=object())
     assert "SanityFeedback" in registry.names
     assert data_bot.db.records

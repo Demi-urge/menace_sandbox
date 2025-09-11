@@ -16,13 +16,11 @@ from typing import Any, Dict, TYPE_CHECKING
 
 from unified_event_bus import UnifiedEventBus
 from sanity_feedback import SanityFeedback
-from self_coding_engine import SelfCodingEngine
 from coding_bot_interface import self_coding_managed
 
 if TYPE_CHECKING:  # pragma: no cover - used for type hints only
     from vector_service.context_builder import ContextBuilder
-    from bot_registry import BotRegistry
-    from data_bot import DataBot
+    from self_coding_manager import SelfCodingManager
 import menace_sanity_layer
 from dynamic_path_router import resolve_path
 
@@ -51,59 +49,32 @@ class SanityConsumer:
 
     def __init__(
         self,
+        manager: "SelfCodingManager",
         event_bus: UnifiedEventBus | None = None,
         *,
-        engine: SelfCodingEngine | None = None,
         context_builder: "ContextBuilder",
-        bot_registry: "BotRegistry" | None = None,
-        data_bot: "DataBot" | None = None,
     ) -> None:
         self.event_bus = event_bus or getattr(
             menace_sanity_layer, "_EVENT_BUS", UnifiedEventBus()
         )
         self.event_bus.subscribe("billing.anomaly", self._handle)
-        self._engine: SelfCodingEngine | None = engine
+        self.manager = manager
+        self._engine = getattr(manager, "engine", None)
         self._feedback: SanityFeedback | None = None
         self._outcome_db = DiscrepancyDB() if DiscrepancyDB is not None else None
         self._context_builder = context_builder
-        self.bot_registry = bot_registry
-        self.data_bot = data_bot
         # Refresh DB weights early so the engine has up-to-date context
         self._context_builder.refresh_db_weights()
 
     # ------------------------------------------------------------------
-    def _get_engine(self) -> SelfCodingEngine:
-        if self._engine is None:
-            try:
-                try:
-                    code_db = CodeDB() if CodeDB is not None else object()
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("failed to initialise CodeDB")
-                    code_db = object()
-                try:
-                    memory_mgr = (
-                        MenaceMemoryManager() if MenaceMemoryManager is not None else object()
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("failed to initialise MenaceMemoryManager")
-                    memory_mgr = object()
-
-                builder = self._context_builder
-                self._engine = SelfCodingEngine(
-                    code_db, memory_mgr, context_builder=builder
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("failed to initialise SelfCodingEngine")
-                raise
+    def _get_engine(self):
         return self._engine
 
     def _get_feedback(self) -> SanityFeedback:
         if self._feedback is None:
             self._feedback = SanityFeedback(
-                self._get_engine(),
+                self.manager,
                 outcome_db=self._outcome_db,
-                bot_registry=self.bot_registry,
-                data_bot=self.data_bot,
             )
             # Share builder so feedback analysers can inspect engine context
             setattr(self._feedback, "context_builder", self._context_builder)
@@ -113,8 +84,11 @@ class SanityConsumer:
     def _handle(self, _topic: str, event: Dict[str, Any]) -> None:
         """Handle a published billing anomaly event."""
 
+        self.process(event)
+
+    def process(self, event: Dict[str, Any]) -> None:
         feedback = self._get_feedback()
-        engine = feedback.engine
+        engine = self._get_engine()
         meta = event.get("metadata", {}) if isinstance(event, dict) else {}
         event_type = (
             event.get("event_type", "billing_anomaly")
@@ -129,12 +103,13 @@ class SanityConsumer:
             if path:
                 try:
                     target = resolve_path(path if path.endswith(".py") else f"{path}.py")
-                    patch_id, success, _ = engine.apply_patch(
+                    self.manager.run_patch(
                         target,
                         f"address {event_type} anomaly",
-                        reason=event_type,
-                        trigger="billing_anomaly",
+                        context_meta={"reason": event_type, "trigger": "billing_anomaly"},
                     )
+                    patch_id = getattr(self.manager, "_last_patch_id", None)
+                    success = bool(patch_id)
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("patch application failed", extra={"path": path})
             else:
@@ -146,6 +121,7 @@ class SanityConsumer:
                             logger.info(
                                 "generation params updated", extra={"changes": changes}
                             )
+                            success = True
                     except Exception:  # pragma: no cover - best effort
                         logger.exception("generation parameter update failed")
         finally:
