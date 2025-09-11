@@ -163,15 +163,26 @@ class EvolutionOrchestrator:
         if bot in self._registered_bots:
             return
         self._registered_bots.add(bot)
+        bus = getattr(self.data_bot, "event_bus", None) or self.event_bus
+        if bus and not getattr(self, "_bot_registered_listener", False):
+            bus.subscribe("bot:registered", self._ensure_degradation_subscription)
+            self._bot_registered_listener = True
+        self._ensure_degradation_subscription()
         try:
-            if not getattr(self, "_degradation_subscribed", False):
-                self.data_bot.subscribe_degradation(self._on_bot_degraded)
-                self._degradation_subscribed = True
             if getattr(self.data_bot, "check_degradation", None):
                 # seed baseline metrics so future deltas are meaningful
                 self.data_bot.check_degradation(bot, roi=0.0, errors=0.0)
         except Exception:
             self.logger.exception("failed to register bot %s for metrics", bot)
+
+    def _ensure_degradation_subscription(self, *_args: object) -> None:
+        if getattr(self, "_degradation_subscribed", False):
+            return
+        try:
+            self.data_bot.subscribe_degradation(self._on_bot_degraded)
+            self._degradation_subscribed = True
+        except Exception:
+            self.logger.exception("failed to attach degradation callback")
 
     # ------------------------------------------------------------------
     def _on_patch_applied(self, _topic: str, event: object) -> None:
