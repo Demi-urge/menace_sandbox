@@ -1174,6 +1174,18 @@ class SelfCodingManager:
                     success=True,
                     resources=f"patch_id:{patch_id}",
                 )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "failed to update bot registry",
+                    extra={"bot": self.bot_name, "module": module_path},
+                )
+            prev_state: dict[str, object] | None = None
+            if self.bot_name in self.bot_registry.graph:
+                try:
+                    prev_state = dict(self.bot_registry.graph.nodes[self.bot_name])
+                except Exception:  # pragma: no cover - best effort
+                    prev_state = None
+            try:
                 self.bot_registry.update_bot(
                     self.bot_name,
                     module_path,
@@ -1195,11 +1207,25 @@ class SelfCodingManager:
                         "version": version,
                     },
                 )
-            except Exception:  # pragma: no cover - best effort
+            except Exception:
                 self.logger.exception(
-                    "failed to update bot registry",
+                    "failed to hot swap bot",
                     extra={"bot": self.bot_name, "module": module_path},
                 )
+                if prev_state is not None:
+                    try:
+                        current = self.bot_registry.graph.nodes[self.bot_name]
+                        current.clear()
+                        current.update(prev_state)
+                        target = getattr(self.bot_registry, "persist_path", None)
+                        if target:
+                            self.bot_registry.save(target)
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "failed to revert bot registry",
+                            extra={"bot": self.bot_name},
+                        )
+                raise
             target = getattr(self.bot_registry, "persist_path", None)
             if target:
                 try:

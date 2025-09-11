@@ -42,19 +42,21 @@ def test_update_bot_persists_module(tmp_path):
     path = tmp_path / "g.db"
     router = init_db_router("br3", str(path), str(path))
     reg = BotRegistry()
-    reg.update_bot("x", "/mod/x")
+    module_file = tmp_path / "mod_x.py"
+    module_file.write_text("x = 1\n")
+    reg.update_bot("x", module_file.as_posix())
     reg.save(router)
     router.close()
 
     router = init_db_router("br3", str(path), str(path))
     reg2 = BotRegistry()
     reg2.load(router)
-    assert reg2.graph.nodes["x"].get("module") == "/mod/x"
+    assert reg2.graph.nodes["x"].get("module") == module_file.as_posix()
     with router.get_connection("bots") as conn:
         row = conn.execute(
             "SELECT module FROM bot_nodes WHERE name='x'",
         ).fetchone()
-    assert row and row[0] == "/mod/x"
+    assert row and row[0] == module_file.as_posix()
     router.close()
 
 
@@ -84,13 +86,15 @@ def test_register_bot_logs_save_error(tmp_path, monkeypatch, caplog):
     assert "Failed to save bot registry" in caplog.text
 
 
-def test_update_bot_emits_event_and_increments_version():
+def test_update_bot_emits_event_and_increments_version(tmp_path):
     bus = UnifiedEventBus()
     events: list[dict[str, object]] = []
     bus.subscribe("bot:updated", lambda _t, e: events.append(e))
     reg = BotRegistry(event_bus=bus)
-    reg.update_bot("x", "/mod/x", patch_id=1, commit="abc")
-    reg.update_bot("x", "/mod/x", patch_id=2, commit="def")
+    module_file = tmp_path / "mod_x.py"
+    module_file.write_text("x = 1\n")
+    reg.update_bot("x", module_file.as_posix(), patch_id=1, commit="abc")
+    reg.update_bot("x", module_file.as_posix(), patch_id=2, commit="def")
     assert reg.graph.nodes["x"].get("version") == 2
     assert events[0]["patch_id"] == 1 and events[0]["commit"] == "abc"
     assert events[1]["version"] == 2 and events[1]["commit"] == "def"
