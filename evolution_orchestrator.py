@@ -65,7 +65,7 @@ class EvolutionOrchestrator:
         workflow_evolver: WorkflowEvolutionBot | None = None,
         experiment_manager: ExperimentManager | None = None,
         analysis_bot: EvolutionAnalysisBot | None = None,
-        self_manager: SelfCodingManager | None = None,
+        selfcoding_manager: SelfCodingManager | None = None,
         trend_predictor: TrendPredictor | None = None,
         predictor: EvolutionPredictor | None = None,
         multi_predictor: object | None = None,
@@ -80,7 +80,7 @@ class EvolutionOrchestrator:
         self.evolution_manager = evolution_manager
         self.history = history_db or EvolutionHistoryDB()
         if triggers is None:
-            bot = self_manager.bot_name if self_manager else None
+            bot = selfcoding_manager.bot_name if selfcoding_manager else None
             t = get_thresholds(bot)
             self.triggers = EvolutionTrigger(
                 error_rate=t.error_increase, roi_drop=t.roi_drop
@@ -92,7 +92,7 @@ class EvolutionOrchestrator:
         self.workflow_evolver = workflow_evolver
         self.experiment_manager = experiment_manager
         self.analysis_bot = analysis_bot
-        self.self_manager = self_manager
+        self.selfcoding_manager = selfcoding_manager
         self.predictor = predictor
         self.multi_predictor = multi_predictor
         self.trend_predictor = trend_predictor
@@ -108,6 +108,7 @@ class EvolutionOrchestrator:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("EvolutionOrchestrator")
         self.prev_roi = self._latest_roi()
+        self.prev_error = self._error_rate()
         self._cycles = 0
         self._last_workflow_benchmark = 0.0
         self._benchmark_interval = 3600
@@ -136,19 +137,19 @@ class EvolutionOrchestrator:
                 self.logger.exception("bot degraded subscription failed")
         else:
             try:
-                self.data_bot.degradation_callback = self._on_bot_degraded  # type: ignore[attr-defined]
+                self.data_bot.subscribe_degradation(self._on_bot_degraded)
             except Exception:
                 self.logger.exception("failed to attach degradation callback")
 
     # ------------------------------------------------------------------
     def _on_bot_degraded(self, event: dict) -> None:
         """Handle bot degradation events by triggering a self patch."""
-        if not self.self_manager:
+        if not self.selfcoding_manager:
             return
         try:
             builder = ContextBuilder()
             try:
-                self.self_manager.engine.generate_helper(builder)
+                self.selfcoding_manager.engine.generate_helper(builder)
             except Exception:
                 self.logger.exception("helper generation failed")
             mod = inspect.getmodule(self.data_bot.__class__)
@@ -162,7 +163,7 @@ class EvolutionOrchestrator:
                 "error_threshold": event.get("error_threshold"),
             }
             desc = f"auto_patch_due_to_degradation:{event.get('bot')}"
-            self.self_manager.run_patch(path, desc, context_meta=context_meta)
+            self.selfcoding_manager.run_patch(path, desc, context_meta=context_meta)
         except Exception:
             self.logger.exception("failed to self patch after degradation")
 
@@ -257,24 +258,34 @@ class EvolutionOrchestrator:
         delta_roi = before_roi - self.prev_roi
         self.prev_roi = before_roi
         error_rate = self._error_rate()
+        delta_err = error_rate - getattr(self, "prev_error", 0.0)
+        self.prev_error = error_rate
         try:
             from . import mutation_logger as MutationLogger
         except Exception:  # pragma: no cover - best effort
             MutationLogger = None  # type: ignore
 
         def _self_patch(module: object, reason: str, trigger: str) -> None:
-            if not self.self_manager:
+            if not self.selfcoding_manager:
                 return
-            if not self.self_manager.should_refactor():
+            if not self.selfcoding_manager.should_refactor():
                 return
             try:
                 mod = inspect.getmodule(module.__class__)
                 path = Path(getattr(mod, "__file__", "")) if mod else None
                 if not path or not path.exists():
                     return
-                self.self_manager.run_patch(path, reason)
+                meta = {
+                    "delta_roi": delta_roi,
+                    "delta_errors": delta_err,
+                    "roi_threshold": self.triggers.roi_drop,
+                    "error_threshold": self.triggers.error_rate,
+                }
+                self.selfcoding_manager.run_patch(
+                    path, reason, context_meta=meta
+                )
                 after = self._latest_roi()
-                patch_id = getattr(self.self_manager, "_last_patch_id", None)
+                patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
                 self.history.add(
                     EvolutionEvent(
                         action=f"patch:{path.name}",
@@ -284,6 +295,8 @@ class EvolutionOrchestrator:
                         patch_id=patch_id,
                         reason=reason,
                         trigger=trigger,
+                        performance=delta_roi,
+                        bottleneck=delta_err,
                     )
                 )
             except Exception:
@@ -414,8 +427,7 @@ class EvolutionOrchestrator:
         sequence: list[str] = []
         predicted_action_roi = 0.0
         if self.multi_predictor and hasattr(self.multi_predictor, "predict"):
-            best_score = float("-inf")
-            best_act: str | None = None
+            scores: dict[str, float] = {}
             for cand in candidates:
                 try:
                     mean, var = self.multi_predictor.predict(cand, before_roi)
@@ -423,13 +435,11 @@ class EvolutionOrchestrator:
                     mean = var = 0.0
                 predictions[cand] = mean
                 variances[cand] = var
-                score = mean - var
-                if score > best_score:
-                    best_score = score
-                    best_act = cand
-                    predicted_action_roi = mean
-            if best_act:
+                scores[cand] = mean - var
+            if scores:
+                best_act = max(scores, key=scores.get)
                 sequence = [best_act]
+                predicted_action_roi = predictions.get(best_act, 0.0)
         else:
             if self.analysis_bot:
                 for cand in candidates:
@@ -484,7 +494,7 @@ class EvolutionOrchestrator:
                 trending_topic = getattr(res, "trending_topic", trending_topic)
                 if res.roi:
                     result_values.append(res.roi.roi)
-                if self.self_manager:
+                if self.selfcoding_manager:
                     failing = (
                         getattr(res, "failing_path", None)
                         or getattr(res, "failing_module", None)
@@ -511,8 +521,8 @@ class EvolutionOrchestrator:
                                 workflow_id=0,
                                 before_metric=before_roi,
                             )
-                            if self.self_manager.should_refactor():
-                                self.self_manager.run_patch(
+                            if self.selfcoding_manager.should_refactor():
+                                self.selfcoding_manager.run_patch(
                                     path, f"auto_patch:{path.name}"
                                 )
                             after_patch = self._latest_roi()
@@ -524,12 +534,12 @@ class EvolutionOrchestrator:
                                 performance=delta,
                             )
                             registry = getattr(
-                                self.self_manager, "bot_registry", None
+                                self.selfcoding_manager, "bot_registry", None
                             )
                             if registry:
                                 try:
                                     registry.register_interaction(
-                                        self.self_manager.bot_name, path.stem
+                                        self.selfcoding_manager.bot_name, path.stem
                                     )
                                 except Exception:
                                     self.logger.exception(

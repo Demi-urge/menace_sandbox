@@ -969,6 +969,9 @@ class DataBot:
         self.roi_drop_threshold = roi_drop_threshold
         self.error_threshold = error_threshold
         self.degradation_callback = degradation_callback
+        self._degradation_callbacks: list[Callable[[dict], None]] = []
+        if degradation_callback:
+            self._degradation_callbacks.append(degradation_callback)
         self.logger = logger
         self._current_cycle_id: int | None = None
         self.gauges: Dict[str, Gauge] = {}
@@ -1108,6 +1111,15 @@ class DataBot:
         self.event_bus.subscribe(
             "data:threshold_breach", lambda _t, e: callback(e)
         )
+
+    # ------------------------------------------------------------------
+    def subscribe_degradation(self, callback: Callable[[dict], None]) -> None:
+        """Register *callback* for bot degradation notifications."""
+        if self.event_bus:
+            self.event_bus.subscribe("bot:degraded", lambda _t, e: callback(e))
+        else:
+            self._degradation_callbacks.append(callback)
+            self.degradation_callback = callback
 
     def collect(
         self,
@@ -1260,7 +1272,7 @@ class DataBot:
                 self.event_bus.publish("metrics:new", asdict(rec))
             except Exception as exc:
                 self.logger.exception("failed to publish metrics event: %s", exc)
-        if self.event_bus or self.degradation_callback:
+        if self.event_bus or self.degradation_callback or self._degradation_callbacks:
             self.check_degradation(bot, current_roi, float(errors))
         for name, gauge in self.gauges.items():
             gauge.labels(bot=bot).set(getattr(rec, name))
@@ -1315,7 +1327,10 @@ class DataBot:
             "error_breach": delta_err >= t.error_threshold,
         }
         degraded = event["roi_breach"] or event["error_breach"]
-        cb = callback or self.degradation_callback
+        callbacks = []
+        if callback:
+            callbacks.append(callback)
+        callbacks.extend(self._degradation_callbacks)
         if self.event_bus:
             try:
                 self.event_bus.publish("metrics:delta", event)
@@ -1324,8 +1339,14 @@ class DataBot:
                     self.event_bus.publish("bot:degraded", event)
             except Exception as exc:
                 self.logger.exception("failed to publish metrics event: %s", exc)
-        elif degraded and cb:
-            cb(event)
+        elif degraded and callbacks:
+            for cb in callbacks:
+                try:
+                    cb(event)
+                except Exception as exc:
+                    self.logger.exception(
+                        "degradation callback failed: %s", exc
+                    )
         return degraded
 
     def log_evolution_cycle(
