@@ -126,8 +126,10 @@ appear.
 All new coding bots must be created via the `@self_coding_managed` decorator
 from `coding_bot_interface`. Decorating a bot automatically registers it with
 `BotRegistry` and wires ROI and error metrics into `DataBot`, allowing the
-system to track and improve the bot over time. Avoid instantiating new coding
-bots without this decorator.
+system to track and improve the bot over time. Bot constructors **must** accept
+`bot_registry`, `data_bot`, and `selfcoding_manager` parameters and forward
+them to the decorator to ensure proper registration. Avoid instantiating new
+coding bots without this decorator.
 
 ## Stripe integration
 
