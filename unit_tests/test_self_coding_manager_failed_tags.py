@@ -102,6 +102,16 @@ class ErrorDB:
 err_mod.ErrorDB = ErrorDB
 sys.modules.setdefault("menace.error_bot", err_mod)
 
+# QuickFixEngine stub
+qfe_mod = types.ModuleType("menace.quick_fix_engine")
+class QuickFixEngine:
+    def __init__(self, *a, **k):
+        self.context_builder = None
+    def apply_validated_patch(self, *a, **k):
+        return True, 1
+qfe_mod.QuickFixEngine = QuickFixEngine
+sys.modules.setdefault("menace.quick_fix_engine", qfe_mod)
+
 ueb_mod = types.ModuleType("menace.unified_event_bus")
 class UnifiedEventBus:
     pass
@@ -168,6 +178,7 @@ def test_failed_tags_recorded(monkeypatch, tmp_path):
     engine = Engine()
     pipeline = ModelAutomationPipeline(context_builder=builder)
     mgr = scm.SelfCodingManager(engine, pipeline)
+    monkeypatch.setattr(scm.SelfCodingManager, "_ensure_quick_fix_engine", lambda self: None)
 
     # ensure clone path exists and file copied during git clone
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
