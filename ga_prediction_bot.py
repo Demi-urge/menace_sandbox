@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import random
 import logging
 
@@ -63,6 +64,7 @@ class TemplateDB:
         self.df.to_csv(self.path, index=False)
 
 
+@self_coding_managed
 class GAPredictionBot:
     """Evolve ML models to maximise prediction accuracy."""
 

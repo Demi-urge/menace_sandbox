@@ -1,3 +1,4 @@
+from .coding_bot_interface import self_coding_managed
 import os
 import json
 import subprocess
@@ -50,6 +51,7 @@ class VideoItem:
     audio_path: str
 
 
+@self_coding_managed
 class VideoResearchBot:
     """Bot that collects and summarises useful video content."""
 

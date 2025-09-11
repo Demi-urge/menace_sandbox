@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 import logging
 
@@ -75,6 +76,7 @@ class EfficiencyDB:
         return cur.fetchall()
 
 
+@self_coding_managed
 class EfficiencyBot:
     """Optimise models via compression and benchmarking."""
 

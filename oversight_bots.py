@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from typing import List, Any
 
@@ -12,6 +13,7 @@ from .data_bot import DataBot, MetricsDB
 from .capital_management_bot import CapitalManagementBot
 
 @dataclass
+@self_coding_managed
 class OversightBot:
     """Monitor subordinate bots using collected metrics."""
 
@@ -41,6 +43,7 @@ class OversightBot:
         return summary
 
 
+@self_coding_managed
 class L1OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -48,6 +51,7 @@ class L1OversightBot(OversightBot):
         super().__init__("L1", data_bot, capital_bot)
 
 
+@self_coding_managed
 class L2OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -55,6 +59,7 @@ class L2OversightBot(OversightBot):
         super().__init__("L2", data_bot, capital_bot)
 
 
+@self_coding_managed
 class L3OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -62,6 +67,7 @@ class L3OversightBot(OversightBot):
         super().__init__("L3", data_bot, capital_bot)
 
 
+@self_coding_managed
 class M1OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -69,6 +75,7 @@ class M1OversightBot(OversightBot):
         super().__init__("M1", data_bot, capital_bot)
 
 
+@self_coding_managed
 class M2OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -76,6 +83,7 @@ class M2OversightBot(OversightBot):
         super().__init__("M2", data_bot, capital_bot)
 
 
+@self_coding_managed
 class M3OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -83,6 +91,7 @@ class M3OversightBot(OversightBot):
         super().__init__("M3", data_bot, capital_bot)
 
 
+@self_coding_managed
 class H1OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -90,6 +99,7 @@ class H1OversightBot(OversightBot):
         super().__init__("H1", data_bot, capital_bot)
 
 
+@self_coding_managed
 class H2OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -97,6 +107,7 @@ class H2OversightBot(OversightBot):
         super().__init__("H2", data_bot, capital_bot)
 
 
+@self_coding_managed
 class H3OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())

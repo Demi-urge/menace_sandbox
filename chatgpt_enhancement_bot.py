@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 import os
 import sqlite3
@@ -1025,6 +1026,7 @@ def parse_enhancements(data: dict[str, object]) -> List[Enhancement]:
     return enhancements
 
 
+@self_coding_managed
 class ChatGPTEnhancementBot:
     """Generate and store improvement ideas via ChatGPT."""
     def __init__(

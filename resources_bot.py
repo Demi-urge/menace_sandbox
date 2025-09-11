@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import logging
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,7 @@ class ROIHistoryDB(EmbeddableDBMixin):
         return ResourceVectorizer().transform(rec)
 
 
+@self_coding_managed
 class ResourcesBot:
     """Central allocator leveraging prediction data and ROI trends.
 

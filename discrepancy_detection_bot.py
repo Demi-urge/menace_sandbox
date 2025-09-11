@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -43,6 +44,7 @@ class OptimizationError(DiscrepancyError):
     """Raised when post-detection optimisation fails."""
 
 
+@self_coding_managed
 class DiscrepancyDetectionBot:
     """Run registered discrepancy rules and log findings."""
 

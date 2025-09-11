@@ -1,4 +1,3 @@
-# flake8: noqa
 """Data Bot for collecting and analysing performance metrics.
 
 The bot exposes a small set of configuration keys that control how
@@ -33,6 +32,8 @@ Example ``self_coding_thresholds.yaml``::
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
+# flake8: noqa
 import sqlite3
 import os
 import logging
@@ -963,6 +964,7 @@ class MetricsDB:
             return pd.read_sql(query, conn, params=params)
 
 
+@self_coding_managed
 class DataBot:
     """Collect metrics, expose them to Prometheus and detect anomalies.
 

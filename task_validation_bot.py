@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import asdict
 from typing import Iterable, List
 
@@ -50,6 +51,7 @@ class TaskSchema(Schema):
     category = fields.Str(required=True)
 
 
+@self_coding_managed
 class TaskValidationBot:
     """Validate tasks against goals and structure."""
 

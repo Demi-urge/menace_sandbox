@@ -1,7 +1,8 @@
-from __future__ import annotations
-
 """Meta genetic algorithm for tuning GeneticAlgorithmBot parameters."""
 
+from __future__ import annotations
+
+from .coding_bot_interface import self_coding_managed
 import random
 from dataclasses import dataclass
 from typing import Iterable, List
@@ -27,6 +28,7 @@ class MetaGARecord:
     roi: float
 
 
+@self_coding_managed
 class MetaGeneticAlgorithmBot:
     """Evolve configurations for GeneticAlgorithmBot instances."""
 

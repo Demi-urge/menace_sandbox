@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1046,6 +1047,7 @@ class StrategyTier(str, Enum):
     AGGRESSIVE = "aggressive"
 
 
+@self_coding_managed
 class CapitalManagementBot:
     """Manage capital and decide reinvestment based on energy score."""
 

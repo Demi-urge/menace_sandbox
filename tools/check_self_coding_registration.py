@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Lint check ensuring all coding bots use ``@self_coding_managed``.
+"""Lint check ensuring all coding bots are registered correctly.
 
-The script scans the repository for modules that import
-``self_coding_manager`` or ``self_coding_engine`` and looks for classes
-with names ending in ``Bot``.  Any such class must be decorated with the
-``self_coding_managed`` decorator.  The check ignores test modules.
+The script scans the repository for Python modules matching ``*bot*.py``
+and inspects classes whose names end with ``Bot``.  Each bot class must be
+decorated with ``@self_coding_managed``.  Modules that omit the decorator
+are only allowed when they explicitly register the bot via
+``BotRegistry.register_bot`` *and* log evaluations with ``db.log_eval``.
+This accommodates factory-based or dynamically constructed bots.  Test
+modules are ignored.
 """
 
 from __future__ import annotations
@@ -14,53 +17,50 @@ from pathlib import Path
 import sys
 
 
-def _uses_self_coding(tree: ast.AST) -> bool:
-    """Return ``True`` if *tree* imports self-coding helpers."""
+def _class_missing(cls: ast.ClassDef) -> bool:
+    """Return ``True`` if *cls* lacks the ``self_coding_managed`` decorator."""
 
+    return not any(
+        (isinstance(dec, ast.Name) and dec.id == "self_coding_managed")
+        or (isinstance(dec, ast.Attribute) and dec.attr == "self_coding_managed")
+        for dec in cls.decorator_list
+    )
+
+
+def _has_register_and_log(tree: ast.AST) -> bool:
+    """Return ``True`` if module registers the bot and logs evaluations."""
+
+    has_reg = False
+    has_log = False
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            mod = node.module or ""
-            if mod.endswith("self_coding_manager") or mod.endswith("self_coding_engine"):
-                return True
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.endswith("self_coding_manager") or alias.name.endswith(
-                    "self_coding_engine"
-                ):
-                    return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "register_bot":
+                has_reg = True
+            elif node.func.attr == "log_eval":
+                has_log = True
+        if has_reg and has_log:
+            return True
     return False
-
-
-def _missing_decorator(tree: ast.AST) -> list[str]:
-    """Return class names missing the ``self_coding_managed`` decorator."""
-
-    missing: list[str] = []
-    for node in getattr(tree, "body", []):
-        if isinstance(node, ast.ClassDef) and node.name.endswith("Bot"):
-            has_dec = any(
-                (isinstance(dec, ast.Name) and dec.id == "self_coding_managed")
-                or (isinstance(dec, ast.Attribute) and dec.attr == "self_coding_managed")
-                for dec in node.decorator_list
-            )
-            if not has_dec:
-                missing.append(node.name)
-    return missing
 
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     offenders: list[tuple[Path, list[str]]] = []
-    for path in root.rglob("*.py"):
+    for path in root.rglob("*bot*.py"):
         if "tests" in path.parts or "unit_tests" in path.parts:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        if not _uses_self_coding(tree):
-            continue
-        missing = _missing_decorator(tree)
-        if missing:
+        missing = [
+            node.name
+            for node in getattr(tree, "body", [])
+            if isinstance(node, ast.ClassDef)
+            and node.name.endswith("Bot")
+            and _class_missing(node)
+        ]
+        if missing and not _has_register_and_log(tree):
             offenders.append((path.relative_to(root), missing))
     if offenders:
         for path, classes in offenders:

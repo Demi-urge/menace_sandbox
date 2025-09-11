@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List
@@ -70,6 +71,7 @@ class MirrorDB:
         return float(sum(r[0] for r in rows) / len(rows))
 
 
+@self_coding_managed
 class MirrorBot:
     """Collect user interactions and mirror communication style."""
 

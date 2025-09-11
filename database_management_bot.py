@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from pathlib import Path
 from typing import Iterable
 
@@ -17,6 +18,7 @@ from .database_manager import (
 )
 
 
+@self_coding_managed
 class DatabaseManagementBot(AdminBotBase):
     """Coordinate idea ingestion and profitability thresholds."""
 

@@ -1,8 +1,9 @@
-# flake8: noqa
-from __future__ import annotations
-
 """Deployment Bot for provisioning and deploying bots."""
 
+from __future__ import annotations
+
+from .coding_bot_interface import self_coding_managed
+# flake8: noqa
 import json
 import logging
 import os
@@ -270,6 +271,7 @@ class DeploymentSpec:
 # Main automation class
 # ---------------------------------------------------------------------------
 
+@self_coding_managed
 class DeploymentBot:
     """Automates build → test → deploy and updates all registry tables."""
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import importlib
 import inspect
 import doctest
@@ -185,6 +186,7 @@ class TestingLogDB:
         ]
 
 
+@self_coding_managed
 class BotTestingBot:
     """Run unit and basic integration tests for bots."""
 

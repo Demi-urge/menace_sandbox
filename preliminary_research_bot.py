@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -62,6 +63,7 @@ class BusinessData:
     roi_score: Optional[float] = None
 
 
+@self_coding_managed
 class PreliminaryResearchBot:
     """Scrape and analyse business metrics for a model suggestion."""
 

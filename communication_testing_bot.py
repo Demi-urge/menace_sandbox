@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from difflib import SequenceMatcher
 import time
 from dataclasses import dataclass
@@ -210,6 +211,7 @@ class CommTestDB:
         ]
 
 
+@self_coding_managed
 class CommunicationTestingBot:
     """Bot that runs communication tests and mirror benchmarks."""
 

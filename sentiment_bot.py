@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import sqlite3
 import logging
 from dataclasses import dataclass, field
@@ -199,6 +200,7 @@ def extract_features(text: str) -> List[str]:
     return words[:3]
 
 
+@self_coding_managed
 class SentimentBot:
     """Collect and analyse user sentiment from social media."""
 

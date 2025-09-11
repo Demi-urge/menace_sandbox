@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import logging
 import re
 from dataclasses import dataclass, field
@@ -219,6 +220,7 @@ class ExecutionPlan:
     graph: nx.DiGraph
 
 
+@self_coding_managed
 class IPOBot:
     """Main orchestrator for the IPO planning process."""
 

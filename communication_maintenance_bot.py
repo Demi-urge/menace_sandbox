@@ -1,8 +1,9 @@
-# flake8: noqa
 """Communication Maintenance Bot for updates and resource optimisation."""
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
+# flake8: noqa
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -316,6 +317,7 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             return _Dummy()
 
 
+    @self_coding_managed
     class ErrorBot:
         def __init__(self, db: ErrorDB, context_builder: ContextBuilder) -> None:
             if not isinstance(context_builder, ContextBuilder):
@@ -948,6 +950,7 @@ def entry_expired(ts: str, threshold: timedelta = timedelta(hours=COMM_LOG_RETEN
     return datetime.utcnow() - dt > threshold
 
 
+@self_coding_managed
 class CommunicationMaintenanceBot(AdminBotBase):
     """Manage updates, patches and resource allocation for communication bots."""
 

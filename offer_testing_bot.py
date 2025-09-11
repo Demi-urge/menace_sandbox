@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import sqlite3
 from dataclasses import dataclass
 import dataclasses
@@ -188,6 +189,7 @@ class OfferDB:
         }
 
 
+@self_coding_managed
 class OfferTestingBot:
     """Generate offer variations, deploy them and select winners."""
 

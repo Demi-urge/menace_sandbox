@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
@@ -40,6 +41,7 @@ class CompetitorFeatures:
         return [self.revenue_growth, self.funding, self.sentiment, float(self.tech_mentions)]
 
 
+@self_coding_managed
 class StrategyPredictionBot:
     """Predict competitor strategies and coordinate actions from other bots."""
 

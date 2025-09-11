@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import asyncio
 import json
 import time
@@ -43,6 +44,7 @@ class FallbackResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+@self_coding_managed
 class ResearchFallbackBot:
     """Fallback bot using headless Chrome to gather external insights."""
 

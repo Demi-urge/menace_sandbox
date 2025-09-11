@@ -1,7 +1,8 @@
-from __future__ import annotations
-
 """Bot for aggressive niche saturation to outcompete rivals (legal only)."""
 
+from __future__ import annotations
+
+from .coding_bot_interface import self_coding_managed
 from typing import Iterable, Tuple
 import time
 
@@ -11,6 +12,7 @@ from vector_service.context_builder import ContextBuilder
 from .compliance_checker import ComplianceChecker
 
 
+@self_coding_managed
 class MarketManipulationBot:
     """
     Saturate market niches using high-effort content and competitive targeting.

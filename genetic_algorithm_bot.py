@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import random
 from dataclasses import dataclass, field
 import logging
@@ -56,6 +57,7 @@ class GAStore:
         self.df.to_csv(self.path, index=False)
 
 
+@self_coding_managed
 class GeneticAlgorithmBot:
     """Run a simple DEAP-based genetic algorithm."""
 

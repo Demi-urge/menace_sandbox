@@ -1,6 +1,7 @@
-# flake8: noqa
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
+# flake8: noqa
 import json
 import time
 import logging
@@ -122,6 +123,7 @@ class InnovationsDB:
             )
         return items
 
+@self_coding_managed
 class ContrarianModelBot:
     prediction_profile = {"scope": ["contrarian"], "risk": ["high"]}
 
