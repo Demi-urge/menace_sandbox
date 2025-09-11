@@ -159,7 +159,7 @@ def test_watchdog_runs_debugger(tmp_path, monkeypatch):
     called = []
 
     class DummyDebugger:
-        def __init__(self, db, eng, **kwargs):
+        def __init__(self, db, eng, context_builder, *, manager, **kwargs):
             pass
 
         def analyse_and_fix(self):

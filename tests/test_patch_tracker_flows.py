@@ -166,6 +166,14 @@ class DummyDataBot:
         return 0.0
 
 
+class DummyManager:
+    def __init__(self, engine):
+        self.engine = engine
+
+    def run_patch(self, path, mode, **kwargs):
+        self.engine.apply_patch(path, mode, **kwargs)
+
+
 def test_automated_debugger_escalation_and_reset(tmp_path, monkeypatch):
     mod = tmp_path / "buggy.py"  # path-ignore
     mod.write_text("def f():\n    raise ValueError('boom')\n")
@@ -175,7 +183,9 @@ def test_automated_debugger_escalation_and_reset(tmp_path, monkeypatch):
     )
 
     engine = DummyEngine()
-    debugger = AutomatedDebugger(DummyTelemetry(log), engine, DummyBuilder())
+    debugger = AutomatedDebugger(
+        DummyTelemetry(log), engine, DummyBuilder(), manager=DummyManager(engine)
+    )
 
     call = {"n": 0}
 

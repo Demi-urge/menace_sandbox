@@ -162,7 +162,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         engine: SelfCodingEngine | None = None,
         *,
         context_builder: ContextBuilder,
-        manager: SelfCodingManager | None = None,
+        manager: SelfCodingManager,
         audit_trail: AuditTrail | None = None,
         policy: SelfImprovementPolicy | None = None,
         state_getter: Callable[[], tuple[int, ...]] | None = None,
@@ -180,7 +180,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         if context_builder is None:
             raise ValueError("SelfDebuggerSandbox requires a ContextBuilder instance")
         super().__init__(telemetry_db, engine, context_builder, manager=manager)
-        eng_or_mgr = manager or engine
+        eng_or_mgr = manager
         self.audit_trail = audit_trail or getattr(eng_or_mgr, "audit_trail", None)
         self.policy = policy
         self.state_getter = state_getter

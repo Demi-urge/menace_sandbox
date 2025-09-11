@@ -560,7 +560,7 @@ bucket is configured or run as a limited pilot.
   with per-metric synergy EMA, deviation and confidence. Window sizes and weight
   parameters are included in each `log_record` entry.
 - Synergy-aware environment presets adapt CPU, memory, bandwidth and threat levels ([docs/environment_generator.md](docs/environment_generator.md))
-- Sandboxed self-debugging using `SelfDebuggerSandbox` (invoked by `launch_menace_bots.py` after the test run)
+- Sandboxed self-debugging using `SelfDebuggerSandbox` (invoked by `launch_menace_bots.py` after the test run) which requires a `SelfCodingManager`
 - Comprehensive build pipeline in `launch_menace_bots.py` that plans,
   develops, tests and scales bots before deployment.  `debug_and_deploy`
   creates a `ContextBuilder` with local database paths by default, but callers

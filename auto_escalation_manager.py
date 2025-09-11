@@ -111,8 +111,22 @@ class AutoEscalationManager:
                     event_bus=event_bus,
                     context_builder=self.context_builder,
                 )
+                try:
+                    from .self_coding_manager import SelfCodingManager
+                    from .model_automation_pipeline import ModelAutomationPipeline
+
+                    pipeline = ModelAutomationPipeline(
+                        context_builder=self.context_builder
+                    )
+                    manager = SelfCodingManager(engine, pipeline, event_bus=event_bus)
+                except Exception:
+                    class _Mgr:
+                        def run_patch(self, *a, **k):
+                            return None
+
+                    manager = _Mgr()
                 debugger = AutomatedDebugger(
-                    ErrorDB(), engine, context_builder=self.context_builder
+                    ErrorDB(), engine, self.context_builder, manager=manager
                 )
             else:  # pragma: no cover - fallback when components missing
                 class _DummyDebugger:

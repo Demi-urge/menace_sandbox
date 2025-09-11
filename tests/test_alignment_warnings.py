@@ -64,11 +64,16 @@ def test_self_debugger_preemptive_patch_logs_warning(tmp_path, monkeypatch):
         def predict_high_risk_modules(self, top_n=5):
             return [str(src)]
 
+    class DummyManager:
+        def run_patch(self, *a, **k):
+            return 1
+
     sandbox = self_debugger_sandbox.SelfDebuggerSandbox(
         object(),
         object(),
         context_builder=DummyBuilder(),
         error_predictor=Predictor(),
+        manager=DummyManager(),
     )
     sandbox.preemptive_fix_high_risk_modules(limit=1)
     assert logs, "expected alignment warning logged"

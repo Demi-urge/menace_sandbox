@@ -1,6 +1,6 @@
 # Self Debugger Sandbox
 
-`SelfDebuggerSandbox` analyses recent errors and tries generated patches in an isolated repository clone. Patch scores and flakiness history are stored in a local SQLite database by default.
+`SelfDebuggerSandbox` analyses recent errors and tries generated patches in an isolated repository clone. Patch scores and flakiness history are stored in a local SQLite database by default. A `SelfCodingManager` must be provided to execute patches.
 
 ## Configuration
 

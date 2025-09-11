@@ -273,6 +273,14 @@ sds = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sds)
 sys.modules["menace.self_debugger_sandbox"] = sds
 
+class DummyManager:
+    def run_patch(self, *a, **k):
+        pass
+
+from functools import partial
+
+sds.SelfDebuggerSandbox = partial(sds.SelfDebuggerSandbox, manager=DummyManager())
+
 # Provide a minimal error logger stub to avoid heavy dependencies during tests
 sds.ErrorLogger = lambda *a, **k: types.SimpleNamespace(record=lambda *a, **k: None)
 sds.create_ephemeral_env = _fake_env

@@ -88,10 +88,15 @@ _router_stub = types.SimpleNamespace(get_connection=lambda name: (_ for _ in ())
 sys.modules['db_router'] = types.SimpleNamespace(
     GLOBAL_ROUTER=_router_stub, init_db_router=lambda name: _router_stub
 )
-def _auto_init(self, telem, engine, context_builder):
+sys.modules['menace.self_coding_manager'] = types.SimpleNamespace(
+    SelfCodingManager=object
+)
+
+def _auto_init(self, telem, engine, context_builder, *, manager):
     self.telemetry_db = telem
     self.engine = engine
     self.context_builder = context_builder
+    self.manager = manager
     self.logger = logging.getLogger('AutomatedDebugger')
 
 sys.modules['menace.automated_debugger'] = types.SimpleNamespace(
@@ -164,6 +169,11 @@ class DummyEngine:
     pass
 
 
+class DummyManager:
+    def run_patch(self, *a, **k):
+        pass
+
+
 def test_context_feedback_logs_malformed_metadata(monkeypatch, caplog):
     class DummyBuilder:
         def exclude_failed_strategies(self, tags):
@@ -177,7 +187,10 @@ def test_context_feedback_logs_malformed_metadata(monkeypatch, caplog):
 
     monkeypatch.setattr(sds, 'ContextBuilder', DummyBuilder)
     dbg = sds.SelfDebuggerSandbox(
-        DummyTelem(), DummyEngine(), context_builder=DummyBuilder()
+        DummyTelem(),
+        DummyEngine(),
+        context_builder=DummyBuilder(),
+        manager=DummyManager(),
     )
     report = types.SimpleNamespace(trace='x')
 
