@@ -12,6 +12,7 @@ import inspect
 import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import contextvars
+import time
 
 from .self_coding_manager import SelfCodingManager
 try:  # pragma: no cover - allow tests to stub engine
@@ -153,4 +154,33 @@ def self_coding_managed(cls: type) -> type:
                 logger.exception("failed logging errors for %s", name)
 
     cls.__init__ = wrapped_init  # type: ignore[assignment]
+
+    for method_name in ("run", "execute"):
+        orig_method = getattr(cls, method_name, None)
+        if callable(orig_method):
+            @wraps(orig_method)
+            def wrapped_method(self, *args: Any, _orig=orig_method, **kwargs: Any):
+                start = time.time()
+                errors = 0
+                try:
+                    result = _orig(self, *args, **kwargs)
+                except Exception:
+                    errors = 1
+                    raise
+                finally:
+                    response_time = time.time() - start
+                    try:
+                        data_bot = getattr(self, "data_bot", None)
+                        if data_bot is None:
+                            manager = getattr(self, "manager", None)
+                            data_bot = getattr(manager, "data_bot", None)
+                        if data_bot:
+                            name = getattr(self, "name", getattr(self, "bot_name", cls.__name__))
+                            data_bot.collect(name, response_time=response_time, errors=errors)
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception("failed logging metrics for %s", cls.__name__)
+                return result
+
+            setattr(cls, method_name, wrapped_method)
+
     return cls
