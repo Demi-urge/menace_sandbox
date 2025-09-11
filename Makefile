@@ -4,6 +4,7 @@ mypy:
 	python scripts/check_governed_embeddings.py
 	python scripts/check_governed_retrieval.py
 	python scripts/check_context_builder_usage.py
+	python tools/check_self_coding_registration.py
 
 synergy-graph:
 	python module_synergy_grapher.py --build

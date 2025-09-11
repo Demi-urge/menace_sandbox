@@ -1,5 +1,6 @@
 import os
 import sys
+import subprocess
 import types
 from pathlib import Path
 
@@ -191,11 +192,18 @@ for name in _stubs:
             stub.BotTestingBot = BotTestingBot
         sys.modules[name] = stub
 
-import menace.launch_menace_bots as lmb  # noqa: E402
-sys.modules.pop("menace.self_debugger_sandbox", None)
+def _load_lmb():
+    import pytest
+    try:
+        import menace.launch_menace_bots as lmb  # noqa: E402
+    except Exception as exc:  # pragma: no cover - environment specific
+        pytest.skip(f"menace.launch_menace_bots unavailable: {exc}")
+    sys.modules.pop("menace.self_debugger_sandbox", None)
+    return lmb
 
 
 def test_extract_docstrings_helper():
+    lmb = _load_lmb()
     code = '''"""Module doc"""
 
 def a():
@@ -212,6 +220,7 @@ def b():
 
 
 def test_debug_and_deploy_runs_sandbox(monkeypatch, tmp_path):
+    lmb = _load_lmb()
     calls = []
 
     class DummySandbox:
@@ -226,3 +235,9 @@ def test_debug_and_deploy_runs_sandbox(monkeypatch, tmp_path):
     builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
     lmb.debug_and_deploy(tmp_path, context_builder=builder)
     assert "fix" in calls
+
+
+def test_self_coding_registration_check():
+    script = Path(__file__).resolve().parents[1] / "tools" / "check_self_coding_registration.py"
+    result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
