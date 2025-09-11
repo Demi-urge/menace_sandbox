@@ -105,7 +105,6 @@ def test_recovery_and_history_growth(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([
         "--max-iterations",

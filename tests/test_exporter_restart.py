@@ -152,8 +152,6 @@ def test_exporter_auto_restart(monkeypatch, tmp_path: Path) -> None:
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -175,7 +173,6 @@ def test_exporter_auto_restart(monkeypatch, tmp_path: Path) -> None:
     port = _free_port()
     monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main(
         [
@@ -236,8 +233,6 @@ def test_exporter_busy_port(monkeypatch, tmp_path: Path) -> None:
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -262,7 +257,6 @@ def test_exporter_busy_port(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     try:
         mod.main(
@@ -316,8 +310,6 @@ def test_exporter_stale_health(monkeypatch, tmp_path: Path) -> None:
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -339,7 +331,6 @@ def test_exporter_stale_health(monkeypatch, tmp_path: Path) -> None:
     port = _free_port()
     monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main(
         [
@@ -407,8 +398,6 @@ def test_exporter_cleanup(monkeypatch, tmp_path: Path) -> None:
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -430,7 +419,6 @@ def test_exporter_cleanup(monkeypatch, tmp_path: Path) -> None:
     port = _free_port()
     monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main(
         [

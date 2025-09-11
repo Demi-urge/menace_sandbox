@@ -118,7 +118,6 @@ def test_full_cycle(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([
         "--max-iterations",

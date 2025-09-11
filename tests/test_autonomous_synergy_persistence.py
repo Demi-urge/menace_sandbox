@@ -152,8 +152,6 @@ def _load_module(monkeypatch, tmp_path: Path):
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -194,7 +192,6 @@ def test_synergy_persistence(monkeypatch, tmp_path: Path) -> None:
     port = _free_port()
     monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     _run_once(monkeypatch, tmp_path, 0.05)
     _run_once(monkeypatch, tmp_path, 0.1)

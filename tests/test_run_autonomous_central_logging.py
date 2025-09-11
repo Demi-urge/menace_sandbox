@@ -12,8 +12,6 @@ def test_run_autonomous_adds_audit_handler(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_check_dependencies", lambda *_a, **_k: True)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda *a, **k: None)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     logging.getLogger().handlers.clear()
     mod.main(["--runs", "0", "--check-settings"])

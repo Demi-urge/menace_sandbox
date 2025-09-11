@@ -108,7 +108,6 @@ def test_run_autonomous_writes_history(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = _load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main(
         ["--max-iterations", "1", "--runs", "1", "--sandbox-data-dir", str(tmp_path)]
@@ -125,7 +124,6 @@ def test_synergy_history_reused(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = _load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     synergy_file = tmp_path / "synergy_history.json"
     synergy_file.write_text(json.dumps([{"synergy_roi": 0.1}]))
@@ -158,7 +156,6 @@ def test_adaptive_synergy_threshold_default(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = _load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     history = [{"synergy_roi": i * 0.1} for i in range(5)]
     (tmp_path / "synergy_history.json").write_text(json.dumps(history))
@@ -198,7 +195,6 @@ def test_previous_synergy_initialises_threshold(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     history = [{"synergy_roi": 0.1}, {"synergy_roi": 0.2}]
     (tmp_path / "synergy_history.json").write_text(json.dumps(history))
@@ -237,7 +233,6 @@ def test_disable_synergy_history(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main(
         [
@@ -259,7 +254,6 @@ def test_env_disable_synergy_history(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setenv("SAVE_SYNERGY_HISTORY", "0")
 
     mod.main(
@@ -281,7 +275,6 @@ def test_invalid_synergy_history_exits(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     (tmp_path / "synergy_history.json").write_text('[{"synergy_roi": "bad"}]')
 
@@ -301,7 +294,6 @@ def test_auto_thresholds_uses_saved_synergy(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     thresholds: list[float] = []
     hist_lengths: list[int] = []
@@ -414,8 +406,6 @@ def test_threshold_gauges_updated(monkeypatch, tmp_path):
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -430,8 +420,6 @@ def test_threshold_gauges_updated(monkeypatch, tmp_path):
             self.synergy_variance_confidence = None
 
     monkeypatch.setattr(mod, "SandboxSettings", DummySettings)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
     mod.main([

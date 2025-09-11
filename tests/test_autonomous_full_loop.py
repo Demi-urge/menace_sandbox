@@ -226,7 +226,6 @@ def test_autonomous_full_loop(monkeypatch, tmp_path):
 
     popen_calls = []
     monkeypatch.setattr(mod.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.chdir(tmp_path)
 
     mod.main(["--max-iterations", "1", "--runs", "1", "--preset-count", "1", "--sandbox-data-dir", str(tmp_path)])

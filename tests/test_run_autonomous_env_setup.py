@@ -74,7 +74,6 @@ def test_files_created(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}])
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([])
 
@@ -88,7 +87,6 @@ def test_cli_overrides_env(monkeypatch, tmp_path):
     mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setenv("ENABLE_RELEVANCY_RADAR", "0")
     captured = {}
 
@@ -135,7 +133,6 @@ def test_main_exits_on_failed_install(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
     mod = load_module(monkeypatch)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: False)
     mod.main([])
 
@@ -148,7 +145,6 @@ def test_invalid_preset_file_exits(monkeypatch, tmp_path):
     (data_dir / "presets.json").write_text('[{"CPU_LIMIT": "foo"}]')
     mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     with pytest.raises((SystemExit, ValidationError)):
         mod.main([
@@ -181,7 +177,6 @@ def test_main_ignores_corrupt_synergy(monkeypatch, tmp_path):
     (data_dir / "synergy_history.json").write_text("not json")
     mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([
         "--max-iterations",
@@ -203,7 +198,6 @@ def test_main_recovers_corrupt_presets(monkeypatch, tmp_path):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([
         "--max-iterations",
@@ -235,7 +229,6 @@ def test_main_ignores_corrupt_synergy_db(monkeypatch, tmp_path):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([
         "--max-iterations",
