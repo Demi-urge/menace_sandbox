@@ -14,7 +14,25 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-import sys
+
+
+# Base classes that identify coding bots.
+#
+# Any class inheriting from one of these bases is treated as a bot even if its
+# name does not end with ``Bot``.  The list can be extended as new bot base
+# classes are introduced.
+KNOWN_BOT_BASES = {"AdminBotBase"}
+
+
+def _inherits_bot_base(cls: ast.ClassDef) -> bool:
+    """Return ``True`` if *cls* inherits from a known bot base."""
+
+    for base in cls.bases:
+        if isinstance(base, ast.Name) and base.id in KNOWN_BOT_BASES:
+            return True
+        if isinstance(base, ast.Attribute) and base.attr in KNOWN_BOT_BASES:
+            return True
+    return False
 
 
 def _class_missing(cls: ast.ClassDef) -> bool:
@@ -57,7 +75,7 @@ def main() -> int:
             node.name
             for node in getattr(tree, "body", [])
             if isinstance(node, ast.ClassDef)
-            and node.name.endswith("Bot")
+            and (node.name.endswith("Bot") or _inherits_bot_base(node))
             and _class_missing(node)
         ]
         if missing and not _has_register_and_log(tree):
@@ -72,4 +90,3 @@ def main() -> int:
 
 if __name__ == "__main__":  # pragma: no cover - entry point
     raise SystemExit(main())
-
