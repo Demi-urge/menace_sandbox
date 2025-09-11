@@ -169,11 +169,17 @@ class SelfCodingManager:
             if error_rate_threshold is not None
             else thresholds.error_increase
         )
+        self.test_failure_threshold = thresholds.test_failure_increase
         self._refresh_thresholds()
         self._last_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         self._last_errors = (
             self.data_bot.average_errors(self.bot_name) - self.error_rate_threshold
             if self.data_bot
+            else 0.0
+        )
+        self._last_test_failures = (
+            self.data_bot.average_test_failures(self.bot_name)
+            if self.data_bot and hasattr(self.data_bot, "average_test_failures")
             else 0.0
         )
         self._failure_cache = FailureCache()
@@ -220,13 +226,14 @@ class SelfCodingManager:
             self.logger.exception("failed to register bot in registry")
 
     def _refresh_thresholds(self) -> None:
-        """Fetch ROI and error thresholds from :class:`DataBot`."""
+        """Fetch ROI, error and test-failure thresholds from :class:`DataBot`."""
         if not self.data_bot:
             return
         try:
             t = self.data_bot.get_thresholds(self.bot_name)
             self.roi_drop_threshold = t.roi_drop
             self.error_rate_threshold = t.error_threshold
+            self.test_failure_threshold = t.test_failure_threshold
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load thresholds for %s", self.bot_name)
 
@@ -295,20 +302,28 @@ class SelfCodingManager:
 
     # ------------------------------------------------------------------
     def should_refactor(self) -> bool:
-        """Return ``True`` when ROI or error metrics breach thresholds."""
+        """Return ``True`` when ROI, error or test metrics breach thresholds."""
 
         if not self.data_bot:
             return False
         self._refresh_thresholds()
         roi = self.data_bot.roi(self.bot_name)
         errors = self.data_bot.average_errors(self.bot_name)
+        failures = (
+            self.data_bot.average_test_failures(self.bot_name)
+            if hasattr(self.data_bot, "average_test_failures")
+            else 0.0
+        )
         delta_roi = roi - self._last_roi
         delta_err = errors - self._last_errors
+        delta_fail = failures - self._last_test_failures
         self._last_roi = roi
         self._last_errors = errors
+        self._last_test_failures = failures
         return (
             delta_roi <= self.roi_drop_threshold
             or delta_err >= self.error_rate_threshold
+            or delta_fail >= self.test_failure_threshold
         )
 
     # ------------------------------------------------------------------
