@@ -25,6 +25,10 @@ th.run_tests = lambda *a, **k: types.SimpleNamespace(success=True, stdout="", du
 th.TestHarnessResult = types.SimpleNamespace
 sys.modules.setdefault("sandbox_runner.test_harness", th)
 
+cbi = types.ModuleType("menace.coding_bot_interface")
+cbi.self_coding_managed = lambda f: f
+sys.modules.setdefault("menace.coding_bot_interface", cbi)
+
 scm_mod = types.ModuleType("menace.self_coding_manager")
 
 class HelperGenerationError(RuntimeError):
@@ -51,6 +55,9 @@ class SelfCodingManager:
 
     def register_patch_cycle(self, *_, **__):  # noqa: D401,D403 - test stub
         """No-op hook for patch cycle registration."""
+
+    def should_refactor(self) -> bool:  # noqa: D401 - simple always-true stub
+        return True
 
 
 scm_mod.SelfCodingManager = SelfCodingManager
@@ -164,3 +171,53 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
     node = registry.graph.nodes["dummy_module"]
     assert node["module"] == str(mod_path)
     assert node["patch_id"] == 123
+
+
+def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(tmp_path)
+    mod_path = tmp_path / "dummy_module.py"
+    mod_path.write_text("def foo():\n    return 1\n")
+
+    import importlib
+
+    importlib.invalidate_caches()
+    __import__("dummy_module")
+
+    bus = DummyBus()
+    monkeypatch.setattr(eo_mod, "ContextBuilder", DummyContextBuilder)
+
+    registry = BotRegistry(event_bus=bus)
+    registry.graph.add_node("dummy_module", module=str(mod_path))
+
+    quick_fix = DummyQuickFix()
+
+    manager = SelfCodingManager(
+        quick_fix=quick_fix,
+        bot_name="dummy_module",
+        bot_registry=registry,
+    )
+
+    calls: list[str] = []
+
+    def fake_update_bot(name, module_path, patch_id=None, commit=None):
+        calls.append(module_path)
+        registry.graph.add_node(name)
+        registry.graph.nodes[name]["module"] = module_path
+
+    monkeypatch.setattr(registry, "update_bot", fake_update_bot)
+
+    data_bot = DataBot(MetricsDB(tmp_path / "metrics.db"), event_bus=bus)
+    EvolutionOrchestrator(
+        data_bot,
+        DummyCapital(),
+        DummyImprovement(),
+        DummyEvolution(),
+        selfcoding_manager=manager,
+        event_bus=bus,
+        history_db=DummyHistoryDB(),
+    )
+
+    bus.publish("bot:degraded", {"bot": "dummy_module"})
+
+    assert manager.called
+    assert calls and calls[0] == str(mod_path)
