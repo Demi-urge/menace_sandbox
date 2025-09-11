@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
-from typing import List, Callable, Dict, Tuple
+from typing import List, Callable, Dict
 
 from . import RAISE_ERRORS
 
@@ -27,14 +27,6 @@ class BotDevConfig:
     )
     headless: bool = os.getenv("BOT_DEV_HEADLESS", "0") == "1"
     default_templates: Dict[str, List[str]] = field(default_factory=dict)
-    ocr_region: Tuple[int, int, int, int] = field(
-        default_factory=lambda: (
-            int(os.getenv("OCR_LEFT", "0")),
-            int(os.getenv("OCR_TOP", "0")),
-            int(os.getenv("OCR_WIDTH", "1920")),
-            int(os.getenv("OCR_HEIGHT", "1080")),
-        )
-    )
     error_sinks: List[Callable[[str, str], None]] = field(default_factory=list)
     concurrency_workers: int = int(os.getenv("BOT_DEV_CONCURRENCY", "1"))
     raise_errors: bool = RAISE_ERRORS
