@@ -68,6 +68,8 @@ except Exception:  # pragma: no cover - optional dependency
 
         pass
 
+from context_builder_util import ensure_fresh_weights
+
 try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -235,6 +237,11 @@ class SelfCodingManager:
                 clayer = getattr(self.engine, "cognition_layer", None)
                 builder = getattr(clayer, "context_builder", None)
                 if builder is not None:
+                    try:
+                        ensure_fresh_weights(builder)
+                    except Exception:
+                        self.logger.exception("quick fix weight refresh failed")
+                        return None
                     self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
             except Exception:
                 self.logger.exception("failed to initialise QuickFixEngine")
@@ -382,14 +389,24 @@ class SelfCodingManager:
                 raise AttributeError(
                     "engine.cognition_layer must provide a context_builder",
                 )
-            self._ensure_quick_fix_engine()
-            if self.quick_fix is not None:
-                try:
-                    self.quick_fix.context_builder = builder
-                except Exception:
-                    self.logger.exception(
-                        "failed to update QuickFixEngine context builder",
-                    )
+            refresh_ok = True
+            try:
+                ensure_fresh_weights(builder)
+            except Exception:
+                self.logger.exception(
+                    "context builder weight refresh failed; using minimal patch"
+                )
+                refresh_ok = False
+                self.quick_fix = None
+            if refresh_ok:
+                self._ensure_quick_fix_engine()
+                if self.quick_fix is not None:
+                    try:
+                        self.quick_fix.context_builder = builder
+                    except Exception:
+                        self.logger.exception(
+                            "failed to update QuickFixEngine context builder",
+                        )
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None
