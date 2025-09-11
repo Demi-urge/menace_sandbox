@@ -25,9 +25,10 @@ sf_module = types.ModuleType("sanity_feedback")
 
 
 class SanityFeedback:
-    def __init__(self, engine, outcome_db=None):
+    def __init__(self, engine, outcome_db=None, **kwargs):
         self.engine = engine
         self.outcome_db = outcome_db
+        self.kwargs = kwargs
 
 
 sf_module.SanityFeedback = SanityFeedback
@@ -95,6 +96,7 @@ class _Builder:
 
     def refresh_db_weights(self):
         self.refreshed = True
+
 
 import billing.sanity_consumer as sc  # noqa: E402
 from unified_event_bus import UnifiedEventBus  # noqa: E402

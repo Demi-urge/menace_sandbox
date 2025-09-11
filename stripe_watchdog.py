@@ -178,9 +178,13 @@ except Exception:  # pragma: no cover - best effort
 try:  # Optional dependency – telemetry feedback loop
     from telemetry_feedback import TelemetryFeedback  # type: ignore
     from error_logger import ErrorLogger  # type: ignore
+    from bot_registry import BotRegistry  # type: ignore
+    from data_bot import DataBot  # type: ignore
 except Exception:  # pragma: no cover - best effort
     TelemetryFeedback = None  # type: ignore
     ErrorLogger = None  # type: ignore
+    BotRegistry = None  # type: ignore
+    DataBot = None  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -1912,7 +1916,10 @@ def main(
         if TelemetryFeedback and ErrorLogger and engine is not None:
             try:
                 telemetry = TelemetryFeedback(
-                    ErrorLogger(context_builder=builder), engine
+                    ErrorLogger(context_builder=builder),
+                    engine,
+                    bot_registry=BotRegistry() if BotRegistry else None,
+                    data_bot=DataBot() if DataBot else None,
                 )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise telemetry feedback")
