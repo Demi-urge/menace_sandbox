@@ -122,7 +122,6 @@ def _load_module():
 def test_converges(monkeypatch, tmp_path):
     counter, mod = _setup(monkeypatch, [0.1, 0.1, 0.1], [0.1, 0.05, 0.02])
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     logs = []
     monkeypatch.setattr(mod.logger, "info", lambda m, *a, **k: logs.append(m))
 
@@ -148,7 +147,6 @@ def test_converges(monkeypatch, tmp_path):
 def test_no_premature_convergence(monkeypatch, tmp_path):
     counter, mod = _setup(monkeypatch, [0.1] * 6, [0.1, -0.1, 0.1, -0.1, 0.1, -0.1])
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     logs = []
     monkeypatch.setattr(mod.logger, "info", lambda m, *a, **k: logs.append(m))
 

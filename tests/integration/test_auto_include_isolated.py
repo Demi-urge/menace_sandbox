@@ -189,8 +189,6 @@ def _load_run_autonomous(monkeypatch, data_dir, log):
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = False
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -219,8 +217,6 @@ def test_auto_include_isolated(monkeypatch, tmp_path):
 
     monkeypatch.chdir(repo)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([
         "--max-iterations",

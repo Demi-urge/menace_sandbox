@@ -95,8 +95,6 @@ def test_run_autonomous_convergence(monkeypatch, tmp_path: Path) -> None:
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = False
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = 5
             self.synergy_cycles = 5
             self.roi_threshold = None
@@ -117,7 +115,6 @@ def test_run_autonomous_convergence(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
     monkeypatch.setenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "0.05")
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([
         "--max-iterations",

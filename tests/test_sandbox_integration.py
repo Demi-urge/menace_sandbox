@@ -296,7 +296,6 @@ def test_autonomous_presets_reused(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(run_autonomous, "_check_dependencies", lambda: True)
     monkeypatch.setattr(run_autonomous, "full_autonomous_run", lambda args, **k: None)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.delenv("SANDBOX_ENV_PRESETS", raising=False)
 
     run_autonomous.main([])

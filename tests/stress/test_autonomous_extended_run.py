@@ -94,8 +94,6 @@ def test_autonomous_extended_run(monkeypatch, tmp_path: Path) -> None:
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -121,9 +119,7 @@ def test_autonomous_extended_run(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("AUTO_TRAIN_INTERVAL", "0.05")
     monkeypatch.setenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "0.05")
     monkeypatch.setenv("SYNERGY_TRAINER_CHECK_INTERVAL", "0.05")
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
 
     mod.main(
         [

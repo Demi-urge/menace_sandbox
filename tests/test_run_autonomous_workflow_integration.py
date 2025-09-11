@@ -109,17 +109,13 @@ def run_single(monkeypatch, tmp_path):
     mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "validate_presets", lambda p: p)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     class DummySettings:
         def __init__(self):
             self.sandbox_data_dir = str(tmp_path)
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None

@@ -367,8 +367,6 @@ def test_run_autonomous_synergy_files(monkeypatch, tmp_path):
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -389,7 +387,6 @@ def test_run_autonomous_synergy_files(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_TRAIN_SYNERGY", "1")
     monkeypatch.setenv("AUTO_TRAIN_INTERVAL", "0.05")
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([
         "--max-iterations", "1",

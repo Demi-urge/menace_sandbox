@@ -29,8 +29,6 @@ def test_autonomous_long_loop(monkeypatch, tmp_path):
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
             self.save_synergy_history = True
-            self.visual_agent_autostart = False
-            self.visual_agent_urls = ""
             self.roi_cycles = None
             self.synergy_cycles = None
             self.roi_threshold = None
@@ -121,8 +119,6 @@ def test_autonomous_long_loop(monkeypatch, tmp_path):
     cli.adaptive_synergy_convergence = lambda *a, **k: (False, 0.0, {})
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
-    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
     # create initial ROI history for preset generation
