@@ -430,6 +430,57 @@ class EvolutionOrchestrator:
                 trending_topic = getattr(res, "trending_topic", trending_topic)
                 if res.roi:
                     result_values.append(res.roi.roi)
+                if self.self_coding_manager:
+                    failing = (
+                        getattr(res, "failing_path", None)
+                        or getattr(res, "failing_module", None)
+                        or getattr(self.improvement_engine, "failing_path", None)
+                    )
+                    path: Path | None = None
+                    if failing:
+                        if isinstance(failing, (str, Path)):
+                            path = Path(failing)
+                        else:
+                            mod = inspect.getmodule(
+                                getattr(failing, "__class__", failing)
+                            )
+                            if mod:
+                                path = Path(getattr(mod, "__file__", ""))
+                    if path and path.exists():
+                        try:
+                            event_id = MutationLogger.log_mutation(
+                                change=f"patch:{path.name}",
+                                reason="self_improvement",
+                                trigger="self_improvement",
+                                performance=0.0,
+                                workflow_id=0,
+                                before_metric=before_roi,
+                            )
+                            self.self_coding_manager.run_patch(
+                                path, f"auto_patch:{path.name}"
+                            )
+                            after_patch = self._latest_roi()
+                            delta = after_patch - before_roi
+                            MutationLogger.record_mutation_outcome(
+                                event_id,
+                                after_metric=after_patch,
+                                roi=delta,
+                                performance=delta,
+                            )
+                            registry = getattr(
+                                self.self_coding_manager, "bot_registry", None
+                            )
+                            if registry:
+                                try:
+                                    registry.register_interaction(
+                                        self.self_coding_manager.bot_name, path.stem
+                                    )
+                                except Exception:
+                                    self.logger.exception(
+                                        "bot registry update failed"
+                                    )
+                        except Exception:
+                            self.logger.exception("self patch failed")
             elif act == "system_evolution":
                 self.logger.info(
                     "Triggering system evolution due to performance drop %.2f",
