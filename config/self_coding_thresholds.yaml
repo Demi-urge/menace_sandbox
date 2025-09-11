@@ -1,0 +1,7 @@
+default:
+  roi_drop: -0.1
+  error_threshold: 1.0
+bots:
+  menace:
+    roi_drop: -0.2
+    error_threshold: 2.0

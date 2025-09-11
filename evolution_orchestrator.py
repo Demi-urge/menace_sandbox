@@ -28,7 +28,6 @@ from .evolution_predictor import EvolutionPredictor
 from .unified_event_bus import UnifiedEventBus
 from . import mutation_logger as MutationLogger
 from .adaptive_roi_predictor import AdaptiveROIPredictor
-from .roi_thresholds import load_thresholds
 
 
 @dataclass
@@ -43,8 +42,8 @@ class EvolutionTrigger:
 class EvolutionOrchestrator:
     """Monitor metrics and coordinate improvement and evolution cycles.
 
-    When ``triggers`` are not provided the ROI and error thresholds are loaded
-    via :func:`roi_thresholds.load_thresholds` to ensure consistent behaviour
+    When ``triggers`` are not provided the ROI and error thresholds are
+    obtained from :class:`DataBot.get_thresholds` to ensure consistent behaviour
     with other components.
     """
 
@@ -77,7 +76,8 @@ class EvolutionOrchestrator:
         self.evolution_manager = evolution_manager
         self.history = history_db or EvolutionHistoryDB()
         if triggers is None:
-            t = load_thresholds()
+            bot = self_coding_manager.bot_name if self_coding_manager else None
+            t = data_bot.get_thresholds(bot)
             self.triggers = EvolutionTrigger(
                 error_rate=t.error_threshold, roi_drop=t.roi_drop
             )
@@ -218,6 +218,8 @@ class EvolutionOrchestrator:
 
         def _self_patch(module: object, reason: str, trigger: str) -> None:
             if not self.self_coding_manager:
+                return
+            if not self.self_coding_manager.should_refactor():
                 return
             try:
                 mod = inspect.getmodule(module.__class__)
@@ -456,9 +458,10 @@ class EvolutionOrchestrator:
                                 workflow_id=0,
                                 before_metric=before_roi,
                             )
-                            self.self_coding_manager.run_patch(
-                                path, f"auto_patch:{path.name}"
-                            )
+                            if self.self_coding_manager.should_refactor():
+                                self.self_coding_manager.run_patch(
+                                    path, f"auto_patch:{path.name}"
+                                )
                             after_patch = self._latest_roi()
                             delta = after_patch - before_roi
                             MutationLogger.record_mutation_outcome(

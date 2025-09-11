@@ -16,10 +16,12 @@ from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
 
 from .unified_event_bus import UnifiedEventBus
-from .roi_thresholds import load_thresholds
+from .roi_thresholds import ROIThresholds
 from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
+import yaml
+from .dynamic_path_router import resolve_path
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -935,6 +937,7 @@ class DataBot:
         self.evolution_db = evolution_db
         self.settings = settings or SandboxSettings()
         self.logger = logger
+        self.thresholds_path = resolve_path("config/self_coding_thresholds.yaml")
         self._current_cycle_id: int | None = None
         self.gauges: Dict[str, Gauge] = {}
         self._last_roi: Dict[str, float] = {}
@@ -1229,7 +1232,7 @@ class DataBot:
                 delta_err = float(errors) - prev_err
                 self._last_roi[bot] = current_roi
                 self._last_errors[bot] = float(errors)
-                t = load_thresholds(bot, self.settings)
+                t = self.get_thresholds(bot)
                 event = {
                     "bot": bot,
                     "delta_roi": delta_roi,
@@ -1375,6 +1378,84 @@ class DataBot:
         except Exception:
             logger.exception("failed to log workflow evolution metrics")
         return event_id
+
+    def average_errors(self, bot: str, limit: int = 10) -> float:
+        """Return average error count for ``bot`` over recent records."""
+
+        try:
+            df = self.db.fetch(limit)
+            if hasattr(df, "empty"):
+                df = df[df["bot"] == bot]
+                if df.empty:
+                    return 0.0
+                return float(df["errors"].mean())
+            if isinstance(df, list):
+                rows = [r for r in df if r.get("bot") == bot]
+                if not rows:
+                    return 0.0
+                return float(sum(r.get("errors", 0.0) for r in rows) / len(rows))
+        except Exception:
+            return 0.0
+        return 0.0
+
+    def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
+        """Load ROI and error thresholds for ``bot``."""
+
+        roi_drop = self.settings.self_coding_roi_drop
+        error_thresh = self.settings.self_coding_error_increase
+        try:
+            data = yaml.safe_load(self.thresholds_path.read_text()) or {}
+        except Exception:
+            data = {}
+        default = data.get("default", {})
+        bots = data.get("bots", {})
+        if "roi_drop" in default:
+            roi_drop = float(default["roi_drop"])
+        if "error_threshold" in default:
+            error_thresh = float(default["error_threshold"])
+        if bot and bot in bots:
+            cfg = bots[bot] or {}
+            if "roi_drop" in cfg:
+                roi_drop = float(cfg["roi_drop"])
+            if "error_threshold" in cfg:
+                error_thresh = float(cfg["error_threshold"])
+        return ROIThresholds(roi_drop=roi_drop, error_threshold=error_thresh)
+
+    def update_thresholds(
+        self,
+        bot: str,
+        *,
+        roi_drop: float | None = None,
+        error_threshold: float | None = None,
+    ) -> None:
+        """Persist new thresholds for ``bot`` and optionally notify API."""
+
+        try:
+            data = yaml.safe_load(self.thresholds_path.read_text()) or {}
+        except Exception:
+            data = {}
+        bots = data.setdefault("bots", {})
+        cfg = bots.setdefault(bot, {})
+        if roi_drop is not None:
+            cfg["roi_drop"] = float(roi_drop)
+        if error_threshold is not None:
+            cfg["error_threshold"] = float(error_threshold)
+        try:
+            self.thresholds_path.write_text(
+                yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
+            )
+        except Exception:
+            self.logger.exception("failed to write thresholds config")
+
+        api_url = os.getenv("SELF_CODING_THRESHOLD_API")
+        if api_url:
+            payload = {"bot": bot, "roi_drop": cfg.get("roi_drop"), "error_threshold": cfg.get("error_threshold")}
+            try:
+                import requests
+
+                requests.post(api_url, json=payload, timeout=5)
+            except Exception:
+                self.logger.exception("failed to update thresholds via API")
 
     def roi(self, bot: str) -> float:
         """Return ROI for a bot via the capital manager if available."""
