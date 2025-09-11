@@ -62,7 +62,6 @@ sys.modules.setdefault("vector_service", vs_mod)
 
 import menace.self_coding_scheduler as sched_mod
 from menace.self_coding_scheduler import SelfCodingScheduler
-from menace.sandbox_settings import SandboxSettings
 
 
 class DummyManager:
@@ -84,11 +83,13 @@ def _stop_after_first(sched: SelfCodingScheduler):
 
 def test_patch_failure_logged(monkeypatch):
     mgr = DummyManager()
-    data_bot = types.SimpleNamespace(roi=lambda b: 0.0, db=types.SimpleNamespace(fetch=lambda l: []))
+    data_bot = types.SimpleNamespace(
+        roi=lambda b: 0.0,
+        average_errors=lambda b: 0.0,
+        db=types.SimpleNamespace(fetch=lambda l: []),
+    )
     sched = SelfCodingScheduler(mgr, data_bot, interval=0)
-    sched.last_roi = 1.0
     monkeypatch.setattr(sched_mod.time, "sleep", _stop_after_first(sched))
-    monkeypatch.setattr(sched, "_current_errors", lambda: 0.0)
     monkeypatch.setattr(
         sched_mod.WorkflowSandboxRunner,
         "run",
@@ -105,32 +106,17 @@ def test_patch_failure_logged(monkeypatch):
 def test_settings_provide_defaults():
     mgr = DummyManager()
     data_bot = types.SimpleNamespace(roi=lambda b: 0.0, db=types.SimpleNamespace(fetch=lambda l: []))
-    cfg = SandboxSettings(
-        self_coding_interval=123,
-        self_coding_roi_drop=-0.5,
-        self_coding_error_increase=2.5,
-    )
+    cfg = types.SimpleNamespace(self_coding_interval=123)
     sched = SelfCodingScheduler(mgr, data_bot, settings=cfg)
-    assert (sched.interval, sched.roi_drop, sched.error_increase) == (123, -0.5, 2.5)
+    assert sched.interval == 123
 
 
 def test_constructor_overrides_settings():
     mgr = DummyManager()
     data_bot = types.SimpleNamespace(roi=lambda b: 0.0, db=types.SimpleNamespace(fetch=lambda l: []))
-    cfg = SandboxSettings(
-        self_coding_interval=123,
-        self_coding_roi_drop=-0.5,
-        self_coding_error_increase=2.5,
-    )
-    sched = SelfCodingScheduler(
-        mgr,
-        data_bot,
-        interval=5,
-        roi_drop=-0.2,
-        error_increase=1.1,
-        settings=cfg,
-    )
-    assert (sched.interval, sched.roi_drop, sched.error_increase) == (5, -0.2, 1.1)
+    cfg = types.SimpleNamespace(self_coding_interval=123)
+    sched = SelfCodingScheduler(mgr, data_bot, interval=5, settings=cfg)
+    assert sched.interval == 5
 
 
 def test_repo_scan_metrics_published(monkeypatch):
@@ -149,7 +135,8 @@ def test_repo_scan_metrics_published(monkeypatch):
 
     mgr = types.SimpleNamespace(engine=Engine(), bot_name="bot")
     data_bot = types.SimpleNamespace(roi=lambda b: 0.0, db=types.SimpleNamespace(fetch=lambda l: []))
-    sched = SelfCodingScheduler(mgr, data_bot, scan_interval=1)
+    cfg = types.SimpleNamespace(self_coding_interval=1)
+    sched = SelfCodingScheduler(mgr, data_bot, scan_interval=1, settings=cfg)
     sched._scan_job()
     assert calls and calls[0][0] == "self_coding:scan"
     assert calls[0][1]["suggestions"] == 3

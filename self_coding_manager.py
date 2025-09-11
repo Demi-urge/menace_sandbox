@@ -44,7 +44,11 @@ from . import mutation_logger as MutationLogger
 from .rollback_manager import RollbackManager
 from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
-from .sandbox_settings import SandboxSettings
+from .sandbox_settings import (
+    SandboxSettings,
+    SELF_CODING_ERROR_INCREASE,
+    SELF_CODING_ROI_DROP,
+)
 from .patch_attempt_tracker import PatchAttemptTracker
 
 try:  # pragma: no cover - optional dependency
@@ -135,6 +139,8 @@ class SelfCodingManager:
         quick_fix: QuickFixEngine | None = None,
         event_bus: UnifiedEventBus | None = None,
         quick_fix_engine: QuickFixEngine | None = None,
+        roi_drop_threshold: float | None = None,
+        error_rate_threshold: float | None = None,
     ) -> None:
         self.engine = self_coding_engine
         self.pipeline = pipeline
@@ -144,9 +150,21 @@ class SelfCodingManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
+        self.roi_drop_threshold = (
+            roi_drop_threshold
+            if roi_drop_threshold is not None
+            else SELF_CODING_ROI_DROP
+        )
+        self.error_rate_threshold = (
+            error_rate_threshold
+            if error_rate_threshold is not None
+            else SELF_CODING_ERROR_INCREASE
+        )
         self._last_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         self._last_errors = (
-            self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
+            self.data_bot.average_errors(self.bot_name) - self.error_rate_threshold
+            if self.data_bot
+            else 0.0
         )
         self._failure_cache = FailureCache()
         self.suggestion_db = suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
@@ -246,14 +264,16 @@ class SelfCodingManager:
 
         if not self.data_bot:
             return False
-        t = self.data_bot.get_thresholds(self.bot_name)
         roi = self.data_bot.roi(self.bot_name)
         errors = self.data_bot.average_errors(self.bot_name)
         delta_roi = roi - self._last_roi
         delta_err = errors - self._last_errors
         self._last_roi = roi
         self._last_errors = errors
-        return delta_roi <= t.roi_drop or delta_err >= t.error_threshold
+        return (
+            delta_roi <= self.roi_drop_threshold
+            or delta_err >= self.error_rate_threshold
+        )
 
     # ------------------------------------------------------------------
     def run_patch(
@@ -282,7 +302,21 @@ class SelfCodingManager:
         """
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
-        before_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
+        roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
+        errors = (
+            self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
+        )
+        if self.data_bot:
+            delta_roi = roi - self._last_roi
+            delta_err = errors - self._last_errors
+            if delta_roi > self.roi_drop_threshold and delta_err < self.error_rate_threshold:
+                self.logger.info(
+                    "ROI and error thresholds not met; skipping patch"
+                )
+                self._last_roi = roi
+                self._last_errors = errors
+                return AutomationResult(None, None)
+        before_roi = roi
         repo_root = Path.cwd().resolve()
         result: AutomationResult | None = None
         after_roi = before_roi
@@ -905,6 +939,9 @@ class SelfCodingManager:
             load_failed_tags()
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to refresh failed tags")
+        if self.data_bot:
+            self._last_roi = self.data_bot.roi(self.bot_name)
+            self._last_errors = self.data_bot.average_errors(self.bot_name)
         return result
 
     # ------------------------------------------------------------------

@@ -92,6 +92,8 @@ class DummyDataBot:
         return self._vals.pop(0)
     def log_evolution_cycle(self, *a, **k):
         pass
+    def average_errors(self, _name):  # pragma: no cover - simple
+        return 0.0
 
 
 def setup(monkeypatch, tmp_path, confidence):

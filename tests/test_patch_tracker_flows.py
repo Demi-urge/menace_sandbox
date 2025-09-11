@@ -162,6 +162,8 @@ class DummyPipeline:
 class DummyDataBot:
     def roi(self, bot_name: str) -> float:  # pragma: no cover - simple
         return 0.0
+    def average_errors(self, bot_name: str) -> float:  # pragma: no cover - simple
+        return 0.0
 
 
 def test_automated_debugger_escalation_and_reset(tmp_path, monkeypatch):
