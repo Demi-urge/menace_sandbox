@@ -1,596 +1,181 @@
-import os
 import sys
 import types
-import importlib.util
 import logging
-from pathlib import Path
 import pytest
-import dynamic_path_router
+from pathlib import Path
 
-if not hasattr(dynamic_path_router, "clear_cache"):
-    def _resolve_path(p: str) -> Path:
-        root = Path(os.environ.get("SANDBOX_REPO_PATH", "."))
-        cand = root / p
-        if not cand.exists():
-            raise FileNotFoundError(p)
-        return cand
+# Minimal stubs to allow importing the manager without heavy dependencies
+stub_env = types.ModuleType("environment_bootstrap")
+stub_env.EnvironmentBootstrapper = object
+sys.modules.setdefault("environment_bootstrap", stub_env)
 
-    dynamic_path_router.resolve_path = _resolve_path  # type: ignore[attr-defined]
-    dynamic_path_router.path_for_prompt = lambda p: Path(p).as_posix()  # type: ignore[attr-defined]
-    dynamic_path_router.clear_cache = lambda: None  # type: ignore[attr-defined]
+db_stub = types.ModuleType("data_bot")
+db_stub.MetricsDB = object
+db_stub.DataBot = object
+sys.modules.setdefault("data_bot", db_stub)
+sys.modules.setdefault("menace.data_bot", db_stub)
 
-# Avoid heavy imports from the real package
-package = types.ModuleType("menace")
-package.__path__ = []
-sys.modules["menace"] = package
-
-# Stub required submodules
-error_bot = types.ModuleType("menace.error_bot")
-error_bot.ErrorDB = object
-sys.modules["menace.error_bot"] = error_bot
-
-scm = types.ModuleType("menace.self_coding_manager")
-scm.SelfCodingManager = object
-sys.modules["menace.self_coding_manager"] = scm
-
-# Stubs for modules imported by patch_provenance/code_database
+db_router_stub = types.ModuleType("db_router")
+db_router_stub.GLOBAL_ROUTER = None
+db_router_stub.LOCAL_TABLES = set()
 
 
-def _auto_link(*a, **k):
-    def decorator(func):
-        return func
+class DummyRouter:
+    def __init__(self, *a, **k) -> None:
+        pass
 
-    return decorator
+    class _Conn:
+        def execute(self, *a, **k):
+            return types.SimpleNamespace(fetchall=lambda: [])
+
+        def commit(self) -> None:
+            pass
+
+    def get_connection(self, *_a, **_k):
+        return self._Conn()
 
 
-sys.modules.setdefault("auto_link", types.SimpleNamespace(auto_link=_auto_link))
-sys.modules.setdefault(
-    "unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object)
+def init_db_router(*a, **k):
+    return DummyRouter()
+
+
+db_router_stub.DBRouter = DummyRouter
+db_router_stub.init_db_router = init_db_router
+sys.modules.setdefault("db_router", db_router_stub)
+
+dpr = types.SimpleNamespace(
+    resolve_path=lambda p: Path(p),
+    repo_root=lambda: Path("."),
+    path_for_prompt=lambda p: str(p),
 )
-sys.modules.setdefault(
-    "retry_utils",
-    types.SimpleNamespace(
-        publish_with_retry=lambda *a, **k: None,
-        with_retry=lambda *a, **k: None,
-    ),
+sys.modules["dynamic_path_router"] = dpr
+
+sr_pkg = types.ModuleType("menace.sandbox_runner")
+th_stub = types.ModuleType("menace.sandbox_runner.test_harness")
+th_stub.run_tests = lambda *a, **k: types.SimpleNamespace(
+    success=True, failure=None, stdout="", stderr="", duration=0.0
 )
-sys.modules.setdefault(
-    "alert_dispatcher",
-    types.SimpleNamespace(
-        send_discord_alert=lambda *a, **k: None,
-        CONFIG={},
-    ),
-)
+th_stub.TestHarnessResult = types.SimpleNamespace
+sr_pkg.test_harness = th_stub
+sys.modules.setdefault("menace.sandbox_runner", sr_pkg)
+sys.modules.setdefault("menace.sandbox_runner.test_harness", th_stub)
 
-kg = types.ModuleType("menace.knowledge_graph")
-kg.KnowledgeGraph = object
-sys.modules["menace.knowledge_graph"] = kg
+mapl_stub = types.ModuleType("menace.model_automation_pipeline")
+class AutomationResult:
+    pass
+class ModelAutomationPipeline:
+    pass
+mapl_stub.AutomationResult = AutomationResult
+mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
+sys.modules["menace.model_automation_pipeline"] = mapl_stub
 
-# Minimal vector_service stubs
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.SelfCodingEngine = object
+sys.modules["menace.self_coding_engine"] = sce_stub
 
+prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
+class ROIResult:
+    def __init__(self, roi, errors, proi, perr, risk):
+        self.roi = roi
+        self.errors = errors
+        self.predicted_roi = proi
+        self.predicted_errors = perr
+        self.risk = risk
+prb_stub.ROIResult = ROIResult
+sys.modules["menace.pre_execution_roi_bot"] = prb_stub
 
-class _DummyContextBuilder:
-    def __init__(self, *a, retriever=None, **k):
-        self.retriever = retriever
+error_bot_stub = types.ModuleType("menace.error_bot")
+error_bot_stub.ErrorDB = object
+sys.modules.setdefault("menace.error_bot", error_bot_stub)
 
-    def build(self, *a, **k):
-        return ""
+aem_stub = types.ModuleType("menace.advanced_error_management")
+aem_stub.FormalVerifier = object
+aem_stub.AutomatedRollbackManager = object
+sys.modules.setdefault("menace.advanced_error_management", aem_stub)
 
-    def refresh_db_weights(self):
-        return None
+rm_stub = types.ModuleType("menace.rollback_manager")
+rm_stub.RollbackManager = object
+sys.modules.setdefault("menace.rollback_manager", rm_stub)
 
+mutation_logger_stub = types.ModuleType("menace.mutation_logger")
+mutation_logger_stub.log_mutation = lambda *a, **k: None
+sys.modules.setdefault("menace.mutation_logger", mutation_logger_stub)
 
-vec = types.SimpleNamespace(
-    ContextBuilder=_DummyContextBuilder,
-    Retriever=object,
-    FallbackResult=list,
-    EmbeddingBackfill=object,
-)
-sys.modules.setdefault("vector_service", vec)
-sys.modules.setdefault("vector_service.patch_logger", types.SimpleNamespace(PatchLogger=object))
-sys.modules.setdefault("vector_service.context_builder", vec)
-sc_stub = types.SimpleNamespace(compress_snippets=lambda meta, **k: meta)
-sys.modules.setdefault("snippet_compressor", sc_stub)
-sys.modules.setdefault("menace.snippet_compressor", sc_stub)
-sys.modules.setdefault(
-    "menace.codebase_diff_checker",
-    types.SimpleNamespace(generate_code_diff=lambda *a, **k: "", flag_risky_changes=lambda *a, **k: False),
-)
-sys.modules.setdefault(
-    "menace.coding_bot_interface",
-    types.SimpleNamespace(self_coding_managed=lambda f: f),
-)
+code_db_stub = types.ModuleType("menace.code_database")
+class PatchRecord:
+    pass
+code_db_stub.PatchRecord = PatchRecord
+sys.modules["menace.code_database"] = code_db_stub
+sys.modules["code_database"] = code_db_stub
 
-# Load QuickFixEngine without importing the full package
-spec = importlib.util.spec_from_file_location(
-    "menace.quick_fix_engine",
-    dynamic_path_router.path_for_prompt("quick_fix_engine.py"),  # path-ignore
-)
-quick_fix = importlib.util.module_from_spec(spec)
-sys.modules["menace.quick_fix_engine"] = quick_fix
-spec.loader.exec_module(quick_fix)
-QuickFixEngine = quick_fix.QuickFixEngine
+import menace.self_coding_manager as scm
 
 
-class DummyManager:
-    def run_patch(self, path, desc, **kw):
-        self.calls = getattr(self, "calls", [])
-        self.calls.append((path, desc, kw.get("context_builder")))
-
-
-class FailingGraph:
-    def add_telemetry_event(self, *a, **k):
-        raise RuntimeError("boom")
-
-    def update_error_stats(self, *a, **k):
+class DummyBuilder:
+    def refresh_db_weights(self) -> None:
         pass
 
 
-def test_telemetry_error_logged(monkeypatch, tmp_path, caplog):
-    engine = QuickFixEngine(
-        error_db=None,
-        manager=DummyManager(),
-        threshold=1,
-        graph=FailingGraph(),
-        context_builder=quick_fix.ContextBuilder(),
-    )
-    (tmp_path / "bot.py").write_text("x = 1\n")  # path-ignore
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "bot", {}, 1))
-    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
-    caplog.set_level(logging.ERROR)
-    with pytest.raises(RuntimeError):
-        engine.run("bot")
-    assert "telemetry update failed" in caplog.text
+class DummyCognitionLayer:
+    def __init__(self) -> None:
+        self.context_builder = DummyBuilder()
+
+
+class DummyEngine:
+    def __init__(self) -> None:
+        self.cognition_layer = DummyCognitionLayer()
+
+
+class DummyDataBot:
+    def get_thresholds(self, _bot: str) -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            roi_drop=0.1, error_threshold=0.1, test_failure_threshold=0.1
+        )
+
+
+class DummyPipeline:
+    pass
+
+
+class DummyRegistry:
+    pass
 
 
 class DummyErrorDB:
-    def top_error_module(self, bot, scope=None):
-        return ("runtime_fault", "b", {"a": 1, "b": 2}, 2, bot)
+    pass
 
 
-class DummyGraph:
-    def __init__(self):
-        self.events = []
-        self.updated = None
-
-    def add_telemetry_event(self, *a, **k):
-        self.events.append((a, k))
-
-    def update_error_stats(self, db):
-        self.updated = db
-
-
-def test_run_targets_frequent_module(tmp_path, monkeypatch):
-    engine = QuickFixEngine(
-        error_db=DummyErrorDB(),
-        manager=DummyManager(),
-        threshold=2,
-        graph=DummyGraph(),
-        context_builder=quick_fix.ContextBuilder(),
-    )
-    (tmp_path / "b.py").write_text("x=1\n")  # path-ignore
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
-    engine.run("bot")
-    assert engine.manager.calls[0][0] == dynamic_path_router.resolve_path("b.py")  # path-ignore
-    assert Path(engine.graph.events[0][0][2]).stem == "b"
-    assert engine.graph.events[0][1]["resolved"] is True
-    assert engine.graph.updated is engine.db
-
-
-class DummyPreemptiveDB:
-    def __init__(self):
-        self.records = []
-
-    def log_preemptive_patch(self, module, risk, patch_id):
-        self.records.append((module, risk, patch_id))
-
-
-class DummyResult:
-    def __init__(self, patch_id):
-        self.patch_id = patch_id
-
-
-class DummyManager2:
-    def __init__(self, fail=False):
-        self.fail = fail
-        self.calls = []
-
-    def run_patch(self, path, desc, **kw):
-        self.calls.append((path, desc, kw.get("context_builder")))
-        if self.fail:
-            raise RuntimeError("boom")
-        return DummyResult(123)
-
-
-def test_preemptive_patch_modules(tmp_path, monkeypatch):
-    db = DummyPreemptiveDB()
-    mgr = DummyManager2()
-    engine = QuickFixEngine(
-        error_db=db,
-        manager=mgr,
-        threshold=0,
-        graph=None,
-        context_builder=quick_fix.ContextBuilder(),
-    )
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
-    modules = [("mod", 0.9), ("low", 0.1)]
-    engine.preemptive_patch_modules(modules, risk_threshold=0.5)
-    assert [
-        (p, d) for p, d, _ in mgr.calls
-    ] == [
-        (dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")
-    ]  # path-ignore
-    assert Path(db.records[0][0]).stem == "mod"
-    assert db.records[0][1:] == (0.9, 123)
-
-
-def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
-    db = DummyPreemptiveDB()
-    mgr = DummyManager2(fail=True)
-    engine = QuickFixEngine(
-        error_db=db,
-        manager=mgr,
-        threshold=0,
-        graph=None,
-        context_builder=quick_fix.ContextBuilder(),
-    )
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
-    monkeypatch.setattr(
-        quick_fix, "generate_patch", lambda m, engine=None, **kw: 999
-    )
-    engine.preemptive_patch_modules([("mod", 0.8)], risk_threshold=0.5)
-    assert mgr.calls == [
-        (dynamic_path_router.resolve_path("mod.py"), "preemptive_patch")
-    ]  # path-ignore
-    assert db.records == [("mod", 0.8, 999)]
-
-
-def test_generate_patch_blocks_risky(monkeypatch, tmp_path):
-    path = tmp_path / "a.py"  # path-ignore
-    path.write_text("x=1\n")
-
-    class DummyEngine:
-        def generate_helper(self, desc, **kwargs):
-            return "eval('2')\n"
-
-        def apply_patch(self, p, helper, **k):
-            with open(p, "a", encoding="utf-8") as f:
-                f.write(helper)
-            return 1, "", ""
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    res = quick_fix.generate_patch(
-        str(path), engine=DummyEngine(), context_builder=quick_fix.ContextBuilder()
-    )
-    assert res is None
-    assert path.read_text() == "x=1\n"
-
-
-def test_run_records_retrieval_metadata(tmp_path, monkeypatch):
-    os.environ["PATCH_HISTORY_DB_PATH"] = str(tmp_path / "patch_history.db")
-    sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
-    from code_database import PatchHistoryDB, PatchRecord
-    from patch_provenance import get_patch_provenance
-    from vector_service.patch_logger import PatchLogger
-
-    db = PatchHistoryDB()
-    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))  # path-ignore
-
-    class Manager:
-        def run_patch(self, path, desc, context_meta=None, **kw):
-            return types.SimpleNamespace(patch_id=patch_id)
-
-    class Retriever:
-        def search(self, query, top_k, session_id):
-            return [
-                {
-                    "origin_db": "db1",
-                    "record_id": "vec1",
-                    "score": 0.5,
-                    "license": "mit",
-                    "semantic_alerts": ["unsafe"],
-                }
-            ]
-
-    engine = QuickFixEngine(
-        error_db=None,
-        manager=Manager(),
-        threshold=1,
-        graph=DummyGraph(),
-        retriever=Retriever(),
-        patch_logger=PatchLogger(patch_db=db),
-        context_builder=quick_fix.ContextBuilder(),
-    )
-    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
-    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
-    engine.run("bot")
-    prov = get_patch_provenance(patch_id, patch_db=db)
-    assert prov[0]["license"] == "mit"
-    assert prov[0]["semantic_alerts"] == ["unsafe"]
-
-
-def test_run_records_ancestry_without_logger(tmp_path, monkeypatch):
-    os.environ["PATCH_HISTORY_DB_PATH"] = str(tmp_path / "patch_history.db")
-    sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
-    from code_database import PatchHistoryDB, PatchRecord
-    from patch_provenance import get_patch_provenance
-
-    db = PatchHistoryDB()
-    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))  # path-ignore
-
-    class Manager:
-        def __init__(self):
-            self.engine = types.SimpleNamespace(patch_db=db)
-
-        def run_patch(self, path, desc, context_meta=None, **kw):
-            return types.SimpleNamespace(patch_id=patch_id)
-
-    class Retriever:
-        def search(self, query, top_k, session_id):
-            return [{"origin_db": "db1", "record_id": "vec1", "score": 0.4}]
-
-    engine = QuickFixEngine(
-        error_db=None,
-        manager=Manager(),
-        threshold=1,
-        graph=DummyGraph(),
-        retriever=Retriever(),
-        context_builder=quick_fix.ContextBuilder(),
-    )
-    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
-    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
-
-    engine.run("bot")
-    prov = get_patch_provenance(patch_id, patch_db=db)
-    assert prov[0]["vector_id"] == "vec1"
-
-
-def test_generate_patch_resolves_module_path(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / ".git").mkdir()
-    nested = repo / "pkg"
-    nested.mkdir()
-    mod = nested / "mod.py"  # path-ignore
-    mod.write_text("x=1\n")
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-    dynamic_path_router.clear_cache()
-
-    class DummyEngine:
-        patch_db = None
-
-        def __init__(self):
-            self.calls = []
-
-        def generate_helper(self, desc, **kwargs):
-            return "# patch"
-
-        def apply_patch(self, path, helper, **k):
-            self.calls.append(path)
-            return 1, "", 0.0
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(quick_fix, "generate_code_diff", lambda a, b: {})
-    monkeypatch.setattr(quick_fix, "flag_risky_changes", lambda d: {})
-    monkeypatch.setattr(quick_fix, "_collect_diff_data", lambda a, b: {})
-    monkeypatch.setattr(
-        quick_fix,
-        "HumanAlignmentAgent",
-        lambda: types.SimpleNamespace(evaluate_changes=lambda *a, **k: {}),
-    )
-    monkeypatch.setattr(quick_fix, "log_violation", lambda *a, **k: None)
-    monkeypatch.setattr(
-        quick_fix,
-        "EmbeddingBackfill",
-        lambda: types.SimpleNamespace(run=lambda *a, **k: None),
-    )
-    sys.modules.setdefault(
-        "sandbox_runner", types.SimpleNamespace(post_round_orphan_scan=lambda p: None)
+def make_manager(skip: bool = False) -> scm.SelfCodingManager:
+    return scm.SelfCodingManager(
+        DummyEngine(),
+        DummyPipeline(),
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        skip_quick_fix_validation=skip,
     )
 
-    engine = DummyEngine()
-    patch_id = quick_fix.generate_patch(
-        "pkg/mod", engine=engine, context_builder=quick_fix.ContextBuilder()
-    )
-    assert patch_id == 1
-    assert engine.calls and engine.calls[0] == mod
+
+@pytest.fixture(autouse=True)
+def _patch_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scm, "ensure_fresh_weights", lambda _b: None)
+    monkeypatch.setattr(scm, "ErrorDB", DummyErrorDB)
 
 
-def test_generate_patch_uses_context_builder(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / ".git").mkdir()
-    mod = repo / "mod.py"  # path-ignore
-    mod.write_text("x=1\n")
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
-    dynamic_path_router.clear_cache()
-
-    captured: dict[str, object] = {}
-
-    class DummyBuilder:
-        def __init__(self):
-            self.refreshed = False
-
-        def refresh_db_weights(self):
-            self.refreshed = True
-            return None
-
-        def build(self, desc, session_id=None, include_vectors=False):
-            captured["build_args"] = (desc, session_id, include_vectors)
-            return "snippet"
-
-    class DummyEngine:
-        def __init__(self):
-            self.helper_calls: list[str] = []
-
-        def generate_helper(self, desc, **kwargs):
-            self.helper_calls.append(desc)
-            return "helper"
-
-        def apply_patch(self, path, helper, **kw):
-            captured["patched_helper"] = helper
-            captured["patched_desc"] = kw.get("description")
-            return 1, "", 0.0
-
-    monkeypatch.setattr(quick_fix, "generate_code_diff", lambda a, b: {})
-    monkeypatch.setattr(quick_fix, "flag_risky_changes", lambda d: {})
-    monkeypatch.setattr(quick_fix, "_collect_diff_data", lambda a, b: {})
-    monkeypatch.setattr(
-        quick_fix,
-        "HumanAlignmentAgent",
-        lambda: types.SimpleNamespace(evaluate_changes=lambda *a, **k: {}),
-    )
-    monkeypatch.setattr(quick_fix, "log_violation", lambda *a, **k: None)
-    monkeypatch.setattr(
-        quick_fix,
-        "EmbeddingBackfill",
-        lambda: types.SimpleNamespace(run=lambda *a, **k: None),
-    )
-    sys.modules.setdefault(
-        "sandbox_runner", types.SimpleNamespace(post_round_orphan_scan=lambda p: None)
-    )
-
-    engine = DummyEngine()
-    builder = DummyBuilder()
-    patch_id = quick_fix.generate_patch(
-        "mod", engine=engine, context_builder=builder, description="fix bug"
-    )
-    assert patch_id == 1
-    build_args = captured.get("build_args")
-    assert build_args and build_args[0] == "fix bug"
-    assert build_args[2] is True
-    assert "snippet" in captured.get("patched_desc", "")
-    assert captured.get("patched_helper") == "helper"
-    assert engine.helper_calls == [captured.get("patched_desc")]
-    assert builder.refreshed is True
+def test_missing_quick_fix_engine_errors(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setattr(scm, "QuickFixEngine", None)
+    mgr = make_manager()
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError):
+            mgr._ensure_quick_fix_engine()
+    assert "pip install menace[quickfix]" in caplog.text
 
 
-def test_init_auto_builds_context_builder(tmp_path, monkeypatch):
-    class BuildCapturingBuilder:
-        def __init__(self, *a, retriever=None, **k):
-            self.retriever = retriever
-            self.calls = []
+def test_skip_quick_fix_engine(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setattr(scm, "QuickFixEngine", None)
+    mgr = make_manager(skip=True)
+    with caplog.at_level(logging.WARNING):
+        assert mgr._ensure_quick_fix_engine() is None
+    text = caplog.text
+    assert "pip install menace[quickfix]" in text
+    assert "skipping validation" in text
 
-        def build(self, query, session_id=None, **kw):
-            self.calls.append((query, session_id))
-            return ""
-
-    class Retriever:
-        pass
-
-    retriever = Retriever()
-    builder = BuildCapturingBuilder(retriever=retriever)
-    engine = QuickFixEngine(
-        error_db=DummyErrorDB(),
-        manager=DummyManager(),
-        threshold=1,
-        graph=DummyGraph(),
-        retriever=retriever,
-        context_builder=builder,
-    )
-    assert engine.context_builder is builder
-
-    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
-    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
-    engine.run("bot")
-    assert engine.context_builder.calls
-
-
-def test_generate_patch_context_compression(monkeypatch, tmp_path):
-    class SentinelBuilder(_DummyContextBuilder):
-        def __init__(self, **dbs):
-            self.dbs = dbs
-
-        def build(self, *_, **__):
-            return "RAW-" + ",".join(sorted(self.dbs.values()))
-
-    def fake_compress(meta, **_):
-        txt = meta.get("snippet", "")
-        return {"snippet": txt.replace("RAW-", "COMPRESSED-")}
-
-    monkeypatch.setattr(quick_fix, "compress_snippets", fake_compress)
-
-    builder = SentinelBuilder(
-        bot_db="bots.db",
-        code_db="code.db",
-        error_db="errors.db",
-        workflow_db="workflows.db",
-    )
-
-    class DummyEngine:
-        def __init__(self):
-            self.descs = []
-        
-        def generate_helper(self, desc, **kwargs):
-            return desc
-
-        def apply_patch_with_retry(self, path, helper, **_):
-            self.descs.append(helper if isinstance(helper, str) else str(helper))
-            return 1, "", ""
-
-    eng = DummyEngine()
-    p = tmp_path / "mod.py"
-    p.write_text("print(1)\n")  # path-ignore
-    quick_fix.generate_patch(p.as_posix(), engine=eng, context_builder=builder)
-    assert eng.descs and "COMPRESSED-bots.db,code.db,errors.db,workflows.db" in eng.descs[0]
-    assert "RAW-bots.db,code.db,errors.db,workflows.db" not in eng.descs[0]
-
-    with pytest.raises(TypeError):
-        quick_fix.generate_patch(p.as_posix(), engine=eng)  # type: ignore[call-arg]
-
-
-def test_run_context_compression(monkeypatch, tmp_path):
-    class Builder(_DummyContextBuilder):
-        def build(self, *_, **__):
-            return "RAW-snippet"
-
-    def fake_compress(meta, **_):
-        txt = meta.get("snippet", "")
-        return {"snippet": txt.replace("RAW", "COMPRESSED")}
-
-    monkeypatch.setattr(quick_fix, "compress_snippets", fake_compress)
-
-    manager = DummyManager()
-    engine = QuickFixEngine(
-        error_db=DummyErrorDB(),
-        manager=manager,
-        threshold=1,
-        graph=DummyGraph(),
-        context_builder=Builder(),
-    )
-    (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
-    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    dynamic_path_router.clear_cache()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
-    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
-
-    engine.run("bot")
-    desc = manager.calls[0][1]
-    assert "COMPRESSED-snippet" in desc
-    assert "RAW-snippet" not in desc

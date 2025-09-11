@@ -163,6 +163,7 @@ class SelfCodingManager:
         quick_fix: QuickFixEngine | None = None,
         event_bus: UnifiedEventBus | None = None,
         quick_fix_engine: QuickFixEngine | None = None,
+        skip_quick_fix_validation: bool = False,
         roi_drop_threshold: float | None = None,
         error_rate_threshold: float | None = None,
     ) -> None:
@@ -195,6 +196,7 @@ class SelfCodingManager:
         self.failure_store = failure_store
         self.skip_similarity = skip_similarity
         self.quick_fix = quick_fix or quick_fix_engine
+        self.skip_quick_fix_validation = skip_quick_fix_validation
         if baseline_window is None:
             try:
                 baseline_window = getattr(SandboxSettings(), "baseline_window", 5)
@@ -266,31 +268,50 @@ class SelfCodingManager:
             except Exception:
                 self.logger.exception("failed to record context builder session")
 
-    def _ensure_quick_fix_engine(self) -> QuickFixEngine:
+    def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
         """Initialise :class:`QuickFixEngine` on demand.
 
         The quick fix engine performs validation before patches are applied.
-        It is an optional dependency for the wider system but mandatory for
-        this method.  A :class:`RuntimeError` is raised if the engine or its
-        prerequisites cannot be created.
+        When the optional dependency is unavailable and
+        ``skip_quick_fix_validation`` is enabled, validation is skipped and
+        ``None`` is returned. Otherwise a :class:`RuntimeError` is raised.
         """
 
         if self.quick_fix is not None:
             return self.quick_fix
         if QuickFixEngine is None:
+            self.logger.error(
+                "QuickFixEngine is required; install via 'pip install menace[quickfix]'"
+            )
+            if self.skip_quick_fix_validation:
+                self.logger.warning(
+                    "QuickFixEngine unavailable; skipping validation"
+                )
+                return None
             raise RuntimeError(
                 "QuickFixEngine is required but could not be imported"
             )
         clayer = getattr(self.engine, "cognition_layer", None)
         builder = getattr(clayer, "context_builder", None)
         if builder is None:
-            raise RuntimeError(
-                "engine.cognition_layer must provide a context_builder"
-            )
+            msg = "engine.cognition_layer must provide a context_builder"
+            self.logger.error(msg)
+            if self.skip_quick_fix_validation:
+                self.logger.warning(
+                    "QuickFixEngine unavailable; skipping validation"
+                )
+                return None
+            raise RuntimeError(msg)
         self._prepare_context_builder(builder)
         try:
             self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
         except Exception as exc:  # pragma: no cover - instantiation errors
+            self.logger.error("failed to initialise QuickFixEngine")
+            if self.skip_quick_fix_validation:
+                self.logger.warning(
+                    "QuickFixEngine unavailable; skipping validation"
+                )
+                return None
             raise RuntimeError("failed to initialise QuickFixEngine") from exc
         return self.quick_fix
 
@@ -444,9 +465,11 @@ class SelfCodingManager:
             )
         clayer.context_builder = builder
         try:
-            self._ensure_quick_fix_engine()
+            quick_fix = self._ensure_quick_fix_engine()
         except Exception as exc:
             raise RuntimeError("QuickFixEngine validation unavailable") from exc
+        if quick_fix is None:
+            raise RuntimeError("QuickFixEngine validation unavailable")
         return self.run_patch(
             path,
             description,
@@ -541,6 +564,8 @@ class SelfCodingManager:
                 raise RuntimeError(
                     "QuickFixEngine validation unavailable"
                 ) from exc
+            if quick_fix is None:
+                raise RuntimeError("QuickFixEngine validation unavailable")
             try:
                 quick_fix.context_builder = builder
             except Exception:
@@ -771,6 +796,8 @@ class SelfCodingManager:
 
                 module_path = str(cloned_path)
                 module_name = path_for_prompt(cloned_path)
+                if self.quick_fix is None:
+                    raise RuntimeError("QuickFixEngine validation unavailable")
                 passed, patch_id = self.quick_fix.apply_validated_patch(
                     module_path,
                     desc,

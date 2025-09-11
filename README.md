@@ -122,6 +122,11 @@ engine = QuickFixEngine(ErrorDB(), manager, context_builder=builder)
 generate_patch("sandbox_runner", context_builder=builder)
 ```
 
+If the optional `QuickFixEngine` dependency is unavailable, initialise
+`SelfCodingManager` with `skip_quick_fix_validation=True` to bypass quick-fix
+validation. The manager will emit a warning and continue running without
+pre-validation until the dependency is installed.
+
 ### SelfCodingEngine
 
 ```python
