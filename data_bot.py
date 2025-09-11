@@ -9,13 +9,14 @@ import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Dict, TYPE_CHECKING
+from typing import Iterable, List, Dict, TYPE_CHECKING, Callable
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
 
 from .unified_event_bus import UnifiedEventBus
 from .roi_thresholds import load_thresholds
+from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
 
@@ -924,12 +925,14 @@ class DataBot:
         start_server: bool | None = None,
         event_bus: UnifiedEventBus | None = None,
         evolution_db: EvolutionHistoryDB | None = None,
+        settings: SandboxSettings | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
         self.patch_db = patch_db
         self.event_bus = event_bus
         self.evolution_db = evolution_db
+        self.settings = settings or SandboxSettings()
         self.logger = logger
         self._current_cycle_id: int | None = None
         self.gauges: Dict[str, Gauge] = {}
@@ -1059,6 +1062,16 @@ class DataBot:
 
                 port = int(os.getenv("METRICS_PORT", "8001"))
                 start_metrics_server(port)
+
+    def subscribe_threshold_breaches(
+        self, callback: Callable[[dict], None]
+    ) -> None:
+        """Subscribe *callback* to threshold breach events."""
+        if not self.event_bus:
+            raise RuntimeError("event bus not configured")
+        self.event_bus.subscribe(
+            "data:threshold_breach", lambda _t, e: callback(e)
+        )
 
     def collect(
         self,
@@ -1215,7 +1228,7 @@ class DataBot:
                 delta_err = float(errors) - prev_err
                 self._last_roi[bot] = current_roi
                 self._last_errors[bot] = float(errors)
-                t = load_thresholds()
+                t = load_thresholds(bot, self.settings)
                 event = {
                     "bot": bot,
                     "delta_roi": delta_roi,
@@ -1226,6 +1239,8 @@ class DataBot:
                     "error_breach": delta_err >= t.error_threshold,
                 }
                 self.event_bus.publish("metrics:delta", event)
+                if event["roi_breach"] or event["error_breach"]:
+                    self.event_bus.publish("data:threshold_breach", event)
             except Exception as exc:
                 self.logger.exception("failed to publish metrics event: %s", exc)
         for name, gauge in self.gauges.items():

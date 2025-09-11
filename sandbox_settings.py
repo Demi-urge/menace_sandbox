@@ -130,6 +130,13 @@ class ROISettings(BaseModel):
         return v
 
 
+class BotThresholds(BaseModel):
+    """Per-bot ROI and error thresholds."""
+
+    roi_drop: float | None = None
+    error_threshold: float | None = None
+
+
 class SynergySettings(BaseModel):
     """Settings for module synergy calculations."""
 
@@ -773,6 +780,7 @@ class SandboxSettings(BaseSettings):
             "0 drops all examples; None keeps all."
         ),
     )
+
     @field_validator("codex_fallback_strategy")
     def _codex_strategy_valid(cls, v: str) -> str:
         if v not in {"queue", "reroute"}:
@@ -1540,6 +1548,11 @@ class SandboxSettings(BaseSettings):
         1.0,
         env="SELF_CODING_ERROR_INCREASE",
         description="Error increase triggering self-coding.",
+    )
+    bot_thresholds: dict[str, BotThresholds] = Field(
+        default_factory=dict,
+        env="BOT_THRESHOLDS",
+        description="Per-bot ROI drop and error thresholds.",
     )
     roi_growth_weighting: bool = Field(
         True,
@@ -2430,6 +2443,7 @@ __all__ = [
     "AlignmentRules",
     "ROISettings",
     "SynergySettings",
+    "BotThresholds",
     "AlignmentSettings",
     "load_sandbox_settings",
 ]
