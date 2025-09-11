@@ -281,13 +281,26 @@ class EvolutionOrchestrator:
                                 "failed to publish patch_skipped for %s", bot
                             )
                     return
-                self.selfcoding_manager.register_patch_cycle(desc, context_meta)
+                # Record baseline metrics for this degradation event before patching
+                self.selfcoding_manager.register_patch_cycle(desc, event)
                 self.selfcoding_manager.generate_and_patch(
                     module_path,
                     desc,
                     context_meta=context_meta,
                     context_builder=builder,
                 )
+                if registry:
+                    try:
+                        registry.update_bot(bot, str(module_path))
+                    except Exception:
+                        self.logger.exception("failed to update bot %s", bot)
+                if bus:
+                    try:
+                        bus.publish("bot:hot_swapped", {"bot": bot})
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish hot swap event for %s", bot
+                        )
             except HelperGenerationError as exc:
                 self.logger.error(
                     "context_build_failed",
