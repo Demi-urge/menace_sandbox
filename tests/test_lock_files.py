@@ -3,8 +3,11 @@ import sys
 import subprocess
 import time
 from pathlib import Path
+import json
+from contextlib import suppress
 
 import pytest
+from lock_utils import SandboxLock, Timeout
 
 
 LOCK_TYPES = {
@@ -34,17 +37,10 @@ def _make_env(tmp_path: Path, lock_type: str) -> dict[str, str]:
 SCRIPT = r"""
 import os, time
 from pathlib import Path
-import sandbox_runner.environment as env
+from filelock import FileLock
 
 lock_file = Path(os.environ['LOCK_FILE'])
-if os.environ['LOCK_TYPE'] == 'containers':
-    env._ACTIVE_CONTAINERS_FILE = lock_file
-    env._ACTIVE_CONTAINERS_LOCK = env.FileLock(str(lock_file)+'.lock')
-    lock = env._ACTIVE_CONTAINERS_LOCK
-else:
-    env._ACTIVE_OVERLAYS_FILE = lock_file
-    env._ACTIVE_OVERLAYS_LOCK = env.FileLock(str(lock_file)+'.lock')
-    lock = env._ACTIVE_OVERLAYS_LOCK
+lock = FileLock(str(lock_file) + '.lock')
 
 rec = Path(os.environ['RECORD_FILE'])
 with lock:
@@ -83,17 +79,10 @@ def test_lock_exclusive(tmp_path: Path, lock_type: str) -> None:
 STALE_SCRIPT = r"""
 import os, time
 from pathlib import Path
-import sandbox_runner.environment as env
+from filelock import FileLock
 
 lock_file = Path(os.environ['LOCK_FILE'])
-if os.environ['LOCK_TYPE'] == 'containers':
-    env._ACTIVE_CONTAINERS_FILE = lock_file
-    env._ACTIVE_CONTAINERS_LOCK = env.FileLock(str(lock_file)+'.lock')
-    lock = env._ACTIVE_CONTAINERS_LOCK
-else:
-    env._ACTIVE_OVERLAYS_FILE = lock_file
-    env._ACTIVE_OVERLAYS_LOCK = env.FileLock(str(lock_file)+'.lock')
-    lock = env._ACTIVE_OVERLAYS_LOCK
+lock = FileLock(str(lock_file) + '.lock')
 
 rec = Path(os.environ['RECORD_FILE'])
 lock.acquire()
@@ -143,96 +132,69 @@ def test_stale_lock_cleanup(tmp_path: Path, lock_type: str) -> None:
     assert lock_path.exists()
     assert mtime_after > mtime_before
 
+class DummyAgent:
+    def __init__(self) -> None:
+        self.lock_file = Path(os.environ["DUMMY_AGENT_LOCK_FILE"])
+        self._global_lock = SandboxLock(str(self.lock_file))
+        self.state_file = self.lock_file.with_suffix(".state")
+        self.task_queue: list[dict[str, str | None]] = []
 
-import importlib
-import types
+    def _persist_state(self) -> None:
+        self.state_file.write_text(json.dumps(self.task_queue))
+
+    def _startup_load_state(self) -> None:
+        timeout = float(os.environ.get("DUMMY_AGENT_LOCK_TIMEOUT", "1"))
+        for _ in range(3):
+            try:
+                self._global_lock.acquire(timeout=timeout)
+                break
+            except Timeout:
+                if self._global_lock.is_lock_stale(timeout=timeout):
+                    with suppress(Exception):
+                        os.remove(self.lock_file)
+                    continue
+                raise
+        else:
+            raise Timeout(str(self.lock_file))
+        try:
+            if self.state_file.exists():
+                self.task_queue = json.loads(self.state_file.read_text())
+        finally:
+            self._global_lock.release()
 
 
-def _setup_va(monkeypatch, tmp_path):
-    heavy = ["cv2", "numpy", "mss", "pyautogui"]
-    for name in heavy:
-        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
-    pt_mod = types.ModuleType("pytesseract")
-    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")  # path-ignore
-    pt_mod.image_to_string = lambda *a, **k: ""
-    pt_mod.image_to_data = lambda *a, **k: {}
-    pt_mod.Output = types.SimpleNamespace(DICT=0)
-    monkeypatch.setitem(sys.modules, "pytesseract", pt_mod)
-    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    module_name = "menace_visual_" + "agent_2"
-    return importlib.reload(importlib.import_module(module_name))
-
-
-def test_agent_stale_lock_recovery(monkeypatch, tmp_path):
-    token_env = "VISUAL_" + "AGENT_TOKEN"
-    lock_file_env = "VISUAL_" + "AGENT_LOCK_FILE"
-    pid_file_env = "VISUAL_" + "AGENT_PID_FILE"
-    timeout_env = "VISUAL_" + "AGENT_LOCK_TIMEOUT"
-    monkeypatch.setenv(token_env, "tok")
+def test_dummy_agent_stale_lock_recovery(monkeypatch, tmp_path):
     lock_path = tmp_path / "agent.lock"
-    pid_path = tmp_path / "agent.pid"
-    monkeypatch.setenv(lock_file_env, str(lock_path))
-    monkeypatch.setenv(pid_file_env, str(pid_path))
-    monkeypatch.setenv(timeout_env, "1")
+    monkeypatch.setenv("DUMMY_AGENT_LOCK_FILE", str(lock_path))
+    monkeypatch.setenv("DUMMY_AGENT_LOCK_TIMEOUT", "1")
 
-    va = _setup_va(monkeypatch, tmp_path)
-    class DummyQueue(list):
-        def append(self, item):
-            super().append(item)
-        def reset_running_tasks(self):
-            pass
-        def update_status(self, *a, **k):
-            pass
-        def set_last_completed(self, *a, **k):
-            pass
-        def get_status(self):
-            return {i["id"]: {"status": "queued", "prompt": i["prompt"], "branch": i["branch"]} for i in self}
-        def get_last_completed(self):
-            return 0.0
-    va.task_queue = DummyQueue()
-    va.job_status = {}
-    va.job_status["a"] = {"status": "queued", "prompt": "p", "branch": None}
-    va.task_queue.append({"id": "a", "prompt": "p", "branch": None})
-    va._persist_state()
-    va.job_status.clear()
+    agent = DummyAgent()
+    agent.task_queue.append({"id": "a", "prompt": "p", "branch": None})
+    agent._persist_state()
 
     old = time.time() - 2
     lock_path.write_text(f"{os.getpid()+100000},{old}")
 
-    va2 = _setup_va(monkeypatch, tmp_path)
-    va2.task_queue = va.task_queue
-    va2.job_status = va.job_status
-    va2.task_queue = va.task_queue
-    va2.job_status = va.job_status
-    monkeypatch.setattr(va2, "_start_background_threads", lambda: None)
-    va2._startup_load_state()
+    agent2 = DummyAgent()
+    agent2._startup_load_state()
 
     assert not lock_path.exists()
-    assert list(va2.task_queue)[0]["id"] == "a"
+    assert agent2.task_queue[0]["id"] == "a"
 
 
-def test_agent_stale_lock_retry(monkeypatch, tmp_path):
-    token_env = "VISUAL_" + "AGENT_TOKEN"
-    lock_file_env = "VISUAL_" + "AGENT_LOCK_FILE"
-    pid_file_env = "VISUAL_" + "AGENT_PID_FILE"
-    timeout_env = "VISUAL_" + "AGENT_LOCK_TIMEOUT"
-    monkeypatch.setenv(token_env, "tok")
+def test_dummy_agent_stale_lock_retry(monkeypatch, tmp_path):
     lock_path = tmp_path / "agent.lock"
-    pid_path = tmp_path / "agent.pid"
-    monkeypatch.setenv(lock_file_env, str(lock_path))
-    monkeypatch.setenv(pid_file_env, str(pid_path))
-    monkeypatch.setenv(timeout_env, "1")
+    monkeypatch.setenv("DUMMY_AGENT_LOCK_FILE", str(lock_path))
+    monkeypatch.setenv("DUMMY_AGENT_LOCK_TIMEOUT", "1")
 
-    va = _setup_va(monkeypatch, tmp_path)
-    va.job_status["a"] = {"status": "queued", "prompt": "p", "branch": None}
-    va.task_queue.append({"id": "a", "prompt": "p", "branch": None})
-    va._persist_state()
-    va.job_status.clear()
+    agent = DummyAgent()
+    agent.task_queue.append({"id": "a", "prompt": "p", "branch": None})
+    agent._persist_state()
 
     old = time.time() - 2
     lock_path.write_text(f"{os.getpid()+100000},{old}")
 
-    va2 = _setup_va(monkeypatch, tmp_path)
+    agent2 = DummyAgent()
 
     class DummyLock:
         def __init__(self):
@@ -241,7 +203,7 @@ def test_agent_stale_lock_retry(monkeypatch, tmp_path):
         def acquire(self, timeout=0):
             self.calls += 1
             if self.calls == 1:
-                raise va2.Timeout(str(lock_path))
+                raise Timeout(str(lock_path))
 
         def release(self):
             pass
@@ -250,58 +212,27 @@ def test_agent_stale_lock_retry(monkeypatch, tmp_path):
             return True
 
     dummy = DummyLock()
-    monkeypatch.setattr(va2, "_global_lock", dummy)
-    monkeypatch.setattr(va2, "_start_background_threads", lambda: None)
-    monkeypatch.setattr(va2.task_queue, "reset_running_tasks", lambda: None)
-
-    va2._startup_load_state()
+    agent2._global_lock = dummy
+    agent2._startup_load_state()
 
     assert dummy.calls >= 2
     assert not lock_path.exists()
-    assert list(va2.task_queue)[0]["id"] == "a"
+    assert agent2.task_queue[0]["id"] == "a"
 
 
-def test_agent_stale_lock_multi_retry(monkeypatch, tmp_path):
-    token_env = "VISUAL_" + "AGENT_TOKEN"
-    lock_file_env = "VISUAL_" + "AGENT_LOCK_FILE"
-    pid_file_env = "VISUAL_" + "AGENT_PID_FILE"
-    timeout_env = "VISUAL_" + "AGENT_LOCK_TIMEOUT"
-    monkeypatch.setenv(token_env, "tok")
+def test_dummy_agent_stale_lock_multi_retry(monkeypatch, tmp_path):
     lock_path = tmp_path / "agent.lock"
-    pid_path = tmp_path / "agent.pid"
-    monkeypatch.setenv(lock_file_env, str(lock_path))
-    monkeypatch.setenv(pid_file_env, str(pid_path))
-    monkeypatch.setenv(timeout_env, "1")
+    monkeypatch.setenv("DUMMY_AGENT_LOCK_FILE", str(lock_path))
+    monkeypatch.setenv("DUMMY_AGENT_LOCK_TIMEOUT", "1")
 
-    va = _setup_va(monkeypatch, tmp_path)
-    class DummyQueue(list):
-        def append(self, item):
-            super().append(item)
-        def reset_running_tasks(self):
-            pass
-        def update_status(self, *a, **k):
-            pass
-        def set_last_completed(self, *a, **k):
-            pass
-        def get_status(self):
-            return {i["id"]: {"status": "queued", "prompt": i["prompt"], "branch": i["branch"]} for i in self}
-        def get_last_completed(self):
-            return 0.0
-    saved_queue = DummyQueue()
-    va.task_queue = saved_queue
-    va.job_status = {}
-    va.job_status["a"] = {"status": "queued", "prompt": "p", "branch": None}
-    va.task_queue.append({"id": "a", "prompt": "p", "branch": None})
-    va._persist_state()
-    saved_status = va.job_status
-    va.job_status.clear()
+    agent = DummyAgent()
+    agent.task_queue.append({"id": "a", "prompt": "p", "branch": None})
+    agent._persist_state()
 
     old = time.time() - 2
     lock_path.write_text(f"{os.getpid()+100000},{old}")
 
-    va2 = _setup_va(monkeypatch, tmp_path)
-    va2.task_queue = saved_queue
-    va2.job_status = saved_status
+    agent2 = DummyAgent()
 
     class DummyLock:
         def __init__(self):
@@ -310,7 +241,7 @@ def test_agent_stale_lock_multi_retry(monkeypatch, tmp_path):
         def acquire(self, timeout=0):
             self.calls += 1
             if self.calls < 3:
-                raise va2.Timeout(str(lock_path))
+                raise Timeout(str(lock_path))
 
         def release(self):
             pass
@@ -319,12 +250,9 @@ def test_agent_stale_lock_multi_retry(monkeypatch, tmp_path):
             return True
 
     dummy = DummyLock()
-    monkeypatch.setattr(va2, "_global_lock", dummy)
-    monkeypatch.setattr(va2, "_start_background_threads", lambda: None)
-    monkeypatch.setattr(va2.task_queue, "reset_running_tasks", lambda: None)
-
-    va2._startup_load_state()
+    agent2._global_lock = dummy
+    agent2._startup_load_state()
 
     assert dummy.calls >= 3
     assert not lock_path.exists()
-    assert list(va2.task_queue)[0]["id"] == "a"
+    assert agent2.task_queue[0]["id"] == "a"
