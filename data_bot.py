@@ -999,7 +999,7 @@ class DataBot:
         self.gauges: Dict[str, Gauge] = {}
         self._last_roi: Dict[str, float] = {}
         self._last_errors: Dict[str, float] = {}
-        self._last_tests_failed: Dict[str, float] = {}
+        self._last_test_failures: Dict[str, float] = {}
         if Gauge:
             self.registry = registry or CollectorRegistry()
             self.gauges = {
@@ -1304,7 +1304,7 @@ class DataBot:
                 bot,
                 current_roi,
                 float(errors),
-                float(tests_failed),
+                test_failures=float(tests_failed),
             )
         for name, gauge in self.gauges.items():
             gauge.labels(bot=bot).set(getattr(rec, name))
@@ -1332,11 +1332,11 @@ class DataBot:
         bot: str,
         roi: float,
         errors: float,
-        tests_failed: float = 0.0,
+        test_failures: float = 0.0,
         *,
         callback: Callable[[dict], None] | None = None,
     ) -> bool:
-        """Compare current ``roi`` and ``errors`` to configured thresholds.
+        """Compare current metrics against configured degradation thresholds.
 
         If a degradation is detected the event is published on the event bus as
         ``bot:degraded`` or, when no bus is configured, a provided *callback* is
@@ -1345,25 +1345,26 @@ class DataBot:
 
         prev_roi = self._last_roi.get(bot, roi)
         prev_err = self._last_errors.get(bot, errors)
-        prev_fail = self._last_tests_failed.get(bot, tests_failed)
+        prev_fail = self._last_test_failures.get(bot, test_failures)
         delta_roi = roi - prev_roi
         delta_err = errors - prev_err
-        delta_fail = tests_failed - prev_fail
+        delta_fail = test_failures - prev_fail
         self._last_roi[bot] = roi
         self._last_errors[bot] = errors
-        self._last_tests_failed[bot] = tests_failed
+        self._last_test_failures[bot] = test_failures
         t = self.get_thresholds(bot)
         event = {
             "bot": bot,
             "delta_roi": delta_roi,
             "delta_errors": delta_err,
             "delta_tests_failed": delta_fail,
+            "test_failures": test_failures,
             "roi_threshold": t.roi_drop,
             "error_threshold": t.error_threshold,
             "test_failure_threshold": t.test_failure_threshold,
             "roi_breach": delta_roi <= t.roi_drop,
             "error_breach": delta_err >= t.error_threshold,
-            "test_failure_breach": delta_fail > t.test_failure_threshold,
+            "test_failure_breach": test_failures > t.test_failure_threshold,
         }
         degraded = (
             event["roi_breach"]
@@ -1697,6 +1698,32 @@ class DataBot:
                 conn.commit()
         except Exception:
             self.logger.exception("failed to record patch validation")
+
+    def record_test_failure(self, bot: str, count: int) -> None:
+        """Log recent failing test count for ``bot`` and check degradation."""
+        try:
+            self.db.log_eval(bot, "test_failures", float(count))
+        except Exception:
+            self.logger.exception("failed to log test failures")
+        roi = 0.0
+        errors = 0.0
+        try:
+            roi = self.roi(bot)
+        except Exception:
+            pass
+        try:
+            errors = self.average_errors(bot)
+        except Exception:
+            pass
+        try:
+            self.check_degradation(
+                bot,
+                float(roi),
+                float(errors),
+                test_failures=float(count),
+            )
+        except Exception:
+            self.logger.exception("degradation check failed for test failures")
 
     @staticmethod
     def detect_anomalies(
