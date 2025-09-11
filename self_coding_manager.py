@@ -169,6 +169,18 @@ class SelfCodingManager:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
 
+    def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
+        """Initialise QuickFixEngine on demand."""
+        if self.quick_fix_engine is None and quick_fix_engine is not None:
+            try:
+                clayer = getattr(self.engine, "cognition_layer", None)
+                builder = getattr(clayer, "context_builder", None)
+                if builder is not None:
+                    self.quick_fix_engine = QuickFixEngine(ErrorDB(), self, context_builder=builder)
+            except Exception:
+                self.logger.exception("failed to initialise QuickFixEngine")
+        return self.quick_fix_engine
+
     # ------------------------------------------------------------------
     def scan_repo(self) -> None:
         """Invoke the enhancement classifier and queue suggestions."""
@@ -262,6 +274,7 @@ class SelfCodingManager:
                     "engine.cognition_layer must provide a context_builder"
                 )
             builder = clayer.context_builder
+            self._ensure_quick_fix_engine()
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None
@@ -465,6 +478,48 @@ class SelfCodingManager:
                     ctx_meta["target_region"] = asdict(patch_region)
                 else:
                     ctx_meta.pop("target_region", None)
+
+                if self.quick_fix_engine is not None and quick_fix_engine is not None:
+                    module_name = path_for_prompt(cloned_path)
+                    flags: list[str]
+                    try:
+                        _pid, flags = quick_fix_engine.generate_patch(
+                            module_name,
+                            self.engine,
+                            context_builder=self.quick_fix_engine.context_builder,
+                            description=desc,
+                            target_region=patch_region,
+                            return_flags=True,
+                        )
+                    except Exception:
+                        self.logger.exception("quick fix validation failed")
+                        flags = ["validation_error"]
+                    finally:
+                        try:
+                            subprocess.run(
+                                ["git", "checkout", "--", str(cloned_path)],
+                                check=True,
+                                cwd=str(clone_root),
+                            )
+                        except Exception:
+                            self.logger.exception("failed to revert validation patch")
+                    passed = not bool(flags)
+                    if self.data_bot:
+                        try:
+                            self.data_bot.record_validation(
+                                self.bot_name, module_name, passed, None if passed else flags
+                            )
+                        except Exception:
+                            self.logger.exception("failed to record validation in DataBot")
+                    if self.bot_registry:
+                        try:
+                            self.bot_registry.record_validation(self.bot_name, module_name, passed)
+                        except Exception:
+                            self.logger.exception("failed to record validation in registry")
+                    if not passed:
+                        if target_region is not None and func_region is not None:
+                            tracker.record_failure(level, target_region, func_region)
+                        raise RuntimeError("quick fix validation failed")
                 patch_id, reverted, _ = self.engine.apply_patch(
                     cloned_path,
                     desc,
@@ -478,34 +533,6 @@ class SelfCodingManager:
                 )
                 harness_result: TestHarnessResult = _run(clone_root, cloned_path)
                 if harness_result.success:
-                    if self.quick_fix_engine is not None and quick_fix_engine is not None:
-                        try:
-                            quick_fix_engine.generate_patch(
-                                path_for_prompt(cloned_path),
-                                self.engine,
-                                context_builder=self.quick_fix_engine.context_builder,
-                            )
-                        except Exception:
-                            self.logger.exception(
-                                "quick fix validation failed"
-                            )
-                            try:
-                                subprocess.run(
-                                    ["git", "checkout", "--", str(cloned_path)],
-                                    check=True,
-                                    cwd=str(clone_root),
-                                )
-                            except Exception:
-                                self.logger.exception("failed to revert patch")
-                            try:
-                                RollbackManager().rollback(
-                                    str(patch_id), requesting_bot=self.bot_name
-                                )
-                            except Exception:
-                                self.logger.exception("rollback failed")
-                            if target_region is not None and func_region is not None:
-                                tracker.record_failure(level, target_region, func_region)
-                            continue
                     coverage_after = _coverage_ratio(
                         harness_result.stdout, harness_result.success
                     )
