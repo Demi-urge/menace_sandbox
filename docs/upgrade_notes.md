@@ -4,6 +4,19 @@
 
 The visual agent interface and related configuration variables (e.g. `VISUAL_AGENT_AUTOSTART`, `VISUAL_AGENT_TOKEN`) have been fully removed. All workflows now rely on `SelfCodingEngine`; purge any remaining visual-agent settings.
 
+Legacy entries referencing `visual_agent` may persist in `code.db`. A one-time cleanup script removes them:
+
+```bash
+python -m migrations.cleanup_visual_agent_code
+```
+
+After running the script, verify the dataset is clean so future migrations can rely on it:
+
+```bash
+sqlite3 code.db "SELECT COUNT(*) FROM code WHERE code LIKE '%visual_agent%' OR summary LIKE '%visual_agent%';"
+# expected output: 0
+```
+
 
 ## Stripe per-bot keys removed
 
