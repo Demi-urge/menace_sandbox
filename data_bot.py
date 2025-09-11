@@ -54,6 +54,7 @@ from .self_coding_thresholds import (
 from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
+from .self_improvement.baseline_tracker import BaselineTracker
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -963,7 +964,13 @@ class MetricsDB:
 
 
 class DataBot:
-    """Collect metrics, expose them to Prometheus and detect anomalies."""
+    """Collect metrics, expose them to Prometheus and detect anomalies.
+
+    A :class:`BaselineTracker` maintains rolling averages for ROI, error rate
+    and test failures.  ``baseline_window`` controls the number of recent
+    observations considered and ``anomaly_sensitivity`` adjusts how many
+    standard deviations from the mean constitute a breach.
+    """
 
     def __init__(
         self,
@@ -980,6 +987,8 @@ class DataBot:
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
         degradation_callback: Callable[[dict], None] | None = None,
+        baseline_window: int | None = None,
+        anomaly_sensitivity: float | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
@@ -997,9 +1006,17 @@ class DataBot:
         self.logger = logger
         self._current_cycle_id: int | None = None
         self.gauges: Dict[str, Gauge] = {}
-        self._last_roi: Dict[str, float] = {}
-        self._last_errors: Dict[str, float] = {}
-        self._last_test_failures: Dict[str, float] = {}
+        self.baseline_window = (
+            baseline_window
+            if baseline_window is not None
+            else getattr(self.settings, "baseline_window", 10)
+        )
+        self.anomaly_sensitivity = (
+            anomaly_sensitivity
+            if anomaly_sensitivity is not None
+            else getattr(self.settings, "anomaly_sensitivity", 1.0)
+        )
+        self._baseline: Dict[str, BaselineTracker] = {}
         if Gauge:
             self.registry = registry or CollectorRegistry()
             self.gauges = {
@@ -1338,34 +1355,52 @@ class DataBot:
     ) -> bool:
         """Compare current metrics against configured degradation thresholds.
 
-        If a degradation is detected the event is published on the event bus as
-        ``bot:degraded`` or, when no bus is configured, a provided *callback* is
-        invoked.  Returns ``True`` when the bot breached either threshold.
+        Metrics are evaluated against a rolling baseline maintained by
+        :class:`BaselineTracker`.  If a degradation is detected the event is
+        published on the event bus as ``bot:degraded`` or, when no bus is
+        configured, a provided *callback* is invoked.  Returns ``True`` when the
+        bot breached either threshold.
         """
 
-        prev_roi = self._last_roi.get(bot, roi)
-        prev_err = self._last_errors.get(bot, errors)
-        prev_fail = self._last_test_failures.get(bot, test_failures)
-        delta_roi = roi - prev_roi
-        delta_err = errors - prev_err
-        delta_fail = test_failures - prev_fail
-        self._last_roi[bot] = roi
-        self._last_errors[bot] = errors
-        self._last_test_failures[bot] = test_failures
+        tracker = self._baseline.setdefault(
+            bot, BaselineTracker(window=self.baseline_window)
+        )
+        avg_roi = tracker.get("roi")
+        avg_err = tracker.get("errors")
+        avg_fail = tracker.get("tests_failed")
+        std_roi = tracker.std("roi")
+        std_err = tracker.std("errors")
+        std_fail = tracker.std("tests_failed")
+        delta_roi = roi - avg_roi
+        delta_err = errors - avg_err
+        delta_fail = test_failures - avg_fail
         t = self.get_thresholds(bot)
+        roi_thresh = t.roi_drop - std_roi * self.anomaly_sensitivity
+        err_thresh = t.error_threshold + std_err * self.anomaly_sensitivity
+        fail_thresh = (
+            t.test_failure_threshold + std_fail * self.anomaly_sensitivity
+        )
         event = {
             "bot": bot,
             "delta_roi": delta_roi,
             "delta_errors": delta_err,
             "delta_tests_failed": delta_fail,
             "test_failures": test_failures,
-            "roi_threshold": t.roi_drop,
-            "error_threshold": t.error_threshold,
-            "test_failure_threshold": t.test_failure_threshold,
-            "roi_breach": delta_roi <= t.roi_drop,
-            "error_breach": delta_err >= t.error_threshold,
-            "test_failure_breach": test_failures > t.test_failure_threshold,
+            "roi_baseline": avg_roi,
+            "errors_baseline": avg_err,
+            "tests_failed_baseline": avg_fail,
+            "roi_std": std_roi,
+            "errors_std": std_err,
+            "tests_failed_std": std_fail,
+            "roi_threshold": roi_thresh,
+            "error_threshold": err_thresh,
+            "test_failure_threshold": fail_thresh,
+            "roi_breach": delta_roi <= roi_thresh,
+            "error_breach": delta_err >= err_thresh,
+            "test_failure_breach": delta_fail > fail_thresh,
         }
+        self.logger.info("degradation metrics: %s", event)
+        tracker.update(roi=roi, errors=errors, tests_failed=test_failures)
         degraded = (
             event["roi_breach"]
             or event["error_breach"]
