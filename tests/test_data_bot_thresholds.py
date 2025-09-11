@@ -13,6 +13,7 @@ def test_threshold_event_published(monkeypatch, tmp_path):
     settings = types.SimpleNamespace(
         self_coding_roi_drop=-0.1,
         self_coding_error_increase=1.0,
+        self_coding_test_failure_increase=0.0,
         bot_thresholds={
             "bot": types.SimpleNamespace(roi_drop=-5.0, error_threshold=5.0)
         },
@@ -27,6 +28,7 @@ def test_threshold_event_published(monkeypatch, tmp_path):
     bot.collect("bot", revenue=10.0, expense=0.0, errors=0)
     bot.collect("bot", revenue=0.0, expense=0.0, errors=10)
     assert events and events[0]["roi_breach"] and events[0]["error_breach"]
+    assert not events[0]["test_failure_breach"]
     assert degraded and degraded[0]["roi_breach"]
 
 
@@ -39,6 +41,7 @@ def test_check_degradation_callback(monkeypatch, tmp_path):
     settings = types.SimpleNamespace(
         self_coding_roi_drop=-0.1,
         self_coding_error_increase=1.0,
+        self_coding_test_failure_increase=0.0,
         bot_thresholds={},
     )
     mdb = db.MetricsDB(tmp_path / "m.db")

@@ -14,16 +14,21 @@ Configuration Keys
 ``self_coding_error_increase``
     Maximum allowed increase in error count before a bot is considered
     degraded.
+``self_coding_test_failure_increase``
+    Maximum allowed increase in failed test count before a bot is
+    considered degraded.
 
 Example ``self_coding_thresholds.yaml``::
 
     default:
       roi_drop: -0.1
       error_increase: 1.0
+      test_failure_increase: 0.0
     bots:
       example-bot:
         roi_drop: -0.2
         error_increase: 2.0
+        test_failure_increase: 0.0
 """
 
 from __future__ import annotations
@@ -99,6 +104,8 @@ class MetricRecord:
     disk_io: float
     net_io: float
     errors: int
+    tests_failed: int = 0
+    tests_run: int = 0
     revenue: float = 0.0
     expense: float = 0.0
     security_score: float = 0.0
@@ -147,6 +154,8 @@ class MetricsDB:
                 disk_io REAL,
                 net_io REAL,
                 errors INTEGER,
+                tests_failed INTEGER DEFAULT 0,
+                tests_run INTEGER DEFAULT 0,
                 revenue REAL DEFAULT 0,
                 expense REAL DEFAULT 0,
                 security_score REAL DEFAULT 0,
@@ -338,6 +347,15 @@ class MetricsDB:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_retrieval_stats_ts ON retrieval_stats(ts)"
         )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
+        if "tests_failed" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN tests_failed INTEGER DEFAULT 0"
+            )
+        if "tests_run" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN tests_run INTEGER DEFAULT 0"
+            )
         cols = [r[1] for r in conn.execute("PRAGMA table_info(embedding_stats)").fetchall()]
         if "patch_id" not in cols:
             conn.execute("ALTER TABLE embedding_stats ADD COLUMN patch_id TEXT")
@@ -511,7 +529,7 @@ class MetricsDB:
                 """
                 INSERT INTO metrics(
                     bot, cpu, memory, response_time, disk_io, net_io, errors,
-                    revenue, expense,
+                    tests_failed, tests_run, revenue, expense,
                     security_score, safety_rating, adaptability,
                     antifragility, shannon_entropy, efficiency,
                     flexibility, gpu_usage, projected_lucrativity,
@@ -519,7 +537,7 @@ class MetricsDB:
                     resilience, network_latency, throughput, risk_index,
                     maintainability, code_quality, ts, source_menace_id)
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -530,6 +548,8 @@ class MetricsDB:
                     rec.disk_io,
                     rec.net_io,
                     rec.errors,
+                    rec.tests_failed,
+                    rec.tests_run,
                     rec.revenue,
                     rec.expense,
                     rec.security_score,
@@ -958,6 +978,7 @@ class DataBot:
         settings: SandboxSettings | None = None,
         roi_drop_threshold: float | None = None,
         error_threshold: float | None = None,
+        test_failure_threshold: float | None = None,
         degradation_callback: Callable[[dict], None] | None = None,
     ) -> None:
         self.db = db or MetricsDB()
@@ -969,6 +990,7 @@ class DataBot:
         self.roi_drop_threshold = roi_drop_threshold
         self.error_threshold = error_threshold
         self.degradation_callback = degradation_callback
+        self.test_failure_threshold = test_failure_threshold
         self._degradation_callbacks: list[Callable[[dict], None]] = []
         if degradation_callback:
             self._degradation_callbacks.append(degradation_callback)
@@ -977,6 +999,7 @@ class DataBot:
         self.gauges: Dict[str, Gauge] = {}
         self._last_roi: Dict[str, float] = {}
         self._last_errors: Dict[str, float] = {}
+        self._last_tests_failed: Dict[str, float] = {}
         if Gauge:
             self.registry = registry or CollectorRegistry()
             self.gauges = {
@@ -1126,6 +1149,8 @@ class DataBot:
         bot: str,
         response_time: float = 0.0,
         errors: int = 0,
+        tests_failed: int = 0,
+        tests_run: int = 0,
         revenue: float = 0.0,
         expense: float = 0.0,
         *,
@@ -1233,6 +1258,8 @@ class DataBot:
             disk_io=disk,
             net_io=netio,
             errors=errors,
+            tests_failed=tests_failed,
+            tests_run=tests_run,
             revenue=revenue,
             expense=expense,
             security_score=security_score,
@@ -1273,7 +1300,12 @@ class DataBot:
             except Exception as exc:
                 self.logger.exception("failed to publish metrics event: %s", exc)
         if self.event_bus or self.degradation_callback or self._degradation_callbacks:
-            self.check_degradation(bot, current_roi, float(errors))
+            self.check_degradation(
+                bot,
+                current_roi,
+                float(errors),
+                float(tests_failed),
+            )
         for name, gauge in self.gauges.items():
             gauge.labels(bot=bot).set(getattr(rec, name))
         if self.patch_db:
@@ -1300,6 +1332,7 @@ class DataBot:
         bot: str,
         roi: float,
         errors: float,
+        tests_failed: float = 0.0,
         *,
         callback: Callable[[dict], None] | None = None,
     ) -> bool:
@@ -1312,21 +1345,31 @@ class DataBot:
 
         prev_roi = self._last_roi.get(bot, roi)
         prev_err = self._last_errors.get(bot, errors)
+        prev_fail = self._last_tests_failed.get(bot, tests_failed)
         delta_roi = roi - prev_roi
         delta_err = errors - prev_err
+        delta_fail = tests_failed - prev_fail
         self._last_roi[bot] = roi
         self._last_errors[bot] = errors
+        self._last_tests_failed[bot] = tests_failed
         t = self.get_thresholds(bot)
         event = {
             "bot": bot,
             "delta_roi": delta_roi,
             "delta_errors": delta_err,
+            "delta_tests_failed": delta_fail,
             "roi_threshold": t.roi_drop,
             "error_threshold": t.error_threshold,
+            "test_failure_threshold": t.test_failure_threshold,
             "roi_breach": delta_roi <= t.roi_drop,
             "error_breach": delta_err >= t.error_threshold,
+            "test_failure_breach": delta_fail > t.test_failure_threshold,
         }
-        degraded = event["roi_breach"] or event["error_breach"]
+        degraded = (
+            event["roi_breach"]
+            or event["error_breach"]
+            or event["test_failure_breach"]
+        )
         callbacks = []
         if callback:
             callbacks.append(callback)
@@ -1493,7 +1536,16 @@ class DataBot:
             if self.error_threshold is not None
             else t.error_increase
         )
-        return ROIThresholds(roi_drop=roi_drop, error_threshold=error_thresh)
+        fail_thresh = (
+            self.test_failure_threshold
+            if self.test_failure_threshold is not None
+            else t.test_failure_increase
+        )
+        return ROIThresholds(
+            roi_drop=roi_drop,
+            error_threshold=error_thresh,
+            test_failure_threshold=fail_thresh,
+        )
 
     def update_thresholds(
         self,
@@ -1501,12 +1553,14 @@ class DataBot:
         *,
         roi_drop: float | None = None,
         error_threshold: float | None = None,
+        test_failure_threshold: float | None = None,
     ) -> None:
         """Persist new thresholds for ``bot`` and optionally notify API."""
         save_sc_thresholds(
             bot,
             roi_drop=roi_drop,
             error_increase=error_threshold,
+            test_failure_increase=test_failure_threshold,
         )
 
         api_url = os.getenv("SELF_CODING_THRESHOLD_API")
@@ -1515,6 +1569,7 @@ class DataBot:
                 "bot": bot,
                 "roi_drop": roi_drop,
                 "error_threshold": error_threshold,
+                "test_failure_threshold": test_failure_threshold,
             }
             try:
                 import requests
