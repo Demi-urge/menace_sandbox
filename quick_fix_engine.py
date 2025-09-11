@@ -234,6 +234,23 @@ def generate_patch(
                 except Exception:
                     chunks = []
             patch_ids: List[int | None] = []
+
+            def _gen(desc: str) -> str:
+                """Generate helper code for *desc* using the current context."""
+                try:
+                    return engine.generate_helper(
+                        desc,
+                        path=path,
+                        metadata=context_meta,
+                        target_region=target_region,
+                    )
+                except TypeError:
+                    try:
+                        return engine.generate_helper(desc)
+                    except Exception:
+                        return ""
+                except Exception:
+                    return ""
             if chunks and target_region is None:
                 for chunk in chunks:
                     summary = (
@@ -248,15 +265,35 @@ def generate_patch(
                         apply = getattr(engine, "apply_patch_with_retry")
                     except AttributeError:
                         apply = getattr(engine, "apply_patch")
+                    helper = _gen(chunk_desc)
                     try:
                         pid, _, _ = apply(
                             path,
-                            chunk_desc,
+                            helper,
+                            description=chunk_desc,
                             reason="preemptive_fix",
                             trigger="quick_fix_engine",
                             context_meta=context_meta,
                             target_region=target_region,
                         )
+                    except TypeError:
+                        try:
+                            pid, _, _ = apply(
+                                path,
+                                chunk_desc,
+                                reason="preemptive_fix",
+                                trigger="quick_fix_engine",
+                                context_meta=context_meta,
+                                target_region=target_region,
+                            )
+                        except AttributeError:
+                            engine.patch_file(
+                                path,
+                                "preemptive_fix",
+                                context_meta=context_meta,
+                                target_region=target_region,
+                            )
+                            pid = None
                     except AttributeError:
                         engine.patch_file(
                             path,
@@ -272,15 +309,35 @@ def generate_patch(
                     apply = getattr(engine, "apply_patch_with_retry")
                 except AttributeError:
                     apply = getattr(engine, "apply_patch")
+                helper = _gen(base_description)
                 try:
                     patch_id, _, _ = apply(
                         path,
-                        base_description,
+                        helper,
+                        description=base_description,
                         reason="preemptive_fix",
                         trigger="quick_fix_engine",
                         context_meta=context_meta,
                         target_region=target_region,
                     )
+                except TypeError:
+                    try:
+                        patch_id, _, _ = apply(
+                            path,
+                            base_description,
+                            reason="preemptive_fix",
+                            trigger="quick_fix_engine",
+                            context_meta=context_meta,
+                            target_region=target_region,
+                        )
+                    except AttributeError:
+                        engine.patch_file(
+                            path,
+                            "preemptive_fix",
+                            context_meta=context_meta,
+                            target_region=target_region,
+                        )
+                        patch_id = None
                 except AttributeError:
                     engine.patch_file(
                         path,

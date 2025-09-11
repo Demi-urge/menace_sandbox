@@ -8,8 +8,11 @@ def test_generate_patch_logs_alignment_warning(tmp_path, monkeypatch):
     src.write_text("def f():\n    return 1\n")
 
     class Engine:
-        def apply_patch(self, path: Path, desc: str, **kwargs):
-            text = path.read_text() + "\n" + "eval('2+2')\n"
+        def generate_helper(self, desc, **kwargs):
+            return "eval('2+2')\n"
+
+        def apply_patch(self, path: Path, helper: str, **kwargs):
+            text = path.read_text() + "\n" + helper
             path.write_text(text)
             return 1, False, 0.0
 

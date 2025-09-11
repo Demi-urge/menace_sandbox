@@ -104,10 +104,16 @@ def test_context_block_compressed(monkeypatch):
 
     class DummyEngine:
         def __init__(self):
-            self.desc = None
+            self.helper_calls: list[str] = []
+            self.patched: dict[str, str] = {}
 
-        def apply_patch_with_retry(self, path, description, **kwargs):
-            self.desc = description
+        def generate_helper(self, desc, **kwargs):
+            self.helper_calls.append(desc)
+            return "helper"
+
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            self.patched["helper"] = helper
+            self.patched["desc"] = kwargs.get("description", "")
             return 1, "", ""
 
     builder = DummyBuilder()
@@ -123,6 +129,8 @@ def test_context_block_compressed(monkeypatch):
         patch_logger=DummyPatchLogger(),
     )
 
-    assert engine.desc == f"desc\n\n{expected}"
-    assert context_block not in engine.desc
+    assert engine.helper_calls == [f"desc\n\n{expected}"]
+    assert engine.patched["helper"] == "helper"
+    assert engine.patched["desc"] == f"desc\n\n{expected}"
+    assert context_block not in engine.helper_calls[0]
 

@@ -243,9 +243,12 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
     )
 
     class Engine:
-        def apply_patch(self, path, description, reason, trigger, context_meta):
+        def generate_helper(self, desc, **kwargs):
+            return "# patched\n"
+
+        def apply_patch(self, path, helper, **kwargs):
             p = Path(path)
-            p.write_text(p.read_text() + "# patched\n")
+            p.write_text(p.read_text() + helper)
             return 1, "", ""
 
     qfe.generate_patch(
