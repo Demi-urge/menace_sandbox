@@ -28,6 +28,14 @@ sys.modules.setdefault(
         ErrorResult=Exception,
     ),
 )
+sys.modules.setdefault(
+    "vector_service.text_preprocessor",
+    types.SimpleNamespace(get_config=lambda: None),
+)
+sys.modules.setdefault(
+    "vector_service.context_builder",
+    types.SimpleNamespace(ContextBuilder=object),
+)
 
 import menace.error_bot as eb  # noqa: E402
 import menace.error_logger as elog  # noqa: E402
@@ -61,6 +69,30 @@ class DummyGraph:
 
     def update_error_stats(self, db):
         self.updated = db
+
+
+class DummyRegistry:
+    def __init__(self):
+        self.names = []
+
+    def register_bot(self, name):
+        self.names.append(name)
+
+
+class _DummyMetricsDB:
+    def __init__(self):
+        self.records = []
+
+    def log_eval(self, name, metric, value):
+        self.records.append((name, metric, value))
+
+
+class DummyDataBot:
+    def __init__(self):
+        self.db = _DummyMetricsDB()
+
+    def roi(self, _name):
+        return 0.0
 
 
 def _setup(tmp_path, monkeypatch):
@@ -98,9 +130,19 @@ def test_feedback_triggers_patch(tmp_path, monkeypatch, scope, src):
             source_menace_id=src,
         )
     monkeypatch.setattr(tf, "resolve_path", lambda _p: mod.resolve())
-    fb = tf.TelemetryFeedback(logger, engine, threshold=3)
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+    fb = tf.TelemetryFeedback(
+        logger,
+        engine,
+        threshold=3,
+        bot_registry=registry,
+        data_bot=data_bot,
+    )
     fb._run_cycle(scope=scope)
     assert engine.calls and engine.calls[0][0] == mod.resolve()
+    assert "TelemetryFeedback" in registry.names
+    assert data_bot.db.records
 
 
 def test_feedback_threshold(tmp_path, monkeypatch):

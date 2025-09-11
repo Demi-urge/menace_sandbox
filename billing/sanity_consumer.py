@@ -17,9 +17,12 @@ from typing import Any, Dict, TYPE_CHECKING
 from unified_event_bus import UnifiedEventBus
 from sanity_feedback import SanityFeedback
 from self_coding_engine import SelfCodingEngine
+from coding_bot_interface import self_coding_managed
 
 if TYPE_CHECKING:  # pragma: no cover - used for type hints only
     from vector_service.context_builder import ContextBuilder
+    from bot_registry import BotRegistry
+    from data_bot import DataBot
 import menace_sanity_layer
 from dynamic_path_router import resolve_path
 
@@ -42,6 +45,7 @@ except Exception:  # pragma: no cover - best effort
 logger = logging.getLogger(__name__)
 
 
+@self_coding_managed
 class SanityConsumer:
     """Subscribe to billing anomaly events and trigger self-correction."""
 
@@ -51,6 +55,8 @@ class SanityConsumer:
         *,
         engine: SelfCodingEngine | None = None,
         context_builder: "ContextBuilder",
+        bot_registry: "BotRegistry" | None = None,
+        data_bot: "DataBot" | None = None,
     ) -> None:
         self.event_bus = event_bus or getattr(
             menace_sanity_layer, "_EVENT_BUS", UnifiedEventBus()
@@ -60,6 +66,8 @@ class SanityConsumer:
         self._feedback: SanityFeedback | None = None
         self._outcome_db = DiscrepancyDB() if DiscrepancyDB is not None else None
         self._context_builder = context_builder
+        self.bot_registry = bot_registry
+        self.data_bot = data_bot
         # Refresh DB weights early so the engine has up-to-date context
         self._context_builder.refresh_db_weights()
 
@@ -92,7 +100,10 @@ class SanityConsumer:
     def _get_feedback(self) -> SanityFeedback:
         if self._feedback is None:
             self._feedback = SanityFeedback(
-                self._get_engine(), outcome_db=self._outcome_db
+                self._get_engine(),
+                outcome_db=self._outcome_db,
+                bot_registry=self.bot_registry,
+                data_bot=self.data_bot,
             )
             # Share builder so feedback analysers can inspect engine context
             setattr(self._feedback, "context_builder", self._context_builder)

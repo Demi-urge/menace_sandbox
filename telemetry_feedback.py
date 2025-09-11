@@ -19,8 +19,10 @@ from .scope_utils import Scope, build_scope_clause, apply_scope
 from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine
 from .knowledge_graph import KnowledgeGraph
+from .coding_bot_interface import self_coding_managed
 
 
+@self_coding_managed
 class TelemetryFeedback:
     """Monitor telemetry and trigger self-coding patches.
 

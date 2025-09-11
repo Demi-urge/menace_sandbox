@@ -14,6 +14,8 @@ from .self_coding_engine import SelfCodingEngine
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .knowledge_graph import KnowledgeGraph
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 
 try:  # pragma: no cover - optional vector service dependency
     from vector_service.context_builder import ContextBuilder
@@ -30,6 +32,8 @@ class DebugLoopService:
         *,
         graph: KnowledgeGraph | None = None,
         context_builder: ContextBuilder,
+        bot_registry: BotRegistry | None = None,
+        data_bot: DataBot | None = None,
     ) -> None:
         """Create service.
 
@@ -51,7 +55,12 @@ class DebugLoopService:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=context_builder
             )
-            feedback = TelemetryFeedback(logger, engine)
+            feedback = TelemetryFeedback(
+                logger,
+                engine,
+                bot_registry=bot_registry,
+                data_bot=data_bot,
+            )
         self.feedback = feedback
         self.logger = logging.getLogger(self.__class__.__name__)
         self.failure_count = 0
