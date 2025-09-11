@@ -130,7 +130,10 @@ class EvolutionOrchestrator:
                     encoding="utf-8",
                 )
             except Exception:
-                pass
+                self.logger.exception(
+                    "failed to initialize ROI dataset at %s", self.dataset_path
+                )
+                raise
         if self.event_bus:
             try:
                 self.event_bus.subscribe("evolve:system", lambda *_: self.run_cycle())
