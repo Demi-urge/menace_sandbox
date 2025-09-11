@@ -14,6 +14,7 @@ import threading
 import time
 import re
 import json
+import uuid
 from dataclasses import asdict
 from typing import Dict, Any, TYPE_CHECKING
 
@@ -259,6 +260,24 @@ class SelfCodingManager:
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load thresholds for %s", self.bot_name)
 
+    def _prepare_context_builder(self, builder: ContextBuilder) -> None:
+        """Refresh *builder* weights and log its session id."""
+
+        ensure_fresh_weights(builder)
+        patch_db = getattr(self.engine, "patch_db", None)
+        session_id = getattr(builder, "session_id", "") or uuid.uuid4().hex
+        setattr(builder, "session_id", session_id)
+        if patch_db:
+            try:
+                conn = patch_db.router.get_connection("patch_history")
+                conn.execute(
+                    "INSERT INTO patch_contributors(patch_id, vector_id, influence, session_id) VALUES(?,?,?,?)",
+                    (None, "", 0.0, session_id),
+                )
+                conn.commit()
+            except Exception:
+                self.logger.exception("failed to record context builder session")
+
     def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
         """Initialise :class:`QuickFixEngine` on demand.
 
@@ -281,7 +300,7 @@ class SelfCodingManager:
             raise RuntimeError(
                 "engine.cognition_layer must provide a context_builder"
             )
-        ensure_fresh_weights(builder)
+        self._prepare_context_builder(builder)
         self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
         return self.quick_fix
 
@@ -555,6 +574,7 @@ class SelfCodingManager:
                 raise AttributeError(
                     "engine.cognition_layer must provide a context_builder",
                 )
+            self._prepare_context_builder(builder)
             self._ensure_quick_fix_engine()
             if self.quick_fix is None:
                 raise RuntimeError("QuickFixEngine validation unavailable")
