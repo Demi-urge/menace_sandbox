@@ -29,7 +29,7 @@ try:  # pragma: no cover - optional dependency
         load_failed_tags,
         ContextBuilder,
     )
-except Exception as exc:  # pragma: no cover - optional dependency
+except Exception as exc:  # pragma: no cover - optional dependency  # noqa: F841
 
     _ctx_exc = exc
 
@@ -74,10 +74,12 @@ except Exception as exc:  # pragma: no cover - optional dependency
     class QuickFixEngine:  # type: ignore
         """Placeholder when :mod:`quick_fix_engine` is unavailable."""
 
-        def __init__(self, *a: object, **k: object) -> None:  # noqa: D401 - simple
+        def __init__(
+            self, *a: object, _exc: Exception = exc, **k: object
+        ) -> None:  # noqa: D401
             raise RuntimeError(
                 "QuickFixEngine is required but could not be imported"
-            ) from exc
+            ) from _exc
 
 from context_builder_util import ensure_fresh_weights
 
@@ -554,13 +556,14 @@ class SelfCodingManager:
                     "engine.cognition_layer must provide a context_builder",
                 )
             self._ensure_quick_fix_engine()
-            if self.quick_fix is not None:
-                try:
-                    self.quick_fix.context_builder = builder
-                except Exception:
-                    self.logger.exception(
-                        "failed to update QuickFixEngine context builder",
-                    )
+            if self.quick_fix is None:
+                raise RuntimeError("QuickFixEngine validation unavailable")
+            try:
+                self.quick_fix.context_builder = builder
+            except Exception:
+                self.logger.exception(
+                    "failed to update QuickFixEngine context builder",
+                )
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None
@@ -783,43 +786,30 @@ class SelfCodingManager:
                 else:
                     ctx_meta.pop("target_region", None)
 
-                if self.quick_fix is not None:
-                    module_path = str(cloned_path)
-                    module_name = path_for_prompt(cloned_path)
-                    passed, patch_id = self.quick_fix.apply_validated_patch(
-                        module_path,
-                        desc,
-                        ctx_meta,
-                    )
-                    reverted = not passed
-                    if self.data_bot:
-                        try:
-                            self.data_bot.record_validation(
-                                self.bot_name, module_name, passed, None
-                            )
-                        except Exception:
-                            self.logger.exception("failed to record validation in DataBot")
-                    if self.bot_registry:
-                        try:
-                            self.bot_registry.record_validation(self.bot_name, module_name, passed)
-                        except Exception:
-                            self.logger.exception("failed to record validation in registry")
-                    if not passed:
-                        if target_region is not None and func_region is not None:
-                            tracker.record_failure(level, target_region, func_region)
-                        raise RuntimeError("quick fix validation failed")
-                else:
-                    patch_id, reverted, _ = self.engine.apply_patch(
-                        cloned_path,
-                        desc,
-                        parent_patch_id=self._last_patch_id,
-                        reason=desc,
-                        trigger=prompt_path,
-                        context_meta=ctx_meta,
-                        baseline_coverage=coverage_before,
-                        baseline_runtime=runtime_before,
-                        target_region=patch_region,
-                    )
+                module_path = str(cloned_path)
+                module_name = path_for_prompt(cloned_path)
+                passed, patch_id = self.quick_fix.apply_validated_patch(
+                    module_path,
+                    desc,
+                    ctx_meta,
+                )
+                reverted = not passed
+                if self.data_bot:
+                    try:
+                        self.data_bot.record_validation(
+                            self.bot_name, module_name, passed, None
+                        )
+                    except Exception:
+                        self.logger.exception("failed to record validation in DataBot")
+                if self.bot_registry:
+                    try:
+                        self.bot_registry.record_validation(self.bot_name, module_name, passed)
+                    except Exception:
+                        self.logger.exception("failed to record validation in registry")
+                if not passed:
+                    if target_region is not None and func_region is not None:
+                        tracker.record_failure(level, target_region, func_region)
+                    raise RuntimeError("quick fix validation failed")
                 harness_result: TestHarnessResult = _run(clone_root, cloned_path)
                 if (
                     self.data_bot
