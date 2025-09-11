@@ -341,7 +341,7 @@ class BotDevelopmentBot:
             manager = SelfCodingManager(
                 engine,
                 pipeline,
-                data_bot=DataBot(),
+                data_bot=DataBot(event_bus=bus),
                 bot_registry=registry,
                 event_bus=bus,
             )
@@ -539,7 +539,11 @@ class BotDevelopmentBot:
                 registry = getattr(self.manager, "bot_registry", None)
                 if registry is not None:
                     try:
-                        name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                        name = getattr(
+                            self,
+                            "name",
+                            getattr(self, "bot_name", self.__class__.__name__),
+                        )
                         registry.update_bot(name, str(path))
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception("bot registry update failed")

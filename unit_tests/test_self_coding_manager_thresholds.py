@@ -81,8 +81,24 @@ rb_mod.RollbackManager = RollbackManager
 sys.modules.setdefault("menace.rollback_manager", rb_mod)
 
 db_mod = types.ModuleType("menace.data_bot")
+
+
 class DataBot:
-    pass
+    def roi(self, _bot: str) -> float:
+        return 1.0
+
+    def average_errors(self, _bot: str) -> float:
+        return 0.0
+
+    def average_test_failures(self, _bot: str) -> float:
+        return 0.0
+
+    def get_thresholds(self, _bot: str):
+        from menace.self_coding_thresholds import SelfCodingThresholds
+
+        return SelfCodingThresholds(roi_drop=-0.5, error_increase=2.0)
+
+
 db_mod.DataBot = DataBot
 sys.modules.setdefault("menace.data_bot", db_mod)
 
@@ -144,37 +160,34 @@ sys.modules["code_database"] = code_db_mod
 # Import target modules
 # ---------------------------------------------------------------------------
 import menace.self_coding_manager as scm
-from menace.self_coding_thresholds import SelfCodingThresholds
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
-def test_default_thresholds_from_helper(monkeypatch):
-    calls = {}
-    def fake_get_thresholds(bot):
-        calls['bot'] = bot
-        return SelfCodingThresholds(roi_drop=-0.5, error_increase=2.0)
-    monkeypatch.setattr(scm, 'get_thresholds', fake_get_thresholds)
-    mgr = scm.SelfCodingManager(scm.SelfCodingEngine(), scm.ModelAutomationPipeline(), bot_name='alpha')
-    assert calls['bot'] == 'alpha'
-    assert mgr.roi_drop_threshold == -0.5
-    assert mgr.error_rate_threshold == 2.0
-
-def test_threshold_overrides(monkeypatch):
-    calls = {}
-    def fake_get_thresholds(bot):
-        calls['bot'] = bot
-        return SelfCodingThresholds(roi_drop=-0.5, error_increase=2.0)
-    monkeypatch.setattr(scm, 'get_thresholds', fake_get_thresholds)
+def test_default_thresholds_from_helper():
+    data_bot = scm.DataBot()
     mgr = scm.SelfCodingManager(
         scm.SelfCodingEngine(),
         scm.ModelAutomationPipeline(),
-        bot_name='beta',
+        bot_name="alpha",
+        data_bot=data_bot,
+        bot_registry=scm.BotRegistry(),
+    )
+    assert mgr.roi_drop_threshold == -0.5
+    assert mgr.error_rate_threshold == 2.0
+
+def test_threshold_overrides():
+    data_bot = scm.DataBot()
+    mgr = scm.SelfCodingManager(
+        scm.SelfCodingEngine(),
+        scm.ModelAutomationPipeline(),
+        bot_name="beta",
+        data_bot=data_bot,
+        bot_registry=scm.BotRegistry(),
         roi_drop_threshold=-0.2,
         error_rate_threshold=3.3,
     )
-    assert calls['bot'] == 'beta'
     assert mgr.roi_drop_threshold == -0.2
     assert mgr.error_rate_threshold == 3.3
 
@@ -211,6 +224,7 @@ def test_should_refactor_on_failed_tests(monkeypatch):
         scm.ModelAutomationPipeline(),
         bot_name="alpha",
         data_bot=data_bot,
+        bot_registry=scm.BotRegistry(),
     )
     mgr._last_errors = data_bot.average_errors("alpha")
     data_bot.failures = 1
@@ -221,7 +235,11 @@ def test_should_refactor_on_failed_tests(monkeypatch):
 
 def test_missing_context_builder_raises(tmp_path):
     mgr = scm.SelfCodingManager(
-        scm.SelfCodingEngine(), scm.ModelAutomationPipeline(), bot_name="x"
+        scm.SelfCodingEngine(),
+        scm.ModelAutomationPipeline(),
+        bot_name="x",
+        data_bot=scm.DataBot(),
+        bot_registry=scm.BotRegistry(),
     )
     path = tmp_path / "mod.py"
     path.write_text("print('hi')\n")
@@ -231,7 +249,11 @@ def test_missing_context_builder_raises(tmp_path):
 
 def test_missing_quick_fix_engine_raises(monkeypatch):
     mgr = scm.SelfCodingManager(
-        scm.SelfCodingEngine(), scm.ModelAutomationPipeline(), bot_name="x"
+        scm.SelfCodingEngine(),
+        scm.ModelAutomationPipeline(),
+        bot_name="x",
+        data_bot=scm.DataBot(),
+        bot_registry=scm.BotRegistry(),
     )
     monkeypatch.setattr(scm, "quick_fix_engine", None)
     with pytest.raises(RuntimeError, match="QuickFixEngine"):

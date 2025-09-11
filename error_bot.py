@@ -90,7 +90,6 @@ from .metrics_exporter import error_bot_exceptions
 from .scope_utils import build_scope_clause, Scope, apply_scope
 from .coding_bot_interface import self_coding_managed
 from .self_coding_manager import SelfCodingManager
-from .bot_registry import BotRegistry
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
@@ -968,9 +967,7 @@ class ErrorBot(AdminBotBase):
         metrics_db: MetricsDB | None = None,
         *,
         prediction_manager: "PredictionManager" | None = None,
-        bot_registry: BotRegistry | None = None,
-        data_bot: DataBot | None = None,
-        selfcoding_manager: "SelfCodingManager" | None = None,
+        selfcoding_manager: "SelfCodingManager",
         menace_db: "MenaceDB" | None = None,
         bot_db: "BotDB" | None = None,
         enhancement_db: "EnhancementDB" | None = None,
@@ -986,9 +983,15 @@ class ErrorBot(AdminBotBase):
     ) -> None:
         super().__init__(db_router=db_router)
         self.name = "ErrorBot"
+        if selfcoding_manager is None:
+            raise ValueError("selfcoding_manager is required")
         self.manager = selfcoding_manager
         self.bot_registry = getattr(selfcoding_manager, "bot_registry", None)
         self.data_bot = getattr(selfcoding_manager, "data_bot", None)
+        if self.bot_registry is None or self.data_bot is None:
+            raise ValueError(
+                "selfcoding_manager must provide bot_registry and data_bot"
+            )
         self.db = db or ErrorDB()
         self.graph = graph
         self.context_builder = context_builder

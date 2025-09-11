@@ -91,6 +91,10 @@ from bot_development_bot import BotDevelopmentBot, BotSpec
 from automated_reviewer import AutomatedReviewer
 from quick_fix_engine import QuickFixEngine, generate_patch
 from error_bot import ErrorDB
+from self_coding_engine import SelfCodingEngine
+from model_automation_pipeline import ModelAutomationPipeline
+from data_bot import DataBot
+from bot_registry import BotRegistry
 from self_coding_manager import SelfCodingManager
 
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
@@ -103,7 +107,13 @@ dev_bot._build_prompt(BotSpec(name="demo", purpose="Add feature"), context_build
 
 reviewer = AutomatedReviewer(context_builder=builder)
 
-qfe = QuickFixEngine(ErrorDB(), SelfCodingManager(), context_builder=builder)
+manager = SelfCodingManager(
+    SelfCodingEngine(),
+    ModelAutomationPipeline(),
+    data_bot=DataBot(),
+    bot_registry=BotRegistry(),
+)
+qfe = QuickFixEngine(ErrorDB(), manager, context_builder=builder)
 generate_patch("sandbox_runner", context_builder=builder)
 ```
 
