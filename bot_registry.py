@@ -110,6 +110,20 @@ class BotRegistry:
                 except Exception:
                     logger.exception("Failed publishing heartbeat error")
 
+    def record_validation(self, bot: str, module: str, passed: bool) -> None:
+        """Record patch validation outcome for ``bot``."""
+        self.interactions_meta.append(
+            {"bot": bot, "module": module, "passed": bool(passed), "ts": time.time()}
+        )
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "bot:patch_validation",
+                    {"bot": bot, "module": module, "passed": bool(passed)},
+                )
+            except Exception as exc:
+                logger.error("Failed to publish bot:patch_validation event: %s", exc)
+
     def active_bots(self, timeout: float = 60.0) -> Dict[str, float]:
         """Return bots seen within ``timeout`` seconds."""
         now = time.time()

@@ -105,7 +105,8 @@ def generate_patch(
     context: Dict[str, Any] | None = None,
     effort_estimate: float | None = None,
     target_region: "TargetRegion" | None = None,
-) -> int | None:
+    return_flags: bool = False,
+) -> int | tuple[int | None, list[str]] | None:
     """Attempt a quick patch for *module* and return the patch id.
 
     A provided :class:`vector_service.ContextBuilder` is used to gather context
@@ -292,11 +293,11 @@ def generate_patch(
             after_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, after_target)
             diff_struct = generate_code_diff(before_dir, after_dir)
-            risky = flag_risky_changes(diff_struct)
-            if risky:
-                logger.warning("risky changes detected: %s", risky)
+            risk_flags = flag_risky_changes(diff_struct)
+            if risk_flags:
+                logger.warning("risky changes detected: %s", risk_flags)
                 shutil.copy2(before_target, path)
-                return None
+                return (None, risk_flags) if return_flags else None
             diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
             workflow_changes = [
                 {"file": path_for_prompt(f), "code": "\n".join(d["added"])}
@@ -341,10 +342,10 @@ def generate_patch(
                 logger.exception(
                     "post_round_orphan_scan after preemptive patch failed"
                 )
-            return patch_id
+            return (patch_id, []) if return_flags else patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
         logger.error("quick fix generation failed for %s: %s", prompt_path, exc)
-        return None
+        return (None, [str(exc)]) if return_flags else None
 
 
 @self_coding_managed

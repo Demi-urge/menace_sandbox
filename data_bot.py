@@ -6,6 +6,7 @@ from __future__ import annotations
 import sqlite3
 import os
 import logging
+import json
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -1471,6 +1472,29 @@ class DataBot:
             return pred - y[-1]
         except Exception:
             return y[-1] - y[-2]
+
+    def record_validation(
+        self, bot: str, module: str, passed: bool, flags: List[str] | None = None
+    ) -> None:
+        """Persist patch validation results for later analysis."""
+        try:
+            with self.db._connect() as conn:  # type: ignore[attr-defined]
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS patch_validation(" "bot TEXT, module TEXT, passed INTEGER, flags TEXT, ts TEXT)"
+                )
+                conn.execute(
+                    "INSERT INTO patch_validation(bot,module,passed,flags,ts) VALUES(?,?,?,?,?)",
+                    (
+                        bot,
+                        module,
+                        1 if passed else 0,
+                        json.dumps(flags or []),
+                        datetime.utcnow().isoformat(),
+                    ),
+                )
+                conn.commit()
+        except Exception:
+            self.logger.exception("failed to record patch validation")
 
     @staticmethod
     def detect_anomalies(
