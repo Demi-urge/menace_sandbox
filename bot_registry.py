@@ -11,6 +11,9 @@ change.
 from typing import List, Tuple, Union, Optional, Dict
 from pathlib import Path
 import time
+import importlib
+import importlib.util
+import sys
 
 try:
     from .databases import MenaceDB
@@ -114,6 +117,44 @@ class BotRegistry:
                 logger.error(
                     "Failed to save bot registry to %s: %s", self.persist_path, exc
                 )
+        self.hot_swap_bot(name)
+
+    def hot_swap_bot(self, name: str) -> None:
+        """Import or reload the module backing ``name`` and refresh references."""
+
+        node = self.graph.nodes.get(name)
+        if not node or "module" not in node:
+            raise KeyError(f"bot {name!r} has no module path")
+        module_path = node["module"]
+        try:
+            path_obj = Path(module_path)
+            if path_obj.suffix == ".py" or "/" in module_path:
+                module_name = path_obj.stem
+                spec = importlib.util.spec_from_file_location(
+                    module_name, module_path
+                )
+                if not spec or not spec.loader:
+                    raise ImportError(f"cannot load module from {module_path}")
+                importlib.invalidate_caches()
+                if module_name in sys.modules:
+                    module = sys.modules[module_name]
+                    module.__file__ = module_path
+                    module.__spec__ = spec
+                    spec.loader.exec_module(module)
+                else:
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[module_name] = module
+                    spec.loader.exec_module(module)
+            else:
+                if module_path in sys.modules:
+                    importlib.reload(sys.modules[module_path])
+                else:
+                    importlib.import_module(module_path)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error(
+                "Failed to hot swap bot %s from %s: %s", name, module_path, exc
+            )
+            raise
 
     def register_interaction(self, from_bot: str, to_bot: str, weight: float = 1.0) -> None:
         """Record that *from_bot* interacted with *to_bot*."""
