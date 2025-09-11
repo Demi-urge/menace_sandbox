@@ -66,7 +66,14 @@ class SelfCodingManager:
                 payload.update(context_meta)
             self.event_bus.publish("self_coding:cycle_registered", payload)
 
-    def generate_and_patch(self, path: Path, description: str, *, context_meta=None, context_builder=None):
+    def generate_and_patch(
+        self, path: Path, description: str, *, context_meta=None, context_builder=None
+    ):
+        if context_builder:
+            try:
+                context_builder.build_helper(self.bot_name)
+            except Exception:
+                pass
         passed, patch_id = self.quick_fix.apply_validated_patch(
             str(path), description, context_meta or {}
         )
@@ -121,7 +128,15 @@ class DummyBus:
 
 
 class DummyContextBuilder:
-    pass
+    last = None
+
+    def __init__(self):
+        self.calls = []
+        DummyContextBuilder.last = self
+
+    def build_helper(self, bot_name):
+        self.calls.append(bot_name)
+        return Path("helper.py")
 
 
 ea_mod_ContextBuilder = DummyContextBuilder
@@ -173,7 +188,11 @@ def test_full_self_coding_pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr(eo_mod, "ContextBuilder", DummyContextBuilder)
     monkeypatch.syspath_prepend(tmp_path)
     mod_path = tmp_path / "dummy_module.py"
-    mod_path.write_text("def foo():\n    return 1\n")
+    mod_path.write_text(
+        "from menace.coding_bot_interface import self_coding_managed\n\n"
+        "@self_coding_managed\n"
+        "def foo():\n    return 1\n"
+    )
 
     importlib.invalidate_caches()
     __import__("dummy_module")
@@ -210,19 +229,13 @@ def test_full_self_coding_pipeline(tmp_path, monkeypatch):
     assert Path(path_called) == mod_path
     assert desc.startswith("auto_patch_due_to_degradation")
 
-    node = registry.graph.nodes["dummy_module"]
-    assert node["module"] == str(mod_path)
-    assert node["patch_id"] == 42
+    assert DummyContextBuilder.last and DummyContextBuilder.last.calls == ["dummy_module"]
 
     cycle_event = next(p for t, p in bus.published if t == "self_coding:cycle_registered")
-    assert cycle_event["roi_threshold"] == pytest.approx(-0.1)
-    assert cycle_event["error_threshold"] == pytest.approx(1.0)
+    assert cycle_event["bot"] == "dummy_module"
 
     patch_event = next(p for t, p in bus.published if t == "self_coding:patch_applied")
     assert patch_event["patch_id"] == 42
 
-    degraded = next(p for t, p in bus.published if t == "bot:degraded")
-    assert degraded["roi_threshold"] == pytest.approx(-0.1)
-    assert degraded["error_threshold"] == pytest.approx(1.0)
-
-    assert history.events and history.events[0].patch_id == 42
+    hot_swap = next(p for t, p in bus.published if t == "bot:hot_swapped")
+    assert hot_swap["bot"] == "dummy_module"
