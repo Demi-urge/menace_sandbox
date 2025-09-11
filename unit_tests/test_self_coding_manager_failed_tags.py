@@ -91,8 +91,24 @@ rb_mod.RollbackManager = RollbackManager
 sys.modules.setdefault("menace.rollback_manager", rb_mod)
 
 db_mod = types.ModuleType("menace.data_bot")
+
+
 class DataBot:
-    pass
+    def roi(self, _bot: str) -> float:
+        return 1.0
+
+    def average_errors(self, _bot: str) -> float:
+        return 0.0
+
+    def average_test_failures(self, _bot: str) -> float:
+        return 0.0
+
+    def get_thresholds(self, _bot: str):
+        return types.SimpleNamespace(
+            roi_drop=-1.0, error_threshold=1.0, test_failure_threshold=1.0
+        )
+
+
 db_mod.DataBot = DataBot
 sys.modules.setdefault("menace.data_bot", db_mod)
 
@@ -177,7 +193,12 @@ def test_failed_tags_recorded(monkeypatch, tmp_path):
 
     engine = Engine()
     pipeline = ModelAutomationPipeline(context_builder=builder)
-    mgr = scm.SelfCodingManager(engine, pipeline)
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        data_bot=scm.DataBot(),
+        bot_registry=scm.BotRegistry(),
+    )
     monkeypatch.setattr(scm.SelfCodingManager, "_ensure_quick_fix_engine", lambda self: None)
 
     # ensure clone path exists and file copied during git clone

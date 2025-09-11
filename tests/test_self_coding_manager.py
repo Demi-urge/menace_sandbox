@@ -1,8 +1,5 @@
 # flake8: noqa
 import pytest
-from dynamic_path_router import resolve_path
-
-resolve_path("README.md")
 
 pytest.importorskip("networkx")
 pytest.importorskip("pandas")
@@ -15,6 +12,39 @@ sys.modules.setdefault("environment_bootstrap", stub_env)
 db_stub = types.ModuleType("data_bot")
 db_stub.MetricsDB = object
 sys.modules.setdefault("data_bot", db_stub)
+db_router_stub = types.ModuleType("db_router")
+db_router_stub.GLOBAL_ROUTER = None
+db_router_stub.LOCAL_TABLES = set()
+
+
+class DummyRouter:
+    def __init__(self, *a, **k):
+        pass
+
+    class _Conn:
+        def execute(self, *a, **k):
+            return types.SimpleNamespace(fetchall=lambda: [])
+
+        def commit(self):
+            pass
+
+    def get_connection(self, *_a, **_k):
+        return self._Conn()
+
+
+def init_db_router(*a, **k):
+    return DummyRouter()
+
+
+db_router_stub.DBRouter = DummyRouter
+db_router_stub.init_db_router = init_db_router
+sys.modules.setdefault("db_router", db_router_stub)
+dpr = types.SimpleNamespace(
+    resolve_path=lambda p: __import__("pathlib").Path(p),
+    repo_root=lambda: __import__("pathlib").Path("."),
+    path_for_prompt=lambda p: str(p),
+)
+sys.modules["dynamic_path_router"] = dpr
 import menace.data_bot as db
 sys.modules["data_bot"] = db
 sys.modules["menace"].RAISE_ERRORS = False
@@ -108,13 +138,51 @@ class DummyPipeline:
         )
 
 
+class DummyRegistry:
+    def register_bot(self, name: str) -> None:
+        pass
+
+
+class DummyDataBot:
+    def __init__(self) -> None:
+        self.failures = 0
+        self.db = types.SimpleNamespace(log_eval=lambda *a, **k: None)
+
+    def roi(self, _bot: str) -> float:
+        return 1.0
+
+    def average_errors(self, _bot: str) -> float:
+        return 0.0
+
+    def average_test_failures(self, _bot: str) -> float:
+        return self.failures
+
+    def get_thresholds(self, _bot: str):
+        return types.SimpleNamespace(
+            roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
+        )
+
+    def log_evolution_cycle(self, *a, **k) -> None:  # pragma: no cover - simple
+        pass
+
+
 def test_run_patch_logs_evolution(monkeypatch, tmp_path):
     hist = EvolutionHistoryDB(tmp_path / "e.db")
-    mdb = db.MetricsDB(tmp_path / "m.db")
-    data_bot = db.DataBot(mdb, evolution_db=hist)
+
+    class LocalDataBot(DummyDataBot):
+        def log_evolution_cycle(self, *a, **k) -> None:
+            hist.log_cycle("self_coding", {})
+
+    data_bot = LocalDataBot()
     engine = DummyEngine()
     pipeline = DummyPipeline()
-    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=data_bot,
+        bot_registry=DummyRegistry(),
+    )
     file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
@@ -166,11 +234,21 @@ def test_run_patch_logs_evolution(monkeypatch, tmp_path):
 
 def test_run_patch_logging_error(monkeypatch, tmp_path, caplog):
     hist = EvolutionHistoryDB(tmp_path / "e.db")
-    mdb = db.MetricsDB(tmp_path / "m.db")
-    data_bot = db.DataBot(mdb, evolution_db=hist)
+
+    class LocalDataBot(DummyDataBot):
+        def log_evolution_cycle(self, *a, **k) -> None:
+            hist.log_cycle("self_coding", {})
+
+    data_bot = LocalDataBot()
     engine = DummyEngine()
     pipeline = DummyPipeline()
-    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=data_bot,
+        bot_registry=DummyRegistry(),
+    )
     file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
@@ -273,6 +351,14 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
         def average_errors(self, _bot: str) -> float:  # pragma: no cover - simple
             return 0.0
 
+        def average_test_failures(self, _bot: str) -> float:  # pragma: no cover - simple
+            return 0.0
+
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(
+                roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
+            )
+
     engine = DummyEngine()
 
     def record_patch_outcome(session_id, success, contribution=0.0):
@@ -281,7 +367,13 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
     engine.cognition_layer.record_patch_outcome = record_patch_outcome
     pipeline = DummyPipeline()
     data_bot = DummyDataBot()
-    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot", data_bot=data_bot)
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=data_bot,
+        bot_registry=DummyRegistry(),
+    )
     file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
@@ -330,7 +422,13 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
 
     engine = Engine()
     pipeline = DummyPipeline()
-    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+    )
     file_path = tmp_path / "sample.py"
     file_path.write_text("pass\n")
 
@@ -354,7 +452,13 @@ def test_generate_and_patch_failure(monkeypatch, tmp_path):
 
     engine = Engine()
     pipeline = DummyPipeline()
-    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+    )
     file_path = tmp_path / "sample.py"
     file_path.write_text("pass\n")
 
@@ -393,9 +497,32 @@ def test_should_refactor_on_test_failures_only(monkeypatch):
 
     data_bot = DummyDataBot()
     mgr = scm.SelfCodingManager(
-        DummyEngine(), DummyPipeline(), bot_name="bot", data_bot=data_bot
+        DummyEngine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=data_bot,
+        bot_registry=DummyRegistry(),
     )
     mgr._last_errors = data_bot.average_errors("bot")
     assert not mgr.should_refactor()
     data_bot.failures = 5
     assert mgr.should_refactor()
+
+
+def test_init_requires_helpers():
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+    with pytest.raises(ValueError):
+        scm.SelfCodingManager(
+            engine,
+            pipeline,
+            bot_name="bot",
+            data_bot=DummyDataBot(),
+        )
+    with pytest.raises(ValueError):
+        scm.SelfCodingManager(
+            engine,
+            pipeline,
+            bot_name="bot",
+            bot_registry=DummyRegistry(),
+        )

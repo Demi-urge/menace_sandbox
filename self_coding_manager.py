@@ -64,7 +64,6 @@ from .rollback_manager import RollbackManager
 from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings
-from .self_coding_thresholds import get_thresholds
 from .patch_attempt_tracker import PatchAttemptTracker
 
 try:  # pragma: no cover - optional dependency
@@ -152,7 +151,11 @@ class HelperGenerationError(RuntimeError):
 
 
 class SelfCodingManager:
-    """Apply code patches and redeploy bots."""
+    """Apply code patches and redeploy bots.
+
+    ``data_bot`` and ``bot_registry`` must be provided; a
+    :class:`ValueError` is raised otherwise.
+    """
 
     def __init__(
         self,
@@ -174,6 +177,8 @@ class SelfCodingManager:
         roi_drop_threshold: float | None = None,
         error_rate_threshold: float | None = None,
     ) -> None:
+        if data_bot is None or bot_registry is None:
+            raise ValueError("data_bot and bot_registry are required")
         self.engine = self_coding_engine
         self.pipeline = pipeline
         self.bot_name = bot_name
@@ -182,34 +187,16 @@ class SelfCodingManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
-        if data_bot and hasattr(data_bot, "get_thresholds"):
-            thresholds = data_bot.get_thresholds(bot_name)
-            self.roi_drop_threshold = (
-                roi_drop_threshold
-                if roi_drop_threshold is not None
-                else thresholds.roi_drop
-            )
-            self.error_rate_threshold = (
-                error_rate_threshold
-                if error_rate_threshold is not None
-                else thresholds.error_threshold
-            )
-            self.test_failure_threshold = thresholds.test_failure_threshold
-        else:
-            thresholds = get_thresholds(bot_name)
-            self.roi_drop_threshold = (
-                roi_drop_threshold
-                if roi_drop_threshold is not None
-                else thresholds.roi_drop
-            )
-            self.error_rate_threshold = (
-                error_rate_threshold
-                if error_rate_threshold is not None
-                else thresholds.error_increase
-            )
-            self.test_failure_threshold = getattr(
-                thresholds, "test_failure_increase", 0.0
-            )
+        thresholds = data_bot.get_thresholds(bot_name)
+        self.roi_drop_threshold = (
+            roi_drop_threshold if roi_drop_threshold is not None else thresholds.roi_drop
+        )
+        self.error_rate_threshold = (
+            error_rate_threshold
+            if error_rate_threshold is not None
+            else thresholds.error_threshold
+        )
+        self.test_failure_threshold = thresholds.test_failure_threshold
         self._refresh_thresholds()
         self._last_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         self._last_errors = (

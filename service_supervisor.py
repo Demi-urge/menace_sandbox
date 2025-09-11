@@ -64,6 +64,7 @@ from vector_service.context_builder import ContextBuilder  # noqa: E402
 from context_builder_util import create_context_builder  # noqa: E402
 from .unified_event_bus import UnifiedEventBus  # noqa: E402
 from .bot_registry import BotRegistry  # noqa: E402
+from .data_bot import DataBot  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -378,6 +379,7 @@ class ServiceSupervisor:
         )
         bus = UnifiedEventBus()
         registry = BotRegistry(event_bus=bus)
+        data_bot = DataBot(event_bus=bus)
         pipeline = ModelAutomationPipeline(
             context_builder=self.context_builder,
             event_bus=bus,
@@ -388,6 +390,7 @@ class ServiceSupervisor:
             pipeline,
             bot_name="menace",
             approval_policy=self.approval_policy,
+            data_bot=data_bot,
             bot_registry=registry,
             event_bus=bus,
         )
@@ -415,12 +418,14 @@ class ServiceSupervisor:
             from .code_database import CodeDB
             from .menace_memory_manager import MenaceMemoryManager
             from .model_automation_pipeline import ModelAutomationPipeline
+            from .data_bot import DataBot
 
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
             bus = UnifiedEventBus()
             registry = BotRegistry(event_bus=bus)
+            data_bot = DataBot(event_bus=bus)
             pipeline = ModelAutomationPipeline(
                 context_builder=self.context_builder,
                 event_bus=bus,
@@ -431,6 +436,7 @@ class ServiceSupervisor:
                 pipeline,
                 bot_name="menace",
                 approval_policy=self.approval_policy,
+                data_bot=data_bot,
                 bot_registry=registry,
                 event_bus=bus,
             )
