@@ -163,10 +163,7 @@ FUNCTION_IMPLEMENTATION_MAP: Dict[str, str] = {
     ),
     "type_text": (
         "Send keyboard input to the active field using an automation library"
-    ),
-    "capture_screenshot": (
-        "Save a screenshot to the provided path and return the path"
-    ),
+    )
 }
 
 
