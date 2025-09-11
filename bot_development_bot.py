@@ -361,6 +361,8 @@ class BotDevelopmentBot:
         }.items():
             if mod is None:
                 self.logger.warning("optional dependency %s unavailable", dep_name)
+        self.name = getattr(self, "name", self.__class__.__name__)
+        self.data_bot = DataBot()
 
     @property
     def coding_engine(self) -> SelfCodingEngine:  # pragma: no cover - backward compat
@@ -991,58 +993,76 @@ class BotDevelopmentBot:
         sample_with_vectors:
             Whether to request embeddings for training samples.
         """
-        # check for existing code templates first
-        if self.db_steward:
-            try:
-                existing = self.db_steward.existing_code(spec.name)
-            except Exception as exc:
-                self.logger.warning("existing code lookup failed: %s", exc)
-                self._escalate(f"existing code lookup failed: {exc}")
-                if RAISE_ERRORS:
-                    raise
+        start_time = time.time()
+        errors = 0
+        try:
+            # check for existing code templates first
+            if self.db_steward:
+                try:
+                    existing = self.db_steward.existing_code(spec.name)
+                except Exception as exc:
+                    self.logger.warning("existing code lookup failed: %s", exc)
+                    self._escalate(f"existing code lookup failed: {exc}")
+                    if RAISE_ERRORS:
+                        errors = 1
+                        raise
+                    existing = None
+            else:
                 existing = None
-        else:
-            existing = None
 
-        repo_dir = Path(resolve_path(self.create_env(spec, model_id=model_id)))
-        meta = self._write_meta(repo_dir, spec)
+            repo_dir = Path(resolve_path(self.create_env(spec, model_id=model_id)))
+            meta = self._write_meta(repo_dir, spec)
 
-        if existing:
+            if existing:
+                file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
+                self._write_with_retry(file_path, existing)
+                file_path = Path(resolve_path(file_path))
+                self.lint_code(file_path)
+                req = self._create_requirements(repo_dir, spec)
+                tests = self._create_tests(repo_dir, spec)
+                self._validate_repo(repo_dir, spec)
+                paths = [file_path, meta] + ([req] if req else []) + tests
+                self.version_control(
+                    repo_dir, paths, message=f"Initial version of {spec.name}"
+                )
+                return file_path
+
+            prompt = self._build_prompt(
+                spec,
+                context_builder=context_builder,
+                sample_limit=sample_limit,
+                sample_sort_by=sample_sort_by,
+                sample_with_vectors=sample_with_vectors,
+            )
+            messages = [{"role": "user", "content": prompt}]
             file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
-            self._write_with_retry(file_path, existing)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.touch(exist_ok=True)
+            result = self._call_codex_api(messages, path=file_path)
+            if not result.success or not result.code:
+                errors = 1
+                raise RuntimeError(result.error or "engine request failed")
             file_path = Path(resolve_path(file_path))
             self.lint_code(file_path)
             req = self._create_requirements(repo_dir, spec)
             tests = self._create_tests(repo_dir, spec)
             self._validate_repo(repo_dir, spec)
             paths = [file_path, meta] + ([req] if req else []) + tests
-            self.version_control(
-                repo_dir, paths, message=f"Initial version of {spec.name}"
-            )
+            self.version_control(repo_dir, paths, message=f"Initial version of {spec.name}")
             return file_path
-
-        prompt = self._build_prompt(
-            spec,
-            context_builder=context_builder,
-            sample_limit=sample_limit,
-            sample_sort_by=sample_sort_by,
-            sample_with_vectors=sample_with_vectors,
-        )
-        messages = [{"role": "user", "content": prompt}]
-        file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.touch(exist_ok=True)
-        result = self._call_codex_api(messages, path=file_path)
-        if not result.success or not result.code:
-            raise RuntimeError(result.error or "engine request failed")
-        file_path = Path(resolve_path(file_path))
-        self.lint_code(file_path)
-        req = self._create_requirements(repo_dir, spec)
-        tests = self._create_tests(repo_dir, spec)
-        self._validate_repo(repo_dir, spec)
-        paths = [file_path, meta] + ([req] if req else []) + tests
-        self.version_control(repo_dir, paths, message=f"Initial version of {spec.name}")
-        return file_path
+        except Exception:
+            errors = 1 if not errors else errors
+            raise
+        finally:
+            self.data_bot.collect(
+                bot=self.name,
+                response_time=time.time() - start_time,
+                errors=errors,
+                tests_failed=0,
+                tests_run=0,
+                revenue=0.0,
+                expense=0.0,
+            )
 
     def build_from_plan(
         self,
@@ -1050,6 +1070,8 @@ class BotDevelopmentBot:
         *,
         model_id: int | None = None,
     ) -> List[Path]:
+        start_time = time.time()
+        errors = 0
         specs = self.parse_plan(data)
         try:
             if self.concurrency > 1:
@@ -1076,10 +1098,21 @@ class BotDevelopmentBot:
                     for s in specs
                 ]
         except Exception as exc:
+            errors = 1
             msg = f"build_from_plan failed: {exc}"
             self.logger.exception(msg)
             self._escalate(msg)
             raise
+        finally:
+            self.data_bot.collect(
+                bot=self.name,
+                response_time=time.time() - start_time,
+                errors=errors,
+                tests_failed=0,
+                tests_run=0,
+                revenue=0.0,
+                expense=0.0,
+            )
         return files
 
 
