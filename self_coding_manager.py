@@ -68,6 +68,11 @@ try:  # pragma: no cover - allow package/flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from bot_registry import BotRegistry  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover - fallback for flat layout
+    from unified_event_bus import UnifiedEventBus  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from .enhancement_classifier import EnhancementClassifier
 
@@ -126,9 +131,9 @@ class SelfCodingManager:
         failure_store: FailureFingerprintStore | None = None,
         skip_similarity: float | None = None,
         baseline_window: int | None = None,
-        registry: BotRegistry | None = None,
-        quick_fix: QuickFixEngine | None = None,
         bot_registry: BotRegistry | None = None,
+        quick_fix: QuickFixEngine | None = None,
+        event_bus: UnifiedEventBus | None = None,
         quick_fix_engine: QuickFixEngine | None = None,
     ) -> None:
         self.engine = self_coding_engine
@@ -169,10 +174,11 @@ class SelfCodingManager:
                     exc,
                 )
                 self.enhancement_classifier = None
-        self.registry = registry or bot_registry
-        if self.registry:
+        self.bot_registry = bot_registry
+        self.event_bus = event_bus
+        if self.bot_registry:
             try:
-                self.registry.register_bot(self.bot_name)
+                self.bot_registry.register_bot(self.bot_name)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
 
@@ -517,9 +523,9 @@ class SelfCodingManager:
                             )
                         except Exception:
                             self.logger.exception("failed to record validation in DataBot")
-                    if self.registry:
+                    if self.bot_registry:
                         try:
-                            self.registry.record_validation(self.bot_name, module_name, passed)
+                            self.bot_registry.record_validation(self.bot_name, module_name, passed)
                         except Exception:
                             self.logger.exception("failed to record validation in registry")
                     if not passed:
@@ -854,11 +860,11 @@ class SelfCodingManager:
                 self.logger.exception(
                     "failed to log evolution cycle: %s", exc
                 )
-        if self.registry:
+        if self.bot_registry:
             try:
-                self.registry.record_heartbeat(self.bot_name)
-                self.registry.register_interaction(self.bot_name, "patched")
-                self.registry.record_interaction_metadata(
+                self.bot_registry.record_heartbeat(self.bot_name)
+                self.bot_registry.register_interaction(self.bot_name, "patched")
+                self.bot_registry.record_interaction_metadata(
                     self.bot_name,
                     "patched",
                     duration=runtime_after,
@@ -867,19 +873,33 @@ class SelfCodingManager:
                         f"hot_swap:{int(time.time())},patch_id:{patch_id}"
                     ),
                 )
-                self.registry.register_bot(self.bot_name)
-                self.registry.record_interaction_metadata(
+                self.bot_registry.register_bot(self.bot_name)
+                self.bot_registry.record_interaction_metadata(
                     self.bot_name,
                     "evolution",
                     duration=runtime_after,
                     success=True,
                     resources=f"patch_id:{patch_id}",
                 )
-                target = getattr(self.registry, "persist_path", None)
+                target = getattr(self.bot_registry, "persist_path", None)
                 if target:
-                    self.registry.save(target)
+                    self.bot_registry.save(target)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to update bot registry")
+        if self.event_bus:
+            try:
+                payload = {
+                    "bot": self.bot_name,
+                    "patch_id": patch_id,
+                    "path": prompt_path,
+                    "description": description,
+                    "roi_before": before_roi,
+                    "roi_after": after_roi,
+                    "roi_delta": roi_delta,
+                }
+                self.event_bus.publish("self_coding:patch_applied", payload)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to publish patch_applied event")
         self.scan_repo()
         try:
             load_failed_tags()

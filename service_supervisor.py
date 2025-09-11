@@ -61,7 +61,9 @@ from .menace_memory_manager import MenaceMemoryManager  # noqa: E402
 from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
 from .quick_fix_engine import QuickFixEngine  # noqa: E402
 from vector_service.context_builder import ContextBuilder  # noqa: E402
-from context_builder_util import create_context_builder
+from context_builder_util import create_context_builder  # noqa: E402
+from .unified_event_bus import UnifiedEventBus  # noqa: E402
+from .bot_registry import BotRegistry  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -374,12 +376,20 @@ class ServiceSupervisor:
         engine = SelfCodingEngine(
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
         )
-        pipeline = ModelAutomationPipeline(context_builder=self.context_builder)
+        bus = UnifiedEventBus()
+        registry = BotRegistry(event_bus=bus)
+        pipeline = ModelAutomationPipeline(
+            context_builder=self.context_builder,
+            event_bus=bus,
+            bot_registry=registry,
+        )
         manager = SelfCodingManager(
             engine,
             pipeline,
             bot_name="menace",
             approval_policy=self.approval_policy,
+            bot_registry=registry,
+            event_bus=bus,
         )
         manager.context_builder = self.context_builder
         self.error_db = ErrorDB()
@@ -409,12 +419,20 @@ class ServiceSupervisor:
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
-            pipeline = ModelAutomationPipeline(context_builder=self.context_builder)
+            bus = UnifiedEventBus()
+            registry = BotRegistry(event_bus=bus)
+            pipeline = ModelAutomationPipeline(
+                context_builder=self.context_builder,
+                event_bus=bus,
+                bot_registry=registry,
+            )
             manager = SelfCodingManager(
                 engine,
                 pipeline,
                 bot_name="menace",
                 approval_policy=self.approval_policy,
+                bot_registry=registry,
+                event_bus=bus,
             )
             manager.context_builder = self.context_builder
             manager.run_patch(path, description)

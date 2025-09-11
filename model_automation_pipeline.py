@@ -226,14 +226,15 @@ class ModelAutomationPipeline:
         self.spike_bot = spike_bot or RevenueSpikeEvaluatorBot(RevenueEventsDB())
         self.allocation_bot = allocation_bot or CapitalAllocationBot()
         self.bot_registry = bot_registry or BotRegistry()
+        self.event_bus = event_bus
         self.pathway_db = pathway_db
         self.myelination_threshold = myelination_threshold
         self.learning_engine = learning_engine
         self.action_planner = action_planner
-        if event_bus:
+        if self.event_bus:
             try:
                 self.db_router.memory_mgr.subscribe(
-                    lambda entry: event_bus.publish("memory:broadcast", entry)
+                    lambda entry: self.event_bus.publish("memory:broadcast", entry)
                 )
             except Exception as exc:
                 self.logger.exception("memory broadcast hook failed: %s", exc)
