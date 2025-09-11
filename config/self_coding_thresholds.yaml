@@ -19,3 +19,43 @@ bots:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
+  ErrorBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  TelemetryFeedback:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  SanityFeedback:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  AutomatedDebugger:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  BotCreationBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  SanityConsumer:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ImplementationOptimiserBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  QuickFixEngine:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  BotDevelopmentBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  EnhancementBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0

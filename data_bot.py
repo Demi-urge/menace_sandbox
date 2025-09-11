@@ -1524,7 +1524,7 @@ class DataBot:
         return 0.0
 
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
-        """Load ROI and error thresholds for ``bot``."""
+        """Load ROI, error and test failure thresholds for ``bot``."""
 
         t = load_sc_thresholds(bot, self.settings)
         roi_drop = (

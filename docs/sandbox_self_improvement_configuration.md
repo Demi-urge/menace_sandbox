@@ -27,6 +27,31 @@ advice for common setup problems.
 - `ENTROPY_REGRESSION_THRESHOLD` – drop in entropy at or below this threshold
   is treated as a regression during patch evaluation.
 
+## Self-coding thresholds
+Per-bot regression limits are stored in `config/self_coding_thresholds.yaml`.
+Each entry defines the maximum allowed ROI drop, error increase and test
+failure increase before a bot is considered degraded. Example:
+
+```yaml
+default:
+  roi_drop: -0.1
+  error_increase: 1.0
+  test_failure_increase: 0.0
+bots:
+  QuickFixEngine:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  BotDevelopmentBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ImplementationOptimiserBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+```
+
 ## Security considerations
 - Resource and network limits are controlled through environment variables.
   `SECURITY_LEVEL` and `THREAT_INTENSITY` tune the simulated security posture,
