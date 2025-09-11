@@ -127,6 +127,10 @@ class PatchApprovalPolicy:
         return ok
 
 
+class HelperGenerationError(RuntimeError):
+    """Raised when helper generation fails before patching."""
+
+
 class SelfCodingManager:
     """Apply code patches and redeploy bots."""
 
@@ -324,6 +328,55 @@ class SelfCodingManager:
             delta_roi <= self.roi_drop_threshold
             or delta_err >= self.error_rate_threshold
             or delta_fail >= self.test_failure_threshold
+        )
+
+    # ------------------------------------------------------------------
+    def generate_and_patch(
+        self,
+        path: Path,
+        description: str,
+        *,
+        context_meta: Dict[str, Any] | None = None,
+        context_builder: ContextBuilder | None = None,
+        **kwargs: Any,
+    ) -> AutomationResult:
+        """Generate a helper then patch ``path`` using :meth:`run_patch`.
+
+        ``context_builder`` is applied to the underlying engine and cognition
+        layer before generation to ensure fresh context.  Any additional
+        keyword arguments are forwarded to :meth:`run_patch`.
+        """
+
+        builder = context_builder or ContextBuilder()
+        engine = self.engine
+        try:
+            engine.context_builder = builder
+            clayer = getattr(engine, "cognition_layer", None)
+            if clayer is not None:
+                clayer.context_builder = builder
+        except Exception:
+            self.logger.error(
+                "context_builder_refresh_failed",
+                exc_info=True,
+                extra={"path": str(path)},
+            )
+        try:
+            engine.generate_helper(
+                description,
+                path=path,
+                metadata=context_meta,
+                strategy=None,
+                target_region=None,
+            )
+        except Exception as exc:  # pragma: no cover - generation failure
+            raise HelperGenerationError(str(exc)) from exc
+
+        return self.run_patch(
+            path,
+            description,
+            context_meta=context_meta,
+            context_builder=builder,
+            **kwargs,
         )
 
     # ------------------------------------------------------------------
@@ -1147,4 +1200,4 @@ class SelfCodingManager:
                     self.logger.exception("failed to delete suggestion %s", sid)
 
 
-__all__ = ["SelfCodingManager", "PatchApprovalPolicy"]
+__all__ = ["SelfCodingManager", "PatchApprovalPolicy", "HelperGenerationError"]

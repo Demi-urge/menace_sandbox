@@ -46,6 +46,28 @@ class ROIResult:
         self.risk = risk
 prb_stub.ROIResult = ROIResult
 sys.modules["menace.pre_execution_roi_bot"] = prb_stub
+error_bot_stub = types.ModuleType("menace.error_bot")
+error_bot_stub.ErrorDB = object
+sys.modules.setdefault("menace.error_bot", error_bot_stub)
+aem_stub = types.ModuleType("menace.advanced_error_management")
+aem_stub.FormalVerifier = object
+aem_stub.AutomatedRollbackManager = object
+sys.modules.setdefault("menace.advanced_error_management", aem_stub)
+rm_stub = types.ModuleType("menace.rollback_manager")
+rm_stub.RollbackManager = object
+sys.modules.setdefault("menace.rollback_manager", rm_stub)
+mutation_logger_stub = types.ModuleType("menace.mutation_logger")
+mutation_logger_stub.log_mutation = lambda *a, **k: None
+sys.modules.setdefault("menace.mutation_logger", mutation_logger_stub)
+sr_pkg = types.ModuleType("menace.sandbox_runner")
+th_stub = types.ModuleType("menace.sandbox_runner.test_harness")
+th_stub.run_tests = lambda *a, **k: types.SimpleNamespace(
+    success=True, failure=None, stdout="", stderr="", duration=0.0
+)
+th_stub.TestHarnessResult = types.SimpleNamespace
+sr_pkg.test_harness = th_stub
+sys.modules.setdefault("menace.sandbox_runner", sr_pkg)
+sys.modules.setdefault("menace.sandbox_runner.test_harness", th_stub)
 import menace.self_coding_manager as scm
 import menace.model_automation_pipeline as mapl
 import menace.pre_execution_roi_bot as prb
@@ -289,3 +311,53 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
         file_path, "add", context_meta={"retrieval_session_id": "sid"}
     )
     assert engine.cognition_layer.calls == [("sid", True, pytest.approx(1.0))]
+
+
+def test_generate_and_patch_delegates(monkeypatch, tmp_path):
+    calls: list[tuple] = []
+
+    class Engine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(context_builder=None)
+
+        def generate_helper(self, *a, **k):
+            calls.append(("gen", a, k))
+
+        def apply_patch(self, path: Path, desc: str, **_: object):
+            return 1, False, 0.0
+
+    engine = Engine()
+    pipeline = DummyPipeline()
+    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("pass\n")
+
+    def fake_run_patch(path, desc, **kw):
+        calls.append(("patch", path, desc, kw.get("context_builder")))
+        return mapl.AutomationResult(None, prb.ROIResult(0, 0, 0, 0, 0))
+
+    monkeypatch.setattr(mgr, "run_patch", fake_run_patch)
+    builder = object()
+    mgr.generate_and_patch(file_path, "fix", context_builder=builder)
+    assert any(c[0] == "gen" for c in calls)
+    assert any(c[0] == "patch" and c[1] == file_path and c[3] is builder for c in calls)
+
+
+def test_generate_and_patch_failure(tmp_path):
+    class BadEngine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(context_builder=None)
+
+        def generate_helper(self, *a, **k):
+            raise RuntimeError("boom")
+
+        def apply_patch(self, path: Path, desc: str, **_: object):
+            return 1, False, 0.0
+
+    engine = BadEngine()
+    pipeline = DummyPipeline()
+    mgr = scm.SelfCodingManager(engine, pipeline, bot_name="bot")
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("pass\n")
+    with pytest.raises(scm.HelperGenerationError):
+        mgr.generate_and_patch(file_path, "fix")
