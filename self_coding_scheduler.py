@@ -17,7 +17,6 @@ from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
 from .self_coding_manager import SelfCodingManager
 from .data_bot import DataBot
-from .self_coding_thresholds import get_thresholds
 from .advanced_error_management import AutomatedRollbackManager
 from .sandbox_settings import SandboxSettings
 from .error_parser import ErrorParser
@@ -30,11 +29,9 @@ except Exception:  # pragma: no cover - scheduler utilities may be missing
 
 
 class SelfCodingScheduler:
-    """Trigger :class:`SelfCodingManager` based on ROI and error metrics.
+    """Trigger :class:`SelfCodingManager` at regular intervals.
 
-    Defaults for ``interval`` are sourced from :class:`SandboxSettings` while
-    ROI and error thresholds are sourced via :func:`self_coding_thresholds.get_thresholds`.
-    All values can be overridden via constructor arguments.
+    Defaults for ``interval`` are sourced from :class:`SandboxSettings`.
     """
 
     def __init__(
@@ -45,8 +42,6 @@ class SelfCodingScheduler:
         rollback_mgr: AutomatedRollbackManager | None = None,
         nodes: Optional[Iterable[str]] = None,
         interval: int | None = None,
-        roi_drop: float | None = None,
-        error_increase: float | None = None,
         patch_path: Path | None = None,
         description: str = "auto_patch",
         settings: SandboxSettings | None = None,
@@ -60,27 +55,11 @@ class SelfCodingScheduler:
         self.interval = interval if interval is not None else self.settings.self_coding_interval
         self.patch_path = Path(patch_path) if patch_path else resolve_path("auto_helpers.py")
         self.description = description
-        self.last_roi = self.data_bot.roi(self.manager.bot_name)
-        self.last_errors = self._current_errors()
-        t = get_thresholds(self.manager.bot_name, self.settings)
-        self._roi_override = roi_drop
-        self._err_override = error_increase
-        self.roi_drop = self._roi_override if self._roi_override is not None else t.roi_drop
-        self.error_increase = (
-            self._err_override if self._err_override is not None else t.error_increase
-        )
         self.running = False
         self.logger = logging.getLogger(self.__class__.__name__)
         self._thread: Optional[threading.Thread] = None
         self.scan_interval = scan_interval
         self._scan_scheduler: object | None = None
-
-    def _current_errors(self) -> float:
-        """Return average error count for the managed bot."""
-
-        return getattr(self.data_bot, "average_errors", lambda _: 0.0)(
-            self.manager.bot_name
-        )
 
     def _latest_patch_id(self) -> str | None:
         patch_db = getattr(self.manager.engine, "patch_db", None)
@@ -155,56 +134,41 @@ class SelfCodingScheduler:
     def _loop(self) -> None:
         while self.running:
             try:
-                t = get_thresholds(self.manager.bot_name, self.settings)
-                roi = self.data_bot.roi(self.manager.bot_name)
-                errors = self._current_errors()
-                roi_drop = (
-                    self._roi_override if self._roi_override is not None else t.roi_drop
-                )
-                err_increase = (
-                    self._err_override if self._err_override is not None else t.error_increase
-                )
-                if roi - self.last_roi <= roi_drop or errors - self.last_errors >= err_increase:
-                    before = roi
-                    runner = WorkflowSandboxRunner()
-                    attempt = 0
-                    success = False
-                    while attempt < 3 and not success:
-                        attempt += 1
+                before = self.data_bot.roi(self.manager.bot_name)
+                runner = WorkflowSandboxRunner()
+                attempt = 0
+                success = False
+                while attempt < 3 and not success:
+                    attempt += 1
 
-                        def _run_patch() -> None:
-                            self.manager.run_patch(self.patch_path, self.description)
+                    def _run_patch() -> None:
+                        self.manager.run_patch(self.patch_path, self.description)
 
-                        metrics = runner.run(_run_patch, safe_mode=True)
-                        module = metrics.modules[0] if getattr(metrics, "modules", None) else None
-                        success = bool(
-                            getattr(module, "success", getattr(module, "result", False))
-                        )
-                        if success:
+                    metrics = runner.run(_run_patch, safe_mode=True)
+                    module = metrics.modules[0] if getattr(metrics, "modules", None) else None
+                    success = bool(
+                        getattr(module, "success", getattr(module, "result", False))
+                    )
+                    if success:
+                        break
+                    trace = getattr(module, "exception", "") or ""
+                    if trace:
+                        failure = ErrorParser.parse_failure(str(trace))
+                        exc = failure.get("strategy_tag", "")
+                        if exc in {"syntax_error", "import_error"}:
                             break
-                        trace = getattr(module, "exception", "") or ""
-                        if trace:
-                            failure = ErrorParser.parse_failure(str(trace))
-                            exc = failure.get("strategy_tag", "")
-                            if exc in {"syntax_error", "import_error"}:
-                                break
 
-                    after = self.data_bot.roi(self.manager.bot_name)
-                    if after < before:
-                        pid = self._latest_patch_id()
-                        if pid:
-                            self.manager.engine.rollback_patch(pid)
-                            if self.rollback_mgr and self.nodes:
-                                try:
-                                    self.rollback_mgr.auto_rollback(pid, self.nodes)
-                                except Exception:
-                                    self.logger.exception("auto rollback failed")
-                    self.last_roi = after
-                    self.last_errors = errors
-                    self._record_cycle_metrics(success, attempt - 1)
-                else:
-                    self.last_roi = roi
-                    self.last_errors = errors
+                after = self.data_bot.roi(self.manager.bot_name)
+                if after < before:
+                    pid = self._latest_patch_id()
+                    if pid:
+                        self.manager.engine.rollback_patch(pid)
+                        if self.rollback_mgr and self.nodes:
+                            try:
+                                self.rollback_mgr.auto_rollback(pid, self.nodes)
+                            except Exception:
+                                self.logger.exception("auto rollback failed")
+                self._record_cycle_metrics(success, attempt - 1)
             except Exception:
                 self.logger.exception("self-coding loop failed")
             time.sleep(self.interval)

@@ -242,6 +242,8 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
 
         def log_evolution_cycle(self, *a, **k):
             pass
+        def average_errors(self, _bot: str) -> float:  # pragma: no cover - simple
+            return 0.0
 
     engine = DummyEngine()
 

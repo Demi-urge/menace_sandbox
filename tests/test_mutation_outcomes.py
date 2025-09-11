@@ -83,6 +83,8 @@ class DummyDataBot:
 
     def log_evolution_cycle(self, *args, **kwargs):
         pass
+    def average_errors(self, bot_name: str) -> float:  # pragma: no cover - simple
+        return 0.0
 
 
 class DummyCodingEngine:

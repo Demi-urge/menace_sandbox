@@ -28,7 +28,11 @@ try:  # pragma: no cover - compatibility shim
     from pydantic import field_validator
 except Exception:  # pragma: no cover
     from pydantic import validator as field_validator  # type: ignore
-
+ 
+SELF_CODING_ROI_DROP: float = float(os.getenv("SELF_CODING_ROI_DROP", "-0.1"))
+SELF_CODING_ERROR_INCREASE: float = float(
+    os.getenv("SELF_CODING_ERROR_INCREASE", "1.0")
+)
 
 DEFAULT_SEVERITY_SCORE_MAP: dict[str, float] = {
     "critical": 100.0,

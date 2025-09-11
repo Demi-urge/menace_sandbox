@@ -111,6 +111,8 @@ class DummyDataBot:
         return self._vals.pop(0)
     def log_evolution_cycle(self, *a, **k):
         self.logged.append(k)
+    def average_errors(self, _name):  # pragma: no cover - simple
+        return 0.0
 
 
 @pytest.mark.parametrize("backend", ["venv", "docker"])

@@ -191,7 +191,11 @@ def _load_manager(
     monkeypatch.setitem(sys.modules, "menace_sandbox.model_automation_pipeline", mp_mod)
 
     db_mod = types.ModuleType("menace_sandbox.data_bot")
-    db_mod.DataBot = type("DataBot", (), {"roi": lambda self, name: 0.0})
+    db_mod.DataBot = type(
+        "DataBot",
+        (),
+        {"roi": lambda self, name: 0.0, "average_errors": lambda self, name: 0.0},
+    )
     monkeypatch.setitem(sys.modules, "menace_sandbox.data_bot", db_mod)
 
     ae_mod = types.ModuleType("menace_sandbox.advanced_error_management")
