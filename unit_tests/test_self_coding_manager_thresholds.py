@@ -2,6 +2,7 @@
 import types
 import sys
 from pathlib import Path
+import pytest
 
 # ---------------------------------------------------------------------------
 # Stub heavy dependencies before importing target modules
@@ -90,6 +91,14 @@ class ErrorDB:
     pass
 err_mod.ErrorDB = ErrorDB
 sys.modules.setdefault("menace.error_bot", err_mod)
+
+# QuickFixEngine stub used for patch tests
+qfe_mod = types.ModuleType("menace.quick_fix_engine")
+class QuickFixEngine:
+    def __init__(self, *a, **k):
+        self.context_builder = None
+qfe_mod.QuickFixEngine = QuickFixEngine
+sys.modules.setdefault("menace.quick_fix_engine", qfe_mod)
 
 ueb_mod = types.ModuleType("menace.unified_event_bus")
 class UnifiedEventBus:
@@ -202,3 +211,22 @@ def test_should_refactor_on_failed_tests(monkeypatch):
     assert not mgr.should_refactor()
     data_bot.failures = 5
     assert mgr.should_refactor()
+
+
+def test_missing_context_builder_raises(tmp_path):
+    mgr = scm.SelfCodingManager(
+        scm.SelfCodingEngine(), scm.ModelAutomationPipeline(), bot_name="x"
+    )
+    path = tmp_path / "mod.py"
+    path.write_text("print('hi')\n")
+    with pytest.raises(RuntimeError, match="ContextBuilder"):
+        mgr.generate_and_patch(path, "desc")
+
+
+def test_missing_quick_fix_engine_raises(monkeypatch):
+    mgr = scm.SelfCodingManager(
+        scm.SelfCodingEngine(), scm.ModelAutomationPipeline(), bot_name="x"
+    )
+    monkeypatch.setattr(scm, "quick_fix_engine", None)
+    with pytest.raises(RuntimeError, match="QuickFixEngine"):
+        mgr._ensure_quick_fix_engine()

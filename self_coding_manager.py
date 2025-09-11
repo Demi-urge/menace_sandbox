@@ -29,18 +29,26 @@ try:  # pragma: no cover - optional dependency
         load_failed_tags,
         ContextBuilder,
     )
-except Exception:  # pragma: no cover - optional dependency
+except Exception as exc:  # pragma: no cover - optional dependency
+
+    _ctx_exc = exc
+
+    def _ctx_builder_unavailable(*_a: object, **_k: object) -> None:
+        raise RuntimeError(
+            "vector_service.ContextBuilder is required but could not be imported"
+        ) from _ctx_exc
 
     class ContextBuilder:  # type: ignore
-        """Fallback ContextBuilder when vector service is unavailable."""
+        """Placeholder when vector service is unavailable."""
 
-        pass
+        def __init__(self, *a: object, **k: object) -> None:  # noqa: D401 - simple
+            _ctx_builder_unavailable()
 
     def record_failed_tags(_tags: list[str]) -> None:  # type: ignore
-        return None
+        _ctx_builder_unavailable()
 
     def load_failed_tags() -> set[str]:  # type: ignore
-        return set()
+        _ctx_builder_unavailable()
 
 from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 
@@ -60,13 +68,16 @@ from .patch_attempt_tracker import PatchAttemptTracker
 try:  # pragma: no cover - optional dependency
     from . import quick_fix_engine
     from .quick_fix_engine import QuickFixEngine
-except Exception:  # pragma: no cover - optional dependency
+except Exception as exc:  # pragma: no cover - optional dependency
     quick_fix_engine = None  # type: ignore
 
     class QuickFixEngine:  # type: ignore
-        """Fallback QuickFixEngine when optional dependency missing."""
+        """Placeholder when :mod:`quick_fix_engine` is unavailable."""
 
-        pass
+        def __init__(self, *a: object, **k: object) -> None:  # noqa: D401 - simple
+            raise RuntimeError(
+                "QuickFixEngine is required but could not be imported"
+            ) from exc
 
 from context_builder_util import ensure_fresh_weights
 
@@ -242,20 +253,29 @@ class SelfCodingManager:
             self.logger.exception("failed to load thresholds for %s", self.bot_name)
 
     def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
-        """Initialise QuickFixEngine on demand."""
-        if self.quick_fix is None and quick_fix_engine is not None:
-            try:
-                clayer = getattr(self.engine, "cognition_layer", None)
-                builder = getattr(clayer, "context_builder", None)
-                if builder is not None:
-                    try:
-                        ensure_fresh_weights(builder)
-                    except Exception:
-                        self.logger.exception("quick fix weight refresh failed")
-                        return None
-                    self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
-            except Exception:
-                self.logger.exception("failed to initialise QuickFixEngine")
+        """Initialise :class:`QuickFixEngine` on demand.
+
+        Raises
+        ------
+        RuntimeError
+            If the optional ``quick_fix_engine`` dependency is missing or
+            initialisation fails.
+        """
+
+        if self.quick_fix is not None:
+            return self.quick_fix
+        if quick_fix_engine is None:
+            raise RuntimeError(
+                "QuickFixEngine is required but could not be imported"
+            )
+        clayer = getattr(self.engine, "cognition_layer", None)
+        builder = getattr(clayer, "context_builder", None)
+        if builder is None:
+            raise RuntimeError(
+                "engine.cognition_layer must provide a context_builder"
+            )
+        ensure_fresh_weights(builder)
+        self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
         return self.quick_fix
 
     # ------------------------------------------------------------------
@@ -458,24 +478,14 @@ class SelfCodingManager:
                 raise AttributeError(
                     "engine.cognition_layer must provide a context_builder",
                 )
-            refresh_ok = True
-            try:
-                ensure_fresh_weights(builder)
-            except Exception:
-                self.logger.exception(
-                    "context builder weight refresh failed; using minimal patch"
-                )
-                refresh_ok = False
-                self.quick_fix = None
-            if refresh_ok:
-                self._ensure_quick_fix_engine()
-                if self.quick_fix is not None:
-                    try:
-                        self.quick_fix.context_builder = builder
-                    except Exception:
-                        self.logger.exception(
-                            "failed to update QuickFixEngine context builder",
-                        )
+            self._ensure_quick_fix_engine()
+            if self.quick_fix is not None:
+                try:
+                    self.quick_fix.context_builder = builder
+                except Exception:
+                    self.logger.exception(
+                        "failed to update QuickFixEngine context builder",
+                    )
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None
