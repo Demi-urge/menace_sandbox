@@ -30,6 +30,8 @@ from snippet_compressor import compress_snippets
 
 from billing.prompt_notice import prepend_payment_notice
 from llm_interface import LLMClient, Prompt
+from .self_coding_manager import SelfCodingManager
+from .coding_bot_interface import self_coding_managed
 
 try:
     from vector_service.context_builder import ContextBuilder
@@ -57,6 +59,7 @@ class RefactorProposal:
     author_bot: str = "codex"
 
 
+@self_coding_managed
 class EnhancementBot:
     """Automatically validate and merge Codex refactors."""
 
@@ -69,6 +72,7 @@ class EnhancementBot:
         *,
         context_builder: ContextBuilder,
         llm_client: LLMClient | None = None,
+        manager: SelfCodingManager | None = None,
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
@@ -79,6 +83,13 @@ class EnhancementBot:
         self.context_builder = context_builder
         self.db_weights = self.context_builder.refresh_db_weights()
         self.llm_client = llm_client
+        self.manager = manager
+        if self.manager is not None:
+            try:
+                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                self.manager.register_bot(name)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("bot registration failed")
 
     # ------------------------------------------------------------------
     def _hash(self, text: str) -> str:
@@ -198,7 +209,18 @@ class EnhancementBot:
         if codex_summary:
             summary = codex_summary
 
-        file_path.write_text(proposal.new_code)
+        if self.manager is not None:
+            desc = f"apply enhancement from {proposal.author_bot}\n\n{proposal.new_code}"
+            self.manager.run_patch(file_path, desc)
+            registry = getattr(self.manager, "bot_registry", None)
+            if registry is not None:
+                try:
+                    name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                    registry.update_bot(name, str(file_path))
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("bot registry update failed")
+        else:
+            file_path.write_text(proposal.new_code)
 
         subprocess.run(["pytest", "-q"], check=False)
 
