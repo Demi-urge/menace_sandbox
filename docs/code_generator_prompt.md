@@ -1,12 +1,6 @@
 # Code Generator Prompt Format
 
-> **Migration note:** Visual agents have been removed. Use this generic prompt structure with `SelfCodingEngine` to replace prior visual agent workflows.
-
-
-`BotDevelopmentBot` sends instructions to local code generators through the
-``SelfCodingEngine``. The prompt is composed of several sections. Each
-section guides the agent to create a
-complete, testable repository. The list below summarises the required headings:
+Visual-agent workflows have been fully retired. `BotDevelopmentBot` sends instructions to local code generators through the `SelfCodingEngine`. The prompt is composed of several sections. Each section guides the agent to create a complete, testable repository. The list below summarises the required headings:
 
 1. **Introduction** – states the target language, bot name and short
    description.
