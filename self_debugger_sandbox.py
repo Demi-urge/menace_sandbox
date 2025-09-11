@@ -440,7 +440,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
                     patch_id = generate_patch(
-                        mod, self.engine, context_builder=self.context_builder
+                        mod,
+                        self.engine,
+                        self.manager,
+                        context_builder=self.context_builder,
                     )
                     if patch_id is not None:
                         try:
