@@ -18,13 +18,6 @@ LOG_DIR = resolve_dir("logs")
 JSONL_PATH = LOG_DIR / "audit_log.jsonl"
 SQLITE_PATH = LOG_DIR / "audit_log.db"
 
-# Legacy event types that should never be persisted.
-_BLOCKED_EVENT_TYPES = {
-    "visual_agent_run",
-    "visual_agent_run_result",
-}
-
-
 def _ensure_log_dir() -> None:
     """Create the log directory if missing."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,9 +32,6 @@ def generate_event_id(event_type: str) -> str:
 
 def log_event(event_type: str, data: Dict[str, Any], jsonl_path: Path = JSONL_PATH) -> str:
     """Append an event record to the JSONL audit log."""
-    if event_type in _BLOCKED_EVENT_TYPES:
-        # Visual-agent events are ignored entirely.
-        return ""
     _ensure_log_dir()
     event_id = generate_event_id(event_type)
     record = {
@@ -108,8 +98,6 @@ def _ensure_db(conn: sqlite3.Connection) -> None:
 
 def log_to_sqlite(event_type: str, data: Dict[str, Any], db_path: str = SQLITE_PATH) -> str:
     """Store an event in the SQLite log."""
-    if event_type in _BLOCKED_EVENT_TYPES:
-        return ""
     _ensure_log_dir()
     event_id = generate_event_id(event_type)
     ts = datetime.utcnow().isoformat()
@@ -159,14 +147,12 @@ def get_recent_events(
         except Exception:
             pass
         events.append({"timestamp": ts, "event_type": etype, "event_id": event_id, "data": data})
-    events = [e for e in events if e["event_type"] not in _BLOCKED_EVENT_TYPES]
     if events:
         return list(reversed(events))
     if not Path(jsonl_path).exists():
         return []
     with Path(jsonl_path).open("r", encoding="utf-8") as fh:
         lines = [json.loads(line) for line in fh if line.strip()]
-    lines = [e for e in lines if e.get("event_type") not in _BLOCKED_EVENT_TYPES]
     lines.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return lines[:limit][::-1]
 
