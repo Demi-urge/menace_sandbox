@@ -118,6 +118,7 @@ class EvolutionOrchestrator:
         self._cycles = 0
         self._last_workflow_benchmark = 0.0
         self._benchmark_interval = 3600
+        self._cached_eval_score = 0.0
         self._workflow_roi_history: dict[str, list[float]] = {}
         self._last_mutation_id: int | None = None
         self._workflow_event_ids: dict[int | str, int] = {}
@@ -378,9 +379,12 @@ class EvolutionOrchestrator:
             db = EvaluationHistoryDB()
             hist = db.history(eng, limit=1)
             if hist:
-                return float(hist[0][0])
+                score = float(hist[0][0])
+                self._cached_eval_score = score
+                return score
         except Exception:
-            pass
+            self.logger.exception("failed to fetch latest eval score")
+            return self._cached_eval_score
         return 0.0
 
     def _append_dataset(

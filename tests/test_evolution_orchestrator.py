@@ -1,6 +1,7 @@
 import sys
 import types
 from pathlib import Path
+import logging
 
 import pytest
 from unittest.mock import MagicMock
@@ -129,7 +130,7 @@ class DummyDataBot:
 
 
 class DummyImprovementEngine:
-    pass
+    bot_name = "engine"
 
 
 class DummyEvolutionManager:
@@ -147,3 +148,30 @@ def test_unwritable_dataset_path(tmp_path):
             history_db=MagicMock(),
             dataset_path=bad_path,
         )
+
+
+def test_latest_eval_score_error_fallback(monkeypatch, caplog):
+    eng = DummyImprovementEngine()
+    orchestrator = EvolutionOrchestrator(
+        data_bot=DummyDataBot(),
+        capital_bot=CapitalManagementBot(),
+        improvement_engine=eng,
+        evolution_manager=DummyEvolutionManager(),
+        history_db=MagicMock(),
+    )
+    orchestrator._cached_eval_score = 1.23
+
+    class BadEvalDB:
+        def history(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "menace_sandbox.evolution_orchestrator.EvaluationHistoryDB",
+        lambda: BadEvalDB(),
+    )
+
+    with caplog.at_level(logging.ERROR):
+        score = orchestrator._latest_eval_score()
+
+    assert score == 1.23
+    assert any("failed to fetch latest eval score" in r.getMessage() for r in caplog.records)
