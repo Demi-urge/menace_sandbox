@@ -1019,6 +1019,10 @@ class DataBot:
             else getattr(self.settings, "anomaly_sensitivity", 1.0)
         )
         self._baseline: Dict[str, BaselineTracker] = {}
+        # Cache per-bot thresholds to avoid unnecessary disk reads.  The
+        # :meth:`reload_thresholds` method refreshes this mapping at runtime
+        # when configuration files change.
+        self._thresholds: Dict[str, ROIThresholds] = {}
         if Gauge:
             self.registry = registry or CollectorRegistry()
             self.gauges = {
@@ -1376,7 +1380,10 @@ class DataBot:
         delta_roi = roi - avg_roi
         delta_err = errors - avg_err
         delta_fail = test_failures - avg_fail
-        t = self.get_thresholds(bot)
+        # Always refresh thresholds to pick up configuration updates at
+        # runtime.  ``reload_thresholds`` updates the internal cache and
+        # returns the current values for ``bot``.
+        t = self.reload_thresholds(bot)
         roi_thresh = t.roi_drop - std_roi * self.anomaly_sensitivity
         err_thresh = t.error_threshold + std_err * self.anomaly_sensitivity
         fail_thresh = (
@@ -1581,8 +1588,13 @@ class DataBot:
             return 0.0
         return 0.0
 
-    def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
-        """Load ROI, error and test failure thresholds for ``bot``."""
+    def reload_thresholds(self, bot: str | None = None) -> ROIThresholds:
+        """Reload thresholds for ``bot`` from configuration.
+
+        This fetches fresh values via :func:`self_coding_thresholds.get_thresholds`
+        and updates the local cache so long running processes can pick up
+        runtime edits to ``config/self_coding_thresholds.yaml``.
+        """
 
         t = load_sc_thresholds(bot, self.settings)
         roi_drop = (
@@ -1600,11 +1612,26 @@ class DataBot:
             if self.test_failure_threshold is not None
             else t.test_failure_increase
         )
-        return ROIThresholds(
+        rt = ROIThresholds(
             roi_drop=roi_drop,
             error_threshold=error_thresh,
             test_failure_threshold=fail_thresh,
         )
+        key = bot or ""
+        self._thresholds[key] = rt
+        return rt
+
+    def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
+        """Return cached thresholds for ``bot``.
+
+        When a value is not present, :meth:`reload_thresholds` is invoked to
+        populate the cache.
+        """
+
+        key = bot or ""
+        if key not in self._thresholds:
+            return self.reload_thresholds(bot)
+        return self._thresholds[key]
 
     def update_thresholds(
         self,

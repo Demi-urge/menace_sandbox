@@ -2,10 +2,39 @@
 
 The configuration file ``config/self_coding_thresholds.yaml`` stores
 thresholds keyed by bot name.  Each entry may define ``roi_drop``
-(allowable decrease in ROI) and ``error_increase`` (maximum allowed
-increase in errors).  This module provides helpers to load and update
-these thresholds so that different components can share the same
-trigger logic.
+(allowable decrease in ROI), ``error_increase`` (maximum allowed
+increase in errors) and ``test_failure_increase`` (allowed growth in
+failing tests).
+
+Long running services cache threshold values after the first lookup.
+When the YAML file is edited at runtime these values can be refreshed by
+calling :meth:`menace.data_bot.DataBot.reload_thresholds` for the
+affected bot.  This function simply wraps :func:`get_thresholds` and
+updates the in-memory cache, allowing new limits to take effect without a
+restart.
+
+Example configuration snippet::
+
+    default:
+      roi_drop: -0.1
+      error_increase: 1.0
+      test_failure_increase: 0.0
+    bots:
+      example-bot:
+        roi_drop: -0.2
+        error_increase: 2.0
+        test_failure_increase: 0.1
+
+You can modify the file directly or use :func:`update_thresholds`::
+
+    from menace.self_coding_thresholds import update_thresholds
+    update_thresholds("example-bot", roi_drop=-0.25)
+
+After editing the file, apply the changes at runtime::
+
+    from menace.data_bot import DataBot
+    bot = DataBot()
+    bot.reload_thresholds("example-bot")
 """
 from __future__ import annotations
 
