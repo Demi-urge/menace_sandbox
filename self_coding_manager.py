@@ -167,8 +167,6 @@ class SelfCodingManager:
         bot_registry: BotRegistry | None = None,
         quick_fix: QuickFixEngine | None = None,
         event_bus: UnifiedEventBus | None = None,
-        quick_fix_engine: QuickFixEngine | None = None,
-        skip_quick_fix_validation: bool = False,
         roi_drop_threshold: float | None = None,
         error_rate_threshold: float | None = None,
     ) -> None:
@@ -200,8 +198,7 @@ class SelfCodingManager:
         )
         self.failure_store = failure_store
         self.skip_similarity = skip_similarity
-        self.quick_fix = quick_fix or quick_fix_engine
-        self.skip_quick_fix_validation = skip_quick_fix_validation
+        self.quick_fix = quick_fix
         if baseline_window is None:
             try:
                 baseline_window = getattr(SandboxSettings(), "baseline_window", 5)
@@ -227,6 +224,27 @@ class SelfCodingManager:
                 self.bot_registry.register_bot(self.bot_name)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
+
+        clayer = getattr(self.engine, "cognition_layer", None)
+        builder = getattr(clayer, "context_builder", None) if clayer else None
+        if builder is None:
+            raise RuntimeError(
+                "engine.cognition_layer must provide a context_builder"
+            )
+        if QuickFixEngine is None and self.quick_fix is None:
+            raise RuntimeError(
+                "QuickFixEngine is required but could not be imported"
+            )
+        self._prepare_context_builder(builder)
+        if self.quick_fix is None:
+            try:
+                self.quick_fix = QuickFixEngine(
+                    ErrorDB(), self, context_builder=builder
+                )
+            except Exception as exc:  # pragma: no cover - instantiation errors
+                raise RuntimeError(
+                    "failed to initialise QuickFixEngine"
+                ) from exc
 
     def register_bot(self, name: str) -> None:
         """Register *name* with the underlying :class:`BotRegistry`."""
@@ -273,51 +291,32 @@ class SelfCodingManager:
             except Exception:
                 self.logger.exception("failed to record context builder session")
 
-    def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
-        """Initialise :class:`QuickFixEngine` on demand.
+    def _ensure_quick_fix_engine(
+        self, builder: ContextBuilder | None = None
+    ) -> QuickFixEngine:
+        """Return the initialised :class:`QuickFixEngine`.
 
-        The quick fix engine performs validation before patches are applied.
-        When the optional dependency is unavailable and
-        ``skip_quick_fix_validation`` is enabled, validation is skipped and
-        ``None`` is returned. Otherwise a :class:`RuntimeError` is raised.
+        A fresh *builder* updates the engine's context. ``self.quick_fix``
+        must already be created; absence is treated as fatal.
         """
 
-        if self.quick_fix is not None:
-            return self.quick_fix
-        if QuickFixEngine is None:
-            self.logger.error(
-                "QuickFixEngine is required; install via 'pip install menace[quickfix]'"
-            )
-            if self.skip_quick_fix_validation:
-                self.logger.warning(
-                    "QuickFixEngine unavailable; skipping validation"
-                )
-                return None
-            raise RuntimeError(
-                "QuickFixEngine is required but could not be imported"
-            )
-        clayer = getattr(self.engine, "cognition_layer", None)
-        builder = getattr(clayer, "context_builder", None)
+        if self.quick_fix is None:
+            raise RuntimeError("QuickFixEngine was not initialised")
         if builder is None:
-            msg = "engine.cognition_layer must provide a context_builder"
-            self.logger.error(msg)
-            if self.skip_quick_fix_validation:
-                self.logger.warning(
-                    "QuickFixEngine unavailable; skipping validation"
+            clayer = getattr(self.engine, "cognition_layer", None)
+            builder = getattr(clayer, "context_builder", None)
+            if builder is None:
+                raise RuntimeError(
+                    "engine.cognition_layer must provide a context_builder"
                 )
-                return None
-            raise RuntimeError(msg)
         self._prepare_context_builder(builder)
         try:
-            self.quick_fix = QuickFixEngine(ErrorDB(), self, context_builder=builder)
-        except Exception as exc:  # pragma: no cover - instantiation errors
-            self.logger.error("failed to initialise QuickFixEngine")
-            if self.skip_quick_fix_validation:
-                self.logger.warning(
-                    "QuickFixEngine unavailable; skipping validation"
-                )
-                return None
-            raise RuntimeError("failed to initialise QuickFixEngine") from exc
+            self.quick_fix.context_builder = builder
+        except Exception:
+            self.logger.exception(
+                "failed to update QuickFixEngine context builder",
+            )
+            raise
         return self.quick_fix
 
     # ------------------------------------------------------------------
@@ -470,11 +469,17 @@ class SelfCodingManager:
             )
         clayer.context_builder = builder
         try:
-            quick_fix = self._ensure_quick_fix_engine()
+            self._ensure_quick_fix_engine(builder)
         except Exception as exc:
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "bot:patch_failed",
+                        {"bot": self.bot_name, "reason": str(exc)},
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to publish patch_failed event")
             raise RuntimeError("QuickFixEngine validation unavailable") from exc
-        if quick_fix is None:
-            raise RuntimeError("QuickFixEngine validation unavailable")
         return self.run_patch(
             path,
             description,
@@ -565,21 +570,22 @@ class SelfCodingManager:
                 raise AttributeError(
                     "engine.cognition_layer must provide a context_builder",
                 )
-            self._prepare_context_builder(builder)
             try:
-                quick_fix = self._ensure_quick_fix_engine()
+                self._ensure_quick_fix_engine(builder)
             except Exception as exc:
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "bot:patch_failed",
+                            {"bot": self.bot_name, "reason": str(exc)},
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "failed to publish patch_failed event",
+                        )
                 raise RuntimeError(
                     "QuickFixEngine validation unavailable"
                 ) from exc
-            if quick_fix is None:
-                raise RuntimeError("QuickFixEngine validation unavailable")
-            try:
-                quick_fix.context_builder = builder
-            except Exception:
-                self.logger.exception(
-                    "failed to update QuickFixEngine context builder",
-                )
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None
