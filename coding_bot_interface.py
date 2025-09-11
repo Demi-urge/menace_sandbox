@@ -24,23 +24,32 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 def _resolve_helpers(
     obj: Any, registry: BotRegistry | None, data_bot: DataBot | None
-) -> tuple[BotRegistry | None, DataBot | None, str]:
+) -> tuple[BotRegistry, DataBot, str]:
     """Resolve ``BotRegistry``/``DataBot`` and return defining module path.
 
     ``inspect.getfile(obj.__class__)`` is used to determine the file where the
     class of ``obj`` is defined.  This path is returned alongside the resolved
     helpers so callers can update the registry with accurate module metadata.
+
+    A :class:`RuntimeError` is raised if either dependency cannot be resolved
+    from the provided arguments, instance attributes or ``manager`` attribute.
     """
     if registry is None:
         registry = getattr(obj, "bot_registry", None)
         if registry is None:
             manager = getattr(obj, "manager", None)
             registry = getattr(manager, "bot_registry", None)
+    if registry is None:
+        raise RuntimeError("BotRegistry is required but was not provided")
+
     if data_bot is None:
         data_bot = getattr(obj, "data_bot", None)
         if data_bot is None:
             manager = getattr(obj, "manager", None)
             data_bot = getattr(manager, "data_bot", None)
+    if data_bot is None:
+        raise RuntimeError("DataBot is required but was not provided")
+
     try:
         module_path = inspect.getfile(obj.__class__)
     except Exception:  # pragma: no cover - best effort
@@ -69,31 +78,28 @@ def self_coding_managed(cls: type) -> type:
         registry = kwargs.pop("bot_registry", None)
         data_bot = kwargs.pop("data_bot", None)
         orig_init(self, *args, **kwargs)
-        registry, data_bot, module_path = _resolve_helpers(
-            self, registry, data_bot
-        )
+        try:
+            registry, data_bot, module_path = _resolve_helpers(
+                self, registry, data_bot
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(f"{cls.__name__}: {exc}") from exc
         manager = getattr(self, "manager", None)
         name = getattr(self, "name", getattr(self, "bot_name", cls.__name__))
         if not isinstance(manager, SelfCodingManager):
-            if registry and data_bot:
-                try:
-                    manager = SelfCodingManager(
-                        getattr(self, "engine", None),
-                        getattr(self, "pipeline", None),
-                        bot_name=name,
-                        bot_registry=registry,
-                        data_bot=data_bot,
-                    )
-                    self.manager = manager
-                except Exception as exc:  # pragma: no cover - best effort
-                    raise RuntimeError(
-                        "failed to initialise SelfCodingManager; provide a manager"
-                    ) from exc
-            else:
-                raise RuntimeError(
-                    "SelfCodingManager required: provide 'manager' or both"
-                    " 'bot_registry' and 'data_bot'"
+            try:
+                manager = SelfCodingManager(
+                    getattr(self, "engine", None),
+                    getattr(self, "pipeline", None),
+                    bot_name=name,
+                    bot_registry=registry,
+                    data_bot=data_bot,
                 )
+                self.manager = manager
+            except Exception as exc:  # pragma: no cover - best effort
+                raise RuntimeError(
+                    "failed to initialise SelfCodingManager; provide a manager"
+                ) from exc
         if registry:
             try:
                 registry.register_bot(name)
