@@ -69,25 +69,42 @@ class BotRegistry:
                     "Failed to save bot registry to %s: %s", self.persist_path, exc
                 )
 
-    def update_bot(self, name: str, module_path: str) -> None:
-        """Update stored module path for ``name`` and emit ``bot:updated``."""
+    def update_bot(
+        self,
+        name: str,
+        module_path: str,
+        *,
+        patch_id: int | None = None,
+        commit: str | None = None,
+    ) -> None:
+        """Update stored module path for ``name`` and emit ``bot:updated``.
+
+        ``patch_id`` and ``commit`` are included in the emitted event so
+        consumers can trace the exact change applied to the bot.
+        """
 
         # Ensure the bot exists in the graph.
         self.register_bot(name)
         node = self.graph.nodes[name]
         node["module"] = module_path
         node["version"] = int(node.get("version", 0)) + 1
+        if patch_id is not None:
+            node["patch_id"] = patch_id
+        if commit is not None:
+            node["commit"] = commit
 
         if self.event_bus:
             try:
-                self.event_bus.publish(
-                    "bot:updated",
-                    {
-                        "name": name,
-                        "module": module_path,
-                        "version": node["version"],
-                    },
-                )
+                payload = {
+                    "name": name,
+                    "module": module_path,
+                    "version": node["version"],
+                }
+                if patch_id is not None:
+                    payload["patch_id"] = patch_id
+                if commit is not None:
+                    payload["commit"] = commit
+                self.event_bus.publish("bot:updated", payload)
             except Exception as exc:
                 logger.error("Failed to publish bot:updated event: %s", exc)
         if self.persist_path:

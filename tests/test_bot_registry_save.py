@@ -1,5 +1,6 @@
 import pytest
 from menace.bot_registry import BotRegistry
+from menace.unified_event_bus import UnifiedEventBus
 from db_router import init_db_router
 
 pytest.importorskip("networkx")
@@ -81,3 +82,15 @@ def test_register_bot_logs_save_error(tmp_path, monkeypatch, caplog):
     caplog.set_level("ERROR")
     reg.register_bot("x")
     assert "Failed to save bot registry" in caplog.text
+
+
+def test_update_bot_emits_event_and_increments_version():
+    bus = UnifiedEventBus()
+    events: list[dict[str, object]] = []
+    bus.subscribe("bot:updated", lambda _t, e: events.append(e))
+    reg = BotRegistry(event_bus=bus)
+    reg.update_bot("x", "/mod/x", patch_id=1, commit="abc")
+    reg.update_bot("x", "/mod/x", patch_id=2, commit="def")
+    assert reg.graph.nodes["x"].get("version") == 2
+    assert events[0]["patch_id"] == 1 and events[0]["commit"] == "abc"
+    assert events[1]["version"] == 2 and events[1]["commit"] == "def"
