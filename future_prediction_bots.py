@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import logging
 from typing import Iterable
 
@@ -8,6 +9,7 @@ from .data_bot import DataBot
 logger = logging.getLogger(__name__)
 
 
+@self_coding_managed
 class FutureLucrativityBot:
     """Predict upcoming lucrativity based on recent metrics."""
 
@@ -34,6 +36,7 @@ class FutureLucrativityBot:
             return 0.0
 
 
+@self_coding_managed
 class FutureProfitabilityBot:
     """Predict upcoming profitability by averaging recent data."""
 
@@ -60,6 +63,7 @@ class FutureProfitabilityBot:
             return 0.0
 
 
+@self_coding_managed
 class FutureAntifragilityBot:
     """Predict upcoming antifragility by averaging recent data."""
 
@@ -86,6 +90,7 @@ class FutureAntifragilityBot:
             return 0.0
 
 
+@self_coding_managed
 class FutureShannonEntropyBot:
     """Predict upcoming Shannon entropy by averaging recent data."""
 
@@ -112,6 +117,7 @@ class FutureShannonEntropyBot:
             return 0.0
 
 
+@self_coding_managed
 class FutureSynergyProfitBot:
     """Predict upcoming synergy profitability metrics by averaging recent data."""
 
@@ -150,6 +156,7 @@ class FutureSynergyProfitBot:
             return 0.0
 
 
+@self_coding_managed
 class FutureSynergyMaintainabilityBot:
     """Predict upcoming synergy maintainability by averaging recent data."""
 
@@ -190,6 +197,7 @@ class FutureSynergyMaintainabilityBot:
             return 0.0
 
 
+@self_coding_managed
 class FutureSynergyCodeQualityBot:
     """Predict upcoming synergy code quality by averaging recent data."""
 
@@ -230,6 +238,7 @@ class FutureSynergyCodeQualityBot:
             return 0.0
 
 
+@self_coding_managed
 class FutureSynergyNetworkLatencyBot:
     """Predict upcoming synergy network latency by averaging recent data."""
 
@@ -270,6 +279,7 @@ class FutureSynergyNetworkLatencyBot:
             return 0.0
 
 
+@self_coding_managed
 class FutureSynergyThroughputBot:
     """Predict upcoming synergy throughput by averaging recent data."""
 

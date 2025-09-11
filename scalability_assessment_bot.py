@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 import logging
 from dataclasses import dataclass, field
@@ -56,6 +57,7 @@ class PerformanceDB:
         self.conn.commit()
 
 
+@self_coding_managed
 class ScalabilityAssessmentBot:
     """Analyse blueprints and simulate high load to find bottlenecks."""
 

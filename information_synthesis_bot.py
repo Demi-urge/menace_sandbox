@@ -7,6 +7,7 @@ behaviour without requiring the Celery dependency.
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, asdict
 from typing import List, Iterable
 import os
@@ -93,6 +94,7 @@ def send_to_task_manager(task: SynthesisTask) -> None:
         logging.getLogger(__name__).warning("Failed to send task to manager")
 
 
+@self_coding_managed
 class InformationSynthesisBot:
     """Retrieve, analyse and synthesise data into tasks."""
 

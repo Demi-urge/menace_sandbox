@@ -1,7 +1,8 @@
-from __future__ import annotations
-
 """Predict future ROI change from evolution history."""
 
+from __future__ import annotations
+
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from typing import List
 
@@ -25,6 +26,7 @@ class PredictedROI:
     expected_roi: float
 
 
+@self_coding_managed
 class EvolutionAnalysisBot:
     """Train a simple model on ``EvolutionHistoryDB`` records."""
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import argparse
 import logging
 from dataclasses import dataclass
@@ -98,6 +99,7 @@ class AnomalyDB:
         return cur.fetchall()
 
 
+@self_coding_managed
 class OperationalMonitoringBot(AdminBotBase):
     """Collect metrics, detect anomalies and log to Elasticsearch or Splunk."""
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -83,6 +84,7 @@ class NicheDB:
         return pd.read_sql("SELECT niche, roi, ts FROM saturation", self.conn)
 
 
+@self_coding_managed
 class NicheSaturationBot:
     """Detect viable niches and coordinate rapid saturation."""
 

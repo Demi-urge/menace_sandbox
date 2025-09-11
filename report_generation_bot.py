@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import smtplib
 from dataclasses import dataclass
 from datetime import datetime
@@ -46,6 +47,7 @@ class ReportOptions:
     recipients: List[str] | None = None
 
 
+@self_coding_managed
 class ReportGenerationBot:
     """Create formatted reports from Data Bot metrics and send them via email."""
 

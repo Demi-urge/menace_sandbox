@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -133,6 +134,7 @@ def summarise_text(text: str, ratio: float = 0.2) -> str:
     return ". ".join(ranked[:count]).rstrip(".") + "."
 
 
+@self_coding_managed
 class TextResearchBot:
     """Scrape, parse and summarise textual sources."""
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 import os
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ class Transaction:
     ts: str = datetime.utcnow().isoformat()
 
 
+@self_coding_managed
 class FinanceRouterBot:
     """Route payments and log payouts for Menace."""
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 import logging
 from dataclasses import dataclass
@@ -38,6 +39,7 @@ class BotTaskRecord:
     completed: bool = False
 
 
+@self_coding_managed
 class HierarchyAssessmentBot:
     """Coordinate bots, monitor redundancy and system health."""
 

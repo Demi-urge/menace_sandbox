@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -85,6 +86,7 @@ class EvolutionDB:
         self.conn.commit()
 
 
+@self_coding_managed
 class StructuralEvolutionBot:
     """Forecast and apply structural adjustments based on metrics."""
 

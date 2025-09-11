@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import gzip
 import json
 from dataclasses import dataclass
@@ -130,6 +131,7 @@ class VectorMemoryStorage(MemoryStorage):
         return results
 
 
+@self_coding_managed
 class MemoryBot(GPTMemoryInterface):
     """Bot that stores conversations and provides search with caching."""
 

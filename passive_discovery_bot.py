@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import asyncio
 import json
 from dataclasses import dataclass, field
@@ -64,6 +65,7 @@ class DiscoveryError(ResilienceError):
     """Raised when passive discovery fails permanently."""
 
 
+@self_coding_managed
 class PassiveDiscoveryBot:
     """Passive network of crawlers fetching idea related content."""
 

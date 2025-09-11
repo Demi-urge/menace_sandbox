@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -85,6 +86,7 @@ class AllocationDB:
         return pd.read_sql("SELECT bot, roi, active, ts FROM allocations", self.conn)
 
 
+@self_coding_managed
 class ResourceAllocationBot:
     """Manage resources and optimise ROI across bots."""
 

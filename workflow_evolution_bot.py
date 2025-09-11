@@ -1,7 +1,8 @@
-from __future__ import annotations
-
 """Analyse pathway data to propose new workflow sequences."""
 
+from __future__ import annotations
+
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from typing import Dict, Iterable, List
 import logging
@@ -56,6 +57,7 @@ class WorkflowSuggestion:
     expected_roi: float
 
 
+@self_coding_managed
 class WorkflowEvolutionBot:
     """Suggest workflow improvements from PathwayDB statistics."""
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from typing import Dict, Tuple, Mapping, Any
 import logging
@@ -48,6 +49,7 @@ class SimpleRL:
         return self.values.get(state, 0.0)
 
 
+@self_coding_managed
 class PerformanceAssessmentBot:
     """Assess performance data and suggest hardware or software upgrades."""
 

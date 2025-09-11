@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,6 +150,7 @@ class DataFetcher:
         return res
 
 
+@self_coding_managed
 class QueryBot:
     """NLU-driven query handler with optional context management."""
 

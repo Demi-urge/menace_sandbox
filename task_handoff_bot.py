@@ -6,6 +6,7 @@ Run ``menace embed --db workflow`` to backfill manually.
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 import uuid
 from dataclasses import dataclass, asdict, field
@@ -579,6 +580,7 @@ class WorkflowDB(EmbeddableDBMixin):
         return results
 
 
+@self_coding_managed
 class TaskHandoffBot:
     """Compile tasks, record workflows and transmit them to Stage 4."""
 

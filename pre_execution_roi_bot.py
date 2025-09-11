@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Dict, List, Callable, Optional, Any
@@ -116,6 +117,7 @@ class ROIHistoryDB:
         }
 
 
+@self_coding_managed
 class PreExecutionROIBot:
     """Predict costs, timelines and return on investment."""
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 import logging
 from dataclasses import dataclass
@@ -63,6 +64,7 @@ class RedisUnavailableError(CentralDatabaseError):
     """Raised when Redis operations fail or circuit is open."""
 
 
+@self_coding_managed
 class CentralDatabaseBot(AdminBotBase):
     """Serialize schema-changing operations via a FIFO queue."""
 

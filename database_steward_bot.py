@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -140,6 +141,7 @@ class ESIndex:
         return [d for d in self.docs]
 
 
+@self_coding_managed
 class DatabaseStewardBot(AdminBotBase):
     """Manage schemas and data lifecycles across databases."""
 

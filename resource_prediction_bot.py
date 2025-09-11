@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Dict, Optional
@@ -71,6 +72,7 @@ class TemplateDB:
         self.df.to_csv(self.path, index=False)
 
 
+@self_coding_managed
 class ResourcePredictionBot:
     """Predict resources, detect redundancies and assess risk."""
 

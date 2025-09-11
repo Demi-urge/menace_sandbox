@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 import os
 import time
@@ -459,6 +460,7 @@ def choose_countermeasure(algorithm: str, probability: float | None = None) -> s
     return "counter flood"
 
 
+@self_coding_managed
 class AICounterBot:
     """Analyse competitor activity and plan counter actions."""
 

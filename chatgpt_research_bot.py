@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 import os
 import logging
@@ -593,6 +594,7 @@ def _send_cloud_log(payload: dict, url: str) -> None:
         logger.error("cloud logging failed: %s", exc)
 
 
+@self_coding_managed
 class ChatGPTResearchBot:
     """Interact with ChatGPT recursively to gather research."""
 

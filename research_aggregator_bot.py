@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -741,6 +742,7 @@ class InfoDB(EmbeddableDBMixin):
                 )
 
 
+@self_coding_managed
 class ResearchAggregatorBot:
     """Collects, refines and stores research with energy-based depth."""
 

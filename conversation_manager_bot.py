@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 import json
 from dataclasses import dataclass
 from functools import lru_cache
@@ -55,6 +56,7 @@ class ConversationResult:
     audio_path: Optional[Path] = None
 
 
+@self_coding_managed
 class ConversationManagerBot:
     """Manage queries to ChatGPT and Stage 7 bots with optional speech support."""
 

@@ -13,6 +13,7 @@ all LLM prompts.
 
 from __future__ import annotations
 
+from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -678,6 +679,7 @@ class EnhancementEvaluation:
     alerts: List[str] = field(default_factory=list)
 
 
+@self_coding_managed
 class ChatGPTPredictionBot:
     """Evaluate business ideas using a trained ML model.
 

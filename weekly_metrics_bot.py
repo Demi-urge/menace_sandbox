@@ -1,7 +1,8 @@
-from __future__ import annotations
-
 """Bot to summarize weekly MetricsDB statistics and post to Discord."""
 
+from __future__ import annotations
+
+from .coding_bot_interface import self_coding_managed
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -30,6 +31,7 @@ class WeeklyStats:
     delta_roi: float
 
 
+@self_coding_managed
 class WeeklyMetricsBot:
     """Aggregate weekly financial metrics and send Discord notifications."""
 
