@@ -15,6 +15,7 @@ from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
 
 from .unified_event_bus import UnifiedEventBus
+from .roi_thresholds import load_thresholds
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
 
@@ -932,6 +933,8 @@ class DataBot:
         self.logger = logger
         self._current_cycle_id: int | None = None
         self.gauges: Dict[str, Gauge] = {}
+        self._last_roi: Dict[str, float] = {}
+        self._last_errors: Dict[str, float] = {}
         if Gauge:
             self.registry = registry or CollectorRegistry()
             self.gauges = {
@@ -1205,6 +1208,24 @@ class DataBot:
         if self.event_bus:
             try:
                 self.event_bus.publish("metrics:new", asdict(rec))
+                current_roi = revenue - expense
+                prev_roi = self._last_roi.get(bot, current_roi)
+                prev_err = self._last_errors.get(bot, float(errors))
+                delta_roi = current_roi - prev_roi
+                delta_err = float(errors) - prev_err
+                self._last_roi[bot] = current_roi
+                self._last_errors[bot] = float(errors)
+                t = load_thresholds()
+                event = {
+                    "bot": bot,
+                    "delta_roi": delta_roi,
+                    "delta_errors": delta_err,
+                    "roi_threshold": t.roi_drop,
+                    "error_threshold": t.error_threshold,
+                    "roi_breach": delta_roi <= t.roi_drop,
+                    "error_breach": delta_err >= t.error_threshold,
+                }
+                self.event_bus.publish("metrics:delta", event)
             except Exception as exc:
                 self.logger.exception("failed to publish metrics event: %s", exc)
         for name, gauge in self.gauges.items():

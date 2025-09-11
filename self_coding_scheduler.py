@@ -18,6 +18,7 @@ from .data_bot import DataBot
 from .advanced_error_management import AutomatedRollbackManager
 from .sandbox_settings import SandboxSettings
 from .error_parser import ErrorParser
+from .roi_thresholds import load_thresholds
 
 try:  # pragma: no cover - optional dependency
     from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler
@@ -32,10 +33,9 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
 class SelfCodingScheduler:
     """Trigger :class:`SelfCodingManager` based on ROI and error metrics.
 
-    Defaults for ``interval``, ``roi_drop`` and ``error_increase`` are loaded
-    from :class:`SandboxSettings` (``SELF_CODING_INTERVAL``,
-    ``SELF_CODING_ROI_DROP`` and ``SELF_CODING_ERROR_INCREASE``) and can be
-    overridden via constructor arguments.
+    Defaults for ``interval`` are sourced from :class:`SandboxSettings` while
+    ROI and error thresholds are provided by :func:`roi_thresholds.load_thresholds`.
+    All values can be overridden via constructor arguments.
     """
 
     def __init__(
@@ -58,14 +58,11 @@ class SelfCodingScheduler:
         self.rollback_mgr = rollback_mgr
         self.nodes: List[str] = list(nodes or [])
         self.settings = settings or SandboxSettings()
+        thresholds = load_thresholds(self.settings)
         self.interval = interval if interval is not None else self.settings.self_coding_interval
-        self.roi_drop = (
-            roi_drop if roi_drop is not None else self.settings.self_coding_roi_drop
-        )
+        self.roi_drop = roi_drop if roi_drop is not None else thresholds.roi_drop
         self.error_increase = (
-            error_increase
-            if error_increase is not None
-            else self.settings.self_coding_error_increase
+            error_increase if error_increase is not None else thresholds.error_threshold
         )
         self.patch_path = Path(patch_path) if patch_path else resolve_path("auto_helpers.py")
         self.description = description

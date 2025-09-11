@@ -28,6 +28,7 @@ from .evolution_predictor import EvolutionPredictor
 from .unified_event_bus import UnifiedEventBus
 from . import mutation_logger as MutationLogger
 from .adaptive_roi_predictor import AdaptiveROIPredictor
+from .roi_thresholds import load_thresholds
 
 
 @dataclass
@@ -40,7 +41,12 @@ class EvolutionTrigger:
 
 
 class EvolutionOrchestrator:
-    """Monitor metrics and coordinate improvement and evolution cycles."""
+    """Monitor metrics and coordinate improvement and evolution cycles.
+
+    When ``triggers`` are not provided the ROI and error thresholds are loaded
+    via :func:`roi_thresholds.load_thresholds` to ensure consistent behaviour
+    with other components.
+    """
 
     def __init__(
         self,
@@ -70,7 +76,13 @@ class EvolutionOrchestrator:
         self.improvement_engine = improvement_engine
         self.evolution_manager = evolution_manager
         self.history = history_db or EvolutionHistoryDB()
-        self.triggers = triggers or EvolutionTrigger()
+        if triggers is None:
+            t = load_thresholds()
+            self.triggers = EvolutionTrigger(
+                error_rate=t.error_threshold, roi_drop=t.roi_drop
+            )
+        else:
+            self.triggers = triggers
         self.bot_creator = bot_creator
         self.resource_optimizer = resource_optimizer
         self.workflow_evolver = workflow_evolver
