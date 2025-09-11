@@ -232,6 +232,22 @@ class EvolutionOrchestrator:
                 or getattr(self.data_bot, "event_bus", None)
             )
             try:
+                if not self.selfcoding_manager.should_refactor():
+                    self.logger.info(
+                        "patch_skip_thresholds",
+                        extra={"bot": bot},
+                    )
+                    if bus:
+                        try:
+                            bus.publish(
+                                "bot:patch_skipped",
+                                {"bot": bot, "reason": "thresholds"},
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to publish patch_skipped for %s", bot
+                            )
+                    return
                 self.selfcoding_manager.register_patch_cycle(desc, context_meta)
                 self.selfcoding_manager.generate_and_patch(
                     module_path,
