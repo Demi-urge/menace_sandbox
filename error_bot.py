@@ -88,6 +88,9 @@ from .db_router import DBRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from .scope_utils import build_scope_clause, Scope, apply_scope
+from .coding_bot_interface import self_coding_managed
+from .self_coding_manager import SelfCodingManager
+from .bot_registry import BotRegistry
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
@@ -953,6 +956,7 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
 
 
+@self_coding_managed
 class ErrorBot(AdminBotBase):
     """Detect anomalies, resolve known issues, and patch admin bots."""
 
@@ -964,7 +968,9 @@ class ErrorBot(AdminBotBase):
         metrics_db: MetricsDB | None = None,
         *,
         prediction_manager: "PredictionManager" | None = None,
+        bot_registry: BotRegistry | None = None,
         data_bot: DataBot | None = None,
+        selfcoding_manager: "SelfCodingManager" | None = None,
         menace_db: "MenaceDB" | None = None,
         bot_db: "BotDB" | None = None,
         enhancement_db: "EnhancementDB" | None = None,
@@ -980,6 +986,9 @@ class ErrorBot(AdminBotBase):
     ) -> None:
         super().__init__(db_router=db_router)
         self.name = "ErrorBot"
+        self.manager = selfcoding_manager
+        self.bot_registry = getattr(selfcoding_manager, "bot_registry", None)
+        self.data_bot = getattr(selfcoding_manager, "data_bot", None)
         self.db = db or ErrorDB()
         self.graph = graph
         self.context_builder = context_builder
@@ -989,11 +998,10 @@ class ErrorBot(AdminBotBase):
             knowledge_graph=self.graph,
             context_builder=self.context_builder,
         )
-        self.data_bot = data_bot
         if metrics_db:
             self.metrics_db = metrics_db
-        elif data_bot is not None:
-            self.metrics_db = data_bot.db
+        elif self.data_bot is not None:
+            self.metrics_db = self.data_bot.db
         else:
             self.metrics_db = MetricsDB()
         self.prediction_manager = prediction_manager
