@@ -163,6 +163,11 @@ class SelfCodingManager:
                 )
                 self.enhancement_classifier = None
         self.bot_registry = bot_registry
+        if self.bot_registry:
+            try:
+                self.bot_registry.register_bot(self.bot_name)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to register bot in registry")
 
     # ------------------------------------------------------------------
     def scan_repo(self) -> None:
@@ -818,17 +823,20 @@ class SelfCodingManager:
                 )
         if self.bot_registry:
             try:
-                self.bot_registry.register_bot(self.bot_name)
                 self.bot_registry.record_heartbeat(self.bot_name)
+                self.bot_registry.register_interaction(self.bot_name, "patched")
                 self.bot_registry.record_interaction_metadata(
                     self.bot_name,
-                    self.bot_name,
+                    "patched",
                     duration=runtime_after,
                     success=True,
                     resources=(
                         f"hot_swap:{int(time.time())},patch_id:{patch_id}"
                     ),
                 )
+                target = getattr(self.bot_registry, "persist_path", None)
+                if target:
+                    self.bot_registry.save(target)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to update bot registry")
         self.scan_repo()
