@@ -1,5 +1,30 @@
 # flake8: noqa
-"""Data Bot for collecting and analysing performance metrics."""
+"""Data Bot for collecting and analysing performance metrics.
+
+The bot exposes a small set of configuration keys that control how
+``ROI`` and error deltas are evaluated when looking for performance
+degradation.  These values are typically provided by
+``SandboxSettings`` but can also be overridden per bot via
+``config/self_coding_thresholds.yaml``.
+
+Configuration Keys
+------------------
+``self_coding_roi_drop``
+    Maximum allowed decrease in ROI before a bot is considered degraded.
+``self_coding_error_increase``
+    Maximum allowed increase in error count before a bot is considered
+    degraded.
+
+Example ``self_coding_thresholds.yaml``::
+
+    default:
+      roi_drop: -0.1
+      error_threshold: 1.0
+    bots:
+      example-bot:
+        roi_drop: -0.2
+        error_threshold: 2.0
+"""
 
 from __future__ import annotations
 
@@ -929,6 +954,9 @@ class DataBot:
         event_bus: UnifiedEventBus | None = None,
         evolution_db: EvolutionHistoryDB | None = None,
         settings: SandboxSettings | None = None,
+        roi_drop_threshold: float | None = None,
+        error_threshold: float | None = None,
+        degradation_callback: Callable[[dict], None] | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
@@ -936,6 +964,9 @@ class DataBot:
         self.event_bus = event_bus
         self.evolution_db = evolution_db
         self.settings = settings or SandboxSettings()
+        self.roi_drop_threshold = roi_drop_threshold
+        self.error_threshold = error_threshold
+        self.degradation_callback = degradation_callback
         self.logger = logger
         self.thresholds_path = resolve_path("config/self_coding_thresholds.yaml")
         self._current_cycle_id: int | None = None
@@ -1222,31 +1253,14 @@ class DataBot:
                 )
             except Exception as exc:
                 self.logger.exception("failed to update evolution cycle: %s", exc)
+        current_roi = revenue - expense
         if self.event_bus:
             try:
                 self.event_bus.publish("metrics:new", asdict(rec))
-                current_roi = revenue - expense
-                prev_roi = self._last_roi.get(bot, current_roi)
-                prev_err = self._last_errors.get(bot, float(errors))
-                delta_roi = current_roi - prev_roi
-                delta_err = float(errors) - prev_err
-                self._last_roi[bot] = current_roi
-                self._last_errors[bot] = float(errors)
-                t = self.get_thresholds(bot)
-                event = {
-                    "bot": bot,
-                    "delta_roi": delta_roi,
-                    "delta_errors": delta_err,
-                    "roi_threshold": t.roi_drop,
-                    "error_threshold": t.error_threshold,
-                    "roi_breach": delta_roi <= t.roi_drop,
-                    "error_breach": delta_err >= t.error_threshold,
-                }
-                self.event_bus.publish("metrics:delta", event)
-                if event["roi_breach"] or event["error_breach"]:
-                    self.event_bus.publish("data:threshold_breach", event)
             except Exception as exc:
                 self.logger.exception("failed to publish metrics event: %s", exc)
+        if self.event_bus or self.degradation_callback:
+            self.check_degradation(bot, current_roi, float(errors))
         for name, gauge in self.gauges.items():
             gauge.labels(bot=bot).set(getattr(rec, name))
         if self.patch_db:
@@ -1267,6 +1281,51 @@ class DataBot:
             except Exception as exc:
                 self.logger.exception("failed to query capital bot: %s", exc)
         return rec
+
+    def check_degradation(
+        self,
+        bot: str,
+        roi: float,
+        errors: float,
+        *,
+        callback: Callable[[dict], None] | None = None,
+    ) -> bool:
+        """Compare current ``roi`` and ``errors`` to configured thresholds.
+
+        If a degradation is detected the event is published on the event bus as
+        ``bot:degraded`` or, when no bus is configured, a provided *callback* is
+        invoked.  Returns ``True`` when the bot breached either threshold.
+        """
+
+        prev_roi = self._last_roi.get(bot, roi)
+        prev_err = self._last_errors.get(bot, errors)
+        delta_roi = roi - prev_roi
+        delta_err = errors - prev_err
+        self._last_roi[bot] = roi
+        self._last_errors[bot] = errors
+        t = self.get_thresholds(bot)
+        event = {
+            "bot": bot,
+            "delta_roi": delta_roi,
+            "delta_errors": delta_err,
+            "roi_threshold": t.roi_drop,
+            "error_threshold": t.error_threshold,
+            "roi_breach": delta_roi <= t.roi_drop,
+            "error_breach": delta_err >= t.error_threshold,
+        }
+        degraded = event["roi_breach"] or event["error_breach"]
+        cb = callback or self.degradation_callback
+        if self.event_bus:
+            try:
+                self.event_bus.publish("metrics:delta", event)
+                if degraded:
+                    self.event_bus.publish("data:threshold_breach", event)
+                    self.event_bus.publish("bot:degraded", event)
+            except Exception as exc:
+                self.logger.exception("failed to publish metrics event: %s", exc)
+        elif degraded and cb:
+            cb(event)
+        return degraded
 
     def log_evolution_cycle(
         self,
@@ -1401,8 +1460,16 @@ class DataBot:
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
         """Load ROI and error thresholds for ``bot``."""
 
-        roi_drop = self.settings.self_coding_roi_drop
-        error_thresh = self.settings.self_coding_error_increase
+        roi_drop = (
+            self.roi_drop_threshold
+            if self.roi_drop_threshold is not None
+            else self.settings.self_coding_roi_drop
+        )
+        error_thresh = (
+            self.error_threshold
+            if self.error_threshold is not None
+            else self.settings.self_coding_error_increase
+        )
         try:
             data = yaml.safe_load(self.thresholds_path.read_text()) or {}
         except Exception:

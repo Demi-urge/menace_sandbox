@@ -1,3 +1,6 @@
+# ROI/error thresholds used by DataBot.check_degradation
+# roi_drop: allowable decrease in ROI (negative value)
+# error_threshold: maximum increase in errors
 default:
   roi_drop: -0.1
   error_threshold: 1.0
