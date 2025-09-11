@@ -6,24 +6,26 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
 import time
+import inspect
 
 import numpy as np
 
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .self_improvement import SelfImprovementEngine
-from .growth_utils import growth_score
-from .system_evolution_manager import SystemEvolutionManager, EvolutionCycleResult
+from .system_evolution_manager import SystemEvolutionManager
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .evaluation_history_db import EvaluationHistoryDB
-from .trend_predictor import TrendPredictor, TrendPrediction
+from .trend_predictor import TrendPredictor
 from .bot_creation_bot import BotCreationBot
 from .resource_allocation_optimizer import ResourceAllocationOptimizer
 from .workflow_evolution_bot import WorkflowEvolutionBot
 from .experiment_manager import ExperimentManager
 from .evolution_analysis_bot import EvolutionAnalysisBot
+from .self_coding_manager import SelfCodingManager
+from .evolution_predictor import EvolutionPredictor
+from .unified_event_bus import UnifiedEventBus
 from . import mutation_logger as MutationLogger
 from .adaptive_roi_predictor import AdaptiveROIPredictor
 
@@ -54,6 +56,7 @@ class EvolutionOrchestrator:
         workflow_evolver: WorkflowEvolutionBot | None = None,
         experiment_manager: ExperimentManager | None = None,
         analysis_bot: EvolutionAnalysisBot | None = None,
+        self_coding_manager: SelfCodingManager | None = None,
         trend_predictor: TrendPredictor | None = None,
         predictor: EvolutionPredictor | None = None,
         multi_predictor: object | None = None,
@@ -73,6 +76,7 @@ class EvolutionOrchestrator:
         self.workflow_evolver = workflow_evolver
         self.experiment_manager = experiment_manager
         self.analysis_bot = analysis_bot
+        self.self_coding_manager = self_coding_manager
         self.predictor = predictor
         self.multi_predictor = multi_predictor
         self.trend_predictor = trend_predictor
@@ -199,6 +203,45 @@ class EvolutionOrchestrator:
         delta_roi = before_roi - self.prev_roi
         self.prev_roi = before_roi
         error_rate = self._error_rate()
+
+        def _self_patch(module: object, reason: str, trigger: str) -> None:
+            if not self.self_coding_manager:
+                return
+            try:
+                mod = inspect.getmodule(module.__class__)
+                path = Path(getattr(mod, "__file__", "")) if mod else None
+                if not path or not path.exists():
+                    return
+                self.self_coding_manager.run_patch(path, reason)
+                after = self._latest_roi()
+                patch_id = getattr(self.self_coding_manager, "_last_patch_id", None)
+                self.history.add(
+                    EvolutionEvent(
+                        action=f"patch:{path.name}",
+                        before_metric=before_roi,
+                        after_metric=after,
+                        roi=after - before_roi,
+                        patch_id=patch_id,
+                        reason=reason,
+                        trigger=trigger,
+                    )
+                )
+            except Exception:
+                self.logger.exception("self coding patch failed")
+
+        if error_rate > self.triggers.error_rate:
+            _self_patch(
+                self.improvement_engine,
+                f"error_rate {error_rate:.2f} > {self.triggers.error_rate:.2f}",
+                "error_rate",
+            )
+        if delta_roi <= self.triggers.roi_drop:
+            _self_patch(
+                self.evolution_manager,
+                f"roi_drop {delta_roi:.2f} <= {self.triggers.roi_drop:.2f}",
+                "roi_drop",
+            )
+
         try:
             seq, _, _, _ = self.roi_predictor.predict(
                 [[before_roi, error_rate]], horizon=1
@@ -223,7 +266,9 @@ class EvolutionOrchestrator:
             failure_rate=error_rate,
         )
         result_roi = before_roi
-        close = lambda val, thr: abs(val - thr) <= abs(thr) * 0.1
+
+        def close(val: float, thr: float) -> bool:
+            return abs(val - thr) <= abs(thr) * 0.1
         candidates: list[str] = []
         action_reasons: dict[str, list[str]] = {}
         action_triggers: dict[str, list[str]] = {}
@@ -534,7 +579,7 @@ class EvolutionOrchestrator:
                     self.roi_predictor.train(dataset)
                 except Exception:
                     self.logger.exception("roi predictor retrain failed")
-        
+
     # ------------------------------------------------------------------
     def _run_workflow_experiments(self, limit: int = 3) -> None:
         """Propose alternative workflows and optionally benchmark them."""
@@ -746,36 +791,50 @@ class EvolutionOrchestrator:
     # ------------------------------------------------------------------
     def _cleanup_workflows(self) -> None:
         """Remove paused workflows from MenaceDB to keep the database small."""
-        mdb = getattr(self.resource_optimizer, "menace_db", None) if self.resource_optimizer else None
+        mdb = (
+            getattr(self.resource_optimizer, "menace_db", None)
+            if self.resource_optimizer
+            else None
+        )
         if not mdb:
             return
         try:
             with mdb.engine.begin() as conn:
                 rows = (
                     conn.execute(
-                        mdb.workflows.select().where(mdb.workflows.c.status == "paused")
+                        mdb.workflows.select().where(
+                            mdb.workflows.c.status == "paused"
+                        )
                     )
                     .mappings()
                     .fetchall()
                 )
                 for row in rows:
                     conn.execute(
-                        mdb.workflows.delete().where(mdb.workflows.c.workflow_id == row["workflow_id"])
-                )
+                        mdb.workflows.delete().where(
+                            mdb.workflows.c.workflow_id == row["workflow_id"]
+                        )
+                    )
         except Exception:
             self.logger.exception("cleanup workflows failed")
 
     # ------------------------------------------------------------------
     def _replace_main_workflow(self, name: str) -> None:
         """Set *name* as the active workflow in MenaceDB."""
-        mdb = getattr(self.resource_optimizer, "menace_db", None) if self.resource_optimizer else None
+        mdb = (
+            getattr(self.resource_optimizer, "menace_db", None)
+            if self.resource_optimizer
+            else None
+        )
         if not mdb:
             return
         try:
             with mdb.engine.begin() as conn:
                 row = (
                     conn.execute(
-                        mdb.workflows.select().where(mdb.workflows.c.workflow_name == name)
+                        mdb.workflows.select().where(
+                            mdb.workflows.c.workflow_name == name
+                        )
                     )
                     .mappings()
                     .fetchone()
@@ -788,7 +847,6 @@ class EvolutionOrchestrator:
                     )
         except Exception:
             self.logger.exception("replace main workflow failed")
-
 
 
 __all__ = ["EvolutionTrigger", "EvolutionOrchestrator"]
