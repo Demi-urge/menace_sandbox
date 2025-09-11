@@ -1,7 +1,6 @@
-import sys
 import types
 from pathlib import Path
-
+import sys
 
 # Stub dependencies required by billing.sanity_consumer
 class _Bus:
@@ -16,34 +15,20 @@ class _Bus:
             if t == topic:
                 cb(topic, event)
 
-
 bus_module = types.ModuleType("unified_event_bus")
 bus_module.UnifiedEventBus = _Bus
 sys.modules["unified_event_bus"] = bus_module
 
 sf_module = types.ModuleType("sanity_feedback")
 
-
 class SanityFeedback:
-    def __init__(self, engine, outcome_db=None, **kwargs):
-        self.engine = engine
+    def __init__(self, manager, outcome_db=None, **kwargs):
+        self.manager = manager
         self.outcome_db = outcome_db
         self.kwargs = kwargs
 
-
 sf_module.SanityFeedback = SanityFeedback
 sys.modules["sanity_feedback"] = sf_module
-
-sce_module = types.ModuleType("self_coding_engine")
-
-
-class SelfCodingEngine:
-    def __init__(self, *a, **k):
-        pass
-
-
-sce_module.SelfCodingEngine = SelfCodingEngine
-sys.modules["self_coding_engine"] = sce_module
 
 msl_module = types.ModuleType("menace_sanity_layer")
 msl_module._EVENT_BUS = _Bus()
@@ -58,36 +43,16 @@ dpr_module.get_project_roots = lambda: [Path('.')]
 sys.modules["dynamic_path_router"] = dpr_module
 
 db_module = types.ModuleType("discrepancy_db")
-
-
 class _DummyDB:
     def __init__(self, *a, **k):
         pass
-
 
 db_module.DiscrepancyDB = _DummyDB
 db_module.DiscrepancyRecord = object
 sys.modules["discrepancy_db"] = db_module
 
-code_db_module = types.ModuleType("code_database")
-
-
-class _CodeDB:
-    pass
-
-
-code_db_module.CodeDB = _CodeDB
-sys.modules["code_database"] = code_db_module
-
-mmm_module = types.ModuleType("menace_memory_manager")
-
-
-class _Memory:
-    pass
-
-
-mmm_module.MenaceMemoryManager = _Memory
-sys.modules["menace_memory_manager"] = mmm_module
+from unified_event_bus import UnifiedEventBus  # noqa: E402
+import billing.sanity_consumer as sc  # noqa: E402
 
 
 class _Builder:
@@ -98,115 +63,34 @@ class _Builder:
         self.refreshed = True
 
 
-import billing.sanity_consumer as sc  # noqa: E402
-from unified_event_bus import UnifiedEventBus  # noqa: E402
-from db_router import init_db_router  # noqa: E402
+class DummyManager:
+    def __init__(self, engine):
+        self.engine = engine
+
+    def run_patch(self, *a, **k):
+        pass
 
 
-def test_injected_engine_used():
+def test_injected_manager_used():
     class DummyEngine:
         pass
 
     engine = DummyEngine()
     builder = _Builder()
     consumer = sc.SanityConsumer(
-        event_bus=UnifiedEventBus(), engine=engine, context_builder=builder
+        DummyManager(engine), event_bus=UnifiedEventBus(), context_builder=builder
     )
     assert consumer._get_engine() is engine
     assert builder.refreshed
 
 
-def test_engine_instantiates_dependencies(monkeypatch, tmp_path):
-    init_db_router('sc', str(tmp_path / 'local.db'), str(tmp_path / 'shared.db'))
-
-    class DummyCodeDB:
-        pass
-
-    class DummyMemory:
-        pass
-
+def test_builder_shared_with_feedback():
     class DummyEngine:
-        def __init__(self, code_db, memory_mgr, context_builder=None):
-            self.code_db = code_db
-            self.memory_mgr = memory_mgr
-            self.context_builder = context_builder
-
-    monkeypatch.setattr(sc, 'CodeDB', DummyCodeDB)
-    monkeypatch.setattr(sc, 'MenaceMemoryManager', DummyMemory)
-    monkeypatch.setattr(sc, 'SelfCodingEngine', DummyEngine)
-
-    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus(), context_builder=_Builder())
-    engine = consumer._get_engine()
-    assert isinstance(engine, DummyEngine)
-    assert isinstance(engine.code_db, DummyCodeDB)
-    assert isinstance(engine.memory_mgr, DummyMemory)
-    assert engine.context_builder is not None
-
-
-def test_optional_dependency_failure(monkeypatch, tmp_path):
-    init_db_router('sc2', str(tmp_path / 'local.db'), str(tmp_path / 'shared.db'))
-
-    class FailingCodeDB:
-        def __init__(self):
-            raise RuntimeError('boom')
-
-    class DummyMemory:
         pass
 
-    captured = {}
-
-    class DummyEngine:
-        def __init__(self, code_db, memory_mgr, context_builder=None):
-            captured['code_db'] = code_db
-            captured['memory_mgr'] = memory_mgr
-            captured['builder'] = context_builder
-
-    monkeypatch.setattr(sc, 'CodeDB', FailingCodeDB)
-    monkeypatch.setattr(sc, 'MenaceMemoryManager', DummyMemory)
-    monkeypatch.setattr(sc, 'SelfCodingEngine', DummyEngine)
-
-    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus(), context_builder=_Builder())
-    engine = consumer._get_engine()
-    assert engine is not None
-    assert captured['memory_mgr'].__class__ is DummyMemory
-    assert captured['code_db'].__class__ is object
-    assert captured['builder'] is not None
-
-
-def test_builder_shared_with_feedback(monkeypatch, tmp_path):
-    init_db_router('sc3', str(tmp_path / 'local.db'), str(tmp_path / 'shared.db'))
-
-    class DummyCodeDB:
-        pass
-
-    class DummyMemory:
-        pass
-
-    shared = {}
-
-    class DummyEngine:
-        def __init__(self, code_db, memory_mgr, context_builder=None):
-            shared['builder'] = context_builder
-            self.context_builder = context_builder
-
-    monkeypatch.setattr(sc, 'CodeDB', DummyCodeDB)
-    monkeypatch.setattr(sc, 'MenaceMemoryManager', DummyMemory)
-    monkeypatch.setattr(sc, 'SelfCodingEngine', DummyEngine)
-
-    consumer = sc.SanityConsumer(event_bus=UnifiedEventBus(), context_builder=_Builder())
+    builder = _Builder()
+    consumer = sc.SanityConsumer(
+        DummyManager(DummyEngine()), event_bus=UnifiedEventBus(), context_builder=builder
+    )
     feedback = consumer._get_feedback()
-    assert getattr(feedback, 'context_builder', None) is shared['builder']
-
-
-def teardown_module(module):  # pragma: no cover - test cleanup
-    for name in [
-        "unified_event_bus",
-        "sanity_feedback",
-        "self_coding_engine",
-        "menace_sanity_layer",
-        "dynamic_path_router",
-        "discrepancy_db",
-        "code_database",
-        "menace_memory_manager",
-    ]:
-        sys.modules.pop(name, None)
+    assert getattr(feedback, "context_builder", None) is builder

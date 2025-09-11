@@ -8,7 +8,6 @@ import time
 from typing import Optional
 import logging
 
-from .self_coding_engine import SelfCodingEngine
 from .dynamic_path_router import resolve_path
 from .log_tags import FEEDBACK
 from .coding_bot_interface import self_coding_managed
@@ -38,14 +37,15 @@ class SanityFeedback:
 
     def __init__(
         self,
-        engine: SelfCodingEngine,
+        manager,
         *,
         threshold: float = 1.0,
         interval: int = 60,
         detection_db: DetectionDB | None = None,
         outcome_db: OutcomeDB | None = None,
     ) -> None:
-        self.engine = engine
+        self.manager = manager
+        self.engine = getattr(manager, "engine", None)
         self.threshold = threshold
         self.interval = interval
         self.detection_db = detection_db or (DetectionDB() if DetectionDB else None)
@@ -114,12 +114,13 @@ class SanityFeedback:
         if path:
             try:
                 path_obj = resolve_path(path if path.endswith(".py") else f"{path}.py")
-                patch_id, success, _ = self.engine.apply_patch(
+                self.manager.run_patch(
                     path_obj,
                     desc,
-                    reason=desc,
-                    trigger="sanity_feedback",
+                    context_meta={"reason": desc, "trigger": "sanity_feedback"},
                 )
+                patch_id = getattr(self.manager, "_last_patch_id", None)
+                success = bool(patch_id)
             except Exception:
                 logger.exception("patch application failed", extra={"path": path})
         # log memory interaction

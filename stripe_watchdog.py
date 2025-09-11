@@ -180,11 +180,17 @@ try:  # Optional dependency – telemetry feedback loop
     from error_logger import ErrorLogger  # type: ignore
     from bot_registry import BotRegistry  # type: ignore
     from data_bot import DataBot  # type: ignore
+    from self_coding_manager import SelfCodingManager  # type: ignore
+    from model_automation_pipeline import ModelAutomationPipeline  # type: ignore
+    from unified_event_bus import UnifiedEventBus  # type: ignore
 except Exception:  # pragma: no cover - best effort
     TelemetryFeedback = None  # type: ignore
     ErrorLogger = None  # type: ignore
     BotRegistry = None  # type: ignore
     DataBot = None  # type: ignore
+    SelfCodingManager = None  # type: ignore
+    ModelAutomationPipeline = None  # type: ignore
+    UnifiedEventBus = None  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -1913,13 +1919,31 @@ def main(
                 )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise SelfCodingEngine")
-        if TelemetryFeedback and ErrorLogger and engine is not None:
+        if (
+            TelemetryFeedback
+            and ErrorLogger
+            and engine is not None
+            and SelfCodingManager
+            and ModelAutomationPipeline
+            and UnifiedEventBus
+        ):
             try:
+                bus = UnifiedEventBus()
+                registry = BotRegistry(event_bus=bus) if BotRegistry else None
+                data_bot = DataBot() if DataBot else None
+                pipeline = ModelAutomationPipeline(
+                    context_builder=builder, event_bus=bus, bot_registry=registry
+                )
+                manager = SelfCodingManager(
+                    engine,
+                    pipeline,
+                    bot_registry=registry,
+                    data_bot=data_bot,
+                    event_bus=bus,
+                )
                 telemetry = TelemetryFeedback(
                     ErrorLogger(context_builder=builder),
-                    engine,
-                    bot_registry=BotRegistry() if BotRegistry else None,
-                    data_bot=DataBot() if DataBot else None,
+                    manager,
                 )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to initialise telemetry feedback")

@@ -23,7 +23,7 @@ sys.modules["vector_service.context_builder"] = types.SimpleNamespace(
 
 # write stub modules to temporary package path
 (TMP / "telemetry_feedback.py").write_text(  # path-ignore
-    """class TelemetryFeedback:\n    def __init__(self, logger=None, engine=None):\n        self.interval=0\n        self.started=False\n        self.stopped=False\n    def start(self):\n        self.started=True\n    def stop(self):\n        self.stopped=True\n"""
+    """class TelemetryFeedback:\n    def __init__(self, logger=None, manager=None):\n        self.interval=0\n        self.started=False\n        self.stopped=False\n    def start(self):\n        self.started=True\n    def stop(self):\n        self.stopped=True\n"""
 )
 (TMP / "error_logger.py").write_text(  # path-ignore
     "class ErrorLogger:\n    def __init__(self, **kwargs):\n        pass\n"
@@ -37,6 +37,22 @@ sys.modules["vector_service.context_builder"] = types.SimpleNamespace(
 )
 (TMP / "knowledge_graph.py").write_text(  # path-ignore
     """class KnowledgeGraph:\n    def __init__(self):\n        self.traces=[]\n    def add_crash_trace(self, name, trace):\n        self.traces.append((name, trace))\n"""
+)
+
+(TMP / "self_coding_manager.py").write_text(
+    "class SelfCodingManager:\n    def __init__(self, engine, pipeline, **k):\n        self.engine = engine\n"
+)
+(TMP / "model_automation_pipeline.py").write_text(
+    "class ModelAutomationPipeline:\n    def __init__(self, **k):\n        pass\n"
+)
+(TMP / "unified_event_bus.py").write_text(
+    "class UnifiedEventBus:\n    def __init__(self, *a, **k):\n        pass\n"
+)
+(TMP / "bot_registry.py").write_text(
+    "class BotRegistry:\n    def __init__(self, *a, **k):\n        pass\n"
+)
+(TMP / "data_bot.py").write_text(
+    "class DataBot:\n    pass\n"
 )
 
 spec = importlib.util.spec_from_file_location(

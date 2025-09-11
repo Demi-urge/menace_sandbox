@@ -122,14 +122,20 @@ def test_watchdog_anomaly_reaches_consumer(monkeypatch, tmp_path):
     monkeypatch.setattr(sc, "DiscrepancyDB", lambda: outcome_db)
     monkeypatch.setattr(sc, "DiscrepancyRecord", DummyRecord)
 
-    # Stub self-coding engine
+    # Stub manager and engine
     class DummyEngine:
         def __init__(self, *a, **k) -> None:
             self.updates: list[dict] = []
 
         def update_generation_params(self, meta):
             self.updates.append(meta)
-    monkeypatch.setattr(sc, "SelfCodingEngine", DummyEngine)
+
+    class DummyManager:
+        def __init__(self, engine):
+            self.engine = engine
+
+        def run_patch(self, *a, **k):
+            return None
 
     class DummyBuilder:
         def __init__(self) -> None:
@@ -139,7 +145,9 @@ def test_watchdog_anomaly_reaches_consumer(monkeypatch, tmp_path):
             self.refreshed = True
 
     builder = DummyBuilder()
-    consumer = sc.SanityConsumer(event_bus=bus, context_builder=builder)
+    consumer = sc.SanityConsumer(
+        DummyManager(DummyEngine()), event_bus=bus, context_builder=builder
+    )
     assert builder.refreshed
 
     # Emit anomaly
@@ -147,6 +155,7 @@ def test_watchdog_anomaly_reaches_consumer(monkeypatch, tmp_path):
     monkeypatch.setattr(sw, "record_billing_event", lambda *a, **k: None)
     monkeypatch.setattr(sw.menace_sanity_layer, "record_payment_anomaly", lambda *a, **k: None)
     monkeypatch.setattr(sw, "load_api_key", lambda: None)
+    monkeypatch.setattr(sw, "_ensure_context_builder", lambda b: b)
     sw._emit_anomaly(record, False, False, context_builder=builder)
 
     # Sanity layer persisted and published event

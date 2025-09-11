@@ -17,7 +17,6 @@ from .db_router import (
 from .scope_utils import Scope, build_scope_clause, apply_scope
 
 from .error_logger import ErrorLogger
-from .self_coding_engine import SelfCodingEngine
 from .knowledge_graph import KnowledgeGraph
 from .coding_bot_interface import self_coding_managed
 
@@ -35,7 +34,7 @@ class TelemetryFeedback:
     def __init__(
         self,
         logger: ErrorLogger,
-        engine: SelfCodingEngine,
+        manager,
         *,
         threshold: int = 3,
         interval: int = 60,
@@ -47,11 +46,12 @@ class TelemetryFeedback:
         ``TelemetryFeedback`` itself remains agnostic about
         :class:`~vector_service.context_builder.ContextBuilder` usage; any
         prompt construction is delegated to the provided
-        :class:`SelfCodingEngine`.  The engine should therefore be configured
-        with an appropriate builder.
+        :class:`SelfCodingManager`.  The manager's engine should therefore be
+        configured with an appropriate builder.
         """
         self.logger = logger
-        self.engine = engine
+        self.manager = manager
+        self.engine = getattr(manager, "engine", None)
         self.threshold = threshold
         self.interval = interval
         self.graph = graph
@@ -112,12 +112,12 @@ class TelemetryFeedback:
             return
         desc = f"fix {error_type}: {module}"
         try:
-            patch_id, _, _ = self.engine.apply_patch(
+            self.manager.run_patch(
                 path,
                 desc,
-                reason=desc,
-                trigger="telemetry_feedback",
+                context_meta={"reason": desc, "trigger": "telemetry_feedback"},
             )
+            patch_id = getattr(self.manager, "_last_patch_id", None)
         except Exception:
             patch_id = None
         menace_id = self.logger.db._menace_id(source_menace_id)

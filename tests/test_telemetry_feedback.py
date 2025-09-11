@@ -30,12 +30,39 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault(
     "vector_service.text_preprocessor",
-    types.SimpleNamespace(get_config=lambda: None),
+    types.SimpleNamespace(
+        get_config=lambda: None,
+        PreprocessingConfig=object,
+        generalise=lambda *a, **k: None,
+    ),
 )
 sys.modules.setdefault(
     "vector_service.context_builder",
     types.SimpleNamespace(ContextBuilder=object),
 )
+
+# Stub error_bot to avoid heavy imports
+eb_module = types.ModuleType("menace.error_bot")
+class ErrorDB:
+    def __init__(self, path):
+        self.records = []
+        self.router = object()
+        self.conn = types.SimpleNamespace(execute=lambda *a, **k: types.SimpleNamespace(fetchall=lambda: []))
+
+    def add_telemetry(self, event, source_menace_id=None):
+        self.records.append(event)
+
+    def top_error_module(self, **_):
+        if not self.records:
+            return None
+        ev = self.records[0]
+        return (ev.error_type, ev.module, {}, len(self.records), "bot")
+
+    def _menace_id(self, source=None):
+        return "bot"
+
+eb_module.ErrorDB = ErrorDB
+sys.modules["menace.error_bot"] = eb_module
 
 import menace.error_bot as eb  # noqa: E402
 import menace.error_logger as elog  # noqa: E402
@@ -57,6 +84,18 @@ class DummyEngine:
     def apply_patch(self, path: Path, desc: str, **_: object):
         self.calls.append((path, desc))
         return 1, False, 0.0
+
+
+class DummyManager:
+    def __init__(self, engine, registry=None, data_bot=None):
+        self.engine = engine
+        self.bot_registry = registry
+        self.data_bot = data_bot
+        self.calls = []
+
+    def run_patch(self, path, desc, **_):
+        self.calls.append((path, desc))
+        return self.engine.apply_patch(path, desc)
 
 
 class DummyGraph:
@@ -132,15 +171,20 @@ def test_feedback_triggers_patch(tmp_path, monkeypatch, scope, src):
     monkeypatch.setattr(tf, "resolve_path", lambda _p: mod.resolve())
     registry = DummyRegistry()
     data_bot = DummyDataBot()
+    manager = DummyManager(engine, registry, data_bot)
     fb = tf.TelemetryFeedback(
         logger,
-        engine,
+        manager,
         threshold=3,
-        bot_registry=registry,
-        data_bot=data_bot,
+    )
+    monkeypatch.setattr(fb, "_mark_attempt", lambda *a, **k: None)
+    monkeypatch.setattr(
+        fb.logger.db.conn,
+        "execute",
+        lambda *a, **k: types.SimpleNamespace(fetchall=lambda: []),
     )
     fb._run_cycle(scope=scope)
-    assert engine.calls and engine.calls[0][0] == mod.resolve()
+    assert manager.calls and manager.calls[0][0] == mod.resolve()
     assert "TelemetryFeedback" in registry.names
     assert data_bot.db.records
 
@@ -159,6 +203,13 @@ def test_feedback_threshold(tmp_path, monkeypatch):
                 module_counts={"bot": 1},
             )
         )
-    fb = tf.TelemetryFeedback(logger, engine, threshold=3)
+    manager = DummyManager(engine)
+    fb = tf.TelemetryFeedback(logger, manager, threshold=3)
+    monkeypatch.setattr(fb, "_mark_attempt", lambda *a, **k: None)
+    monkeypatch.setattr(
+        fb.logger.db.conn,
+        "execute",
+        lambda *a, **k: types.SimpleNamespace(fetchall=lambda: []),
+    )
     fb._run_cycle()
-    assert not engine.calls
+    assert not manager.calls
