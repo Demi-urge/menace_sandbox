@@ -2,6 +2,11 @@
 
 `SelfCodingEngine` automatically builds helper functions from existing code snippets and appends them to a file. It can query an LLM to write helpers, run linting and tests and revert changes when performance drops.
 
+All coding bots interacting with the self‑coding system must be decorated with
+`@self_coding_managed` from `coding_bot_interface`. The decorator registers the
+bot with `BotRegistry` and records ROI/error metrics in `DataBot` so new bots
+remain observable and improvable.
+
 ## Usage
 
 ```python

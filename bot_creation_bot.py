@@ -51,6 +51,7 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from intent_clusterer import IntentClusterer  # type: ignore
     from universal_retriever import UniversalRetriever  # type: ignore
+from .coding_bot_interface import self_coding_managed
 
 
 @dataclass
@@ -61,6 +62,7 @@ class CreationConfig:
     complexity_threshold: float = 150.0
 
 
+@self_coding_managed
 class BotCreationBot(AdminBotBase):
     """Identify, build, test and deploy new bots asynchronously."""
 
