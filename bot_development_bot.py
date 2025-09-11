@@ -347,6 +347,12 @@ class BotDevelopmentBot:
             )
         self.manager = manager
         self.engine = getattr(self.manager, "engine", engine)
+        if self.manager is not None:
+            try:
+                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                self.manager.register_bot(name)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("bot registration failed")
         # warn about missing optional dependencies
         for dep_name, mod in {
             "yaml": yaml,
@@ -527,6 +533,17 @@ class BotDevelopmentBot:
         """Write ``data`` to ``path`` atomically with retries."""
 
         def writer() -> None:
+            if self.manager is not None:
+                desc = f"update {path.name} content\n\n{data}"
+                self.manager.run_patch(path, desc)
+                registry = getattr(self.manager, "bot_registry", None)
+                if registry is not None:
+                    try:
+                        name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                        registry.update_bot(name, str(path))
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("bot registry update failed")
+                return
             tmp = path.with_suffix(path.suffix + ".tmp")
             with open(tmp, "w") as fh:
                 fh.write(data)

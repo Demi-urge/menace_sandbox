@@ -46,6 +46,12 @@ class ImplementationOptimiserBot:
         self.history: List[TaskPackage] = []
         self.manager = manager
         self.context_builder = context_builder
+        if self.manager is not None:
+            try:
+                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                self.manager.register_bot(name)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("bot registration failed")
         try:
             self.context_builder.refresh_db_weights()
         except Exception as exc:
@@ -307,6 +313,16 @@ class ImplementationOptimiserBot:
                         try:
                             path = Path(path_str)
                             self.manager.run_patch(path, desc)
+                            if getattr(self.manager, "bot_registry", None):
+                                try:
+                                    name = getattr(
+                                        self,
+                                        "name",
+                                        getattr(self, "bot_name", self.__class__.__name__),
+                                    )
+                                    self.manager.bot_registry.update_bot(name, str(path))
+                                except Exception:  # pragma: no cover - best effort
+                                    logger.exception("bot registry update failed")
                             generated = path.read_text().rstrip()
                         except Exception:
                             generated = ""

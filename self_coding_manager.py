@@ -200,6 +200,15 @@ class SelfCodingManager:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
 
+    def register_bot(self, name: str) -> None:
+        """Register *name* with the underlying :class:`BotRegistry`."""
+        if not self.bot_registry:
+            return
+        try:
+            self.bot_registry.register_bot(name)
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to register bot in registry")
+
     def _ensure_quick_fix_engine(self) -> QuickFixEngine | None:
         """Initialise QuickFixEngine on demand."""
         if self.quick_fix is None and quick_fix_engine is not None:
