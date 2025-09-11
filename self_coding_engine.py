@@ -20,6 +20,11 @@ import re
 import traceback
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import contextvars
+
+MANAGER_CONTEXT: contextvars.ContextVar[object | None] = contextvars.ContextVar(
+    "self_coding_manager", default=None
+)
 
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
@@ -1086,6 +1091,10 @@ class SelfCodingEngine:
         retried via :func:`codex_fallback_handler.handle`, which returns an
         :class:`LLMResult` capturing the rerouted output and metadata.
         """
+        if MANAGER_CONTEXT.get() is None:
+            raise RuntimeError(
+                "generate_helper requires a SelfCodingManager context"
+            )
         snippets = self.suggest_snippets(description, limit=3)
         snippet_context = "\n\n".join(s.code for s in snippets)
         summaries: List[str] | None = None
