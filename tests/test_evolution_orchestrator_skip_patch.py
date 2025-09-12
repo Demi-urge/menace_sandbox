@@ -65,6 +65,10 @@ def test_degraded_bot_skips_when_thresholds_not_met(tmp_path):
     mod = types.ModuleType(mod_name)
     mod.__file__ = str(mod_path)
     sys.modules[mod_name] = mod
+    import networkx as nx
+    g = nx.DiGraph()
+    g.add_node(mod_name, module=str(mod_path))
+    manager.bot_registry = types.SimpleNamespace(graph=g)
 
     orch._on_bot_degraded({"bot": mod_name})
 

@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 import time
 import inspect
-import importlib
 
 import numpy as np
 
@@ -235,32 +234,58 @@ class EvolutionOrchestrator:
         if not self.selfcoding_manager:
             return
         bot = str(event.get("bot", ""))
+        bus = (
+            getattr(self.selfcoding_manager, "event_bus", None)
+            or self.event_bus
+            or getattr(self.data_bot, "event_bus", None)
+        )
         try:
             registry = getattr(self.selfcoding_manager, "bot_registry", None)
             module_path: Path | None = None
-            if registry and bot:
-                try:
-                    mod_path = registry.graph.nodes[bot]["module"]
-                    p = Path(mod_path)
-                    if p.exists():
-                        module_path = p
-                except KeyError:
-                    pass
-                except Exception:
-                    self.logger.exception("bot registry lookup failed for %s", bot)
-            if module_path is None and bot:
-                try:
-                    mod = importlib.import_module(bot)
-                    mod_file = getattr(mod, "__file__", "")
-                    if mod_file:
-                        p = Path(mod_file)
-                        if p.exists():
-                            module_path = p
-                except Exception:
-                    self.logger.exception("import failed for %s", bot)
+            if not registry or not bot or bot not in getattr(registry, "graph", {}):
+                if bus:
+                    try:
+                        bus.publish("evolve:unknown_bot", {"bot": bot})
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish unknown bot event for %s", bot
+                        )
+                else:
+                    self.logger.error("unknown bot %s", bot)
+                return
+            try:
+                mod_path = registry.graph.nodes[bot]["module"]
+                p = Path(mod_path)
+                if p.exists():
+                    module_path = p
+            except Exception:
+                self.logger.exception("bot registry lookup failed for %s", bot)
+                return
             if not module_path or not module_path.exists():
                 self.logger.error("module path not found for %s", bot)
                 return
+
+            roi_baseline = float(event.get("roi_baseline", 0.0))
+            delta_roi = float(event.get("delta_roi", 0.0))
+            delta_errors = float(event.get("delta_errors", 0.0))
+            after_roi = roi_baseline + delta_roi
+            if getattr(self.data_bot, "log_evolution_cycle", None):
+                try:
+                    self.data_bot.log_evolution_cycle(
+                        "degradation",
+                        roi_baseline,
+                        after_roi,
+                        delta_roi,
+                        after_roi,
+                        roi_delta=delta_roi,
+                        anomaly_count=delta_errors,
+                        reason="bot degraded",
+                        trigger="degradation",
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to log degradation cycle for %s", bot
+                    )
 
             degraded_path = module_path
             context_meta = {
@@ -272,17 +297,8 @@ class EvolutionOrchestrator:
                 "test_failure_threshold": event.get("test_failure_threshold"),
             }
             desc = f"auto_patch_due_to_degradation:{bot}"
-            bus = (
-                getattr(self.selfcoding_manager, "event_bus", None)
-                or self.event_bus
-                or getattr(self.data_bot, "event_bus", None)
-            )
-            current_roi = float(event.get("roi_baseline", 0.0)) + float(
-                event.get("delta_roi", 0.0)
-            )
-            current_err = float(event.get("errors_baseline", 0.0)) + float(
-                event.get("delta_errors", 0.0)
-            )
+            current_roi = after_roi
+            current_err = float(event.get("errors_baseline", 0.0)) + delta_errors
             predicted_roi = current_roi
             predicted_gain = 0.0
             confidence = 0.0
