@@ -140,6 +140,8 @@ system to track and improve the bot over time. Bot constructors **must** accept
 `bot_registry`, `data_bot`, and `selfcoding_manager` parameters and forward
 them to the decorator to ensure proper registration. Avoid instantiating new
 coding bots without this decorator.
+CI runs `python tools/find_unmanaged_bots.py` to ensure every bot class is managed. Run this script locally; it exits with a non-zero status if an unmanaged bot is found.
+
 
 ## Helper generation wrappers
 
