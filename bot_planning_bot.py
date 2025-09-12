@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .bot_registry import registry
+from .data_bot import data_bot
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from typing import Iterable, List, Dict, Optional
@@ -61,7 +63,7 @@ class BotPlan:
     level: str
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class BotPlanningBot:
     """Analyse tasks and plan bots with hierarchy mapping."""
 

@@ -11,8 +11,9 @@ import ast
 import logging
 import time
 from vector_service.context_builder import ContextBuilder
+from .bot_registry import registry
+from .data_bot import data_bot
 from .coding_bot_interface import self_coding_managed
-from .data_bot import DataBot
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class ImplementationAdvice:
     optimised_code: str
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ImplementationOptimiserBot:
     """Receive ``TaskPackage`` objects and refine them.
 
@@ -70,7 +71,7 @@ class ImplementationOptimiserBot:
             except Exception:
                 pass
         self.name = getattr(self, "name", self.__class__.__name__)
-        self.data_bot = DataBot()
+        self.data_bot = data_bot
 
     # ------------------------------------------------------------------
     @staticmethod
