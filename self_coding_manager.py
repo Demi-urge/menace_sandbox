@@ -1281,7 +1281,7 @@ class SelfCodingManager:
                     "failed to log evolution cycle: %s", exc
                 )
         if self.bot_registry:
-            module_path = path_for_prompt(cloned_path)
+            module_path = path_for_prompt(path)
             try:
                 self.bot_registry.record_heartbeat(self.bot_name)
                 self.bot_registry.register_interaction(self.bot_name, "patched")
@@ -1305,7 +1305,7 @@ class SelfCodingManager:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception(
                     "failed to update bot registry",
-                    extra={"bot": self.bot_name, "module": module_path},
+                    extra={"bot": self.bot_name, "module_path": module_path},
                 )
             prev_state: dict[str, object] | None = None
             if self.bot_name in self.bot_registry.graph:
@@ -1331,14 +1331,14 @@ class SelfCodingManager:
                     "bot registry updated",
                     extra={
                         "bot": self.bot_name,
-                        "module": module_path,
+                        "module_path": module_path,
                         "version": version,
                     },
                 )
             except Exception:
                 self.logger.exception(
-                    "failed to hot swap bot",
-                    extra={"bot": self.bot_name, "module": module_path},
+                    "failed to update bot registry",
+                    extra={"bot": self.bot_name, "module_path": module_path},
                 )
                 if prev_state is not None:
                     try:
@@ -1354,6 +1354,13 @@ class SelfCodingManager:
                             extra={"bot": self.bot_name},
                         )
                 raise
+            try:
+                self.bot_registry.hot_swap_bot(self.bot_name)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "failed to hot swap bot",
+                    extra={"bot": self.bot_name, "module_path": module_path},
+                )
             target = getattr(self.bot_registry, "persist_path", None)
             if target:
                 try:
