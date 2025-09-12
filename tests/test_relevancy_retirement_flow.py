@@ -71,8 +71,9 @@ def test_relevancy_retirement_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(module_retirement_service, "retired_modules_total", dummy_counter)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    manager = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
     service = module_retirement_service.ModuleRetirementService(
-        repo, context_builder=_DummyBuilder()
+        repo, context_builder=_DummyBuilder(), manager=manager
     )
     service.process_flags(flags)
 

@@ -112,8 +112,12 @@ def test_generate_patch_triggers_scan_once_success(monkeypatch, tmp_path):
     monkeypatch.setattr(qfe, "generate_code_diff", lambda *a, **k: [])
     monkeypatch.setattr(qfe, "flag_risky_changes", lambda *a, **k: [])
 
+    eng = Engine()
+    manager = types.SimpleNamespace(
+        engine=eng, register_patch_cycle=lambda *a, **k: None
+    )
     res = qfe.generate_patch(
-        str(path), engine=Engine(), context_builder=qfe.ContextBuilder()
+        str(path), manager, eng, context_builder=qfe.ContextBuilder()
     )
     assert res == 1
     assert len(calls) == 1
@@ -145,8 +149,12 @@ def test_generate_patch_scan_failure_handled(monkeypatch, tmp_path):
     monkeypatch.setattr(qfe, "generate_code_diff", lambda *a, **k: [])
     monkeypatch.setattr(qfe, "flag_risky_changes", lambda *a, **k: [])
 
+    eng = Engine()
+    manager = types.SimpleNamespace(
+        engine=eng, register_patch_cycle=lambda *a, **k: None
+    )
     res = qfe.generate_patch(
-        str(path), engine=Engine(), context_builder=qfe.ContextBuilder()
+        str(path), manager, eng, context_builder=qfe.ContextBuilder()
     )
     assert res == 1
     assert len(calls) == 1

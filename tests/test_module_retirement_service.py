@@ -2,7 +2,7 @@ import sys
 import types
 
 fake_qfe = types.ModuleType("quick_fix_engine")
-fake_qfe.generate_patch = lambda path, *, context_builder, **kw: 1
+fake_qfe.generate_patch = lambda path, manager, *, context_builder, **kw: 1
 sys.modules["quick_fix_engine"] = fake_qfe
 
 
@@ -62,7 +62,10 @@ def test_retire_module_zero_impact(monkeypatch, tmp_path):
     gauge = DummyGauge()
     monkeypatch.setattr(module_retirement_service, "retired_modules_total", gauge)
 
-    service = ModuleRetirementService(tmp_path, context_builder=_DummyBuilder())
+    mgr = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
+    service = ModuleRetirementService(
+        tmp_path, context_builder=_DummyBuilder(), manager=mgr
+    )
     res = service.process_flags(flags)
 
     retired = tmp_path / "sandbox_data" / "retired_modules" / "demo.py"  # path-ignore

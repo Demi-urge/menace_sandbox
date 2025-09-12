@@ -1,5 +1,6 @@
 import sys
 import types
+import pytest
 
 
 def test_context_block_compressed(monkeypatch):
@@ -118,11 +119,15 @@ def test_context_block_compressed(monkeypatch):
 
     builder = DummyBuilder()
     engine = DummyEngine()
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
+    )
 
     expected = qfe.compress_snippets({"snippet": context_block})["snippet"]
 
     qfe.generate_patch(
         module="simple_functions",
+        manager=manager,
         engine=engine,
         context_builder=builder,
         description="desc",
@@ -133,4 +138,18 @@ def test_context_block_compressed(monkeypatch):
     assert engine.patched["helper"] == "helper"
     assert engine.patched["desc"] == f"desc\n\n{expected}"
     assert context_block not in engine.helper_calls[0]
+
+
+def test_generate_patch_errors_without_manager(monkeypatch):
+    import menace_sandbox.quick_fix_engine as qfe
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            return None
+
+        def build(self, *a, **k):
+            return ""
+
+    with pytest.raises(RuntimeError):
+        qfe.generate_patch("mod", None, context_builder=DummyBuilder())
 

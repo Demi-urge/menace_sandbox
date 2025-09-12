@@ -1,6 +1,7 @@
 from menace import quick_fix_engine, self_debugger_sandbox, human_alignment_agent, violation_logger
 from tests.test_self_debugger_sandbox import DummyBuilder
 from pathlib import Path
+import types
 
 
 def test_generate_patch_logs_alignment_warning(tmp_path, monkeypatch):
@@ -32,8 +33,12 @@ def test_generate_patch_logs_alignment_warning(tmp_path, monkeypatch):
         def build(self, *a, **k):
             return ""
 
+    engine = Engine()
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
+    )
     pid = quick_fix_engine.generate_patch(
-        str(src), Engine(), context_builder=DummyBuilder()
+        str(src), manager, engine, context_builder=DummyBuilder()
     )
     assert pid == 1
     assert logs, "expected alignment warning logged"
@@ -53,7 +58,7 @@ def test_self_debugger_preemptive_patch_logs_warning(tmp_path, monkeypatch):
     monkeypatch.setattr(human_alignment_agent, "log_violation", fake_log_violation)
     monkeypatch.setattr(self_debugger_sandbox, "log_record", lambda **kw: {})
 
-    def stub_generate_patch(module: str, engine, **kwargs):
+    def stub_generate_patch(module: str, manager, engine=None, **kwargs):
         path = Path(module)
         if path.suffix == "":
             path = path.with_suffix(".py")  # path-ignore

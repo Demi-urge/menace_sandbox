@@ -132,8 +132,8 @@ _VEC_METRICS = None
 
 def generate_patch(
     module: str,
+    manager: SelfCodingManager,
     engine: "SelfCodingEngine" | None = None,
-    manager: SelfCodingManager | None = None,
     *,
     context_builder: ContextBuilder,
     description: str | None = None,
@@ -153,13 +153,13 @@ def generate_patch(
     ----------
     module:
         Target module path or module name without ``.py``.
+    manager:
+        :class:`~self_coding_manager.SelfCodingManager` providing helper
+        generation context and telemetry hooks.
     engine:
         Optional :class:`~self_coding_engine.SelfCodingEngine` instance.  If not
         provided, a minimal engine is instantiated on demand.  The function
         tolerates missing dependencies and simply returns ``None`` on failure.
-    manager:
-        Optional :class:`~self_coding_manager.SelfCodingManager` providing
-        helper generation context and telemetry hooks.
     context_builder:
         :class:`vector_service.ContextBuilder` instance used to retrieve
         contextual information from local databases. The builder must be able
@@ -185,6 +185,8 @@ def generate_patch(
     logger = logging.getLogger("QuickFixEngine")
     if context_builder is None:
         raise TypeError("context_builder is required")
+    if manager is None:
+        raise RuntimeError("manager is required")
     builder = context_builder
     try:
         builder.refresh_db_weights()
@@ -235,13 +237,12 @@ def generate_patch(
         context_meta["prompt_strategy"] = str(strategy)
     base_description = description
 
-    if manager is not None:
-        try:
-            meta = dict(context_meta)
-            meta.setdefault("trigger", "quick_fix_engine")
-            manager.register_patch_cycle(description, meta)
-        except Exception:
-            logger.exception("failed to register patch cycle")
+    try:
+        meta = dict(context_meta)
+        meta.setdefault("trigger", "quick_fix_engine")
+        manager.register_patch_cycle(description, meta)
+    except Exception:
+        logger.exception("failed to register patch cycle")
 
     if patch_logger is None:
         try:
@@ -249,7 +250,7 @@ def generate_patch(
         except Exception:
             patch_logger = None
 
-    if engine is None and manager is not None:
+    if engine is None:
         engine = getattr(manager, "engine", None)
     if engine is None:
         try:  # pragma: no cover - heavy dependencies
@@ -287,7 +288,7 @@ def generate_patch(
 
             def _gen(desc: str) -> str:
                 """Generate helper code for *desc* using the current context."""
-                owner = manager if manager is not None else engine
+                owner = manager
                 attempts = int(getattr(owner, "helper_retry_attempts", 3))
                 delay = float(getattr(owner, "helper_retry_delay", 1.0))
                 event_bus = getattr(owner, "event_bus", None)
@@ -296,15 +297,8 @@ def generate_patch(
                 module_name = Path(context_meta.get("module", path.name)).name
                 for i in range(attempts):
                     try:
-                        if manager is not None:
-                            return manager_generate_helper(
-                                manager,
-                                desc,
-                                path=path,
-                                metadata=context_meta,
-                                target_region=target_region,
-                            )
-                        return engine.generate_helper(
+                        return manager_generate_helper(
+                            manager,
                             desc,
                             path=path,
                             metadata=context_meta,
@@ -312,9 +306,7 @@ def generate_patch(
                         )
                     except TypeError:
                         try:
-                            if manager is not None:
-                                return manager_generate_helper(manager, desc)
-                            return engine.generate_helper(desc)
+                            return manager_generate_helper(manager, desc)
                         except Exception as exc2:  # fall through to logging
                             err: Exception = exc2
                     except Exception as exc:
@@ -499,7 +491,7 @@ def generate_patch(
                                 "embedding backfill failed", exc_info=True
                             )
                         break
-            if manager is not None and patch_id is not None:
+            if patch_id is not None:
                 registry = getattr(manager, "bot_registry", None)
                 if registry is not None:
                     try:

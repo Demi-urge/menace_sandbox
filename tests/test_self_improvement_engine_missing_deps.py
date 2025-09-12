@@ -87,4 +87,4 @@ def test_missing_sandbox_runner(monkeypatch):
 def test_missing_quick_fix_engine(monkeypatch):
     mod = _reload_with_missing(monkeypatch, {"quick_fix_engine"})
     with pytest.raises(RuntimeError, match="quick_fix_engine"):
-        mod.generate_patch(context_builder=object())
+        mod.generate_patch("m", object(), context_builder=object())

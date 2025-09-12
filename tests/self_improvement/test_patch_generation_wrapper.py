@@ -27,7 +27,8 @@ def test_wrapper_forwards_builder_and_requires(monkeypatch):
         patch_generation, "_call_with_retries", lambda func, *a, **k: func(*a, **k)
     )
     builder = object()
-    assert patch_generation.generate_patch("mod", context_builder=builder) == 42
+    manager = object()
+    assert patch_generation.generate_patch("mod", manager, context_builder=builder) == 42
     assert record["kwargs"]["context_builder"] is builder
     with pytest.raises(TypeError):
-        patch_generation.generate_patch("mod")
+        patch_generation.generate_patch("mod", manager)

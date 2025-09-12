@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover
     from .target_region import TargetRegion
     from vector_service.context_builder import ContextBuilder
+    from ..self_coding_manager import SelfCodingManager
 
 try:  # pragma: no cover - simplified environments
     from ..logging_utils import log_record
@@ -35,6 +36,8 @@ _settings = SandboxSettings()
 
 
 def generate_patch(
+    module: str,
+    manager: "SelfCodingManager",
     *args: object,
     context_builder: "ContextBuilder",
     target_region: "TargetRegion" | None = None,
@@ -67,6 +70,8 @@ def generate_patch(
     try:
         patch_id = _call_with_retries(
             func,
+            module,
+            manager,
             *args,
             context_builder=context_builder,
             retries=retries,

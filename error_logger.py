@@ -749,7 +749,9 @@ class ErrorLogger:
             if generate_patch is not None and resolved_module:
                 try:
                     patch_id = generate_patch(
-                        resolved_module, context_builder=self.context_builder
+                        resolved_module,
+                        getattr(self, "manager", None),
+                        context_builder=self.context_builder,
                     )
                     if patch_id is not None:
                         try:

@@ -42,7 +42,9 @@ def test_patch_success(monkeypatch, tmp_path, capsys):
     module.write_text("x=1\n")
 
     monkeypatch.setattr(vector_service, "ContextBuilder", DummyContextBuilder)
-    monkeypatch.setattr(quick_fix_engine, "generate_patch", lambda module, **k: 123, raising=False)
+    monkeypatch.setattr(
+        quick_fix_engine, "generate_patch", lambda module, *a, **k: 123, raising=False
+    )
 
     class DummyDB:
         def get(self, pid):
@@ -104,12 +106,14 @@ def test_patch_description_and_context(monkeypatch, tmp_path):
 
     captured = {}
 
-    def fake_generate_patch(module, **kwargs):
+    def fake_generate_patch(module, *a, **kwargs):
         captured["description"] = kwargs.get("description")
         captured["context"] = kwargs.get("context")
         return 7
 
-    monkeypatch.setattr(quick_fix_engine, "generate_patch", fake_generate_patch, raising=False)
+    monkeypatch.setattr(
+        quick_fix_engine, "generate_patch", fake_generate_patch, raising=False
+    )
     monkeypatch.setattr(menace_cli, "PatchHistoryDB", lambda: types.SimpleNamespace(get=lambda pid: None))
     monkeypatch.setattr(menace_cli, "PatchLogger", lambda patch_db=None: object())
 

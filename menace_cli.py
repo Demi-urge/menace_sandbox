@@ -11,6 +11,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+import types
 
 from dynamic_path_router import resolve_path
 from db_router import init_db_router
@@ -268,10 +269,14 @@ def handle_patch(args: argparse.Namespace) -> int:
     except TypeError:  # pragma: no cover - fallback for stub implementations
         db = PatchHistoryDB()
     patch_logger = PatchLogger(patch_db=db)
+    manager = types.SimpleNamespace(
+        engine=None, register_patch_cycle=lambda *a, **k: None
+    )
     patch_id = quick_fix_engine.generate_patch(
         args.module,
-        context_builder=builder,
+        manager,
         engine=None,
+        context_builder=builder,
         description=args.desc,
         patch_logger=patch_logger,
         context=ctx,
