@@ -84,6 +84,13 @@ sys.modules.setdefault(
 sys.modules.setdefault(
     "sandbox_runner", types.SimpleNamespace(post_round_orphan_scan=lambda *a, **k: None)
 )
+sys.modules.setdefault(
+    "menace_sandbox.coding_bot_interface",
+    types.SimpleNamespace(
+        self_coding_managed=lambda cls: cls,
+        manager_generate_helper=lambda mgr, desc, **kw: mgr.engine.generate_helper(desc, **kw),
+    ),
+)
 
 sys.modules.setdefault(
     "db_router",
@@ -170,3 +177,47 @@ def test_quick_fix_engine_uses_context_builder(tmp_path, monkeypatch):
     )
     assert patch_id == 1
     assert builder.calls and builder.calls[0] == "fix bug"
+
+
+def test_apply_validated_patch_emits_rejection_event(tmp_path, monkeypatch):
+    builder = RecordingBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+
+    class EventBus:
+        def __init__(self):
+            self.handlers: dict[str, list] = {}
+
+        def publish(self, topic, payload):
+            for cb in self.handlers.get(topic, []):
+                cb(topic, payload)
+
+        def subscribe(self, topic, cb):
+            self.handlers.setdefault(topic, []).append(cb)
+
+    events: list[dict] = []
+
+    bus = EventBus()
+    bus.subscribe("self_coding:patch_rejected", lambda t, p: events.append(p))
+
+    calls: list[tuple] = []
+
+    class DB:
+        def record_validation(self, *a):
+            calls.append(a)
+
+    mgr = types.SimpleNamespace(
+        engine=object(),
+        event_bus=bus,
+        data_bot=DB(),
+        bot_name="bot",
+    )
+    monkeypatch.setattr(qfe, "generate_patch", lambda *a, **k: (1, ["flag"]))
+    monkeypatch.setattr(qfe.subprocess, "run", lambda *a, **k: None)
+    engine = QuickFixEngine(object(), mgr, context_builder=builder)
+    passed, pid = engine.apply_validated_patch(tmp_path / "m.py", "d")
+    assert not passed and pid is None
+    assert events and events[0] == {
+        "bot": "bot",
+        "module": str(tmp_path / "m.py"),
+        "flags": ["flag"],
+    }
+    assert calls and calls[0] == ("bot", str(tmp_path / "m.py"), False, ["flag"])
