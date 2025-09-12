@@ -903,6 +903,35 @@ class SelfCodingManager:
 
                 module_path = str(cloned_path)
                 module_name = path_for_prompt(cloned_path)
+                predicted_gain = 0.0
+                if self.data_bot and hasattr(self.data_bot, "forecast_roi_drop"):
+                    try:
+                        predicted_gain = float(self.data_bot.forecast_roi_drop())
+                    except Exception:
+                        self.logger.exception("roi prediction failed")
+                else:
+                    evo = getattr(self.pipeline, "forecast_roi_drop", None)
+                    if evo:
+                        try:
+                            predicted_gain = float(evo())
+                        except Exception:
+                            self.logger.exception("roi prediction failed")
+                if predicted_gain < self.roi_drop_threshold:
+                    self.logger.info(
+                        "patch_skip_low_roi_prediction",
+                        extra={"bot": self.bot_name, "predicted_gain": predicted_gain},
+                    )
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "bot:patch_skipped",
+                                {"bot": self.bot_name, "reason": "roi_prediction"},
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to publish patch_skipped event",
+                            )
+                    return AutomationResult(None, None)
                 if self.quick_fix is None:
                     raise RuntimeError("QuickFixEngine validation unavailable")
                 passed, patch_id = self.quick_fix.apply_validated_patch(

@@ -660,6 +660,263 @@ def test_generate_and_patch_refreshes_builder(monkeypatch, tmp_path):
     assert len(calls) == 2
 
 
+def test_run_patch_skips_on_low_predicted_roi(monkeypatch, tmp_path):
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, topic, payload):
+            events.append((topic, payload))
+
+    class DataBot(DummyDataBot):
+        def check_degradation(self, *a, **k):
+            return True
+
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(
+                roi_drop=-0.1, error_threshold=999.0, test_failure_threshold=1.0
+            )
+
+        def reload_thresholds(self, bot: str):
+            return self.get_thresholds(bot)
+
+        def forecast_roi_drop(self, limit: int = 100) -> float:
+            return -0.2
+
+    data_bot = DataBot()
+
+    class Engine:
+        def __init__(self) -> None:
+            base_builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=base_builder)
+
+        def apply_patch(self, path: Path, desc: str, **_: object):
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("# patched\n")
+            return 1, False, 0.0
+
+    pipeline = DummyPipeline()
+
+    called = {"applied": False}
+
+    def apply_validated_patch(*a, **k):
+        called["applied"] = True
+        return True, None
+
+    quick_fix = types.SimpleNamespace(
+        context_builder=None, apply_validated_patch=apply_validated_patch
+    )
+
+    bus = Bus()
+    class Registry:
+        def __init__(self) -> None:
+            self.graph: dict[str, dict] = {}
+
+        def record_heartbeat(self, _name: str) -> None:
+            pass
+
+        def register_interaction(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def record_interaction_metadata(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def register_bot(self, name: str) -> None:
+            self.graph.setdefault(name, {})
+
+        def record_validation(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def update_bot(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def update_bot(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+    registry = Registry()
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        pipeline,
+        bot_name="bot",
+        data_bot=data_bot,
+        bot_registry=registry,
+        quick_fix=quick_fix,
+        event_bus=bus,
+    )
+
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    res = mgr.run_patch(file_path, "add")
+    assert not called["applied"]
+    assert (
+        "bot:patch_skipped",
+        {"bot": "bot", "reason": "roi_prediction"},
+    ) in events
+    assert isinstance(res, mapl.AutomationResult)
+    assert res.package is None and res.roi is None
+
+
+def test_run_patch_accepts_high_predicted_roi(monkeypatch, tmp_path):
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, topic, payload):
+            events.append((topic, payload))
+
+    class DataBot(DummyDataBot):
+        def check_degradation(self, *a, **k):
+            return True
+
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(
+                roi_drop=-0.1, error_threshold=999.0, test_failure_threshold=1.0
+            )
+
+        def reload_thresholds(self, bot: str):
+            return self.get_thresholds(bot)
+
+        def forecast_roi_drop(self, limit: int = 100) -> float:
+            return 0.2
+
+        def record_validation(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def record_test_failure(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def log_evolution_cycle(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+    data_bot = DataBot()
+
+    class Engine:
+        def __init__(self) -> None:
+            base_builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=base_builder)
+
+        def apply_patch(self, path: Path, desc: str, **_: object):
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("# patched\n")
+            return 1, False, 0.0
+
+    pipeline = DummyPipeline()
+
+    called = {"applied": False}
+
+    def apply_validated_patch(*a, **k):
+        called["applied"] = True
+        return True, None
+
+    quick_fix = types.SimpleNamespace(
+        context_builder=None, apply_validated_patch=apply_validated_patch
+    )
+
+    bus = Bus()
+
+    class Registry:
+        def __init__(self) -> None:
+            self.graph: dict[str, dict] = {}
+
+        def record_heartbeat(self, _name: str) -> None:
+            pass
+
+        def register_interaction(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def record_interaction_metadata(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def register_bot(self, name: str) -> None:
+            self.graph.setdefault(name, {})
+
+        def record_validation(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+        def update_bot(self, *a, **k) -> None:  # pragma: no cover - stub
+            pass
+
+    registry = Registry()
+    mgr = scm.SelfCodingManager(
+        Engine(),
+        pipeline,
+        bot_name="bot",
+        data_bot=data_bot,
+        bot_registry=registry,
+        quick_fix=quick_fix,
+        event_bus=bus,
+    )
+
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path, **kw: types.SimpleNamespace(
+            success=True, failure=None, stdout="", stderr="", duration=0.0
+        ),
+    )
+    monkeypatch.setattr(
+        scm.subprocess, "check_output", lambda *a, **k: b"deadbeef"
+    )
+    monkeypatch.setattr(
+        scm.MutationLogger,
+        "record_mutation_outcome",
+        lambda *a, **k: None,
+        raising=False,
+    )
+
+    res = mgr.run_patch(file_path, "add")
+    assert called["applied"]
+    assert (
+        "bot:patch_skipped",
+        {"bot": "bot", "reason": "roi_prediction"},
+    ) not in events
+    assert isinstance(res, mapl.AutomationResult)
+
 def test_should_refactor_on_test_failures_only(monkeypatch):
     class DummyEngine:
         patch_suggestion_db = None
