@@ -53,7 +53,34 @@ except Exception:  # pragma: no cover - optional dependency
     QuickFixEngine = None  # type: ignore
     generate_patch = None  # type: ignore
 
-from context_builder_util import ensure_fresh_weights
+from context_builder_util import ensure_fresh_weights, create_context_builder
+
+try:  # pragma: no cover - allow flat and package imports
+    from .coding_bot_interface import manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from coding_bot_interface import manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER  # type: ignore
+
+try:  # pragma: no cover - optional dependency for patching helper generation
+    from . import quick_fix_engine as _quick_fix_engine_mod
+except Exception:  # pragma: no cover - fallback for flat layout
+    import quick_fix_engine as _quick_fix_engine_mod  # type: ignore
+
+
+def _manager_generate_helper_with_builder(manager, description: str, **kwargs: Any) -> str:
+    """Create a fresh ``ContextBuilder`` and invoke the base helper generator."""
+
+    builder = create_context_builder()
+    ensure_fresh_weights(builder)
+    kwargs.setdefault("context_builder", builder)
+    try:
+        return _BASE_MANAGER_GENERATE_HELPER(manager, description, **kwargs)
+    except TypeError:
+        kwargs.pop("context_builder", None)
+        return _BASE_MANAGER_GENERATE_HELPER(manager, description, **kwargs)
+
+
+if _quick_fix_engine_mod is not None:  # pragma: no cover - best effort patching
+    _quick_fix_engine_mod.manager_generate_helper = _manager_generate_helper_with_builder
 
 try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
