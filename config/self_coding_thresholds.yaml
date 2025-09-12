@@ -1,3 +1,11 @@
+## Configuration for self-coding degradation thresholds
+#
+# roi_drop:             Allowed ROI decrease compared to the rolling baseline.
+# error_increase:       Maximum tolerated growth in error count.
+# test_failure_increase:Allowed increase in failing tests.
+# model:                Forecast model used by the TrendPredictor.
+# confidence:           Confidence level for forecast intervals.
+
 default:
   roi_drop: -0.1
   error_increase: 1.0
