@@ -96,9 +96,9 @@ class EvolutionOrchestrator:
         self.history = history_db or EvolutionHistoryDB()
         if triggers is None:
             bot = selfcoding_manager.bot_name if selfcoding_manager else None
-            t = get_thresholds(bot)
+            t = data_bot.reload_thresholds(bot)
             self.triggers = EvolutionTrigger(
-                error_rate=t.error_increase, roi_drop=t.roi_drop
+                error_rate=t.error_threshold, roi_drop=t.roi_drop
             )
         else:
             self.triggers = triggers
@@ -152,6 +152,9 @@ class EvolutionOrchestrator:
                 self.event_bus.subscribe("evolve:system", lambda *_: self.run_cycle())
                 self.event_bus.subscribe(
                     "self_coding:patch_applied", self._on_patch_applied
+                )
+                self.event_bus.subscribe(
+                    "self_coding:thresholds_updated", self._on_thresholds_updated
                 )
             except Exception:
                 self.logger.exception("event bus subscription failed")
@@ -241,6 +244,29 @@ class EvolutionOrchestrator:
             self.roi_history.append(after)
         except Exception:
             self.logger.exception("failed to record patch_applied event")
+
+    # ------------------------------------------------------------------
+    def _on_thresholds_updated(self, _topic: str, event: object) -> None:
+        """Refresh evolution triggers when self-coding thresholds change."""
+        if not isinstance(event, dict):
+            return
+        bot = event.get("bot")
+        if self.selfcoding_manager and bot != self.selfcoding_manager.bot_name:
+            return
+        try:
+            roi_drop = float(event.get("roi_drop", self.triggers.roi_drop))
+            err = float(event.get("error_threshold", self.triggers.error_rate))
+            if (
+                roi_drop != self.triggers.roi_drop
+                or err != self.triggers.error_rate
+            ):
+                self.triggers = EvolutionTrigger(
+                    error_rate=err,
+                    roi_drop=roi_drop,
+                    energy_threshold=self.triggers.energy_threshold,
+                )
+        except Exception:
+            self.logger.exception("failed to process threshold update")
 
     # ------------------------------------------------------------------
     def _on_threshold_breach(self, event: dict) -> None:

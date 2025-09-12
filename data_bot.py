@@ -1851,6 +1851,26 @@ class DataBot:
         )
         key = bot or ""
         self._thresholds[key] = rt
+
+        # Persist explicit overrides back to the configuration file so
+        # subsequent processes observe the updated thresholds without a
+        # restart.
+        if bot and (
+            self.roi_drop_threshold is not None
+            or self.error_threshold is not None
+            or self.test_failure_threshold is not None
+        ):
+            try:  # pragma: no cover - best effort persistence
+                save_sc_thresholds(
+                    bot,
+                    roi_drop=roi_drop if self.roi_drop_threshold is not None else None,
+                    error_increase=
+                        error_thresh if self.error_threshold is not None else None,
+                    test_failure_increase=
+                        fail_thresh if self.test_failure_threshold is not None else None,
+                )
+            except Exception:
+                self.logger.exception("failed to persist thresholds for %s", bot)
         return rt
 
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
