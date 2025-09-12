@@ -9,6 +9,9 @@ import logging
 
 from .neuroplasticity import PathwayDB
 from . import mutation_logger as MutationLogger
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+from .self_coding_manager import SelfCodingManager
 try:  # pragma: no cover - allow flat imports
     from .intent_clusterer import IntentClusterer
     from .universal_retriever import UniversalRetriever
@@ -50,6 +53,9 @@ except Exception:  # pragma: no cover - fallback for flat layout
 
 logger = logging.getLogger(__name__)
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 
 @dataclass
 class WorkflowSuggestion:
@@ -57,17 +63,31 @@ class WorkflowSuggestion:
     expected_roi: float
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class WorkflowEvolutionBot:
     """Suggest workflow improvements from PathwayDB statistics."""
 
     def __init__(
         self,
+        manager: SelfCodingManager | None = None,
+        *,
         pathway_db: PathwayDB | None = None,
         intent_clusterer: IntentClusterer | None = None,
     ) -> None:
+        self.manager = manager
         self.db = pathway_db or PathwayDB()
         self.intent_clusterer = intent_clusterer or IntentClusterer(UniversalRetriever())
+        if self.manager is not None:
+            try:
+                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                self.manager.register_bot(name)
+                orch = getattr(self.manager, "evolution_orchestrator", None)
+                if orch:
+                    orch.register_bot(name)
+            except Exception:
+                logger.exception("bot registration failed")
+        self.name = getattr(self, "name", self.__class__.__name__)
+        self.data_bot = data_bot
         # Track mutation events for rearranged sequences so benchmarking
         # results can be fed back once available.
         self._rearranged_events: Dict[str, int] = {}
