@@ -5,6 +5,7 @@ import types
 import pytest
 from llm_interface import LLMResult
 from prompt_types import Prompt
+from menace.coding_bot_interface import manager_generate_helper
 
 pytestmark = pytest.mark.skip(reason="context builder refactor")
 
@@ -128,7 +129,8 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
     monkeypatch.setattr(self_coding_engine, "call_codex_with_backoff", fake_call)
     patch_history(monkeypatch)
 
-    result = engine.generate_helper("do something")
+    manager = types.SimpleNamespace(engine=engine)
+    result = manager_generate_helper(manager, "do something")
 
     assert call_delays == [[2, 5, 10], [2, 5, 10]]
     assert mock_llm.generate.call_count == 6
@@ -161,5 +163,5 @@ def test_codex_fallback_queue_on_malformed(monkeypatch):
     )
     patch_history(monkeypatch)
 
-    engine.generate_helper("do something")
+    manager_generate_helper(types.SimpleNamespace(engine=engine), "do something")
     queue_mock.assert_called_once()

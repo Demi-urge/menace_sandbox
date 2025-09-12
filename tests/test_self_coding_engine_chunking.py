@@ -5,6 +5,7 @@ import sys
 import types
 import importlib.util
 import pytest
+from menace.coding_bot_interface import manager_generate_helper
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +270,7 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
     target = tmp_path / "big.py"  # path-ignore
     target.write_text("print('hi')\n")
 
-    engine.generate_helper("do something", path=target)
+    manager_generate_helper(types.SimpleNamespace(engine=engine), "do something", path=target)
 
     assert called["limit"] == engine.chunk_token_threshold
     assert "Chunk 0: sum1" in captured["context"]
@@ -330,8 +331,9 @@ def test_generate_helper_uses_cached_chunk_summaries(monkeypatch, tmp_path):
     target = tmp_path / "big.py"  # path-ignore
     target.write_text("print('hi')\n")
 
-    engine.generate_helper("do something", path=target)
-    engine.generate_helper("do something", path=target)
+    mgr = types.SimpleNamespace(engine=engine)
+    manager_generate_helper(mgr, "do something", path=target)
+    manager_generate_helper(mgr, "do something", path=target)
 
     assert calls["n"] == 2  # summaries computed once and then served from cache
 
@@ -387,7 +389,7 @@ def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
     target.write_text("a=1\nb=2\nc=3\n")
     region = sce.TargetRegion(start_line=2, end_line=2, function="f")
 
-    engine.generate_helper("do something", path=target, target_region=region)
+    manager_generate_helper(types.SimpleNamespace(engine=engine), "do something", path=target, target_region=region)
 
     ctx = captured["context"]
     assert "Modify only lines 2-2" in ctx
@@ -466,7 +468,7 @@ def test_patch_file_rejects_scope_violation(tmp_path):
     engine.event_bus = types.SimpleNamespace(
         publish=lambda name, data: events.append((name, data))
     )
-    engine.generate_helper = lambda desc, **_: "print('x')\nprint('y')\nprint('z')\n"
+    setattr(engine, "generate_helper", lambda desc, **_: "print('x')\nprint('y')\nprint('z')\n")
 
     target = tmp_path / "mod.py"  # path-ignore
     target.write_text("print('a')\nprint('b')\nprint('c')\n")

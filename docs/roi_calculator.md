@@ -112,8 +112,11 @@ prompt = """Optimize the following aspect:
 {metric}: {hint}
 """
 from self_coding_engine import SelfCodingEngine
+from self_coding_manager import SelfCodingManager
+from coding_bot_interface import manager_generate_helper
 engine = SelfCodingEngine()
-code = engine.generate_helper(prompt.format(metric=metric, hint=hint))
+manager = SelfCodingManager(engine, pipeline, data_bot=data_bot, bot_registry=registry)
+code = manager_generate_helper(manager, prompt.format(metric=metric, hint=hint))
 ```
 
 This feedback loop ensures that low-scoring metrics quickly result in concrete

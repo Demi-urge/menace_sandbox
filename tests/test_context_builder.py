@@ -2,6 +2,7 @@ import json
 import sys
 import types
 from dataclasses import dataclass
+from menace.coding_bot_interface import manager_generate_helper
 
 from llm_interface import LLMResult
 
@@ -250,7 +251,8 @@ def test_self_coding_engine_includes_context(monkeypatch):
         context_builder=builder,
         gpt_memory=gpt_mem,
     )
-    engine.generate_helper("alpha issue")
+    manager = types.SimpleNamespace(engine=engine)
+    manager_generate_helper(manager, "alpha issue")
     assert "### Retrieval context" in client.last_prompt
     assert pretty in client.last_prompt
 

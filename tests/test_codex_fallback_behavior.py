@@ -5,6 +5,7 @@ import types
 
 from llm_interface import LLMResult
 from prompt_types import Prompt
+from menace.coding_bot_interface import manager_generate_helper
 
 pytestmark = pytest.mark.skip(reason="context builder refactor")
 
@@ -133,7 +134,8 @@ def test_timeout_error_prompts_simplified_and_builtin_fallback(monkeypatch):
     monkeypatch.setattr(self_coding_engine.codex_fallback_handler, 'handle', handle_mock)
     patch_history(monkeypatch)
 
-    result = engine.generate_helper('do something')
+    manager = types.SimpleNamespace(engine=engine)
+    result = manager_generate_helper(manager, 'do something')
 
     assert len(calls) == 2
     assert calls[1].system == ''
@@ -176,7 +178,8 @@ def test_empty_completion_reroutes_and_queues(monkeypatch):
 
     patch_history(monkeypatch)
 
-    result = engine.generate_helper('do something')
+    manager = types.SimpleNamespace(engine=engine)
+    result = manager_generate_helper(manager, 'do something')
 
     q_mock.assert_called_once()
     assert result == _expected_fallback('do something')
@@ -197,7 +200,8 @@ def test_handle_returns_llmresult_used_by_engine(monkeypatch):
 
     patch_history(monkeypatch)
 
-    result = engine.generate_helper('do something')
+    manager = types.SimpleNamespace(engine=engine)
+    result = manager_generate_helper(manager, 'do something')
 
     handle_mock.assert_called_once()
     assert isinstance(handle_mock.return_value, LLMResult)

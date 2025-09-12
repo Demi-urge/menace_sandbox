@@ -7,6 +7,7 @@ import pytest
 import importlib.util
 import sys
 import types
+from menace.coding_bot_interface import manager_generate_helper
 
 cd_stub = types.SimpleNamespace(
     CodeDB=object,
@@ -316,7 +317,8 @@ def test_context_builder_shared(monkeypatch):
     assert builder is engine.prompt_engine.context_builder
     assert builder is engine.cognition_layer.context_builder
 
-    engine.generate_helper("alpha issue")
+    manager = types.SimpleNamespace(engine=engine)
+    manager_generate_helper(manager, "alpha issue")
     assert "### Retrieval context" in client.last_prompt
     assert "ctx:alpha issue" in client.last_prompt
 

@@ -12,6 +12,7 @@ llm_config_stub = sys.modules.setdefault("llm_config", types.ModuleType("llm_con
 
 from llm_interface import LLMResult  # noqa: E402
 from prompt_types import Prompt  # noqa: E402
+from menace.coding_bot_interface import manager_generate_helper
 
 # Stub heavy dependencies required by self_coding_engine at import time
 code_db_stub = sys.modules.setdefault("code_database", types.ModuleType("code_database"))
@@ -147,7 +148,8 @@ def test_empty_output_triggers_fallback(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
     patch_history(monkeypatch)
 
-    result = engine.generate_helper("do something")
+    manager = types.SimpleNamespace(engine=engine)
+    result = manager_generate_helper(manager, "do something")
 
     assert model_used["model"] == fallback_model
     assert result == "print('hi')\n"
@@ -183,7 +185,8 @@ def test_malformed_output_triggers_fallback(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
     patch_history(monkeypatch)
 
-    result = engine.generate_helper("do something")
+    manager = types.SimpleNamespace(engine=engine)
+    result = manager_generate_helper(manager, "do something")
 
     assert model_used["model"] == fallback_model
     assert result == "print('fixed')\n"
@@ -203,5 +206,5 @@ def test_fallback_uses_existing_context_builder(monkeypatch):
         self_coding_engine.codex_fallback_handler, "handle", handle
     )
     patch_history(monkeypatch)
-    engine.generate_helper("do something")
+    manager_generate_helper(types.SimpleNamespace(engine=engine), "do something")
 

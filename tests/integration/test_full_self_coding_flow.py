@@ -3,6 +3,7 @@ import inspect
 import sys
 import types
 from pathlib import Path
+from menace.coding_bot_interface import manager_generate_helper
 
 # Prepare menace package root for dynamic imports
 ROOT = Path(__file__).resolve().parents[2]
@@ -117,7 +118,7 @@ class SelfCodingManager:
             )
 
     def run_patch(self, path: Path, description: str, *, context_meta=None, context_builder=None):
-        self.engine.generate_helper(description, path=str(path))
+        manager_generate_helper(self, description, path=str(path))
         self.quick_fix.apply_validated_patch(str(path), description, context_meta or {})
         self._last_patch_id = 123
         self._last_commit_hash = "deadbeef"

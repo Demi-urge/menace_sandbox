@@ -1,6 +1,7 @@
 import sys
 import types
 from types import SimpleNamespace
+from menace.coding_bot_interface import manager_generate_helper
 
 # Stub heavy dependencies before importing the engine
 code_db_stub = types.ModuleType("code_database")
@@ -45,11 +46,8 @@ def test_fallback_compiles_and_uses_snippet_context():
     engine.logger = types.SimpleNamespace(debug=lambda *a, **k: None)
     snippet = """total = 0\nfor item in items:\n    total += item\nif total > 0:\n    return total"""
     engine.suggest_snippets = lambda *a, **k: [SimpleNamespace(code=snippet)]
-    token = MANAGER_CONTEXT.set(object())
-    try:
-        result = engine.generate_helper("summation helper")
-    finally:
-        MANAGER_CONTEXT.reset(token)
+    manager = SimpleNamespace(engine=engine)
+    result = manager_generate_helper(manager, "summation helper")
     compile(result, "<generated>", "exec")
     assert "for item in items" in result
     assert "total" in result
