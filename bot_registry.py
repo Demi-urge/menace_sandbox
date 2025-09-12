@@ -16,6 +16,7 @@ import importlib.util
 import sys
 import subprocess
 import json
+import os
 
 try:
     from .databases import MenaceDB
@@ -74,6 +75,32 @@ class BotRegistry:
                     "Failed to save bot registry to %s: %s", self.persist_path, exc
                 )
 
+    def _verify_signed_provenance(self, patch_id: int, commit: str) -> bool:
+        """Return ``True`` if a signed provenance file confirms the update."""
+
+        prov_file = os.environ.get("PATCH_PROVENANCE_FILE")
+        pubkey = os.environ.get("PATCH_PROVENANCE_PUBKEY") or os.environ.get(
+            "PATCH_PROVENANCE_PUBLIC_KEY"
+        )
+        if not prov_file or not pubkey:
+            return False
+        try:
+            with open(prov_file, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            data = payload.get("data") or {}
+            signature = payload.get("signature")
+            if not signature:
+                return False
+            if str(data.get("patch_id")) != str(patch_id) or str(
+                data.get("commit")
+            ) != str(commit):
+                return False
+            from .override_validator import verify_signature
+
+            return verify_signature(data, signature, pubkey)
+        except Exception:  # pragma: no cover - best effort
+            return False
+
     def update_bot(
         self,
         name: str,
@@ -119,6 +146,42 @@ class BotRegistry:
         # Ensure the bot exists in the graph.
         self.register_bot(name)
         node = self.graph.nodes[name]
+
+        manager = node.get("selfcoding_manager") or node.get("manager")
+        mgr_patch = getattr(manager, "_last_patch_id", None) if manager else None
+        mgr_commit = (
+            getattr(manager, "_last_commit_hash", None) if manager else None
+        )
+        verified = mgr_patch == patch_id and mgr_commit == commit
+        if not verified:
+            verified = self._verify_signed_provenance(patch_id, commit)
+        if not verified:
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "bot:update_blocked",
+                        {
+                            "name": name,
+                            "module": module_path,
+                            "patch_id": patch_id,
+                            "commit": commit,
+                            "reason": "unverified_provenance",
+                        },
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Failed to publish bot:update_blocked event: %s", exc
+                    )
+            node["update_blocked"] = True
+            if self.persist_path:
+                try:
+                    self.save(self.persist_path)
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to save bot registry to %s: %s", self.persist_path, exc
+                    )
+            raise RuntimeError("update blocked: provenance verification failed")
+
         prev_state = dict(node)
         node["module"] = module_path
         node["version"] = int(node.get("version", 0)) + 1

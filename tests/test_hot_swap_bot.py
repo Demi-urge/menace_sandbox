@@ -22,6 +22,18 @@ def _stub_service(monkeypatch, commits):
     monkeypatch.setattr(patch_provenance, "PatchProvenanceService", DummyService)
 
 
+def _set_manager(reg, patch_id, commit):
+    reg.register_bot("dummy")
+    node = reg.graph.nodes["dummy"]
+    manager = node.get("selfcoding_manager")
+    if not manager:
+        manager = types.SimpleNamespace()
+        node["selfcoding_manager"] = manager
+    manager._last_patch_id = patch_id
+    manager._last_commit_hash = commit
+    return manager
+
+
 def test_hot_swap_bot_reloads_module(tmp_path, monkeypatch):
     commits = {1: "a", 2: "b"}
     _stub_service(monkeypatch, commits)
@@ -30,10 +42,12 @@ def test_hot_swap_bot_reloads_module(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(tmp_path)
     dummy = importlib.import_module("dummy_bot")
     reg = BotRegistry()
+    _set_manager(reg, 1, "a")
     reg.update_bot("dummy", module.as_posix(), patch_id=1, commit="a")
     assert dummy.greet() == "old"
     module.write_text("def greet():\n    return 'new'\n# change\n")
     importlib.invalidate_caches()
+    _set_manager(reg, 2, "b")
     reg.update_bot("dummy", module.as_posix(), patch_id=2, commit="b")
     assert dummy.greet() == "new"
 
@@ -57,8 +71,10 @@ def test_hot_swap_failure_reverts_and_persists(tmp_path, monkeypatch):
     dummy = importlib.import_module("dummy_bot")
     bus = DummyBus()
     reg = BotRegistry(event_bus=bus)
+    _set_manager(reg, 1, "a")
     reg.update_bot("dummy", module_good.as_posix(), patch_id=1, commit="a")
     importlib.invalidate_caches()
+    _set_manager(reg, 2, "b")
     with pytest.raises(Exception):
         reg.update_bot("dummy", module_bad.as_posix(), patch_id=2, commit="b")
     assert dummy.greet() == "old"
@@ -79,6 +95,7 @@ def test_health_check_failure_reverts(tmp_path, monkeypatch):
     dummy = importlib.import_module("dummy_bot")
     bus = DummyBus()
     reg = BotRegistry(event_bus=bus)
+    _set_manager(reg, 1, "a")
     reg.update_bot("dummy", module.as_posix(), patch_id=1, commit="a")
     module.write_text("def greet():\n    return 'new'\n")
     importlib.invalidate_caches()
@@ -87,6 +104,7 @@ def test_health_check_failure_reverts(tmp_path, monkeypatch):
         raise RuntimeError("no heartbeat")
 
     monkeypatch.setattr(reg, "record_heartbeat", bad_heartbeat)
+    _set_manager(reg, 2, "b")
     with pytest.raises(Exception):
         reg.update_bot("dummy", module.as_posix(), patch_id=2, commit="b")
     assert dummy.greet() == "old"
@@ -107,6 +125,7 @@ def test_manual_commit_mismatch_rejected(tmp_path, monkeypatch):
     dummy = importlib.import_module("dummy_bot")
     bus = DummyBus()
     reg = BotRegistry(event_bus=bus)
+    _set_manager(reg, 1, "a")
     reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
     importlib.invalidate_caches()
     with pytest.raises(RuntimeError, match="update blocked"):
@@ -114,7 +133,7 @@ def test_manual_commit_mismatch_rejected(tmp_path, monkeypatch):
     assert dummy.greet() == "old"
     event_name, payload = bus.events[-1]
     assert event_name == "bot:update_blocked"
-    assert payload["reason"] == "provenance_mismatch"
+    assert payload["reason"] == "unverified_provenance"
     node = reg.graph.nodes["dummy"]
     assert node["module"] == module_old.as_posix()
     assert node["version"] == 1
@@ -132,14 +151,16 @@ def test_missing_provenance_blocks_update(tmp_path, monkeypatch):
     dummy = importlib.import_module("dummy_bot")
     bus = DummyBus()
     reg = BotRegistry(event_bus=bus)
+    _set_manager(reg, 1, "a")
     reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
     importlib.invalidate_caches()
+    _set_manager(reg, 2, "b")
     with pytest.raises(RuntimeError, match="update blocked"):
         reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="")
     assert dummy.greet() == "old"
     event_name, payload = bus.events[-1]
     assert event_name == "bot:update_blocked"
-    assert payload["reason"] == "missing_provenance"
+    assert payload["reason"] == "unverified_provenance"
     node = reg.graph.nodes["dummy"]
     assert node["module"] == module_old.as_posix()
     assert node["update_blocked"]
@@ -164,8 +185,15 @@ def test_provenance_mismatch_notifies_manager(tmp_path, monkeypatch):
             self.cycles.append((description, context_meta))
 
     reg = BotRegistry(event_bus=bus)
+    reg.register_bot("dummy")
+    node = reg.graph.nodes["dummy"]
+    manager = DummyManager()
+    manager._last_patch_id = 1
+    manager._last_commit_hash = "a"
+    node["selfcoding_manager"] = manager
     reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
-    reg.graph.nodes["dummy"]["selfcoding_manager"] = DummyManager()
+    manager._last_patch_id = 2
+    manager._last_commit_hash = "b"
     importlib.invalidate_caches()
     with pytest.raises(RuntimeError, match="update blocked"):
         reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="b")
