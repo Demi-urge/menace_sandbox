@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Lint check ensuring all coding bots are registered correctly.
 
-The script scans the repository for Python modules matching ``*bot*.py``
-and inspects classes whose names end with ``Bot``.  Each bot class must be
+The script scans all Python modules in the repository and inspects classes whose
+names end with ``Bot``.  Each bot class must be
 decorated with ``@self_coding_managed``.  Modules that omit the decorator
 are only allowed when they explicitly register the bot via
 ``BotRegistry.register_bot`` *and* log evaluations with ``db.log_eval``.
@@ -22,6 +22,17 @@ from pathlib import Path
 # name does not end with ``Bot``.  The list can be extended as new bot base
 # classes are introduced.
 KNOWN_BOT_BASES = {"AdminBotBase"}
+
+
+# Files where ``Bot`` classes are known to be configuration or helper objects
+# rather than true coding bots.  These modules are skipped to avoid false
+# positives.
+EXCLUDED_PATHS = {
+    Path("config.py"),
+    Path("investment_engine.py"),
+    Path("revenue_amplifier.py"),
+    Path("plugins/metrics_prediction.py"),
+}
 
 
 def _inherits_bot_base(cls: ast.ClassDef) -> bool:
@@ -66,8 +77,11 @@ def _has_register_and_log(tree: ast.AST) -> bool:
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     offenders: list[tuple[Path, list[str]]] = []
-    for path in root.rglob("*bot*.py"):
+    for path in root.rglob("*.py"):
         if "tests" in path.parts or "unit_tests" in path.parts:
+            continue
+        rel = path.relative_to(root)
+        if rel in EXCLUDED_PATHS:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -81,7 +95,7 @@ def main() -> int:
             and _class_missing(node)
         ]
         if missing and not _has_register_and_log(tree):
-            offenders.append((path.relative_to(root), missing))
+            offenders.append((rel, missing))
     if offenders:
         for path, classes in offenders:
             cls_list = ", ".join(classes)

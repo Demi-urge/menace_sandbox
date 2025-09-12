@@ -140,7 +140,16 @@ system to track and improve the bot over time. Bot constructors **must** accept
 `bot_registry`, `data_bot`, and `selfcoding_manager` parameters and forward
 them to the decorator to ensure proper registration. Avoid instantiating new
 coding bots without this decorator.
-CI runs `python tools/find_unmanaged_bots.py` to ensure every bot class is managed. Run this script locally; it exits with a non-zero status if an unmanaged bot is found.
+The pre-commit hook `self-coding-registration` (backed by
+`tools/check_self_coding_registration.py`) scans all Python sources for classes
+whose names end with `Bot` and verifies they are decorated with
+`@self_coding_managed`. Run it before committing:
+
+```bash
+pre-commit run self-coding-registration --all-files
+```
+
+The hook exits with a non-zero status if any unmanaged bot class is found.
 
 
 ## Helper generation wrappers
