@@ -99,165 +99,173 @@ def _resolve_helpers(
     return registry, data_bot, orchestrator, module_path, manager
 
 
-def self_coding_managed(cls: type) -> type:
+def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Callable[[type], type]:
     """Class decorator registering bots with :class:`BotRegistry` and :class:`DataBot`.
 
-    Classes wrapped with ``@self_coding_managed`` automatically register their
-    ``name`` (or ``bot_name`` attribute) with :class:`BotRegistry` and ensure
-    baseline ROI/error metrics are logged via :class:`DataBot` on construction.
-    The decorator looks for ``bot_registry`` and ``data_bot`` either passed as
-    keyword arguments during initialisation or available on the instance or its
-    ``manager`` attribute.  A ``manager`` attribute of type
-    :class:`SelfCodingManager` is required; if missing the decorator will attempt
-    to construct one from the resolved helpers and otherwise raise a
-    :class:`RuntimeError`.
+    ``bot_registry`` and ``data_bot`` instances must be provided when applying
+    the decorator.  The bot's name is registered with ``bot_registry`` during
+    class creation so registration does not depend on instantiation.
     """
 
-    orig_init = cls.__init__  # type: ignore[attr-defined]
+    if bot_registry is None or data_bot is None:
+        raise RuntimeError("BotRegistry and DataBot instances are required")
 
-    @wraps(orig_init)
-    def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
-        registry = kwargs.pop("bot_registry", None)
-        data_bot = kwargs.pop("data_bot", None)
-        orchestrator: EvolutionOrchestrator | None = kwargs.pop(
-            "evolution_orchestrator", None
-        )
-        orig_init(self, *args, **kwargs)
+    def decorator(cls: type) -> type:
+        orig_init = cls.__init__  # type: ignore[attr-defined]
+
+        name = getattr(cls, "name", getattr(cls, "bot_name", cls.__name__))
         try:
-            (
-                registry,
-                data_bot,
-                orchestrator,
-                module_path,
-                manager,
-            ) = _resolve_helpers(self, registry, data_bot, orchestrator)
-        except RuntimeError as exc:
-            raise RuntimeError(f"{cls.__name__}: {exc}") from exc
-
-        name = getattr(self, "name", getattr(self, "bot_name", cls.__name__))
-        if not isinstance(manager, SelfCodingManager):
-            try:
-                manager = SelfCodingManager(
-                    getattr(self, "engine", None),
-                    getattr(self, "pipeline", None),
-                    bot_name=name,
-                    bot_registry=registry,
-                    data_bot=data_bot,
-                )
-                self.manager = manager
-            except Exception as exc:  # pragma: no cover - best effort
-                raise RuntimeError(
-                    "failed to initialise SelfCodingManager; provide a manager"
-                ) from exc
-
-        if orchestrator is None:
-            try:
-                from .capital_management_bot import CapitalManagementBot  # type: ignore
-                from .self_improvement.engine import SelfImprovementEngine  # type: ignore
-                from .system_evolution_manager import SystemEvolutionManager  # type: ignore
-                from .evolution_orchestrator import EvolutionOrchestrator as _EO
-
-                capital = CapitalManagementBot(data_bot=data_bot)
-                improv = SelfImprovementEngine(data_bot=data_bot, bot_name=name)
-                bot_list: list[str] = []
-                try:
-                    bot_list = list(getattr(registry, "graph", {}).keys())
-                except Exception:
-                    bot_list = []
-                evol_mgr = SystemEvolutionManager(bot_list)
-                orchestrator = _EO(
-                    data_bot=data_bot,
-                    capital_bot=capital,
-                    improvement_engine=improv,
-                    evolution_manager=evol_mgr,
-                    selfcoding_manager=manager,
-                )
-                self.evolution_orchestrator = orchestrator
-            except Exception as exc:  # pragma: no cover - optional dependency
-                raise RuntimeError(
-                    f"{cls.__name__}: EvolutionOrchestrator is required but could not be instantiated"
-                ) from exc
-        if getattr(manager, "quick_fix", None) is None:
-            try:
-                from .quick_fix_engine import QuickFixEngine  # type: ignore
-                from .error_bot import ErrorDB
-            except Exception as exc:  # pragma: no cover - optional dependency
-                raise RuntimeError(
-                    f"{cls.__name__}: QuickFixEngine is required but could not be imported",
-                ) from exc
-            engine = getattr(manager, "engine", None)
-            clayer = getattr(engine, "cognition_layer", None)
-            builder = getattr(clayer, "context_builder", None)
-            if builder is None:
-                raise RuntimeError(
-                    f"{cls.__name__}: QuickFixEngine requires a context_builder",
-                )
-            error_db = getattr(self, "error_db", None) or getattr(manager, "error_db", None)
-            if error_db is None:
-                try:
-                    error_db = ErrorDB()
-                except Exception as exc:  # pragma: no cover - instantiation errors
-                    raise RuntimeError(
-                        f"{cls.__name__}: failed to initialise ErrorDB for QuickFixEngine",
-                    ) from exc
-            try:
-                manager.quick_fix = QuickFixEngine(error_db, manager, context_builder=builder)
-                manager.error_db = error_db
-            except Exception as exc:  # pragma: no cover - instantiation errors
-                raise RuntimeError(
-                    f"{cls.__name__}: failed to initialise QuickFixEngine",
-                ) from exc
-        registry.register_bot(name)
+            module_path = inspect.getfile(cls)
+        except Exception:  # pragma: no cover - best effort
+            module_path = ""
+        bot_registry.register_bot(name)
         try:
-            registry.update_bot(name, module_path)
+            bot_registry.update_bot(name, module_path)
         except Exception:  # pragma: no cover - best effort
             logger.exception("bot update failed for %s", name)
-        try:
-            orchestrator.register_bot(name)
-            logger.info("registered %s with EvolutionOrchestrator", name)
-        except Exception:  # pragma: no cover - best effort
-            logger.exception(
-                "evolution orchestrator registration failed for %s", name
+
+        cls.bot_registry = bot_registry  # type: ignore[attr-defined]
+        cls.data_bot = data_bot  # type: ignore[attr-defined]
+
+        @wraps(orig_init)
+        def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
+            orchestrator: EvolutionOrchestrator | None = kwargs.pop(
+                "evolution_orchestrator", None
             )
-        if data_bot and getattr(data_bot, "db", None):
+            orig_init(self, *args, **kwargs)
             try:
-                roi = float(data_bot.roi(name)) if hasattr(data_bot, "roi") else 0.0
-                data_bot.db.log_eval(name, "roi", roi)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("failed logging roi for %s", name)
-            try:
-                data_bot.db.log_eval(name, "errors", 0.0)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("failed logging errors for %s", name)
+                (
+                    registry,
+                    d_bot,
+                    orchestrator,
+                    _module_path,
+                    manager,
+                ) = _resolve_helpers(self, bot_registry, data_bot, orchestrator)
+            except RuntimeError as exc:
+                raise RuntimeError(f"{cls.__name__}: {exc}") from exc
 
-    cls.__init__ = wrapped_init  # type: ignore[assignment]
-
-    for method_name in ("run", "execute"):
-        orig_method = getattr(cls, method_name, None)
-        if callable(orig_method):
-            @wraps(orig_method)
-            def wrapped_method(self, *args: Any, _orig=orig_method, **kwargs: Any):
-                start = time.time()
-                errors = 0
+            name_local = getattr(self, "name", getattr(self, "bot_name", name))
+            if not isinstance(manager, SelfCodingManager):
                 try:
-                    result = _orig(self, *args, **kwargs)
-                except Exception:
-                    errors = 1
-                    raise
-                finally:
-                    response_time = time.time() - start
+                    manager = SelfCodingManager(
+                        getattr(self, "engine", None),
+                        getattr(self, "pipeline", None),
+                        bot_name=name_local,
+                        bot_registry=registry,
+                        data_bot=d_bot,
+                    )
+                    self.manager = manager
+                except Exception as exc:  # pragma: no cover - best effort
+                    raise RuntimeError(
+                        "failed to initialise SelfCodingManager; provide a manager"
+                    ) from exc
+
+            if orchestrator is None:
+                try:
+                    from .capital_management_bot import CapitalManagementBot  # type: ignore
+                    from .self_improvement.engine import SelfImprovementEngine  # type: ignore
+                    from .system_evolution_manager import SystemEvolutionManager  # type: ignore
+                    from .evolution_orchestrator import EvolutionOrchestrator as _EO
+
+                    capital = CapitalManagementBot(data_bot=d_bot)
+                    improv = SelfImprovementEngine(data_bot=d_bot, bot_name=name_local)
+                    bot_list: list[str] = []
                     try:
-                        data_bot = getattr(self, "data_bot", None)
-                        if data_bot is None:
-                            manager = getattr(self, "manager", None)
-                            data_bot = getattr(manager, "data_bot", None)
-                        if data_bot:
-                            name = getattr(self, "name", getattr(self, "bot_name", cls.__name__))
-                            data_bot.collect(name, response_time=response_time, errors=errors)
-                    except Exception:  # pragma: no cover - best effort
-                        logger.exception("failed logging metrics for %s", cls.__name__)
-                return result
+                        bot_list = list(getattr(registry, "graph", {}).keys())
+                    except Exception:
+                        bot_list = []
+                    evol_mgr = SystemEvolutionManager(bot_list)
+                    orchestrator = _EO(
+                        data_bot=d_bot,
+                        capital_bot=capital,
+                        improvement_engine=improv,
+                        evolution_manager=evol_mgr,
+                        selfcoding_manager=manager,
+                    )
+                    self.evolution_orchestrator = orchestrator
+                except Exception as exc:  # pragma: no cover - optional dependency
+                    raise RuntimeError(
+                        f"{cls.__name__}: EvolutionOrchestrator is required but could not be instantiated"
+                    ) from exc
+            if getattr(manager, "quick_fix", None) is None:
+                try:
+                    from .quick_fix_engine import QuickFixEngine  # type: ignore
+                    from .error_bot import ErrorDB
+                except Exception as exc:  # pragma: no cover - optional dependency
+                    raise RuntimeError(
+                        f"{cls.__name__}: QuickFixEngine is required but could not be imported"
+                    ) from exc
+                engine = getattr(manager, "engine", None)
+                clayer = getattr(engine, "cognition_layer", None)
+                builder = getattr(clayer, "context_builder", None)
+                if builder is None:
+                    raise RuntimeError(
+                        f"{cls.__name__}: QuickFixEngine requires a context_builder"
+                    )
+                error_db = getattr(self, "error_db", None) or getattr(manager, "error_db", None)
+                if error_db is None:
+                    try:
+                        error_db = ErrorDB()
+                    except Exception as exc:  # pragma: no cover - instantiation errors
+                        raise RuntimeError(
+                            f"{cls.__name__}: failed to initialise ErrorDB for QuickFixEngine"
+                        ) from exc
+                try:
+                    manager.quick_fix = QuickFixEngine(error_db, manager, context_builder=builder)
+                    manager.error_db = error_db
+                except Exception as exc:  # pragma: no cover - instantiation errors
+                    raise RuntimeError(
+                        f"{cls.__name__}: failed to initialise QuickFixEngine"
+                    ) from exc
+            try:
+                orchestrator.register_bot(name_local)
+                logger.info("registered %s with EvolutionOrchestrator", name_local)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception(
+                    "evolution orchestrator registration failed for %s", name_local
+                )
+            if d_bot and getattr(d_bot, "db", None):
+                try:
+                    roi = float(d_bot.roi(name_local)) if hasattr(d_bot, "roi") else 0.0
+                    d_bot.db.log_eval(name_local, "roi", roi)
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed logging roi for %s", name_local)
+                try:
+                    d_bot.db.log_eval(name_local, "errors", 0.0)
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed logging errors for %s", name_local)
 
-            setattr(cls, method_name, wrapped_method)
+        cls.__init__ = wrapped_init  # type: ignore[assignment]
 
-    return cls
+        for method_name in ("run", "execute"):
+            orig_method = getattr(cls, method_name, None)
+            if callable(orig_method):
+                @wraps(orig_method)
+                def wrapped_method(self, *args: Any, _orig=orig_method, **kwargs: Any):
+                    start = time.time()
+                    errors = 0
+                    try:
+                        result = _orig(self, *args, **kwargs)
+                    except Exception:
+                        errors = 1
+                        raise
+                    finally:
+                        response_time = time.time() - start
+                        try:
+                            d_bot_local = getattr(self, "data_bot", None)
+                            if d_bot_local is None:
+                                manager = getattr(self, "manager", None)
+                                d_bot_local = getattr(manager, "data_bot", None)
+                            if d_bot_local:
+                                name_local2 = getattr(self, "name", getattr(self, "bot_name", name))
+                                d_bot_local.collect(name_local2, response_time=response_time, errors=errors)
+                        except Exception:  # pragma: no cover - best effort
+                            logger.exception("failed logging metrics for %s", name)
+                    return result
+
+                setattr(cls, method_name, wrapped_method)
+
+        return cls
+
+    return decorator
+

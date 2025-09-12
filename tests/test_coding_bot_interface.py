@@ -105,37 +105,33 @@ class DummyOrchestrator:
 
 
 def test_missing_bot_registry():
-    @self_coding_managed
-    class Bot:
-        def __init__(self):
-            pass
-
-    with pytest.raises(RuntimeError, match="Bot: BotRegistry is required"):
-        Bot(data_bot=DummyDataBot(), evolution_orchestrator=DummyOrchestrator())
+    with pytest.raises(TypeError):
+        @self_coding_managed(data_bot=DummyDataBot())  # type: ignore[call-arg]
+        class Bot:
+            def __init__(self):
+                pass
 
 
 def test_missing_data_bot():
-    @self_coding_managed
-    class Bot:
-        def __init__(self):
-            pass
-
-    with pytest.raises(RuntimeError, match="Bot: DataBot is required"):
-        Bot(bot_registry=DummyRegistry(), evolution_orchestrator=DummyOrchestrator())
+    with pytest.raises(TypeError):
+        @self_coding_managed(bot_registry=DummyRegistry())  # type: ignore[call-arg]
+        class Bot:
+            def __init__(self):
+                pass
 
 
 def test_auto_instantiates_orchestrator():
     registry = DummyRegistry()
     data_bot = DummyDataBot()
 
-    @self_coding_managed
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
     class Bot:
         name = "auto"
 
         def __init__(self):
             pass
 
-    bot = Bot(bot_registry=registry, data_bot=data_bot)
+    bot = Bot()
     assert registry.registered == ["auto"]
     assert bot.evolution_orchestrator.registered == ["auto"]
 
@@ -147,13 +143,13 @@ def test_orchestrator_autoinstantiation_failure(monkeypatch):
 
     monkeypatch.setattr(evo_stub, "EvolutionOrchestrator", Broken)
 
-    @self_coding_managed
+    @self_coding_managed(bot_registry=DummyRegistry(), data_bot=DummyDataBot())
     class Bot:
         def __init__(self):
             pass
 
-    with pytest.raises(RuntimeError, match="Bot: EvolutionOrchestrator is required"):
-        Bot(bot_registry=DummyRegistry(), data_bot=DummyDataBot())
+    with pytest.raises(RuntimeError, match="EvolutionOrchestrator is required"):
+        Bot()
 
 
 def test_successful_initialisation_registers():
@@ -161,18 +157,13 @@ def test_successful_initialisation_registers():
     data_bot = DummyDataBot()
     orchestrator = DummyOrchestrator()
 
-    @self_coding_managed
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
     class Bot:
         name = "sample"
 
         def __init__(self):
             pass
-
-    Bot(
-        bot_registry=registry,
-        data_bot=data_bot,
-        evolution_orchestrator=orchestrator,
-    )
+    Bot(evolution_orchestrator=orchestrator)
 
     assert registry.registered == ["sample"]
     assert orchestrator.registered == ["sample"]
