@@ -8,14 +8,17 @@ import threading
 import time
 import logging
 from pathlib import Path
-from typing import Iterable, Optional, List, Dict
+from typing import Iterable, Optional, List, Dict, Any
 
 import yaml
 from dynamic_path_router import resolve_path, path_for_prompt
 
 from sandbox_runner.workflow_sandbox_runner import WorkflowSandboxRunner
 
-from .self_coding_manager import SelfCodingManager
+try:  # pragma: no cover - optional self-coding dependency
+    from .self_coding_manager import SelfCodingManager
+except ImportError:  # pragma: no cover - self-coding unavailable
+    SelfCodingManager = Any  # type: ignore
 from .data_bot import DataBot
 from .advanced_error_management import AutomatedRollbackManager
 from .sandbox_settings import SandboxSettings

@@ -89,7 +89,10 @@ from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from .scope_utils import build_scope_clause, Scope, apply_scope
 from .coding_bot_interface import self_coding_managed
-from .self_coding_manager import SelfCodingManager
+try:  # pragma: no cover - optional self-coding dependency
+    from .self_coding_manager import SelfCodingManager
+except ImportError:  # pragma: no cover - self-coding unavailable
+    SelfCodingManager = Any  # type: ignore
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only

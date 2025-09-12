@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Any
 
 import ast
 from difflib import SequenceMatcher
@@ -30,7 +30,10 @@ from snippet_compressor import compress_snippets
 
 from billing.prompt_notice import prepend_payment_notice
 from llm_interface import LLMClient, Prompt
-from .self_coding_manager import SelfCodingManager
+try:  # pragma: no cover - optional self-coding dependency
+    from .self_coding_manager import SelfCodingManager
+except ImportError:  # pragma: no cover - self-coding unavailable
+    SelfCodingManager = Any  # type: ignore
 from .coding_bot_interface import self_coding_managed
 
 try:

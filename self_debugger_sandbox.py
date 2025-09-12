@@ -22,7 +22,7 @@ import threading
 import importlib
 from types import SimpleNamespace
 from contextlib import contextmanager
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Any
 from collections import deque
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
@@ -36,7 +36,10 @@ from .sandbox_runner.scoring import record_run
 from db_router import GLOBAL_ROUTER, init_db_router
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
-from .self_coding_manager import SelfCodingManager
+try:  # pragma: no cover - optional self-coding dependency
+    from .self_coding_manager import SelfCodingManager
+except ImportError:  # pragma: no cover - self-coding unavailable
+    SelfCodingManager = Any  # type: ignore
 from .audit_trail import AuditTrail
 from patch_attempt_tracker import PatchAttemptTracker
 try:
