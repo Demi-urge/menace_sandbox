@@ -131,3 +131,49 @@ def test_patch_fails_without_validation(monkeypatch):
     mgr = DummyManager()
     with pytest.raises(RuntimeError):
         mgr.run_patch(Path("mod.py"), "desc")
+
+
+def test_helper_generation_retries_and_logging(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "mod.py"  # path-ignore
+    path.write_text("def f():\n    pass\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(quick_fix, "generate_code_diff", lambda *a, **k: {})
+    monkeypatch.setattr(quick_fix, "flag_risky_changes", lambda *a, **k: [])
+    monkeypatch.setattr(quick_fix, "resolve_path", lambda p: Path(p))
+    monkeypatch.setattr(quick_fix, "path_for_prompt", lambda p: p)
+
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, topic, payload):
+            events.append((topic, payload))
+
+    calls: list[tuple[str, str, bool, list[str] | None]] = []
+
+    class DataBot:
+        def record_validation(self, bot, module, passed, flags=None):
+            calls.append((bot, module, passed, flags))
+
+    class Engine:
+        helper_retry_attempts = 2
+        helper_retry_delay = 0
+        bot_name = "bot"
+
+        def __init__(self):
+            self.event_bus = Bus()
+            self.data_bot = DataBot()
+
+        def generate_helper(self, desc, **kw):
+            raise RuntimeError("fail")
+
+        def apply_patch(self, *a, **kw):
+            return None, False, ""
+
+    engine = Engine()
+
+    with caplog.at_level("ERROR"):
+        quick_fix.generate_patch(str(path), engine, context_builder=quick_fix.ContextBuilder())
+
+    assert len(events) == engine.helper_retry_attempts
+    assert calls == [("bot", "mod.py", False, ["helper_generation_failed"])]
+    assert "helper generation failed" in caplog.text

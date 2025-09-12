@@ -17,6 +17,7 @@ import shutil
 import tempfile
 import os
 import uuid
+import time
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
 from .snippet_compressor import compress_snippets
@@ -36,6 +37,10 @@ from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
 from .coding_bot_interface import self_coding_managed, manager_generate_helper
+try:  # pragma: no cover - optional dependency
+    from .data_bot import DataBot
+except Exception:  # pragma: no cover - fallback when unavailable
+    DataBot = object  # type: ignore
 try:  # pragma: no cover - fail fast if vector service missing
     from vector_service.context_builder import (
         ContextBuilder,
@@ -251,30 +256,66 @@ def generate_patch(
 
             def _gen(desc: str) -> str:
                 """Generate helper code for *desc* using the current context."""
-                try:
-                    if manager is not None:
-                        return manager_generate_helper(
-                            manager,
+                owner = manager if manager is not None else engine
+                attempts = int(getattr(owner, "helper_retry_attempts", 3))
+                delay = float(getattr(owner, "helper_retry_delay", 1.0))
+                event_bus = getattr(owner, "event_bus", None)
+                data_bot: DataBot | None = getattr(owner, "data_bot", None)
+                bot_name = getattr(owner, "bot_name", "quick_fix_engine")
+                module_name = Path(context_meta.get("module", path.name)).name
+                for i in range(attempts):
+                    try:
+                        if manager is not None:
+                            return manager_generate_helper(
+                                manager,
+                                desc,
+                                path=path,
+                                metadata=context_meta,
+                                target_region=target_region,
+                            )
+                        return engine.generate_helper(
                             desc,
                             path=path,
                             metadata=context_meta,
                             target_region=target_region,
                         )
-                    return engine.generate_helper(
-                        desc,
-                        path=path,
-                        metadata=context_meta,
-                        target_region=target_region,
-                    )
-                except TypeError:
+                    except TypeError:
+                        try:
+                            if manager is not None:
+                                return manager_generate_helper(manager, desc)
+                            return engine.generate_helper(desc)
+                        except Exception as exc2:  # fall through to logging
+                            err: Exception = exc2
+                    except Exception as exc:
+                        err = exc
+                    logger.exception("helper generation failed", exc_info=err)
+                    if event_bus:
+                        payload = {
+                            "module": module_name,
+                            "description": desc,
+                            "error": str(err),
+                            "attempt": i + 1,
+                        }
+                        try:
+                            event_bus.publish("bot:helper_failed", payload)
+                        except Exception:
+                            logger.exception("event bus publish failed")
+                    if i < attempts - 1:
+                        time.sleep(delay)
+                        delay *= 2
+                if data_bot:
                     try:
-                        if manager is not None:
-                            return manager_generate_helper(manager, desc)
-                        return engine.generate_helper(desc)
+                        data_bot.record_validation(
+                            bot_name,
+                            module_name,
+                            False,
+                            ["helper_generation_failed"],
+                        )
                     except Exception:
-                        return ""
-                except Exception:
-                    return ""
+                        logger.exception(
+                            "failed to record validation in DataBot"
+                        )
+                return ""
             if chunks and target_region is None:
                 for chunk in chunks:
                     summary = (
