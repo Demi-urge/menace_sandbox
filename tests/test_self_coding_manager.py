@@ -733,12 +733,14 @@ class PredictingDataBot:
         roi_drop: float | None = None,
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
+        forecast: dict | None = None,
     ) -> None:
         self.thresholds = types.SimpleNamespace(
             roi_drop=roi_drop,
             error_threshold=error_threshold,
             test_failure_threshold=test_failure_threshold,
         )
+        self.forecast = forecast
 
     def check_degradation(
         self, _bot: str, _roi: float, _errors: float, _failures: float
@@ -807,6 +809,61 @@ def test_should_refactor_ignores_positive_prediction(monkeypatch):
     data_bot.current_err = 0.4
     data_bot.current_fail = 0.0
     assert not mgr.should_refactor()
+
+
+def test_ema_forecast_reduces_false_positive(monkeypatch):
+    class DummyDataBot:
+        def __init__(self) -> None:
+            self.rois = [1.0, 1.0, 1.0, 0.95]
+            self.idx = 0
+            self.thresholds = types.SimpleNamespace(
+                roi_drop=-0.1, error_threshold=1.0, test_failure_threshold=1.0
+            )
+
+        def roi(self, _bot: str) -> float:
+            v = self.rois[self.idx]
+            self.idx += 1
+            return v
+
+        def average_errors(self, _bot: str) -> float:
+            return 0.0
+
+        def average_test_failures(self, _bot: str) -> float:
+            return 0.0
+
+        def get_thresholds(self, _bot: str):
+            return self.thresholds
+
+        def update_thresholds(self, _bot: str, *, roi_drop=None, error_threshold=None, test_failure_threshold=None, forecast=None):
+            self.thresholds = types.SimpleNamespace(
+                roi_drop=roi_drop,
+                error_threshold=error_threshold,
+                test_failure_threshold=test_failure_threshold,
+            )
+            self.forecast = forecast
+
+        def check_degradation(self, _bot, roi, _err, _fail):
+            delta = roi - 1.0
+            return delta <= (self.thresholds.roi_drop or 0.0)
+
+    class LocalEngine:
+        def __init__(self) -> None:
+            builder = types.SimpleNamespace(session_id="", refresh_db_weights=lambda: None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+            self.patch_suggestion_db = None
+
+    mgr = scm.SelfCodingManager(
+        LocalEngine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=types.SimpleNamespace(context_builder=None),
+    )
+    for _ in range(3):
+        assert not mgr.should_refactor()
+    assert not mgr.should_refactor()
+    assert mgr.data_bot.forecast["roi"]
 
 def test_init_requires_helpers():
     engine = DummyEngine()

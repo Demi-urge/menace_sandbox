@@ -214,6 +214,13 @@ class SelfCodingManager:
         self.baseline_tracker = BaselineTracker(
             window=int(baseline_window), metrics=["confidence"]
         )
+        # ``_forecast_history`` stores predicted metrics so threshold updates
+        # can adapt based on recent trends.
+        self._forecast_history: Dict[str, list[float]] = {
+            "roi": [],
+            "errors": [],
+            "tests_failed": [],
+        }
         if enhancement_classifier and not getattr(self.engine, "enhancement_classifier", None):
             try:
                 self.engine.enhancement_classifier = enhancement_classifier
@@ -402,28 +409,26 @@ class SelfCodingManager:
         # used to derive predictions for this bot.
         self.baseline_tracker.update(roi=roi, errors=errors, tests_failed=failures)
 
-        def _forecast(metric: str) -> float:
-            """Predict the next value using simple linear projection."""
+        def _forecast(metric: str, alpha: float = 0.3) -> float:
+            """Predict the next value using exponential moving average."""
 
             hist = self.baseline_tracker.to_dict().get(metric, [])
-            n = len(hist)
-            if n < 2:
-                return hist[0] if n == 1 else 0.0
-            mean_x = (n - 1) / 2.0
-            mean_y = sum(hist) / n
-            denom = sum((i - mean_x) ** 2 for i in range(n)) or 1.0
-            slope = sum((i - mean_x) * (y - mean_y) for i, y in enumerate(hist)) / denom
-            intercept = mean_y - slope * mean_x
-            return slope * n + intercept
+            if not hist:
+                return 0.0
+            ema = hist[0]
+            for v in hist[1:]:
+                ema = alpha * v + (1.0 - alpha) * ema
+            self._forecast_history[metric].append(ema)
+            return ema
 
         pred_roi = _forecast("roi")
         pred_err = _forecast("errors")
         pred_fail = _forecast("tests_failed")
 
         sens = getattr(self.data_bot, "anomaly_sensitivity", 1.0)
-        roi_thresh = (pred_roi - roi) * sens
-        err_thresh = (pred_err - errors) * sens
-        fail_thresh = (pred_fail - failures) * sens
+        roi_thresh = self.roi_drop_threshold + (roi - pred_roi) * sens
+        err_thresh = self.error_rate_threshold + (errors - pred_err) * sens
+        fail_thresh = self.test_failure_threshold + (failures - pred_fail) * sens
 
         # Persist the dynamically calculated thresholds so ``DataBot`` and other
         # components share a consistent view.
@@ -433,6 +438,11 @@ class SelfCodingManager:
                 roi_drop=roi_thresh,
                 error_threshold=err_thresh,
                 test_failure_threshold=fail_thresh,
+                forecast={
+                    "roi": pred_roi,
+                    "errors": pred_err,
+                    "tests_failed": pred_fail,
+                },
             )
         except Exception:  # pragma: no cover - best effort
             self.logger.exception(
