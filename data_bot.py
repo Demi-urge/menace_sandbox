@@ -55,6 +55,8 @@ import sqlite3
 import os
 import logging
 import json
+import threading
+import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -1212,6 +1214,66 @@ class DataBot:
         else:
             self._degradation_callbacks.append(callback)
             self.degradation_callback = callback
+
+    def start_monitoring(self, interval: float) -> threading.Thread:
+        """Periodically invoke :meth:`check_degradation` for known bots.
+
+        Bots are discovered from the existing baseline trackers which are
+        seeded via :meth:`check_degradation` when a bot registers.  The
+        monitoring loop runs in a background daemon thread and publishes a
+        ``data:monitoring_started`` event on the :class:`UnifiedEventBus`
+        when available.
+        """
+
+        def _monitor() -> None:
+            while True:
+                bots = list(self._baseline.keys())
+                for bot in bots:
+                    try:
+                        with self.db._connect() as conn:  # type: ignore[attr-defined]
+                            row = conn.execute(
+                                "SELECT revenue, expense, errors, tests_failed "
+                                "FROM metrics WHERE bot=? "
+                                "ORDER BY id DESC LIMIT 1",
+                                (bot,),
+                            ).fetchone()
+                        if not row:
+                            continue
+                        revenue, expense, errors, tests_failed = row
+                        roi = float(revenue) - float(expense)
+                        self.check_degradation(
+                            bot, roi, float(errors), float(tests_failed)
+                        )
+                    except Exception as exc:
+                        self.logger.exception(
+                            "monitoring loop failed for %s: %s", bot, exc
+                        )
+                        if self.event_bus:
+                            try:
+                                self.event_bus.publish(
+                                    "data:monitoring_error",
+                                    {"bot": bot, "error": str(exc)},
+                                )
+                            except Exception:
+                                self.logger.exception(
+                                    "failed to publish monitoring error event"
+                                )
+                time.sleep(interval)
+
+        thread = threading.Thread(
+            target=_monitor, name="data-bot-monitor", daemon=True
+        )
+        thread.start()
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "data:monitoring_started", {"interval": interval}
+                )
+            except Exception:
+                self.logger.exception(
+                    "failed to publish monitoring started event"
+                )
+        return thread
 
     def collect(
         self,
