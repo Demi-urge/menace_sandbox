@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from .bot_registry import registry
-from .data_bot import data_bot
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from typing import Iterable, List, Dict, Optional
@@ -19,6 +19,9 @@ except Exception:  # pragma: no cover - optional dependency
         def predict(self, X):
             return [0.0 for _ in X]
 import pulp
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 
 class TemplateManager:
@@ -66,6 +69,8 @@ class BotPlan:
 @self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class BotPlanningBot:
     """Analyse tasks and plan bots with hierarchy mapping."""
+
+    manager: "SelfCodingManager | None" = None
 
     def __init__(self, template_manager: Optional[TemplateManager] = None) -> None:
         self.tm = template_manager or TemplateManager()

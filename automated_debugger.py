@@ -19,17 +19,22 @@ from .retry_utils import retry
 from .self_improvement.target_region import TargetRegion, extract_target_region
 from .patch_attempt_tracker import PatchAttemptTracker
 from .vector_service.context_builder import ContextBuilder
-from .bot_registry import registry
-from .data_bot import data_bot
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 
 
 _FRAME_RE = re.compile(r"File \"([^\"]+)\", line (\d+), in ([^\n]+)")
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 
 @self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class AutomatedDebugger:
     """Analyse telemetry logs and trigger self-coding fixes."""
+
+    manager: "SelfCodingManager | None" = None
 
     def __init__(
         self,

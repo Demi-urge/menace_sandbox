@@ -56,6 +56,9 @@ from .menace_memory_manager import MenaceMemoryManager
 from .unified_event_bus import UnifiedEventBus
 from .bot_registry import BotRegistry
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
 except Exception:  # pragma: no cover - optional dependency
@@ -244,9 +247,11 @@ class PromptTemplateEngine:
         return rendered
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class BotDevelopmentBot:
     """Receive bot specs and generate starter code repositories."""
+
+    manager: "SelfCodingManager | None" = None
 
     def __init__(
         self,

@@ -23,9 +23,13 @@ import time
 
 from .bot_testing_config import BotTestingSettings
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 logger = logging.getLogger("BotTester")
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 # Allow users to register custom randomizers for specific types
 CUSTOM_GENERATORS: dict[type[Any], Callable[[], Any]] = {}
@@ -187,9 +191,11 @@ class TestingLogDB:
         ]
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class BotTestingBot:
     """Run unit and basic integration tests for bots."""
+
+    manager: "SelfCodingManager | None" = None
 
     def __init__(
         self,
