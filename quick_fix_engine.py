@@ -21,127 +21,7 @@ import time
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
 from .snippet_compressor import compress_snippets
-
-try:  # pragma: no cover - optional dependency
-    from .codebase_diff_checker import generate_code_diff, flag_risky_changes
-except Exception:  # pragma: no cover - fallback when module missing
-    import ast
-    import difflib
-    import os
-    import re
-
-    _CRITICAL_PATHS = ("security", "auth", "payment")
-
-    def _list_py_files(root: str) -> List[str]:
-        paths: List[str] = []
-        for base, _, files in os.walk(root):
-            for name in files:
-                if name.endswith(".py"):
-                    full = os.path.join(base, name)
-                    paths.append(os.path.relpath(full, root))
-        return sorted(paths)
-
-    def _read_lines(path: str) -> List[str]:
-        if not os.path.exists(path):
-            return []
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().splitlines()
-
-    def _function_map(lines: List[str]) -> Dict[int, str]:
-        mapping: Dict[int, str] = {}
-        try:
-            tree = ast.parse("\n".join(lines))
-        except SyntaxError:
-            return mapping
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                start = node.lineno
-                end = getattr(node, "end_lineno", start)
-                for lineno in range(start, end + 1):
-                    mapping[lineno] = node.name
-        return mapping
-
-    def _diff_stats(diff_lines: List[str], before_lines: List[str], after_lines: List[str]) -> Dict[str, Any]:
-        lines_added = lines_removed = 0
-        touched: set[str] = set()
-        before_map = _function_map(before_lines)
-        after_map = _function_map(after_lines)
-        before_line = after_line = 0
-        hunk_re = re.compile(r"@@ -(\d+),?\d* \+(\d+),?\d* @@")
-        for line in diff_lines:
-            if line.startswith("@@"):
-                m = hunk_re.match(line)
-                if m:
-                    before_line = int(m.group(1))
-                    after_line = int(m.group(2))
-                continue
-            if line.startswith("+") and not line.startswith("+++"):
-                lines_added += 1
-                func = after_map.get(after_line)
-                if func:
-                    touched.add(func)
-                after_line += 1
-            elif line.startswith("-") and not line.startswith("---"):
-                lines_removed += 1
-                func = before_map.get(before_line)
-                if func:
-                    touched.add(func)
-                before_line += 1
-            else:
-                before_line += 1
-                after_line += 1
-        complexity = lines_added + lines_removed
-        return {
-            "lines_added": lines_added,
-            "lines_removed": lines_removed,
-            "touched_functions": sorted(touched),
-            "complexity": complexity,
-        }
-
-    def generate_code_diff(before_dir: str, after_dir: str) -> Dict[str, Dict[str, Any]]:
-        """Compare two directories of python files and return structured diff."""
-        result: Dict[str, Dict[str, Any]] = {}
-        before_files = _list_py_files(before_dir)
-        after_files = _list_py_files(after_dir)
-        all_files = set(before_files) | set(after_files)
-        for rel in sorted(all_files):
-            before_path = os.path.join(before_dir, rel)
-            after_path = os.path.join(after_dir, rel)
-            before_lines = _read_lines(before_path)
-            after_lines = _read_lines(after_path)
-            diff_lines = list(
-                difflib.unified_diff(
-                    before_lines, after_lines, fromfile=rel, tofile=rel, lineterm=""
-                )
-            )
-            if not os.path.exists(before_path):
-                status = "added"
-            elif not os.path.exists(after_path):
-                status = "removed"
-            else:
-                status = "modified"
-            result[rel] = {
-                "status": status,
-                "diff": diff_lines,
-                "stats": _diff_stats(diff_lines, before_lines, after_lines),
-            }
-        return result
-
-    def flag_risky_changes(
-        diff_data: Dict[str, Dict[str, Any]], diff_threshold: int = 50
-    ) -> List[str]:
-        """Return heuristic flags for risky changes detected in ``diff_data``."""
-        flags: List[str] = []
-        for path, info in diff_data.items():
-            stats = info.get("stats", {})
-            changed = stats.get("lines_added", 0) + stats.get("lines_removed", 0)
-            if changed > diff_threshold:
-                flags.append(f"{path}: large diff ({changed} lines)")
-            if any(c in path for c in _CRITICAL_PATHS):
-                flags.append(f"{path}: critical file modified")
-            if len(stats.get("touched_functions", [])) > 10:
-                flags.append(f"{path}: many functions touched")
-        return flags
+from .codebase_diff_checker import generate_code_diff, flag_risky_changes
 
 try:  # pragma: no cover - optional dependency
     from context_builder_util import ensure_fresh_weights
@@ -399,6 +279,7 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
+    risk_flags: list[str] = []
     if context_builder is None:
         raise TypeError("context_builder is required")
     if manager is None:
@@ -415,7 +296,7 @@ def generate_patch(
         path = resolve_path(mod_str)
     except FileNotFoundError:
         logger.error("module not found: %s", module)
-        return None
+        return (None, risk_flags) if return_flags else None
 
     prompt_path = path_for_prompt(path.as_posix())
     description = description or f"preemptive fix for {prompt_path}"
@@ -518,7 +399,7 @@ def generate_patch(
 
             def _gen(desc: str) -> str:
                 """Generate helper code for *desc* using the current context."""
-                owner = manager
+                owner = getattr(manager, "engine", manager)
                 attempts = int(getattr(owner, "helper_retry_attempts", 3))
                 delay = float(getattr(owner, "helper_retry_delay", 1.0))
                 event_bus = getattr(owner, "event_bus", None)
@@ -671,8 +552,6 @@ def generate_patch(
             risk_flags = flag_risky_changes(diff_struct)
             if risk_flags:
                 logger.warning("risky changes detected: %s", risk_flags)
-                shutil.copy2(before_target, path)
-                return (None, risk_flags) if return_flags else None
             diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
             workflow_changes = [
                 {"file": path_for_prompt(f), "code": "\n".join(d["added"])}
@@ -750,7 +629,7 @@ def generate_patch(
                 logger.exception(
                     "post_round_orphan_scan after preemptive patch failed"
                 )
-            return (patch_id, []) if return_flags else patch_id
+            return (patch_id, risk_flags) if return_flags else patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
         logger.error("quick fix generation failed for %s: %s", prompt_path, exc)
         return (None, [str(exc)]) if return_flags else None
