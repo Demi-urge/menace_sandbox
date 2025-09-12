@@ -265,6 +265,48 @@ def test_patch_uses_refreshed_weights(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen == [1, 2]
 
 
+def test_manager_helper_gets_new_builder_each_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each helper invocation should receive a fresh ContextBuilder."""
+
+    counter = {"value": 0}
+
+    class Builder:
+        def __init__(self) -> None:
+            self.id = counter["value"]
+            counter["value"] += 1
+
+        def refresh_db_weights(self) -> None:  # pragma: no cover - simple stub
+            pass
+
+    seen: list[int] = []
+
+    def fake_helper(_mgr, _desc, **kwargs):
+        seen.append(getattr(kwargs.get("context_builder"), "id", -1))
+        return ""
+
+    monkeypatch.setattr(scm, "ContextBuilder", Builder)
+    monkeypatch.setattr(scm, "ensure_fresh_weights", lambda _b: None)
+    monkeypatch.setattr(scm, "_BASE_MANAGER_GENERATE_HELPER", fake_helper)
+    class DummyDataBot:
+        def __init__(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(db_stub, "DataBot", DummyDataBot)
+    monkeypatch.setattr(scm, "DataBot", DummyDataBot)
+    sys.modules.pop("menace.quick_fix_engine", None)
+    sys.modules.pop("quick_fix_engine", None)
+    import menace.quick_fix_engine as qfe
+
+    qfe.manager_generate_helper(object(), "first")
+    qfe.manager_generate_helper(object(), "second")
+
+    assert seen == [0, 1]
+    sys.modules["quick_fix_engine"] = qfe_stub
+    sys.modules["menace.quick_fix_engine"] = qfe_stub
+
+
 def test_run_patch_without_quick_fix_engine_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
