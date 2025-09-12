@@ -38,6 +38,10 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
     scm_mod.SelfCodingManager = SelfCodingManager
     sys.modules["menace_sandbox.self_coding_manager"] = scm_mod
 
+    sce_mod = types.ModuleType("menace_sandbox.self_coding_engine")
+    sce_mod.MANAGER_CONTEXT = types.SimpleNamespace()
+    sys.modules["menace_sandbox.self_coding_engine"] = sce_mod
+
     ecp = types.ModuleType("menace_sandbox.error_cluster_predictor")
     ecp.ErrorClusterPredictor = object
     sys.modules["menace_sandbox.error_cluster_predictor"] = ecp
@@ -164,6 +168,9 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
     mod = tmp_path / "mod.py"
     mod.write_text("print('hi')\n")
 
+    commit = "deadbeef"
+    monkeypatch.setattr(qfe.subprocess, "check_output", lambda *a, **k: commit.encode())
+
     patch_id = qfe.generate_patch(
         str(mod), manager, manager.engine, context_builder=builder
     )
@@ -171,5 +178,8 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
     assert patch_id == 123
     assert manager.cycle is not None
     assert manager.data_bot.roi_called and manager.data_bot.errors_called
-    assert manager.bot_registry.updated == (manager.bot_name, str(mod), {"patch_id": 123})
-
+    assert manager.bot_registry.updated == (
+        manager.bot_name,
+        str(mod),
+        {"patch_id": 123, "commit": commit},
+    )

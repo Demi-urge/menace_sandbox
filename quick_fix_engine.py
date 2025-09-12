@@ -490,11 +490,21 @@ def generate_patch(
             if patch_id is not None:
                 registry = getattr(manager, "bot_registry", None)
                 if registry is not None:
+                    commit_hash: str | None = None
+                    try:
+                        commit_hash = (
+                            subprocess.check_output(["git", "rev-parse", "HEAD"])
+                            .decode()
+                            .strip()
+                        )
+                    except Exception:
+                        logger.debug("failed to capture commit hash", exc_info=True)
                     try:
                         registry.update_bot(
                             getattr(manager, "bot_name", ""),
                             path.as_posix(),
                             patch_id=patch_id,
+                            commit=commit_hash,
                         )
                     except Exception:
                         logger.exception("failed to update bot registry")
