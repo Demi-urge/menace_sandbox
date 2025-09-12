@@ -94,7 +94,8 @@ class DummyBus:
 
 
 class DummyContextBuilder:
-    pass
+    def refresh_db_weights(self):
+        pass
 
 
 class DummyEngine:
@@ -186,7 +187,7 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
 
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
-    assert "bot:hot_swapped" in topics
+    assert "bot:patch_failed" in topics
 
 
 def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
@@ -242,7 +243,7 @@ def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
 
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
-    assert "bot:hot_swapped" in topics
+    assert "bot:patch_failed" in topics
 
 
 def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
@@ -315,4 +316,4 @@ def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
     assert quick_fix.calls
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
-    assert "bot:hot_swapped" in topics
+    assert "bot:patch_failed" in topics
