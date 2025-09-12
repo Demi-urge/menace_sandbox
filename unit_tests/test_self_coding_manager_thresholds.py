@@ -21,6 +21,10 @@ class _EmbeddableDBMixin:
         pass
 vec_mod.EmbeddableDBMixin = _EmbeddableDBMixin
 vec_mod.SharedVectorService = object
+class PatchLogger:
+    def __init__(self, *a, **k):
+        pass
+vec_mod.PatchLogger = PatchLogger
 sys.modules.setdefault("vector_service", vec_mod)
 
 tp_mod = types.ModuleType("vector_service.text_preprocessor")
@@ -48,7 +52,9 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 # Stubs for modules referenced by SelfCodingManager
 sce_mod = types.ModuleType("menace.self_coding_engine")
 class SelfCodingEngine:
-    pass
+    def __init__(self):
+        builder = types.SimpleNamespace(session_id="", refresh_db_weights=lambda: None)
+        self.cognition_layer = types.SimpleNamespace(context_builder=builder)
 sce_mod.SelfCodingEngine = SelfCodingEngine
 sys.modules.setdefault("menace.self_coding_engine", sce_mod)
 
@@ -94,9 +100,10 @@ class DataBot:
         return 0.0
 
     def get_thresholds(self, _bot: str):
-        from menace.self_coding_thresholds import SelfCodingThresholds
+        from menace.roi_thresholds import ROIThresholds
 
-        return SelfCodingThresholds(roi_drop=-0.5, error_increase=2.0)
+        return ROIThresholds(roi_drop=-0.5, error_threshold=2.0, test_failure_threshold=2.0)
+
 
 
 db_mod.DataBot = DataBot
@@ -153,6 +160,9 @@ code_db_mod = types.ModuleType("menace.code_database")
 class PatchRecord:
     pass
 code_db_mod.PatchRecord = PatchRecord
+class PatchHistoryDB:
+    pass
+code_db_mod.PatchHistoryDB = PatchHistoryDB
 sys.modules["menace.code_database"] = code_db_mod
 sys.modules["code_database"] = code_db_mod
 
@@ -264,6 +274,7 @@ def test_missing_quick_fix_engine_raises(monkeypatch):
         data_bot=scm.DataBot(),
         bot_registry=scm.BotRegistry(),
     )
-    monkeypatch.setattr(scm, "quick_fix_engine", None)
+    monkeypatch.setattr(scm, "QuickFixEngine", None)
+    mgr.quick_fix = None
     with pytest.raises(RuntimeError, match="QuickFixEngine"):
         mgr._ensure_quick_fix_engine()
