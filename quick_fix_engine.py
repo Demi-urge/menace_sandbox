@@ -22,21 +22,94 @@ from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
 from .snippet_compressor import compress_snippets
 
-from .codebase_diff_checker import generate_code_diff, flag_risky_changes
-from context_builder_util import ensure_fresh_weights
+try:  # pragma: no cover - optional dependency
+    from .codebase_diff_checker import generate_code_diff, flag_risky_changes
+except Exception:  # pragma: no cover - fallback when module missing
+    def generate_code_diff(*a: object, **k: object) -> dict:
+        return {}
+
+    def flag_risky_changes(*a: object, **k: object) -> list:
+        return []
+
+try:  # pragma: no cover - optional dependency
+    from context_builder_util import ensure_fresh_weights
+except Exception:  # pragma: no cover - fallback when utility missing
+    def ensure_fresh_weights(builder) -> None:  # type: ignore
+        builder.refresh_db_weights()
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 try:  # pragma: no cover - optional dependency
     from .error_cluster_predictor import ErrorClusterPredictor
-except Exception:  # pragma: no cover - optional dependency
-    ErrorClusterPredictor = object  # type: ignore
+except Exception:  # pragma: no cover - fallback implementation
+    from collections import Counter
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+    except Exception:  # pragma: no cover - optional dependency
+        TfidfVectorizer = None  # type: ignore
+    try:  # pragma: no cover - optional dependency
+        from sklearn.cluster import KMeans  # type: ignore
+    except Exception:  # pragma: no cover - optional dependency
+        KMeans = None  # type: ignore
+    from .knowledge_graph import _SimpleKMeans
+
+    class ErrorClusterPredictor:
+        """Cluster stack traces for a module using k-means."""
+
+        def __init__(self, db: "ErrorDB") -> None:
+            self.db = db
+
+        def best_cluster(self, module: str, n_clusters: int = 3) -> tuple[int | None, list[str]]:
+            """Return ``(cluster_id, traces)`` for ``module``.
+
+            The ``cluster_id`` corresponds to the cluster with the highest
+            number of stack traces.  ``traces`` contains stack traces belonging
+            to that cluster.
+            """
+
+            cur = self.db.conn.execute(
+                "SELECT stack_trace FROM telemetry WHERE module=? AND stack_trace!=''",
+                (module,),
+            )
+            traces = [row[0] for row in cur.fetchall()]
+            if not traces:
+                return None, []
+            labels = [0] * len(traces)
+            if TfidfVectorizer is not None:
+                try:
+                    vec = TfidfVectorizer().fit_transform(traces)
+                    n = min(len(traces), n_clusters) or 1
+                    km = KMeans(n_clusters=n, n_init="auto") if KMeans else _SimpleKMeans(n_clusters=n)
+                    labels = km.fit_predict(vec.toarray())
+                except Exception:
+                    labels = [0] * len(traces)
+            cluster_id, _ = Counter(labels).most_common(1)[0]
+            cluster_traces = [t for t, lbl in zip(traces, labels) if lbl == cluster_id]
+            return int(cluster_id), cluster_traces
 
 from .error_bot import ErrorDB
-from .self_coding_manager import SelfCodingManager
-from .knowledge_graph import KnowledgeGraph
-from .coding_bot_interface import self_coding_managed, manager_generate_helper
+try:  # pragma: no cover - optional dependency
+    from .self_coding_manager import SelfCodingManager
+except Exception:  # pragma: no cover - fallback
+    class SelfCodingManager:  # type: ignore
+        pass
+try:  # pragma: no cover - optional dependency
+    from .knowledge_graph import KnowledgeGraph
+except Exception:  # pragma: no cover - fallback
+    class KnowledgeGraph:  # type: ignore
+        pass
+try:  # pragma: no cover - optional dependency
+    from .coding_bot_interface import self_coding_managed, manager_generate_helper
+except Exception:  # pragma: no cover - fallback when coding engine unavailable
+    def self_coding_managed(cls):  # type: ignore
+        return cls
+
+    def manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
+        engine = getattr(manager, "engine", None)
+        if engine is None:
+            raise ImportError("Self-coding engine is required for operation")
+        return engine.generate_helper(description, **kwargs)
 try:  # pragma: no cover - optional dependency
     from .data_bot import DataBot
 except Exception:  # pragma: no cover - fallback when unavailable
@@ -61,6 +134,13 @@ try:  # pragma: no cover - optional dependency
     from chunking import get_chunk_summaries
 except Exception:  # pragma: no cover - chunking unavailable
     get_chunk_summaries = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .target_region import extract_target_region
+except Exception:  # pragma: no cover - fallback for flat layout
+    try:
+        from target_region import extract_target_region  # type: ignore
+    except Exception:  # pragma: no cover - extractor unavailable
+        extract_target_region = None  # type: ignore
 try:  # pragma: no cover - optional dependency
     from self_improvement.prompt_strategies import PromptStrategy, render_prompt
 except Exception:  # pragma: no cover - fallback for tests
@@ -202,6 +282,27 @@ def generate_patch(
     context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
     if context:
         context_meta.update(context)
+    cluster_id: int | None = None
+    cluster_traces: list[str] = []
+    error_db = getattr(manager, "error_db", None)
+    if error_db is not None:
+        try:
+            predictor = ErrorClusterPredictor(error_db)
+            cluster_id, cluster_traces = predictor.best_cluster(prompt_path)
+            if cluster_id is not None:
+                context_meta["error_cluster_id"] = cluster_id
+        except Exception:
+            cluster_id = None
+            cluster_traces = []
+    if cluster_traces:
+        try:
+            description += "\n\n" + cluster_traces[0]
+            if extract_target_region is not None and target_region is None:
+                region = extract_target_region(cluster_traces[0])
+                if region and region.filename.endswith(prompt_path):
+                    target_region = region
+        except Exception:
+            pass
     context_block = ""
     cb_session = uuid.uuid4().hex
     context_meta["context_session_id"] = cb_session
