@@ -142,7 +142,35 @@ class DummyPipeline:
 
 
 class DummyRegistry:
+    class Graph:
+        def __init__(self) -> None:
+            self.nodes: dict[str, dict] = {}
+
+        def __contains__(self, name: str) -> bool:
+            return name in self.nodes
+
+    def __init__(self) -> None:
+        self.graph = self.Graph()
+
     def register_bot(self, name: str) -> None:
+        pass
+
+    def record_validation(self, *a, **k) -> None:
+        pass
+
+    def record_heartbeat(self, *a, **k) -> None:
+        pass
+
+    def register_interaction(self, *a, **k) -> None:
+        pass
+
+    def record_interaction_metadata(self, *a, **k) -> None:
+        pass
+
+    def update_bot(self, *a, **k) -> None:
+        pass
+
+    def hot_swap_bot(self, *a, **k) -> None:
         pass
 
 
@@ -362,6 +390,15 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
                 roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
             )
 
+        def log_evolution_cycle(self, *a, **k) -> None:
+            pass
+
+        def check_degradation(self, *_a):
+            return True
+
+        def reload_thresholds(self, _bot: str):
+            return self.get_thresholds(_bot)
+
     engine = DummyEngine()
 
     def record_patch_outcome(session_id, success, contribution=0.0):
@@ -370,6 +407,21 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
     engine.cognition_layer.record_patch_outcome = record_patch_outcome
     pipeline = DummyPipeline()
     data_bot = PredictingDataBot()
+    data_bot.check_degradation = lambda *a, **k: True
+    data_bot.record_validation = lambda *a, **k: None
+    data_bot.log_evolution_cycle = lambda *a, **k: None
+
+    class DummyQuickFix:
+        def __init__(self, *a, context_builder=None, **k):
+            self.context_builder = context_builder
+
+    monkeypatch.setattr(scm, "QuickFixEngine", DummyQuickFix)
+    monkeypatch.setattr(
+        scm,
+        "generate_patch",
+        lambda module_path, *a, **k: (1, []),
+    )
+
     mgr = scm.SelfCodingManager(
         engine,
         pipeline,
@@ -408,10 +460,263 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
             success=True, failure=None, stdout="", stderr="", duration=0.0
         ),
     )
+    monkeypatch.setattr(
+        scm.MutationLogger,
+        "record_mutation_outcome",
+        lambda *a, **k: None,
+        raising=False,
+    )
     mgr.run_patch(
         file_path, "add", context_meta={"retrieval_session_id": "sid"}
     )
-    assert engine.cognition_layer.calls == [("sid", True, pytest.approx(1.0))]
+    assert engine.cognition_layer.calls == [("sid", True, pytest.approx(0.0))]
+
+
+def test_run_patch_quick_fix_success(monkeypatch, tmp_path):
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+
+    class DummyEngine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+
+    class DummyPipeline:
+        def run(self, model: str, energy: int = 1) -> mapl.AutomationResult:
+            return mapl.AutomationResult(package=None, roi=None)
+
+    class DummyDataBot:
+        def roi(self, _bot: str) -> float:
+            return 1.0
+
+        def average_errors(self, _bot: str) -> float:
+            return 0.0
+
+        def average_test_failures(self, _bot: str) -> float:
+            return 0.0
+
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(
+                roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
+            )
+
+        def log_evolution_cycle(self, *a, **k) -> None:
+            pass
+
+        def check_degradation(self, *_a):
+            return True
+
+        def reload_thresholds(self, _bot: str):
+            return self.get_thresholds(_bot)
+        def check_degradation(self, *_a):
+            return True
+
+        def reload_thresholds(self, _bot: str):
+            return self.get_thresholds(_bot)
+
+    class DummyQuickFix:
+        def __init__(self, *a, context_builder=None, **k):
+            self.context_builder = context_builder
+
+    monkeypatch.setattr(scm, "QuickFixEngine", DummyQuickFix)
+
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+    )
+
+    file_path = tmp_path / "sample.py"  # path-ignore
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        scm.subprocess, "check_output", lambda *a, **k: b"abc123\n"
+    )
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path, **kw: types.SimpleNamespace(
+            success=True, failure=None, stdout="", stderr="", duration=0.0
+        ),
+    )
+
+    def fake_generate(module_path, *a, **k):
+        with open(module_path, "a", encoding="utf-8") as fh:
+            fh.write("# patched\n")
+        return 123, []
+
+    monkeypatch.setattr(scm, "generate_patch", fake_generate)
+
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, name: str, payload: dict) -> None:
+            events.append((name, payload))
+
+    mgr.event_bus = Bus()
+
+    records: list[tuple] = []
+    monkeypatch.setattr(
+        scm,
+        "record_patch_metadata",
+        lambda *a, **k: records.append((a, k)),
+    )
+    monkeypatch.setattr(
+        scm.MutationLogger,
+        "record_mutation_outcome",
+        lambda *a, **k: None,
+        raising=False,
+    )
+
+    mgr.run_patch(file_path, "add")
+    assert any(
+        name == "self_coding:patch_applied"
+        and payload.get("commit") == "abc123"
+        and payload.get("patch_id") == 123
+        for name, payload in events
+    )
+    assert records[0][0][0] == 123
+
+
+def test_run_patch_quick_fix_failure(monkeypatch, tmp_path):
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+
+    class DummyEngine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+
+    class DummyPipeline:
+        def run(self, model: str, energy: int = 1) -> mapl.AutomationResult:
+            return mapl.AutomationResult(package=None, roi=None)
+
+    class DummyDataBot:
+        def roi(self, _bot: str) -> float:
+            return 1.0
+
+        def average_errors(self, _bot: str) -> float:
+            return 0.0
+
+        def average_test_failures(self, _bot: str) -> float:
+            return 0.0
+
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(
+                roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
+            )
+
+        def log_evolution_cycle(self, *a, **k) -> None:
+            pass
+
+        def check_degradation(self, *_a):
+            return True
+
+        def reload_thresholds(self, _bot: str):
+            return self.get_thresholds(_bot)
+
+    class DummyQuickFix:
+        def __init__(self, *a, context_builder=None, **k):
+            self.context_builder = context_builder
+
+    monkeypatch.setattr(scm, "QuickFixEngine", DummyQuickFix)
+
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+    )
+
+    file_path = tmp_path / "sample.py"  # path-ignore
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path, **kw: types.SimpleNamespace(
+            success=True, failure=None, stdout="", stderr="", duration=0.0
+        ),
+    )
+
+    def bad_generate(module_path, *a, **k):
+        with open(module_path, "a", encoding="utf-8") as fh:
+            fh.write("# patched\n")
+        return None, ["risky"]
+
+    monkeypatch.setattr(scm, "generate_patch", bad_generate)
+
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, name: str, payload: dict) -> None:
+            events.append((name, payload))
+
+    mgr.event_bus = Bus()
+
+    rollbacks: list[str] = []
+
+    class RB:
+        def rollback(self, pid: str, requesting_bot: str | None = None) -> None:
+            rollbacks.append(pid)
+
+    monkeypatch.setattr(scm, "RollbackManager", lambda: RB())
+    monkeypatch.setattr(
+        scm.MutationLogger,
+        "record_mutation_outcome",
+        lambda *a, **k: None,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError):
+        mgr.run_patch(file_path, "add")
+    assert any(name == "bot:patch_failed" for name, _ in events)
+    assert rollbacks
 
 
 def test_registry_update_and_hot_swap(monkeypatch, tmp_path):
