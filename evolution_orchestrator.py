@@ -3,6 +3,7 @@ from __future__ import annotations
 """Orchestrate system evolution based on metrics and capital signals."""
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
 from .self_coding_thresholds import get_thresholds
 from .self_coding_manager import HelperGenerationError
+from .sandbox_settings import SandboxSettings
 try:  # pragma: no cover - optional dependency
     from . import mutation_logger as MutationLogger
 except Exception:  # pragma: no cover - best effort
@@ -346,8 +348,16 @@ class EvolutionOrchestrator:
                     return
                 # Record baseline metrics for this degradation event before patching
                 self.selfcoding_manager.register_patch_cycle(desc, event)
+                settings = getattr(self.data_bot, "settings", SandboxSettings())
+                data_dir = Path(getattr(settings, "sandbox_data_dir", "."))
+                bot_db = Path(os.getenv("BOT_DB_PATH", data_dir / "bots.db"))
+                code_db = Path(os.getenv("CODE_DB_PATH", data_dir / "code.db"))
+                error_db = Path(os.getenv("ERROR_DB_PATH", data_dir / "errors.db"))
+                workflow_db = Path(
+                    os.getenv("WORKFLOW_DB_PATH", data_dir / "workflows.db")
+                )
                 builder = ContextBuilder(
-                    "bots.db", "code.db", "errors.db", "workflows.db"
+                    str(bot_db), str(code_db), str(error_db), str(workflow_db)
                 )
                 self.selfcoding_manager.generate_and_patch(
                     module_path,
