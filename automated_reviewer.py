@@ -142,5 +142,24 @@ class AutomatedReviewer:
             except Exception:
                 self.logger.exception("escalation failed")
 
+            roi = 0.0
+            errors = 0.0
+            try:
+                roi = data_bot.roi(str(bot_id))
+            except Exception:
+                self.logger.exception("failed to fetch ROI for %s", bot_id)
+            try:
+                errors = data_bot.average_errors(str(bot_id))
+            except Exception:
+                self.logger.exception("failed to fetch errors for %s", bot_id)
+            try:
+                data_bot.record_metrics(str(bot_id), float(roi), float(errors))
+            except Exception:
+                self.logger.exception("failed to record metrics for %s", bot_id)
+            try:
+                data_bot.check_degradation(str(bot_id), float(roi), float(errors))
+            except Exception:
+                self.logger.exception("degradation check failed for %s", bot_id)
+
 
 __all__ = ["AutomatedReviewer"]
