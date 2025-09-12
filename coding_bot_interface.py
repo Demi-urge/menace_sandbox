@@ -182,11 +182,17 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                         evolution_manager=evol_mgr,
                         selfcoding_manager=manager,
                     )
-                    self.evolution_orchestrator = orchestrator
                 except Exception as exc:  # pragma: no cover - optional dependency
                     raise RuntimeError(
                         f"{cls.__name__}: EvolutionOrchestrator is required but could not be instantiated"
                     ) from exc
+
+            if orchestrator is not None:
+                self.evolution_orchestrator = orchestrator
+                try:
+                    manager.evolution_orchestrator = orchestrator
+                except Exception:
+                    pass
             if getattr(manager, "quick_fix", None) is None:
                 try:
                     from .quick_fix_engine import QuickFixEngine  # type: ignore

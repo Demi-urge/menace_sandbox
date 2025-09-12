@@ -12,6 +12,9 @@ def _setup_module(tmp_path, monkeypatch):
     sc_engine_mod = types.ModuleType("menace.self_coding_engine")
     sc_engine_mod.MANAGER_CONTEXT = None
     sys.modules["menace.self_coding_engine"] = sc_engine_mod
+    cbi = types.ModuleType("menace.coding_bot_interface")
+    cbi.self_coding_managed = lambda *a, **k: (lambda cls: cls)
+    sys.modules["menace.coding_bot_interface"] = cbi
 
     monkeypatch.syspath_prepend(tmp_path)
     mod_path = tmp_path / "dummy_module.py"
@@ -39,7 +42,7 @@ def _setup_module(tmp_path, monkeypatch):
 
         def __init__(self):
             self.event_bus = bus
-            self.generate_called = False
+            self.patch_called = False
             import networkx as nx
             g = nx.DiGraph()
             g.add_node("dummy_module", module=str(mod_path))
@@ -51,9 +54,11 @@ def _setup_module(tmp_path, monkeypatch):
         def register_patch_cycle(self, *a, **k):
             pass
 
-        def generate_and_patch(self, *a, **k):
-            self.generate_called = True
-            return None, None
+        def run_patch(self, *a, **k):
+            self.patch_called = True
+            self._last_patch_id = 123
+            self._last_commit_hash = "deadbeef"
+            return None
 
     class History:
         def __init__(self):
@@ -117,7 +122,7 @@ def test_low_confidence_skips_patch(tmp_path, monkeypatch):
         }
     )
 
-    assert not manager.generate_called
+    assert not manager.patch_called
     assert ("bot:patch_skipped", {"bot": "dummy_module", "reason": "confidence"}) in bus.events
     event = history.events[-1]
     assert event.action == "skip"
@@ -168,7 +173,7 @@ def test_high_confidence_triggers_patch(tmp_path, monkeypatch):
         }
     )
 
-    assert manager.generate_called
+    assert manager.patch_called
     assert any(t == "bot:patch_failed" and p.get("bot") == "dummy_module" for t, p in bus.events)
     event = history.events[-1]
     assert event.action == "patch_failed"

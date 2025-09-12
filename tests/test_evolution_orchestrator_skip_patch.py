@@ -12,6 +12,9 @@ def test_degraded_bot_skips_when_thresholds_not_met(tmp_path):
     sc_engine_mod = types.ModuleType("menace.self_coding_engine")
     sc_engine_mod.MANAGER_CONTEXT = None
     sys.modules["menace.self_coding_engine"] = sc_engine_mod
+    cbi = types.ModuleType("menace.coding_bot_interface")
+    cbi.self_coding_managed = lambda *a, **k: (lambda cls: cls)
+    sys.modules["menace.coding_bot_interface"] = cbi
 
     # Import after stubbing
     from menace.evolution_orchestrator import EvolutionOrchestrator
@@ -36,9 +39,9 @@ def test_degraded_bot_skips_when_thresholds_not_met(tmp_path):
         def register_patch_cycle(self, *a, **k):
             self.register_called = True
 
-        def generate_and_patch(self, *a, **k):
+        def run_patch(self, *a, **k):
             self.patch_called = True
-            return None, None
+            return None
 
     data_bot = types.SimpleNamespace(
         db=types.SimpleNamespace(fetch=lambda limit=50: []),

@@ -40,20 +40,28 @@ class SelfCodingManager:
         self.bot_name = kwargs.get("bot_name", "")
         self.bot_registry = kwargs.get("bot_registry")
         self.called = False
+        module_path = kwargs.get("module_path")
+        if self.bot_registry:
+            self.bot_registry.register_bot(self.bot_name)
+            if module_path:
+                try:
+                    self.bot_registry.graph.nodes[self.bot_name]["module"] = str(module_path)
+                except Exception:
+                    pass
         self.event_bus = kwargs.get("event_bus")
         self._last_patch_id = None
         if self.bot_registry:
             self.bot_registry.register_bot(self.bot_name)
 
-    def generate_and_patch(
+    def run_patch(
         self, path: Path, description: str, *, context_meta=None, context_builder=None
     ):
         self.called = True
-        passed, patch_id = self.quick_fix.apply_validated_patch(
+        self.quick_fix.apply_validated_patch(
             str(path), description, context_meta or {}
         )
-        self._last_patch_id = patch_id
-        return None, "deadbeef"
+        self._last_patch_id = 123
+        self._last_commit_hash = "deadbeef"
 
     def register_patch_cycle(self, description, context_meta=None):  # noqa: D401,D403
         """Publish registration event for assertions."""
@@ -155,6 +163,16 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
 
     data_bot = DataBot(MetricsDB(tmp_path / "metrics.db"), event_bus=bus)
     registry = BotRegistry(event_bus=bus)
+    calls: list[str] = []
+
+    def fake_update_bot(name, module_path, patch_id=None, commit=None):
+        calls.append(module_path)
+        registry.graph.add_node(name)
+        registry.graph.nodes[name]["module"] = module_path
+        registry.graph.nodes[name]["patch_id"] = patch_id
+        registry.graph.nodes[name]["commit"] = commit
+
+    monkeypatch.setattr(registry, "update_bot", fake_update_bot)
 
     quick_fix = DummyQuickFix()
 
@@ -163,6 +181,7 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
         bot_name="dummy_module",
         bot_registry=registry,
         event_bus=bus,
+        module_path=mod_path,
     )
 
     EvolutionOrchestrator(
@@ -187,7 +206,7 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
 
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
-    assert "bot:patch_failed" in topics
+    assert "bot:patched" in topics
 
 
 def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
@@ -214,6 +233,7 @@ def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
         bot_name="dummy_module",
         bot_registry=registry,
         event_bus=bus,
+        module_path=mod_path,
     )
 
     calls: list[str] = []
@@ -243,7 +263,7 @@ def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
 
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
-    assert "bot:patch_failed" in topics
+    assert "bot:patched" in topics
 
 
 def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
@@ -290,6 +310,7 @@ def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
         bot_name="dummy_module",
         bot_registry=registry,
         event_bus=bus,
+        module_path=mod_path,
     )
 
     orch = EvolutionOrchestrator(
@@ -316,4 +337,4 @@ def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
     assert quick_fix.calls
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
-    assert "bot:patch_failed" in topics
+    assert "bot:patched" in topics

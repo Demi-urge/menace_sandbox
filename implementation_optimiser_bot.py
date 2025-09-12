@@ -53,6 +53,9 @@ class ImplementationOptimiserBot:
             try:
                 name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
                 self.manager.register_bot(name)
+                orch = getattr(self.manager, "evolution_orchestrator", None)
+                if orch:
+                    orch.register_bot(name)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("bot registration failed")
         try:
