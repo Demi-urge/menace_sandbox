@@ -399,12 +399,31 @@ class SelfCodingManager:
         failures = self.data_bot.average_test_failures(self.bot_name)
 
         # Record metrics in the manager's tracker so rolling statistics can be
-        # used to derive dynamic thresholds for this bot.
+        # used to derive predictions for this bot.
         self.baseline_tracker.update(roi=roi, errors=errors, tests_failed=failures)
+
+        def _forecast(metric: str) -> float:
+            """Predict the next value using simple linear projection."""
+
+            hist = self.baseline_tracker.to_dict().get(metric, [])
+            n = len(hist)
+            if n < 2:
+                return hist[0] if n == 1 else 0.0
+            mean_x = (n - 1) / 2.0
+            mean_y = sum(hist) / n
+            denom = sum((i - mean_x) ** 2 for i in range(n)) or 1.0
+            slope = sum((i - mean_x) * (y - mean_y) for i, y in enumerate(hist)) / denom
+            intercept = mean_y - slope * mean_x
+            return slope * n + intercept
+
+        pred_roi = _forecast("roi")
+        pred_err = _forecast("errors")
+        pred_fail = _forecast("tests_failed")
+
         sens = getattr(self.data_bot, "anomaly_sensitivity", 1.0)
-        roi_thresh = -self.baseline_tracker.std("roi") * sens
-        err_thresh = self.baseline_tracker.std("errors") * sens
-        fail_thresh = self.baseline_tracker.std("tests_failed") * sens
+        roi_thresh = (pred_roi - roi) * sens
+        err_thresh = (pred_err - errors) * sens
+        fail_thresh = (pred_fail - failures) * sens
 
         # Persist the dynamically calculated thresholds so ``DataBot`` and other
         # components share a consistent view.

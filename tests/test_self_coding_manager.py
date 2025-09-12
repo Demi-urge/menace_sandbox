@@ -101,7 +101,10 @@ sys.modules.setdefault("menace.sandbox_runner.test_harness", th_stub)
 code_db_stub = types.ModuleType("menace.code_database")
 class PatchRecord:
     pass
+class PatchHistoryDB:
+    pass
 code_db_stub.PatchRecord = PatchRecord
+code_db_stub.PatchHistoryDB = PatchHistoryDB
 sys.modules["menace.code_database"] = code_db_stub
 sys.modules["code_database"] = code_db_stub
 import menace.self_coding_manager as scm
@@ -366,7 +369,7 @@ def test_run_patch_records_patch_outcome(monkeypatch, tmp_path):
 
     engine.cognition_layer.record_patch_outcome = record_patch_outcome
     pipeline = DummyPipeline()
-    data_bot = DummyDataBot()
+    data_bot = PredictingDataBot()
     mgr = scm.SelfCodingManager(
         engine,
         pipeline,
@@ -497,19 +500,128 @@ def test_should_refactor_on_test_failures_only(monkeypatch):
                 roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
             )
 
-    data_bot = DummyDataBot()
+    data_bot = PredictingDataBot()
     mgr = scm.SelfCodingManager(
         DummyEngine(),
         DummyPipeline(),
         bot_name="bot",
         data_bot=data_bot,
         bot_registry=DummyRegistry(),
+        quick_fix=object(),
     )
     mgr._last_errors = data_bot.average_errors("bot")
     assert not mgr.should_refactor()
     data_bot.failures = 5
     assert mgr.should_refactor()
 
+
+class PredictingDataBot:
+    def __init__(self) -> None:
+        self.thresholds = types.SimpleNamespace(
+            roi_drop=0.0, error_threshold=0.0, test_failure_threshold=0.0
+        )
+        self.current_roi = 1.0
+        self.current_err = 3.0
+        self.current_fail = 2.0
+        self.anomaly_sensitivity = 1.0
+        self.confidence = 0.1
+
+    def roi(self, _bot: str) -> float:
+        return self.current_roi
+
+    def average_errors(self, _bot: str) -> float:
+        return self.current_err
+
+    def average_test_failures(self, _bot: str) -> float:
+        return self.current_fail
+
+    def get_thresholds(self, _bot: str):
+        return self.thresholds
+
+    def reload_thresholds(self, _bot: str):  # pragma: no cover - simple stub
+        return self.thresholds
+
+    def update_thresholds(
+        self,
+        _bot: str,
+        *,
+        roi_drop: float | None = None,
+        error_threshold: float | None = None,
+        test_failure_threshold: float | None = None,
+    ) -> None:
+        self.thresholds = types.SimpleNamespace(
+            roi_drop=roi_drop,
+            error_threshold=error_threshold,
+            test_failure_threshold=test_failure_threshold,
+        )
+
+    def check_degradation(
+        self, _bot: str, _roi: float, _errors: float, _failures: float
+    ) -> bool:
+        t = self.thresholds
+        conf = self.confidence
+        return (t.roi_drop or 0.0) < -conf or (t.error_threshold or 0.0) > conf or (
+            t.test_failure_threshold or 0.0
+        ) > conf
+
+
+def test_should_refactor_with_negative_prediction(monkeypatch):
+    class DummyEngine:
+        def __init__(self) -> None:
+            builder = types.SimpleNamespace(
+                refresh_db_weights=lambda: None, session_id=""
+            )
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+            self.patch_suggestion_db = None
+
+    class DummyPipeline:
+        pass
+
+    data_bot = PredictingDataBot()
+    mgr = scm.SelfCodingManager(
+        DummyEngine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=data_bot,
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+    )
+    mgr.baseline_tracker.update(roi=3.0, errors=1.0, tests_failed=0.0)
+    mgr.baseline_tracker.update(roi=2.0, errors=2.0, tests_failed=1.0)
+    assert mgr.should_refactor()
+    assert data_bot.thresholds.roi_drop < 0.0
+    assert data_bot.thresholds.error_threshold > 0.0
+    assert data_bot.thresholds.test_failure_threshold > 0.0
+
+
+def test_should_refactor_ignores_positive_prediction(monkeypatch):
+    class DummyEngine:
+        def __init__(self) -> None:
+            builder = types.SimpleNamespace(
+                refresh_db_weights=lambda: None, session_id=""
+            )
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+            self.patch_suggestion_db = None
+
+    class DummyPipeline:
+        pass
+
+    data_bot = PredictingDataBot()
+    mgr = scm.SelfCodingManager(
+        DummyEngine(),
+        DummyPipeline(),
+        bot_name="bot",
+        data_bot=data_bot,
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+    )
+    # Positive ROI and stable errors/failures should not trigger refactor
+    mgr.baseline_tracker.update(roi=1.0, errors=1.0, tests_failed=0.0)
+    mgr.baseline_tracker.update(roi=2.0, errors=0.5, tests_failed=0.0)
+    data_bot.current_roi = 3.0
+    data_bot.current_err = 0.4
+    data_bot.current_fail = 0.0
+    assert not mgr.should_refactor()
 
 def test_init_requires_helpers():
     engine = DummyEngine()
