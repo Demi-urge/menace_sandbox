@@ -80,6 +80,7 @@ class EvolutionOrchestrator:
         event_bus: UnifiedEventBus | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
         roi_gain_floor: float = 0.0,
+        roi_confidence_floor: float = 0.0,
         dataset_path: str | Path = "roi_eval_dataset.csv",
         retrain_interval: int = 10,
     ) -> None:
@@ -108,6 +109,7 @@ class EvolutionOrchestrator:
         self.event_bus = event_bus
         self.roi_predictor = roi_predictor
         self.roi_gain_floor = float(roi_gain_floor)
+        self.roi_confidence_floor = float(roi_confidence_floor)
         self.dataset_path = Path(dataset_path)
         self.retrain_interval = retrain_interval
         if self.capital_bot and getattr(self.capital_bot, "trend_predictor", None) is None:
@@ -279,33 +281,50 @@ class EvolutionOrchestrator:
             )
             predicted_roi = current_roi
             predicted_gain = 0.0
+            confidence = 0.0
+            horizon = 3
             if self.roi_predictor or self.trend_predictor:
                 try:
                     if self.roi_predictor:
-                        seq, _, _, _ = self.roi_predictor.predict(
-                            [[current_roi, current_err]], horizon=1
+                        features = [[current_roi, current_err]] * horizon
+                        seq, _, confs, _ = self.roi_predictor.predict(
+                            features, horizon=horizon
                         )
                         if seq:
                             last = seq[-1]
-                            if isinstance(last, (list, tuple)):
-                                predicted_roi = float(last[-1])
-                            else:
-                                predicted_roi = float(last)
+                            predicted_roi = float(
+                                last[-1] if isinstance(last, (list, tuple)) else last
+                            )
+                        if confs:
+                            c_last = confs[-1]
+                            confidence = float(
+                                c_last[-1] if isinstance(c_last, (list, tuple)) else c_last
+                            )
                     elif self.trend_predictor:
-                        pred = self.trend_predictor.predict_future_metrics(1)
-                        predicted_roi = float(getattr(pred, "roi", current_roi))
+                        pred = self.trend_predictor.predict_future_metrics(horizon)
+                        final = pred[-1] if isinstance(pred, (list, tuple)) else pred
+                        predicted_roi = float(getattr(final, "roi", current_roi))
+                        confidence = float(
+                            getattr(final, "confidence", getattr(final, "roi_confidence", 1.0))
+                        )
                     predicted_gain = predicted_roi - current_roi
                 except Exception:
                     self.logger.exception("roi prediction failed for %s", bot)
-            decision = "skip" if predicted_gain < self.roi_gain_floor else "proceed"
+            decision = (
+                "patch"
+                if predicted_gain >= self.roi_gain_floor
+                and confidence >= self.roi_confidence_floor
+                else "skip"
+            )
             try:
                 self.history.add(
                     EvolutionEvent(
-                        action="roi_prediction",
+                        action=decision,
                         before_metric=current_roi,
                         after_metric=predicted_roi,
                         roi=predicted_gain,
                         predicted_roi=predicted_roi,
+                        confidence=confidence,
                         reason=decision,
                         trigger="degradation",
                         performance=predicted_gain,
@@ -313,16 +332,16 @@ class EvolutionOrchestrator:
                 )
             except Exception:
                 self.logger.exception("failed to record roi prediction")
-            if predicted_gain < self.roi_gain_floor:
+            if decision == "skip":
+                reason = "roi_prediction" if predicted_gain < self.roi_gain_floor else "confidence"
                 self.logger.info(
-                    "patch_skip_low_roi_prediction",
-                    extra={"bot": bot, "predicted_gain": predicted_gain},
+                    "patch_skip_%s", reason, extra={"bot": bot, "predicted_gain": predicted_gain, "confidence": confidence}
                 )
                 if bus:
                     try:
                         bus.publish(
                             "bot:patch_skipped",
-                            {"bot": bot, "reason": "roi_prediction"},
+                            {"bot": bot, "reason": reason},
                         )
                     except Exception:
                         self.logger.exception(

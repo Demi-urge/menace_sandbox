@@ -20,6 +20,7 @@ class EvolutionEvent:
     after_metric: float
     roi: float
     predicted_roi: float = 0.0
+    confidence: float = 0.0
     efficiency: float = 0.0
     bottleneck: float = 0.0
     patch_id: int | None = None
@@ -71,6 +72,7 @@ class EvolutionHistoryDB:
                 after_metric REAL,
                 roi REAL,
                 predicted_roi REAL DEFAULT 0,
+                confidence REAL DEFAULT 0,
                 efficiency REAL DEFAULT 0,
                 bottleneck REAL DEFAULT 0,
                 patch_id INTEGER,
@@ -103,6 +105,10 @@ class EvolutionHistoryDB:
         if "predicted_roi" not in cols:
             self.conn.execute(
                 "ALTER TABLE evolution_history ADD COLUMN predicted_roi REAL DEFAULT 0"
+            )
+        if "confidence" not in cols:
+            self.conn.execute(
+                "ALTER TABLE evolution_history ADD COLUMN confidence REAL DEFAULT 0"
             )
         if "patch_id" not in cols:
             self.conn.execute("ALTER TABLE evolution_history ADD COLUMN patch_id INTEGER")
@@ -182,9 +188,9 @@ class EvolutionHistoryDB:
         cur = self.conn.execute(
             "INSERT INTO evolution_history("
             "source_menace_id, action, before_metric, after_metric, roi, "
-            "predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, "
+            "predicted_roi, confidence, efficiency, bottleneck, patch_id, workflow_id, ts, "
             'trending_topic, reason, "trigger", performance, parent_event_id, '
-            "predicted_class, actual_class) VALUES(" + ",".join("?" for _ in range(18)) + ")",
+            "predicted_class, actual_class) VALUES(" + ",".join("?" for _ in range(19)) + ")",
             (
                 menace_id,
                 event.action,
@@ -192,6 +198,7 @@ class EvolutionHistoryDB:
                 event.after_metric,
                 event.roi,
                 event.predicted_roi,
+                event.confidence,
                 event.efficiency,
                 event.bottleneck,
                 event.patch_id,

@@ -2,7 +2,7 @@ import importlib
 import types
 
 
-def test_low_predicted_roi_skips_patch(tmp_path, monkeypatch):
+def _setup_module(tmp_path, monkeypatch):
     scm_mod = types.ModuleType("menace.self_coding_manager")
     HelperGenerationError = type("HelperGenerationError", (Exception,), {})
     scm_mod.HelperGenerationError = HelperGenerationError
@@ -57,13 +57,6 @@ def test_low_predicted_roi_skips_patch(tmp_path, monkeypatch):
         def add(self, event):
             self.events.append(event)
 
-    class LowROIPredictor:
-        def predict(self, X, horizon=1):
-            current_roi = X[0][0]
-            seq = [[current_roi - 0.1] for _ in range(horizon)]
-            conf = [[0.9] for _ in range(horizon)]
-            return seq, "", conf, None
-
     data_bot = types.SimpleNamespace(
         db=types.SimpleNamespace(fetch=lambda limit=50: []),
         subscribe_degradation=lambda cb: None,
@@ -71,6 +64,19 @@ def test_low_predicted_roi_skips_patch(tmp_path, monkeypatch):
     cap_bot = types.SimpleNamespace(energy_score=lambda **k: 1.0)
     improver = types.SimpleNamespace()
     evolver = types.SimpleNamespace()
+
+    return bus, Manager, History, data_bot, cap_bot, improver, evolver
+
+
+def test_low_confidence_skips_patch(tmp_path, monkeypatch):
+    bus, Manager, History, data_bot, cap_bot, improver, evolver = _setup_module(tmp_path, monkeypatch)
+
+    class LowConfidencePredictor:
+        def predict(self, X, horizon=1):
+            current_roi = X[0][0]
+            seq = [[current_roi + 1.0] for _ in range(horizon)]
+            conf = [[0.1] for _ in range(horizon)]
+            return seq, "", conf, None
 
     from menace.evolution_orchestrator import EvolutionOrchestrator
 
@@ -85,15 +91,16 @@ def test_low_predicted_roi_skips_patch(tmp_path, monkeypatch):
         history_db=history,
         selfcoding_manager=manager,
         event_bus=bus,
-        roi_predictor=LowROIPredictor(),
-        roi_confidence_floor=0.0,
+        roi_predictor=LowConfidencePredictor(),
+        roi_gain_floor=0.1,
+        roi_confidence_floor=0.5,
     )
 
     orch._on_bot_degraded(
         {
             "bot": "dummy_module",
             "roi_baseline": 1.0,
-            "delta_roi": -1.0,
+            "delta_roi": -0.1,
             "errors_baseline": 0.0,
             "delta_errors": 0.0,
             "error_threshold": 0.0,
@@ -104,8 +111,56 @@ def test_low_predicted_roi_skips_patch(tmp_path, monkeypatch):
     )
 
     assert not manager.generate_called
-    assert ("bot:patch_skipped", {"bot": "dummy_module", "reason": "roi_prediction"}) in bus.events
-    assert history.events
+    assert ("bot:patch_skipped", {"bot": "dummy_module", "reason": "confidence"}) in bus.events
     event = history.events[-1]
-    assert event.reason == "skip"
-    assert event.roi < 0
+    assert event.action == "skip"
+    assert event.confidence == 0.1
+
+
+def test_high_confidence_triggers_patch(tmp_path, monkeypatch):
+    bus, Manager, History, data_bot, cap_bot, improver, evolver = _setup_module(tmp_path, monkeypatch)
+
+    class HighConfidencePredictor:
+        def predict(self, X, horizon=1):
+            current_roi = X[0][0]
+            seq = [[current_roi + 1.0] for _ in range(horizon)]
+            conf = [[0.9] for _ in range(horizon)]
+            return seq, "", conf, None
+
+    from menace.evolution_orchestrator import EvolutionOrchestrator
+
+    history = History()
+    manager = Manager()
+
+    orch = EvolutionOrchestrator(
+        data_bot,
+        cap_bot,
+        improver,
+        evolver,
+        history_db=history,
+        selfcoding_manager=manager,
+        event_bus=bus,
+        roi_predictor=HighConfidencePredictor(),
+        roi_gain_floor=0.1,
+        roi_confidence_floor=0.5,
+    )
+
+    orch._on_bot_degraded(
+        {
+            "bot": "dummy_module",
+            "roi_baseline": 1.0,
+            "delta_roi": -0.1,
+            "errors_baseline": 0.0,
+            "delta_errors": 0.0,
+            "error_threshold": 0.0,
+            "roi_threshold": -0.1,
+            "test_failures": 0.0,
+            "test_failure_threshold": 0.0,
+        }
+    )
+
+    assert manager.generate_called
+    assert ("bot:hot_swapped", {"bot": "dummy_module"}) in bus.events
+    event = history.events[-1]
+    assert event.action == "patch"
+    assert event.confidence == 0.9
