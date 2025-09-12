@@ -37,6 +37,10 @@ def test_threshold_event_published(monkeypatch, tmp_path):
     assert events[0]["roi_breach"] and events[0]["error_breach"]
     assert not events[0]["test_failure_breach"]
     assert degraded and degraded[0]["roi_breach"]
+    # Degradation events provide summary metrics for downstream consumers
+    assert "roi_drop" in degraded[0]
+    assert "error_rate" in degraded[0]
+    assert "tests_failed" in degraded[0]
 
 
 def test_check_degradation_callback(monkeypatch, tmp_path):

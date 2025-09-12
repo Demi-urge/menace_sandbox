@@ -1550,6 +1550,15 @@ class DataBot:
             "error_breach": delta_err >= err_thresh,
             "test_failure_breach": delta_fail > fail_thresh,
         }
+        # Provide a concise summary for consumers that only require high-level
+        # degradation indicators.
+        event.update(
+            {
+                "roi_drop": delta_roi,
+                "error_rate": errors,
+                "tests_failed": test_failures,
+            }
+        )
         self.logger.info("degradation metrics: %s", event)
         alpha = self.smoothing_factor
         ema["roi"] = alpha * roi + (1.0 - alpha) * avg_roi

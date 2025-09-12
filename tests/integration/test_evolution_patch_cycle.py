@@ -24,14 +24,18 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     sys.modules["alert_dispatcher"] = alert_mod
 
     ueb = types.ModuleType("unified_event_bus")
+
     class UnifiedEventBus:
         def __init__(self):
             self.subs = {}
+
         def subscribe(self, topic, fn):
             self.subs.setdefault(topic, []).append(fn)
+
         def publish(self, topic, payload):
             for fn in self.subs.get(topic, []):
                 fn(topic, payload)
+
     ueb.UnifiedEventBus = UnifiedEventBus
     sys.modules["unified_event_bus"] = ueb
 
@@ -39,9 +43,19 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     cbi.self_coding_managed = lambda f: f
     sys.modules["menace.coding_bot_interface"] = cbi
 
+    metrics_exporter = types.ModuleType("metrics_exporter")
+    metrics_exporter.update_relevancy_metrics = lambda *a, **k: None
+    metrics_exporter.Gauge = type("_G", (), {"__call__": lambda self, *a, **k: None})
+    sys.modules["metrics_exporter"] = metrics_exporter
+    rmdb = types.ModuleType("relevancy_metrics_db")
+    rmdb.RelevancyMetricsDB = object
+    sys.modules["relevancy_metrics_db"] = rmdb
+
     scm_stub = types.ModuleType("menace.self_coding_manager")
+
     class HelperGenerationError(RuntimeError):
         pass
+
     scm_stub.HelperGenerationError = HelperGenerationError
     sys.modules["menace.self_coding_manager"] = scm_stub
 
@@ -57,12 +71,15 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     EvolutionTrigger = eo_mod.EvolutionTrigger
 
     created_builders = []
+
     class DummyContextBuilder:
         def __init__(self):
             self.built = False
             created_builders.append(self)
+
         def refresh_db_weights(self):
             pass
+
         def build(self, description, session_id=None, include_vectors=False):
             self.built = True
             return "", "", []
@@ -74,8 +91,10 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
         def __init__(self):
             self.subs = {}
             self.events = []
+
         def subscribe(self, topic, fn):
             self.subs.setdefault(topic, []).append(fn)
+
         def publish(self, topic, payload):
             self.events.append((topic, payload))
             for fn in self.subs.get(topic, []):
@@ -86,8 +105,10 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
         def __init__(self, event_bus):
             self.event_bus = event_bus
             self.cb = None
+
         def subscribe_degradation(self, cb):
             self.cb = cb
+
         def check_degradation(self, bot, roi, errors, test_failures=0.0):
             if errors > 1.0:
                 event = {"bot": bot, "roi": roi, "errors": errors}
@@ -97,8 +118,10 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
                     self.cb(event)
                 return True
             return False
+
         def roi(self, bot):
             return 0.0
+
         def average_errors(self, bot):
             return 0.0
 
@@ -112,10 +135,12 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
             self.event_bus = event_bus
             self.graph = DummyGraph()
             self.updated = None
+
         def register_bot(self, name, module=None):
             self.graph[name] = {"module": module}
             if self.event_bus:
                 self.event_bus.publish("bot:registered", {"bot": name})
+
         def update_bot(self, name, module, patch_id=None, commit=None):
             self.updated = (name, module, patch_id, commit)
             self.graph[name] = {"module": module, "patch_id": patch_id, "commit": commit}
@@ -123,9 +148,11 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     class DummyQuickFix:
         def __init__(self):
             self.validated = []
+
         def validate_patch(self, module_path, code):
             self.validated.append((module_path, code))
             return True
+
         def apply_patch(self, module_path, code):
             return 123
 
@@ -133,6 +160,7 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
         def __init__(self):
             self.cognition_layer = types.SimpleNamespace(context_builder=None)
             self.called_builder = None
+
         def generate_helper(self, desc, **kwargs):
             self.called_builder = self.cognition_layer.context_builder
             return "helper"
@@ -148,6 +176,8 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
             self.cycle_registered = False
             self._last_patch_id = None
             self.bot_registry.register_bot(bot_name, module=str(mod_path))
+            self.run_patch_called = False
+
         def register_patch_cycle(self, description, context_meta=None):
             self.cycle_registered = True
             if self.event_bus:
@@ -155,8 +185,14 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
                     "self_coding:cycle_registered",
                     {"bot": self.bot_name, "description": description},
                 )
+
         def should_refactor(self):
             return True
+
+        def run_patch(self, path, description, *, context_meta=None, context_builder=None):
+            self.run_patch_called = True
+            return None, "deadbeef"
+
         def generate_and_patch(self, path, description, *, context_meta=None, context_builder=None):
             context_builder.build(description)
             self.engine.cognition_layer.context_builder = context_builder
@@ -164,15 +200,25 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
             self.quick_fix.validate_patch(str(path), code)
             patch_id = self.quick_fix.apply_patch(str(path), code)
             self._last_patch_id = patch_id
-            self.bot_registry.update_bot(self.bot_name, str(path), patch_id=patch_id, commit="deadbeef")
-            return None, "deadbeef"
+            self.bot_registry.update_bot(
+                self.bot_name, str(path), patch_id=patch_id, commit="deadbeef"
+            )
+            return self.run_patch(
+                path,
+                description,
+                context_meta=context_meta,
+                context_builder=context_builder,
+            )
 
     class DummyCapital:
         pass
+
     class DummyImprovement:
         pass
+
     class DummyEvolution:
         pass
+
     class DummyHistoryDB:
         def add(self, *a, **k):
             pass
@@ -183,7 +229,7 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     quick_fix = DummyQuickFix()
     manager = SelfCodingManager(engine, quick_fix, registry, data_bot, "dummy_bot", bus)
 
-    orch = EvolutionOrchestrator(
+    _ = EvolutionOrchestrator(
         data_bot,
         DummyCapital(),
         DummyImprovement(),
@@ -202,3 +248,4 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     assert quick_fix.validated
     assert registry.updated == ("dummy_bot", str(mod_path), 123, "deadbeef")
     assert len(created_builders) == 1 and created_builders[0].built
+    assert manager.run_patch_called
