@@ -71,6 +71,16 @@ class AutomatedReviewer:
         self.escalation_manager = escalation_manager
         self.logger = logging.getLogger(self.__class__.__name__)
         self.manager = manager
+        evo = getattr(self.manager, "evolution_orchestrator", None)
+        if evo:
+            try:  # pragma: no cover - best effort registration
+                evo.register_bot(self.manager.bot_name)
+            except Exception:
+                self.logger.exception("evolution orchestrator registration failed")
+            try:  # pragma: no cover - best effort subscription
+                evo._ensure_degradation_subscription()
+            except Exception:
+                self.logger.exception("failed to subscribe to degradation events")
         if context_builder is None:
             raise ValueError("context_builder is required")
         if not hasattr(context_builder, "build"):
