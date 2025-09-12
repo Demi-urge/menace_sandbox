@@ -7,9 +7,14 @@ from typing import Optional
 
 from typing import TYPE_CHECKING
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+from .coding_bot_interface import self_coding_managed
+
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
     from .bot_database import BotDB
+    from .self_coding_manager import SelfCodingManager
 
 # ``vector_service`` is required.  Fail fast if the import is unavailable.
 try:  # pragma: no cover - optional dependency used in runtime
@@ -36,14 +41,23 @@ from snippet_compressor import compress_snippets
 from context_builder_util import ensure_fresh_weights
 
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
+
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class AutomatedReviewer:
     """Analyse review events and trigger remediation."""
+
+    manager: "SelfCodingManager | None" = None
 
     def __init__(
         self,
         context_builder: ContextBuilder,
         bot_db: "BotDB" | None = None,
         escalation_manager: "AutoEscalationManager" | None = None,
+        *,
+        manager: "SelfCodingManager",
     ) -> None:
         if bot_db is None:
             from .bot_database import BotDB
@@ -56,6 +70,7 @@ class AutomatedReviewer:
             escalation_manager = AutoEscalationManager(context_builder=context_builder)
         self.escalation_manager = escalation_manager
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.manager = manager
         if context_builder is None:
             raise ValueError("context_builder is required")
         if not hasattr(context_builder, "build"):
@@ -110,6 +125,13 @@ class AutomatedReviewer:
             except Exception:
                 ctx = ""
                 vectors = []
+            try:
+                self.manager.manager_generate_helper(
+                    f"review for bot {bot_id}",
+                    context_builder=self.context_builder,
+                )
+            except Exception:
+                self.logger.exception("helper generation failed")
             try:
                 self.escalation_manager.handle(
                     f"review for bot {bot_id}",
