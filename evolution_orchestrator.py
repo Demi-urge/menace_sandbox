@@ -287,15 +287,10 @@ class EvolutionOrchestrator:
                         "failed to log degradation cycle for %s", bot
                     )
 
-            degraded_path = module_path
-            context_meta = {
-                "delta_roi": event.get("delta_roi"),
-                "delta_errors": event.get("delta_errors"),
-                "roi_threshold": event.get("roi_threshold"),
-                "error_threshold": event.get("error_threshold"),
-                "test_failures": event.get("test_failures"),
-                "test_failure_threshold": event.get("test_failure_threshold"),
-            }
+            # Capture all supplied metadata so downstream consumers like
+            # ``SelfCodingManager`` receive the complete context for this
+            # degradation event.
+            context_meta = dict(event)
             desc = f"auto_patch_due_to_degradation:{bot}"
             current_roi = after_roi
             current_err = float(event.get("errors_baseline", 0.0)) + delta_errors
@@ -392,7 +387,7 @@ class EvolutionOrchestrator:
                             )
                     return
                 # Record baseline metrics for this degradation event before patching
-                self.selfcoding_manager.register_patch_cycle(desc, event)
+                self.selfcoding_manager.register_patch_cycle(desc, context_meta)
                 settings = getattr(self.data_bot, "settings", SandboxSettings())
                 data_dir = Path(getattr(settings, "sandbox_data_dir", "."))
                 os.environ["SANDBOX_DATA_DIR"] = str(data_dir)
