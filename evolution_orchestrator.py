@@ -459,6 +459,7 @@ class EvolutionOrchestrator:
                     "roi_threshold": self.triggers.roi_drop,
                     "error_threshold": self.triggers.error_rate,
                 }
+                self.selfcoding_manager.register_patch_cycle(reason, meta)
                 self.selfcoding_manager.run_patch(
                     path, reason, context_meta=meta
                 )
