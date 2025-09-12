@@ -32,7 +32,14 @@ Example ``self_coding_thresholds.yaml``::
 
 from __future__ import annotations
 
-from .coding_bot_interface import self_coding_managed
+# ``self_coding_managed`` is optional during import to allow lightweight tests
+# that do not provide the full self-coding stack.  When unavailable the
+# decorator becomes a no-op.
+try:  # pragma: no cover - allow tests to stub missing dependencies
+    from .coding_bot_interface import self_coding_managed
+except Exception:  # pragma: no cover
+    def self_coding_managed(cls):  # type: ignore[override]
+        return cls
 # flake8: noqa
 import sqlite3
 import os
@@ -991,6 +998,8 @@ class DataBot:
         degradation_callback: Callable[[dict], None] | None = None,
         baseline_window: int | None = None,
         anomaly_sensitivity: float | None = None,
+        smoothing_factor: float | None = None,
+        trend_predictor: "TrendPredictor" | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
@@ -1018,7 +1027,21 @@ class DataBot:
             if anomaly_sensitivity is not None
             else getattr(self.settings, "anomaly_sensitivity", 1.0)
         )
+        self.smoothing_factor = (
+            smoothing_factor
+            if smoothing_factor is not None
+            else getattr(self.settings, "smoothing_factor", 0.1)
+        )
+        self.trend_predictor = trend_predictor
+        if self.trend_predictor is None:
+            try:  # pragma: no cover - optional dependency
+                from .trend_predictor import TrendPredictor as _TP
+
+                self.trend_predictor = _TP()
+            except Exception:
+                self.trend_predictor = None
         self._baseline: Dict[str, BaselineTracker] = {}
+        self._ema_baseline: Dict[str, Dict[str, float]] = {}
         # Cache per-bot thresholds to avoid unnecessary disk reads.  The
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
@@ -1379,24 +1402,32 @@ class DataBot:
         tracker = self._baseline.setdefault(
             bot, BaselineTracker(window=self.baseline_window)
         )
-        avg_roi = tracker.get("roi")
-        avg_err = tracker.get("errors")
-        avg_fail = tracker.get("tests_failed")
-        std_roi = tracker.std("roi")
-        std_err = tracker.std("errors")
-        std_fail = tracker.std("tests_failed")
+        ema = self._ema_baseline.setdefault(
+            bot,
+            {"roi": float(roi), "errors": float(errors), "tests_failed": float(test_failures)},
+        )
+        avg_roi = float(ema["roi"])
+        avg_err = float(ema["errors"])
+        avg_fail = float(ema["tests_failed"])
         delta_roi = roi - avg_roi
         delta_err = errors - avg_err
         delta_fail = test_failures - avg_fail
+        roi_trend_adj = 0.0
+        err_trend_adj = 0.0
+        if self.trend_predictor:
+            try:  # pragma: no cover - best effort
+                pred = self.trend_predictor.predict_future_metrics()
+                roi_trend_adj = pred.roi - roi
+                err_trend_adj = pred.errors - errors
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("trend prediction failed for %s", bot)
         # Always refresh thresholds to pick up configuration updates at
         # runtime.  ``reload_thresholds`` updates the internal cache and
         # returns the current values for ``bot``.
         t = self.reload_thresholds(bot)
-        roi_thresh = t.roi_drop - std_roi * self.anomaly_sensitivity
-        err_thresh = t.error_threshold + std_err * self.anomaly_sensitivity
-        fail_thresh = (
-            t.test_failure_threshold + std_fail * self.anomaly_sensitivity
-        )
+        roi_thresh = t.roi_drop + roi_trend_adj * self.anomaly_sensitivity
+        err_thresh = t.error_threshold + err_trend_adj * self.anomaly_sensitivity
+        fail_thresh = t.test_failure_threshold
         event = {
             "bot": bot,
             "delta_roi": delta_roi,
@@ -1406,9 +1437,6 @@ class DataBot:
             "roi_baseline": avg_roi,
             "errors_baseline": avg_err,
             "tests_failed_baseline": avg_fail,
-            "roi_std": std_roi,
-            "errors_std": std_err,
-            "tests_failed_std": std_fail,
             "roi_threshold": roi_thresh,
             "error_threshold": err_thresh,
             "test_failure_threshold": fail_thresh,
@@ -1417,6 +1445,10 @@ class DataBot:
             "test_failure_breach": delta_fail > fail_thresh,
         }
         self.logger.info("degradation metrics: %s", event)
+        alpha = self.smoothing_factor
+        ema["roi"] = alpha * roi + (1.0 - alpha) * avg_roi
+        ema["errors"] = alpha * errors + (1.0 - alpha) * avg_err
+        ema["tests_failed"] = alpha * test_failures + (1.0 - alpha) * avg_fail
         tracker.update(roi=roi, errors=errors, tests_failed=test_failures)
         degraded = (
             event["roi_breach"]
