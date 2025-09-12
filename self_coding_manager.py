@@ -380,6 +380,29 @@ class SelfCodingManager:
         roi = self.data_bot.roi(self.bot_name)
         errors = self.data_bot.average_errors(self.bot_name)
         failures = self.data_bot.average_test_failures(self.bot_name)
+
+        # Record metrics in the manager's tracker so rolling statistics can be
+        # used to derive dynamic thresholds for this bot.
+        self.baseline_tracker.update(roi=roi, errors=errors, tests_failed=failures)
+        sens = getattr(self.data_bot, "anomaly_sensitivity", 1.0)
+        roi_thresh = -self.baseline_tracker.std("roi") * sens
+        err_thresh = self.baseline_tracker.std("errors") * sens
+        fail_thresh = self.baseline_tracker.std("tests_failed") * sens
+
+        # Persist the dynamically calculated thresholds so ``DataBot`` and other
+        # components share a consistent view.
+        try:
+            self.data_bot.update_thresholds(
+                self.bot_name,
+                roi_drop=roi_thresh,
+                error_threshold=err_thresh,
+                test_failure_threshold=fail_thresh,
+            )
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception(
+                "failed to persist dynamic thresholds for %s", self.bot_name
+            )
+
         return self.data_bot.check_degradation(
             self.bot_name, roi, errors, failures
         )
