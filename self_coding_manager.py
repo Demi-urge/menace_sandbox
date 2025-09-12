@@ -421,42 +421,42 @@ class SelfCodingManager:
         # Record metrics so rolling statistics can inform future predictions.
         self.baseline_tracker.update(roi=roi, errors=errors, tests_failed=failures)
 
-        def _ema(metric: str, alpha: float = 0.3) -> float:
-            """Fallback exponential smoothing for *metric*."""
-
-            hist = self.baseline_tracker.to_dict().get(metric, [])
-            if not hist:
-                return 0.0
-            ema = hist[0]
-            for v in hist[1:]:
-                ema = alpha * v + (1.0 - alpha) * ema
-            return ema
-
-        # Use ``DataBot``'s trend predictor when available for ROI and error
-        # forecasts.  This model trains on historical metrics to capture
-        # underlying trends.  ``tests_failed`` continues to rely on simple
-        # exponential smoothing as training data may be sparse.
-        trend = None
-        predictor = getattr(self.data_bot, "trend_predictor", None)
-        if predictor is not None:
+        forecast = None
+        forecaster = getattr(self.data_bot, "forecast_metrics", None)
+        if forecaster is not None:
             try:
-                predictor.train()
-                trend = predictor.predict_future_metrics(1)
+                forecast = forecaster(
+                    self.bot_name,
+                    roi=roi,
+                    errors=errors,
+                    tests_failed=failures,
+                )
             except Exception:
-                trend = None
+                forecast = None
 
-        pred_roi = getattr(trend, "roi", _ema("roi"))
-        pred_err = getattr(trend, "errors", _ema("errors"))
-        pred_fail = _ema("tests_failed")
+        if forecast:
+            pred_roi, roi_low, _roi_high = forecast.get("roi", (roi, roi, roi))
+            pred_err, _err_low, err_high = forecast.get(
+                "errors", (errors, errors, errors)
+            )
+            pred_fail, _fail_low, fail_high = forecast.get(
+                "tests_failed", (failures, failures, failures)
+            )
+        else:
+            pred_roi = roi
+            roi_low = roi
+            pred_err = errors
+            err_high = errors
+            pred_fail = failures
+            fail_high = failures
 
         self._forecast_history["roi"].append(pred_roi)
         self._forecast_history["errors"].append(pred_err)
         self._forecast_history["tests_failed"].append(pred_fail)
 
-        sens = getattr(self.data_bot, "anomaly_sensitivity", 1.0)
-        roi_thresh = self.roi_drop_threshold + (roi - pred_roi) * sens
-        err_thresh = self.error_rate_threshold + (errors - pred_err) * sens
-        fail_thresh = self.test_failure_threshold + (failures - pred_fail) * sens
+        roi_thresh = min(self.roi_drop_threshold + (roi_low - pred_roi), 0.0)
+        err_thresh = max(self.error_rate_threshold + (err_high - pred_err), 0.0)
+        fail_thresh = max(self.test_failure_threshold + (fail_high - pred_fail), 0.0)
 
         # Persist the dynamically calculated thresholds so ``DataBot`` and other
         # components share a consistent view.
