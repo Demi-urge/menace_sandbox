@@ -7,6 +7,7 @@ class DummyManager:
         self.bot_registry = kwargs.get("bot_registry")
         self.data_bot = kwargs.get("data_bot")
         self.evolution_orchestrator = kwargs.get("evolution_orchestrator")
+        self.quick_fix = kwargs.get("quick_fix") or object()
 
 
 stub = types.ModuleType("menace.self_coding_manager")
