@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Tuple, Dict
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     from sklearn.linear_model import LogisticRegression  # type: ignore
@@ -84,7 +90,7 @@ class NicheDB:
         return pd.read_sql("SELECT niche, roi, ts FROM saturation", self.conn)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class NicheSaturationBot:
     """Detect viable niches and coordinate rapid saturation."""
 

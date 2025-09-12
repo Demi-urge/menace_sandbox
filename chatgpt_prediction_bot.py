@@ -13,6 +13,9 @@ all LLM prompts.
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
@@ -29,6 +32,9 @@ import math
 import os
 import sys
 import csv
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
@@ -679,7 +685,7 @@ class EnhancementEvaluation:
     alerts: List[str] = field(default_factory=list)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ChatGPTPredictionBot:
     """Evaluate business ideas using a trained ML model.
 

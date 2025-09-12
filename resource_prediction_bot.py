@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Dict, Optional
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -72,7 +77,7 @@ class TemplateDB:
         self.df.to_csv(self.path, index=False)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ResourcePredictionBot:
     """Predict resources, detect redundancies and assess risk."""
 

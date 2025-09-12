@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -134,7 +140,7 @@ def summarise_text(text: str, ratio: float = 0.2) -> str:
     return ". ".join(ranked[:count]).rstrip(".") + "."
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class TextResearchBot:
     """Scrape, parse and summarise textual sources."""
 

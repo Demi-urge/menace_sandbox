@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -19,6 +22,9 @@ import statistics
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 try:  # pragma: no cover - optional dependency
     from dotenv import load_dotenv
 except Exception:  # pragma: no cover - missing optional dependency
@@ -28,10 +34,6 @@ else:  # pragma: no cover - load env if library present
 
 from .alert_dispatcher import send_discord_alert
 
-try:  # pragma: no cover - optional dependency
-    from .data_bot import DataBot
-except Exception:  # pragma: no cover - fallback when data_bot is unavailable
-    DataBot = None  # type: ignore
 from .database_manager import DB_PATH
 from .neuroplasticity import PathwayDB
 try:  # pragma: no cover - optional dependency
@@ -1047,7 +1049,7 @@ class StrategyTier(str, Enum):
     AGGRESSIVE = "aggressive"
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class CapitalManagementBot:
     """Manage capital and decide reinvestment based on energy score."""
 

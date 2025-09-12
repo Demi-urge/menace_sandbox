@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import sqlite3
 import time
@@ -21,6 +24,9 @@ import warnings
 from datetime import datetime
 
 from .chatgpt_enhancement_bot import (
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
     EnhancementDB,
     ChatGPTEnhancementBot,
     Enhancement,
@@ -742,7 +748,7 @@ class InfoDB(EmbeddableDBMixin):
                 )
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ResearchAggregatorBot:
     """Collects, refines and stores research with energy-based depth."""
 

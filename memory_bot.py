@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import gzip
 import json
@@ -11,6 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from gpt_memory_interface import GPTMemoryInterface
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     from security.secret_redactor import redact_secrets
@@ -131,7 +137,7 @@ class VectorMemoryStorage(MemoryStorage):
         return results
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class MemoryBot(GPTMemoryInterface):
     """Bot that stores conversations and provides search with caching."""
 

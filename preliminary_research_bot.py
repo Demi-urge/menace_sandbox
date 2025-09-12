@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import re
 from dataclasses import dataclass, field
@@ -9,6 +12,9 @@ from datetime import datetime
 from typing import Iterable, List, Dict, Optional
 import os
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import requests  # type: ignore
@@ -63,7 +69,7 @@ class BusinessData:
     roi_score: Optional[float] = None
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class PreliminaryResearchBot:
     """Scrape and analyse business metrics for a model suggestion."""
 

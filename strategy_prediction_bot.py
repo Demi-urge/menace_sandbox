@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, TYPE_CHECKING
 
 import time
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +47,7 @@ class CompetitorFeatures:
         return [self.revenue_growth, self.funding, self.sentiment, float(self.tech_mentions)]
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class StrategyPredictionBot:
     """Predict competitor strategies and coordinate actions from other bots."""
 

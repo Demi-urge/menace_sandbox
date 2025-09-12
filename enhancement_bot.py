@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 """Automatically validate and merge Codex refactors.
 
 The enhancement workflow depends on :class:`vector_service.ContextBuilder` for
@@ -62,7 +68,7 @@ class RefactorProposal:
     author_bot: str = "codex"
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class EnhancementBot:
     """Automatically validate and merge Codex refactors."""
 

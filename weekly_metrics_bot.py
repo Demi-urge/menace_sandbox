@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import os
 from dataclasses import dataclass
@@ -10,6 +13,9 @@ from typing import Dict, List, Tuple
 
 from .data_bot import MetricsDB
 from .alert_dispatcher import send_discord_alert
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 DEFAULT_WEBHOOK = os.getenv(
     "WEEKLY_METRICS_WEBHOOK", "https://discord.com/api/webhooks/PLACEHOLDER"
@@ -31,7 +37,7 @@ class WeeklyStats:
     delta_roi: float
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class WeeklyMetricsBot:
     """Aggregate weekly financial metrics and send Discord notifications."""
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 import argparse
 import logging
@@ -9,6 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -99,7 +104,7 @@ class AnomalyDB:
         return cur.fetchall()
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class OperationalMonitoringBot(AdminBotBase):
     """Collect metrics, detect anomalies and log to Elasticsearch or Splunk."""
 

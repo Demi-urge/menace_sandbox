@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 from difflib import SequenceMatcher
 import time
@@ -11,6 +14,9 @@ from pathlib import Path
 from typing import Callable, Iterable, List, Tuple, Literal
 import asyncio
 import tempfile
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -211,7 +217,7 @@ class CommTestDB:
         ]
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class CommunicationTestingBot:
     """Bot that runs communication tests and mirror benchmarks."""
 

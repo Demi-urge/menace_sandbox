@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 import random
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass
@@ -64,7 +69,7 @@ class TemplateDB:
         self.df.to_csv(self.path, index=False)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class GAPredictionBot:
     """Evolve ML models to maximise prediction accuracy."""
 
@@ -243,4 +248,3 @@ class GAPredictionBot:
 
 
 __all__ = ["TemplateEntry", "TemplateDB", "GAPredictionBot"]
-

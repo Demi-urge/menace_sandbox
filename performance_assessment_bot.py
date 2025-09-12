@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from typing import Dict, Tuple, Mapping, Any
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -49,7 +55,7 @@ class SimpleRL:
         return self.values.get(state, 0.0)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class PerformanceAssessmentBot:
     """Assess performance data and suggest hardware or software upgrades."""
 

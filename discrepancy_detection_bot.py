@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
@@ -14,6 +17,9 @@ from .logging_utils import set_correlation_id, get_logger
 from .failure_learning_system import DiscrepancyDB
 from .resource_allocation_optimizer import ResourceAllocationOptimizer
 
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 @dataclass
 class Detection:
@@ -44,7 +50,7 @@ class OptimizationError(DiscrepancyError):
     """Raised when post-detection optimisation fails."""
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class DiscrepancyDetectionBot:
     """Run registered discrepancy rules and log findings."""
 

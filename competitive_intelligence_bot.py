@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import sqlite3
 import logging
@@ -20,6 +23,9 @@ import license_detector
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 try:
@@ -498,7 +504,7 @@ def detect_ai_signals(
     return sum(k in text_lower for k in _AI_KEYWORDS) > 1
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class CompetitiveIntelligenceBot:
     """Gather and analyse competitor information."""
 

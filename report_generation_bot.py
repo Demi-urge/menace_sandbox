@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import smtplib
 from dataclasses import dataclass
@@ -9,6 +12,9 @@ from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable, List, Optional
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -47,7 +53,7 @@ class ReportOptions:
     recipients: List[str] | None = None
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ReportGenerationBot:
     """Create formatted reports from Data Bot metrics and send them via email."""
 

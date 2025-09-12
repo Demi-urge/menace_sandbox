@@ -7,11 +7,17 @@ behaviour without requiring the Celery dependency.
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, asdict
 from typing import List, Iterable
 import os
 import logging
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional
@@ -94,7 +100,7 @@ def send_to_task_manager(task: SynthesisTask) -> None:
         logging.getLogger(__name__).warning("Failed to send task to manager")
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class InformationSynthesisBot:
     """Retrieve, analyse and synthesise data into tasks."""
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 import logging
 from dataclasses import dataclass
@@ -9,6 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 import uuid
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -86,7 +91,7 @@ class AllocationDB:
         return pd.read_sql("SELECT bot, roi, active, ts FROM allocations", self.conn)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ResourceAllocationBot:
     """Manage resources and optimise ROI across bots."""
 

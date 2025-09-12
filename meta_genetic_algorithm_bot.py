@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import random
 from dataclasses import dataclass
 from typing import Iterable, List
 
 from .genetic_algorithm_bot import GeneticAlgorithmBot, GARecord
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     from deap import tools  # type: ignore
@@ -28,7 +34,7 @@ class MetaGARecord:
     roi: float
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class MetaGeneticAlgorithmBot:
     """Evolve configurations for GeneticAlgorithmBot instances."""
 

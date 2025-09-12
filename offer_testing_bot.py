@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import sqlite3
 from dataclasses import dataclass
@@ -15,6 +18,9 @@ from db_router import GLOBAL_ROUTER
 
 from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +195,7 @@ class OfferDB:
         }
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class OfferTestingBot:
     """Generate offer variations, deploy them and select winners."""
 

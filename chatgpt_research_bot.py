@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 import os
@@ -11,6 +14,9 @@ import time
 from dynamic_path_router import resolve_dir
 
 from .dependency_manager import DependencyManager
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 _deps = DependencyManager()
 
@@ -594,7 +600,7 @@ def _send_cloud_log(payload: dict, url: str) -> None:
         logger.error("cloud logging failed: %s", exc)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ChatGPTResearchBot:
     """Interact with ChatGPT recursively to gather research."""
 

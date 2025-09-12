@@ -6,6 +6,9 @@ Run ``menace embed --db workflow`` to backfill manually.
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 import uuid
@@ -22,6 +25,9 @@ from .workflow_graph import WorkflowGraph
 from vector_service import EmbeddableDBMixin, EmbeddingBackfill
 from vector_service.text_preprocessor import generalise
 from db_router import (
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
     DBRouter,
     GLOBAL_ROUTER,
     LOCAL_TABLES,
@@ -580,7 +586,7 @@ class WorkflowDB(EmbeddableDBMixin):
         return results
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class TaskHandoffBot:
     """Compile tasks, record workflows and transmit them to Stage 4."""
 

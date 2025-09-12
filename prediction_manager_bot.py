@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 import json
 from dataclasses import dataclass, field
@@ -10,6 +12,9 @@ from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 import os
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -37,7 +42,7 @@ if TYPE_CHECKING:
     from .genetic_algorithm_bot import GeneticAlgorithmBot
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class AverageMetricBot:
     """Predict metrics by averaging recent values."""
 
@@ -64,7 +69,7 @@ class AverageMetricBot:
             return 0.0
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FlexibilityPredictionBot:
     """Predict upcoming flexibility by averaging recent data."""
 
@@ -93,7 +98,7 @@ class FlexibilityPredictionBot:
             return 0.0
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class AntifragilityPredictionBot:
     """Predict upcoming antifragility by averaging recent data."""
 
@@ -122,7 +127,7 @@ class AntifragilityPredictionBot:
             return 0.0
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ShannonEntropyPredictionBot:
     """Predict upcoming Shannon entropy by averaging recent data."""
 
@@ -151,7 +156,7 @@ class ShannonEntropyPredictionBot:
             return 0.0
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class AverageSynergyMetricBot:
     """Predict synergy metrics by averaging recent data."""
 
@@ -193,7 +198,7 @@ class AverageSynergyMetricBot:
             return 0.0
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class AverageSynergyROIBot(AverageSynergyMetricBot):
     """Predict synergy ROI by averaging recent data."""
 
@@ -207,7 +212,7 @@ class AverageSynergyROIBot(AverageSynergyMetricBot):
         super().__init__("synergy_roi", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergySecurityScoreBot(AverageSynergyMetricBot):
     """Predict upcoming synergy security score."""
 
@@ -217,7 +222,7 @@ class FutureSynergySecurityScoreBot(AverageSynergyMetricBot):
         super().__init__("synergy_security_score", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyEfficiencyBot(AverageSynergyMetricBot):
     """Predict upcoming synergy efficiency."""
 
@@ -227,7 +232,7 @@ class FutureSynergyEfficiencyBot(AverageSynergyMetricBot):
         super().__init__("synergy_efficiency", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyAntifragilityBot(AverageSynergyMetricBot):
     """Predict upcoming synergy antifragility."""
 
@@ -237,7 +242,7 @@ class FutureSynergyAntifragilityBot(AverageSynergyMetricBot):
         super().__init__("synergy_antifragility", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyResilienceBot(AverageSynergyMetricBot):
     """Predict upcoming synergy resilience."""
 
@@ -247,7 +252,7 @@ class FutureSynergyResilienceBot(AverageSynergyMetricBot):
         super().__init__("synergy_resilience", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyShannonEntropyBot(AverageSynergyMetricBot):
     """Predict upcoming synergy Shannon entropy."""
 
@@ -257,7 +262,7 @@ class FutureSynergyShannonEntropyBot(AverageSynergyMetricBot):
         super().__init__("synergy_shannon_entropy", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyFlexibilityBot(AverageSynergyMetricBot):
     """Predict upcoming synergy flexibility."""
 
@@ -267,7 +272,7 @@ class FutureSynergyFlexibilityBot(AverageSynergyMetricBot):
         super().__init__("synergy_flexibility", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyEnergyConsumptionBot(AverageSynergyMetricBot):
     """Predict upcoming synergy energy consumption."""
 
@@ -277,7 +282,7 @@ class FutureSynergyEnergyConsumptionBot(AverageSynergyMetricBot):
         super().__init__("synergy_energy_consumption", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyAdaptabilityBot(AverageSynergyMetricBot):
     """Predict upcoming synergy adaptability."""
 
@@ -287,7 +292,7 @@ class FutureSynergyAdaptabilityBot(AverageSynergyMetricBot):
         super().__init__("synergy_adaptability", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergySafetyRatingBot(AverageSynergyMetricBot):
     """Predict upcoming synergy safety rating."""
 
@@ -297,7 +302,7 @@ class FutureSynergySafetyRatingBot(AverageSynergyMetricBot):
         super().__init__("synergy_safety_rating", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyRiskIndexBot(AverageSynergyMetricBot):
     """Predict upcoming synergy risk index."""
 
@@ -307,7 +312,7 @@ class FutureSynergyRiskIndexBot(AverageSynergyMetricBot):
         super().__init__("synergy_risk_index", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyRecoveryTimeBot(AverageSynergyMetricBot):
     """Predict upcoming synergy recovery time."""
 
@@ -317,7 +322,7 @@ class FutureSynergyRecoveryTimeBot(AverageSynergyMetricBot):
         super().__init__("synergy_recovery_time", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyDiscrepancyCountBot(AverageSynergyMetricBot):
     """Predict upcoming synergy discrepancy count."""
 
@@ -327,7 +332,7 @@ class FutureSynergyDiscrepancyCountBot(AverageSynergyMetricBot):
         super().__init__("synergy_discrepancy_count", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyGPUUsageBot(AverageSynergyMetricBot):
     """Predict upcoming synergy GPU usage."""
 
@@ -337,7 +342,7 @@ class FutureSynergyGPUUsageBot(AverageSynergyMetricBot):
         super().__init__("synergy_gpu_usage", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyCPUUsageBot(AverageSynergyMetricBot):
     """Predict upcoming synergy CPU usage."""
 
@@ -347,7 +352,7 @@ class FutureSynergyCPUUsageBot(AverageSynergyMetricBot):
         super().__init__("synergy_cpu_usage", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyMemoryUsageBot(AverageSynergyMetricBot):
     """Predict upcoming synergy memory usage."""
 
@@ -357,7 +362,7 @@ class FutureSynergyMemoryUsageBot(AverageSynergyMetricBot):
         super().__init__("synergy_memory_usage", data_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FutureSynergyLongTermLucrativityBot(AverageSynergyMetricBot):
     """Predict upcoming synergy long term lucrativity."""
 

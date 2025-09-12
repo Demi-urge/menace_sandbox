@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 from dataclasses import dataclass
@@ -12,6 +15,9 @@ from typing import Callable, Dict, Optional, List
 from datetime import datetime, timezone
 
 from neurosales import (
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
     add_message as mq_add_message,
     get_recent_messages,
     push_chain,
@@ -56,7 +62,7 @@ class ConversationResult:
     audio_path: Optional[Path] = None
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ConversationManagerBot:
     """Manage queries to ChatGPT and Stage 7 bots with optional speech support."""
 

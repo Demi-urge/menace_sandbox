@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Dict, List, Callable, Optional, Any
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import pandas as pd  # type: ignore
@@ -117,7 +122,7 @@ class ROIHistoryDB:
         }
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class PreExecutionROIBot:
     """Predict costs, timelines and return on investment."""
 

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 import logging
 from dataclasses import dataclass
 from typing import List, Dict
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +45,7 @@ class BotTaskRecord:
     completed: bool = False
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class HierarchyAssessmentBot:
     """Coordinate bots, monitor redundancy and system health."""
 
