@@ -151,6 +151,14 @@ pre-commit run self-coding-registration --all-files
 
 The hook exits with a non-zero status if any unmanaged bot class is found.
 
+Additionally, `tools/find_unmanaged_bots.py` scans the repository for bot modules that lack the `@self_coding_managed` decorator or proper registration. Run it before pushing changes:
+
+```bash
+pre-commit run find-unmanaged-bots --all-files
+```
+
+CI fails if unmanaged bots are detected.
+
 
 ## Helper generation wrappers
 

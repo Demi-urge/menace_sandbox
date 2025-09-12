@@ -44,6 +44,8 @@ jobs:
         run: "python tools/check_self_coding_integrity.py $(git ls-files '*.py')"
       - name: ensure all bots are self-coding managed
         run: pre-commit run self-coding-registration --all-files
+      - name: Check for unmanaged bots
+        run: pre-commit run find-unmanaged-bots --all-files
       - name: Prevent unwrapped engine.generate_helper usage
         run: "python tools/check_engine_generate_helper_wrapping.py $(git ls-files '*.py')"
       - name: Verify patch provenance tags
@@ -82,6 +84,8 @@ jobs:
         run: pre-commit run check-self-coding-integrity --all-files
       - name: ensure all bots are self-coding managed
         run: pre-commit run self-coding-registration --all-files
+      - name: Check for unmanaged bots
+        run: pre-commit run find-unmanaged-bots --all-files
       - name: Prevent unwrapped engine.generate_helper usage
         run: pre-commit run check-engine-generate-helper --all-files
       - name: Run flake8
