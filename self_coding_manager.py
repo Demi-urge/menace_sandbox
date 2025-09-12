@@ -524,8 +524,12 @@ class SelfCodingManager:
         **kwargs: Any,
     ) -> AutomationResult:
         """Patch ``path`` using :meth:`run_patch` with fresh context."""
-
         builder = context_builder or ContextBuilder()
+        try:
+            ensure_fresh_weights(builder)
+        except Exception as exc:
+            raise RuntimeError("failed to refresh context builder weights") from exc
+
         clayer = getattr(self.engine, "cognition_layer", None)
         if clayer is None:
             raise AttributeError(

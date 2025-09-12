@@ -550,7 +550,9 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
 
     class Engine:
         def __init__(self) -> None:
-            self.cognition_layer = types.SimpleNamespace(context_builder=None)
+            base_builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=base_builder)
+
         def apply_patch(self, path: Path, desc: str, **_: object):
             return 1, False, 0.0
 
@@ -562,6 +564,7 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
         bot_name="bot",
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
+        quick_fix=object(),
     )
     file_path = tmp_path / "sample.py"
     file_path.write_text("pass\n")
@@ -571,8 +574,8 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
         return mapl.AutomationResult(None, prb.ROIResult(0, 0, 0, 0, 0))
 
     monkeypatch.setattr(mgr, "run_patch", fake_run_patch)
-    builder = object()
-    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda: object())
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda *_a, **_k: object())
     mgr.generate_and_patch(file_path, "fix", context_builder=builder)
     assert any(c[0] == "patch" and c[1] == file_path and c[3] is builder for c in calls)
 
@@ -580,7 +583,8 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
 def test_generate_and_patch_failure(monkeypatch, tmp_path):
     class Engine:
         def __init__(self) -> None:
-            self.cognition_layer = types.SimpleNamespace(context_builder=None)
+            base_builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=base_builder)
 
         def apply_patch(self, path: Path, desc: str, **_: object):
             return 1, False, 0.0
@@ -593,6 +597,7 @@ def test_generate_and_patch_failure(monkeypatch, tmp_path):
         bot_name="bot",
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
+        quick_fix=object(),
     )
     file_path = tmp_path / "sample.py"
     file_path.write_text("pass\n")
@@ -601,9 +606,58 @@ def test_generate_and_patch_failure(monkeypatch, tmp_path):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(mgr, "run_patch", bad_run_patch)
-    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda: object())
+    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda *_a, **_k: object())
+
+    class DummyBuilder:
+        def refresh_db_weights(self) -> None:
+            return None
+
+    monkeypatch.setattr(scm, "ContextBuilder", DummyBuilder)
+
     with pytest.raises(RuntimeError):
         mgr.generate_and_patch(file_path, "fix")
+
+
+def test_generate_and_patch_refreshes_builder(monkeypatch, tmp_path):
+    calls: list[int] = []
+
+    class Engine:
+        def __init__(self) -> None:
+            base_builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=base_builder)
+
+        def apply_patch(self, path: Path, desc: str, **_: object):  # pragma: no cover - stub
+            return 1, False, 0.0
+
+    engine = Engine()
+    pipeline = DummyPipeline()
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=object(),
+    )
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("pass\n")
+
+    def fake_run_patch(path, desc, **kw):
+        return mapl.AutomationResult(None, prb.ROIResult(0, 0, 0, 0, 0))
+
+    monkeypatch.setattr(mgr, "run_patch", fake_run_patch)
+    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda *_a, **_k: object())
+
+    class Builder:
+        def refresh_db_weights(self) -> None:
+            calls.append(1)
+
+    builder = Builder()
+
+    mgr.generate_and_patch(file_path, "fix", context_builder=builder)
+    mgr.generate_and_patch(file_path, "fix", context_builder=builder)
+
+    assert len(calls) == 2
 
 
 def test_should_refactor_on_test_failures_only(monkeypatch):
