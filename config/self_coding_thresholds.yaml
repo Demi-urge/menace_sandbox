@@ -1,18 +1,3 @@
-# ROI/error/test thresholds used by DataBot.check_degradation
-# roi_drop: allowable decrease in ROI (negative value)
-# error_increase: maximum increase in errors
-# test_failure_increase: maximum increase in failed tests
-#
-# Changes can be applied at runtime by editing this file and invoking
-# ``DataBot.reload_thresholds(<bot>)``.  For example::
-#
-#   bots:
-#     sample-bot:
-#       roi_drop: -0.2
-#       error_increase: 2.5
-#
-# followed by ``bot.reload_thresholds("sample-bot")`` will update the
-# thresholds without restarting the service.
 default:
   roi_drop: -0.1
   error_increase: 1.0
@@ -67,6 +52,10 @@ bots:
     error_increase: 1.0
     test_failure_increase: 0.0
   EnhancementBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  agent:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0

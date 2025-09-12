@@ -3,8 +3,8 @@
 The configuration file ``config/self_coding_thresholds.yaml`` stores
 thresholds keyed by bot name.  Each entry may define ``roi_drop``
 (allowable decrease in ROI), ``error_increase`` (maximum allowed
-increase in errors) and ``test_failure_increase`` (allowed growth in
-failing tests).
+increase in errors), ``test_failure_increase`` (allowed growth in
+failing tests) and ``test_command`` (custom test runner).
 
 Long running services cache threshold values after the first lookup.
 When the YAML file is edited at runtime these values can be refreshed by
@@ -19,11 +19,13 @@ Example configuration snippet::
       roi_drop: -0.1
       error_increase: 1.0
       test_failure_increase: 0.0
+      test_command: ["pytest", "-q"]
     bots:
       example-bot:
         roi_drop: -0.2
         error_increase: 2.0
         test_failure_increase: 0.1
+        test_command: ["pytest", "tests/example", "-q"]
 
 You can modify the file directly or use :func:`update_thresholds`::
 
@@ -42,6 +44,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
+import os
+import shlex
 import yaml
 
 from .sandbox_settings import SandboxSettings
@@ -55,6 +59,7 @@ class SelfCodingThresholds:
     roi_drop: float
     error_increase: float
     test_failure_increase: float = 0.0
+    test_command: list[str] | None = None
 
 
 _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")
@@ -91,19 +96,38 @@ def get_thresholds(
     roi_drop = getattr(s, "self_coding_roi_drop", -0.1)
     err_inc = getattr(s, "self_coding_error_increase", 1.0)
     fail_inc = getattr(s, "self_coding_test_failure_increase", 0.0)
+    cmd: list[str] | None
+    env_cmd = os.getenv("SELF_CODING_TEST_COMMAND")
+    if env_cmd:
+        cmd = shlex.split(env_cmd)
+    else:
+        cmd_val = getattr(s, "self_coding_test_command", None)
+        if isinstance(cmd_val, str):
+            cmd = shlex.split(cmd_val)
+        else:
+            cmd = cmd_val
     data = _load_config(path)
     default = data.get("default", {})
     bots = data.get("bots", {})
     roi_drop = float(default.get("roi_drop", roi_drop))
     err_inc = float(default.get("error_increase", err_inc))
     fail_inc = float(default.get("test_failure_increase", fail_inc))
+    cmd_cfg = default.get("test_command", cmd)
     if bot and bot in bots:
         cfg = bots[bot] or {}
         roi_drop = float(cfg.get("roi_drop", roi_drop))
         err_inc = float(cfg.get("error_increase", err_inc))
         fail_inc = float(cfg.get("test_failure_increase", fail_inc))
+        cmd_cfg = cfg.get("test_command", cmd_cfg)
+    if isinstance(cmd_cfg, str):
+        cmd_cfg = shlex.split(cmd_cfg)
+    elif cmd_cfg is not None:
+        cmd_cfg = list(cmd_cfg)
     return SelfCodingThresholds(
-        roi_drop=roi_drop, error_increase=err_inc, test_failure_increase=fail_inc
+        roi_drop=roi_drop,
+        error_increase=err_inc,
+        test_failure_increase=fail_inc,
+        test_command=cmd_cfg,
     )
 
 
@@ -113,6 +137,7 @@ def update_thresholds(
     roi_drop: float | None = None,
     error_increase: float | None = None,
     test_failure_increase: float | None = None,
+    test_command: list[str] | None = None,
     path: Path | None = None,
 ) -> None:
     """Persist new thresholds for ``bot`` to the configuration file."""
@@ -127,6 +152,8 @@ def update_thresholds(
         cfg["error_increase"] = float(error_increase)
     if test_failure_increase is not None:
         cfg["test_failure_increase"] = float(test_failure_increase)
+    if test_command is not None:
+        cfg["test_command"] = list(test_command)
     try:
         cfg_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     except Exception:
