@@ -152,53 +152,81 @@ try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
-try:  # pragma: no cover - optional dependency
-    from .error_cluster_predictor import ErrorClusterPredictor
-except Exception:  # pragma: no cover - fallback implementation
-    from collections import Counter
-    try:
-        from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
-    except Exception:  # pragma: no cover - optional dependency
-        TfidfVectorizer = None  # type: ignore
-    try:  # pragma: no cover - optional dependency
-        from sklearn.cluster import KMeans  # type: ignore
-    except Exception:  # pragma: no cover - optional dependency
-        KMeans = None  # type: ignore
-    from .knowledge_graph import _SimpleKMeans
+from collections import Counter
+import numpy as np
 
-    class ErrorClusterPredictor:
-        """Cluster stack traces for a module using k-means."""
 
-        def __init__(self, db: "ErrorDB") -> None:
-            self.db = db
+class ErrorClusterPredictor:
+    """Cluster stack traces for a module using a lightweight k-means algorithm."""
 
-        def best_cluster(self, module: str, n_clusters: int = 3) -> tuple[int | None, list[str]]:
-            """Return ``(cluster_id, traces)`` for ``module``.
+    def __init__(self, db: "ErrorDB") -> None:
+        self.db = db
 
-            The ``cluster_id`` corresponds to the cluster with the highest
-            number of stack traces.  ``traces`` contains stack traces belonging
-            to that cluster.
-            """
+    @staticmethod
+    def _vectorize(traces: list[str]) -> np.ndarray:
+        """Convert traces to simple bag-of-words vectors."""
+        vocab: dict[str, int] = {}
+        rows: list[Counter[str]] = []
+        for trace in traces:
+            counts: Counter[str] = Counter(trace.split())
+            rows.append(counts)
+            for token in counts:
+                if token not in vocab:
+                    vocab[token] = len(vocab)
+        vecs = np.zeros((len(traces), len(vocab)), dtype=float)
+        for i, counts in enumerate(rows):
+            for token, count in counts.items():
+                vecs[i, vocab[token]] = float(count)
+        return vecs
 
-            cur = self.db.conn.execute(
-                "SELECT stack_trace FROM telemetry WHERE module=? AND stack_trace!=''",
-                (module,),
-            )
-            traces = [row[0] for row in cur.fetchall()]
-            if not traces:
-                return None, []
-            labels = [0] * len(traces)
-            if TfidfVectorizer is not None:
-                try:
-                    vec = TfidfVectorizer().fit_transform(traces)
-                    n = min(len(traces), n_clusters) or 1
-                    km = KMeans(n_clusters=n, n_init="auto") if KMeans else _SimpleKMeans(n_clusters=n)
-                    labels = km.fit_predict(vec.toarray())
-                except Exception:
-                    labels = [0] * len(traces)
-            cluster_id, _ = Counter(labels).most_common(1)[0]
-            cluster_traces = [t for t, lbl in zip(traces, labels) if lbl == cluster_id]
-            return int(cluster_id), cluster_traces
+    @staticmethod
+    def _kmeans(vecs: np.ndarray, n_clusters: int, max_iter: int = 100) -> list[int]:
+        """Minimal k-means implementation using Euclidean distance."""
+        n_samples = vecs.shape[0]
+        n_clusters = min(n_clusters, n_samples) or 1
+        rng = np.random.default_rng(0)
+        indices: list[int] = []
+        for idx in rng.permutation(n_samples):
+            if len(indices) == n_clusters:
+                break
+            if not any(np.array_equal(vecs[idx], vecs[j]) for j in indices):
+                indices.append(idx)
+        while len(indices) < n_clusters:
+            indices.append(rng.integers(0, n_samples))
+        centroids = vecs[indices].copy()
+        labels = np.zeros(n_samples, dtype=int)
+        for _ in range(max_iter):
+            distances = ((vecs[:, None, :] - centroids[None, :, :]) ** 2).sum(axis=2)
+            new_labels = distances.argmin(axis=1)
+            if np.array_equal(labels, new_labels):
+                break
+            labels = new_labels
+            for j in range(n_clusters):
+                members = vecs[labels == j]
+                if len(members):
+                    centroids[j] = members.mean(axis=0)
+        return labels.tolist()
+
+    def best_cluster(self, module: str, n_clusters: int = 3) -> tuple[int | None, list[str]]:
+        """Return ``(cluster_id, traces)`` for ``module``.
+
+        The ``cluster_id`` corresponds to the cluster with the highest number of
+        stack traces. ``traces`` contains stack traces belonging to that
+        cluster.
+        """
+
+        cur = self.db.conn.execute(
+            "SELECT stack_trace FROM telemetry WHERE module=? AND stack_trace!=''",
+            (module,),
+        )
+        traces = [row[0] for row in cur.fetchall()]
+        if not traces:
+            return None, []
+        vecs = self._vectorize(traces)
+        labels = self._kmeans(vecs, n_clusters)
+        cluster_id, _ = Counter(labels).most_common(1)[0]
+        cluster_traces = [t for t, lbl in zip(traces, labels) if lbl == cluster_id]
+        return int(cluster_id), cluster_traces
 
 from .error_bot import ErrorDB
 try:  # pragma: no cover - optional dependency
