@@ -26,7 +26,6 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback for tests
     class ContextBuilder:  # type: ignore
         pass
-from .self_coding_thresholds import get_thresholds
 from .self_coding_manager import HelperGenerationError
 from .sandbox_settings import SandboxSettings
 try:  # pragma: no cover - optional dependency
@@ -164,6 +163,10 @@ class EvolutionOrchestrator:
             try:
                 bus.subscribe("data:threshold_breach", lambda _t, e: self._on_threshold_breach(e))
                 bus.subscribe("bot:degraded", lambda _t, e: self._on_bot_degraded(e))
+                bus.subscribe(
+                    "self_coding:degradation",
+                    lambda _t, e: self._on_self_coding_degradation(e),
+                )
                 self._degradation_subscribed = True
             except Exception:
                 self.logger.exception("bot degraded subscription failed")
@@ -276,6 +279,20 @@ class EvolutionOrchestrator:
         bot = str(event.get("bot", ""))
         if bot:
             self._pending_patch_cycle.add(bot)
+
+    # ------------------------------------------------------------------
+    def _on_self_coding_degradation(self, event: dict) -> None:
+        """Register patch cycle when self-coding reports degradation."""
+        if not self.selfcoding_manager:
+            return
+        bot = str(event.get("bot", ""))
+        desc = f"auto_patch_due_to_degradation:{bot}"
+        try:
+            self.selfcoding_manager.register_patch_cycle(desc, event)
+            if bot:
+                self._pending_patch_cycle.add(bot)
+        except Exception:
+            self.logger.exception("failed to register patch cycle for %s", bot)
 
     # ------------------------------------------------------------------
     def _on_bot_degraded(self, event: dict) -> None:

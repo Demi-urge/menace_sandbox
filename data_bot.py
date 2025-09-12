@@ -1672,6 +1672,7 @@ class DataBot:
                     self.event_bus.publish("data:threshold_breach", event)
                 if degraded:
                     self.event_bus.publish("bot:degraded", event)
+                    self.event_bus.publish("self_coding:degradation", event)
             except Exception as exc:
                 self.logger.exception("failed to publish metrics event: %s", exc)
         elif degraded and callbacks:
