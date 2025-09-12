@@ -47,6 +47,7 @@ dpr = types.SimpleNamespace(
     resolve_path=lambda p: Path(p),
     repo_root=lambda: Path("."),
     path_for_prompt=lambda p: str(p),
+    get_project_root=lambda: Path("."),
 )
 sys.modules["dynamic_path_router"] = dpr
 
@@ -71,6 +72,18 @@ sys.modules["menace.model_automation_pipeline"] = mapl_stub
 
 sce_stub = types.ModuleType("menace.self_coding_engine")
 sce_stub.SelfCodingEngine = object
+
+class _DummyCtx:
+    def set(self, _val):
+        return None
+
+    def reset(self, _tok) -> None:
+        pass
+
+    def get(self):
+        return None
+
+sce_stub.MANAGER_CONTEXT = _DummyCtx()
 sys.modules["menace.self_coding_engine"] = sce_stub
 
 prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
@@ -105,6 +118,7 @@ code_db_stub = types.ModuleType("menace.code_database")
 class PatchRecord:
     pass
 code_db_stub.PatchRecord = PatchRecord
+code_db_stub.PatchHistoryDB = object
 sys.modules["menace.code_database"] = code_db_stub
 sys.modules["code_database"] = code_db_stub
 
@@ -132,13 +146,19 @@ class DummyDataBot:
             roi_drop=0.1, error_threshold=0.1, test_failure_threshold=0.1
         )
 
+    def reload_thresholds(self, _bot: str) -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            roi_drop=0.1, error_threshold=0.1, test_failure_threshold=0.1
+        )
+
 
 class DummyPipeline:
     pass
 
 
 class DummyRegistry:
-    pass
+    def register_bot(self, *_a, **_k) -> None:
+        pass
 
 
 class DummyErrorDB:
@@ -178,4 +198,45 @@ def test_skip_quick_fix_engine(monkeypatch: pytest.MonkeyPatch, caplog: pytest.L
     text = caplog.text
     assert "pip install menace[quickfix]" in text
     assert "skipping validation" in text
+
+
+def test_patch_uses_refreshed_weights(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mutating DB weights should result in a fresh builder per patch."""
+
+    weights = {"value": 0}
+
+    class Builder:
+        def __init__(self) -> None:
+            self.weight = weights["value"]
+
+        def refresh_db_weights(self) -> None:  # pragma: no cover - no-op
+            pass
+
+    monkeypatch.setattr(scm, "create_context_builder", lambda: Builder())
+    monkeypatch.setattr(scm, "ensure_fresh_weights", lambda _b: None)
+
+    seen = []
+
+    def fake_helper(_mgr, _desc, **kw):
+        cb = kw.get("context_builder")
+        seen.append(getattr(cb, "weight", -1))
+        return ""
+
+    monkeypatch.setattr(scm, "_BASE_MANAGER_GENERATE_HELPER", fake_helper)
+    monkeypatch.setattr(scm, "QuickFixEngine", lambda *a, **k: types.SimpleNamespace())
+
+    mgr = scm.SelfCodingManager(
+        DummyEngine(),
+        DummyPipeline(),
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+    )
+    import menace.quick_fix_engine as qfe
+
+    weights["value"] = 1
+    qfe.manager_generate_helper(mgr, "first")
+    weights["value"] = 2
+    qfe.manager_generate_helper(mgr, "second")
+
+    assert seen == [1, 2]
 
