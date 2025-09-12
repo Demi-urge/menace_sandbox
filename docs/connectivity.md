@@ -93,3 +93,11 @@ timeout are returned:
 for name, ts in registry.active_bots(timeout=300).items():
     print(name, ts)
 ```
+
+## Bot Update Guardrails
+
+`BotRegistry.hot_swap_bot` verifies that every update is accompanied by
+provenance metadata. If a bot is updated without a `patch_id` or commit hash, or
+if the metadata does not match the recorded patch, the reload is aborted and a
+`bot:update_blocked` event is emitted. Administrators must perform a manual
+override and retry the operation once the provenance is confirmed.

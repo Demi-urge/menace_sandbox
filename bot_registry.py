@@ -141,8 +141,17 @@ class BotRegistry:
                         "bot:manual_change",
                         {"name": name, "module": module_path, "reason": "missing_provenance"},
                     )
+                    self.event_bus.publish(
+                        "bot:update_blocked",
+                        {
+                            "name": name,
+                            "module": module_path,
+                            "reason": "missing_provenance",
+                        },
+                    )
                 except Exception as exc:
-                    logger.error("Failed to publish bot:manual_change event: %s", exc)
+                    logger.error("Failed to publish bot:update_blocked event: %s", exc)
+            node["update_blocked"] = True
             if prev_module is not None:
                 node["module"] = prev_module
             if prev_version is not None:
@@ -158,7 +167,7 @@ class BotRegistry:
                     logger.error(
                         "Failed to save bot registry to %s: %s", self.persist_path, save_exc
                     )
-            raise RuntimeError("missing provenance metadata")
+            raise RuntimeError("update blocked: missing provenance metadata")
 
         stored_commit: str | None = None
         try:
@@ -181,7 +190,7 @@ class BotRegistry:
                         {"name": name, "module": module_path, "reason": "provenance_mismatch"},
                     )
                     self.event_bus.publish(
-                        "bot:manual_change_detected",
+                        "bot:update_blocked",
                         {
                             "name": name,
                             "module": module_path,
@@ -192,7 +201,7 @@ class BotRegistry:
                     )
                 except Exception as exc:
                     logger.error(
-                        "Failed to publish bot:manual_change_detected event: %s", exc
+                        "Failed to publish bot:update_blocked event: %s", exc
                     )
             manager = node.get("selfcoding_manager") or node.get("manager")
             if manager and hasattr(manager, "register_patch_cycle"):
@@ -208,6 +217,7 @@ class BotRegistry:
                     logger.error(
                         "Failed to notify SelfCodingManager for %s: %s", name, exc
                     )
+            node["update_blocked"] = True
             if prev_module is not None:
                 node["module"] = prev_module
             if prev_version is not None:
@@ -223,7 +233,7 @@ class BotRegistry:
                     logger.error(
                         "Failed to save bot registry to %s: %s", self.persist_path, save_exc
                     )
-            raise RuntimeError("provenance mismatch")
+            raise RuntimeError("update blocked: provenance mismatch")
 
         try:
             status = subprocess.check_output(

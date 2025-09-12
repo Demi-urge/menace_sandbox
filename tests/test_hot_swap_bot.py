@@ -86,13 +86,40 @@ def test_manual_commit_mismatch_rejected(tmp_path, monkeypatch):
     reg = BotRegistry(event_bus=bus)
     reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
     importlib.invalidate_caches()
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="update blocked"):
         reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="b")
     assert dummy.greet() == "old"
-    assert bus.events[-1][0] == "bot:manual_change_detected"
+    event_name, payload = bus.events[-1]
+    assert event_name == "bot:update_blocked"
+    assert payload["reason"] == "provenance_mismatch"
     node = reg.graph.nodes["dummy"]
     assert node["module"] == module_old.as_posix()
     assert node["version"] == 1
+    assert node["update_blocked"]
+
+
+def test_missing_provenance_blocks_update(tmp_path, monkeypatch):
+    commits = {1: "a", 2: "b"}
+    _stub_service(monkeypatch, commits)
+    module_old = tmp_path / "dummy_bot.py"
+    module_old.write_text("def greet():\n    return 'old'\n")
+    module_new = tmp_path / "dummy_bot_new.py"
+    module_new.write_text("def greet():\n    return 'new'\n")
+    monkeypatch.syspath_prepend(tmp_path)
+    dummy = importlib.import_module("dummy_bot")
+    bus = DummyBus()
+    reg = BotRegistry(event_bus=bus)
+    reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
+    importlib.invalidate_caches()
+    with pytest.raises(RuntimeError, match="update blocked"):
+        reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="")
+    assert dummy.greet() == "old"
+    event_name, payload = bus.events[-1]
+    assert event_name == "bot:update_blocked"
+    assert payload["reason"] == "missing_provenance"
+    node = reg.graph.nodes["dummy"]
+    assert node["module"] == module_old.as_posix()
+    assert node["update_blocked"]
 
 
 def test_provenance_mismatch_notifies_manager(tmp_path, monkeypatch):
@@ -117,7 +144,7 @@ def test_provenance_mismatch_notifies_manager(tmp_path, monkeypatch):
     reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
     reg.graph.nodes["dummy"]["selfcoding_manager"] = DummyManager()
     importlib.invalidate_caches()
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="update blocked"):
         reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="b")
     manager = reg.graph.nodes["dummy"]["selfcoding_manager"]
     assert manager.cycles
