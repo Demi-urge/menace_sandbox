@@ -18,7 +18,13 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .data_bot import MetricsDB, DataBot
 from .evolution_approval_policy import EvolutionApprovalPolicy
+from .self_coding_manager import SelfCodingManager
+from .bot_registry import BotRegistry
 
+logger = logging.getLogger(__name__)
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 @dataclass
 class SystemSnapshot:
@@ -86,21 +92,35 @@ class EvolutionDB:
         self.conn.commit()
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class StructuralEvolutionBot:
     """Forecast and apply structural adjustments based on metrics."""
 
     def __init__(
         self,
+        manager: SelfCodingManager | None = None,
+        *,
         metrics_db: MetricsDB | None = None,
         db: EvolutionDB | None = None,
         approval_policy: "EvolutionApprovalPolicy | None" = None,
     ) -> None:
+        self.manager = manager
         self.metrics_db = metrics_db or MetricsDB()
         self.db = db or EvolutionDB()
         self.approval_policy = approval_policy or EvolutionApprovalPolicy()
+        if self.manager is not None:
+            try:
+                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                self.manager.register_bot(name)
+                orch = getattr(self.manager, "evolution_orchestrator", None)
+                if orch:
+                    orch.register_bot(name)
+            except Exception:
+                logger.exception("bot registration failed")
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("StructuralEvolution")
+        self.name = getattr(self, "name", self.__class__.__name__)
+        self.data_bot = data_bot
 
     def take_snapshot(self, limit: int = 100) -> SystemSnapshot:
         df = self.metrics_db.fetch(limit)
