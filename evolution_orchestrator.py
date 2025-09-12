@@ -191,7 +191,7 @@ class EvolutionOrchestrator:
                 bots = [bot]
         bus = getattr(self.data_bot, "event_bus", None) or self.event_bus
         if bus and not getattr(self, "_bot_registered_listener", False):
-            bus.subscribe("bot:registered", self._ensure_degradation_subscription)
+            bus.subscribe("bot:new", self._ensure_degradation_subscription)
             self._bot_registered_listener = True
         self._ensure_degradation_subscription()
         for name in bots:
