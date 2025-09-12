@@ -22,6 +22,7 @@ from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
 from .snippet_compressor import compress_snippets
 from .codebase_diff_checker import generate_code_diff, flag_risky_changes
+from .bot_registry import BotRegistry
 
 try:  # pragma: no cover - optional dependency
     from context_builder_util import ensure_fresh_weights
@@ -134,6 +135,9 @@ try:  # pragma: no cover - optional dependency
     from .data_bot import DataBot
 except Exception:  # pragma: no cover - fallback when unavailable
     DataBot = object  # type: ignore
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 try:  # pragma: no cover - fail fast if vector service missing
     from vector_service.context_builder import (
         ContextBuilder,
@@ -635,7 +639,7 @@ def generate_patch(
         return (None, [str(exc)]) if return_flags else None
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class QuickFixEngine:
     """Analyse frequent errors and trigger small patches."""
 
@@ -656,6 +660,10 @@ class QuickFixEngine:
     ) -> None:
         self.db = error_db
         self.manager = manager
+        try:
+            self.manager.register_bot(self.__class__.__name__)
+        except Exception:
+            logger.exception("bot registration failed")
         self.threshold = threshold
         self.graph = graph or KnowledgeGraph()
         self.risk_threshold = risk_threshold

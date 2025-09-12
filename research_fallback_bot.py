@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from .coding_bot_interface import self_coding_managed
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 import asyncio
 import json
 import time
@@ -36,6 +38,10 @@ from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
 
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
+
 @dataclass
 class FallbackResult:
     url: str
@@ -44,7 +50,7 @@ class FallbackResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ResearchFallbackBot:
     """Fallback bot using headless Chrome to gather external insights."""
 

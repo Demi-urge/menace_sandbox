@@ -89,11 +89,16 @@ from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
 from .scope_utils import build_scope_clause, Scope, apply_scope
 from .coding_bot_interface import self_coding_managed
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 try:  # pragma: no cover - optional self-coding dependency
     from .self_coding_manager import SelfCodingManager
 except ImportError:  # pragma: no cover - self-coding unavailable
     SelfCodingManager = Any  # type: ignore
 from db_dedup import insert_if_unique, ensure_content_hash_column
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -958,7 +963,7 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ErrorBot(AdminBotBase):
     """Detect anomalies, resolve known issues, and patch admin bots."""
 
@@ -989,6 +994,10 @@ class ErrorBot(AdminBotBase):
         if selfcoding_manager is None:
             raise ValueError("selfcoding_manager is required")
         self.manager = selfcoding_manager
+        try:
+            self.manager.register_bot(self.name)
+        except Exception:
+            logger.exception("bot registration failed")
         self.bot_registry = getattr(selfcoding_manager, "bot_registry", None)
         self.data_bot = getattr(selfcoding_manager, "data_bot", None)
         if self.bot_registry is None or self.data_bot is None:

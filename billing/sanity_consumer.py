@@ -17,12 +17,17 @@ from typing import Any, Dict, TYPE_CHECKING
 from unified_event_bus import UnifiedEventBus
 from sanity_feedback import SanityFeedback
 from coding_bot_interface import self_coding_managed
+from bot_registry import BotRegistry
+from data_bot import DataBot
 
 if TYPE_CHECKING:  # pragma: no cover - used for type hints only
     from vector_service.context_builder import ContextBuilder
     from self_coding_manager import SelfCodingManager
 import menace_sanity_layer
 from dynamic_path_router import resolve_path
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:  # pragma: no cover - optional dependency
     from code_database import CodeDB
@@ -43,7 +48,7 @@ except Exception:  # pragma: no cover - best effort
 logger = logging.getLogger(__name__)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class SanityConsumer:
     """Subscribe to billing anomaly events and trigger self-correction."""
 
@@ -59,6 +64,10 @@ class SanityConsumer:
         )
         self.event_bus.subscribe("billing.anomaly", self._handle)
         self.manager = manager
+        try:
+            self.manager.register_bot(self.__class__.__name__)
+        except Exception:
+            logger.exception("bot registration failed")
         self._engine = getattr(manager, "engine", None)
         self._feedback: SanityFeedback | None = None
         self._outcome_db = DiscrepancyDB() if DiscrepancyDB is not None else None

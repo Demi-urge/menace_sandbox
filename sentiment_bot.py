@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from .coding_bot_interface import self_coding_managed
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 import sqlite3
 import logging
 from dataclasses import dataclass, field
@@ -11,6 +13,9 @@ from pathlib import Path
 from typing import Iterable, List
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +205,7 @@ def extract_features(text: str) -> List[str]:
     return words[:3]
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class SentimentBot:
     """Collect and analyse user sentiment from social media."""
 

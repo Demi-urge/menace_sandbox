@@ -19,9 +19,13 @@ from .scope_utils import Scope, build_scope_clause, apply_scope
 from .error_logger import ErrorLogger
 from .knowledge_graph import KnowledgeGraph
 from .coding_bot_interface import self_coding_managed
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class TelemetryFeedback:
     """Monitor telemetry and trigger self-coding patches.
 
@@ -51,6 +55,10 @@ class TelemetryFeedback:
         """
         self.logger = logger
         self.manager = manager
+        try:
+            self.manager.register_bot(self.__class__.__name__)
+        except Exception:
+            logger.exception("bot registration failed")
         self.engine = getattr(manager, "engine", None)
         self.threshold = threshold
         self.interval = interval
