@@ -1113,11 +1113,40 @@ class SelfCodingEngine:
             func = f"auto_{description.replace(' ', '_')}"
             body: list[str] = []
             for snip in snippets:
-                body = [
-                    "    " + ln
-                    for ln in self._extract_statements(snip.code)
-                    if ln.strip() and ln.strip() != "pass"
-                ]
+                try:
+                    tree = ast.parse(snip.code)
+                except Exception:
+                    continue
+                names = [n.id for n in ast.walk(tree) if isinstance(n, ast.Name)]
+                if names:
+                    for n in list(dict.fromkeys(names))[:3]:  # preserve order
+                        body.append(f"    {n} = None")
+                loop = next((n for n in ast.walk(tree) if isinstance(n, (ast.For, ast.While))), None)
+                if loop:
+                    if isinstance(loop, ast.For):
+                        body.extend(
+                            [
+                                f"    for {ast.unparse(loop.target)} in {ast.unparse(loop.iter)}:",
+                                "        pass",
+                            ]
+                        )
+                    else:
+                        body.extend(
+                            [
+                                f"    while {ast.unparse(loop.test)}:",
+                                "        break",
+                            ]
+                        )
+                cond = next((n for n in ast.walk(tree) if isinstance(n, ast.If)), None)
+                if cond:
+                    body.extend(
+                        [
+                            f"    if {ast.unparse(cond.test)}:",
+                            "        pass",
+                        ]
+                    )
+                if names:
+                    body.append(f"    return {names[0]}")
                 if body:
                     break
             if not body:
