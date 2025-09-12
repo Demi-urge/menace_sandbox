@@ -65,9 +65,18 @@ try:  # pragma: no cover - optional dependency
     from self_improvement.prompt_strategies import PromptStrategy, render_prompt
 except Exception:  # pragma: no cover - fallback for tests
     class PromptStrategy(str):  # type: ignore
-        pass
+        """Minimal stand-in when prompt strategies are unavailable."""
+
+        def __new__(cls, value: str = ""):
+            logging.getLogger("QuickFixEngine").warning(
+                "self_improvement.prompt_strategies missing; using dummy PromptStrategy"
+            )
+            return str.__new__(cls, value)
 
     def render_prompt(*a: object, **k: object) -> str:  # type: ignore
+        logging.getLogger("QuickFixEngine").warning(
+            "self_improvement.prompt_strategies missing; render_prompt returning empty string"
+        )
         return ""
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
@@ -77,22 +86,44 @@ try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
     class ErrorResult(Exception):
-        """Fallback ErrorResult when vector service lacks explicit class."""
+        """Fallback used when :mod:`vector_service` lacks ``ErrorResult``."""
 
-        pass
+        def __init__(self, *a: object, **k: object) -> None:
+            logging.getLogger("QuickFixEngine").warning(
+                "vector_service.ErrorResult missing; using fallback ErrorResult"
+            )
+            super().__init__(*a)
 try:  # pragma: no cover - optional dependency
     from .human_alignment_flagger import _collect_diff_data
 except Exception:  # pragma: no cover - fallback for tests
     def _collect_diff_data(*a, **k):
+        logging.getLogger("QuickFixEngine").warning(
+            "human_alignment_flagger._collect_diff_data missing; returning empty diff data"
+        )
         return {}
 try:  # pragma: no cover - optional dependency
     from .human_alignment_agent import HumanAlignmentAgent
 except Exception:  # pragma: no cover - fallback for tests
-    HumanAlignmentAgent = object  # type: ignore
+    class HumanAlignmentAgent:  # type: ignore
+        """Fallback agent when human alignment module is unavailable."""
+
+        def __init__(self, *a: object, **k: object) -> None:
+            logging.getLogger("QuickFixEngine").warning(
+                "HumanAlignmentAgent missing; alignment checks skipped"
+            )
+
+        def evaluate_changes(self, *a: object, **k: object) -> dict:
+            logging.getLogger("QuickFixEngine").warning(
+                "Fallback HumanAlignmentAgent.evaluate_changes called"
+            )
+            return {}
 try:  # pragma: no cover - optional dependency
     from .violation_logger import log_violation
 except Exception:  # pragma: no cover - fallback for tests
     def log_violation(*a, **k):
+        logging.getLogger("QuickFixEngine").warning(
+            "violation_logger.log_violation missing; nothing will be recorded"
+        )
         return None
 
 
