@@ -135,6 +135,7 @@ class EvolutionOrchestrator:
         self._workflow_event_ids: dict[int | str, int] = {}
         self.roi_history: list[float] = []
         self._registered_bots: set[str] = set()
+        self._pending_patch_cycle: set[str] = set()
         if not self.dataset_path.exists():
             try:
                 self.dataset_path.write_text(
@@ -158,6 +159,7 @@ class EvolutionOrchestrator:
         bus = getattr(self.data_bot, "event_bus", None) or self.event_bus
         if bus:
             try:
+                bus.subscribe("data:threshold_breach", lambda _t, e: self._on_threshold_breach(e))
                 bus.subscribe("bot:degraded", lambda _t, e: self._on_bot_degraded(e))
                 self._degradation_subscribed = True
             except Exception:
@@ -227,6 +229,19 @@ class EvolutionOrchestrator:
             self.roi_history.append(after)
         except Exception:
             self.logger.exception("failed to record patch_applied event")
+
+    # ------------------------------------------------------------------
+    def _on_threshold_breach(self, event: dict) -> None:
+        """Register a patch cycle when metrics thresholds are exceeded."""
+        if not self.selfcoding_manager:
+            return
+        bot = str(event.get("bot", ""))
+        desc = f"auto_patch_due_to_degradation:{bot}"
+        try:
+            self.selfcoding_manager.register_patch_cycle(desc, event)
+            self._pending_patch_cycle.add(bot)
+        except Exception:
+            self.logger.exception("failed to register patch cycle for %s", bot)
 
     # ------------------------------------------------------------------
     def _on_bot_degraded(self, event: dict) -> None:
@@ -387,7 +402,10 @@ class EvolutionOrchestrator:
                             )
                     return
                 # Record baseline metrics for this degradation event before patching
-                self.selfcoding_manager.register_patch_cycle(desc, context_meta)
+                if bot in self._pending_patch_cycle:
+                    self._pending_patch_cycle.remove(bot)
+                else:
+                    self.selfcoding_manager.register_patch_cycle(desc, context_meta)
                 settings = getattr(self.data_bot, "settings", SandboxSettings())
                 data_dir = Path(getattr(settings, "sandbox_data_dir", "."))
                 os.environ["SANDBOX_DATA_DIR"] = str(data_dir)
