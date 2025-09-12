@@ -164,7 +164,12 @@ class PatchRecord:
     pass
 
 
+class PatchHistoryDB:
+    pass
+
+
 code_db_stub.PatchRecord = PatchRecord
+code_db_stub.PatchHistoryDB = PatchHistoryDB
 sys.modules["menace.code_database"] = code_db_stub
 sys.modules["code_database"] = code_db_stub
 
@@ -196,6 +201,9 @@ vs_mod = types.ModuleType("vector_service")
 vs_mod.SharedVectorService = object
 vs_mod.CognitionLayer = object
 vs_mod.ContextBuilder = object
+# Provide ErrorResult so quick_fix_engine import doesn't fail
+vs_mod.ErrorResult = Exception
+vs_mod.PatchLogger = object
 sys.modules["vector_service"] = vs_mod
 sys.modules["vector_service.context_builder"] = vc_stub
 sys.modules["vector_service.text_preprocessor"] = types.ModuleType(

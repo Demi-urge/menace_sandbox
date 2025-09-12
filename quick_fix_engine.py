@@ -82,17 +82,13 @@ except Exception:  # pragma: no cover - fallback for tests
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
     from .self_coding_engine import SelfCodingEngine
     from .self_improvement.target_region import TargetRegion
-try:  # pragma: no cover - optional dependency
+try:  # pragma: no cover - required dependency
     from vector_service import ErrorResult  # type: ignore
-except Exception:  # pragma: no cover - fallback when unavailable
-    class ErrorResult(Exception):
-        """Fallback used when :mod:`vector_service` lacks ``ErrorResult``."""
-
-        def __init__(self, *a: object, **k: object) -> None:
-            logging.getLogger("QuickFixEngine").warning(
-                "vector_service.ErrorResult missing; using fallback ErrorResult"
-            )
-            super().__init__(*a)
+except Exception as exc:  # pragma: no cover - fail fast when unavailable
+    raise RuntimeError(
+        "vector_service.ErrorResult is required for quick_fix_engine. "
+        "Install or update `vector_service` to include ErrorResult."
+    ) from exc
 try:  # pragma: no cover - optional dependency
     from .human_alignment_flagger import _collect_diff_data
 except Exception:  # pragma: no cover - fallback for tests

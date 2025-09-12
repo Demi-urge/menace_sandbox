@@ -24,6 +24,11 @@ sys.modules["menace_sandbox.self_coding_manager"] = scm
 kg = types.ModuleType("menace_sandbox.knowledge_graph")
 kg.KnowledgeGraph = object
 sys.modules["menace_sandbox.knowledge_graph"] = kg
+# Stub out coding bot interface to avoid heavy self-coding engine imports
+cbi = types.ModuleType("menace_sandbox.coding_bot_interface")
+cbi.self_coding_managed = lambda cls: cls
+cbi.manager_generate_helper = lambda mgr, desc, **kw: mgr.engine.generate_helper(desc, **kw)
+sys.modules["menace_sandbox.coding_bot_interface"] = cbi
 
 vec_pkg = types.ModuleType("vector_service")
 vec_pkg.__path__ = []
@@ -53,6 +58,13 @@ vec.ContextBuilder = _DummyContextBuilder
 vec.Retriever = object
 vec.FallbackResult = object
 vec.EmbeddingBackfill = _DummyBackfill
+# Provide minimal vector_service attributes so quick_fix_engine import succeeds
+class _ErrorResult(Exception):
+    pass
+vec_pkg.ErrorResult = _ErrorResult
+vec_pkg.ContextBuilder = _DummyContextBuilder
+vec_pkg.CognitionLayer = object
+vec_pkg.SharedVectorService = object
 sys.modules["vector_service"] = vec_pkg
 sys.modules["vector_service.context_builder"] = vec
 vec_text = types.ModuleType("vector_service.text_preprocessor")
@@ -64,7 +76,6 @@ vec_embed = types.ModuleType("vector_service.embed_utils")
 vec_embed.get_text_embeddings = lambda *a, **k: []
 vec_embed.EMBED_DIM = 1
 sys.modules["vector_service.embed_utils"] = vec_embed
-vec_pkg.SharedVectorService = object
 
 pp = types.ModuleType("patch_provenance")
 pp.PatchLogger = object
