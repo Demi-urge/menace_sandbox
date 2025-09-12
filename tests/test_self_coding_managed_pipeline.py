@@ -66,18 +66,14 @@ def test_self_coding_managed_pipeline():
         bot_registry=registry, data_bot=data_bot, evolution_orchestrator=orchestrator
     )
 
-    @self_coding_managed
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
     class DummyBot:
+        name = "dummy"
+
         def __init__(self, manager=None):
             self.manager = manager
-            self.bot_name = "dummy"
 
-    DummyBot(
-        manager=manager,
-        bot_registry=registry,
-        data_bot=data_bot,
-        evolution_orchestrator=orchestrator,
-    )
+    DummyBot(manager=manager, evolution_orchestrator=orchestrator)
 
     assert "dummy" in registry.registered
     assert "dummy" in orchestrator.registered
