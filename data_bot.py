@@ -1423,6 +1423,27 @@ class DataBot:
             or event["error_breach"]
             or event["test_failure_breach"]
         )
+
+        # Persist dynamically derived thresholds so future runs adapt to the
+        # observed baseline for this bot.  ``save_sc_thresholds`` writes to the
+        # ``self_coding_thresholds.yaml`` configuration file.  Best effort –
+        # failures are logged but do not disrupt degradation checks.
+        try:
+            save_sc_thresholds(
+                bot,
+                roi_drop=roi_thresh,
+                error_increase=err_thresh,
+                test_failure_increase=fail_thresh,
+            )
+            self._thresholds[bot] = ROIThresholds(
+                roi_drop=roi_thresh,
+                error_threshold=err_thresh,
+                test_failure_threshold=fail_thresh,
+            )
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception(
+                "failed to persist dynamic thresholds for %s", bot
+            )
         callbacks = []
         if callback:
             callbacks.append(callback)
