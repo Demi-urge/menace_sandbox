@@ -299,21 +299,39 @@ class SelfCodingManager:
     def _ensure_quick_fix_engine(
         self, builder: ContextBuilder | None = None
     ) -> QuickFixEngine:
-        """Return the initialised :class:`QuickFixEngine`.
+        """Return an initialised :class:`QuickFixEngine`.
 
-        A fresh *builder* updates the engine's context. ``self.quick_fix``
-        must already be created; absence is treated as fatal.
+        A fresh *builder* updates the engine's context. When no engine is
+        present a new instance is created so patches always undergo
+        validation.
         """
 
-        if self.quick_fix is None:
-            raise RuntimeError("QuickFixEngine was not initialised")
         if builder is None:
             clayer = getattr(self.engine, "cognition_layer", None)
             builder = getattr(clayer, "context_builder", None)
-            if builder is None:
-                raise RuntimeError(
-                    "engine.cognition_layer must provide a context_builder"
+
+        if self.quick_fix is None:
+            if QuickFixEngine is None:
+                self.logger.error(
+                    "QuickFixEngine is required but could not be imported; "
+                    "pip install menace[quickfix]",
                 )
+                raise RuntimeError(
+                    "QuickFixEngine is required but could not be imported",
+                )
+            if builder is None:
+                builder = ContextBuilder()
+            try:
+                self.quick_fix = QuickFixEngine(
+                    ErrorDB(), self, context_builder=builder
+                )
+            except Exception as exc:  # pragma: no cover - instantiation errors
+                raise RuntimeError(
+                    "failed to initialise QuickFixEngine",
+                ) from exc
+
+        if builder is None:
+            builder = ContextBuilder()
         self._prepare_context_builder(builder)
         try:
             self.quick_fix.context_builder = builder
