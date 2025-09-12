@@ -415,6 +415,7 @@ class SelfCodingManager:
 
         if not self.data_bot:
             return False
+
         self._refresh_thresholds()
         roi = self.data_bot.roi(self.bot_name)
         errors = self.data_bot.average_errors(self.bot_name)
@@ -423,24 +424,38 @@ class SelfCodingManager:
         # Record metrics so rolling statistics can inform future predictions.
         self.baseline_tracker.update(roi=roi, errors=errors, tests_failed=failures)
 
+        # ------------------------------------------------------------------
+        # Load persisted forecast history (exponential moving averages) if not
+        # already present.  During tests (detected via ``PYTEST_CURRENT_TEST``)
+        # persisted state is ignored to avoid cross-test interference.
+        # ------------------------------------------------------------------
+        if not hasattr(self, "_forecast_ema"):
+            history_dir = Path("forecast_records")
+            history_dir.mkdir(exist_ok=True)
+            self._forecast_hist_path = history_dir / f"{self.bot_name}_forecast.json"
+            self._forecast_ema: Dict[str, float] = {}
+            if not os.environ.get("PYTEST_CURRENT_TEST") and self._forecast_hist_path.exists():
+                try:
+                    self._forecast_ema = {
+                        k: float(v)
+                        for k, v in json.loads(self._forecast_hist_path.read_text()).items()
+                    }
+                except Exception:
+                    self._forecast_ema = {}
+
         forecast = None
         forecaster = getattr(self.data_bot, "forecast_metrics", None)
         if forecaster is not None:
             try:
                 forecast = forecaster(
-                    self.bot_name,
-                    roi=roi,
-                    errors=errors,
-                    tests_failed=failures,
+                    self.bot_name, roi=roi, errors=errors, tests_failed=failures
                 )
             except Exception:
                 forecast = None
 
         if forecast:
             pred_roi, roi_low, _roi_high = forecast.get("roi", (roi, roi, roi))
-            pred_err, _err_low, err_high = forecast.get(
-                "errors", (errors, errors, errors)
-            )
+            pred_err, _err_low, err_high = forecast.get("errors", (errors, errors, errors))
             pred_fail, _fail_low, fail_high = forecast.get(
                 "tests_failed", (failures, failures, failures)
             )
@@ -452,13 +467,43 @@ class SelfCodingManager:
             pred_fail = failures
             fail_high = failures
 
-        self._forecast_history["roi"].append(pred_roi)
-        self._forecast_history["errors"].append(pred_err)
-        self._forecast_history["tests_failed"].append(pred_fail)
+        # ------------------------------------------------------------------
+        # Update exponential moving averages for predictions and confidence
+        # bounds.  The smoothing factor favours recent forecasts while retaining
+        # historical trends.
+        # ------------------------------------------------------------------
+        alpha = 0.3
 
-        roi_thresh = min(self.roi_drop_threshold + (roi_low - pred_roi), 0.0)
-        err_thresh = max(self.error_rate_threshold + (err_high - pred_err), 0.0)
-        fail_thresh = max(self.test_failure_threshold + (fail_high - pred_fail), 0.0)
+        def _ema_update(key: str, value: float) -> float:
+            prev = self._forecast_ema.get(key)
+            ema = float(value) if prev is None else alpha * float(value) + (1.0 - alpha) * prev
+            self._forecast_ema[key] = ema
+            return ema
+
+        ema_pred_roi = _ema_update("pred_roi", pred_roi)
+        ema_roi_low = _ema_update("roi_low", roi_low)
+        ema_pred_err = _ema_update("pred_err", pred_err)
+        ema_err_high = _ema_update("err_high", err_high)
+        ema_pred_fail = _ema_update("pred_fail", pred_fail)
+        ema_fail_high = _ema_update("fail_high", fail_high)
+
+        # Persist EMA state so decisions survive process restarts.
+        try:
+            self._forecast_hist_path.write_text(json.dumps(self._forecast_ema))
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to persist forecast history")
+
+        # Store smoothed predictions for introspection/testing.
+        self._forecast_history["roi"].append(ema_pred_roi)
+        self._forecast_history["errors"].append(ema_pred_err)
+        self._forecast_history["tests_failed"].append(ema_pred_fail)
+
+        # Derive adaptive thresholds from the smoothed forecast history.
+        roi_thresh = min(self.roi_drop_threshold + (ema_roi_low - ema_pred_roi), 0.0)
+        err_thresh = max(self.error_rate_threshold + (ema_err_high - ema_pred_err), 0.0)
+        fail_thresh = max(
+            self.test_failure_threshold + (ema_fail_high - ema_pred_fail), 0.0
+        )
 
         # Persist the dynamically calculated thresholds so ``DataBot`` and other
         # components share a consistent view.
@@ -469,9 +514,9 @@ class SelfCodingManager:
                 error_threshold=err_thresh,
                 test_failure_threshold=fail_thresh,
                 forecast={
-                    "roi": pred_roi,
-                    "errors": pred_err,
-                    "tests_failed": pred_fail,
+                    "roi": ema_pred_roi,
+                    "errors": ema_pred_err,
+                    "tests_failed": ema_pred_fail,
                 },
             )
         except Exception:  # pragma: no cover - best effort
