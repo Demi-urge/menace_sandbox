@@ -136,6 +136,36 @@ def self_coding_managed(cls: type) -> type:
                 raise RuntimeError(
                     "failed to initialise SelfCodingManager; provide a manager"
                 ) from exc
+        if getattr(manager, "quick_fix", None) is None:
+            try:
+                from .quick_fix_engine import QuickFixEngine  # type: ignore
+                from .error_bot import ErrorDB
+            except Exception as exc:  # pragma: no cover - optional dependency
+                raise RuntimeError(
+                    f"{cls.__name__}: QuickFixEngine is required but could not be imported",
+                ) from exc
+            engine = getattr(manager, "engine", None)
+            clayer = getattr(engine, "cognition_layer", None)
+            builder = getattr(clayer, "context_builder", None)
+            if builder is None:
+                raise RuntimeError(
+                    f"{cls.__name__}: QuickFixEngine requires a context_builder",
+                )
+            error_db = getattr(self, "error_db", None) or getattr(manager, "error_db", None)
+            if error_db is None:
+                try:
+                    error_db = ErrorDB()
+                except Exception as exc:  # pragma: no cover - instantiation errors
+                    raise RuntimeError(
+                        f"{cls.__name__}: failed to initialise ErrorDB for QuickFixEngine",
+                    ) from exc
+            try:
+                manager.quick_fix = QuickFixEngine(error_db, manager, context_builder=builder)
+                manager.error_db = error_db
+            except Exception as exc:  # pragma: no cover - instantiation errors
+                raise RuntimeError(
+                    f"{cls.__name__}: failed to initialise QuickFixEngine",
+                ) from exc
         registry.register_bot(name)
         try:
             registry.update_bot(name, module_path)
