@@ -40,6 +40,10 @@ def _setup_module(tmp_path, monkeypatch):
         def __init__(self):
             self.event_bus = bus
             self.generate_called = False
+            import networkx as nx
+            g = nx.DiGraph()
+            g.add_node("dummy_module", module=str(mod_path))
+            self.bot_registry = types.SimpleNamespace(graph=g)
 
         def should_refactor(self) -> bool:
             return True

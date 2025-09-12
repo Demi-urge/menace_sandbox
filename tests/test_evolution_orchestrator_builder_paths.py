@@ -161,6 +161,10 @@ def test_builder_uses_sandbox_settings(tmp_path, monkeypatch):
     mod = types.ModuleType("dummy")
     mod.__file__ = str(mod_path)
     sys.modules["dummy"] = mod
+    import networkx as nx
+    g = nx.DiGraph()
+    g.add_node("dummy", module=str(mod_path))
+    manager.bot_registry = types.SimpleNamespace(graph=g)
 
     orch._on_bot_degraded({"bot": "dummy"})
     monkeypatch.delenv("SANDBOX_DATA_DIR", raising=False)
