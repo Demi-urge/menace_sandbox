@@ -1,8 +1,11 @@
 import sys
 import types
 import logging
-import pytest
+import subprocess
+import shutil
 from pathlib import Path
+
+import pytest
 
 # Minimal stubs to allow importing the manager without heavy dependencies
 stub_env = types.ModuleType("environment_bootstrap")
@@ -42,6 +45,13 @@ def init_db_router(*a, **k):
 db_router_stub.DBRouter = DummyRouter
 db_router_stub.init_db_router = init_db_router
 sys.modules.setdefault("db_router", db_router_stub)
+
+qfe_stub = types.ModuleType("quick_fix_engine")
+qfe_stub.QuickFixEngine = object
+qfe_stub.generate_patch = lambda *a, **k: None
+qfe_stub.manager_generate_helper = lambda *a, **k: ""
+sys.modules.setdefault("quick_fix_engine", qfe_stub)
+sys.modules.setdefault("menace.quick_fix_engine", qfe_stub)
 
 dpr = types.SimpleNamespace(
     resolve_path=lambda p: Path(p),
@@ -151,6 +161,20 @@ class DummyDataBot:
             roi_drop=0.1, error_threshold=0.1, test_failure_threshold=0.1
         )
 
+    def roi(self, _bot: str) -> float:  # pragma: no cover - simple stub
+        return 0.0
+
+    def average_errors(self, _bot: str) -> float:  # pragma: no cover - stub
+        return 0.0
+
+    def average_test_failures(self, _bot: str) -> float:  # pragma: no cover
+        return 0.0
+
+    def check_degradation(
+        self, _bot: str, _roi: float, _errors: float, _failures: float
+    ) -> bool:  # pragma: no cover - stub
+        return True
+
 
 class DummyPipeline:
     pass
@@ -239,4 +263,55 @@ def test_patch_uses_refreshed_weights(monkeypatch: pytest.MonkeyPatch) -> None:
     qfe.manager_generate_helper(mgr, "second")
 
     assert seen == [1, 2]
+
+
+def test_run_patch_without_quick_fix_engine_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """run_patch should fail clearly when QuickFixEngine is missing."""
+
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+    dummy_qf = types.SimpleNamespace(
+        apply_validated_patch=lambda *a, **k: (True, 1, [])
+    )
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=dummy_qf,
+    )
+
+    file_path = tmp_path / "sample.py"  # path-ignore
+    file_path.write_text("def x():\n    pass\n")
+
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    def fake_run(cmd, *a, **k):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path, backend="venv": types.SimpleNamespace(
+            success=True,
+            failure=None,
+            stdout="",
+            stderr="",
+            duration=0.0,
+        ),
+    )
+    monkeypatch.setattr(scm, "QuickFixEngine", None)
+    mgr.quick_fix = None
+
+    with pytest.raises(RuntimeError) as exc:
+        mgr.run_patch(file_path, "add")
+
+    assert "QuickFixEngine is required" in str(exc.value)
 
