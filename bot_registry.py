@@ -153,6 +153,10 @@ class BotRegistry:
                     logger.error("Failed to publish bot:manual_change event: %s", exc)
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("Failed to check manual changes for %s: %s", module_path, exc)
+        prev_module = node.get("last_good_module")
+        prev_version = node.get("last_good_version")
+        prev_commit = node.get("last_good_commit")
+        prev_patch = node.get("last_good_patch_id")
         try:
             path_obj = Path(module_path)
             if path_obj.suffix == ".py" or "/" in module_path:
@@ -177,10 +181,46 @@ class BotRegistry:
                     importlib.reload(sys.modules[module_path])
                 else:
                     importlib.import_module(module_path)
+            node["last_good_module"] = module_path
+            node["last_good_version"] = node.get("version")
+            node["last_good_commit"] = commit
+            node["last_good_patch_id"] = patch_id
+            if self.persist_path:
+                try:
+                    self.save(self.persist_path)
+                except Exception as save_exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to save bot registry to %s: %s", self.persist_path, save_exc
+                    )
         except Exception as exc:  # pragma: no cover - best effort
             logger.error(
                 "Failed to hot swap bot %s from %s: %s", name, module_path, exc
             )
+            if prev_module is not None:
+                node["module"] = prev_module
+            if prev_version is not None:
+                node["version"] = prev_version
+            if prev_commit is not None:
+                node["commit"] = prev_commit
+            if prev_patch is not None:
+                node["patch_id"] = prev_patch
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "bot:hot_swap_failed",
+                        {"name": name, "module": module_path, "error": str(exc)},
+                    )
+                except Exception as pub_exc:
+                    logger.error(
+                        "Failed to publish bot:hot_swap_failed event: %s", pub_exc
+                    )
+            if self.persist_path:
+                try:
+                    self.save(self.persist_path)
+                except Exception as save_exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to save bot registry to %s: %s", self.persist_path, save_exc
+                    )
             raise
 
     def register_interaction(self, from_bot: str, to_bot: str, weight: float = 1.0) -> None:
@@ -318,7 +358,9 @@ class BotRegistry:
         cur.execute(
             "CREATE TABLE IF NOT EXISTS bot_nodes(" "name TEXT PRIMARY KEY, "
             "module TEXT, "
-            "version INTEGER)"
+            "version INTEGER, "
+            "last_good_module TEXT, "
+            "last_good_version INTEGER)"
         )
         # Ensure columns exist for databases created before they were introduced.
         try:  # pragma: no cover - only executed on legacy schemas
@@ -327,6 +369,10 @@ class BotRegistry:
                 cur.execute("ALTER TABLE bot_nodes ADD COLUMN module TEXT")
             if "version" not in cols:
                 cur.execute("ALTER TABLE bot_nodes ADD COLUMN version INTEGER")
+            if "last_good_module" not in cols:
+                cur.execute("ALTER TABLE bot_nodes ADD COLUMN last_good_module TEXT")
+            if "last_good_version" not in cols:
+                cur.execute("ALTER TABLE bot_nodes ADD COLUMN last_good_version INTEGER")
         except Exception:
             pass
         cur.execute(
@@ -343,9 +389,15 @@ class BotRegistry:
             data = self.graph.nodes[node]
             module = data.get("module")
             version = data.get("version")
+            last_mod = data.get("last_good_module")
+            last_ver = data.get("last_good_version")
             cur.execute(
-                "INSERT OR REPLACE INTO bot_nodes(name, module, version) VALUES(?, ?, ?)",
-                (node, module, version),
+                """
+                INSERT OR REPLACE INTO bot_nodes(
+                    name, module, version, last_good_module, last_good_version
+                ) VALUES(?, ?, ?, ?, ?)
+                """,
+                (node, module, version, last_mod, last_ver),
             )
         for u, v, data in self.graph.edges(data=True):
             cur.execute(
@@ -389,18 +441,16 @@ class BotRegistry:
 
         module_col = "module" in cols
         version_col = "version" in cols
+        last_mod_col = "last_good_module" in cols
+        last_ver_col = "last_good_version" in cols
+        select_cols = [
+            c for c in ["module", "version", "last_good_module", "last_good_version"] if c in cols
+        ]
+        col_sql = ", ".join(select_cols)
         try:
-            if module_col and version_col:
+            if col_sql:
                 node_rows = cur.execute(
-                    "SELECT name, module, version FROM bot_nodes"
-                ).fetchall()
-            elif module_col:
-                node_rows = cur.execute(
-                    "SELECT name, module FROM bot_nodes"
-                ).fetchall()
-            elif version_col:
-                node_rows = cur.execute(
-                    "SELECT name, version FROM bot_nodes"
+                    f"SELECT name, {col_sql} FROM bot_nodes"
                 ).fetchall()
             else:
                 node_rows = cur.execute("SELECT name FROM bot_nodes").fetchall()
@@ -409,19 +459,28 @@ class BotRegistry:
 
         for row in node_rows:
             name = row[0]
-            module = None
-            version = None
-            if module_col and version_col and len(row) >= 3:
-                _, module, version = row
-            elif module_col:
-                _, module = row
-            elif version_col:
-                _, version = row
             self.graph.add_node(name)
-            if module is not None:
-                self.graph.nodes[name]["module"] = module
-            if version is not None:
-                self.graph.nodes[name]["version"] = int(version)
+            idx = 1
+            if module_col:
+                module = row[idx]
+                idx += 1
+                if module is not None:
+                    self.graph.nodes[name]["module"] = module
+            if version_col:
+                version = row[idx]
+                idx += 1
+                if version is not None:
+                    self.graph.nodes[name]["version"] = int(version)
+            if last_mod_col:
+                last_mod = row[idx]
+                idx += 1
+                if last_mod is not None:
+                    self.graph.nodes[name]["last_good_module"] = last_mod
+            if last_ver_col:
+                last_ver = row[idx]
+                idx += 1
+                if last_ver is not None:
+                    self.graph.nodes[name]["last_good_version"] = int(last_ver)
 
         try:
             edge_rows = cur.execute(
