@@ -469,24 +469,36 @@ def generate_patch(
                         alignment_warning=True,
                     )
             if patch_logger is not None:
-                try:
-                    patch_logger.track_contributors(
-                        [(f"{o}:{vid}", score) for o, vid, score in vectors],
-                        patch_id is not None,
-                        patch_id=str(patch_id) if patch_id is not None else "",
-                        session_id=cb_session,
-                        effort_estimate=effort_estimate,
-                    )
-                except Exception:
-                    pass
-                else:  # run embedding backfill on success
+                for attempt in range(2):
                     try:
-                        EmbeddingBackfill().run(
-                            db="code",
-                            backend=os.getenv("VECTOR_BACKEND", "annoy"),
+                        patch_logger.track_contributors(
+                            [(f"{o}:{vid}", score) for o, vid, score in vectors],
+                            patch_id is not None,
+                            patch_id=str(patch_id) if patch_id is not None else "",
+                            session_id=cb_session,
+                            effort_estimate=effort_estimate,
                         )
-                    except BaseException:  # pragma: no cover - best effort
-                        logger.debug("embedding backfill failed", exc_info=True)
+                    except Exception:
+                        logger.warning(
+                            "patch_logger.track_contributors failed",
+                            exc_info=True,
+                            extra={"attempt": attempt + 1},
+                        )
+                        if attempt == 0:
+                            time.sleep(0.5)
+                        else:
+                            break
+                    else:  # run embedding backfill on success
+                        try:
+                            EmbeddingBackfill().run(
+                                db="code",
+                                backend=os.getenv("VECTOR_BACKEND", "annoy"),
+                            )
+                        except BaseException:  # pragma: no cover - best effort
+                            logger.debug(
+                                "embedding backfill failed", exc_info=True
+                            )
+                        break
             if manager is not None and patch_id is not None:
                 registry = getattr(manager, "bot_registry", None)
                 if registry is not None:
