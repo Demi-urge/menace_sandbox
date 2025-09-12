@@ -233,9 +233,9 @@ def generate_patch(
         :class:`~self_coding_manager.SelfCodingManager` providing helper
         generation context and telemetry hooks.
     engine:
-        Optional :class:`~self_coding_engine.SelfCodingEngine` instance.  If not
-        provided, a minimal engine is instantiated on demand.  The function
-        tolerates missing dependencies and simply returns ``None`` on failure.
+        :class:`~self_coding_engine.SelfCodingEngine` instance. If ``None``,
+        the value from ``manager.engine`` is used. A ``RuntimeError`` is raised
+        when no engine is available.
     context_builder:
         :class:`vector_service.ContextBuilder` instance used to retrieve
         contextual information from local databases. The builder must be able
@@ -350,17 +350,10 @@ def generate_patch(
     if engine is None:
         engine = getattr(manager, "engine", None)
     if engine is None:
-        try:  # pragma: no cover - heavy dependencies
-            from .self_coding_engine import SelfCodingEngine
-            from .code_database import CodeDB
-            from .menace_memory_manager import MenaceMemoryManager
-
-            engine = SelfCodingEngine(
-                CodeDB(), MenaceMemoryManager(), context_builder=builder
-            )
-        except Exception as exc:  # pragma: no cover - optional deps
-            logger.error("self coding engine unavailable: %s", exc)
-            return None
+        raise RuntimeError(
+            "generate_patch requires a SelfCodingEngine instance. Pass"
+            " manager.engine so improvements originate from SelfCodingManager."
+        )
 
     try:
         patch_id: int | None
