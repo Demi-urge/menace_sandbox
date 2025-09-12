@@ -58,7 +58,9 @@ from context_builder_util import ensure_fresh_weights, create_context_builder
 try:  # pragma: no cover - allow flat and package imports
     from .coding_bot_interface import manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER
 except Exception:  # pragma: no cover - fallback for flat layout
-    from coding_bot_interface import manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER  # type: ignore
+    from coding_bot_interface import (
+        manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER,  # type: ignore
+    )
 
 try:  # pragma: no cover - optional dependency for patching helper generation
     from . import quick_fix_engine as _quick_fix_engine_mod
@@ -430,109 +432,15 @@ class SelfCodingManager:
         # Record metrics so rolling statistics can inform future predictions.
         self.baseline_tracker.update(roi=roi, errors=errors, tests_failed=failures)
 
-        # ------------------------------------------------------------------
-        # Load persisted forecast history (exponential moving averages) if not
-        # already present.  During tests (detected via ``PYTEST_CURRENT_TEST``)
-        # persisted state is ignored to avoid cross-test interference.
-        # ------------------------------------------------------------------
-        if not hasattr(self, "_forecast_ema"):
-            history_dir = Path("forecast_records")
-            history_dir.mkdir(exist_ok=True)
-            self._forecast_hist_path = history_dir / f"{self.bot_name}_forecast.json"
-            self._forecast_ema: Dict[str, float] = {}
-            if not os.environ.get("PYTEST_CURRENT_TEST") and self._forecast_hist_path.exists():
-                try:
-                    self._forecast_ema = {
-                        k: float(v)
-                        for k, v in json.loads(self._forecast_hist_path.read_text()).items()
-                    }
-                except Exception:
-                    self._forecast_ema = {}
-
-        forecast = None
-        forecaster = getattr(self.data_bot, "forecast_metrics", None)
-        if forecaster is not None:
-            try:
-                forecast = forecaster(
-                    self.bot_name, roi=roi, errors=errors, tests_failed=failures
-                )
-            except Exception:
-                forecast = None
-
-        if forecast:
-            pred_roi, roi_low, _roi_high = forecast.get("roi", (roi, roi, roi))
-            pred_err, _err_low, err_high = forecast.get("errors", (errors, errors, errors))
-            pred_fail, _fail_low, fail_high = forecast.get(
-                "tests_failed", (failures, failures, failures)
-            )
-        else:
-            pred_roi = roi
-            roi_low = roi
-            pred_err = errors
-            err_high = errors
-            pred_fail = failures
-            fail_high = failures
-
-        # ------------------------------------------------------------------
-        # Update exponential moving averages for predictions and confidence
-        # bounds.  The smoothing factor favours recent forecasts while retaining
-        # historical trends.
-        # ------------------------------------------------------------------
-        alpha = 0.3
-
-        def _ema_update(key: str, value: float) -> float:
-            prev = self._forecast_ema.get(key)
-            ema = float(value) if prev is None else alpha * float(value) + (1.0 - alpha) * prev
-            self._forecast_ema[key] = ema
-            return ema
-
-        ema_pred_roi = _ema_update("pred_roi", pred_roi)
-        ema_roi_low = _ema_update("roi_low", roi_low)
-        ema_pred_err = _ema_update("pred_err", pred_err)
-        ema_err_high = _ema_update("err_high", err_high)
-        ema_pred_fail = _ema_update("pred_fail", pred_fail)
-        ema_fail_high = _ema_update("fail_high", fail_high)
-
-        # Persist EMA state so decisions survive process restarts.
-        try:
-            self._forecast_hist_path.write_text(json.dumps(self._forecast_ema))
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("failed to persist forecast history")
-
-        # Store smoothed predictions for introspection/testing.
-        self._forecast_history["roi"].append(ema_pred_roi)
-        self._forecast_history["errors"].append(ema_pred_err)
-        self._forecast_history["tests_failed"].append(ema_pred_fail)
-
-        # Derive adaptive thresholds from the smoothed forecast history.
-        roi_thresh = min(self.roi_drop_threshold + (ema_roi_low - ema_pred_roi), 0.0)
-        err_thresh = max(self.error_rate_threshold + (ema_err_high - ema_pred_err), 0.0)
-        fail_thresh = max(
-            self.test_failure_threshold + (ema_fail_high - ema_pred_fail), 0.0
-        )
-
-        # Persist the dynamically calculated thresholds so ``DataBot`` and other
-        # components share a consistent view.
-        try:
-            self.data_bot.update_thresholds(
-                self.bot_name,
-                roi_drop=roi_thresh,
-                error_threshold=err_thresh,
-                test_failure_threshold=fail_thresh,
-                forecast={
-                    "roi": ema_pred_roi,
-                    "errors": ema_pred_err,
-                    "tests_failed": ema_pred_fail,
-                },
-            )
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception(
-                "failed to persist dynamic thresholds for %s", self.bot_name
-            )
-
-        return self.data_bot.check_degradation(
+        result = self.data_bot.check_degradation(
             self.bot_name, roi, errors, failures
         )
+
+        # ``check_degradation`` adapts thresholds based on the latest metrics;
+        # refresh the local cache so subsequent decisions reflect the new
+        # values.
+        self._refresh_thresholds()
+        return result
 
     # ------------------------------------------------------------------
     def register_patch_cycle(

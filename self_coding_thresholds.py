@@ -56,6 +56,12 @@ import yaml
 
 from .sandbox_settings import SandboxSettings
 from .dynamic_path_router import resolve_path
+from .roi_thresholds import ROIThresholds
+
+try:  # pragma: no cover - optional dependency
+    from .trend_predictor import TrendPredictor, TrendPrediction
+except Exception:  # pragma: no cover - predictor is optional
+    TrendPredictor = TrendPrediction = None  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -181,4 +187,61 @@ def update_thresholds(
         pass
 
 
-__all__ = ["SelfCodingThresholds", "get_thresholds", "update_thresholds"]
+def adaptive_thresholds(
+    bot: str,
+    *,
+    roi_baseline: float,
+    error_baseline: float,
+    failure_baseline: float,
+    prediction: "TrendPrediction | None" = None,
+    predictor: "TrendPredictor | None" = None,
+) -> ROIThresholds:
+    """Derive and persist adaptive thresholds for ``bot``.
+
+    ``roi_baseline`` and friends represent rolling averages of recent
+    metrics.  ``prediction`` may supply a forecast from
+    :class:`~menace.trend_predictor.TrendPredictor`; when omitted a predictor
+    instance is used to generate one.  The returned
+    :class:`~menace.roi_thresholds.ROIThresholds` reflects updated limits that
+    have also been written back to ``self_coding_thresholds.yaml`` so future
+    lookups share the same view.
+    """
+
+    if prediction is None and TrendPredictor is not None:
+        pred = predictor or TrendPredictor()
+        try:
+            pred.train()
+            prediction = pred.predict_future_metrics()
+        except Exception:  # pragma: no cover - prediction errors
+            prediction = None
+
+    pred_roi = prediction.roi if prediction else roi_baseline
+    pred_err = prediction.errors if prediction else error_baseline
+    pred_fail = failure_baseline  # tests_failed forecasts are currently
+    # unavailable so fall back to the rolling baseline.
+
+    current = get_thresholds(bot)
+    roi_thresh = min(current.roi_drop, pred_roi - roi_baseline)
+    err_thresh = max(current.error_increase, pred_err - error_baseline)
+    fail_thresh = max(current.test_failure_increase, pred_fail - failure_baseline)
+
+    update_thresholds(
+        bot,
+        roi_drop=roi_thresh,
+        error_increase=err_thresh,
+        test_failure_increase=fail_thresh,
+    )
+
+    return ROIThresholds(
+        roi_drop=roi_thresh,
+        error_threshold=err_thresh,
+        test_failure_threshold=fail_thresh,
+    )
+
+
+__all__ = [
+    "SelfCodingThresholds",
+    "get_thresholds",
+    "update_thresholds",
+    "adaptive_thresholds",
+]

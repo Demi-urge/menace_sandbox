@@ -70,12 +70,12 @@ from .roi_thresholds import ROIThresholds
 from .self_coding_thresholds import (
     get_thresholds as load_sc_thresholds,
     update_thresholds as save_sc_thresholds,
+    adaptive_thresholds,
 )
 from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
 from .self_improvement.baseline_tracker import BaselineTracker
-from .forecasting import ForecastModel, create_model
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -1055,10 +1055,6 @@ class DataBot:
         self._ema_baseline: Dict[str, Dict[str, float]] = {}
         # Per-bot forecast history for adaptive thresholding.
         self._forecast_history: Dict[str, Dict[str, list[float]]] = {}
-        # Dedicated forecasting models for each metric per bot.
-        self._forecast_models: Dict[str, Dict[str, ForecastModel]] = {}
-        # Forecast configuration cache (model, confidence) per bot.
-        self._forecast_cfg: Dict[str, dict] = {}
         # Cache per-bot thresholds to avoid unnecessary disk reads.  The
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
@@ -1458,6 +1454,43 @@ class DataBot:
                 self.logger.exception("failed to query capital bot: %s", exc)
         return rec
 
+    def forecast_metrics(
+        self,
+        bot: str,
+        *,
+        roi: float,
+        errors: float,
+        tests_failed: float = 0.0,
+    ) -> Dict[str, tuple[float, float, float]]:
+        """Forecast next-cycle metrics using ``TrendPredictor``.
+
+        Returns a mapping of metric name to ``(prediction, low, high)`` tuples.
+        Low/high bounds are derived from the current value when confidence
+        intervals are unavailable.
+        """
+
+        prediction = None
+        if self.trend_predictor is not None:
+            try:
+                self.trend_predictor.train()
+                prediction = self.trend_predictor.predict_future_metrics()
+            except Exception:  # pragma: no cover - prediction best effort
+                prediction = None
+
+        pred_roi = prediction.roi if prediction else roi
+        pred_err = prediction.errors if prediction else errors
+        pred_fail = tests_failed
+
+        return {
+            "roi": (pred_roi, min(pred_roi, roi), max(pred_roi, roi)),
+            "errors": (pred_err, min(pred_err, errors), max(pred_err, errors)),
+            "tests_failed": (
+                pred_fail,
+                min(pred_fail, tests_failed),
+                max(pred_fail, tests_failed),
+            ),
+        }
+
     def check_degradation(
         self,
         bot: str,
@@ -1490,26 +1523,38 @@ class DataBot:
         delta_err = errors - avg_err
         delta_fail = test_failures - avg_fail
 
-        cfg = self._forecast_cfg.get(bot)
-        if cfg is None:
-            self.reload_thresholds(bot)
-            cfg = self._forecast_cfg.get(bot, {})
-        model_name = cfg.get("model", "exponential")
-        confidence = float(cfg.get("confidence", 0.95))
-        models = self._forecast_models.setdefault(bot, {})
+        prediction = None
+        if self.trend_predictor is not None:
+            try:
+                self.trend_predictor.train()
+                prediction = self.trend_predictor.predict_future_metrics()
+            except Exception:  # pragma: no cover - prediction best effort
+                prediction = None
 
-        def _forecast(metric: str, current: float) -> tuple[float, float, float]:
-            hist = tracker.to_dict().get(metric, [])
-            if not hist:
-                return current, current, current
-            model = create_model(model_name, confidence)
-            models[metric] = model
-            model.fit(hist)
-            return model.forecast()
+        thresholds = adaptive_thresholds(
+            bot,
+            roi_baseline=avg_roi,
+            error_baseline=avg_err,
+            failure_baseline=avg_fail,
+            prediction=prediction,
+            predictor=self.trend_predictor,
+        )
+        self._thresholds[bot] = thresholds
+        roi_thresh = thresholds.roi_drop
+        err_thresh = thresholds.error_threshold
+        fail_thresh = thresholds.test_failure_threshold
 
-        pred_roi, roi_low, roi_high = _forecast("roi", roi)
-        pred_err, err_low, err_high = _forecast("errors", errors)
-        pred_fail, fail_low, fail_high = _forecast("tests_failed", test_failures)
+        pred_roi = prediction.roi if prediction else avg_roi
+        pred_err = prediction.errors if prediction else avg_err
+        pred_fail = avg_fail
+
+        roi_low = min(pred_roi, avg_roi)
+        roi_high = max(pred_roi, avg_roi)
+        err_low = min(pred_err, avg_err)
+        err_high = max(pred_err, avg_err)
+        fail_low = min(pred_fail, avg_fail)
+        fail_high = max(pred_fail, avg_fail)
+
         fhist = self._forecast_history.setdefault(
             bot, {"roi": [], "errors": [], "tests_failed": []}
         )
@@ -1517,10 +1562,6 @@ class DataBot:
         fhist["errors"].append(pred_err)
         fhist["tests_failed"].append(pred_fail)
 
-        t = self.reload_thresholds(bot)
-        roi_thresh = min(t.roi_drop + (roi_low - pred_roi), 0.0)
-        err_thresh = max(t.error_threshold + (err_high - pred_err), 0.0)
-        fail_thresh = max(t.test_failure_threshold + (fail_high - pred_fail), 0.0)
         event = {
             "bot": bot,
             "roi": roi,
@@ -1534,8 +1575,8 @@ class DataBot:
             "error_confidence_high": err_high,
             "test_failure_confidence_low": fail_low,
             "test_failure_confidence_high": fail_high,
-            "forecast_model": model_name,
-            "forecast_confidence": confidence,
+            "forecast_model": "trend",
+            "forecast_confidence": 0.0,
             "delta_roi": delta_roi,
             "delta_errors": delta_err,
             "delta_tests_failed": delta_fail,
@@ -1571,26 +1612,6 @@ class DataBot:
             or event["test_failure_breach"]
         )
 
-        # Persist dynamically derived thresholds so future runs adapt to the
-        # observed baseline for this bot.  ``save_sc_thresholds`` writes to the
-        # ``self_coding_thresholds.yaml`` configuration file.  Best effort –
-        # failures are logged but do not disrupt degradation checks.
-        try:
-            save_sc_thresholds(
-                bot,
-                roi_drop=roi_thresh,
-                error_increase=err_thresh,
-                test_failure_increase=fail_thresh,
-            )
-            self._thresholds[bot] = ROIThresholds(
-                roi_drop=roi_thresh,
-                error_threshold=err_thresh,
-                test_failure_threshold=fail_thresh,
-            )
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception(
-                "failed to persist dynamic thresholds for %s", bot
-            )
         callbacks = []
         if callback:
             callbacks.append(callback)
@@ -1795,7 +1816,6 @@ class DataBot:
         )
         key = bot or ""
         self._thresholds[key] = rt
-        self._forecast_cfg[key] = {"model": t.model, "confidence": t.confidence}
         return rt
 
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
