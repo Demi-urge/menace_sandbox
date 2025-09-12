@@ -13,6 +13,8 @@ import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import time
 
+from .self_coding_thresholds import update_thresholds
+
 try:  # pragma: no cover - optional self-coding dependency
     from .self_coding_manager import SelfCodingManager
 except ImportError:  # pragma: no cover - self-coding unavailable
@@ -145,6 +147,17 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                 raise RuntimeError(f"{cls.__name__}: {exc}") from exc
 
             name_local = getattr(self, "name", getattr(self, "bot_name", name))
+            if hasattr(d_bot, "reload_thresholds"):
+                try:
+                    thresholds = d_bot.reload_thresholds(name_local)
+                    update_thresholds(
+                        name_local,
+                        roi_drop=thresholds.roi_drop,
+                        error_increase=thresholds.error_threshold,
+                        test_failure_increase=thresholds.test_failure_threshold,
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed to initialise thresholds for %s", name_local)
             if not isinstance(manager, SelfCodingManager):
                 try:
                     manager = SelfCodingManager(

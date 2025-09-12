@@ -1509,6 +1509,11 @@ class DataBot:
         bot breached either threshold.
         """
 
+        if bot not in self._thresholds:
+            try:
+                self.reload_thresholds(bot)
+            except Exception:  # pragma: no cover - best effort
+                pass
         tracker = self._baseline.setdefault(
             bot, BaselineTracker(window=self.baseline_window)
         )
