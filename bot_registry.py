@@ -15,6 +15,7 @@ import importlib
 import importlib.util
 import sys
 import subprocess
+import json
 
 try:
     from .databases import MenaceDB
@@ -129,6 +130,10 @@ class BotRegistry:
         module_path = node["module"]
         commit = node.get("commit")
         patch_id = node.get("patch_id")
+        prev_module = node.get("last_good_module")
+        prev_version = node.get("last_good_version")
+        prev_commit = node.get("last_good_commit")
+        prev_patch = node.get("last_good_patch_id")
         if not commit or patch_id is None:
             if self.event_bus:
                 try:
@@ -138,7 +143,62 @@ class BotRegistry:
                     )
                 except Exception as exc:
                     logger.error("Failed to publish bot:manual_change event: %s", exc)
+            if prev_module is not None:
+                node["module"] = prev_module
+            if prev_version is not None:
+                node["version"] = prev_version
+            if prev_commit is not None:
+                node["commit"] = prev_commit
+            if prev_patch is not None:
+                node["patch_id"] = prev_patch
+            if self.persist_path:
+                try:
+                    self.save(self.persist_path)
+                except Exception as save_exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to save bot registry to %s: %s", self.persist_path, save_exc
+                    )
             raise RuntimeError("missing provenance metadata")
+
+        stored_commit: str | None = None
+        try:
+            from .patch_provenance import PatchProvenanceService
+
+            service = PatchProvenanceService()
+            rec = service.db.get(patch_id)
+            if rec and getattr(rec, "summary", None):
+                try:
+                    stored_commit = json.loads(rec.summary).get("commit")
+                except Exception:  # pragma: no cover - best effort
+                    stored_commit = None
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("Failed to fetch patch provenance for %s: %s", patch_id, exc)
+        if stored_commit != commit:
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "bot:manual_change",
+                        {"name": name, "module": module_path, "reason": "provenance_mismatch"},
+                    )
+                except Exception as exc:
+                    logger.error("Failed to publish bot:manual_change event: %s", exc)
+            if prev_module is not None:
+                node["module"] = prev_module
+            if prev_version is not None:
+                node["version"] = prev_version
+            if prev_commit is not None:
+                node["commit"] = prev_commit
+            if prev_patch is not None:
+                node["patch_id"] = prev_patch
+            if self.persist_path:
+                try:
+                    self.save(self.persist_path)
+                except Exception as save_exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to save bot registry to %s: %s", self.persist_path, save_exc
+                    )
+            raise RuntimeError("provenance mismatch")
+
         try:
             status = subprocess.check_output(
                 ["git", "status", "--porcelain", module_path]
@@ -153,10 +213,6 @@ class BotRegistry:
                     logger.error("Failed to publish bot:manual_change event: %s", exc)
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("Failed to check manual changes for %s: %s", module_path, exc)
-        prev_module = node.get("last_good_module")
-        prev_version = node.get("last_good_version")
-        prev_commit = node.get("last_good_commit")
-        prev_patch = node.get("last_good_patch_id")
         try:
             path_obj = Path(module_path)
             if path_obj.suffix == ".py" or "/" in module_path:
