@@ -42,6 +42,8 @@ jobs:
         run: "python tools/check_self_coding_integrity.py $(git ls-files '*.py')"
       - name: Ensure coding bots are registered
         run: python tools/check_self_coding_registration.py
+      - name: Prevent unwrapped engine.generate_helper usage
+        run: "python tools/check_engine_generate_helper_wrapping.py $(git ls-files '*.py')"
       - name: Verify patch provenance tags
         run: |
           git fetch --no-tags origin main
