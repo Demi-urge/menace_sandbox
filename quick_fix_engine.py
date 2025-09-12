@@ -1061,13 +1061,13 @@ class QuickFixEngine:
         module_path: str | Path,
         description: str = "",
         context_meta: Dict[str, Any] | None = None,
-    ) -> Tuple[bool, int | None]:
-        """Generate and apply a patch returning its success status and id.
+    ) -> Tuple[bool, int | None, List[str]]:
+        """Generate and apply a patch returning its success status, id and flags.
 
         The patch is first generated via :func:`generate_patch` which performs
         internal risk checks.  When any validation flags are raised the change
         is reverted and ``False`` is returned along with ``None`` for the
-        ``patch_id``.
+        ``patch_id`` and the list of ``flags``.
         """
 
         ctx = context_meta or {}
@@ -1083,8 +1083,9 @@ class QuickFixEngine:
             )
         except Exception:
             self.logger.exception("quick fix patch failed")
-            return False, None
-        if flags:
+            return False, None, ["generation_error"]
+        flags_list = list(flags)
+        if flags_list:
             try:
                 subprocess.run([
                     "git",
@@ -1099,13 +1100,13 @@ class QuickFixEngine:
                 payload = {
                     "bot": getattr(self.manager, "bot_name", "quick_fix_engine"),
                     "module": str(module_path),
-                    "flags": list(flags),
+                    "flags": flags_list,
                 }
                 try:
                     event_bus.publish("self_coding:patch_rejected", payload)
                 except Exception:
                     self.logger.exception(
-                        "failed to publish patch_rejected event"
+                        "failed to publish patch_rejected event",
                     )
             data_bot = getattr(self.manager, "data_bot", None)
             if data_bot:
@@ -1114,14 +1115,14 @@ class QuickFixEngine:
                         getattr(self.manager, "bot_name", "quick_fix_engine"),
                         str(module_path),
                         False,
-                        list(flags),
+                        flags_list,
                     )
                 except Exception:
                     self.logger.exception(
-                        "failed to record validation in DataBot"
+                        "failed to record validation in DataBot",
                     )
-            return False, None
-        return True, patch_id
+            return False, None, flags_list
+        return True, patch_id, []
 
     # ------------------------------------------------------------------
     def validate_patch(

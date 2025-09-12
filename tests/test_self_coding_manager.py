@@ -728,6 +728,81 @@ def test_run_patch_quick_fix_failure(monkeypatch, tmp_path):
     assert rollbacks
 
 
+def test_run_patch_requires_quick_fix_engine(monkeypatch, tmp_path):
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+
+    class DummyEngine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+
+    class DummyPipeline:
+        def run(self, model: str, energy: int = 1) -> mapl.AutomationResult:
+            return mapl.AutomationResult(package=None, roi=None)
+
+    class DummyDataBot:
+        def roi(self, _bot: str) -> float:
+            return 1.0
+
+        def average_errors(self, _bot: str) -> float:
+            return 0.0
+
+        def average_test_failures(self, _bot: str) -> float:
+            return 0.0
+
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(
+                roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
+            )
+
+        def log_evolution_cycle(self, *a, **k) -> None:
+            pass
+
+        def check_degradation(self, *_a):
+            return True
+
+        def reload_thresholds(self, _bot: str):
+            return self.get_thresholds(_bot)
+
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+    quick_fix = types.SimpleNamespace(
+        context_builder=builder, apply_validated_patch=lambda *a, **k: (True, 1, [])
+    )
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        quick_fix=quick_fix,
+    )
+
+    monkeypatch.setattr(scm, "QuickFixEngine", None)
+    mgr.quick_fix = None
+
+    file_path = tmp_path / "sample.py"  # path-ignore
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+    monkeypatch.setattr(
+        scm.subprocess, "run", lambda cmd, *a, **kw: subprocess.CompletedProcess(cmd, 0)
+    )
+
+    with pytest.raises(RuntimeError, match="QuickFixEngine is required"):
+        mgr.run_patch(file_path, "add")
+
+
 def test_registry_update_and_hot_swap(monkeypatch, tmp_path):
     class DummyEngine:
         def __init__(self) -> None:
@@ -813,7 +888,7 @@ def test_registry_update_and_hot_swap(monkeypatch, tmp_path):
         data_bot=DummyDataBot(),
         bot_registry=registry,
         quick_fix=types.SimpleNamespace(
-            context_builder=None, apply_validated_patch=lambda *a, **k: (True, None)
+            context_builder=None, apply_validated_patch=lambda *a, **k: (True, None, [])
         ),
         event_bus=bus,
     )
@@ -1025,7 +1100,7 @@ def test_run_patch_skips_on_low_predicted_roi(monkeypatch, tmp_path):
 
     def apply_validated_patch(*a, **k):
         called["applied"] = True
-        return True, None
+        return True, None, []
 
     quick_fix = types.SimpleNamespace(
         context_builder=None, apply_validated_patch=apply_validated_patch
@@ -1152,7 +1227,7 @@ def test_run_patch_accepts_high_predicted_roi(monkeypatch, tmp_path):
 
     def apply_validated_patch(*a, **k):
         called["applied"] = True
-        return True, None
+        return True, None, []
 
     quick_fix = types.SimpleNamespace(
         context_builder=None, apply_validated_patch=apply_validated_patch
@@ -1520,7 +1595,7 @@ def test_update_blocked_event_when_provenance_missing(monkeypatch, tmp_path):
         data_bot=DummyDataBot(),
         bot_registry=registry,
         quick_fix=types.SimpleNamespace(
-            context_builder=None, apply_validated_patch=lambda *a, **k: (True, None)
+            context_builder=None, apply_validated_patch=lambda *a, **k: (True, None, [])
         ),
         event_bus=bus,
     )

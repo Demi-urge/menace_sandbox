@@ -213,7 +213,7 @@ def test_apply_validated_patch_emits_rejection_event(tmp_path, monkeypatch):
     monkeypatch.setattr(qfe, "generate_patch", lambda *a, **k: (1, ["flag"]))
     monkeypatch.setattr(qfe.subprocess, "run", lambda *a, **k: None)
     engine = QuickFixEngine(object(), mgr, context_builder=builder)
-    passed, pid = engine.apply_validated_patch(tmp_path / "m.py", "d")
+    passed, pid, _flags = engine.apply_validated_patch(tmp_path / "m.py", "d")
     assert not passed and pid is None
     assert events and events[0] == {
         "bot": "bot",

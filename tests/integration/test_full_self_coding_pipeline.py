@@ -150,7 +150,7 @@ class QuickFixEngine:
 
     def apply_validated_patch(self, module_path, desc, ctx_meta):
         self.calls.append((module_path, desc, ctx_meta))
-        return True, 42
+        return True, 42, []
 
 
 class DummyPatchDB:

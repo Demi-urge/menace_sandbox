@@ -124,7 +124,7 @@ class QuickFixEngine:
     def __init__(self, *a, **k):
         self.context_builder = None
     def apply_validated_patch(self, *a, **k):
-        return True, 1
+        return True, 1, []
 qfe_mod.QuickFixEngine = QuickFixEngine
 sys.modules.setdefault("menace.quick_fix_engine", qfe_mod)
 
