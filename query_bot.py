@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 from dataclasses import dataclass
@@ -9,6 +12,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 import logging
 import uuid
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:  # pragma: no cover - support package and standalone usage
     from config import get_config  # type: ignore
@@ -150,7 +156,7 @@ class DataFetcher:
         return res
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class QueryBot:
     """NLU-driven query handler with optional context management."""
 

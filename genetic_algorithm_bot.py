@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 import random
 from dataclasses import dataclass, field
@@ -12,6 +14,9 @@ from typing import List
 from typing import TYPE_CHECKING
 
 from .data_bot import DataBot
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -57,7 +62,7 @@ class GAStore:
         self.df.to_csv(self.path, index=False)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class GeneticAlgorithmBot:
     """Run a simple DEAP-based genetic algorithm."""
 

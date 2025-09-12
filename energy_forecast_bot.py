@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 import math
@@ -14,7 +19,7 @@ from .capital_management_bot import CapitalManagementBot
 from .prediction_manager_bot import PredictionManager
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class EnergyForecastBot:
     """Predict near-term energy score from basic metrics."""
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 import logging
@@ -10,6 +13,9 @@ import uuid
 
 from .logging_utils import set_correlation_id
 from .resilience import (
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
     CircuitBreaker,
     CircuitOpenError,
     RetryError,
@@ -64,7 +70,7 @@ class RedisUnavailableError(CentralDatabaseError):
     """Raised when Redis operations fail or circuit is open."""
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class CentralDatabaseBot(AdminBotBase):
     """Serialize schema-changing operations via a FIFO queue."""
 

@@ -1,3 +1,6 @@
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import os
 import json
@@ -9,6 +12,9 @@ import logging
 from urllib import request as urlrequest, error as urlerror
 
 from .db_router import DBRouter
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import requests  # type: ignore
@@ -51,7 +57,7 @@ class VideoItem:
     audio_path: str
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class VideoResearchBot:
     """Bot that collects and summarises useful video content."""
 

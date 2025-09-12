@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from typing import List
@@ -11,6 +13,9 @@ from .capital_management_bot import CapitalManagementBot
 from .evolution_predictor import EvolutionPredictor
 
 from .evolution_history_db import EvolutionHistoryDB
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:  # optional dependency
     from sklearn.linear_model import LinearRegression
@@ -26,7 +31,7 @@ class PredictedROI:
     expected_roi: float
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class EvolutionAnalysisBot:
     """Train a simple model on ``EvolutionHistoryDB`` records."""
 

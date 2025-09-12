@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 from datetime import datetime
@@ -76,7 +81,7 @@ class EfficiencyDB:
         return cur.fetchall()
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class EfficiencyBot:
     """Optimise models via compression and benchmarking."""
 

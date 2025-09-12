@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 from pathlib import Path
 from typing import Iterable
@@ -12,13 +15,16 @@ from .admin_bot_base import AdminBotBase
 from .preliminary_research_bot import PreliminaryResearchBot
 from .capital_management_bot import CapitalManagementBot
 from .database_manager import (
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
     process_idea,
     update_profitability_threshold,
     DB_PATH,
 )
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class DatabaseManagementBot(AdminBotBase):
     """Coordinate idea ingestion and profitability thresholds."""
 

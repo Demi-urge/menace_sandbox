@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 import os
@@ -20,6 +23,9 @@ from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 try:  # pragma: no cover - allow flat imports
     from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1026,7 +1032,7 @@ def parse_enhancements(data: dict[str, object]) -> List[Enhancement]:
     return enhancements
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ChatGPTEnhancementBot:
     """Generate and store improvement ideas via ChatGPT."""
     def __init__(

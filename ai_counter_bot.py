@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 import os
@@ -9,6 +12,9 @@ import time
 import urllib.request
 import joblib
 import pickle
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:  # pragma: no cover - optional dependency
     import duckdb  # type: ignore
@@ -460,7 +466,7 @@ def choose_countermeasure(algorithm: str, probability: float | None = None) -> s
     return "counter flood"
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class AICounterBot:
     """Analyse competitor activity and plan counter actions."""
 

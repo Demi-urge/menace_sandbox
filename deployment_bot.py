@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 # flake8: noqa
 import json
@@ -11,6 +14,9 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -271,7 +277,7 @@ class DeploymentSpec:
 # Main automation class
 # ---------------------------------------------------------------------------
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class DeploymentBot:
     """Automates build → test → deploy and updates all registry tables."""
 

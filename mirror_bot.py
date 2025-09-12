@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List
 
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 _POSITIVE = {"great", "good", "love", "excellent", "nice", "awesome"}
 _NEGATIVE = {"bad", "terrible", "hate", "awful", "poor"}
@@ -71,7 +77,7 @@ class MirrorDB:
         return float(sum(r[0] for r in rows) / len(rows))
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class MirrorBot:
     """Collect user interactions and mirror communication style."""
 

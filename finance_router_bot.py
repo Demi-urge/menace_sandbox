@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import json
 import os
@@ -20,6 +23,9 @@ from . import stripe_billing_router
 from .capital_management_bot import CapitalManagementBot
 from .unified_event_bus import UnifiedEventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,7 @@ class Transaction:
     ts: str = datetime.utcnow().isoformat()
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class FinanceRouterBot:
     """Route payments and log payouts for Menace."""
 

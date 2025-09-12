@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 # flake8: noqa
 import json
@@ -13,6 +16,9 @@ import atexit
 import tempfile
 import time
 import sqlite3
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 try:  # optional dependency
     from sqlalchemy import Column, String, Text, Table, MetaData, create_engine
     from sqlalchemy.engine import Engine
@@ -317,7 +323,7 @@ if os.getenv("MENACE_LIGHT_IMPORTS"):
             return _Dummy()
 
 
-    @self_coding_managed
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
     class ErrorBot:
         def __init__(self, db: ErrorDB, context_builder: ContextBuilder) -> None:
             if not isinstance(context_builder, ContextBuilder):
@@ -950,7 +956,7 @@ def entry_expired(ts: str, threshold: timedelta = timedelta(hours=COMM_LOG_RETEN
     return datetime.utcnow() - dt > threshold
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class CommunicationMaintenanceBot(AdminBotBase):
     """Manage updates, patches and resource allocation for communication bots."""
 

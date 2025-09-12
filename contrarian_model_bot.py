@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+
 from .coding_bot_interface import self_coding_managed
 # flake8: noqa
 import json
 import time
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
@@ -123,7 +128,7 @@ class InnovationsDB:
             )
         return items
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ContrarianModelBot:
     prediction_profile = {"scope": ["contrarian"], "risk": ["high"]}
 

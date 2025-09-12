@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import logging
 import re
@@ -16,6 +19,9 @@ from snippet_compressor import compress_snippets
 from governed_embeddings import governed_embed, get_embedder
 
 import networkx as nx
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 try:
     from fuzzywuzzy import fuzz  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -220,7 +226,7 @@ class ExecutionPlan:
     graph: nx.DiGraph
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class IPOBot:
     """Main orchestrator for the IPO planning process."""
 

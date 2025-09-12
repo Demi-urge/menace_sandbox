@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import hashlib
 import logging
@@ -9,6 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Iterable
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +147,7 @@ class ESIndex:
         return [d for d in self.docs]
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class DatabaseStewardBot(AdminBotBase):
     """Manage schemas and data lifecycles across databases."""
 

@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+
 from .coding_bot_interface import self_coding_managed
 import logging
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 logger = logging.getLogger(__name__)
 import sqlite3
@@ -111,7 +117,7 @@ class ROIHistoryDB(EmbeddableDBMixin):
         return ResourceVectorizer().transform(rec)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ResourcesBot:
     """Central allocator leveraging prediction data and ROI trends.
 
