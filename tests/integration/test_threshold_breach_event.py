@@ -11,11 +11,26 @@ dpr = types.ModuleType("dynamic_path_router")
 dpr.resolve_path = lambda p: Path(p)
 sys.modules.setdefault("dynamic_path_router", dpr)
 
+sem = types.ModuleType("menace.system_evolution_manager")
+sem.SystemEvolutionManager = type("SystemEvolutionManager", (), {})
+sys.modules.setdefault("menace.system_evolution_manager", sem)
+
 scm_mod = types.ModuleType("menace.self_coding_manager")
 class SelfCodingManager:
     def __init__(self, **kwargs):
         self.bot_name = kwargs.get("bot_name", "dummy")
         self.calls = []
+        module = kwargs.get("module_path", Path("dummy.py"))
+        name = self.bot_name
+        class _Graph(dict):
+            def __init__(self, module: Path):
+                super().__init__({name: {"module": str(module)}})
+
+            @property
+            def nodes(self):
+                return self
+
+        self.bot_registry = types.SimpleNamespace(graph=_Graph(module))
     def register_patch_cycle(self, description, context_meta=None):
         self.calls.append((description, context_meta))
     def run_patch(self, *a, **k):
@@ -42,7 +57,9 @@ def test_threshold_breach_registers_patch_cycle(tmp_path):
     bus = DummyBus()
     db = MetricsDB(path=tmp_path / "metrics.db")
     data_bot = DataBot(db=db, event_bus=bus)
-    manager = SelfCodingManager(bot_name="dummy")
+    module = tmp_path / "dummy.py"
+    module.write_text("def foo():\n    return 1\n")
+    manager = SelfCodingManager(bot_name="dummy", module_path=module)
     EvolutionOrchestrator(
         data_bot,
         types.SimpleNamespace(trend_predictor=None),

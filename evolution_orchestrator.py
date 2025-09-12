@@ -174,23 +174,35 @@ class EvolutionOrchestrator:
 
     # ------------------------------------------------------------------
     def register_bot(self, bot: str) -> None:
-        """Subscribe to DataBot metrics for *bot* to receive degradation events."""
+        """Subscribe to DataBot metrics for *bot* and existing registry bots."""
         if not bot:
             return
-        if bot in self._registered_bots:
-            return
-        self._registered_bots.add(bot)
+        registry = getattr(self.selfcoding_manager, "bot_registry", None)
+        bots = [bot]
+        if registry and getattr(registry, "graph", None):
+            try:
+                bots = list(registry.graph)
+                if bot not in bots:
+                    bots.append(bot)
+            except Exception:  # pragma: no cover - best effort
+                bots = [bot]
         bus = getattr(self.data_bot, "event_bus", None) or self.event_bus
         if bus and not getattr(self, "_bot_registered_listener", False):
             bus.subscribe("bot:registered", self._ensure_degradation_subscription)
             self._bot_registered_listener = True
         self._ensure_degradation_subscription()
-        try:
-            if getattr(self.data_bot, "check_degradation", None):
-                # seed baseline metrics so future deltas are meaningful
-                self.data_bot.check_degradation(bot, roi=0.0, errors=0.0)
-        except Exception:
-            self.logger.exception("failed to register bot %s for metrics", bot)
+        for name in bots:
+            if name in self._registered_bots:
+                continue
+            self._registered_bots.add(name)
+            try:
+                if getattr(self.data_bot, "check_degradation", None):
+                    # seed baseline metrics so future deltas are meaningful
+                    self.data_bot.check_degradation(
+                        name, roi=0.0, errors=0.0, test_failures=0.0
+                    )
+            except Exception:
+                self.logger.exception("failed to register bot %s for metrics", name)
 
     def _ensure_degradation_subscription(self, *_args: object) -> None:
         if getattr(self, "_degradation_subscribed", False):
@@ -232,16 +244,12 @@ class EvolutionOrchestrator:
 
     # ------------------------------------------------------------------
     def _on_threshold_breach(self, event: dict) -> None:
-        """Register a patch cycle when metrics thresholds are exceeded."""
+        """Track bots that exceed degradation thresholds."""
         if not self.selfcoding_manager:
             return
         bot = str(event.get("bot", ""))
-        desc = f"auto_patch_due_to_degradation:{bot}"
-        try:
-            self.selfcoding_manager.register_patch_cycle(desc, event)
+        if bot:
             self._pending_patch_cycle.add(bot)
-        except Exception:
-            self.logger.exception("failed to register patch cycle for %s", bot)
 
     # ------------------------------------------------------------------
     def _on_bot_degraded(self, event: dict) -> None:
@@ -307,6 +315,11 @@ class EvolutionOrchestrator:
             # degradation event.
             context_meta = dict(event)
             desc = f"auto_patch_due_to_degradation:{bot}"
+            try:
+                self.selfcoding_manager.register_patch_cycle(desc, context_meta)
+                self._pending_patch_cycle.add(bot)
+            except Exception:
+                self.logger.exception("failed to register patch cycle for %s", bot)
             current_roi = after_roi
             current_err = float(event.get("errors_baseline", 0.0)) + delta_errors
             predicted_roi = current_roi
@@ -401,11 +414,6 @@ class EvolutionOrchestrator:
                                 "failed to publish patch_skipped for %s", bot
                             )
                     return
-                # Record baseline metrics for this degradation event before patching
-                if bot in self._pending_patch_cycle:
-                    self._pending_patch_cycle.remove(bot)
-                else:
-                    self.selfcoding_manager.register_patch_cycle(desc, context_meta)
                 settings = getattr(self.data_bot, "settings", SandboxSettings())
                 data_dir = Path(getattr(settings, "sandbox_data_dir", "."))
                 os.environ["SANDBOX_DATA_DIR"] = str(data_dir)
