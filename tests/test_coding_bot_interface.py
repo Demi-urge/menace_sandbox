@@ -1,5 +1,6 @@
 import sys
 import types
+import sys
 import pytest
 import contextvars
 
@@ -65,7 +66,11 @@ class SystemEvolutionManager:
 sem_stub.SystemEvolutionManager = SystemEvolutionManager
 sys.modules.setdefault("menace.system_evolution_manager", sem_stub)
 
-from menace.coding_bot_interface import self_coding_managed
+import menace.coding_bot_interface as cbi
+from menace.roi_thresholds import ROIThresholds
+
+cbi.update_thresholds = lambda *a, **k: None
+self_coding_managed = cbi.self_coding_managed
 
 
 class DummyRegistry:
@@ -91,9 +96,15 @@ class DummyDB:
 class DummyDataBot:
     def __init__(self):
         self.db = DummyDB()
+        self._thresholds = {}
 
     def roi(self, name):
         return 0.0
+
+    def reload_thresholds(self, bot=None):
+        rt = ROIThresholds(roi_drop=-0.1, error_threshold=1.0, test_failure_threshold=0.0)
+        self._thresholds[bot or ""] = rt
+        return rt
 
 
 class DummyOrchestrator:
@@ -167,4 +178,19 @@ def test_successful_initialisation_registers():
 
     assert registry.registered == ["sample"]
     assert orchestrator.registered == ["sample"]
+
+
+def test_thresholds_loaded_on_init():
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    @self_coding_managed(bot_registry=registry, data_bot=data_bot)
+    class Bot:
+        name = "loader"
+
+        def __init__(self):
+            pass
+
+    Bot()
+    assert "loader" in data_bot._thresholds
 

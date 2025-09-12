@@ -1,6 +1,10 @@
 import sys
 import types
 
+stub_cbi = types.ModuleType("menace.coding_bot_interface")
+stub_cbi.self_coding_managed = lambda cls: cls
+sys.modules["menace.coding_bot_interface"] = stub_cbi
+
 from menace.unified_event_bus import UnifiedEventBus
 
 
@@ -66,6 +70,7 @@ def test_check_degradation_callback(monkeypatch, tmp_path):
     bot.check_degradation("bot", roi=10.0, errors=0.0)
     bot.check_degradation("bot", roi=0.0, errors=10.0, callback=lambda e: events.append(e))
     assert events and events[0]["roi_breach"] and events[0]["error_breach"]
+    assert "bot" in bot._thresholds
 
 
 def test_forecasting_model_detection(monkeypatch, tmp_path):

@@ -1,11 +1,3 @@
-## Configuration for self-coding degradation thresholds
-#
-# roi_drop:             Allowed ROI decrease compared to the rolling baseline.
-# error_increase:       Maximum tolerated growth in error count.
-# test_failure_increase:Allowed increase in failing tests.
-# model:                Forecast model used by the TrendPredictor.
-# confidence:           Confidence level for forecast intervals.
-
 default:
   roi_drop: -0.1
   error_increase: 1.0
@@ -13,447 +5,451 @@ default:
   model: exponential
   confidence: 0.95
 bots:
-  AICounterBot:  # standard thresholds for general operations
+  AICounterBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  AntifragilityPredictionBot:  # standard thresholds for general operations
+  AntifragilityPredictionBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  AutomatedDebugger:  # debugging support with standard margins
+  AutomatedDebugger:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  AverageMetricBot:  # standard thresholds for general operations
+  AverageMetricBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  AverageSynergyMetricBot:  # standard thresholds for general operations
+  AverageSynergyMetricBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  AverageSynergyROIBot:  # conservative limits for financial and resource tasks
+  AverageSynergyROIBot:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
-  BotCreationBot:  # spawns new bots; default thresholds
+  BotCreationBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  BotDevelopmentBot:  # supports development; default thresholds
+  BotDevelopmentBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  BotPlanningBot:  # standard thresholds for general operations
+  BotPlanningBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  BotTestingBot:  # standard thresholds for general operations
+  BotTestingBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  CapitalManagementBot:  # conservative limits for financial and resource tasks
+  CapitalManagementBot:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
-  CentralDatabaseBot:  # allows minor fluctuations in data ingestion
+  CentralDatabaseBot:
     roi_drop: -0.2
     error_increase: 1.5
     test_failure_increase: 0.05
-  ChatGPTEnhancementBot:  # standard thresholds for general operations
+  ChatGPTEnhancementBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  ChatGPTPredictionBot:  # standard thresholds for general operations
+  ChatGPTPredictionBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  ChatGPTResearchBot:  # standard thresholds for general operations
+  ChatGPTResearchBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  CommunicationMaintenanceBot:  # standard thresholds for general operations
+  CommunicationMaintenanceBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  CommunicationTestingBot:  # standard thresholds for general operations
+  CommunicationTestingBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  CompetitiveIntelligenceBot:  # standard thresholds for general operations
+  CompetitiveIntelligenceBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  ContrarianModelBot:  # standard thresholds for general operations
+  ContrarianModelBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  ConversationManagerBot:  # standard thresholds for general operations
+  ConversationManagerBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  DataBot:  # allows minor fluctuations in data ingestion
+  DataBot:
+    roi_drop: -0.2
+    error_increase: 1.5
+    test_failure_increase: 0.1
+  DatabaseManagementBot:
     roi_drop: -0.2
     error_increase: 1.5
     test_failure_increase: 0.05
-  DatabaseManagementBot:  # allows minor fluctuations in data ingestion
+  DatabaseStewardBot:
     roi_drop: -0.2
     error_increase: 1.5
     test_failure_increase: 0.05
-  DatabaseStewardBot:  # allows minor fluctuations in data ingestion
+  DeploymentBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  DiscrepancyDetectionBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  EfficiencyBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  EnergyForecastBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  EnhancementBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ErrorBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  EvolutionAnalysisBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  FinanceRouterBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  FlexibilityPredictionBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  FutureAntifragilityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureLucrativityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureProfitabilityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureShannonEntropyBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyAdaptabilityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyAntifragilityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyCPUUsageBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyCodeQualityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyDiscrepancyCountBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyEfficiencyBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyEnergyConsumptionBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyFlexibilityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyGPUUsageBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyLongTermLucrativityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyMaintainabilityBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyMemoryUsageBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyNetworkLatencyBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyProfitBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyRecoveryTimeBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyResilienceBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyRiskIndexBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergySafetyRatingBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergySecurityScoreBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyShannonEntropyBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  FutureSynergyThroughputBot:
+    roi_drop: -0.25
+    error_increase: 2.0
+    test_failure_increase: 0.1
+  GAPredictionBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  GeneticAlgorithmBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  H1OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  H2OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  H3OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  HierarchyAssessmentBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  IPOBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ImplementationOptimiserBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  InformationSynthesisBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  L1OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  L2OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  L3OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  M1OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  M2OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  M3OversightBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  MarketManipulationBot:
+    roi_drop: -0.05
+    error_increase: 0.5
+    test_failure_increase: 0.0
+  MemoryBot:
     roi_drop: -0.2
     error_increase: 1.5
     test_failure_increase: 0.05
-  DeploymentBot:  # standard thresholds for general operations
+  MetaGeneticAlgorithmBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  DiscrepancyDetectionBot:  # standard thresholds for general operations
+  MirrorBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  EfficiencyBot:  # standard thresholds for general operations
+  NicheSaturationBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  EnergyForecastBot:  # standard thresholds for general operations
+  OfferTestingBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  EnhancementBot:  # implements enhancements; default thresholds
+  OperationalMonitoringBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  ErrorBot:  # tracks system errors using standard limits
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  EvolutionAnalysisBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  FinanceRouterBot:  # conservative limits for financial and resource tasks
+  OversightBot:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
-  FlexibilityPredictionBot:  # standard thresholds for general operations
+  PassiveDiscoveryBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  FutureAntifragilityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureLucrativityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureProfitabilityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureShannonEntropyBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyAdaptabilityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyAntifragilityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyCPUUsageBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyCodeQualityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyDiscrepancyCountBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyEfficiencyBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyEnergyConsumptionBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyFlexibilityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyGPUUsageBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyLongTermLucrativityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyMaintainabilityBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyMemoryUsageBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyNetworkLatencyBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyProfitBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyRecoveryTimeBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyResilienceBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyRiskIndexBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergySafetyRatingBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergySecurityScoreBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyShannonEntropyBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  FutureSynergyThroughputBot:  # relaxed thresholds for long-term forecasts
-    roi_drop: -0.25
-    error_increase: 2.0
-    test_failure_increase: 0.1
-  GAPredictionBot:  # standard thresholds for general operations
+  PerformanceAssessmentBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
-  GeneticAlgorithmBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  H1OversightBot:  # strict thresholds for oversight roles
+  PreExecutionROIBot:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
-  H2OversightBot:  # strict thresholds for oversight roles
+  PreliminaryResearchBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  QueryBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.02
+  QuickFixEngine:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ReportGenerationBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.02
+  ResearchAggregatorBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ResearchFallbackBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ResourceAllocationBot:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
-  H3OversightBot:  # strict thresholds for oversight roles
+  ResourcePredictionBot:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
-  HierarchyAssessmentBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  IPOBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  ImplementationOptimiserBot:  # optimizes implementations; default thresholds
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  InformationSynthesisBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  L1OversightBot:  # strict thresholds for oversight roles
+  ResourcesBot:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
-  L2OversightBot:  # strict thresholds for oversight roles
+  SanityConsumer:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  SanityFeedback:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ScalabilityAssessmentBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  SentimentBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  ShannonEntropyPredictionBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  StrategyPredictionBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  StructuralEvolutionBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  TaskHandoffBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  TaskValidationBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  TelemetryFeedback:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  TextResearchBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  VideoResearchBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  WeeklyMetricsBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  WorkflowEvolutionBot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  agent:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
+  finance_router:
     roi_drop: -0.05
     error_increase: 0.5
     test_failure_increase: 0.0
-  L3OversightBot:  # strict thresholds for oversight roles
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  M1OversightBot:  # strict thresholds for oversight roles
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  M2OversightBot:  # strict thresholds for oversight roles
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  M3OversightBot:  # strict thresholds for oversight roles
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  MarketManipulationBot:  # conservative limits for financial and resource tasks
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  MemoryBot:  # allows minor fluctuations in data ingestion
-    roi_drop: -0.2
-    error_increase: 1.5
-    test_failure_increase: 0.05
-  MetaGeneticAlgorithmBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  MirrorBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  NicheSaturationBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  OfferTestingBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  OperationalMonitoringBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  OversightBot:  # strict thresholds for oversight roles
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  PassiveDiscoveryBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  PerformanceAssessmentBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  PreExecutionROIBot:  # conservative limits for financial and resource tasks
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  PreliminaryResearchBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  QueryBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  QuickFixEngine:  # rapid patch engine; default thresholds
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  ReportGenerationBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  ResearchAggregatorBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  ResearchFallbackBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  ResourceAllocationBot:  # conservative limits for financial and resource tasks
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  ResourcePredictionBot:  # conservative limits for financial and resource tasks
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  ResourcesBot:  # conservative limits for financial and resource tasks
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  SanityConsumer:  # consumes sanity reports; default thresholds
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  SanityFeedback:  # sanity check feedback; default thresholds
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  ScalabilityAssessmentBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  SentimentBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  ShannonEntropyPredictionBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  StrategyPredictionBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  StructuralEvolutionBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  TaskHandoffBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  TaskValidationBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  TelemetryFeedback:  # ingests telemetry; default thresholds
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  TextResearchBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  VideoResearchBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  WeeklyMetricsBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  WorkflowEvolutionBot:  # standard thresholds for general operations
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  agent:  # fallback agent defaults
-    roi_drop: -0.1
-    error_increase: 1.0
-    test_failure_increase: 0.0
-  finance_router:  # handles transactions; conservative thresholds
-    roi_drop: -0.05
-    error_increase: 0.5
-    test_failure_increase: 0.0
-  menace:  # core orchestrator; looser error allowance for iterative growth
+  menace:
     roi_drop: -0.2
     error_increase: 2.0
     test_failure_increase: 0.0
     model: simple
     confidence: 0.9
-  research_aggregator:  # aggregates research; moderate tolerance
+  research_aggregator:
     roi_drop: -0.15
     error_increase: 1.5
     test_failure_increase: 0.1
     model: arima
     confidence: 0.9
+  bot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
