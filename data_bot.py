@@ -45,6 +45,7 @@ import sqlite3
 import os
 import logging
 import json
+import math
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -101,6 +102,73 @@ _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 logger = logging.getLogger(__name__)
 
+
+class SimpleForecastModel:
+    """Very small linear regression forecaster with confidence intervals.
+
+    The model fits a line to the provided history and forecasts the next
+    value.  A 95% confidence interval is returned based on the standard
+    error of the regression.  It is intentionally lightweight so that it can
+    operate without external dependencies.
+    """
+
+    def __init__(self) -> None:  # pragma: no cover - trivial
+        self.history: List[float] = []
+        self.n = 0
+        self.slope = 0.0
+        self.intercept = 0.0
+        self.std_err = 0.0
+
+    # ------------------------------------------------------------------
+    def fit(self, history: List[float]) -> "SimpleForecastModel":
+        self.history = [float(h) for h in history]
+        self.n = len(self.history)
+        if self.n >= 2:
+            x_vals = list(range(self.n))
+            x_mean = sum(x_vals) / self.n
+            y_mean = sum(self.history) / self.n
+            s_xy = sum(
+                (x - x_mean) * (y - y_mean)
+                for x, y in zip(x_vals, self.history)
+            )
+            s_xx = sum((x - x_mean) ** 2 for x in x_vals)
+            self.slope = s_xy / s_xx if s_xx else 0.0
+            self.intercept = y_mean - self.slope * x_mean
+            residuals = [
+                y - (self.slope * x + self.intercept)
+                for x, y in zip(x_vals, self.history)
+            ]
+            dof = max(self.n - 2, 1)
+            self.std_err = math.sqrt(sum(r * r for r in residuals) / dof)
+        elif self.n == 1:
+            self.intercept = self.history[0]
+            self.slope = 0.0
+            self.std_err = 0.0
+        else:
+            self.intercept = 0.0
+            self.slope = 0.0
+            self.std_err = 0.0
+        return self
+
+    # ------------------------------------------------------------------
+    def forecast(self) -> tuple[float, float, float]:
+        if self.n == 0:
+            return 0.0, 0.0, 0.0
+        x_pred = self.n
+        pred = self.slope * x_pred + self.intercept
+        if self.n < 2:
+            return pred, pred, pred
+        x_vals = list(range(self.n))
+        x_mean = sum(x_vals) / self.n
+        s_xx = sum((x - x_mean) ** 2 for x in x_vals)
+        if s_xx == 0:
+            se_pred = self.std_err
+        else:
+            se_pred = self.std_err * math.sqrt(
+                1 + 1 / self.n + (x_pred - x_mean) ** 2 / s_xx
+            )
+        ci = 1.96 * se_pred
+        return pred, pred - ci, pred + ci
 
 @dataclass
 class MetricRecord:
@@ -1044,6 +1112,8 @@ class DataBot:
         self._ema_baseline: Dict[str, Dict[str, float]] = {}
         # Per-bot forecast history for adaptive thresholding.
         self._forecast_history: Dict[str, Dict[str, list[float]]] = {}
+        # Dedicated forecasting models for each metric per bot.
+        self._forecast_models: Dict[str, Dict[str, SimpleForecastModel]] = {}
         # Cache per-bot thresholds to avoid unnecessary disk reads.  The
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
@@ -1415,18 +1485,22 @@ class DataBot:
         delta_err = errors - avg_err
         delta_fail = test_failures - avg_fail
 
-        def _forecast(metric: str, current: float, alpha: float = self.smoothing_factor) -> float:
+        models = self._forecast_models.setdefault(bot, {})
+
+        def _forecast(metric: str, current: float) -> tuple[float, float, float]:
             hist = tracker.to_dict().get(metric, [])
             if not hist:
-                return current
-            ema_val = hist[0]
-            for v in hist[1:]:
-                ema_val = alpha * v + (1.0 - alpha) * ema_val
-            return ema_val
+                return current, current, current
+            model = models.get(metric)
+            if model is None:
+                model = SimpleForecastModel()
+                models[metric] = model
+            model.fit(hist)
+            return model.forecast()
 
-        pred_roi = _forecast("roi", roi)
-        pred_err = _forecast("errors", errors)
-        pred_fail = _forecast("tests_failed", test_failures)
+        pred_roi, roi_low, _roi_high = _forecast("roi", roi)
+        pred_err, _err_low, err_high = _forecast("errors", errors)
+        pred_fail, _fail_low, fail_high = _forecast("tests_failed", test_failures)
         fhist = self._forecast_history.setdefault(
             bot, {"roi": [], "errors": [], "tests_failed": []}
         )
@@ -1435,14 +1509,9 @@ class DataBot:
         fhist["tests_failed"].append(pred_fail)
 
         t = self.reload_thresholds(bot)
-        roi_diff = (roi - pred_roi) * self.anomaly_sensitivity
-        err_diff = (errors - pred_err) * self.anomaly_sensitivity
-        fail_diff = (test_failures - pred_fail) * self.anomaly_sensitivity
-        roi_thresh = max(min(t.roi_drop + roi_diff, 0.0), t.roi_drop)
-        err_thresh = min(max(t.error_threshold + err_diff, 0.0), t.error_threshold)
-        fail_thresh = min(
-            max(t.test_failure_threshold + fail_diff, 0.0), t.test_failure_threshold
-        )
+        roi_thresh = min(t.roi_drop + (roi_low - pred_roi), 0.0)
+        err_thresh = max(t.error_threshold + (err_high - pred_err), 0.0)
+        fail_thresh = max(t.test_failure_threshold + (fail_high - pred_fail), 0.0)
         event = {
             "bot": bot,
             "delta_roi": delta_roi,
