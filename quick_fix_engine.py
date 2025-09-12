@@ -111,23 +111,35 @@ class ErrorClusterPredictor:
 
 from .error_bot import ErrorDB
 try:  # pragma: no cover - optional dependency
-    from .self_coding_manager import SelfCodingManager
+    from .self_coding_manager import (
+        SelfCodingManager,
+        _manager_generate_helper_with_builder,
+    )
 except Exception:  # pragma: no cover - fallback
     class SelfCodingManager:  # type: ignore
         pass
+
+    _manager_generate_helper_with_builder = None  # type: ignore
 try:  # pragma: no cover - optional dependency
     from .knowledge_graph import KnowledgeGraph
 except Exception:  # pragma: no cover - fallback
     class KnowledgeGraph:  # type: ignore
         pass
 try:  # pragma: no cover - optional dependency
-    from .coding_bot_interface import self_coding_managed, manager_generate_helper
+    from .coding_bot_interface import (
+        self_coding_managed,
+        manager_generate_helper as _base_manager_generate_helper,
+    )
 except Exception:  # pragma: no cover - fallback when coding engine unavailable
     def self_coding_managed(cls):  # type: ignore
         return cls
 
-    def manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
+    def _base_manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
         raise ImportError("Self-coding engine is required for operation")
+
+manager_generate_helper = (
+    _manager_generate_helper_with_builder or _base_manager_generate_helper
+)
 try:  # pragma: no cover - optional dependency
     from .data_bot import DataBot
 except Exception:  # pragma: no cover - fallback when unavailable
