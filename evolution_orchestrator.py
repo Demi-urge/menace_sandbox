@@ -77,6 +77,7 @@ class EvolutionOrchestrator:
         multi_predictor: object | None = None,
         event_bus: UnifiedEventBus | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
+        roi_gain_floor: float = 0.0,
         dataset_path: str | Path = "roi_eval_dataset.csv",
         retrain_interval: int = 10,
     ) -> None:
@@ -104,6 +105,7 @@ class EvolutionOrchestrator:
         self.trend_predictor = trend_predictor
         self.event_bus = event_bus
         self.roi_predictor = roi_predictor
+        self.roi_gain_floor = float(roi_gain_floor)
         self.dataset_path = Path(dataset_path)
         self.retrain_interval = retrain_interval
         if self.capital_bot and getattr(self.capital_bot, "trend_predictor", None) is None:
@@ -253,7 +255,6 @@ class EvolutionOrchestrator:
                 return
 
             module_path = degraded_path
-            builder = ContextBuilder()
             context_meta = {
                 "delta_roi": event.get("delta_roi"),
                 "delta_errors": event.get("delta_errors"),
@@ -268,6 +269,64 @@ class EvolutionOrchestrator:
                 or self.event_bus
                 or getattr(self.data_bot, "event_bus", None)
             )
+            current_roi = float(event.get("roi_baseline", 0.0)) + float(
+                event.get("delta_roi", 0.0)
+            )
+            current_err = float(event.get("errors_baseline", 0.0)) + float(
+                event.get("delta_errors", 0.0)
+            )
+            predicted_roi = current_roi
+            predicted_gain = 0.0
+            if self.roi_predictor or self.trend_predictor:
+                try:
+                    if self.roi_predictor:
+                        seq, _, _, _ = self.roi_predictor.predict(
+                            [[current_roi, current_err]], horizon=1
+                        )
+                        if seq:
+                            last = seq[-1]
+                            if isinstance(last, (list, tuple)):
+                                predicted_roi = float(last[-1])
+                            else:
+                                predicted_roi = float(last)
+                    elif self.trend_predictor:
+                        pred = self.trend_predictor.predict_future_metrics(1)
+                        predicted_roi = float(getattr(pred, "roi", current_roi))
+                    predicted_gain = predicted_roi - current_roi
+                except Exception:
+                    self.logger.exception("roi prediction failed for %s", bot)
+            decision = "skip" if predicted_gain < self.roi_gain_floor else "proceed"
+            try:
+                self.history.add(
+                    EvolutionEvent(
+                        action="roi_prediction",
+                        before_metric=current_roi,
+                        after_metric=predicted_roi,
+                        roi=predicted_gain,
+                        predicted_roi=predicted_roi,
+                        reason=decision,
+                        trigger="degradation",
+                        performance=predicted_gain,
+                    )
+                )
+            except Exception:
+                self.logger.exception("failed to record roi prediction")
+            if predicted_gain < self.roi_gain_floor:
+                self.logger.info(
+                    "patch_skip_low_roi_prediction",
+                    extra={"bot": bot, "predicted_gain": predicted_gain},
+                )
+                if bus:
+                    try:
+                        bus.publish(
+                            "bot:patch_skipped",
+                            {"bot": bot, "reason": "roi_prediction"},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish patch_skipped for %s", bot
+                        )
+                return
             try:
                 if not self.selfcoding_manager.should_refactor():
                     self.logger.info(
@@ -287,6 +346,9 @@ class EvolutionOrchestrator:
                     return
                 # Record baseline metrics for this degradation event before patching
                 self.selfcoding_manager.register_patch_cycle(desc, event)
+                builder = ContextBuilder(
+                    "bots.db", "code.db", "errors.db", "workflows.db"
+                )
                 self.selfcoding_manager.generate_and_patch(
                     module_path,
                     desc,
