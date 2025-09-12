@@ -1423,70 +1423,95 @@ class SelfCodingManager:
                     "failed to update bot registry",
                     extra={"bot": self.bot_name, "module_path": module_path},
                 )
+
             prev_state: dict[str, object] | None = None
-            if self.bot_name in self.bot_registry.graph:
-                try:
-                    prev_state = dict(self.bot_registry.graph.nodes[self.bot_name])
-                except Exception:  # pragma: no cover - best effort
-                    prev_state = None
-            try:
-                self.bot_registry.update_bot(
-                    self.bot_name,
-                    module_path,
-                    patch_id=patch_id,
-                    commit=commit_hash,
-                )
-                version = None
-                try:
-                    version = self.bot_registry.graph.nodes[self.bot_name].get(
-                        "version"
-                    )
-                except Exception:
-                    version = None
-                self.logger.info(
-                    "bot registry updated",
-                    extra={
-                        "bot": self.bot_name,
-                        "module_path": module_path,
-                        "version": version,
-                    },
-                )
-            except Exception:
-                self.logger.exception(
-                    "failed to update bot registry",
-                    extra={"bot": self.bot_name, "module_path": module_path},
-                )
-                if prev_state is not None:
+            if not commit_hash or patch_id is None:
+                if self.event_bus:
                     try:
-                        current = self.bot_registry.graph.nodes[self.bot_name]
-                        current.clear()
-                        current.update(prev_state)
-                        target = getattr(self.bot_registry, "persist_path", None)
-                        if target:
-                            self.bot_registry.save(target)
+                        self.event_bus.publish(
+                            "bot:update_blocked",
+                            {"bot": self.bot_name, "path": module_path, "patch_id": patch_id, "commit": commit_hash, "reason": "missing_provenance"},
+                        )
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception(
-                            "failed to revert bot registry",
+                            "failed to publish update_blocked event",
                             extra={"bot": self.bot_name},
                         )
-                raise
-            try:
-                self.bot_registry.hot_swap_bot(self.bot_name)
-                self.bot_registry.health_check_bot(self.bot_name, prev_state)
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "failed to hot swap bot",
-                    extra={"bot": self.bot_name, "module_path": module_path},
-                )
-                raise
-            target = getattr(self.bot_registry, "persist_path", None)
-            if target:
+            else:
+                if self.bot_name in self.bot_registry.graph:
+                    try:
+                        prev_state = dict(self.bot_registry.graph.nodes[self.bot_name])
+                    except Exception:  # pragma: no cover - best effort
+                        prev_state = None
                 try:
-                    self.bot_registry.save(target)
+                    self.bot_registry.update_bot(
+                        self.bot_name,
+                        module_path,
+                        patch_id=patch_id,
+                        commit=commit_hash,
+                    )
+                    version = None
+                    try:
+                        version = self.bot_registry.graph.nodes[self.bot_name].get(
+                            "version"
+                        )
+                    except Exception:
+                        version = None
+                    self.logger.info(
+                        "bot registry updated",
+                        extra={
+                            "bot": self.bot_name,
+                            "module_path": module_path,
+                            "version": version,
+                        },
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to update bot registry",
+                        extra={"bot": self.bot_name, "module_path": module_path},
+                    )
+                    if prev_state is not None:
+                        try:
+                            current = self.bot_registry.graph.nodes[self.bot_name]
+                            current.clear()
+                            current.update(prev_state)
+                            target = getattr(self.bot_registry, "persist_path", None)
+                            if target:
+                                self.bot_registry.save(target)
+                        except Exception:  # pragma: no cover - best effort
+                            self.logger.exception(
+                                "failed to revert bot registry",
+                                extra={"bot": self.bot_name},
+                            )
+                    raise
+                try:
+                    self.bot_registry.hot_swap_bot(self.bot_name)
+                    self.bot_registry.health_check_bot(self.bot_name, prev_state)
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception(
-                        "failed to persist bot registry", extra={"path": str(target)}
+                        "failed to hot swap bot",
+                        extra={"bot": self.bot_name, "module_path": module_path},
                     )
+                    raise
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "bot:updated",
+                            {"bot": self.bot_name, "path": module_path, "patch_id": patch_id, "commit": commit_hash},
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "failed to publish bot updated event",
+                            extra={"bot": self.bot_name},
+                        )
+                target = getattr(self.bot_registry, "persist_path", None)
+                if target:
+                    try:
+                        self.bot_registry.save(target)
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "failed to persist bot registry", extra={"path": str(target)}
+                        )
         if self.event_bus:
             try:
                 payload = {

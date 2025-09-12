@@ -43,6 +43,7 @@ dpr = types.SimpleNamespace(
     resolve_path=lambda p: __import__("pathlib").Path(p),
     repo_root=lambda: __import__("pathlib").Path("."),
     path_for_prompt=lambda p: str(p),
+    get_project_root=lambda: __import__("pathlib").Path("."),
 )
 sys.modules["dynamic_path_router"] = dpr
 import menace.data_bot as db
@@ -65,7 +66,15 @@ mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
 sys.modules["menace.model_automation_pipeline"] = mapl_stub
 sce_stub = types.ModuleType("menace.self_coding_engine")
 sce_stub.SelfCodingEngine = object
+sce_stub.MANAGER_CONTEXT = {}
 sys.modules["menace.self_coding_engine"] = sce_stub
+cb_stub = types.ModuleType("coding_bot_interface")
+cb_stub.manager_generate_helper = lambda *a, **k: ""
+sys.modules.setdefault("coding_bot_interface", cb_stub)
+qfe_stub = types.ModuleType("quick_fix_engine")
+qfe_stub.QuickFixEngine = object
+qfe_stub.generate_patch = lambda *a, **k: (1, [])
+sys.modules.setdefault("quick_fix_engine", qfe_stub)
 prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
 class ROIResult:
     def __init__(self, roi, errors, proi, perr, risk):
@@ -768,6 +777,7 @@ def test_registry_update_and_hot_swap(monkeypatch, tmp_path):
             self.graph = Graph()
             self.update_args: tuple | None = None
             self.hot_swapped = False
+            self.health_checked = False
 
         def record_heartbeat(self, _name: str) -> None:  # pragma: no cover - simple
             pass
@@ -788,9 +798,14 @@ def test_registry_update_and_hot_swap(monkeypatch, tmp_path):
         def hot_swap_bot(self, name: str) -> None:
             self.hot_swapped = True
 
+        def health_check_bot(self, name: str, prev_state) -> None:  # pragma: no cover - simple
+            self.health_checked = True
+
     engine = DummyEngine()
     pipeline = DummyPipeline()
     registry = DummyRegistry()
+    bus = types.SimpleNamespace(events=[], publish=lambda n, p: bus.events.append((n, p)))
+    monkeypatch.setattr(scm, "generate_patch", lambda *a, **k: (1, []))
     mgr = scm.SelfCodingManager(
         engine,
         pipeline,
@@ -800,6 +815,7 @@ def test_registry_update_and_hot_swap(monkeypatch, tmp_path):
         quick_fix=types.SimpleNamespace(
             context_builder=None, apply_validated_patch=lambda *a, **k: (True, None)
         ),
+        event_bus=bus,
     )
     file_path = tmp_path / "sample.py"  # path-ignore
     file_path.write_text("def x():\n    pass\n")
@@ -844,10 +860,14 @@ def test_registry_update_and_hot_swap(monkeypatch, tmp_path):
     assert registry.update_args == (
         "bot",
         scm.path_for_prompt(file_path),
-        None,
+        1,
         "deadbeef",
     )
     assert registry.hot_swapped
+    assert registry.health_checked
+    event = next((p for n, p in bus.events if n == "bot:updated" and p.get("bot") == "bot"), None)
+    assert event is not None and event["patch_id"] == 1 and event["commit"] == "deadbeef"
+    assert not any(n == "bot:update_blocked" for n, _ in bus.events)
 
 
 def test_generate_and_patch_delegates(monkeypatch, tmp_path):
@@ -1444,3 +1464,99 @@ def test_init_requires_helpers():
             bot_name="bot",
             bot_registry=DummyRegistry(),
         )
+
+
+def test_update_blocked_event_when_provenance_missing(monkeypatch, tmp_path):
+    class DummyEngine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(context_builder=types.SimpleNamespace())
+        def apply_patch(self, path: Path, desc: str, **_: object):
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("# patched\n")
+            return 1, False, 0.0
+
+    class DummyPipeline:
+        def run(self, model: str, energy: int = 1) -> mapl.AutomationResult:
+            return mapl.AutomationResult(package=None, roi=None)
+
+    class DummyDataBot:
+        def roi(self, _bot: str) -> float: return 1.0
+        def average_errors(self, _bot: str) -> float: return 0.0
+        def average_test_failures(self, _bot: str) -> float: return 0.0
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0)
+        def check_degradation(self, *_): return True
+        def log_evolution_cycle(self, *a, **k) -> None: pass  # pragma: no cover - simple
+
+    class Graph:
+        def __init__(self) -> None:
+            self.nodes: dict[str, dict] = {}
+        def __contains__(self, name: str) -> bool:
+            return name in self.nodes
+
+    class DummyRegistry:
+        def __init__(self) -> None:
+            self.graph = Graph()
+            self.update_args = None
+            self.hot_swapped = False
+            self.health_checked = False
+        def record_heartbeat(self, _name: str) -> None: pass  # pragma: no cover - simple
+        def register_interaction(self, *_a, **_k) -> None: pass  # pragma: no cover - simple
+        def record_interaction_metadata(self, *a, **k) -> None: pass  # pragma: no cover - simple
+        def register_bot(self, name: str) -> None: self.graph.nodes.setdefault(name, {})
+        def update_bot(self, *a, **k) -> None: self.update_args = (a, k)
+        def hot_swap_bot(self, *a, **k) -> None: self.hot_swapped = True
+        def health_check_bot(self, *a, **k) -> None: self.health_checked = True
+
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+    registry = DummyRegistry()
+    bus = types.SimpleNamespace(events=[], publish=lambda n, p: bus.events.append((n, p)))
+    monkeypatch.setattr(scm, "generate_patch", lambda *a, **k: (1, []))
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=registry,
+        quick_fix=types.SimpleNamespace(
+            context_builder=None, apply_validated_patch=lambda *a, **k: (True, None)
+        ),
+        event_bus=bus,
+    )
+    file_path = tmp_path / "sample.py"  # path-ignore
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+    tmpdir_path = tmp_path / "clone"
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3]); dst.mkdir(exist_ok=True); shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0)
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    def bad_check_output(*a, **k):
+        raise subprocess.CalledProcessError(1, a[0])
+    monkeypatch.setattr(scm.subprocess, "check_output", bad_check_output)
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path, *, backend="venv": types.SimpleNamespace(success=True, failure=None, stdout="", stderr="", duration=0.0),
+    )
+    monkeypatch.setattr(
+        scm.MutationLogger,
+        "record_mutation_outcome",
+        lambda *a, **k: None,
+        raising=False,
+    )
+    mgr.run_patch(file_path, "add")
+    assert registry.update_args is None
+    assert not registry.hot_swapped
+    assert not registry.health_checked
+    event = next((p for n, p in bus.events if n == "bot:update_blocked"), None)
+    assert event is not None and event["bot"] == "bot"
