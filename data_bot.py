@@ -1011,6 +1011,7 @@ class DataBot:
         anomaly_sensitivity: float | None = None,
         smoothing_factor: float | None = None,
         trend_predictor: "TrendPredictor" | None = None,
+        threshold_update_interval: float | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
@@ -1059,6 +1060,12 @@ class DataBot:
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
         self._thresholds: Dict[str, ROIThresholds] = {}
+        self.threshold_update_interval = (
+            threshold_update_interval
+            if threshold_update_interval is not None
+            else getattr(self.settings, "threshold_update_interval", 60.0)
+        )
+        self._last_threshold_refresh: Dict[str, float] = {}
         if Gauge:
             self.registry = registry or CollectorRegistry()
             self.gauges = {
@@ -1536,15 +1543,32 @@ class DataBot:
             except Exception:  # pragma: no cover - prediction best effort
                 prediction = None
 
-        thresholds = adaptive_thresholds(
-            bot,
-            roi_baseline=avg_roi,
-            error_baseline=avg_err,
-            failure_baseline=avg_fail,
-            prediction=prediction,
-            predictor=self.trend_predictor,
-        )
-        self._thresholds[bot] = thresholds
+        now = time.time()
+        thresholds = self._thresholds.get(bot)
+        last = self._last_threshold_refresh.get(bot, 0.0)
+        if (
+            thresholds is None
+            or now - last >= self.threshold_update_interval
+        ):
+            thresholds = adaptive_thresholds(
+                bot,
+                roi_baseline=avg_roi,
+                error_baseline=avg_err,
+                failure_baseline=avg_fail,
+                prediction=prediction,
+                predictor=self.trend_predictor,
+            )
+            self._thresholds[bot] = thresholds
+            try:
+                save_sc_thresholds(
+                    bot,
+                    roi_drop=thresholds.roi_drop,
+                    error_increase=thresholds.error_threshold,
+                    test_failure_increase=thresholds.test_failure_threshold,
+                )
+            except Exception:  # pragma: no cover - best effort
+                pass
+            self._last_threshold_refresh[bot] = now
         roi_thresh = thresholds.roi_drop
         err_thresh = thresholds.error_threshold
         fail_thresh = thresholds.test_failure_threshold
