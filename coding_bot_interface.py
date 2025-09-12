@@ -46,38 +46,54 @@ def manager_generate_helper(
 
 
 def _resolve_helpers(
-    obj: Any, registry: BotRegistry | None, data_bot: DataBot | None
-) -> tuple[BotRegistry, DataBot, str]:
-    """Resolve ``BotRegistry``/``DataBot`` and return defining module path.
+    obj: Any,
+    registry: BotRegistry | None,
+    data_bot: DataBot | None,
+    orchestrator: EvolutionOrchestrator | None,
+) -> tuple[
+    BotRegistry,
+    DataBot,
+    EvolutionOrchestrator | None,
+    str,
+    SelfCodingManager | None,
+]:
+    """Resolve helper objects for *obj*.
 
-    ``inspect.getfile(obj.__class__)`` is used to determine the file where the
-    class of ``obj`` is defined.  This path is returned alongside the resolved
-    helpers so callers can update the registry with accurate module metadata.
-
-    A :class:`RuntimeError` is raised if either dependency cannot be resolved
-    from the provided arguments, instance attributes or ``manager`` attribute.
+    ``BotRegistry`` and ``DataBot`` are mandatory helpers.  When available, the
+    existing ``EvolutionOrchestrator`` and ``SelfCodingManager`` references are
+    also returned so callers can reuse or extend them.  A
+    :class:`RuntimeError` is raised if either ``BotRegistry`` or ``DataBot``
+    cannot be resolved from the provided arguments, instance attributes or the
+    ``manager`` attribute.
     """
+
+    manager = getattr(obj, "manager", None)
+
     if registry is None:
         registry = getattr(obj, "bot_registry", None)
-        if registry is None:
-            manager = getattr(obj, "manager", None)
+        if registry is None and manager is not None:
             registry = getattr(manager, "bot_registry", None)
     if registry is None:
         raise RuntimeError("BotRegistry is required but was not provided")
 
     if data_bot is None:
         data_bot = getattr(obj, "data_bot", None)
-        if data_bot is None:
-            manager = getattr(obj, "manager", None)
+        if data_bot is None and manager is not None:
             data_bot = getattr(manager, "data_bot", None)
     if data_bot is None:
         raise RuntimeError("DataBot is required but was not provided")
+
+    if orchestrator is None:
+        orchestrator = getattr(obj, "evolution_orchestrator", None)
+        if orchestrator is None and manager is not None:
+            orchestrator = getattr(manager, "evolution_orchestrator", None)
 
     try:
         module_path = inspect.getfile(obj.__class__)
     except Exception:  # pragma: no cover - best effort
         module_path = ""
-    return registry, data_bot, module_path
+
+    return registry, data_bot, orchestrator, module_path, manager
 
 
 def self_coding_managed(cls: type) -> type:
@@ -105,21 +121,16 @@ def self_coding_managed(cls: type) -> type:
         )
         orig_init(self, *args, **kwargs)
         try:
-            registry, data_bot, module_path = _resolve_helpers(
-                self, registry, data_bot
-            )
+            (
+                registry,
+                data_bot,
+                orchestrator,
+                module_path,
+                manager,
+            ) = _resolve_helpers(self, registry, data_bot, orchestrator)
         except RuntimeError as exc:
             raise RuntimeError(f"{cls.__name__}: {exc}") from exc
-        if orchestrator is None:
-            orchestrator = getattr(self, "evolution_orchestrator", None)
-            if orchestrator is None:
-                manager_for_orch = getattr(self, "manager", None)
-                orchestrator = getattr(manager_for_orch, "evolution_orchestrator", None)
-        if orchestrator is None:
-            raise RuntimeError(
-                f"{cls.__name__}: EvolutionOrchestrator is required but was not provided"
-            )
-        manager = getattr(self, "manager", None)
+
         name = getattr(self, "name", getattr(self, "bot_name", cls.__name__))
         if not isinstance(manager, SelfCodingManager):
             try:
@@ -134,6 +145,34 @@ def self_coding_managed(cls: type) -> type:
             except Exception as exc:  # pragma: no cover - best effort
                 raise RuntimeError(
                     "failed to initialise SelfCodingManager; provide a manager"
+                ) from exc
+
+        if orchestrator is None:
+            try:
+                from .capital_management_bot import CapitalManagementBot  # type: ignore
+                from .self_improvement.engine import SelfImprovementEngine  # type: ignore
+                from .system_evolution_manager import SystemEvolutionManager  # type: ignore
+                from .evolution_orchestrator import EvolutionOrchestrator as _EO
+
+                capital = CapitalManagementBot(data_bot=data_bot)
+                improv = SelfImprovementEngine(data_bot=data_bot, bot_name=name)
+                bot_list: list[str] = []
+                try:
+                    bot_list = list(getattr(registry, "graph", {}).keys())
+                except Exception:
+                    bot_list = []
+                evol_mgr = SystemEvolutionManager(bot_list)
+                orchestrator = _EO(
+                    data_bot=data_bot,
+                    capital_bot=capital,
+                    improvement_engine=improv,
+                    evolution_manager=evol_mgr,
+                    selfcoding_manager=manager,
+                )
+                self.evolution_orchestrator = orchestrator
+            except Exception as exc:  # pragma: no cover - optional dependency
+                raise RuntimeError(
+                    f"{cls.__name__}: EvolutionOrchestrator is required but could not be instantiated"
                 ) from exc
         if getattr(manager, "quick_fix", None) is None:
             try:
@@ -170,7 +209,13 @@ def self_coding_managed(cls: type) -> type:
             registry.update_bot(name, module_path)
         except Exception:  # pragma: no cover - best effort
             logger.exception("bot update failed for %s", name)
-        orchestrator.register_bot(name)
+        try:
+            orchestrator.register_bot(name)
+            logger.info("registered %s with EvolutionOrchestrator", name)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception(
+                "evolution orchestrator registration failed for %s", name
+            )
         if data_bot and getattr(data_bot, "db", None):
             try:
                 roi = float(data_bot.roi(name)) if hasattr(data_bot, "roi") else 0.0

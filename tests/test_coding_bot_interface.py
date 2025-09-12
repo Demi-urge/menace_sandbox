@@ -20,6 +20,51 @@ sce_stub.MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT")
 sce_stub.SelfCodingEngine = object
 sys.modules.setdefault("menace.self_coding_engine", sce_stub)
 
+# lightweight stubs for orchestrator dependencies used during auto-instantiation
+evo_stub = types.ModuleType("menace.evolution_orchestrator")
+
+class _StubOrchestrator:
+    def __init__(self, data_bot, capital_bot, improvement_engine, evolution_manager, selfcoding_manager=None):
+        self.data_bot = data_bot
+        self.registered: list[str] = []
+
+    def register_bot(self, name: str) -> None:
+        self.registered.append(name)
+
+
+evo_stub.EvolutionOrchestrator = _StubOrchestrator
+sys.modules.setdefault("menace.evolution_orchestrator", evo_stub)
+
+cap_stub = types.ModuleType("menace.capital_management_bot")
+
+class CapitalManagementBot:
+    def __init__(self, *a, **k):
+        pass
+
+
+cap_stub.CapitalManagementBot = CapitalManagementBot
+sys.modules.setdefault("menace.capital_management_bot", cap_stub)
+
+sie_stub = types.ModuleType("menace.self_improvement.engine")
+
+class SelfImprovementEngine:
+    def __init__(self, *a, **k):
+        pass
+
+
+sie_stub.SelfImprovementEngine = SelfImprovementEngine
+sys.modules.setdefault("menace.self_improvement.engine", sie_stub)
+
+sem_stub = types.ModuleType("menace.system_evolution_manager")
+
+class SystemEvolutionManager:
+    def __init__(self, bots, *a, **k):
+        pass
+
+
+sem_stub.SystemEvolutionManager = SystemEvolutionManager
+sys.modules.setdefault("menace.system_evolution_manager", sem_stub)
+
 from menace.coding_bot_interface import self_coding_managed
 
 
@@ -79,7 +124,29 @@ def test_missing_data_bot():
         Bot(bot_registry=DummyRegistry(), evolution_orchestrator=DummyOrchestrator())
 
 
-def test_missing_orchestrator():
+def test_auto_instantiates_orchestrator():
+    registry = DummyRegistry()
+    data_bot = DummyDataBot()
+
+    @self_coding_managed
+    class Bot:
+        name = "auto"
+
+        def __init__(self):
+            pass
+
+    bot = Bot(bot_registry=registry, data_bot=data_bot)
+    assert registry.registered == ["auto"]
+    assert bot.evolution_orchestrator.registered == ["auto"]
+
+
+def test_orchestrator_autoinstantiation_failure(monkeypatch):
+    class Broken(_StubOrchestrator):
+        def __init__(self, *a, **k):  # pragma: no cover - simulate failure
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(evo_stub, "EvolutionOrchestrator", Broken)
+
     @self_coding_managed
     class Bot:
         def __init__(self):
