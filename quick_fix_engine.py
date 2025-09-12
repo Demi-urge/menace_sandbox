@@ -971,6 +971,32 @@ class QuickFixEngine:
                 ], check=True)
             except Exception:
                 self.logger.exception("failed to revert invalid patch")
+            event_bus = getattr(self.manager, "event_bus", None)
+            if event_bus:
+                payload = {
+                    "bot": getattr(self.manager, "bot_name", "quick_fix_engine"),
+                    "module": str(module_path),
+                    "flags": list(flags),
+                }
+                try:
+                    event_bus.publish("self_coding:patch_rejected", payload)
+                except Exception:
+                    self.logger.exception(
+                        "failed to publish patch_rejected event"
+                    )
+            data_bot = getattr(self.manager, "data_bot", None)
+            if data_bot:
+                try:
+                    data_bot.record_validation(
+                        getattr(self.manager, "bot_name", "quick_fix_engine"),
+                        str(module_path),
+                        False,
+                        list(flags),
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to record validation in DataBot"
+                    )
             return False, None
         return True, patch_id
 
