@@ -11,13 +11,16 @@ import ast
 import logging
 import time
 from vector_service.context_builder import ContextBuilder
-from .bot_registry import registry
-from .data_bot import data_bot
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
 
 logger = logging.getLogger(__name__)
 
 from .task_handoff_bot import TaskPackage, TaskInfo
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 
 @dataclass
@@ -37,6 +40,8 @@ class ImplementationOptimiserBot:
     that simply defines the required functions, and a logging style that wraps
     the body in basic ``try``/``except`` blocks and emits log messages.
     """
+
+    manager: SelfCodingManager | None = None
 
     def __init__(
         self,

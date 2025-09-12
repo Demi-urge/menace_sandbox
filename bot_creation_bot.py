@@ -17,6 +17,7 @@ import re
 import time
 
 from .data_bot import DataBot, MetricsDB
+from .bot_registry import BotRegistry
 from .bot_planning_bot import BotPlanningBot, PlanningTask
 from .bot_development_bot import BotDevelopmentBot, BotSpec
 from .bot_testing_bot import BotTestingBot
@@ -53,6 +54,9 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from universal_retriever import UniversalRetriever  # type: ignore
 from .coding_bot_interface import self_coding_managed
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
+
 
 @dataclass
 class CreationConfig:
@@ -62,7 +66,7 @@ class CreationConfig:
     complexity_threshold: float = 150.0
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class BotCreationBot(AdminBotBase):
     """Identify, build, test and deploy new bots asynchronously."""
 
@@ -70,6 +74,8 @@ class BotCreationBot(AdminBotBase):
 
     COOLDOWN_PERIOD = 3600  # seconds
     MAX_BOTS_PER_PERIOD = 5
+
+    manager: "SelfCodingManager | None" = None
 
     def __init__(
         self,
