@@ -111,6 +111,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from .enhancement_classifier import EnhancementClassifier
+    from .evolution_orchestrator import EvolutionOrchestrator
 
 
 class PatchApprovalPolicy:
@@ -195,6 +196,7 @@ class SelfCodingManager:
         quick_fix: QuickFixEngine | None = None,
         error_db: ErrorDB | None = None,
         event_bus: UnifiedEventBus | None = None,
+        evolution_orchestrator: "EvolutionOrchestrator | None" = None,
         roi_drop_threshold: float | None = None,
         error_rate_threshold: float | None = None,
     ) -> None:
@@ -256,6 +258,7 @@ class SelfCodingManager:
                 self.enhancement_classifier = None
         self.bot_registry = bot_registry
         self.event_bus = event_bus
+        self.evolution_orchestrator = evolution_orchestrator
         if self.bot_registry:
             try:
                 self.bot_registry.register_bot(self.bot_name)
@@ -274,6 +277,30 @@ class SelfCodingManager:
             )
         self._prepare_context_builder(builder)
         self._init_quick_fix_engine(builder)
+
+        if self.evolution_orchestrator is None:
+            try:  # pragma: no cover - optional dependencies
+                from .capital_management_bot import CapitalManagementBot
+                from .self_improvement.engine import SelfImprovementEngine
+                from .system_evolution_manager import SystemEvolutionManager
+                from .evolution_orchestrator import EvolutionOrchestrator
+
+                if self.data_bot and self.bot_registry:
+                    capital = CapitalManagementBot(data_bot=self.data_bot)
+                    improv = SelfImprovementEngine(
+                        data_bot=self.data_bot, bot_name=self.bot_name
+                    )
+                    bots = list(getattr(self.bot_registry, "graph", {}).keys())
+                    evol_mgr = SystemEvolutionManager(bots)
+                    self.evolution_orchestrator = EvolutionOrchestrator(
+                        data_bot=self.data_bot,
+                        capital_bot=capital,
+                        improvement_engine=improv,
+                        evolution_manager=evol_mgr,
+                        selfcoding_manager=self,
+                    )
+            except Exception:  # pragma: no cover - best effort
+                self.evolution_orchestrator = None
 
     def register_bot(self, name: str) -> None:
         """Register *name* with the underlying :class:`BotRegistry`."""

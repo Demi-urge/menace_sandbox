@@ -409,13 +409,14 @@ class EvolutionOrchestrator:
                                 "failed to publish patch_failed for %s", bot
                             )
                     return
-                _, commit = self.selfcoding_manager.generate_and_patch(
+                self.selfcoding_manager.run_patch(
                     module_path,
                     desc,
                     context_meta=context_meta,
                     context_builder=builder,
                 )
                 patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
+                commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
                 success = bool(patch_id and commit)
                 roi_after = (
                     self.data_bot.roi(bot)

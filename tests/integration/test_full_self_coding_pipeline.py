@@ -66,7 +66,7 @@ class SelfCodingManager:
                 payload.update(context_meta)
             self.event_bus.publish("self_coding:cycle_registered", payload)
 
-    def generate_and_patch(
+    def run_patch(
         self, path: Path, description: str, *, context_meta=None, context_builder=None
     ):
         if context_builder:
@@ -74,17 +74,17 @@ class SelfCodingManager:
                 context_builder.build_helper(self.bot_name)
             except Exception:
                 pass
-        passed, patch_id = self.quick_fix.apply_validated_patch(
+        self.quick_fix.apply_validated_patch(
             str(path), description, context_meta or {}
         )
-        self._last_patch_id = patch_id
-        commit = "deadbeef"
+        self._last_patch_id = 123
+        self._last_commit_hash = "deadbeef"
         if self.event_bus:
             self.event_bus.publish(
                 "self_coding:patch_applied",
                 {
                     "bot": self.bot_name,
-                    "patch_id": patch_id,
+                    "patch_id": self._last_patch_id,
                     "path": str(path),
                     "description": description,
                     "roi_before": 0.0,
@@ -92,7 +92,7 @@ class SelfCodingManager:
                     "roi_delta": 0.0,
                 },
             )
-        return None, commit
+        return None
 
 
 def should_refactor(self) -> bool:

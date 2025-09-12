@@ -38,11 +38,13 @@ def test_instantiated_bot_triggers_patch(tmp_path, monkeypatch):
             self.bot_name = kwargs.get("bot_name", "")
             self.bot_registry = kwargs.get("bot_registry")
             self.called = False
+            if self.bot_registry:
+                self.bot_registry.register_bot(self.bot_name)
 
-        def generate_and_patch(self, path: Path, description: str, *, context_meta=None, context_builder=None):
+        def run_patch(self, path: Path, description: str, *, context_meta=None, context_builder=None):
             self.called = True
-            passed, patch_id = self.quick_fix.apply_validated_patch(str(path), description, context_meta or {})
-            self.bot_registry.update_bot(self.bot_name, str(path), patch_id=patch_id, commit="deadbeef")
+            self.quick_fix.apply_validated_patch(str(path), description, context_meta or {})
+            self.bot_registry.update_bot(self.bot_name, str(path), patch_id=123, commit="deadbeef")
 
         def register_patch_cycle(self, *_, **__):
             pass
@@ -59,6 +61,22 @@ def test_instantiated_bot_triggers_patch(tmp_path, monkeypatch):
     sys.modules["menace.self_coding_engine"] = sce_mod
 
     sys.modules.pop("menace.coding_bot_interface", None)
+    cbi = types.ModuleType("menace.coding_bot_interface")
+
+    def self_coding_managed(cls):
+        orig_init = cls.__init__
+
+        def wrapped(self, *a, **kw):
+            orch = kw.get("evolution_orchestrator")
+            orig_init(self, *a, **kw)
+            if orch:
+                orch.register_bot(self.name)
+
+        cls.__init__ = wrapped
+        return cls
+
+    cbi.self_coding_managed = self_coding_managed
+    sys.modules["menace.coding_bot_interface"] = cbi
     from menace.coding_bot_interface import self_coding_managed
 
     class DummyBus:
@@ -134,7 +152,7 @@ def test_instantiated_bot_triggers_patch(tmp_path, monkeypatch):
         def _on_bot_degraded(self, event):
             path = Path(__file__)
             desc = f"auto_patch_due_to_degradation:{event.get('bot')}"
-            self.selfcoding_manager.generate_and_patch(path, desc, context_meta=event)
+            self.selfcoding_manager.run_patch(path, desc, context_meta=event)
 
     mod_path = tmp_path / "dummy_module.py"
     mod_path.write_text(

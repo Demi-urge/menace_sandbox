@@ -145,7 +145,7 @@ def test_builder_uses_sandbox_settings(tmp_path, monkeypatch):
         event_bus=None,
         should_refactor=lambda: True,
         register_patch_cycle=lambda *a, **k: None,
-        generate_and_patch=lambda *a, **k: (None, None),
+        run_patch=lambda *a, **k: None,
     )
 
     orch = eo.EvolutionOrchestrator(
