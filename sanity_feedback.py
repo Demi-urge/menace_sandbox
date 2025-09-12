@@ -11,6 +11,8 @@ import logging
 from .dynamic_path_router import resolve_path
 from .log_tags import FEEDBACK
 from .coding_bot_interface import self_coding_managed
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
 
 try:  # pragma: no cover - optional dependency
     from failure_learning_system import DiscrepancyDB as DetectionDB
@@ -30,8 +32,11 @@ except Exception:  # pragma: no cover - best effort
 
 logger = logging.getLogger(__name__)
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
-@self_coding_managed
+
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class SanityFeedback:
     """Poll Sanity Layer detections and trigger self-coding patches."""
 

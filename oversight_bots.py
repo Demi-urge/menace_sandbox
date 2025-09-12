@@ -11,9 +11,13 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .data_bot import DataBot, MetricsDB
 from .capital_management_bot import CapitalManagementBot
+from .bot_registry import BotRegistry
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 @dataclass
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class OversightBot:
     """Monitor subordinate bots using collected metrics."""
 
@@ -43,7 +47,7 @@ class OversightBot:
         return summary
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class L1OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -51,7 +55,7 @@ class L1OversightBot(OversightBot):
         super().__init__("L1", data_bot, capital_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class L2OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -59,7 +63,7 @@ class L2OversightBot(OversightBot):
         super().__init__("L2", data_bot, capital_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class L3OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -67,7 +71,7 @@ class L3OversightBot(OversightBot):
         super().__init__("L3", data_bot, capital_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class M1OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -75,7 +79,7 @@ class M1OversightBot(OversightBot):
         super().__init__("M1", data_bot, capital_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class M2OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -83,7 +87,7 @@ class M2OversightBot(OversightBot):
         super().__init__("M2", data_bot, capital_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class M3OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -91,7 +95,7 @@ class M3OversightBot(OversightBot):
         super().__init__("M3", data_bot, capital_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class H1OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -99,7 +103,7 @@ class H1OversightBot(OversightBot):
         super().__init__("H1", data_bot, capital_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class H2OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())
@@ -107,7 +111,7 @@ class H2OversightBot(OversightBot):
         super().__init__("H2", data_bot, capital_bot)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class H3OversightBot(OversightBot):
     def __init__(self, data_bot: DataBot | None = None, capital_bot: CapitalManagementBot | None = None) -> None:
         data_bot = data_bot or DataBot(MetricsDB())

@@ -30,7 +30,11 @@ except Exception:  # pragma: no cover - optional dependency
 import networkx as nx
 import logging
 
-from .unified_event_bus import UnifiedEventBus
+try:  # pragma: no cover - optional dependency
+    from .unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover
+    class UnifiedEventBus:  # type: ignore[override]
+        pass
 import db_router
 from db_router import DBRouter, init_db_router
 

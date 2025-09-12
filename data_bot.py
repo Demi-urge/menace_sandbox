@@ -65,7 +65,11 @@ from typing import Iterable, List, Dict, TYPE_CHECKING, Callable
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
 
-from .unified_event_bus import UnifiedEventBus
+try:  # pragma: no cover - optional dependency
+    from .unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover
+    class UnifiedEventBus:  # type: ignore[override]
+        pass
 from .roi_thresholds import ROIThresholds
 from .self_coding_thresholds import (
     get_thresholds as load_sc_thresholds,
