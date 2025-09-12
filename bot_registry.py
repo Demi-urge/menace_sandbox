@@ -17,6 +17,7 @@ import sys
 import subprocess
 import json
 import os
+import threading
 
 try:
     from .databases import MenaceDB
@@ -51,10 +52,12 @@ class BotRegistry:
         event_bus: Optional["UnifiedEventBus"] = None,
     ) -> None:
         self.graph = nx.DiGraph()
+        self.modules: Dict[str, str] = {}
         self.persist_path = Path(persist) if persist else None
         self.event_bus = event_bus
         self.heartbeats: Dict[str, float] = {}
         self.interactions_meta: List[Dict[str, object]] = []
+        self._lock = threading.RLock()
         if self.persist_path and self.persist_path.exists():
             try:
                 self.load(self.persist_path)
@@ -65,19 +68,20 @@ class BotRegistry:
 
     def register_bot(self, name: str) -> None:
         """Ensure *name* exists in the graph."""
-        self.graph.add_node(name)
-        if self.event_bus:
-            try:
-                self.event_bus.publish("bot:new", {"name": name})
-            except Exception as exc:
-                logger.error("Failed to publish bot:new event: %s", exc)
-        if self.persist_path:
-            try:
-                self.save(self.persist_path)
-            except Exception as exc:
-                logger.error(
-                    "Failed to save bot registry to %s: %s", self.persist_path, exc
-                )
+        with self._lock:
+            self.graph.add_node(name)
+            if self.event_bus:
+                try:
+                    self.event_bus.publish("bot:new", {"name": name})
+                except Exception as exc:
+                    logger.error("Failed to publish bot:new event: %s", exc)
+            if self.persist_path:
+                try:
+                    self.save(self.persist_path)
+                except Exception as exc:
+                    logger.error(
+                        "Failed to save bot registry to %s: %s", self.persist_path, exc
+                    )
 
     def _verify_signed_provenance(self, patch_id: int, commit: str) -> bool:
         """Return ``True`` if a signed provenance file confirms the update."""
@@ -147,72 +151,96 @@ class BotRegistry:
             if patch_id is None or commit is None:
                 raise RuntimeError("patch provenance required")
 
-        # Ensure the bot exists in the graph.
-        self.register_bot(name)
-        node = self.graph.nodes[name]
+        with self._lock:
+            self.register_bot(name)
+            node = self.graph.nodes[name]
 
-        manager = node.get("selfcoding_manager") or node.get("manager")
-        mgr_patch = getattr(manager, "_last_patch_id", None) if manager else None
-        mgr_commit = (
-            getattr(manager, "_last_commit_hash", None) if manager else None
-        )
-        verified = mgr_patch == patch_id and mgr_commit == commit
-        if not verified:
-            verified = self._verify_signed_provenance(patch_id, commit)
-        if not verified:
+            manager = node.get("selfcoding_manager") or node.get("manager")
+            mgr_patch = getattr(manager, "_last_patch_id", None) if manager else None
+            mgr_commit = (
+                getattr(manager, "_last_commit_hash", None) if manager else None
+            )
+            verified = mgr_patch == patch_id and mgr_commit == commit
+            if not verified:
+                verified = self._verify_signed_provenance(patch_id, commit)
+            if not verified:
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "bot:update_blocked",
+                            {
+                                "name": name,
+                                "module": module_path,
+                                "patch_id": patch_id,
+                                "commit": commit,
+                                "reason": "unverified_provenance",
+                            },
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Failed to publish bot:update_blocked event: %s", exc
+                        )
+                node["update_blocked"] = True
+                if self.persist_path:
+                    try:
+                        self.save(self.persist_path)
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.error(
+                            "Failed to save bot registry to %s: %s",
+                            self.persist_path,
+                            exc,
+                        )
+                raise RuntimeError("update blocked: provenance verification failed")
+
+            prev_state = dict(node)
+            prev_module_entry = self.modules.get(name)
+            node["module"] = module_path
+            node["version"] = int(node.get("version", 0)) + 1
+            node["patch_id"] = patch_id
+            node["commit"] = commit
+            self.modules[name] = module_path
+
             if self.event_bus:
                 try:
-                    self.event_bus.publish(
-                        "bot:update_blocked",
-                        {
-                            "name": name,
-                            "module": module_path,
-                            "patch_id": patch_id,
-                            "commit": commit,
-                            "reason": "unverified_provenance",
-                        },
-                    )
+                    payload = {
+                        "name": name,
+                        "module": module_path,
+                        "version": node["version"],
+                        "patch_id": patch_id,
+                        "commit": commit,
+                    }
+                    self.event_bus.publish("bot:updated", payload)
                 except Exception as exc:
-                    logger.error(
-                        "Failed to publish bot:update_blocked event: %s", exc
-                    )
-            node["update_blocked"] = True
+                    logger.error("Failed to publish bot:updated event: %s", exc)
             if self.persist_path:
                 try:
                     self.save(self.persist_path)
-                except Exception as exc:  # pragma: no cover - best effort
+                except Exception as exc:
                     logger.error(
-                        "Failed to save bot registry to %s: %s", self.persist_path, exc
+                        "Failed to save bot registry to %s: %s",
+                        self.persist_path,
+                        exc,
                     )
-            raise RuntimeError("update blocked: provenance verification failed")
-
-        prev_state = dict(node)
-        node["module"] = module_path
-        node["version"] = int(node.get("version", 0)) + 1
-        node["patch_id"] = patch_id
-        node["commit"] = commit
-
-        if self.event_bus:
             try:
-                payload = {
-                    "name": name,
-                    "module": module_path,
-                    "version": node["version"],
-                    "patch_id": patch_id,
-                    "commit": commit,
-                }
-                self.event_bus.publish("bot:updated", payload)
-            except Exception as exc:
-                logger.error("Failed to publish bot:updated event: %s", exc)
-        if self.persist_path:
-            try:
-                self.save(self.persist_path)
-            except Exception as exc:
-                logger.error(
-                    "Failed to save bot registry to %s: %s", self.persist_path, exc
-                )
-        self.hot_swap_bot(name)
-        self.health_check_bot(name, prev_state)
+                self.hot_swap_bot(name)
+                self.health_check_bot(name, prev_state)
+            except Exception:
+                if prev_module_entry is None:
+                    self.modules.pop(name, None)
+                else:
+                    self.modules[name] = prev_module_entry
+                node.clear()
+                node.update(prev_state)
+                if self.persist_path:
+                    try:
+                        self.save(self.persist_path)
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.error(
+                            "Failed to save bot registry to %s: %s",
+                            self.persist_path,
+                            exc,
+                        )
+                raise
 
     def hot_swap_bot(self, name: str) -> None:
         """Import or reload the module backing ``name`` and refresh references."""

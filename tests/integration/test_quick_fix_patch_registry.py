@@ -1,10 +1,14 @@
 import sys
 import types
 import importlib.util
+import importlib
 from pathlib import Path
+import concurrent.futures
+import threading
+import time
 
 
-def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
+def _setup_env(tmp_path, monkeypatch):
     ROOT = Path(__file__).resolve().parents[2]
     monkeypatch.chdir(tmp_path)
     sys.path.insert(0, str(ROOT))
@@ -16,6 +20,7 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
     dpr = types.ModuleType("dynamic_path_router")
     dpr.resolve_path = lambda p: Path(p)
     dpr.path_for_prompt = lambda p: str(p)
+    dpr.resolve_dir = lambda p: Path(p)
     sys.modules["dynamic_path_router"] = dpr
 
     sr = types.ModuleType("sandbox_runner")
@@ -111,12 +116,26 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
     vl.log_violation = lambda *a, **k: None
     sys.modules["menace_sandbox.violation_logger"] = vl
 
+    db_mod = types.ModuleType("menace_sandbox.data_bot")
+
+    class DataBot:  # pragma: no cover - stub
+        def __init__(self, *a, **k):
+            pass
+
+    db_mod.DataBot = DataBot
+    sys.modules["menace_sandbox.data_bot"] = db_mod
+
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.quick_fix_engine", ROOT / "quick_fix_engine.py"
     )
     qfe = importlib.util.module_from_spec(spec)
     sys.modules["menace_sandbox.quick_fix_engine"] = qfe
     spec.loader.exec_module(qfe)
+    return ROOT, qfe, ContextBuilder
+
+
+def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
+    ROOT, qfe, ContextBuilder = _setup_env(tmp_path, monkeypatch)
 
     class DummyDataBot:
         def __init__(self):
@@ -183,3 +202,68 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
         str(mod),
         {"patch_id": 123, "commit": commit},
     )
+
+
+def test_quick_fix_registry_updates_atomic(tmp_path, monkeypatch):
+    ROOT, qfe, ContextBuilder = _setup_env(tmp_path, monkeypatch)
+    bot_registry_mod = importlib.import_module("menace_sandbox.bot_registry")
+    BotRegistry = bot_registry_mod.BotRegistry
+    monkeypatch.setattr(BotRegistry, "_verify_signed_provenance", lambda *a, **k: True)
+    monkeypatch.setattr(BotRegistry, "hot_swap_bot", lambda *a, **k: None)
+    monkeypatch.setattr(BotRegistry, "health_check_bot", lambda *a, **k: None)
+
+    class DummyDataBot:
+        def __init__(self):
+            self.db = types.SimpleNamespace(log_eval=lambda *a, **k: None)
+
+        def roi(self, _name):
+            return 0.0
+
+        def average_errors(self, _name):
+            return 0.0
+
+    class DummyEngine:
+        def __init__(self):
+            self._counter = 0
+            self._lock = threading.Lock()
+
+        def generate_helper(self, desc, **kwargs):
+            return "helper"
+
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            with self._lock:
+                self._counter += 1
+                pid = self._counter
+            time.sleep(0.01)
+            return pid, "", ""
+
+    class DummyManager:
+        def __init__(self, registry):
+            self.engine = DummyEngine()
+            self.data_bot = DummyDataBot()
+            self.bot_registry = registry
+            self.bot_name = "dummy"
+
+        def register_patch_cycle(self, description, context_meta=None):
+            pass
+
+    registry = BotRegistry()
+    manager = DummyManager(registry)
+    builder = ContextBuilder()
+
+    mod1 = tmp_path / "mod1.py"
+    mod2 = tmp_path / "mod2.py"
+    mod1.write_text("print('hi')\n")
+    mod2.write_text("print('hi')\n")
+
+    commit = "deadbeef"
+    monkeypatch.setattr(qfe.subprocess, "check_output", lambda *a, **k: commit.encode())
+
+    def run(p):
+        qfe.generate_patch(str(p), manager, manager.engine, context_builder=builder)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        list(ex.map(run, [mod1, mod2]))
+
+    node = registry.graph.nodes[manager.bot_name]
+    assert registry.modules[manager.bot_name] == node["module"]
