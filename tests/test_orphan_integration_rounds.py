@@ -251,9 +251,14 @@ def test_quick_fix_patch_cycle_indexes_orphans(tmp_path, monkeypatch):
             p.write_text(p.read_text() + helper)
             return 1, "", ""
 
+    eng = Engine()
+    manager = types.SimpleNamespace(
+        engine=eng, register_patch_cycle=lambda *a, **k: None
+    )
     qfe.generate_patch(
         "foo.py",
-        engine=Engine(),
+        manager,
+        eng,
         context_builder=qfe.ContextBuilder(),
         patch_logger=types.SimpleNamespace(track_contributors=lambda *a, **k: None),
     )  # path-ignore

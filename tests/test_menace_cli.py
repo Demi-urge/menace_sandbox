@@ -110,6 +110,7 @@ import os
 
 def generate_patch(
     module,
+    manager,
     *,
     context_builder,
     engine=None,

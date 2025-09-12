@@ -165,7 +165,7 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
     mod.write_text("print('hi')\n")
 
     patch_id = qfe.generate_patch(
-        str(mod), manager.engine, manager, context_builder=builder
+        str(mod), manager, manager.engine, context_builder=builder
     )
 
     assert patch_id == 123

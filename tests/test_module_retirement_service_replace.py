@@ -32,7 +32,7 @@ def test_replace_module(monkeypatch, tmp_path):
 
     called = {}
 
-    def fake_generate_patch(path, *, context_builder, **kw):
+    def fake_generate_patch(path, manager, *, context_builder, **kw):
         called["path"] = path
         return 1
 
@@ -48,7 +48,10 @@ def test_replace_module(monkeypatch, tmp_path):
     gauge = DummyGauge()
     monkeypatch.setattr(module_retirement_service, "replaced_modules_total", gauge)
 
-    service = ModuleRetirementService(tmp_path, context_builder=_DummyBuilder())
+    mgr = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
+    service = ModuleRetirementService(
+        tmp_path, context_builder=_DummyBuilder(), manager=mgr
+    )
     assert service.replace_module("demo")
     assert called["path"] == str(module)
     assert gauge.count == 1.0
@@ -62,7 +65,7 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
     called = {}
 
-    def fake_generate_patch(path, *, context_builder, **kw):
+    def fake_generate_patch(path, manager, *, context_builder, **kw):
         called["path"] = path
         return 1
 
@@ -85,7 +88,10 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
     monkeypatch.setattr(module_retirement_service, "update_module_retirement_metrics", fake_update)
 
-    service = ModuleRetirementService(tmp_path, context_builder=_DummyBuilder())
+    mgr = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
+    service = ModuleRetirementService(
+        tmp_path, context_builder=_DummyBuilder(), manager=mgr
+    )
     res = service.process_flags({"demo": "replace"})
     assert res == {"demo": "replaced"}
     assert called["path"] == str(module)
@@ -99,7 +105,7 @@ def test_process_flags_replace_skipped(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)
 
-    def fake_generate_patch(path, *, context_builder, **kw):
+    def fake_generate_patch(path, manager, *, context_builder, **kw):
         return None
 
     monkeypatch.setattr(module_retirement_service, "generate_patch", fake_generate_patch)
@@ -121,7 +127,10 @@ def test_process_flags_replace_skipped(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(module_retirement_service, "update_module_retirement_metrics", fake_update)
 
-    service = ModuleRetirementService(tmp_path, context_builder=_DummyBuilder())
+    mgr = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
+    service = ModuleRetirementService(
+        tmp_path, context_builder=_DummyBuilder(), manager=mgr
+    )
     with caplog.at_level("INFO"):
         res = service.process_flags({"demo": "replace"})
     assert res == {"demo": "skipped"}

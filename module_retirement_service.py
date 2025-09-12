@@ -3,7 +3,7 @@ from __future__ import annotations
 """Service for archiving, compressing, or replacing modules flagged for retirement."""
 
 from pathlib import Path
-from typing import Dict, Iterable
+from typing import Dict, Iterable, TYPE_CHECKING
 import logging
 import shutil
 
@@ -12,6 +12,8 @@ from dynamic_path_router import resolve_path
 from module_graph_analyzer import build_import_graph
 from quick_fix_engine import generate_patch
 from vector_service.context_builder import ContextBuilder
+if TYPE_CHECKING:  # pragma: no cover
+    from self_coding_manager import SelfCodingManager
 from metrics_exporter import (
     update_module_retirement_metrics,
     retired_modules_total,
@@ -23,7 +25,13 @@ from metrics_exporter import (
 class ModuleRetirementService:
     """Handle archival, compression, or replacement of modules based on relevancy flags."""
 
-    def __init__(self, repo_root: Path | str = ".", *, context_builder: ContextBuilder) -> None:
+    def __init__(
+        self,
+        repo_root: Path | str = ".",
+        *,
+        context_builder: ContextBuilder,
+        manager: "SelfCodingManager" | None = None,
+    ) -> None:
         if context_builder is None:
             raise ValueError("ContextBuilder is required")
         self.root = Path(resolve_path(repo_root))
@@ -34,6 +42,7 @@ class ModuleRetirementService:
             self._graph = None
             self.logger.exception("failed to build import graph")
         self._context_builder = context_builder
+        self.manager = manager
         try:
             self._context_builder.refresh_db_weights()
         except Exception:
@@ -95,7 +104,9 @@ class ModuleRetirementService:
             self.logger.error("module not found: %s", module)
             return False
         try:
-            patch_id = generate_patch(str(path), context_builder=self._context_builder)
+            patch_id = generate_patch(
+                str(path), self.manager, context_builder=self._context_builder
+            )
             if patch_id is not None:
                 compressed_modules_total.inc()
                 try:
@@ -126,7 +137,9 @@ class ModuleRetirementService:
             self.logger.error("module not found: %s", module)
             return False
         try:
-            patch_id = generate_patch(str(path), context_builder=self._context_builder)
+            patch_id = generate_patch(
+                str(path), self.manager, context_builder=self._context_builder
+            )
             if patch_id is not None:
                 replaced_modules_total.inc()
                 self.logger.info(

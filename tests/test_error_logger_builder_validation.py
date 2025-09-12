@@ -22,7 +22,7 @@ def test_refresh_called_during_init(monkeypatch, tmp_path):
     logger = ErrorLogger(db=db, context_builder=builder)
     called: list[bool] = []
 
-    def fake_generate_patch(module, *, context_builder):
+    def fake_generate_patch(module, manager, *, context_builder):
         assert context_builder is builder
         assert builder.refresh_calls == 1
         called.append(True)

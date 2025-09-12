@@ -105,9 +105,12 @@ def test_chunked_patch_generation(tmp_path, monkeypatch):
             return len(self.calls), False, ""
 
     engine = Engine()
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
+    )
 
     pid = quick_fix.generate_patch(
-        str(path), engine, context_builder=quick_fix.ContextBuilder()
+        str(path), manager, engine, context_builder=quick_fix.ContextBuilder()
     )
     assert len(engine.calls) > 1
     assert pid == len(engine.calls)
@@ -170,9 +173,14 @@ def test_helper_generation_retries_and_logging(tmp_path, monkeypatch, caplog):
             return None, False, ""
 
     engine = Engine()
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
+    )
 
     with caplog.at_level("ERROR"):
-        quick_fix.generate_patch(str(path), engine, context_builder=quick_fix.ContextBuilder())
+        quick_fix.generate_patch(
+            str(path), manager, engine, context_builder=quick_fix.ContextBuilder()
+        )
 
     assert len(events) == engine.helper_retry_attempts
     assert calls == [("bot", "mod.py", False, ["helper_generation_failed"])]

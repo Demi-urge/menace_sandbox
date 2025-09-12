@@ -95,7 +95,9 @@ def test_patch_command(monkeypatch, tmp_path):
 
     calls = {}
 
-    def fake_generate_patch(module, *, context_builder, engine, description, patch_logger=None, **kw):
+    def fake_generate_patch(
+        module, manager, *, context_builder, engine, description, patch_logger=None, **kw
+    ):
         calls["module"] = module
         calls["builder"] = context_builder
         calls["engine"] = engine

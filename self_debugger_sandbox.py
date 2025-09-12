@@ -441,8 +441,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     shutil.copy2(src, before_target)
                     patch_id = generate_patch(
                         mod,
-                        self.engine,
                         self.manager,
+                        self.engine,
                         context_builder=self.context_builder,
                     )
                     if patch_id is not None:

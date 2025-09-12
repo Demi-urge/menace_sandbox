@@ -163,8 +163,10 @@ def test_quick_fix_engine_uses_context_builder(tmp_path, monkeypatch):
     monkeypatch.setattr(qfe, "resolve_path", lambda p: tmp_path / p)
     monkeypatch.setattr(qfe, "path_for_prompt", lambda p: Path(p).as_posix())
 
+    eng = DummyEngine()
+    manager = types.SimpleNamespace(engine=eng, register_patch_cycle=lambda *a, **k: None)
     patch_id = generate_patch(
-        "mod", engine=DummyEngine(), context_builder=builder, description="fix bug"
+        "mod", manager, eng, context_builder=builder, description="fix bug"
     )
     assert patch_id == 1
     assert builder.calls and builder.calls[0] == "fix bug"

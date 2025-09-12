@@ -98,7 +98,7 @@ def test_self_improvement_cycle_runs_with_patch_and_orphans(tmp_path):
             import quick_fix_engine
             from sandbox_runner.orphan_integration import integrate_orphans
 
-            quick_fix_engine.generate_patch("repo", context_builder=object())
+            quick_fix_engine.generate_patch("repo", object(), context_builder=object())
             integrate_orphans(tmp_path)
             return [
                 {"chain": ["wf"], "roi_gain": 1.0, "failures": 0, "entropy": 0.0}

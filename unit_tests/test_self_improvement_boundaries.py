@@ -87,8 +87,9 @@ def test_generate_patch_delegates():
             "menace_sandbox.sandbox_settings": ss_stub,
         },
     )
-    assert module.generate_patch('a', context_builder='b', key='v') == 'patch'
-    assert record['args'] == ('a',)
+    manager = object()
+    assert module.generate_patch('a', manager, context_builder='b', key='v') == 'patch'
+    assert record['args'] == ('a', manager)
     assert record['kwargs'] == {'key': 'v', 'context_builder': 'b'}
     sys.modules.pop("menace_sandbox.sandbox_settings", None)
 
