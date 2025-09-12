@@ -1060,6 +1060,32 @@ class BotDevelopmentBot:
             self._validate_repo(repo_dir, spec)
             paths = [file_path, meta] + ([req] if req else []) + tests
             self.version_control(repo_dir, paths, message=f"Initial version of {spec.name}")
+
+            # Explicit manual registration for auditability
+            try:
+                registry = getattr(self.manager, "bot_registry", None)
+                d_bot = getattr(self.manager, "data_bot", None)
+                orchestrator = getattr(self.manager, "evolution_orchestrator", None)
+                engine = getattr(self.manager, "engine", None)
+                pipeline = getattr(self.manager, "pipeline", None)
+                if registry and d_bot and engine and pipeline:
+                    bot_name = spec.name
+                    module_path = str(file_path)
+                    registry.register_bot(bot_name)
+                    registry.update_bot(bot_name, module_path)
+                    d_bot.reload_thresholds(bot_name)
+                    manager = SelfCodingManager(
+                        engine,
+                        pipeline,
+                        bot_name=bot_name,
+                        bot_registry=registry,
+                        data_bot=d_bot,
+                    )
+                    if orchestrator:
+                        orchestrator.register_bot(bot_name)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("dynamic bot registration failed for %s", spec.name)
+
             return file_path
         except Exception:
             errors = 1 if not errors else errors
