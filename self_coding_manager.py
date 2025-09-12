@@ -171,6 +171,7 @@ class SelfCodingManager:
         baseline_window: int | None = None,
         bot_registry: BotRegistry | None = None,
         quick_fix: QuickFixEngine | None = None,
+        error_db: ErrorDB | None = None,
         event_bus: UnifiedEventBus | None = None,
         roi_drop_threshold: float | None = None,
         error_rate_threshold: float | None = None,
@@ -204,6 +205,7 @@ class SelfCodingManager:
         self.failure_store = failure_store
         self.skip_similarity = skip_similarity
         self.quick_fix = quick_fix
+        self.error_db = error_db
         if baseline_window is None:
             try:
                 baseline_window = getattr(SandboxSettings(), "baseline_window", 5)
@@ -241,15 +243,7 @@ class SelfCodingManager:
                 "QuickFixEngine is required but could not be imported"
             )
         self._prepare_context_builder(builder)
-        if self.quick_fix is None:
-            try:
-                self.quick_fix = QuickFixEngine(
-                    ErrorDB(), self, context_builder=builder
-                )
-            except Exception as exc:  # pragma: no cover - instantiation errors
-                raise RuntimeError(
-                    "failed to initialise QuickFixEngine"
-                ) from exc
+        self._init_quick_fix_engine(builder)
 
     def register_bot(self, name: str) -> None:
         """Register *name* with the underlying :class:`BotRegistry`."""
@@ -296,6 +290,28 @@ class SelfCodingManager:
             except Exception:
                 self.logger.exception("failed to record context builder session")
 
+    def _init_quick_fix_engine(self, builder: ContextBuilder) -> None:
+        """Instantiate :class:`QuickFixEngine` if missing."""
+
+        if self.quick_fix is not None:
+            return
+        if QuickFixEngine is None:
+            self.logger.error(
+                "QuickFixEngine is required but could not be imported; "
+                "pip install menace[quickfix]",
+            )
+            raise RuntimeError(
+                "QuickFixEngine is required but could not be imported",
+            )
+        db = self.error_db or ErrorDB()
+        self.error_db = db
+        try:
+            self.quick_fix = QuickFixEngine(db, self, context_builder=builder)
+        except Exception as exc:  # pragma: no cover - instantiation errors
+            raise RuntimeError(
+                "failed to initialise QuickFixEngine",
+            ) from exc
+
     def _ensure_quick_fix_engine(
         self, builder: ContextBuilder | None = None
     ) -> QuickFixEngine:
@@ -310,28 +326,11 @@ class SelfCodingManager:
             clayer = getattr(self.engine, "cognition_layer", None)
             builder = getattr(clayer, "context_builder", None)
 
-        if self.quick_fix is None:
-            if QuickFixEngine is None:
-                self.logger.error(
-                    "QuickFixEngine is required but could not be imported; "
-                    "pip install menace[quickfix]",
-                )
-                raise RuntimeError(
-                    "QuickFixEngine is required but could not be imported",
-                )
-            if builder is None:
-                builder = ContextBuilder()
-            try:
-                self.quick_fix = QuickFixEngine(
-                    ErrorDB(), self, context_builder=builder
-                )
-            except Exception as exc:  # pragma: no cover - instantiation errors
-                raise RuntimeError(
-                    "failed to initialise QuickFixEngine",
-                ) from exc
-
         if builder is None:
             builder = ContextBuilder()
+
+        self._init_quick_fix_engine(builder)
+
         self._prepare_context_builder(builder)
         try:
             self.quick_fix.context_builder = builder
