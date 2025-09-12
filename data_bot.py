@@ -64,6 +64,7 @@ from typing import Iterable, List, Dict, TYPE_CHECKING, Callable
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
+from .bot_registry import BotRegistry
 
 try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
@@ -117,6 +118,16 @@ _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 
 logger = logging.getLogger(__name__)
+class _DataBotStub:
+    def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
+        return ROIThresholds(0.0, 0.0, 0.0)
+
+    def reload_thresholds(self, bot: str | None = None) -> ROIThresholds:
+        return ROIThresholds(0.0, 0.0, 0.0)
+
+
+registry = BotRegistry()
+data_bot = _DataBotStub()
 @dataclass
 class MetricRecord:
     """Metrics captured for a bot at a point in time."""
@@ -986,7 +997,7 @@ class MetricsDB:
             return pd.read_sql(query, conn, params=params)
 
 
-@self_coding_managed
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class DataBot:
     """Collect metrics, expose them to Prometheus and detect anomalies.
 
