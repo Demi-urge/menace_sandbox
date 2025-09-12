@@ -84,9 +84,37 @@ class BotRegistry:
     ) -> None:
         """Update stored module path for ``name`` and emit ``bot:updated``.
 
-        ``patch_id`` and ``commit`` are included in the emitted event so
-        consumers can trace the exact change applied to the bot.
+        ``patch_id`` and ``commit`` are expected from the ``SelfCodingManager``
+        so changes can be traced back to their origin.  If either piece of
+        metadata is missing this method attempts to retrieve it from
+        :mod:`patch_provenance` and retries once.  If the metadata still cannot
+        be determined a :class:`RuntimeError` is raised.
         """
+
+        if patch_id is None or commit is None:
+            logger.warning(
+                "update_bot called without provenance for %s (patch_id=%s commit=%s)",
+                name,
+                patch_id,
+                commit,
+            )
+            if patch_id is not None:
+                try:
+                    from .patch_provenance import PatchProvenanceService
+
+                    service = PatchProvenanceService()
+                    rec = service.db.get(patch_id)
+                    if rec and getattr(rec, "summary", None):
+                        try:
+                            commit = json.loads(rec.summary).get("commit")
+                        except Exception:  # pragma: no cover - best effort
+                            commit = None
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to fetch patch provenance for %s: %s", patch_id, exc
+                    )
+            if patch_id is None or commit is None:
+                raise RuntimeError("patch provenance required")
 
         # Ensure the bot exists in the graph.
         self.register_bot(name)
@@ -94,10 +122,8 @@ class BotRegistry:
         prev_state = dict(node)
         node["module"] = module_path
         node["version"] = int(node.get("version", 0)) + 1
-        if patch_id is not None:
-            node["patch_id"] = patch_id
-        if commit is not None:
-            node["commit"] = commit
+        node["patch_id"] = patch_id
+        node["commit"] = commit
 
         if self.event_bus:
             try:
@@ -105,11 +131,9 @@ class BotRegistry:
                     "name": name,
                     "module": module_path,
                     "version": node["version"],
+                    "patch_id": patch_id,
+                    "commit": commit,
                 }
-                if patch_id is not None:
-                    payload["patch_id"] = patch_id
-                if commit is not None:
-                    payload["commit"] = commit
                 self.event_bus.publish("bot:updated", payload)
             except Exception as exc:
                 logger.error("Failed to publish bot:updated event: %s", exc)
