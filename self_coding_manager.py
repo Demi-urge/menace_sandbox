@@ -1445,11 +1445,13 @@ class SelfCodingManager:
                 raise
             try:
                 self.bot_registry.hot_swap_bot(self.bot_name)
+                self.bot_registry.health_check_bot(self.bot_name, prev_state)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception(
                     "failed to hot swap bot",
                     extra={"bot": self.bot_name, "module_path": module_path},
                 )
+                raise
             target = getattr(self.bot_registry, "persist_path", None)
             if target:
                 try:

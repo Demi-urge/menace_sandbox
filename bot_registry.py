@@ -91,6 +91,7 @@ class BotRegistry:
         # Ensure the bot exists in the graph.
         self.register_bot(name)
         node = self.graph.nodes[name]
+        prev_state = dict(node)
         node["module"] = module_path
         node["version"] = int(node.get("version", 0)) + 1
         if patch_id is not None:
@@ -120,6 +121,7 @@ class BotRegistry:
                     "Failed to save bot registry to %s: %s", self.persist_path, exc
                 )
         self.hot_swap_bot(name)
+        self.health_check_bot(name, prev_state)
 
     def hot_swap_bot(self, name: str) -> None:
         """Import or reload the module backing ``name`` and refresh references."""
@@ -312,6 +314,48 @@ class BotRegistry:
                 except Exception as save_exc:  # pragma: no cover - best effort
                     logger.error(
                         "Failed to save bot registry to %s: %s", self.persist_path, save_exc
+                    )
+            raise
+
+    def health_check_bot(self, name: str, prev_state: Optional[Dict[str, object]] = None) -> None:
+        """Import the bot module and record a heartbeat to verify health."""
+
+        node = self.graph.nodes.get(name)
+        if not node or "module" not in node:
+            raise KeyError(f"bot {name!r} has no module path")
+        module_path = node["module"]
+        try:
+            path_obj = Path(module_path)
+            if path_obj.suffix == ".py" or "/" in module_path:
+                module_name = path_obj.stem
+            else:
+                module_name = module_path
+            importlib.invalidate_caches()
+            importlib.import_module(module_name)
+            self.record_heartbeat(name)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("Health check failed for bot %s: %s", name, exc)
+            if prev_state is not None:
+                node.clear()
+                node.update(prev_state)
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "bot:hot_swap_failed",
+                        {"name": name, "module": module_path, "error": str(exc)},
+                    )
+                except Exception as pub_exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to publish bot:hot_swap_failed event: %s", pub_exc
+                    )
+            if self.persist_path:
+                try:
+                    self.save(self.persist_path)
+                except Exception as save_exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to save bot registry to %s: %s",
+                        self.persist_path,
+                        save_exc,
                     )
             raise
 
