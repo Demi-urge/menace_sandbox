@@ -53,7 +53,7 @@ except Exception:  # pragma: no cover - optional dependency
     QuickFixEngine = None  # type: ignore
     generate_patch = None  # type: ignore
 
-from context_builder_util import ensure_fresh_weights, create_context_builder
+from context_builder_util import ensure_fresh_weights
 
 try:  # pragma: no cover - allow flat and package imports
     from .coding_bot_interface import manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER
@@ -71,7 +71,8 @@ except Exception:  # pragma: no cover - fallback for flat layout
 def _manager_generate_helper_with_builder(manager, description: str, **kwargs: Any) -> str:
     """Create a fresh ``ContextBuilder`` and invoke the base helper generator."""
 
-    builder = create_context_builder()
+    # Always create a new builder to avoid stale context and refresh weights.
+    builder = ContextBuilder()
     ensure_fresh_weights(builder)
     kwargs.setdefault("context_builder", builder)
     try:
@@ -613,9 +614,10 @@ class SelfCodingManager:
         exceeds ``confidence_threshold``.  ``backend`` selects the test
         execution environment; ``"venv"`` uses a virtual environment while
         ``"docker"`` runs tests inside a Docker container. ``clone_command``
-        customises the VCS command used to clone the repository. When
-        ``context_builder`` is supplied the engine and quick fix components use
-        it for validation.
+        customises the VCS command used to clone the repository. A fresh
+        :class:`ContextBuilder` is created for each attempt; the optional
+        ``context_builder`` argument is retained for backwards compatibility but
+        ignored.
         """
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
@@ -656,39 +658,6 @@ class SelfCodingManager:
                 raise AttributeError(
                     "engine.cognition_layer must provide a context_builder",
                 )
-            if context_builder is not None:
-                clayer.context_builder = context_builder
-                try:
-                    self.engine.context_builder = context_builder
-                except Exception:
-                    self.logger.exception(
-                        "failed to refresh engine context builder",
-                    )
-            builder = getattr(clayer, "context_builder", None)
-            if builder is None:
-                raise AttributeError(
-                    "engine.cognition_layer must provide a context_builder",
-                )
-            try:
-                self._ensure_quick_fix_engine(builder)
-            except Exception as exc:
-                if self.event_bus:
-                    try:
-                        self.event_bus.publish(
-                            "bot:patch_failed",
-                            {"bot": self.bot_name, "reason": str(exc)},
-                        )
-                    except Exception:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "failed to publish patch_failed event",
-                        )
-                if QuickFixEngine is None or self.quick_fix is None:
-                    raise RuntimeError(
-                        "QuickFixEngine is required but not installed",
-                    ) from exc
-                raise RuntimeError(
-                    "QuickFixEngine validation unavailable",
-                ) from exc
             desc = description
             last_fp: FailureFingerprint | None = None
             target_region: TargetRegion | None = None
@@ -742,6 +711,40 @@ class SelfCodingManager:
             while attempt < max_attempts:
                 attempt += 1
                 self.logger.info("patch attempt %s", attempt)
+                # Create a fresh ContextBuilder for each attempt so validation
+                # always runs on a clean context.
+                builder = ContextBuilder()
+                try:
+                    ensure_fresh_weights(builder)
+                except Exception as exc:
+                    raise RuntimeError(
+                        "failed to refresh context builder weights"
+                    ) from exc
+                clayer.context_builder = builder
+                try:
+                    self.engine.context_builder = builder
+                except Exception:
+                    self.logger.exception("failed to refresh engine context builder")
+                try:
+                    self._ensure_quick_fix_engine(builder)
+                except Exception as exc:
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "bot:patch_failed",
+                                {"bot": self.bot_name, "reason": str(exc)},
+                            )
+                        except Exception:  # pragma: no cover - best effort
+                            self.logger.exception(
+                                "failed to publish patch_failed event",
+                            )
+                    if QuickFixEngine is None or self.quick_fix is None:
+                        raise RuntimeError(
+                            "QuickFixEngine is required but not installed",
+                        ) from exc
+                    raise RuntimeError(
+                        "QuickFixEngine validation unavailable",
+                    ) from exc
                 provisional_fp: FailureFingerprint | None = None
                 if self.failure_store:
                     try:
