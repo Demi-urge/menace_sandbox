@@ -196,3 +196,73 @@ def test_helper_generation_retries_and_logging(tmp_path, monkeypatch, caplog):
     assert len(events) == engine.helper_retry_attempts
     assert calls == [("bot", "mod.py", False, ["helper_generation_failed"])]
     assert "helper generation failed" in caplog.text
+
+
+def test_risk_flags_emitted_for_large_diff(tmp_path, monkeypatch):
+    path = tmp_path / "mod.py"  # path-ignore
+    path.write_text("def f():\n    pass\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(quick_fix, "resolve_path", lambda p: Path(p))
+    monkeypatch.setattr(quick_fix, "path_for_prompt", lambda p: p)
+    diff_data = {
+        "mod.py": {
+            "status": "modified",
+            "changes": {"added": {"f": ["+x"] * 60}, "removed": {}, "modified": {}},
+        }
+    }
+    monkeypatch.setattr(quick_fix, "generate_code_diff", lambda *a, **k: diff_data)
+
+    class Engine:
+        def generate_helper(self, desc, **kw):
+            return "# fix"
+
+        def apply_patch(self, p, helper, **kw):
+            with open(p, "a", encoding="utf-8") as fh:
+                fh.write(helper + "\n")
+            return 1, False, ""
+
+    engine = Engine()
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
+    )
+
+    pid, flags = quick_fix.generate_patch(
+        str(path), manager, engine, context_builder=quick_fix.ContextBuilder(), return_flags=True
+    )
+    assert pid == 1
+    assert any("large diff" in f for f in flags)
+
+
+def test_risk_flags_emitted_for_sensitive_module(tmp_path, monkeypatch):
+    path = tmp_path / "security_mod.py"  # path-ignore
+    path.write_text("def f():\n    pass\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(quick_fix, "resolve_path", lambda p: Path(p))
+    monkeypatch.setattr(quick_fix, "path_for_prompt", lambda p: p)
+    diff_data = {
+        "security_mod.py": {
+            "status": "modified",
+            "changes": {"modified": {"f": ["+x"]}},
+        }
+    }
+    monkeypatch.setattr(quick_fix, "generate_code_diff", lambda *a, **k: diff_data)
+
+    class Engine:
+        def generate_helper(self, desc, **kw):
+            return "# fix"
+
+        def apply_patch(self, p, helper, **kw):
+            with open(p, "a", encoding="utf-8") as fh:
+                fh.write(helper + "\n")
+            return 1, False, ""
+
+    engine = Engine()
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
+    )
+
+    pid, flags = quick_fix.generate_patch(
+        str(path), manager, engine, context_builder=quick_fix.ContextBuilder(), return_flags=True
+    )
+    assert pid == 1
+    assert any("critical file modified" in f for f in flags)

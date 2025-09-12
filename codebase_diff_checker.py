@@ -14,6 +14,7 @@ from analysis.semantic_diff_filter import find_semantic_risks
 
 
 _KEYWORDS = {"reward", "self_improve", "security_ai", "dispatch", "monitor", "override"}
+_CRITICAL_PATHS = ("security", "auth", "payment")
 
 
 def _list_py_files(root: str) -> List[str]:
@@ -109,15 +110,21 @@ def save_diff_report(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]], outp
 
 def flag_risky_changes(
     diff_data: Dict[str, Dict[str, Dict[str, List[str]]]],
+    diff_threshold: int = 50,
     semantic_threshold: float = 0.5,
 ) -> List[str]:
     """Return a list of locations where risky patterns appear in diffs."""
     flagged: List[str] = []
     for path, info in diff_data.items():
-        for change_type, sections in info.get("changes", {}).items():
+        changes = info.get("changes", {})
+        changed_lines = 0
+        touched_sections = set()
+        for sections in changes.values():
             for name, lines in sections.items():
+                touched_sections.add(name)
                 for line in lines:
                     if line.startswith("+") or line.startswith("-"):
+                        changed_lines += 1
                         text = line[1:]
                         lowered = text.lower()
                         matched = False
@@ -140,6 +147,12 @@ def flag_risky_changes(
                                 flagged.append(
                                     f"{path}:{name}: {msg} ({score:.2f}): +{l}"
                                 )
+        if changed_lines > diff_threshold:
+            flagged.append(f"{path}: large diff ({changed_lines} lines)")
+        if any(c in path for c in _CRITICAL_PATHS):
+            flagged.append(f"{path}: critical file modified")
+        if len(touched_sections) > 10:
+            flagged.append(f"{path}: many sections touched")
     return flagged
 
 
