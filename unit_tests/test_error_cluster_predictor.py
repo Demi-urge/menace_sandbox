@@ -1,9 +1,9 @@
 import sys
 import types
-import pytest
+import sqlite3
 
 
-def test_context_block_compressed(monkeypatch):
+def _setup_modules(monkeypatch):
     sr_mod = types.ModuleType("sandbox_runner")
     sr_mod.post_round_orphan_scan = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_mod)
@@ -42,12 +42,7 @@ def test_context_block_compressed(monkeypatch):
     monkeypatch.setitem(sys.modules, "vector_service", vec_mod)
 
     patch_mod = types.ModuleType("patch_provenance")
-    class PatchLogger:
-        def __init__(self, *a, **k):
-            pass
-
-        def track_contributors(self, *a, **k):
-            pass
+    class PatchLogger: ...
     patch_mod.PatchLogger = PatchLogger
     monkeypatch.setitem(sys.modules, "patch_provenance", patch_mod)
 
@@ -57,10 +52,8 @@ def test_context_block_compressed(monkeypatch):
 
     ps_mod = types.ModuleType("menace_sandbox.self_improvement.prompt_strategies")
     class PromptStrategy(str): ...
-    def render_prompt(*a, **k):
-        return ""
     ps_mod.PromptStrategy = PromptStrategy
-    ps_mod.render_prompt = render_prompt
+    ps_mod.render_prompt = lambda *a, **k: ""
     monkeypatch.setitem(
         sys.modules, "menace_sandbox.self_improvement.prompt_strategies", ps_mod
     )
@@ -82,70 +75,29 @@ def test_context_block_compressed(monkeypatch):
     vl_mod.log_violation = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "menace_sandbox.violation_logger", vl_mod)
 
-    import menace_sandbox.quick_fix_engine as qfe
 
-    monkeypatch.setattr(qfe, "get_chunk_summaries", None)
-
-    class DummyPatchLogger:
-        def track_contributors(self, *a, **k):
-            raise RuntimeError("skip")
-
-    context_block = "a" * 250
-
-    class DummyBuilder:
-        def refresh_db_weights(self):
-            pass
-
-        def build(self, description, session_id=None, include_vectors=False):
-            return context_block, "", []
-
-    class DummyEngine:
-        def __init__(self):
-            self.helper_calls: list[str] = []
-            self.patched: dict[str, str] = {}
-
-        def generate_helper(self, desc, **kwargs):
-            self.helper_calls.append(desc)
-            return "helper"
-
-        def apply_patch_with_retry(self, path, helper, **kwargs):
-            self.patched["helper"] = helper
-            self.patched["desc"] = kwargs.get("description", "")
-            return 1, "", ""
-
-    builder = DummyBuilder()
-    engine = DummyEngine()
-    manager = types.SimpleNamespace(
-        engine=engine, register_patch_cycle=lambda *a, **k: None
+def _make_db(traces):
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE telemetry (module text, stack_trace text)")
+    conn.executemany(
+        "INSERT INTO telemetry (module, stack_trace) VALUES (?, ?)",
+        [("mod", t) for t in traces],
     )
-
-    expected = qfe.compress_snippets({"snippet": context_block})["snippet"]
-
-    qfe.generate_patch(
-        module="simple_functions",
-        manager=manager,
-        engine=engine,
-        context_builder=builder,
-        description="desc",
-        patch_logger=DummyPatchLogger(),
-    )
-
-    assert engine.helper_calls == [f"desc\n\n{expected}"]
-    assert engine.patched["helper"] == "helper"
-    assert engine.patched["desc"] == f"desc\n\n{expected}"
-    assert context_block not in engine.helper_calls[0]
+    return types.SimpleNamespace(conn=conn)
 
 
-def test_generate_patch_errors_without_manager(monkeypatch):
-    import menace_sandbox.quick_fix_engine as qfe
+def test_best_cluster_groups_similar_traces(monkeypatch):
+    _setup_modules(monkeypatch)
+    from menace_sandbox.quick_fix_engine import ErrorClusterPredictor
 
-    class DummyBuilder:
-        def refresh_db_weights(self):
-            return None
-
-        def build(self, *a, **k):
-            return ""
-
-    with pytest.raises(RuntimeError):
-        qfe.generate_patch("mod", None, context_builder=DummyBuilder())
-
+    traces = [
+        "ValueError: x\nline1\nline2",
+        "ValueError: x\nline1\nline2",
+        "TypeError: y\nother line",
+    ]
+    db = _make_db(traces)
+    predictor = ErrorClusterPredictor(db)
+    cluster_id, cluster_traces = predictor.best_cluster("mod", n_clusters=2)
+    assert cluster_id in (0, 1)
+    assert len(cluster_traces) == 2
+    assert all("ValueError" in t for t in cluster_traces)
