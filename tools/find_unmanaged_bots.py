@@ -10,6 +10,7 @@ managed.
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 KNOWN_BOT_BASES = {"AdminBotBase"}
@@ -56,7 +57,7 @@ def _has_register_and_log(tree: ast.AST) -> bool:
     return False
 
 
-def main() -> int:
+def main() -> None:
     root = Path(__file__).resolve().parents[1]
     offenders: list[tuple[Path, list[str]]] = []
     for path in root.rglob("*_bot.py"):
@@ -78,9 +79,9 @@ def main() -> int:
     if offenders:
         for path, classes in offenders:
             print(f"{path}: unmanaged bot classes: {', '.join(classes)}")
-        return 1
-    return 0
+        sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    raise SystemExit(main())
+    main()
