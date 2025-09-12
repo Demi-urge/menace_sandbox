@@ -1856,11 +1856,11 @@ class DataBot:
         try:
             roi = self.roi(bot)
         except Exception:
-            pass
+            self.logger.exception("failed to fetch ROI for %s", bot)
         try:
             errors = self.average_errors(bot)
         except Exception:
-            pass
+            self.logger.exception("failed to fetch error averages for %s", bot)
         try:
             self.check_degradation(
                 bot,
