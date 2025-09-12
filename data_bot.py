@@ -1624,8 +1624,9 @@ class DataBot:
         if self.event_bus:
             try:
                 self.event_bus.publish("metrics:delta", event)
-                if degraded:
+                if event["roi_breach"] or event["error_breach"]:
                     self.event_bus.publish("data:threshold_breach", event)
+                if degraded:
                     self.event_bus.publish("bot:degraded", event)
             except Exception as exc:
                 self.logger.exception("failed to publish metrics event: %s", exc)
