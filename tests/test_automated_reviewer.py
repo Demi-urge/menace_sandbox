@@ -3,6 +3,7 @@ import os
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import pytest
 import json
+import types
 
 
 class DummyEscalation:
@@ -115,6 +116,84 @@ def _stub_vector_service(monkeypatch):
     monkeypatch.setitem(sys.modules, "vector_service", vs)
     monkeypatch.setitem(sys.modules, "vector_service.decorators", dec)
 
+    bus_mod = types.ModuleType("menace.unified_event_bus")
+
+    class UnifiedEventBus:
+        def subscribe(self, *a, **k):
+            pass
+
+        def publish(self, *a, **k):
+            pass
+
+    bus_mod.UnifiedEventBus = UnifiedEventBus
+    monkeypatch.setitem(sys.modules, "menace.unified_event_bus", bus_mod)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.unified_event_bus", bus_mod)
+
+    cbi = types.ModuleType("menace.coding_bot_interface")
+
+    def self_coding_managed(*args, **kwargs):
+        if args and callable(args[0]) and not kwargs:
+            return args[0]
+
+        def deco(cls):
+            return cls
+
+        return deco
+
+    cbi.self_coding_managed = self_coding_managed
+    monkeypatch.setitem(sys.modules, "menace.coding_bot_interface", cbi)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.coding_bot_interface", cbi)
+
+    db_mod = types.ModuleType("menace.data_bot")
+
+    class DataBot:
+        def __init__(self, *a, event_bus=None, **k):
+            self.event_bus = event_bus
+            self.logged: dict[str, list[tuple[float, float]]] = {}
+
+        def roi(self, bot):
+            return self.logged.get(bot, [(0.0, 0.0)])[-1][0]
+
+        def average_errors(self, bot):
+            return self.logged.get(bot, [(0.0, 0.0)])[-1][1]
+
+        def record_metrics(self, bot, roi, errors, tests_failed=0.0):
+            self.logged.setdefault(bot, []).append((float(roi), float(errors)))
+
+        def check_degradation(self, bot, roi, errors, test_failures=0.0):
+            t = self.reload_thresholds(bot)
+            degraded = roi <= t.roi_drop or errors >= t.error_threshold
+            if degraded and self.event_bus:
+                self.event_bus.publish("data:threshold_breach", {"bot": bot})
+            return degraded
+
+        def reload_thresholds(self, bot=None):
+            from menace.self_coding_thresholds import get_thresholds
+
+            t = get_thresholds(bot)
+            return types.SimpleNamespace(
+                roi_drop=t.roi_drop,
+                error_threshold=t.error_increase,
+                test_failure_threshold=t.test_failure_increase,
+            )
+
+    db_mod.DataBot = DataBot
+    monkeypatch.setitem(sys.modules, "menace.data_bot", db_mod)
+
+    text_pre = types.ModuleType("vector_service.text_preprocessor")
+
+    def _gen(*a, **k):
+        return ""
+
+    text_pre.generalise = _gen
+    text_pre.get_config = lambda *a, **k: None
+
+    class PreprocessingConfig:
+        pass
+
+    text_pre.PreprocessingConfig = PreprocessingConfig
+    monkeypatch.setitem(sys.modules, "vector_service.text_preprocessor", text_pre)
+
     return dec
 
 
@@ -131,8 +210,9 @@ def test_escalation_on_critical(monkeypatch):
         error_db="errors.db",
         workflow_db="workflows.db",
     )
+    manager = types.SimpleNamespace(manager_generate_helper=lambda *a, **k: None)
     reviewer = ar.AutomatedReviewer(
-        bot_db=db, escalation_manager=esc, context_builder=builder
+        bot_db=db, escalation_manager=esc, context_builder=builder, manager=manager
     )
     reviewer.handle({"bot_id": "7", "severity": "critical"})
     assert vector_service.ContextBuilder.calls
@@ -205,8 +285,9 @@ def test_vector_service_metrics_and_fallback(monkeypatch, caplog):
         def update_bot(self, *a, **k):
             pass
 
+    manager = types.SimpleNamespace(manager_generate_helper=lambda *a, **k: None)
     reviewer = ar.AutomatedReviewer(
-        bot_db=DB(), escalation_manager=Escalator(), context_builder=builder
+        bot_db=DB(), escalation_manager=Escalator(), context_builder=builder, manager=manager
     )
     caplog.set_level("ERROR")
     reviewer.handle({"bot_id": "1", "severity": "critical"})
@@ -225,5 +306,72 @@ def test_refresh_db_weights_failure(monkeypatch):
         def refresh_db_weights(self):
             raise RuntimeError("boom")
 
+    manager = types.SimpleNamespace(manager_generate_helper=lambda *a, **k: None)
+    import context_builder_util as cbu
+
+    def _refresh(builder):
+        builder.refresh_db_weights()
+
+    monkeypatch.setattr(cbu, "ensure_fresh_weights", _refresh)
+    monkeypatch.setattr(ar, "ensure_fresh_weights", _refresh)
     with pytest.raises(RuntimeError):
-        ar.AutomatedReviewer(context_builder=BadBuilder())
+        ar.AutomatedReviewer(
+            context_builder=BadBuilder(),
+            bot_db=DummyDB(),
+            escalation_manager=DummyEscalation(),
+            manager=manager,
+        )
+
+
+def test_reload_thresholds_autoreviewer(monkeypatch):
+    _stub_vector_service(monkeypatch)
+    from menace.data_bot import DataBot
+
+    bot = DataBot()
+    t = bot.reload_thresholds("AutomatedReviewer")
+    assert t.roi_drop == -0.1
+    assert t.error_threshold == 1.0
+    assert t.test_failure_threshold == 0.0
+
+
+def test_databot_records_and_breach(monkeypatch, tmp_path):
+    _stub_vector_service(monkeypatch)
+    import menace.automated_reviewer as ar
+    import vector_service
+    from menace.data_bot import DataBot
+
+    class Bus:
+        def __init__(self):
+            self.published: list[tuple[str, dict]] = []
+
+        def publish(self, topic, payload):
+            self.published.append((topic, payload))
+
+        def subscribe(self, *a, **k):
+            pass
+
+    bus = Bus()
+    data_bot = DataBot(event_bus=bus)
+    monkeypatch.setattr(ar, "data_bot", data_bot)
+
+    builder = vector_service.ContextBuilder(
+        bot_db="bots.db", code_db="code.db", error_db="errors.db", workflow_db="workflows.db"
+    )
+    manager = types.SimpleNamespace(manager_generate_helper=lambda *a, **k: None)
+    reviewer = ar.AutomatedReviewer(
+        context_builder=builder, bot_db=DummyDB(), escalation_manager=DummyEscalation(), manager=manager
+    )
+
+    monkeypatch.setattr(data_bot, "roi", lambda _b: 10.0)
+    monkeypatch.setattr(data_bot, "average_errors", lambda _b: 0.0)
+    reviewer.handle({"bot_id": "42", "severity": "critical"})
+
+    monkeypatch.setattr(data_bot, "roi", lambda _b: 0.0)
+    monkeypatch.setattr(data_bot, "average_errors", lambda _b: 5.0)
+    reviewer.handle({"bot_id": "42", "severity": "critical"})
+
+    assert len(data_bot.logged["42"]) == 2
+    assert any(
+        topic == "data:threshold_breach" and payload["bot"] == "42"
+        for topic, payload in bus.published
+    )

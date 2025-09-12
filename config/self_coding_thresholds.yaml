@@ -17,6 +17,10 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+  AutomatedReviewer:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
   AverageMetricBot:
     roi_drop: -0.1
     error_increase: 1.0

@@ -2020,6 +2020,32 @@ class DataBot:
         except Exception:
             return y[-1] - y[-2]
 
+    def record_metrics(
+        self,
+        bot: str,
+        roi: float,
+        errors: float,
+        *,
+        tests_failed: float = 0.0,
+    ) -> None:
+        """Persist basic ROI and error metrics for ``bot``."""
+        try:
+            rec = MetricRecord(
+                bot=bot,
+                cpu=0.0,
+                memory=0.0,
+                response_time=0.0,
+                disk_io=0.0,
+                net_io=0.0,
+                errors=int(errors),
+                tests_failed=int(tests_failed),
+                revenue=float(roi),
+                expense=0.0,
+            )
+            self.db.add(rec)
+        except Exception:
+            self.logger.exception("failed to record metrics for %s", bot)
+
     def record_validation(
         self, bot: str, module: str, passed: bool, flags: List[str] | None = None
     ) -> None:
