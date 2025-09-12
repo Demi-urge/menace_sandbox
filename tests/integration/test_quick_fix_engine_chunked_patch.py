@@ -3,6 +3,7 @@ import types
 import importlib.util
 from pathlib import Path
 import pytest
+from menace.coding_bot_interface import manager_generate_helper
 
 # Ensure repository root is on sys.path so quick_fix_engine dependencies resolve
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +28,7 @@ sys.modules["menace_sandbox.knowledge_graph"] = kg
 # Stub out coding bot interface to avoid heavy self-coding engine imports
 cbi = types.ModuleType("menace_sandbox.coding_bot_interface")
 cbi.self_coding_managed = lambda cls: cls
-cbi.manager_generate_helper = lambda mgr, desc, **kw: mgr.engine.generate_helper(desc, **kw)
+cbi.manager_generate_helper = manager_generate_helper
 sys.modules["menace_sandbox.coding_bot_interface"] = cbi
 
 vec_pkg = types.ModuleType("vector_service")

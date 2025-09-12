@@ -24,7 +24,7 @@ Shell tasks receive a simple `#!/bin/sh` template with a `main` function that ca
 ## Using `SelfCodingEngine`
 
 If an instance of `SelfCodingEngine` is passed to the bot, `fill_missing()` first
-calls `engine.generate_helper(desc)` to produce an implementation based on task
+calls `manager_generate_helper(manager, desc)` to produce an implementation based on task
 metadata.  The engine retries with `CODEX_RETRY_DELAYS`, simplifies the prompt
 on persistent failures and falls back to queueing or rerouting to
 `CODEX_FALLBACK_MODEL` depending on `CODEX_FALLBACK_STRATEGY`.  Even when a

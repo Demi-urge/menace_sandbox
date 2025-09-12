@@ -127,10 +127,7 @@ except Exception:  # pragma: no cover - fallback when coding engine unavailable
         return cls
 
     def manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
-        engine = getattr(manager, "engine", None)
-        if engine is None:
-            raise ImportError("Self-coding engine is required for operation")
-        return engine.generate_helper(description, **kwargs)
+        raise ImportError("Self-coding engine is required for operation")
 try:  # pragma: no cover - optional dependency
     from .data_bot import DataBot
 except Exception:  # pragma: no cover - fallback when unavailable

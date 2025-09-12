@@ -732,8 +732,8 @@ be retrieved and logged.  Example:
 from memory_aware_gpt_client import ask_with_memory
 from log_tags import ERROR_FIX
 
-result = ask_with_memory(client, "self_coding_engine.generate_helper", "Write tests",
-                         memory=gpt_memory, tags=[ERROR_FIX])
+result = ask_with_memory(client, "coding_bot_interface.manager_generate_helper", "Write tests",
+                         memory=gpt_memory, tags=[ERROR_FIX], manager=manager)
 ```
 
 For a deeper overview of the `LocalKnowledgeModule`, required tags, environment

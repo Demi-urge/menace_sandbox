@@ -34,7 +34,8 @@ prompt = "Examples:\n" + "\n\n".join(
 )
 
 engine = SelfCodingEngine()
-code = engine.generate_helper(prompt)
+manager = SelfCodingManager(engine, pipeline, data_bot=data_bot, bot_registry=registry)
+code = manager_generate_helper(manager, prompt)
 print(code)
 ```
 

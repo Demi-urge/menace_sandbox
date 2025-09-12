@@ -2,6 +2,7 @@ import sys
 import types
 import logging
 import pytest
+from menace.coding_bot_interface import manager_generate_helper
 
 # Stub heavy dependencies before importing the module under test
 sys.modules["vector_service"] = types.SimpleNamespace(
@@ -77,5 +78,5 @@ def test_billing_instructions_in_prompt(monkeypatch):
         sce, "fetch_recent_billing_issues", lambda limit=5: ["invoice overdue"]
     )
 
-    engine.generate_helper("demo task")
+    manager_generate_helper(types.SimpleNamespace(engine=engine), "demo task")
     assert "invoice overdue" in engine._last_prompt.text

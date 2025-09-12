@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 import types
 import pytest
+from menace.coding_bot_interface import manager_generate_helper
 
 # Stub modules that these bots depend on to keep tests lightweight.
 
@@ -88,7 +89,7 @@ sys.modules.setdefault(
     "menace_sandbox.coding_bot_interface",
     types.SimpleNamespace(
         self_coding_managed=lambda cls: cls,
-        manager_generate_helper=lambda mgr, desc, **kw: mgr.engine.generate_helper(desc, **kw),
+        manager_generate_helper=manager_generate_helper,
     ),
 )
 
