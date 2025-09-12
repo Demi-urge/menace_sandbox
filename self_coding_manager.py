@@ -313,16 +313,35 @@ class SelfCodingManager:
             self.logger.exception("failed to register bot in registry")
 
     def _refresh_thresholds(self) -> None:
-        """Fetch ROI, error and test-failure thresholds from :class:`DataBot`."""
+        """Fetch ROI, error and test-failure thresholds from :class:`DataBot`.
+
+        When values change an event is emitted so other components can react
+        without requiring a restart.
+        """
+
         if not self.data_bot:
             return
         try:
+            prev = getattr(self, "_last_thresholds", None)
             # Ensure the DataBot refreshes its view of the configuration so
             # manager decisions use the most recent thresholds.
             t = self.data_bot.reload_thresholds(self.bot_name)
             self.roi_drop_threshold = t.roi_drop
             self.error_rate_threshold = t.error_threshold
             self.test_failure_threshold = t.test_failure_threshold
+            changed = prev != t
+            self._last_thresholds = t
+            if changed and self.event_bus:
+                payload = {
+                    "bot": self.bot_name,
+                    "roi_drop": t.roi_drop,
+                    "error_threshold": t.error_threshold,
+                    "test_failure_threshold": t.test_failure_threshold,
+                }
+                try:  # pragma: no cover - best effort
+                    self.event_bus.publish("self_coding:thresholds_updated", payload)
+                except Exception:
+                    self.logger.exception("failed to publish threshold update")
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load thresholds for %s", self.bot_name)
 
