@@ -1203,7 +1203,12 @@ class DataBot:
 
     # ------------------------------------------------------------------
     def subscribe_degradation(self, callback: Callable[[dict], None]) -> None:
-        """Register *callback* for bot degradation notifications."""
+        """Register *callback* for bot degradation notifications.
+
+        Events published under ``bot:degraded`` include ROI, error and test
+        failure deltas via the ``delta_roi``, ``delta_errors`` and
+        ``delta_tests_failed`` keys.
+        """
         if self.event_bus:
             self.event_bus.subscribe("bot:degraded", lambda _t, e: callback(e))
             try:
