@@ -37,12 +37,14 @@ def _inherits_bot_base(cls: ast.ClassDef) -> bool:
 
 def _class_missing(cls: ast.ClassDef) -> bool:
     """Return ``True`` if *cls* lacks the ``self_coding_managed`` decorator."""
-
-    return not any(
-        (isinstance(dec, ast.Name) and dec.id == "self_coding_managed")
-        or (isinstance(dec, ast.Attribute) and dec.attr == "self_coding_managed")
-        for dec in cls.decorator_list
-    )
+    for dec in cls.decorator_list:
+        if isinstance(dec, ast.Call):
+            dec = dec.func
+        if isinstance(dec, ast.Name) and dec.id == "self_coding_managed":
+            return False
+        if isinstance(dec, ast.Attribute) and dec.attr == "self_coding_managed":
+            return False
+    return True
 
 
 def _has_register_and_log(tree: ast.AST) -> bool:
