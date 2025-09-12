@@ -1,6 +1,7 @@
 import importlib
 import sys
 import types
+import contextvars
 from pathlib import Path
 
 
@@ -52,6 +53,10 @@ def test_instantiated_bot_triggers_patch(tmp_path, monkeypatch):
     scm_mod.SelfCodingManager = SelfCodingManager
     scm_mod.HelperGenerationError = HelperGenerationError
     sys.modules["menace.self_coding_manager"] = scm_mod
+
+    sce_mod = types.ModuleType("menace.self_coding_engine")
+    sce_mod.MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT")
+    sys.modules["menace.self_coding_engine"] = sce_mod
 
     sys.modules.pop("menace.coding_bot_interface", None)
     from menace.coding_bot_interface import self_coding_managed

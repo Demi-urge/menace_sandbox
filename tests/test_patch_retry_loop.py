@@ -3,6 +3,7 @@ import types
 from pathlib import Path
 
 import pytest
+import contextvars
 
 # Stub out environment_bootstrap if required
 stub_env = types.ModuleType("environment_bootstrap")
@@ -38,6 +39,7 @@ mapl_stub.ModelAutomationPipeline = ModelAutomationPipeline
 sys.modules["menace.model_automation_pipeline"] = mapl_stub
 sce_stub = types.ModuleType("menace.self_coding_engine")
 sce_stub.SelfCodingEngine = object
+sce_stub.MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT")
 sys.modules["menace.self_coding_engine"] = sce_stub
 import menace.self_coding_manager as scm  # noqa: E402
 from menace.model_automation_pipeline import AutomationResult  # noqa: E402

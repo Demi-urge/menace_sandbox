@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 import pytest
+import contextvars
 
 
 def _stub_module(monkeypatch, name, **attrs):
@@ -82,7 +83,12 @@ def test_run_sandbox_multiscenario(monkeypatch, tmp_path):
     _stub_module(monkeypatch, 'menace.self_improvement', SelfImprovementEngine=DummyBot)
     _stub_module(monkeypatch, 'menace.self_test_service', SelfTestService=DummyBot)
     _stub_module(monkeypatch, 'menace.self_debugger_sandbox', SelfDebuggerSandbox=DummySandbox)
-    _stub_module(monkeypatch, 'menace.self_coding_engine', SelfCodingEngine=DummyBot)
+    _stub_module(
+        monkeypatch,
+        'menace.self_coding_engine',
+        SelfCodingEngine=DummyBot,
+        MANAGER_CONTEXT=contextvars.ContextVar('MANAGER_CONTEXT'),
+    )
     _stub_module(monkeypatch, 'menace.code_database', PatchHistoryDB=DummyBot, CodeDB=DummyBot)
     _stub_module(monkeypatch, 'menace.menace_memory_manager', MenaceMemoryManager=DummyBot, MemoryEntry=None)
     _stub_module(monkeypatch, 'menace.discrepancy_detection_bot', DiscrepancyDetectionBot=DummyBot)
@@ -152,7 +158,12 @@ def test_run_sandbox_hostile_misuse_concurrency_metrics(monkeypatch, tmp_path):
     _stub_module(monkeypatch, 'menace.self_improvement', SelfImprovementEngine=DummyBot)
     _stub_module(monkeypatch, 'menace.self_test_service', SelfTestService=DummyBot)
     _stub_module(monkeypatch, 'menace.self_debugger_sandbox', SelfDebuggerSandbox=DummySandbox)
-    _stub_module(monkeypatch, 'menace.self_coding_engine', SelfCodingEngine=DummyBot)
+    _stub_module(
+        monkeypatch,
+        'menace.self_coding_engine',
+        SelfCodingEngine=DummyBot,
+        MANAGER_CONTEXT=contextvars.ContextVar('MANAGER_CONTEXT'),
+    )
     _stub_module(monkeypatch, 'menace.code_database', PatchHistoryDB=DummyBot, CodeDB=DummyBot)
     _stub_module(monkeypatch, 'menace.menace_memory_manager', MenaceMemoryManager=DummyBot, MemoryEntry=None)
     _stub_module(monkeypatch, 'menace.discrepancy_detection_bot', DiscrepancyDetectionBot=DummyBot)
@@ -231,7 +242,12 @@ def test_run_workflow_multiscenario(monkeypatch, tmp_path, steps):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 
     _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
-    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(
+        monkeypatch,
+        "menace.self_coding_engine",
+        SelfCodingEngine=DummyBot,
+        MANAGER_CONTEXT=contextvars.ContextVar("MANAGER_CONTEXT"),
+    )
     _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot)
     _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
     _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
