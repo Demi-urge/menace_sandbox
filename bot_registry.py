@@ -180,8 +180,34 @@ class BotRegistry:
                         "bot:manual_change",
                         {"name": name, "module": module_path, "reason": "provenance_mismatch"},
                     )
+                    self.event_bus.publish(
+                        "bot:manual_change_detected",
+                        {
+                            "name": name,
+                            "module": module_path,
+                            "reason": "provenance_mismatch",
+                            "expected": stored_commit,
+                            "actual": commit,
+                        },
+                    )
                 except Exception as exc:
-                    logger.error("Failed to publish bot:manual_change event: %s", exc)
+                    logger.error(
+                        "Failed to publish bot:manual_change_detected event: %s", exc
+                    )
+            manager = node.get("selfcoding_manager") or node.get("manager")
+            if manager and hasattr(manager, "register_patch_cycle"):
+                try:
+                    manager.register_patch_cycle(
+                        f"manual change detected for {name}",
+                        {
+                            "reason": "provenance_mismatch",
+                            "module": module_path,
+                        },
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "Failed to notify SelfCodingManager for %s: %s", name, exc
+                    )
             if prev_module is not None:
                 node["module"] = prev_module
             if prev_version is not None:

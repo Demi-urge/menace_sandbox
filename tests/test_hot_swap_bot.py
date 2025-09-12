@@ -89,7 +89,38 @@ def test_manual_commit_mismatch_rejected(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError):
         reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="b")
     assert dummy.greet() == "old"
-    assert bus.events[-1][0] == "bot:manual_change"
+    assert bus.events[-1][0] == "bot:manual_change_detected"
     node = reg.graph.nodes["dummy"]
     assert node["module"] == module_old.as_posix()
     assert node["version"] == 1
+
+
+def test_provenance_mismatch_notifies_manager(tmp_path, monkeypatch):
+    commits = {1: "a", 2: "c"}
+    _stub_service(monkeypatch, commits)
+    module_old = tmp_path / "dummy_bot.py"
+    module_old.write_text("def greet():\n    return 'old'\n")
+    module_new = tmp_path / "dummy_bot_new.py"
+    module_new.write_text("def greet():\n    return 'new'\n")
+    monkeypatch.syspath_prepend(tmp_path)
+    importlib.import_module("dummy_bot")
+    bus = DummyBus()
+
+    class DummyManager:
+        def __init__(self):
+            self.cycles = []
+
+        def register_patch_cycle(self, description, context_meta=None):
+            self.cycles.append((description, context_meta))
+
+    reg = BotRegistry(event_bus=bus)
+    reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
+    reg.graph.nodes["dummy"]["selfcoding_manager"] = DummyManager()
+    importlib.invalidate_caches()
+    with pytest.raises(RuntimeError):
+        reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="b")
+    manager = reg.graph.nodes["dummy"]["selfcoding_manager"]
+    assert manager.cycles
+    desc, meta = manager.cycles[0]
+    assert "manual change" in desc.lower()
+    assert meta["reason"] == "provenance_mismatch"
