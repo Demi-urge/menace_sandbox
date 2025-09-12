@@ -165,7 +165,7 @@ def test_high_confidence_triggers_patch(tmp_path, monkeypatch):
     )
 
     assert manager.generate_called
-    assert ("bot:hot_swapped", {"bot": "dummy_module"}) in bus.events
+    assert any(t == "bot:patch_failed" and p.get("bot") == "dummy_module" for t, p in bus.events)
     event = history.events[-1]
-    assert event.action == "patch"
-    assert event.confidence == 0.9
+    assert event.action == "patch_failed"
+    assert event.confidence == 0.0

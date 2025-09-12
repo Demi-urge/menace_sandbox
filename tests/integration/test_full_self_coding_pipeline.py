@@ -137,6 +137,9 @@ class DummyContextBuilder:
         self.calls.append(bot_name)
         return Path("helper.py")
 
+    def refresh_db_weights(self):
+        pass
+
 
 ea_mod_ContextBuilder = DummyContextBuilder
 
@@ -239,6 +242,7 @@ def test_full_self_coding_pipeline(tmp_path, monkeypatch):
     patch_event = next(p for t, p in bus.published if t == "self_coding:patch_applied")
     assert patch_event["patch_id"] == 42
 
-    hot_swap = next(p for t, p in bus.published if t == "bot:hot_swapped")
-    assert hot_swap["bot"] == "dummy_module"
+    patched = next(p for t, p in bus.published if t == "bot:patched")
+    assert patched["bot"] == "dummy_module"
+    assert patched["commit"] == "deadbeef"
     assert registry.graph.nodes["dummy_module"]["commit"] == "deadbeef"

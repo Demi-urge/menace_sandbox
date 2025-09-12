@@ -9,6 +9,9 @@ def test_degraded_bot_skips_when_thresholds_not_met(tmp_path):
     scm_mod.HelperGenerationError = HelperGenerationError
     scm_mod.SelfCodingManager = object
     sys.modules["menace.self_coding_manager"] = scm_mod
+    sc_engine_mod = types.ModuleType("menace.self_coding_engine")
+    sc_engine_mod.MANAGER_CONTEXT = None
+    sys.modules["menace.self_coding_engine"] = sc_engine_mod
 
     # Import after stubbing
     from menace.evolution_orchestrator import EvolutionOrchestrator

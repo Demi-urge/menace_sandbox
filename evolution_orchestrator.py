@@ -20,7 +20,8 @@ from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .evaluation_history_db import EvaluationHistoryDB
 from .trend_predictor import TrendPredictor
 from typing import TYPE_CHECKING
-from context_builder_util import create_context_builder
+from context_builder_util import create_context_builder, ensure_fresh_weights
+from retry_utils import with_retry
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback for tests
@@ -236,34 +237,32 @@ class EvolutionOrchestrator:
         bot = str(event.get("bot", ""))
         try:
             registry = getattr(self.selfcoding_manager, "bot_registry", None)
-            degraded_path: Path | None = None
+            module_path: Path | None = None
             if registry and bot:
                 try:
-                    node = registry.graph.nodes[bot]
-                    mod_path = node.get("module")
-                    if isinstance(mod_path, str):
-                        p = Path(mod_path)
-                        if p.exists():
-                            degraded_path = p
+                    mod_path = registry.graph.nodes[bot]["module"]
+                    p = Path(mod_path)
+                    if p.exists():
+                        module_path = p
+                except KeyError:
+                    pass
                 except Exception:
-                    self.logger.exception(
-                        "bot registry lookup failed for %s", bot
-                    )
-            if (not degraded_path or not degraded_path.exists()) and bot:
+                    self.logger.exception("bot registry lookup failed for %s", bot)
+            if module_path is None and bot:
                 try:
                     mod = importlib.import_module(bot)
                     mod_file = getattr(mod, "__file__", "")
                     if mod_file:
                         p = Path(mod_file)
                         if p.exists():
-                            degraded_path = p
+                            module_path = p
                 except Exception:
                     self.logger.exception("import failed for %s", bot)
-            if not degraded_path or not degraded_path.exists():
-                self.logger.warning("degraded bot path not found for %s", bot)
+            if not module_path or not module_path.exists():
+                self.logger.error("module path not found for %s", bot)
                 return
 
-            module_path = degraded_path
+            degraded_path = module_path
             context_meta = {
                 "delta_roi": event.get("delta_roi"),
                 "delta_errors": event.get("delta_errors"),
@@ -382,44 +381,100 @@ class EvolutionOrchestrator:
                 data_dir = Path(getattr(settings, "sandbox_data_dir", "."))
                 os.environ["SANDBOX_DATA_DIR"] = str(data_dir)
                 builder = create_context_builder()
+                try:
+                    ensure_fresh_weights(builder)
+                except Exception:
+                    self.logger.exception(
+                        "failed to refresh context builder for %s", bot
+                    )
+                    if bus:
+                        try:
+                            bus.publish(
+                                "bot:patch_failed",
+                                {"bot": bot, "stage": "context", "error": "refresh_db_weights"},
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to publish patch_failed for %s", bot
+                            )
+                    return
                 _, commit = self.selfcoding_manager.generate_and_patch(
                     module_path,
                     desc,
                     context_meta=context_meta,
                     context_builder=builder,
                 )
-                if registry:
+                patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
+                success = bool(patch_id and commit)
+                roi_after = (
+                    self.data_bot.roi(bot)
+                    if hasattr(self.data_bot, "roi")
+                    else current_roi
+                )
+                err_after = (
+                    self.data_bot.average_errors(bot)
+                    if hasattr(self.data_bot, "average_errors")
+                    else current_err
+                )
+                roi_delta = roi_after - current_roi
+                err_delta = err_after - current_err
+                if registry and success:
                     try:
-                        patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
-                        registry.update_bot(
-                            bot,
-                            str(module_path),
-                            patch_id=patch_id,
-                            commit=commit,
-                        )
-                        try:
-                            node = registry.graph.nodes.get(bot, {})
-                            self.logger.info(
-                                "registry updated",
-                                extra={
-                                    "bot": bot,
-                                    "patch_id": node.get("patch_id"),
-                                    "commit": node.get("commit"),
-                                },
+                        def _upd() -> None:
+                            registry.update_bot(
+                                bot,
+                                str(module_path),
+                                patch_id=patch_id,
+                                commit=commit,
                             )
-                        except Exception:
-                            self.logger.exception(
-                                "failed to log registry state for %s", bot
-                            )
+
+                        with_retry(_upd, logger=self.logger)
+                        node = registry.graph.nodes.get(bot, {})
+                        if (
+                            node.get("patch_id") != patch_id
+                            or node.get("commit") != commit
+                        ):
+                            success = False
                     except Exception:
                         self.logger.exception("failed to update bot %s", bot)
+                        success = False
+                payload = {
+                    "bot": bot,
+                    "patch_id": patch_id,
+                    "commit": commit,
+                    "roi_before": current_roi,
+                    "roi_after": roi_after,
+                    "roi_delta": roi_delta,
+                    "errors_before": current_err,
+                    "errors_after": err_after,
+                    "error_delta": err_delta,
+                    "description": desc,
+                    "path": str(module_path),
+                }
                 if bus:
                     try:
-                        bus.publish("bot:hot_swapped", {"bot": bot})
+                        topic = "bot:patched" if success else "bot:patch_failed"
+                        bus.publish(topic, payload)
                     except Exception:
                         self.logger.exception(
-                            "failed to publish hot swap event for %s", bot
+                            "failed to publish %s for %s", topic, bot
                         )
+                try:
+                    self.history.add(
+                        EvolutionEvent(
+                            action="patch" if success else "patch_failed",
+                            before_metric=current_roi,
+                            after_metric=roi_after if success else current_roi,
+                            roi=roi_delta if success else 0.0,
+                            patch_id=patch_id,
+                            reason=desc,
+                            trigger="degradation",
+                            performance=roi_delta,
+                            bottleneck=err_delta,
+                        )
+                    )
+                except Exception:
+                    self.logger.exception("failed to record patch result")
             except HelperGenerationError as exc:
                 self.logger.error(
                     "context_build_failed",
