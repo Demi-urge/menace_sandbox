@@ -2,15 +2,21 @@ default:
   roi_drop: -0.1
   error_increase: 1.0
   test_failure_increase: 0.0
+  model: exponential
+  confidence: 0.95
 bots:
   menace:
     roi_drop: -0.2
     error_increase: 2.0
     test_failure_increase: 0.0
+    model: simple
+    confidence: 0.9
   research_aggregator:
     roi_drop: -0.15
     error_increase: 1.5
     test_failure_increase: 0.1
+    model: arima
+    confidence: 0.9
   finance_router:
     roi_drop: -0.05
     error_increase: 0.5

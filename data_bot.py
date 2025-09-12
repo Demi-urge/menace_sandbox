@@ -17,17 +17,27 @@ Configuration Keys
     Maximum allowed increase in failed test count before a bot is
     considered degraded.
 
+``model``
+    Forecast model to use for predicting future metrics (e.g.,
+    ``exponential`` or ``arima``).
+``confidence``
+    Confidence level for the forecast model's interval.
+
 Example ``self_coding_thresholds.yaml``::
 
     default:
       roi_drop: -0.1
       error_increase: 1.0
       test_failure_increase: 0.0
+      model: exponential
+      confidence: 0.95
     bots:
       example-bot:
         roi_drop: -0.2
         error_increase: 2.0
         test_failure_increase: 0.0
+        model: arima
+        confidence: 0.9
 """
 
 from __future__ import annotations
@@ -45,7 +55,6 @@ import sqlite3
 import os
 import logging
 import json
-import math
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -64,6 +73,7 @@ from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
 from .self_improvement.baseline_tracker import BaselineTracker
+from .forecasting import ForecastModel, create_model
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -101,75 +111,6 @@ _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 
 logger = logging.getLogger(__name__)
-
-
-class SimpleForecastModel:
-    """Very small linear regression forecaster with confidence intervals.
-
-    The model fits a line to the provided history and forecasts the next
-    value.  A 95% confidence interval is returned based on the standard
-    error of the regression.  It is intentionally lightweight so that it can
-    operate without external dependencies.
-    """
-
-    def __init__(self) -> None:  # pragma: no cover - trivial
-        self.history: List[float] = []
-        self.n = 0
-        self.slope = 0.0
-        self.intercept = 0.0
-        self.std_err = 0.0
-
-    # ------------------------------------------------------------------
-    def fit(self, history: List[float]) -> "SimpleForecastModel":
-        self.history = [float(h) for h in history]
-        self.n = len(self.history)
-        if self.n >= 2:
-            x_vals = list(range(self.n))
-            x_mean = sum(x_vals) / self.n
-            y_mean = sum(self.history) / self.n
-            s_xy = sum(
-                (x - x_mean) * (y - y_mean)
-                for x, y in zip(x_vals, self.history)
-            )
-            s_xx = sum((x - x_mean) ** 2 for x in x_vals)
-            self.slope = s_xy / s_xx if s_xx else 0.0
-            self.intercept = y_mean - self.slope * x_mean
-            residuals = [
-                y - (self.slope * x + self.intercept)
-                for x, y in zip(x_vals, self.history)
-            ]
-            dof = max(self.n - 2, 1)
-            self.std_err = math.sqrt(sum(r * r for r in residuals) / dof)
-        elif self.n == 1:
-            self.intercept = self.history[0]
-            self.slope = 0.0
-            self.std_err = 0.0
-        else:
-            self.intercept = 0.0
-            self.slope = 0.0
-            self.std_err = 0.0
-        return self
-
-    # ------------------------------------------------------------------
-    def forecast(self) -> tuple[float, float, float]:
-        if self.n == 0:
-            return 0.0, 0.0, 0.0
-        x_pred = self.n
-        pred = self.slope * x_pred + self.intercept
-        if self.n < 2:
-            return pred, pred, pred
-        x_vals = list(range(self.n))
-        x_mean = sum(x_vals) / self.n
-        s_xx = sum((x - x_mean) ** 2 for x in x_vals)
-        if s_xx == 0:
-            se_pred = self.std_err
-        else:
-            se_pred = self.std_err * math.sqrt(
-                1 + 1 / self.n + (x_pred - x_mean) ** 2 / s_xx
-            )
-        ci = 1.96 * se_pred
-        return pred, pred - ci, pred + ci
-
 @dataclass
 class MetricRecord:
     """Metrics captured for a bot at a point in time."""
@@ -1113,7 +1054,9 @@ class DataBot:
         # Per-bot forecast history for adaptive thresholding.
         self._forecast_history: Dict[str, Dict[str, list[float]]] = {}
         # Dedicated forecasting models for each metric per bot.
-        self._forecast_models: Dict[str, Dict[str, SimpleForecastModel]] = {}
+        self._forecast_models: Dict[str, Dict[str, ForecastModel]] = {}
+        # Forecast configuration cache (model, confidence) per bot.
+        self._forecast_cfg: Dict[str, dict] = {}
         # Cache per-bot thresholds to avoid unnecessary disk reads.  The
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
@@ -1485,22 +1428,26 @@ class DataBot:
         delta_err = errors - avg_err
         delta_fail = test_failures - avg_fail
 
+        cfg = self._forecast_cfg.get(bot)
+        if cfg is None:
+            self.reload_thresholds(bot)
+            cfg = self._forecast_cfg.get(bot, {})
+        model_name = cfg.get("model", "exponential")
+        confidence = float(cfg.get("confidence", 0.95))
         models = self._forecast_models.setdefault(bot, {})
 
         def _forecast(metric: str, current: float) -> tuple[float, float, float]:
             hist = tracker.to_dict().get(metric, [])
             if not hist:
                 return current, current, current
-            model = models.get(metric)
-            if model is None:
-                model = SimpleForecastModel()
-                models[metric] = model
+            model = create_model(model_name, confidence)
+            models[metric] = model
             model.fit(hist)
             return model.forecast()
 
-        pred_roi, roi_low, _roi_high = _forecast("roi", roi)
-        pred_err, _err_low, err_high = _forecast("errors", errors)
-        pred_fail, _fail_low, fail_high = _forecast("tests_failed", test_failures)
+        pred_roi, roi_low, roi_high = _forecast("roi", roi)
+        pred_err, err_low, err_high = _forecast("errors", errors)
+        pred_fail, fail_low, fail_high = _forecast("tests_failed", test_failures)
         fhist = self._forecast_history.setdefault(
             bot, {"roi": [], "errors": [], "tests_failed": []}
         )
@@ -1514,6 +1461,19 @@ class DataBot:
         fail_thresh = max(t.test_failure_threshold + (fail_high - pred_fail), 0.0)
         event = {
             "bot": bot,
+            "roi": roi,
+            "errors": errors,
+            "predicted_roi": pred_roi,
+            "predicted_errors": pred_err,
+            "predicted_tests_failed": pred_fail,
+            "roi_confidence_low": roi_low,
+            "roi_confidence_high": roi_high,
+            "error_confidence_low": err_low,
+            "error_confidence_high": err_high,
+            "test_failure_confidence_low": fail_low,
+            "test_failure_confidence_high": fail_high,
+            "forecast_model": model_name,
+            "forecast_confidence": confidence,
             "delta_roi": delta_roi,
             "delta_errors": delta_err,
             "delta_tests_failed": delta_fail,
@@ -1764,6 +1724,7 @@ class DataBot:
         )
         key = bot or ""
         self._thresholds[key] = rt
+        self._forecast_cfg[key] = {"model": t.model, "confidence": t.confidence}
         return rt
 
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
