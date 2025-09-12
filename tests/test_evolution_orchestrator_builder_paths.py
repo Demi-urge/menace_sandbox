@@ -108,7 +108,7 @@ class ContextBuilder:  # pragma: no cover - simple stub
 vec_mod.ContextBuilder = ContextBuilder
 sys.modules["vector_service.context_builder"] = vec_mod
 
-import menace_sandbox.evolution_orchestrator as eo
+import menace_sandbox.evolution_orchestrator as eo  # noqa: E402
 
 
 def test_builder_uses_sandbox_settings(tmp_path, monkeypatch):
@@ -145,7 +145,7 @@ def test_builder_uses_sandbox_settings(tmp_path, monkeypatch):
         event_bus=None,
         should_refactor=lambda: True,
         register_patch_cycle=lambda *a, **k: None,
-        generate_and_patch=lambda *a, **k: None,
+        generate_and_patch=lambda *a, **k: (None, None),
     )
 
     orch = eo.EvolutionOrchestrator(
@@ -171,4 +171,3 @@ def test_builder_uses_sandbox_settings(tmp_path, monkeypatch):
         str(tmp_path / "errors.db"),
         str(tmp_path / "workflows.db"),
     )
-

@@ -49,6 +49,7 @@ def _setup_module(tmp_path, monkeypatch):
 
         def generate_and_patch(self, *a, **k):
             self.generate_called = True
+            return None, None
 
     class History:
         def __init__(self):
@@ -69,7 +70,9 @@ def _setup_module(tmp_path, monkeypatch):
 
 
 def test_low_confidence_skips_patch(tmp_path, monkeypatch):
-    bus, Manager, History, data_bot, cap_bot, improver, evolver = _setup_module(tmp_path, monkeypatch)
+    bus, Manager, History, data_bot, cap_bot, improver, evolver = _setup_module(
+        tmp_path, monkeypatch
+    )
 
     class LowConfidencePredictor:
         def predict(self, X, horizon=1):
@@ -118,7 +121,9 @@ def test_low_confidence_skips_patch(tmp_path, monkeypatch):
 
 
 def test_high_confidence_triggers_patch(tmp_path, monkeypatch):
-    bus, Manager, History, data_bot, cap_bot, improver, evolver = _setup_module(tmp_path, monkeypatch)
+    bus, Manager, History, data_bot, cap_bot, improver, evolver = _setup_module(
+        tmp_path, monkeypatch
+    )
 
     class HighConfidencePredictor:
         def predict(self, X, horizon=1):

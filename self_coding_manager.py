@@ -199,6 +199,7 @@ class SelfCodingManager:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
+        self._last_commit_hash: str | None = None
         thresholds = data_bot.get_thresholds(bot_name)
         self.roi_drop_threshold = (
             roi_drop_threshold if roi_drop_threshold is not None else thresholds.roi_drop
@@ -560,8 +561,12 @@ class SelfCodingManager:
         context_meta: Dict[str, Any] | None = None,
         context_builder: ContextBuilder | None = None,
         **kwargs: Any,
-    ) -> AutomationResult:
-        """Patch ``path`` using :meth:`run_patch` with fresh context."""
+    ) -> tuple[AutomationResult, str | None]:
+        """Patch ``path`` using :meth:`run_patch` with fresh context.
+
+        Returns a tuple of the :class:`AutomationResult` and the commit hash of
+        the applied patch, if any.
+        """
         builder = context_builder or ContextBuilder()
         try:
             ensure_fresh_weights(builder)
@@ -586,13 +591,14 @@ class SelfCodingManager:
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to publish patch_failed event")
             raise RuntimeError("QuickFixEngine validation unavailable") from exc
-        return self.run_patch(
+        result = self.run_patch(
             path,
             description,
             context_meta=context_meta,
             context_builder=builder,
             **kwargs,
         )
+        return result, getattr(self, "_last_commit_hash", None)
 
     # ------------------------------------------------------------------
     def run_patch(
@@ -1320,6 +1326,7 @@ class SelfCodingManager:
         )
         self._last_event_id = event_id
         self._last_patch_id = patch_id
+        self._last_commit_hash = commit_hash
         if self.data_bot:
             try:
                 roi_val = result.roi.roi if result.roi else 0.0
