@@ -193,13 +193,6 @@ def test_threshold_overrides():
 
 
 def test_should_refactor_on_failed_tests(monkeypatch):
-    def fake_get_thresholds(bot):
-        return SelfCodingThresholds(
-            roi_drop=-999.0, error_increase=999.0, test_failure_increase=2.0
-        )
-
-    monkeypatch.setattr(scm, "get_thresholds", fake_get_thresholds)
-
     class DummyDataBot:
         def __init__(self) -> None:
             self.failures = 0
@@ -218,13 +211,29 @@ def test_should_refactor_on_failed_tests(monkeypatch):
                 roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=2.0
             )
 
+        def reload_thresholds(self, bot):
+            return self.get_thresholds(bot)
+
+        def update_thresholds(self, *a, **k):  # pragma: no cover - simple stub
+            pass
+
+        def check_degradation(self, _bot, _roi, _err, failures):  # pragma: no cover - simple stub
+            return failures > 2
+
     data_bot = DummyDataBot()
+    class Engine:
+        def __init__(self):
+            builder = types.SimpleNamespace(session_id="", refresh_db_weights=lambda: None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+            self.patch_suggestion_db = None
+
     mgr = scm.SelfCodingManager(
-        scm.SelfCodingEngine(),
+        Engine(),
         scm.ModelAutomationPipeline(),
         bot_name="alpha",
         data_bot=data_bot,
         bot_registry=scm.BotRegistry(),
+        quick_fix=types.SimpleNamespace(context_builder=None),
     )
     mgr._last_errors = data_bot.average_errors("alpha")
     data_bot.failures = 1

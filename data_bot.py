@@ -1042,6 +1042,8 @@ class DataBot:
                 self.trend_predictor = None
         self._baseline: Dict[str, BaselineTracker] = {}
         self._ema_baseline: Dict[str, Dict[str, float]] = {}
+        # Per-bot forecast history for adaptive thresholding.
+        self._forecast_history: Dict[str, Dict[str, list[float]]] = {}
         # Cache per-bot thresholds to avoid unnecessary disk reads.  The
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
@@ -1412,22 +1414,35 @@ class DataBot:
         delta_roi = roi - avg_roi
         delta_err = errors - avg_err
         delta_fail = test_failures - avg_fail
-        roi_trend_adj = 0.0
-        err_trend_adj = 0.0
-        if self.trend_predictor:
-            try:  # pragma: no cover - best effort
-                pred = self.trend_predictor.predict_future_metrics()
-                roi_trend_adj = pred.roi - roi
-                err_trend_adj = pred.errors - errors
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("trend prediction failed for %s", bot)
-        # Always refresh thresholds to pick up configuration updates at
-        # runtime.  ``reload_thresholds`` updates the internal cache and
-        # returns the current values for ``bot``.
+
+        def _forecast(metric: str, current: float, alpha: float = self.smoothing_factor) -> float:
+            hist = tracker.to_dict().get(metric, [])
+            if not hist:
+                return current
+            ema_val = hist[0]
+            for v in hist[1:]:
+                ema_val = alpha * v + (1.0 - alpha) * ema_val
+            return ema_val
+
+        pred_roi = _forecast("roi", roi)
+        pred_err = _forecast("errors", errors)
+        pred_fail = _forecast("tests_failed", test_failures)
+        fhist = self._forecast_history.setdefault(
+            bot, {"roi": [], "errors": [], "tests_failed": []}
+        )
+        fhist["roi"].append(pred_roi)
+        fhist["errors"].append(pred_err)
+        fhist["tests_failed"].append(pred_fail)
+
         t = self.reload_thresholds(bot)
-        roi_thresh = t.roi_drop + roi_trend_adj * self.anomaly_sensitivity
-        err_thresh = t.error_threshold + err_trend_adj * self.anomaly_sensitivity
-        fail_thresh = t.test_failure_threshold
+        roi_diff = (roi - pred_roi) * self.anomaly_sensitivity
+        err_diff = (errors - pred_err) * self.anomaly_sensitivity
+        fail_diff = (test_failures - pred_fail) * self.anomaly_sensitivity
+        roi_thresh = max(min(t.roi_drop + roi_diff, 0.0), t.roi_drop)
+        err_thresh = min(max(t.error_threshold + err_diff, 0.0), t.error_threshold)
+        fail_thresh = min(
+            max(t.test_failure_threshold + fail_diff, 0.0), t.test_failure_threshold
+        )
         event = {
             "bot": bot,
             "delta_roi": delta_roi,
@@ -1701,6 +1716,7 @@ class DataBot:
         roi_drop: float | None = None,
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
+        forecast: Dict[str, float] | None = None,
     ) -> None:
         """Persist new thresholds for ``bot`` and optionally notify API."""
         save_sc_thresholds(
@@ -1709,6 +1725,12 @@ class DataBot:
             error_increase=error_threshold,
             test_failure_increase=test_failure_threshold,
         )
+        if forecast is not None:
+            hist = self._forecast_history.setdefault(
+                bot, {"roi": [], "errors": [], "tests_failed": []}
+            )
+            for k, v in forecast.items():
+                hist.setdefault(k, []).append(float(v))
 
         api_url = os.getenv("SELF_CODING_THRESHOLD_API")
         if api_url:
