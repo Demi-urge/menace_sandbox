@@ -16,6 +16,7 @@ import re
 import json
 import uuid
 import os
+import shlex
 from dataclasses import asdict
 from typing import Dict, Any, TYPE_CHECKING
 
@@ -65,6 +66,7 @@ from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings
 from .patch_attempt_tracker import PatchAttemptTracker
+from .self_coding_thresholds import get_thresholds as load_sc_thresholds
 
 try:  # pragma: no cover - optional dependency
     from .quick_fix_engine import QuickFixEngine
@@ -120,6 +122,17 @@ class PatchApprovalPolicy:
         self.rollback_mgr = rollback_mgr
         self.bot_name = bot_name
         self.logger = logging.getLogger(self.__class__.__name__)
+        if test_command is None:
+            env_cmd = os.getenv("SELF_CODING_TEST_COMMAND")
+            if env_cmd:
+                test_command = shlex.split(env_cmd)
+            else:
+                try:
+                    test_command = load_sc_thresholds(
+                        bot_name, SandboxSettings()
+                    ).test_command
+                except Exception:
+                    test_command = None
         self.test_command = test_command or ["pytest", "-q"]
 
     def approve(self, path: Path) -> bool:

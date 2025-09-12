@@ -231,6 +231,7 @@ sys.modules["bot_registry"] = bot_registry_stub
 sys.modules["menace.bot_registry"] = bot_registry_stub
 
 import menace.self_coding_manager as scm
+import menace.self_coding_thresholds as sct
 import menace.model_automation_pipeline as mapl
 import menace.pre_execution_roi_bot as prb
 
@@ -251,6 +252,64 @@ def test_patch_approval_policy_custom_test_command(monkeypatch, tmp_path):
     assert calls["cmd"] == ["echo", "ok"]
 
 
+def test_patch_approval_policy_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("SELF_CODING_TEST_COMMAND", "echo env")
+    calls = {}
+
+    def fake_run(cmd, check=True):
+        calls["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    verifier = types.SimpleNamespace(verify=lambda path: True)
+    policy = scm.PatchApprovalPolicy(verifier=verifier)
+    assert policy.approve(tmp_path)
+    assert calls["cmd"] == ["echo", "env"]
+
+
+def test_patch_approval_policy_config_override(monkeypatch, tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("default:\n  test_command: ['echo','cfg']\n")
+    monkeypatch.setattr(sct, "_CONFIG_PATH", cfg)
+    calls = {}
+
+    def fake_run(cmd, check=True):
+        calls["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    verifier = types.SimpleNamespace(verify=lambda path: True)
+    policy = scm.PatchApprovalPolicy(verifier=verifier)
+    assert policy.approve(tmp_path)
+    assert calls["cmd"] == ["echo", "cfg"]
+
+    cfg.write_text(
+        """
+default:
+  test_command: ['echo','cfg']
+bots:
+  custom:
+    test_command: ['echo','bot']
+"""
+    )
+    monkeypatch.setattr(sct, "_CONFIG_PATH", cfg)
+    calls.clear()
+    policy = scm.PatchApprovalPolicy(verifier=verifier, bot_name="custom")
+    assert policy.approve(tmp_path)
+    assert calls["cmd"] == ["echo", "bot"]
+
+
+def test_patch_approval_policy_handles_failure(monkeypatch, tmp_path):
+    verifier = types.SimpleNamespace(verify=lambda path: True)
+
+    def fail_run(cmd, check=True):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(scm.subprocess, "run", fail_run)
+    policy = scm.PatchApprovalPolicy(verifier=verifier, test_command=["python", "-c", "0/0"])
+    assert not policy.approve(tmp_path)
+
+
 def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
     class DummyEngine:
         def __init__(self):
@@ -269,6 +328,10 @@ def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
 
     engine = DummyEngine()
     pipeline = DummyPipeline()
+    class DummyQuickFix:
+        def __init__(self, db, mgr, context_builder=None):
+            pass
+    monkeypatch.setattr(scm, "QuickFixEngine", DummyQuickFix)
     mgr = scm.SelfCodingManager(
         engine,
         pipeline,

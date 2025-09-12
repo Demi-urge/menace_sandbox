@@ -138,6 +138,12 @@ manager.approval_policy = policy
 manager.run_patch(Path("sandbox_runner.py"), "tweak", clone_command=["git", "clone", "--depth", "1"])
 ```
 
+The default test command (`pytest -q`) can be overridden globally via the
+`SELF_CODING_TEST_COMMAND` environment variable or
+`SandboxSettings.self_coding_test_command`.  Per-bot commands are specified
+with a `test_command` entry in `config/self_coding_thresholds.yaml` or within
+`SandboxSettings.bot_thresholds`.
+
 ### SelfCodingEngine
 
 ```python

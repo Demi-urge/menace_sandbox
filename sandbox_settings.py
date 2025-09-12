@@ -139,6 +139,8 @@ class BotThresholds(BaseModel):
 
     roi_drop: float | None = None
     error_threshold: float | None = None
+    test_failure_threshold: float | None = None
+    test_command: list[str] | None = None
 
 
 class SynergySettings(BaseModel):
@@ -1552,6 +1554,11 @@ class SandboxSettings(BaseSettings):
         1.0,
         env="SELF_CODING_ERROR_INCREASE",
         description="Error increase triggering self-coding.",
+    )
+    self_coding_test_command: list[str] | None = Field(
+        None,
+        env="SELF_CODING_TEST_COMMAND",
+        description="Default test command used during patch approval.",
     )
     bot_thresholds: dict[str, BotThresholds] = Field(
         default_factory=dict,

@@ -30,18 +30,21 @@ advice for common setup problems.
 ## Self-coding thresholds
 Per-bot regression limits are stored in `config/self_coding_thresholds.yaml`.
 Each entry defines the maximum allowed ROI drop, error increase and test
-failure increase before a bot is considered degraded. Example:
+failure increase before a bot is considered degraded. A custom test command can
+also be provided. Example:
 
 ```yaml
 default:
   roi_drop: -0.1
   error_increase: 1.0
   test_failure_increase: 0.0
+  test_command: ["pytest", "-q"]
 bots:
   QuickFixEngine:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    test_command: ["pytest", "tests/quickfix", "-q"]
   BotDevelopmentBot:
     roi_drop: -0.1
     error_increase: 1.0
@@ -51,6 +54,10 @@ bots:
     error_increase: 1.0
     test_failure_increase: 0.0
 ```
+
+The default test command is `pytest -q`.  Override it globally with the
+`SELF_CODING_TEST_COMMAND` environment variable or the corresponding
+`SandboxSettings.self_coding_test_command` field.
 
 ## Security considerations
 - Resource and network limits are controlled through environment variables.
