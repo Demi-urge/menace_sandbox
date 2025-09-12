@@ -26,32 +26,11 @@ from .failure_fingerprint_store import (
     FailureFingerprintStore,
 )
 from .failure_retry_utils import check_similarity_and_warn, record_failure
-try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import (
-        record_failed_tags,
-        load_failed_tags,
-        ContextBuilder,
-    )
-except Exception as exc:  # pragma: no cover - optional dependency  # noqa: F841
-
-    _ctx_exc = exc
-
-    def _ctx_builder_unavailable(*_a: object, **_k: object) -> None:
-        raise RuntimeError(
-            "vector_service.ContextBuilder is required but could not be imported"
-        ) from _ctx_exc
-
-    class ContextBuilder:  # type: ignore
-        """Placeholder when vector service is unavailable."""
-
-        def __init__(self, *a: object, **k: object) -> None:  # noqa: D401 - simple
-            _ctx_builder_unavailable()
-
-    def record_failed_tags(_tags: list[str]) -> None:  # type: ignore
-        _ctx_builder_unavailable()
-
-    def load_failed_tags() -> set[str]:  # type: ignore
-        _ctx_builder_unavailable()
+from vector_service.context_builder import (
+    record_failed_tags,
+    load_failed_tags,
+    ContextBuilder,
+)
 
 from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 

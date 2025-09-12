@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Optional, Any
 
 from pathlib import Path
 from .telemetry_feedback import TelemetryFeedback
 from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine
-from .self_coding_manager import SelfCodingManager
+try:  # pragma: no cover - optional self-coding dependency
+    from .self_coding_manager import SelfCodingManager
+except ImportError:  # pragma: no cover - self-coding unavailable
+    SelfCodingManager = Any  # type: ignore
 from .model_automation_pipeline import ModelAutomationPipeline
 from .unified_event_bus import UnifiedEventBus
 from .code_database import CodeDB

@@ -44,7 +44,10 @@ from vector_service.context_builder import ContextBuilder, FallbackResult, Error
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from .self_coding_manager import SelfCodingManager
+try:  # pragma: no cover - optional self-coding dependency
+    from .self_coding_manager import SelfCodingManager
+except ImportError:  # pragma: no cover - self-coding unavailable
+    SelfCodingManager = Any  # type: ignore
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .data_bot import DataBot

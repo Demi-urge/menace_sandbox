@@ -11,7 +11,10 @@ import traceback
 from typing import Any, Iterable
 
 from .self_coding_engine import SelfCodingEngine
-from .self_coding_manager import SelfCodingManager
+try:  # pragma: no cover - optional self-coding dependency
+    from .self_coding_manager import SelfCodingManager
+except ImportError:  # pragma: no cover - self-coding unavailable
+    SelfCodingManager = Any  # type: ignore
 from .retry_utils import retry
 from .self_improvement.target_region import TargetRegion, extract_target_region
 from .patch_attempt_tracker import PatchAttemptTracker
