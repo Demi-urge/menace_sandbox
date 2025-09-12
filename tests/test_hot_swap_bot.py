@@ -1,9 +1,30 @@
 import importlib
+import json
+import types
+
 import pytest
+
 from menace.bot_registry import BotRegistry
+import menace.patch_provenance as patch_provenance
+
+
+def _stub_service(monkeypatch, commits):
+    class DummyService:
+        def __init__(self, *a, **k):
+            self.db = self
+
+        def get(self, pid):
+            commit = commits.get(pid)
+            if commit is None:
+                return None
+            return types.SimpleNamespace(summary=json.dumps({"commit": commit}))
+
+    monkeypatch.setattr(patch_provenance, "PatchProvenanceService", DummyService)
 
 
 def test_hot_swap_bot_reloads_module(tmp_path, monkeypatch):
+    commits = {1: "a", 2: "b"}
+    _stub_service(monkeypatch, commits)
     module = tmp_path / "dummy_bot.py"
     module.write_text("def greet():\n    return 'old'\n")
     monkeypatch.syspath_prepend(tmp_path)
@@ -26,6 +47,8 @@ class DummyBus:
 
 
 def test_hot_swap_failure_reverts_and_persists(tmp_path, monkeypatch):
+    commits = {1: "a", 2: "b"}
+    _stub_service(monkeypatch, commits)
     module_good = tmp_path / "dummy_bot.py"
     module_good.write_text("def greet():\n    return 'old'\n")
     module_bad = tmp_path / "dummy_bot_new.py"
@@ -48,3 +71,25 @@ def test_hot_swap_failure_reverts_and_persists(tmp_path, monkeypatch):
     assert node["version"] == 1
     assert node["last_good_module"] == module_good.as_posix()
     assert node["last_good_version"] == 1
+
+
+def test_manual_commit_mismatch_rejected(tmp_path, monkeypatch):
+    commits = {1: "a", 2: "c"}
+    _stub_service(monkeypatch, commits)
+    module_old = tmp_path / "dummy_bot.py"
+    module_old.write_text("def greet():\n    return 'old'\n")
+    module_new = tmp_path / "dummy_bot_new.py"
+    module_new.write_text("def greet():\n    return 'new'\n")
+    monkeypatch.syspath_prepend(tmp_path)
+    dummy = importlib.import_module("dummy_bot")
+    bus = DummyBus()
+    reg = BotRegistry(event_bus=bus)
+    reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
+    importlib.invalidate_caches()
+    with pytest.raises(RuntimeError):
+        reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="b")
+    assert dummy.greet() == "old"
+    assert bus.events[-1][0] == "bot:manual_change"
+    node = reg.graph.nodes["dummy"]
+    assert node["module"] == module_old.as_posix()
+    assert node["version"] == 1

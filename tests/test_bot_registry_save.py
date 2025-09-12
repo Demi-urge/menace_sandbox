@@ -1,7 +1,25 @@
+import json
+import types
+
 import pytest
 from menace.bot_registry import BotRegistry
 from menace.unified_event_bus import UnifiedEventBus
 from db_router import init_db_router
+import menace.patch_provenance as patch_provenance
+
+
+def _stub_service(monkeypatch, commits):
+    class DummyService:
+        def __init__(self, *a, **k):
+            self.db = self
+
+        def get(self, pid):
+            commit = commits.get(pid)
+            if commit is None:
+                return None
+            return types.SimpleNamespace(summary=json.dumps({"commit": commit}))
+
+    monkeypatch.setattr(patch_provenance, "PatchProvenanceService", DummyService)
 
 pytest.importorskip("networkx")
 
@@ -38,13 +56,15 @@ def test_registry_load(tmp_path):
     router.close()
 
 
-def test_update_bot_persists_module(tmp_path):
+def test_update_bot_persists_module(tmp_path, monkeypatch):
     path = tmp_path / "g.db"
     router = init_db_router("br3", str(path), str(path))
+    commits = {1: "abc"}
+    _stub_service(monkeypatch, commits)
     reg = BotRegistry()
     module_file = tmp_path / "mod_x.py"
     module_file.write_text("x = 1\n")
-    reg.update_bot("x", module_file.as_posix())
+    reg.update_bot("x", module_file.as_posix(), patch_id=1, commit="abc")
     reg.save(router)
     router.close()
 
@@ -86,7 +106,9 @@ def test_register_bot_logs_save_error(tmp_path, monkeypatch, caplog):
     assert "Failed to save bot registry" in caplog.text
 
 
-def test_update_bot_emits_event_and_increments_version(tmp_path):
+def test_update_bot_emits_event_and_increments_version(tmp_path, monkeypatch):
+    commits = {1: "abc", 2: "def"}
+    _stub_service(monkeypatch, commits)
     bus = UnifiedEventBus()
     events: list[dict[str, object]] = []
     bus.subscribe("bot:updated", lambda _t, e: events.append(e))
