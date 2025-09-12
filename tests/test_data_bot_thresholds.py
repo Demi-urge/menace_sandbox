@@ -64,7 +64,7 @@ def test_check_degradation_callback(monkeypatch, tmp_path):
     assert events and events[0]["roi_breach"] and events[0]["error_breach"]
 
 
-def test_ema_forecast_history(monkeypatch, tmp_path):
+def test_forecasting_model_detection(monkeypatch, tmp_path):
     stub = types.ModuleType("vector_metrics_db")
     monkeypatch.setitem(sys.modules, "menace.vector_metrics_db", stub)
     sys.modules.setdefault("sandbox_settings", sys.modules["menace.sandbox_settings"])
@@ -83,8 +83,11 @@ def test_ema_forecast_history(monkeypatch, tmp_path):
         roi_drop_threshold=-0.1,
         error_threshold=1.0,
     )
-    for _ in range(3):
+    for _ in range(5):
         assert not bot.check_degradation("bot", roi=10.0, errors=0.0, test_failures=0.0)
+    # Slight changes stay within the model's confidence interval
     assert not bot.check_degradation("bot", roi=9.95, errors=0.1, test_failures=0.0)
+    # Significant deviation triggers degradation
+    assert bot.check_degradation("bot", roi=0.0, errors=5.0, test_failures=3.0)
     hist = bot._forecast_history["bot"]
-    assert len(hist["roi"]) >= 4
+    assert len(hist["roi"]) >= 7
