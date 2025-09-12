@@ -682,8 +682,12 @@ class SelfCodingManager:
                         self.logger.exception(
                             "failed to publish patch_failed event",
                         )
+                if QuickFixEngine is None or self.quick_fix is None:
+                    raise RuntimeError(
+                        "QuickFixEngine is required but not installed",
+                    ) from exc
                 raise RuntimeError(
-                    "QuickFixEngine validation unavailable"
+                    "QuickFixEngine validation unavailable",
                 ) from exc
             desc = description
             last_fp: FailureFingerprint | None = None
@@ -941,14 +945,8 @@ class SelfCodingManager:
                 if self.quick_fix is None:
                     raise RuntimeError("QuickFixEngine validation unavailable")
                 try:
-                    patch_id, flags = generate_patch(
-                        module_path,
-                        self.engine,
-                        self,
-                        context_builder=builder,
-                        description=desc,
-                        context=ctx_meta,
-                        return_flags=True,
+                    passed, patch_id, flags = self.quick_fix.apply_validated_patch(
+                        module_path, desc, ctx_meta
                     )
                 except Exception as exc:
                     if self.event_bus:
@@ -965,51 +963,12 @@ class SelfCodingManager:
                             self.logger.exception(
                                 "failed to publish patch_failed event",
                             )
-                    try:
-                        RollbackManager().rollback(
-                            str(patch_id or ""), requesting_bot=self.bot_name
-                        )
-                    except Exception:  # pragma: no cover - best effort
-                        self.logger.exception("rollback failed")
                     raise RuntimeError("quick fix generation failed") from exc
                 flags = list(flags or [])
                 self._last_risk_flags = flags
                 ctx_meta["risk_flags"] = flags
-                passed = not flags
                 reverted = not passed
-                if self.data_bot:
-                    try:
-                        self.data_bot.record_validation(
-                            self.bot_name, module_name, passed, flags or None
-                        )
-                    except Exception:
-                        self.logger.exception("failed to record validation in DataBot")
-                if self.bot_registry:
-                    try:
-                        self.bot_registry.record_validation(self.bot_name, module_name, passed)
-                    except Exception:
-                        self.logger.exception("failed to record validation in registry")
                 if not passed:
-                    if self.event_bus:
-                        try:
-                            self.event_bus.publish(
-                                "bot:patch_failed",
-                                {
-                                    "bot": self.bot_name,
-                                    "stage": "risk_validation",
-                                    "flags": flags,
-                                },
-                            )
-                        except Exception:  # pragma: no cover - best effort
-                            self.logger.exception(
-                                "failed to publish patch_failed event",
-                            )
-                    try:
-                        RollbackManager().rollback(
-                            str(patch_id or ""), requesting_bot=self.bot_name
-                        )
-                    except Exception:  # pragma: no cover - best effort
-                        self.logger.exception("rollback failed")
                     if target_region is not None and func_region is not None:
                         tracker.record_failure(level, target_region, func_region)
                     raise RuntimeError("quick fix validation failed")

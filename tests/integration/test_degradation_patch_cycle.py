@@ -120,7 +120,7 @@ class DummyQuickFix:
 
     def apply_validated_patch(self, module_path, desc, ctx_meta):
         self.calls.append((module_path, desc))
-        return True, 123
+        return True, 123, []
 
 
 class DummyPipeline:
