@@ -1,5 +1,6 @@
 import sys
 import types
+import contextvars
 
 
 class DummyManager:
@@ -13,6 +14,11 @@ class DummyManager:
 stub = types.ModuleType("menace.self_coding_manager")
 stub.SelfCodingManager = DummyManager
 sys.modules.setdefault("menace.self_coding_manager", stub)
+
+sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT")
+sce_stub.SelfCodingEngine = object
+sys.modules.setdefault("menace.self_coding_engine", sce_stub)
 
 from menace.coding_bot_interface import self_coding_managed
 

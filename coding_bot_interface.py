@@ -11,14 +11,13 @@ from functools import wraps
 import inspect
 import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
-import contextvars
 import time
 
 from .self_coding_manager import SelfCodingManager
 try:  # pragma: no cover - allow tests to stub engine
     from .self_coding_engine import MANAGER_CONTEXT
-except Exception:  # pragma: no cover - fallback when engine unavailable
-    MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT")
+except Exception as exc:  # pragma: no cover - fail fast when engine unavailable
+    raise ImportError("Self-coding engine is required for operation") from exc
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .bot_registry import BotRegistry

@@ -1,10 +1,15 @@
 import os
 import types
 import sys
+import contextvars
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 sys.modules.setdefault(
-    "menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object)
+    "menace.self_coding_engine",
+    types.SimpleNamespace(
+        SelfCodingEngine=object,
+        MANAGER_CONTEXT=contextvars.ContextVar("MANAGER_CONTEXT"),
+    ),
 )
 sys.modules.setdefault(
     "menace.data_bot", types.SimpleNamespace(MetricsDB=object, DataBot=object)

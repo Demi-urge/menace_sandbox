@@ -1,13 +1,23 @@
 import importlib.util
 import sys
 import types
+import contextvars
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# Ensure real vector_service package is used regardless of previous stubs
+sys.modules.pop("vector_service", None)
+sys.modules.pop("vector_service.retriever", None)
+sys.modules.pop("vector_service.embed_utils", None)
+sys.modules.pop("vector_service.decorators", None)
+
 # Stub heavy dependencies
-sys.modules.setdefault("menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object))
+sys.modules["menace.self_coding_engine"] = types.SimpleNamespace(
+    SelfCodingEngine=object,
+    MANAGER_CONTEXT=contextvars.ContextVar("MANAGER_CONTEXT"),
+)
 sys.modules.setdefault(
     "menace.model_automation_pipeline",
     types.SimpleNamespace(ModelAutomationPipeline=object, AutomationResult=object),
