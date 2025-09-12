@@ -19,8 +19,8 @@ from .system_evolution_manager import SystemEvolutionManager
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .evaluation_history_db import EvaluationHistoryDB
 from .trend_predictor import TrendPredictor
-from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
+from context_builder_util import create_context_builder
 from .self_coding_thresholds import get_thresholds
 from .self_coding_manager import HelperGenerationError
 from .sandbox_settings import SandboxSettings
@@ -350,15 +350,8 @@ class EvolutionOrchestrator:
                 self.selfcoding_manager.register_patch_cycle(desc, event)
                 settings = getattr(self.data_bot, "settings", SandboxSettings())
                 data_dir = Path(getattr(settings, "sandbox_data_dir", "."))
-                bot_db = Path(os.getenv("BOT_DB_PATH", data_dir / "bots.db"))
-                code_db = Path(os.getenv("CODE_DB_PATH", data_dir / "code.db"))
-                error_db = Path(os.getenv("ERROR_DB_PATH", data_dir / "errors.db"))
-                workflow_db = Path(
-                    os.getenv("WORKFLOW_DB_PATH", data_dir / "workflows.db")
-                )
-                builder = ContextBuilder(
-                    str(bot_db), str(code_db), str(error_db), str(workflow_db)
-                )
+                os.environ["SANDBOX_DATA_DIR"] = str(data_dir)
+                builder = create_context_builder()
                 self.selfcoding_manager.generate_and_patch(
                     module_path,
                     desc,
