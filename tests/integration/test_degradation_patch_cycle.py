@@ -41,6 +41,9 @@ class SelfCodingManager:
         self.bot_registry = kwargs.get("bot_registry")
         self.called = False
         self.event_bus = kwargs.get("event_bus")
+        self._last_patch_id = None
+        if self.bot_registry:
+            self.bot_registry.register_bot(self.bot_name)
 
     def generate_and_patch(
         self, path: Path, description: str, *, context_meta=None, context_builder=None
@@ -49,9 +52,8 @@ class SelfCodingManager:
         passed, patch_id = self.quick_fix.apply_validated_patch(
             str(path), description, context_meta or {}
         )
-        self.bot_registry.update_bot(
-            self.bot_name, str(path), patch_id=patch_id, commit="deadbeef"
-        )
+        self._last_patch_id = patch_id
+        return None, "deadbeef"
 
     def register_patch_cycle(self, description, context_meta=None):  # noqa: D401,D403
         """Publish registration event for assertions."""
@@ -144,6 +146,7 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
     import importlib
 
     importlib.invalidate_caches()
+    sys.modules.pop("dummy_module", None)
     __import__("dummy_module")
 
     bus = DummyBus()
@@ -179,6 +182,7 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
     node = registry.graph.nodes["dummy_module"]
     assert node["module"] == str(mod_path)
     assert node["patch_id"] == 123
+    assert node["commit"] == "deadbeef"
 
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
@@ -193,6 +197,7 @@ def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
     import importlib
 
     importlib.invalidate_caches()
+    sys.modules.pop("dummy_module", None)
     __import__("dummy_module")
 
     bus = DummyBus()

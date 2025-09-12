@@ -21,6 +21,11 @@ from .evaluation_history_db import EvaluationHistoryDB
 from .trend_predictor import TrendPredictor
 from typing import TYPE_CHECKING
 from context_builder_util import create_context_builder
+try:  # pragma: no cover - optional dependency
+    from vector_service.context_builder import ContextBuilder
+except Exception:  # pragma: no cover - fallback for tests
+    class ContextBuilder:  # type: ignore
+        pass
 from .self_coding_thresholds import get_thresholds
 from .self_coding_manager import HelperGenerationError
 from .sandbox_settings import SandboxSettings
@@ -335,7 +340,13 @@ class EvolutionOrchestrator:
             if decision == "skip":
                 reason = "roi_prediction" if predicted_gain < self.roi_gain_floor else "confidence"
                 self.logger.info(
-                    "patch_skip_%s", reason, extra={"bot": bot, "predicted_gain": predicted_gain, "confidence": confidence}
+                    "patch_skip_%s",
+                    reason,
+                    extra={
+                        "bot": bot,
+                        "predicted_gain": predicted_gain,
+                        "confidence": confidence,
+                    },
                 )
                 if bus:
                     try:
@@ -371,7 +382,7 @@ class EvolutionOrchestrator:
                 data_dir = Path(getattr(settings, "sandbox_data_dir", "."))
                 os.environ["SANDBOX_DATA_DIR"] = str(data_dir)
                 builder = create_context_builder()
-                self.selfcoding_manager.generate_and_patch(
+                _, commit = self.selfcoding_manager.generate_and_patch(
                     module_path,
                     desc,
                     context_meta=context_meta,
@@ -379,7 +390,27 @@ class EvolutionOrchestrator:
                 )
                 if registry:
                     try:
-                        registry.update_bot(bot, str(module_path))
+                        patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
+                        registry.update_bot(
+                            bot,
+                            str(module_path),
+                            patch_id=patch_id,
+                            commit=commit,
+                        )
+                        try:
+                            node = registry.graph.nodes.get(bot, {})
+                            self.logger.info(
+                                "registry updated",
+                                extra={
+                                    "bot": bot,
+                                    "patch_id": node.get("patch_id"),
+                                    "commit": node.get("commit"),
+                                },
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to log registry state for %s", bot
+                            )
                     except Exception:
                         self.logger.exception("failed to update bot %s", bot)
                 if bus:

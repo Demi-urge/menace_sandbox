@@ -35,6 +35,7 @@ def test_degraded_bot_skips_when_thresholds_not_met(tmp_path):
 
         def generate_and_patch(self, *a, **k):
             self.patch_called = True
+            return None, None
 
     data_bot = types.SimpleNamespace(
         db=types.SimpleNamespace(fetch=lambda limit=50: []),

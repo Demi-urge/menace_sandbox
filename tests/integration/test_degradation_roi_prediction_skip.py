@@ -49,6 +49,7 @@ def test_low_predicted_roi_skips_patch(tmp_path, monkeypatch):
 
         def generate_and_patch(self, *a, **k):
             self.generate_called = True
+            return None, None
 
     class History:
         def __init__(self):

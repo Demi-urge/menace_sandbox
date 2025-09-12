@@ -3,8 +3,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 package = types.ModuleType("menace")
 package.__path__ = [str(ROOT)]
@@ -41,6 +39,8 @@ class SelfCodingManager:
         self.engine = kwargs.get("engine")
         self.event_bus = kwargs.get("event_bus")
         self._last_patch_id = None
+        if self.bot_registry:
+            self.bot_registry.register_bot(self.bot_name)
 
     def register_patch_cycle(self, description, context_meta=None):
         roi = 0.0
@@ -77,10 +77,8 @@ class SelfCodingManager:
         passed, patch_id = self.quick_fix.apply_validated_patch(
             str(path), description, context_meta or {}
         )
-        if self.bot_registry:
-            self.bot_registry.update_bot(
-                self.bot_name, str(path), patch_id=patch_id, commit="deadbeef"
-            )
+        self._last_patch_id = patch_id
+        commit = "deadbeef"
         if self.event_bus:
             self.event_bus.publish(
                 "self_coding:patch_applied",
@@ -94,6 +92,7 @@ class SelfCodingManager:
                     "roi_delta": 0.0,
                 },
             )
+        return None, commit
 
 
 def should_refactor(self) -> bool:
@@ -195,12 +194,14 @@ def test_full_self_coding_pipeline(tmp_path, monkeypatch):
     )
 
     importlib.invalidate_caches()
+    sys.modules.pop("dummy_module", None)
     __import__("dummy_module")
 
     bus = DummyBus()
     patch_db = DummyPatchDB()
     data_bot = DataBot(MetricsDB(tmp_path / "metrics.db"), event_bus=bus)
     registry = BotRegistry(event_bus=bus)
+    registry.hot_swap_bot = lambda *_a, **_k: None
     quick_fix = QuickFixEngine()
     manager = SelfCodingManager(
         quick_fix=quick_fix,
@@ -211,6 +212,7 @@ def test_full_self_coding_pipeline(tmp_path, monkeypatch):
         event_bus=bus,
     )
     history = DummyHistoryDB()
+    monkeypatch.setattr(eo_mod, "create_context_builder", lambda: DummyContextBuilder())
     EvolutionOrchestrator(
         data_bot,
         DummyCapital(),
@@ -239,3 +241,4 @@ def test_full_self_coding_pipeline(tmp_path, monkeypatch):
 
     hot_swap = next(p for t, p in bus.published if t == "bot:hot_swapped")
     assert hot_swap["bot"] == "dummy_module"
+    assert registry.graph.nodes["dummy_module"]["commit"] == "deadbeef"
