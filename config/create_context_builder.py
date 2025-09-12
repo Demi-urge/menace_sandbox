@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback for tests
@@ -8,8 +13,15 @@ except Exception:  # pragma: no cover - fallback for tests
 
 def create_context_builder() -> ContextBuilder:
     """Return a :class:`ContextBuilder` wired to the standard local databases."""
+    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "."))
+    bot_db = Path(os.getenv("BOT_DB_PATH", data_dir / "bots.db"))
+    code_db = Path(os.getenv("CODE_DB_PATH", data_dir / "code.db"))
+    error_db = Path(os.getenv("ERROR_DB_PATH", data_dir / "errors.db"))
+    workflow_db = Path(os.getenv("WORKFLOW_DB_PATH", data_dir / "workflows.db"))
     try:
-        return ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+        return ContextBuilder(
+            str(bot_db), str(code_db), str(error_db), str(workflow_db)
+        )
     except TypeError as exc:  # pragma: no cover - for simple stubs in tests
         raise ValueError(
             "ContextBuilder requires paths to 'bots.db', 'code.db', 'errors.db', "

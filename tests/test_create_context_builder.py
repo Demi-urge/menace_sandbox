@@ -7,12 +7,15 @@ import pytest
 sys.modules.pop("context_builder_util", None)
 
 # Stub heavy vector_service before importing the helper
-sys.modules.setdefault("vector_service", types.SimpleNamespace(ContextBuilder=object))
+sys.modules.setdefault(
+    "vector_service.context_builder", types.SimpleNamespace(ContextBuilder=object)
+)
 
 cbu = importlib.import_module("context_builder_util")  # noqa: E402
 
 
 def test_create_context_builder_paths(monkeypatch):
+    monkeypatch.delenv("SANDBOX_DATA_DIR", raising=False)
     captured = {}
 
     class DummyBuilder:

@@ -1,5 +1,7 @@
+import os
 import sys
 import types
+from pathlib import Path
 
 
 # Minimal stubs to satisfy imports in evolution_orchestrator
@@ -117,14 +119,20 @@ def test_builder_uses_sandbox_settings(tmp_path, monkeypatch):
         "WORKFLOW_DB_PATH",
     ]:
         monkeypatch.delenv(var, raising=False)
-
     recorded: dict[str, tuple] = {}
 
-    class RecordingBuilder:
-        def __init__(self, *paths):
-            recorded["paths"] = paths
+    def fake_create_context_builder():
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "."))
+        bot_db = Path(os.getenv("BOT_DB_PATH", data_dir / "bots.db"))
+        code_db = Path(os.getenv("CODE_DB_PATH", data_dir / "code.db"))
+        error_db = Path(os.getenv("ERROR_DB_PATH", data_dir / "errors.db"))
+        workflow_db = Path(os.getenv("WORKFLOW_DB_PATH", data_dir / "workflows.db"))
+        recorded["paths"] = (
+            str(bot_db), str(code_db), str(error_db), str(workflow_db)
+        )
+        return ContextBuilder()
 
-    monkeypatch.setattr(eo, "ContextBuilder", RecordingBuilder)
+    monkeypatch.setattr(eo, "create_context_builder", fake_create_context_builder)
 
     data_bot = types.SimpleNamespace(
         db=types.SimpleNamespace(fetch=lambda limit=50: []),
@@ -155,6 +163,7 @@ def test_builder_uses_sandbox_settings(tmp_path, monkeypatch):
     sys.modules["dummy"] = mod
 
     orch._on_bot_degraded({"bot": "dummy"})
+    monkeypatch.delenv("SANDBOX_DATA_DIR", raising=False)
 
     assert recorded["paths"] == (
         str(tmp_path / "bots.db"),
