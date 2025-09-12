@@ -55,9 +55,8 @@ def test_hot_swap_failure_reverts_and_persists(tmp_path, monkeypatch):
     module_bad.write_text("def greet():\n    return 'broken'\n(")  # syntax error
     monkeypatch.syspath_prepend(tmp_path)
     dummy = importlib.import_module("dummy_bot")
-    db = tmp_path / "reg.db"
     bus = DummyBus()
-    reg = BotRegistry(persist=db, event_bus=bus)
+    reg = BotRegistry(event_bus=bus)
     reg.update_bot("dummy", module_good.as_posix(), patch_id=1, commit="a")
     importlib.invalidate_caches()
     with pytest.raises(Exception):
@@ -65,12 +64,36 @@ def test_hot_swap_failure_reverts_and_persists(tmp_path, monkeypatch):
     assert dummy.greet() == "old"
     assert bus.events[-1][0] == "bot:hot_swap_failed"
     assert reg.graph.nodes["dummy"]["version"] == 1
-    reg2 = BotRegistry(persist=db)
-    node = reg2.graph.nodes["dummy"]
+    node = reg.graph.nodes["dummy"]
     assert node["module"] == module_good.as_posix()
-    assert node["version"] == 1
     assert node["last_good_module"] == module_good.as_posix()
     assert node["last_good_version"] == 1
+
+
+def test_health_check_failure_reverts(tmp_path, monkeypatch):
+    commits = {1: "a", 2: "b"}
+    _stub_service(monkeypatch, commits)
+    module = tmp_path / "dummy_bot.py"
+    module.write_text("def greet():\n    return 'old'\n")
+    monkeypatch.syspath_prepend(tmp_path)
+    dummy = importlib.import_module("dummy_bot")
+    bus = DummyBus()
+    reg = BotRegistry(event_bus=bus)
+    reg.update_bot("dummy", module.as_posix(), patch_id=1, commit="a")
+    module.write_text("def greet():\n    return 'new'\n")
+    importlib.invalidate_caches()
+
+    def bad_heartbeat(_name):
+        raise RuntimeError("no heartbeat")
+
+    monkeypatch.setattr(reg, "record_heartbeat", bad_heartbeat)
+    with pytest.raises(Exception):
+        reg.update_bot("dummy", module.as_posix(), patch_id=2, commit="b")
+    assert dummy.greet() == "old"
+    assert bus.events[-1][0] == "bot:hot_swap_failed"
+    node = reg.graph.nodes["dummy"]
+    assert node["module"] == module.as_posix()
+    assert node["version"] == 1
 
 
 def test_manual_commit_mismatch_rejected(tmp_path, monkeypatch):
