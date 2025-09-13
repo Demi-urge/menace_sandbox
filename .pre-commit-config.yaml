@@ -79,6 +79,12 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
+      - id: check-self-coding-decorator
+        name: Ensure helper callers use @self_coding_managed
+        entry: python tools/check_self_coding_decorator.py
+        language: system
+        pass_filenames: false
+        files: '\.py$'
   - repo: https://github.com/pycqa/flake8
     rev: 6.1.0
     hooks:
