@@ -12,12 +12,13 @@ from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
+from .self_coding_thresholds import get_thresholds
 import ast
 import logging
 import time
 from vector_service.context_builder import ContextBuilder
 from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import self_coding_managed
 from .task_handoff_bot import TaskPackage, TaskInfo
 from typing import TYPE_CHECKING
@@ -34,6 +35,12 @@ _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator: EvolutionOrchestrator | None = None
+_th = get_thresholds("ImplementationOptimiserBot")
+persist_sc_thresholds(
+    "ImplementationOptimiserBot",
+    roi_drop=_th.roi_drop,
+    error_increase=_th.error_increase,
+)
 manager = internalize_coding_bot(
     "ImplementationOptimiserBot",
     engine,
@@ -41,8 +48,8 @@ manager = internalize_coding_bot(
     data_bot=data_bot,
     bot_registry=registry,
     evolution_orchestrator=evolution_orchestrator,
-    roi_threshold=-0.1,
-    error_threshold=0.2,
+    roi_threshold=_th.roi_drop,
+    error_threshold=_th.error_increase,
     threshold_service=ThresholdService(),
 )
 

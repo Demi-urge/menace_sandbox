@@ -47,11 +47,12 @@ from .codex_output_analyzer import (
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .bot_registry import BotRegistry
 from .threshold_service import ThresholdService
+from .self_coding_thresholds import get_thresholds
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -60,6 +61,12 @@ _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator: EvolutionOrchestrator | None = None
+_th = get_thresholds("BotDevelopmentBot")
+persist_sc_thresholds(
+    "BotDevelopmentBot",
+    roi_drop=_th.roi_drop,
+    error_increase=_th.error_increase,
+)
 manager = internalize_coding_bot(
     "BotDevelopmentBot",
     engine,
@@ -67,8 +74,8 @@ manager = internalize_coding_bot(
     data_bot=data_bot,
     bot_registry=registry,
     evolution_orchestrator=evolution_orchestrator,
-    roi_threshold=-0.1,
-    error_threshold=0.2,
+    roi_threshold=_th.roi_drop,
+    error_threshold=_th.error_increase,
     threshold_service=ThresholdService(),
 )
 
@@ -1052,6 +1059,12 @@ class BotDevelopmentBot:
                     )
                     registry.update_bot(bot_name, module_path)
                     d_bot.reload_thresholds(bot_name)
+                    _th = get_thresholds(bot_name)
+                    persist_sc_thresholds(
+                        bot_name,
+                        roi_drop=_th.roi_drop,
+                        error_increase=_th.error_increase,
+                    )
                     internalize_coding_bot(
                         bot_name,
                         engine,
@@ -1059,6 +1072,8 @@ class BotDevelopmentBot:
                         data_bot=d_bot,
                         bot_registry=registry,
                         evolution_orchestrator=orchestrator,
+                        roi_threshold=_th.roi_drop,
+                        error_threshold=_th.error_increase,
                     )
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("dynamic bot registration failed for %s", spec.name)

@@ -8,7 +8,7 @@ from typing import Optional
 from typing import TYPE_CHECKING
 
 from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import self_coding_managed
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
@@ -16,6 +16,7 @@ from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .threshold_service import ThresholdService
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+from .self_coding_thresholds import get_thresholds
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
@@ -54,6 +55,12 @@ _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator: EvolutionOrchestrator | None = None
+_th = get_thresholds("AutomatedReviewer")
+persist_sc_thresholds(
+    "AutomatedReviewer",
+    roi_drop=_th.roi_drop,
+    error_increase=_th.error_increase,
+)
 manager = internalize_coding_bot(
     "AutomatedReviewer",
     engine,
@@ -61,8 +68,8 @@ manager = internalize_coding_bot(
     data_bot=data_bot,
     bot_registry=registry,
     evolution_orchestrator=evolution_orchestrator,
-    roi_threshold=-0.1,
-    error_threshold=0.2,
+    roi_threshold=_th.roi_drop,
+    error_threshold=_th.error_increase,
     threshold_service=ThresholdService(),
 )
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 
 from .coding_bot_interface import self_coding_managed
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
@@ -12,6 +12,7 @@ from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
+from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
 
@@ -65,6 +66,12 @@ _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator: EvolutionOrchestrator | None = None
+_th = get_thresholds("ResearchAggregatorBot")
+persist_sc_thresholds(
+    "ResearchAggregatorBot",
+    roi_drop=_th.roi_drop,
+    error_increase=_th.error_increase,
+)
 manager = internalize_coding_bot(
     "ResearchAggregatorBot",
     engine,
@@ -73,6 +80,8 @@ manager = internalize_coding_bot(
     bot_registry=registry,
     evolution_orchestrator=evolution_orchestrator,
     threshold_service=ThresholdService(),
+    roi_threshold=_th.roi_drop,
+    error_threshold=_th.error_increase,
 )
 
 @dataclass
