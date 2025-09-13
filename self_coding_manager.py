@@ -1966,6 +1966,31 @@ def internalize_coding_bot(
         data_bot=data_bot,
         is_coding_bot=True,
     )
+    settings = getattr(data_bot, "settings", None)
+    thresholds = getattr(settings, "bot_thresholds", {}) if settings else {}
+    if bot_name not in thresholds:
+        try:
+            persist_sc_thresholds(
+                bot_name,
+                roi_drop=(
+                    roi_threshold
+                    if roi_threshold is not None
+                    else getattr(settings, "self_coding_roi_drop", None)
+                ),
+                error_increase=(
+                    error_threshold
+                    if error_threshold is not None
+                    else getattr(settings, "self_coding_error_increase", None)
+                ),
+                test_failure_increase=getattr(
+                    settings, "self_coding_test_failure_increase", None
+                ),
+                event_bus=getattr(data_bot, "event_bus", None),
+            )
+        except Exception:  # pragma: no cover - best effort
+            manager.logger.exception(
+                "failed to persist thresholds for %s", bot_name
+            )
     if evolution_orchestrator is not None:
         evolution_orchestrator.selfcoding_manager = manager
         try:
