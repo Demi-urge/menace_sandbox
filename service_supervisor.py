@@ -52,7 +52,11 @@ from .autoscaler import Autoscaler  # noqa: E402
 from .unified_update_service import UnifiedUpdateService  # noqa: E402
 from .self_test_service import SelfTestService  # noqa: E402
 from .auto_escalation_manager import AutoEscalationManager  # noqa: E402
-from .self_coding_manager import PatchApprovalPolicy, SelfCodingManager  # noqa: E402
+from .self_coding_manager import (
+    PatchApprovalPolicy,
+    SelfCodingManager,
+    _manager_generate_helper_with_builder as _helper_fn,
+)  # noqa: E402
 from .advanced_error_management import AutomatedRollbackManager  # noqa: E402
 from .error_bot import ErrorDB  # noqa: E402
 from .self_coding_engine import SelfCodingEngine  # noqa: E402
@@ -401,6 +405,7 @@ class ServiceSupervisor:
             manager,
             graph=self.healer.graph,
             context_builder=self.context_builder,
+            helper_fn=_helper_fn,
         )
 
     def _record_failure(self, etype: str) -> None:

@@ -61,7 +61,12 @@ def test_quick_fix_engine_requires_context_builder():
     error_db = object()
     manager = types.SimpleNamespace()
     with pytest.raises(RuntimeError):
-        QuickFixEngine(error_db, manager, context_builder=None)
+        QuickFixEngine(
+            error_db,
+            manager,
+            context_builder=None,
+            helper_fn=lambda *a, **k: "",
+        )
 
 
 def test_automated_reviewer_requires_context_builder():

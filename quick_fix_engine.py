@@ -18,7 +18,7 @@ import tempfile
 import os
 import uuid
 import time
-from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
+from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
 
 from .snippet_compressor import compress_snippets
 from .codebase_diff_checker import generate_code_diff, flag_risky_changes
@@ -223,6 +223,7 @@ def generate_patch(
     effort_estimate: float | None = None,
     target_region: "TargetRegion" | None = None,
     return_flags: bool = False,
+    helper_fn: Callable[..., str] | None = None,
 ) -> int | tuple[int | None, list[str]] | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -263,6 +264,7 @@ def generate_patch(
     """
 
     logger = logging.getLogger("QuickFixEngine")
+    helper = helper_fn or manager_generate_helper
     risk_flags: list[str] = []
     if context_builder is None:
         raise TypeError("context_builder is required")
@@ -396,7 +398,7 @@ def generate_patch(
                 module_name = Path(context_meta.get("module", path.name)).name
                 for i in range(attempts):
                     try:
-                        return manager_generate_helper(
+                        return helper(
                             manager,
                             desc,
                             path=path,
@@ -405,7 +407,7 @@ def generate_patch(
                         )
                     except TypeError:
                         try:
-                            return manager_generate_helper(manager, desc)
+                            return helper(manager, desc)
                         except Exception as exc2:  # fall through to logging
                             err: Exception = exc2
                     except Exception as exc:
@@ -640,6 +642,7 @@ class QuickFixEngine:
         patch_logger: PatchLogger | None = None,
         min_reliability: float | None = None,
         redundancy_limit: int | None = None,
+        helper_fn: Callable[..., str] = manager_generate_helper,
     ) -> None:
         if context_builder is None:
             raise RuntimeError("context_builder is required")
@@ -689,6 +692,7 @@ class QuickFixEngine:
             if redundancy_limit is not None
             else env_red
         )
+        self.helper_fn = helper_fn
 
     # ------------------------------------------------------------------
     def _top_error(
@@ -1046,9 +1050,10 @@ class QuickFixEngine:
                 try:
                     patch_id = generate_patch(
                         prompt_path,
-                        getattr(self.manager, "engine", None),
                         self.manager,
+                        engine=getattr(self.manager, "engine", None),
                         context_builder=self.context_builder,
+                        helper_fn=self.helper_fn,
                     )
                 except Exception:
                     patch_id = None
@@ -1106,12 +1111,14 @@ class QuickFixEngine:
         try:
             patch_id, flags = generate_patch(
                 str(module_path),
-                getattr(self.manager, "engine", None),
                 self.manager,
+                engine=getattr(self.manager, "engine", None),
                 context_builder=self.context_builder,
                 description=description,
                 context=ctx,
                 return_flags=True,
+                helper_fn=self.helper_fn,
+                patch_logger=self.patch_logger,
             )
         except Exception:
             self.logger.exception("quick fix patch failed")
@@ -1170,12 +1177,14 @@ class QuickFixEngine:
         try:
             _pid, flags = generate_patch(
                 module_name,
-                getattr(self.manager, "engine", None),
                 self.manager,
+                engine=getattr(self.manager, "engine", None),
                 context_builder=self.context_builder,
                 description=description,
                 target_region=target_region,
                 return_flags=True,
+                helper_fn=self.helper_fn,
+                patch_logger=self.patch_logger,
             )
         except Exception:
             self.logger.exception("quick fix validation failed")

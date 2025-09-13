@@ -953,6 +953,9 @@ def _sandbox_init(
         context_builder=context_builder,
     )
     from menace.self_coding_manager import SelfCodingManager
+    from menace.self_coding_manager import (
+        _manager_generate_helper_with_builder as _helper_fn,
+    )
     from menace.model_automation_pipeline import ModelAutomationPipeline
     from menace.unified_event_bus import UnifiedEventBus
     from menace.bot_registry import BotRegistry
@@ -969,7 +972,11 @@ def _sandbox_init(
         event_bus=bus,
     )
     quick_fix_engine = QuickFixEngine(
-        telem_db, quick_manager, graph=graph, context_builder=context_builder
+        telem_db,
+        quick_manager,
+        graph=graph,
+        context_builder=context_builder,
+        helper_fn=_helper_fn,
     )
 
     gpt_client = None
