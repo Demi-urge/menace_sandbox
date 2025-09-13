@@ -22,6 +22,8 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextvars
 
+logger = logging.getLogger(__name__)
+
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
 from .trend_predictor import TrendPredictor
@@ -200,7 +202,7 @@ def _count_tokens(text: str) -> int:
         try:
             return len(_ENCODER.encode(text))
         except Exception:
-            pass
+            logger.exception("token encoding failed; falling back to naive split")
     return len(text.split())
 
 
@@ -381,7 +383,7 @@ class SelfCodingEngine:
             try:
                 self.llm_client.gpt_memory = self.gpt_memory  # type: ignore[attr-defined]
             except Exception:
-                pass
+                logger.exception("failed to attach gpt_memory to llm_client")
         self.rollback_mgr = rollback_mgr
         if formal_verifier is None:
             try:
@@ -1740,7 +1742,9 @@ class SelfCodingEngine:
                     try:
                         tmp_path.unlink()
                     except Exception:
-                        pass
+                        self.logger.exception(
+                            "failed to remove temporary file %s", tmp_path
+                        )
             try:
                 ast.parse(snippet)
                 return True
@@ -1851,7 +1855,7 @@ class SelfCodingEngine:
                 try:
                     self.roi_tracker.update(0.0, 0.0)
                 except Exception:
-                    pass
+                    self.logger.exception("ROI tracker update failed")
             if self.memory_mgr:
                 try:
                     self.memory_mgr.store(str(path), generated, tags="code")
@@ -1957,7 +1961,7 @@ class SelfCodingEngine:
                 try:
                     self.roi_tracker.update(0.0, 0.0)
                 except Exception:
-                    pass
+                    self.logger.exception("ROI tracker update failed")
 
             if self.memory_mgr:
                 try:
@@ -2177,7 +2181,9 @@ class SelfCodingEngine:
                     try:
                         tmp_path.unlink()
                     except Exception:
-                        pass
+                        self.logger.exception(
+                            "failed to remove temporary file %s", tmp_path
+                        )
             else:
                 verified = self.formal_verifier.verify(path)
             if not verified:
@@ -2886,7 +2892,9 @@ class SelfCodingEngine:
                         function=region.function,
                     )
         except Exception:
-            pass
+            self.logger.exception(
+                "failed to expand region for %s", getattr(region, "function", "")
+            )
         return region
 
     def apply_patch_with_retry(
@@ -3020,7 +3028,7 @@ class SelfCodingEngine:
                     try:
                         roi_val = self.data_bot.roi(self.bot_name)
                     except Exception:
-                        pass
+                        self.logger.exception("ROI lookup failed")
                 if log_prompt_attempt:
                     try:
                         log_prompt_attempt(
@@ -3062,7 +3070,7 @@ class SelfCodingEngine:
                             if row:
                                 roi_meta["tests_passed"] = bool(row[0])
                         except Exception:
-                            pass
+                            self.logger.exception("failed to read patch history")
                     exec_res: Dict[str, Any] = {"patch_id": pid, "reverted": reverted}
                     if failures:
                         exec_res["failures"] = [f.trace for f in failures]
@@ -3126,7 +3134,7 @@ class SelfCodingEngine:
                                 function_name = node.name
                                 break
                 except Exception:
-                    pass
+                    self.logger.exception("function name detection failed")
             fp = FailureFingerprint.from_failure(
                 str(path),
                 function_name,
@@ -3153,7 +3161,7 @@ class SelfCodingEngine:
             try:
                 roi_val = self.data_bot.roi(self.bot_name)
             except Exception:
-                pass
+                self.logger.exception("ROI lookup failed")
         if log_prompt_attempt:
             exec_res: Dict[str, Any] = {"failures": [f.trace for f in failures]}
             try:
