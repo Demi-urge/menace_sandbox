@@ -7,6 +7,13 @@ All coding bots interacting with the self‑coding system must be decorated with
 bot with `BotRegistry` and records ROI/error metrics in `DataBot` so new bots
 remain observable and improvable.
 
+For new coding bots use ``internalize_coding_bot`` to instantiate a
+``SelfCodingManager`` and wire the bot into ``BotRegistry`` and
+``EvolutionOrchestrator``. The helper subscribes the manager to
+``degradation:detected`` events so regression automatically triggers a patch
+cycle. See [internalize_coding_bot.md](internalize_coding_bot.md) for an
+example.
+
 ## Usage
 
 ```python
