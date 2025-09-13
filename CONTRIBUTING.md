@@ -159,6 +159,15 @@ pre-commit run find-unmanaged-bots --all-files
 
 CI fails if unmanaged bots are detected.
 
+The `check-coding-bot-decorators` hook (`tools/check_coding_bot_decorators.py`)
+adds an extra safeguard by scanning for modules that import
+`SelfCodingEngine` and flagging any bot classes that lack the
+`@self_coding_managed` decorator. Run it locally when adding new bots:
+
+```bash
+pre-commit run check-coding-bot-decorators --all-files
+```
+
 For additional assurance, the test suite includes
 `tests/test_self_coding_compliance.py`, which executes the same scan during
 `pytest`. The test fails if any `*_bot.py` module defines a bot class without
