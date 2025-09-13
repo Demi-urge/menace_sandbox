@@ -4,7 +4,18 @@ from __future__ import annotations
 
 Note:
     Always decorate new coding bot classes with ``@self_coding_managed`` so
-    they are automatically registered with the system's helpers.
+    they are automatically registered with the system's helpers.  The decorator
+    accepts a ``SelfCodingManager`` instance to reuse existing state across
+    instances.
+
+Example:
+    >>> @self_coding_managed(
+    ...     bot_registry=registry,
+    ...     data_bot=data_bot,
+    ...     manager=manager,
+    ... )
+    ... class ExampleBot:
+    ...     ...
 """
 
 from functools import wraps
@@ -55,6 +66,7 @@ def _resolve_helpers(
     registry: BotRegistry | None,
     data_bot: DataBot | None,
     orchestrator: EvolutionOrchestrator | None,
+    manager: SelfCodingManager | None,
 ) -> tuple[
     BotRegistry,
     DataBot,
@@ -66,13 +78,14 @@ def _resolve_helpers(
 
     ``BotRegistry`` and ``DataBot`` are mandatory helpers.  When available, the
     existing ``EvolutionOrchestrator`` and ``SelfCodingManager`` references are
-    also returned so callers can reuse or extend them.  A
-    :class:`RuntimeError` is raised if either ``BotRegistry`` or ``DataBot``
-    cannot be resolved from the provided arguments, instance attributes or the
-    ``manager`` attribute.
+    also returned so callers can reuse or extend them.  If ``manager`` is
+    provided, it takes precedence over any existing ``manager`` attribute on the
+    object.  A :class:`RuntimeError` is raised if either ``BotRegistry`` or
+    ``DataBot`` cannot be resolved from the provided arguments, instance
+    attributes or the ``manager`` attribute.
     """
 
-    manager = getattr(obj, "manager", None)
+    manager = manager or getattr(obj, "manager", None)
 
     if registry is None:
         registry = getattr(obj, "bot_registry", None)
@@ -123,12 +136,19 @@ def _ensure_threshold_entry(name: str, thresholds: Any) -> None:
         logger.exception("failed to persist thresholds for %s", name)
 
 
-def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Callable[[type], type]:
-    """Class decorator registering bots with :class:`BotRegistry` and :class:`DataBot`.
+def self_coding_managed(
+    *,
+    bot_registry: BotRegistry,
+    data_bot: DataBot,
+    manager: SelfCodingManager | None = None,
+) -> Callable[[type], type]:
+    """Class decorator registering bots with helper services.
 
     ``bot_registry`` and ``data_bot`` instances must be provided when applying
-    the decorator.  The bot's name is registered with ``bot_registry`` during
-    class creation so registration does not depend on instantiation.
+    the decorator.  When ``manager`` is supplied, instances will default to this
+    :class:`SelfCodingManager` when resolving helpers.  The bot's name is
+    registered with ``bot_registry`` during class creation so registration does
+    not depend on instantiation.
     """
 
     if bot_registry is None or data_bot is None:
@@ -167,12 +187,14 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
 
         cls.bot_registry = bot_registry  # type: ignore[attr-defined]
         cls.data_bot = data_bot  # type: ignore[attr-defined]
+        cls.manager = manager  # type: ignore[attr-defined]
 
         @wraps(orig_init)
         def wrapped_init(self, *args: Any, **kwargs: Any) -> None:
             orchestrator: EvolutionOrchestrator | None = kwargs.pop(
                 "evolution_orchestrator", None
             )
+            manager_local: SelfCodingManager | None = kwargs.pop("manager", manager)
             orig_init(self, *args, **kwargs)
             try:
                 (
@@ -180,8 +202,10 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                     d_bot,
                     orchestrator,
                     _module_path,
-                    manager,
-                ) = _resolve_helpers(self, bot_registry, data_bot, orchestrator)
+                    manager_local,
+                ) = _resolve_helpers(
+                    self, bot_registry, data_bot, orchestrator, manager_local
+                )
             except RuntimeError as exc:
                 raise RuntimeError(f"{cls.__name__}: {exc}") from exc
 
@@ -198,20 +222,20 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                     )
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("failed to initialise thresholds for %s", name_local)
-            if not isinstance(manager, SelfCodingManager):
+            if not isinstance(manager_local, SelfCodingManager):
                 try:
-                    manager = SelfCodingManager(
+                    manager_local = SelfCodingManager(
                         getattr(self, "engine", None),
                         getattr(self, "pipeline", None),
                         bot_name=name_local,
                         bot_registry=registry,
                         data_bot=d_bot,
                     )
-                    self.manager = manager
                 except Exception as exc:  # pragma: no cover - best effort
                     raise RuntimeError(
                         "failed to initialise SelfCodingManager; provide a manager"
                     ) from exc
+            self.manager = manager_local
 
             if orchestrator is None:
                 try:
@@ -233,7 +257,7 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                         capital_bot=capital,
                         improvement_engine=improv,
                         evolution_manager=evol_mgr,
-                        selfcoding_manager=manager,
+                        selfcoding_manager=manager_local,
                     )
                 except Exception as exc:  # pragma: no cover - optional dependency
                     raise RuntimeError(
@@ -244,10 +268,10 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
             if orchestrator is not None:
                 self.evolution_orchestrator = orchestrator
                 try:
-                    manager.evolution_orchestrator = orchestrator
+                    manager_local.evolution_orchestrator = orchestrator
                 except Exception:
                     pass
-            if getattr(manager, "quick_fix", None) is None:
+            if getattr(manager_local, "quick_fix", None) is None:
                 try:
                     from .quick_fix_engine import QuickFixEngine  # type: ignore
                     from .error_bot import ErrorDB
@@ -258,14 +282,14 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                     raise RuntimeError(
                         f"{cls.__name__}: QuickFixEngine is required but could not be imported"
                     ) from exc
-                engine = getattr(manager, "engine", None)
+                engine = getattr(manager_local, "engine", None)
                 clayer = getattr(engine, "cognition_layer", None)
                 builder = getattr(clayer, "context_builder", None)
                 if builder is None:
                     raise RuntimeError(
                         f"{cls.__name__}: QuickFixEngine requires a context_builder"
                     )
-                error_db = getattr(self, "error_db", None) or getattr(manager, "error_db", None)
+                error_db = getattr(self, "error_db", None) or getattr(manager_local, "error_db", None)
                 if error_db is None:
                     try:
                         error_db = ErrorDB()
@@ -274,13 +298,13 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                             f"{cls.__name__}: failed to initialise ErrorDB for QuickFixEngine"
                         ) from exc
                 try:
-                    manager.quick_fix = QuickFixEngine(
+                    manager_local.quick_fix = QuickFixEngine(
                         error_db,
-                        manager,
+                        manager_local,
                         context_builder=builder,
                         helper_fn=_helper_fn,
                     )
-                    manager.error_db = error_db
+                    manager_local.error_db = error_db
                 except Exception as exc:  # pragma: no cover - instantiation errors
                     raise RuntimeError(
                         f"{cls.__name__}: failed to initialise QuickFixEngine"
@@ -290,7 +314,7 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                     name_local,
                     roi_threshold=getattr(thresholds, "roi_drop", None),
                     error_threshold=getattr(thresholds, "error_threshold", None),
-                    manager=manager,
+                    manager=manager_local,
                     data_bot=d_bot,
                 )
             except Exception:  # pragma: no cover - best effort
