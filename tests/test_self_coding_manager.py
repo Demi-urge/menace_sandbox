@@ -18,6 +18,8 @@ db_router_stub.LOCAL_TABLES = set()
 
 
 class DummyRouter:
+    menace_id = "test"
+
     def __init__(self, *a, **k):
         pass
 
@@ -608,6 +610,144 @@ def test_run_patch_quick_fix_success(monkeypatch, tmp_path):
         for name, payload in events
     )
     assert records[0][0][0] == 123
+
+
+def test_post_patch_validation_and_hot_swap(monkeypatch, tmp_path):
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+
+    class DummyEngine:
+        def __init__(self):
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+
+    class DummyPipeline:
+        def run(self, model: str, energy: int = 1) -> mapl.AutomationResult:
+            return mapl.AutomationResult(package=None, roi=None)
+
+    class DummyDataBot:
+        def roi(self, _bot: str) -> float:
+            return 1.0
+
+        def average_errors(self, _bot: str) -> float:
+            return 0.0
+
+        def average_test_failures(self, _bot: str) -> float:
+            return 0.0
+
+        def get_thresholds(self, _bot: str):
+            return types.SimpleNamespace(
+                roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0
+            )
+
+        def log_evolution_cycle(self, *a, **k) -> None:
+            pass
+
+        def check_degradation(self, *_a):
+            return True
+
+        def reload_thresholds(self, _bot: str):
+            return self.get_thresholds(_bot)
+
+        def collect(self, *a, **k):
+            pass
+
+    class DummyQuickFix:
+        def __init__(self, *a, context_builder=None, **k):
+            self.context_builder = context_builder
+            self.calls: list[str] = []
+
+        def validate_patch(self, module_name, desc, repo_root=None):
+            self.calls.append("validate")
+            return True, []
+
+        def apply_validated_patch(self, module_name, desc, ctx_meta=None):
+            self.calls.append("apply")
+            with open(module_name, "a", encoding="utf-8") as fh:
+                fh.write("# patched\n")
+            return True, 123, []
+
+    class HotSwapRegistry(DummyRegistry):
+        def __init__(self) -> None:
+            super().__init__()
+            self.hot_swapped: tuple[str, str] | None = None
+
+        def hot_swap(self, name: str, module_path: str) -> None:
+            self.hot_swapped = (name, module_path)
+
+        def health_check_bot(self, *a, **k) -> None:
+            pass
+
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+    registry = HotSwapRegistry()
+    qf = DummyQuickFix(context_builder=builder)
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=registry,
+        quick_fix=qf,
+    )
+
+    file_path = tmp_path / "sample.py"  # path-ignore
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    tmpdir_path = tmp_path / "clone"
+
+    class DummyTempDir:
+        def __enter__(self):
+            tmpdir_path.mkdir()
+            return str(tmpdir_path)
+
+        def __exit__(self, exc_type, exc, tb):
+            shutil.rmtree(tmpdir_path)
+
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", lambda: DummyTempDir())
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(exist_ok=True)
+            shutil.copy2(file_path, dst / file_path.name)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        scm.subprocess, "check_output", lambda *a, **k: b"abc123\n"
+    )
+    monkeypatch.setattr(
+        scm,
+        "run_tests",
+        lambda repo, path, **kw: types.SimpleNamespace(
+            success=True, failure=None, stdout="", stderr="", duration=0.0
+        ),
+    )
+    monkeypatch.setattr(
+        scm.MutationLogger,
+        "record_mutation_outcome",
+        lambda *a, **k: None,
+        raising=False,
+    )
+    monkeypatch.setattr(scm, "record_patch_metadata", lambda *a, **k: None)
+
+    events: list[tuple[str, dict]] = []
+
+    class Bus:
+        def publish(self, name: str, payload: dict) -> None:
+            events.append((name, payload))
+
+    mgr.event_bus = Bus()
+
+    mgr.run_patch(file_path, "add")
+    assert qf.calls.count("validate") == 2
+    assert registry.hot_swapped == ("bot", str(file_path))
+    assert any(
+        name == "self_coding:patch_applied"
+        and payload.get("commit") == "abc123"
+        and payload.get("roi_delta") == 0.0
+        for name, payload in events
+    )
 
 
 def test_run_patch_quick_fix_failure(monkeypatch, tmp_path):
