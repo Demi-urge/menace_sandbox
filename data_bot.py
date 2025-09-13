@@ -1651,9 +1651,8 @@ class DataBot:
         if self.event_bus:
             try:
                 self.event_bus.publish("metrics:delta", event)
-                if event["roi_breach"] or event["error_breach"]:
-                    self.event_bus.publish("data:threshold_breach", event)
                 if degraded:
+                    self.event_bus.publish("data:threshold_breach", event)
                     self.event_bus.publish("bot:degraded", event)
                     self.event_bus.publish("self_coding:degradation", event)
             except Exception as exc:
