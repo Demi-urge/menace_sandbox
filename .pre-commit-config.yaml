@@ -67,6 +67,12 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+      - id: check-coding-bot-decorators
+        name: Ensure SelfCodingEngine bots use @self_coding_managed
+        entry: python tools/check_coding_bot_decorators.py
+        language: system
+        pass_filenames: false
+        files: '\.py$'
       - id: check-engine-generate-helper
         name: Prevent unwrapped engine.generate_helper usage
         entry: python tools/check_engine_generate_helper_wrapping.py
