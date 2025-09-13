@@ -109,6 +109,30 @@ class BotRegistry:
         with self._lock:
             self.graph.add_node(name)
             node = self.graph.nodes[name]
+            existing_mgr = node.get("selfcoding_manager") or node.get("manager")
+            existing_data = node.get("data_bot")
+            is_coding_bot = name.lower().endswith("bot")
+            if is_coding_bot:
+                missing: list[str] = []
+                mgr = manager or existing_mgr
+                db = data_bot or existing_data
+                if mgr is None:
+                    missing.append("manager")
+                if db is None:
+                    missing.append("data_bot")
+                if missing:
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "bot:unmanaged", {"bot": name, "missing": missing}
+                            )
+                        except Exception as exc:
+                            logger.error(
+                                "Failed to publish bot:unmanaged event: %s", exc
+                            )
+                    raise RuntimeError(
+                        f"coding bot requires {', '.join(missing)}"
+                    )
             if roi_threshold is not None:
                 node["roi_threshold"] = float(roi_threshold)
             if error_threshold is not None:

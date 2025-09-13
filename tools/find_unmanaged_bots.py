@@ -62,9 +62,20 @@ def _has_register_and_log(tree: ast.AST) -> bool:
     return False
 
 
+def _register_missing_refs(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "register_bot":
+                kw = {k.arg for k in node.keywords if k.arg}
+                if not {"manager", "data_bot"} <= kw:
+                    return True
+    return False
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     offenders: list[tuple[Path, list[str]]] = []
+    bad_calls: list[Path] = []
     for path in root.rglob("*_bot.py"):
         if "tests" in path.parts or "unit_tests" in path.parts:
             continue
@@ -84,7 +95,11 @@ def main() -> None:
         ]
         if missing and not _has_register_and_log(tree):
             offenders.append((path.relative_to(root), missing))
-    if offenders:
+        if _register_missing_refs(tree):
+            bad_calls.append(path.relative_to(root))
+    if offenders or bad_calls:
+        for path in bad_calls:
+            print(f"{path}: register_bot missing manager/data_bot")
         for path, classes in offenders:
             print(f"{path}: unmanaged bot classes: {', '.join(classes)}")
         sys.exit(1)

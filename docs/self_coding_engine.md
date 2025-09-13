@@ -7,6 +7,11 @@ All coding bots interacting with the self‑coding system must be decorated with
 bot with `BotRegistry` and records ROI/error metrics in `DataBot` so new bots
 remain observable and improvable.
 
+When a bot is registered the registry now verifies that both a
+`SelfCodingManager` and `DataBot` reference are supplied.  Missing references
+cause registration to fail and a `bot:unmanaged` event to be published, ensuring
+coding bots cannot operate outside the manager's control.
+
 For new coding bots use ``internalize_coding_bot`` to instantiate a
 ``SelfCodingManager`` and wire the bot into ``BotRegistry`` and
 ``EvolutionOrchestrator``. The helper subscribes the manager to
