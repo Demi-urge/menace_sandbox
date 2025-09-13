@@ -45,7 +45,10 @@ from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings
 from .patch_attempt_tracker import PatchAttemptTracker
-from .self_coding_thresholds import get_thresholds as load_sc_thresholds
+from .self_coding_thresholds import (
+    get_thresholds as load_sc_thresholds,
+    update_thresholds,
+)
 
 try:  # pragma: no cover - optional dependency
     from .quick_fix_engine import QuickFixEngine, generate_patch
@@ -339,6 +342,12 @@ class SelfCodingManager:
 
         When values change an event is emitted so other components can react
         without requiring a restart.
+
+        When adaptive thresholding is enabled via :class:`SandboxSettings`,
+        rolling metrics from :class:`BaselineTracker` are analysed for long-term
+        drift.  Sustained shifts tighten or relax the ROI drop and error rate
+        limits which are then persisted through
+        :func:`self_coding_thresholds.update_thresholds`.
         """
 
         if not self.data_bot:
@@ -348,12 +357,45 @@ class SelfCodingManager:
             # Ensure the DataBot refreshes its view of the configuration so
             # manager decisions use the most recent thresholds.
             t = self.data_bot.reload_thresholds(self.bot_name)
+
+            adaptive = False
+            try:
+                adaptive = getattr(SandboxSettings(), "adaptive_thresholds", False)
+            except Exception:
+                adaptive = False
+            if adaptive and hasattr(self, "baseline_tracker"):
+                try:
+                    roi_deltas = self.baseline_tracker.delta_history("roi")
+                    err_deltas = self.baseline_tracker.delta_history("errors")
+                    new_roi = t.roi_drop
+                    new_err = t.error_threshold
+                    updated = False
+                    if roi_deltas and len(roi_deltas) >= self.baseline_tracker.window:
+                        roi_drift = sum(roi_deltas) / len(roi_deltas)
+                        if abs(roi_drift) > 0.01:
+                            new_roi = max(min(t.roi_drop + roi_drift, 0.0), -1.0)
+                            updated = updated or new_roi != t.roi_drop
+                    if err_deltas and len(err_deltas) >= self.baseline_tracker.window:
+                        err_drift = sum(err_deltas) / len(err_deltas)
+                        if abs(err_drift) > 0.01:
+                            new_err = max(t.error_threshold + err_drift, 0.0)
+                            updated = updated or new_err != t.error_threshold
+                    if updated:
+                        update_thresholds(
+                            self.bot_name,
+                            roi_drop=new_roi if new_roi != t.roi_drop else None,
+                            error_increase=new_err if new_err != t.error_threshold else None,
+                        )
+                        t = self.data_bot.reload_thresholds(self.bot_name)
+                except Exception:  # pragma: no cover - adaptive failures
+                    self.logger.exception("adaptive threshold update failed")
+
             self.roi_drop_threshold = t.roi_drop
             self.error_rate_threshold = t.error_threshold
             self.test_failure_threshold = t.test_failure_threshold
             changed = prev != t
             self._last_thresholds = t
-            if changed and self.event_bus:
+            if changed and getattr(self, "event_bus", None):
                 payload = {
                     "bot": self.bot_name,
                     "roi_drop": t.roi_drop,

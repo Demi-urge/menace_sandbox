@@ -372,6 +372,9 @@ class SandboxSettings(BaseSettings):
     roi_cycles: int | None = Field(None, env="ROI_CYCLES")
     synergy_cycles: int | None = Field(None, env="SYNERGY_CYCLES")
     baseline_window: int = Field(10, env="BASELINE_WINDOW")
+    adaptive_thresholds: bool = Field(
+        False, env="ADAPTIVE_THRESHOLDS"
+    )
     mae_deviation: float = Field(1.0, env="MAE_DEVIATION")
     acc_deviation: float = Field(1.0, env="ACC_DEVIATION")
     energy_deviation: float = Field(1.0, env="ENERGY_DEVIATION")
