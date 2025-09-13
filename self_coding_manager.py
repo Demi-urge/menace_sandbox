@@ -176,7 +176,9 @@ class SelfCodingManager:
     """Apply code patches and redeploy bots.
 
     ``data_bot`` and ``bot_registry`` must be provided; a
-    :class:`ValueError` is raised otherwise.
+    :class:`ValueError` is raised otherwise. A functioning
+    :class:`EvolutionOrchestrator` is mandatory and failure to
+    construct one results in a :class:`RuntimeError`.
     """
 
     def __init__(
@@ -289,31 +291,36 @@ class SelfCodingManager:
                 from .system_evolution_manager import SystemEvolutionManager
                 from .evolution_orchestrator import EvolutionOrchestrator
 
-                if self.data_bot and self.bot_registry:
-                    capital = CapitalManagementBot(data_bot=self.data_bot)
-                    improv = SelfImprovementEngine(
-                        data_bot=self.data_bot, bot_name=self.bot_name
-                    )
-                    bots = list(getattr(self.bot_registry, "graph", {}).keys())
-                    evol_mgr = SystemEvolutionManager(bots)
-                    self.evolution_orchestrator = EvolutionOrchestrator(
-                        data_bot=self.data_bot,
-                        capital_bot=capital,
-                        improvement_engine=improv,
-                        evolution_manager=evol_mgr,
-                        selfcoding_manager=self,
-                        event_bus=self.event_bus,
-                    )
-            except Exception:  # pragma: no cover - best effort
-                self.evolution_orchestrator = None
-
-        if self.evolution_orchestrator:
-            try:  # pragma: no cover - best effort
-                self.evolution_orchestrator.register_bot(self.bot_name)
-            except Exception:
-                self.logger.exception(
-                    "failed to register bot with evolution orchestrator"
+                capital = CapitalManagementBot(data_bot=self.data_bot)
+                improv = SelfImprovementEngine(
+                    data_bot=self.data_bot, bot_name=self.bot_name
                 )
+                bots = list(getattr(self.bot_registry, "graph", {}).keys())
+                evol_mgr = SystemEvolutionManager(bots)
+                self.evolution_orchestrator = EvolutionOrchestrator(
+                    data_bot=self.data_bot,
+                    capital_bot=capital,
+                    improvement_engine=improv,
+                    evolution_manager=evol_mgr,
+                    selfcoding_manager=self,
+                    event_bus=self.event_bus,
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                raise RuntimeError(
+                    "EvolutionOrchestrator is required but could not be constructed",
+                ) from exc
+
+        if not self.evolution_orchestrator:
+            raise RuntimeError(
+                "EvolutionOrchestrator is required but could not be constructed",
+            )
+
+        try:  # pragma: no cover - best effort
+            self.evolution_orchestrator.register_bot(self.bot_name)
+        except Exception:
+            self.logger.exception(
+                "failed to register bot with evolution orchestrator",
+            )
 
     def register_bot(self, name: str) -> None:
         """Register *name* with the underlying :class:`BotRegistry`."""
