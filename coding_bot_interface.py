@@ -13,7 +13,7 @@ import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import time
 
-from .self_coding_thresholds import update_thresholds
+from .self_coding_thresholds import update_thresholds, _load_config
 
 try:  # pragma: no cover - optional self-coding dependency
     from .self_coding_manager import SelfCodingManager
@@ -101,6 +101,28 @@ def _resolve_helpers(
     return registry, data_bot, orchestrator, module_path, manager
 
 
+def _ensure_threshold_entry(name: str, thresholds: Any) -> None:
+    """Persist default threshold config for *name* when missing."""
+
+    try:
+        bots = (_load_config(None) or {}).get("bots", {})
+    except Exception:  # pragma: no cover - best effort
+        bots = {}
+    if name in bots:
+        return
+    try:  # pragma: no cover - best effort
+        update_thresholds(
+            name,
+            roi_drop=getattr(thresholds, "roi_drop", None),
+            error_increase=getattr(thresholds, "error_threshold", None),
+            test_failure_increase=getattr(
+                thresholds, "test_failure_threshold", None
+            ),
+        )
+    except Exception:
+        logger.exception("failed to persist thresholds for %s", name)
+
+
 def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Callable[[type], type]:
     """Class decorator registering bots with :class:`BotRegistry` and :class:`DataBot`.
 
@@ -126,14 +148,18 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                 t = data_bot.reload_thresholds(name)
                 roi_t = getattr(t, "roi_drop", None)
                 err_t = getattr(t, "error_threshold", None)
+                _ensure_threshold_entry(name, t)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("threshold reload failed for %s", name)
-        bot_registry.register_bot(
-            name,
-            roi_threshold=roi_t,
-            error_threshold=err_t,
-            data_bot=data_bot,
-        )
+        try:
+            bot_registry.register_bot(
+                name,
+                roi_threshold=roi_t,
+                error_threshold=err_t,
+                data_bot=data_bot,
+            )
+        except TypeError:  # pragma: no cover - legacy registries
+            bot_registry.register_bot(name)
         try:
             bot_registry.update_bot(name, module_path)
         except Exception:  # pragma: no cover - best effort
@@ -211,7 +237,8 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                     )
                 except Exception as exc:  # pragma: no cover - optional dependency
                     raise RuntimeError(
-                        f"{cls.__name__}: EvolutionOrchestrator is required but could not be instantiated"
+                        f"{cls.__name__}: "
+                        "EvolutionOrchestrator is required but could not be instantiated"
                     ) from exc
 
             if orchestrator is not None:
@@ -309,8 +336,16 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                                 manager = getattr(self, "manager", None)
                                 d_bot_local = getattr(manager, "data_bot", None)
                             if d_bot_local:
-                                name_local2 = getattr(self, "name", getattr(self, "bot_name", name))
-                                d_bot_local.collect(name_local2, response_time=response_time, errors=errors)
+                                name_local2 = getattr(
+                                    self,
+                                    "name",
+                                    getattr(self, "bot_name", name),
+                                )
+                                d_bot_local.collect(
+                                    name_local2,
+                                    response_time=response_time,
+                                    errors=errors,
+                                )
                         except Exception:  # pragma: no cover - best effort
                             logger.exception("failed logging metrics for %s", name)
                     return result
@@ -320,4 +355,3 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
         return cls
 
     return decorator
-
