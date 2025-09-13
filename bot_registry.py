@@ -347,17 +347,34 @@ class BotRegistry:
                             "Failed to publish bot:update_rolled_back event: %s",
                             pub_exc,
                         )
-                if RollbackManager is not None:
-                    try:
-                        RollbackManager().rollback(str(patch_id), requesting_bot=name)
-                    except Exception as rb_exc:  # pragma: no cover - best effort
-                        logger.error(
-                            "RollbackManager rollback failed for %s: %s",
-                            name,
-                            rb_exc,
-                        )
-                raise
-            return update_ok
+            if RollbackManager is not None:
+                try:
+                    RollbackManager().rollback(str(patch_id), requesting_bot=name)
+                except Exception as rb_exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "RollbackManager rollback failed for %s: %s",
+                        name,
+                        rb_exc,
+                    )
+            raise
+        return update_ok
+
+    def hot_swap(self, name: str, module_path: str) -> None:
+        """Update ``module_path`` for ``name`` and reload the bot.
+
+        This helper ensures the registry records the new module before
+        delegating to :meth:`hot_swap_bot` which performs the actual import
+        and validation.  The bot entry must already contain provenance
+        metadata (commit hash and patch id) which is typically provided by
+        :meth:`update_bot`.
+        """
+
+        with self._lock:
+            self.register_bot(name)
+            node = self.graph.nodes[name]
+            node["module"] = module_path
+            self.modules[name] = module_path
+        self.hot_swap_bot(name)
 
     def hot_swap_bot(self, name: str) -> None:
         """Import or reload the module backing ``name`` and refresh references."""
