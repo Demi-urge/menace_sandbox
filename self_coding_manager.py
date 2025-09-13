@@ -1824,13 +1824,66 @@ class SelfCodingManager:
                                 extra={"bot": self.bot_name},
                             )
                     raise
+                hot_swap_snapshot: dict[str, object] | None = None
+                if self.bot_name in self.bot_registry.graph:
+                    try:
+                        hot_swap_snapshot = dict(
+                            self.bot_registry.graph.nodes[self.bot_name]
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        hot_swap_snapshot = None
                 try:
                     self.bot_registry.hot_swap(self.bot_name, module_path)
                     self.bot_registry.health_check_bot(self.bot_name, prev_state)
+                    MutationLogger.log_mutation(
+                        change="hot_swap_success",
+                        reason=description,
+                        trigger=prompt_path,
+                        performance=0.0,
+                        workflow_id=0,
+                        parent_id=self._last_event_id,
+                    )
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception(
                         "failed to hot swap bot",
                         extra={"bot": self.bot_name, "module_path": module_path},
+                    )
+                    if hot_swap_snapshot is not None:
+                        try:
+                            current = self.bot_registry.graph.nodes[self.bot_name]
+                            current.clear()
+                            current.update(hot_swap_snapshot)
+                            target = getattr(self.bot_registry, "persist_path", None)
+                            if target:
+                                self.bot_registry.save(target)
+                        except Exception:  # pragma: no cover - best effort
+                            self.logger.exception(
+                                "failed to restore bot registry",
+                                extra={"bot": self.bot_name},
+                            )
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "self_coding:hot_swap_failed",
+                                {
+                                    "bot": self.bot_name,
+                                    "path": module_path,
+                                    "patch_id": patch_id,
+                                    "commit": commit_hash,
+                                },
+                            )
+                        except Exception:  # pragma: no cover - best effort
+                            self.logger.exception(
+                                "failed to publish hot_swap_failed event",
+                                extra={"bot": self.bot_name},
+                            )
+                    MutationLogger.log_mutation(
+                        change="hot_swap_failed",
+                        reason=description,
+                        trigger=prompt_path,
+                        performance=0.0,
+                        workflow_id=0,
+                        parent_id=self._last_event_id,
                     )
                     raise
                 if self.event_bus:
