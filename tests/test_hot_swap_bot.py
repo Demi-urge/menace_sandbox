@@ -78,7 +78,8 @@ def test_hot_swap_failure_reverts_and_persists(tmp_path, monkeypatch):
     with pytest.raises(Exception):
         reg.update_bot("dummy", module_bad.as_posix(), patch_id=2, commit="b")
     assert dummy.greet() == "old"
-    assert bus.events[-1][0] == "bot:hot_swap_failed"
+    assert bus.events[-1][0] == "bot:update_rolled_back"
+    assert bus.events[-2][0] == "bot:hot_swap_failed"
     assert reg.graph.nodes["dummy"]["version"] == 1
     node = reg.graph.nodes["dummy"]
     assert node["module"] == module_good.as_posix()
@@ -108,7 +109,8 @@ def test_health_check_failure_reverts(tmp_path, monkeypatch):
     with pytest.raises(Exception):
         reg.update_bot("dummy", module.as_posix(), patch_id=2, commit="b")
     assert dummy.greet() == "old"
-    assert bus.events[-1][0] == "bot:hot_swap_failed"
+    assert bus.events[-1][0] == "bot:update_rolled_back"
+    assert bus.events[-2][0] == "bot:hot_swap_failed"
     node = reg.graph.nodes["dummy"]
     assert node["module"] == module.as_posix()
     assert node["version"] == 1
