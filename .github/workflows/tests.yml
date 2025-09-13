@@ -21,18 +21,6 @@ on:
         default: 'false'
 
 jobs:
-  check-coding-bot-decorators:
-    runs-on: ubuntu-latest
-    env:
-      MENACE_SAFE: "1"
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - name: Ensure SelfCodingEngine bots use @self_coding_managed
-        run: python tools/check_coding_bot_decorators.py
-
   path-checks:
     runs-on: ubuntu-latest
     env:
@@ -52,6 +40,8 @@ jobs:
         run: "python tools/check_dynamic_paths.py $(git ls-files '*.py')"
       - name: Enforce ContextBuilder usage
         run: python scripts/check_context_builder_usage.py
+      - name: Ensure SelfCodingEngine bots use @self_coding_managed
+        run: python tools/check_coding_bot_decorators.py
       - name: Check for direct SelfCodingEngine patch usage
         run: "python tools/check_self_coding_integrity.py $(git ls-files '*.py')"
       - name: ensure all bots are self-coding managed
@@ -71,7 +61,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - path-checks
-      - check-coding-bot-decorators
     env:
       MENACE_SAFE: "1"
     steps:
