@@ -54,8 +54,8 @@ from .self_test_service import SelfTestService  # noqa: E402
 from .auto_escalation_manager import AutoEscalationManager  # noqa: E402
 from .self_coding_manager import (  # noqa: E402
     PatchApprovalPolicy,
-    SelfCodingManager,
     _manager_generate_helper_with_builder as _helper_fn,
+    internalize_coding_bot,
 )
 from .advanced_error_management import AutomatedRollbackManager  # noqa: E402
 from .error_bot import ErrorDB  # noqa: E402
@@ -394,16 +394,15 @@ class ServiceSupervisor:
             event_bus=bus,
             bot_registry=registry,
         )
-        manager = SelfCodingManager(
+        manager = internalize_coding_bot(
+            self.__class__.__name__,
             engine,
             pipeline,
-            bot_name=self.__class__.__name__,
-            approval_policy=self.approval_policy,
             data_bot=data_bot,
             bot_registry=registry,
+            approval_policy=self.approval_policy,
             event_bus=bus,
         )
-        manager.register_bot(self.__class__.__name__)
         manager.context_builder = self.context_builder
         self.manager = manager
         self.error_db = ErrorDB()
@@ -441,16 +440,15 @@ class ServiceSupervisor:
                 event_bus=bus,
                 bot_registry=registry,
             )
-            manager = SelfCodingManager(
+            manager = internalize_coding_bot(
+                self.__class__.__name__,
                 engine,
                 pipeline,
-                bot_name=self.__class__.__name__,
-                approval_policy=self.approval_policy,
                 data_bot=data_bot,
                 bot_registry=registry,
+                approval_policy=self.approval_policy,
                 event_bus=bus,
             )
-            manager.register_bot(self.__class__.__name__)
             manager.context_builder = self.context_builder
             manager.run_patch(path, description)
             added_modules = getattr(engine, "last_added_modules", None)
