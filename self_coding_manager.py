@@ -967,6 +967,36 @@ class SelfCodingManager:
                 if self.quick_fix is None:
                     raise RuntimeError("QuickFixEngine validation unavailable")
                 try:
+                    valid, _flags = self.quick_fix.validate_patch(
+                        module_path, desc, repo_root=clone_root
+                    )
+                except Exception as exc:
+                    try:
+                        RollbackManager().rollback("pre_commit_validation", requesting_bot=self.bot_name)
+                    except Exception:
+                        self.logger.exception("rollback failed")
+                    MutationLogger.log_mutation(
+                        change="quick_fix_validation_error",
+                        reason=description,
+                        trigger=module_name,
+                        workflow_id=0,
+                        parent_id=self._last_event_id,
+                    )
+                    raise RuntimeError("quick fix validation failed") from exc
+                if not valid:
+                    try:
+                        RollbackManager().rollback("quick_fix_validation_failed", requesting_bot=self.bot_name)
+                    except Exception:
+                        self.logger.exception("rollback failed")
+                    MutationLogger.log_mutation(
+                        change="quick_fix_validation_failed",
+                        reason=description,
+                        trigger=module_name,
+                        workflow_id=0,
+                        parent_id=self._last_event_id,
+                    )
+                    raise RuntimeError("quick fix validation failed")
+                try:
                     passed, patch_id, flags = self.quick_fix.apply_validated_patch(
                         module_path, desc, ctx_meta
                     )
