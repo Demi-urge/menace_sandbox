@@ -44,10 +44,7 @@ from vector_service.context_builder import ContextBuilder, FallbackResult, Error
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-try:  # pragma: no cover - optional self-coding dependency
-    from .self_coding_manager import SelfCodingManager
-except ImportError:  # pragma: no cover - self-coding unavailable
-    SelfCodingManager = Any  # type: ignore
+from .self_coding_manager import SelfCodingManager
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .data_bot import DataBot
@@ -55,30 +52,20 @@ from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .unified_event_bus import UnifiedEventBus
 from .bot_registry import BotRegistry
+from .threshold_service import ThresholdService
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-
-class _StubThresholds:
-    roi_drop = 0.0
-    error_threshold = 0.0
-    test_failure_threshold = 0.0
-
-
-class _StubThresholdService:
-    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
-        return _StubThresholds()
-
-
-engine = object()
-pipeline = object()
+_context_builder = ContextBuilder()
+engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
+pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 manager = SelfCodingManager(
     engine,
     pipeline,
     bot_registry=registry,
     data_bot=data_bot,
-    threshold_service=_StubThresholdService(),
+    threshold_service=ThresholdService(),
 )
 
 try:  # pragma: no cover - optional dependency
