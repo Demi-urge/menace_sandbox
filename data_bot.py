@@ -2251,6 +2251,19 @@ class DataBot:
             error_threshold=error_threshold,
             test_failure_threshold=test_failure_threshold,
         )
+        # mirror updates in the self-coding configuration so future
+        # processes see the new limits without relying solely on the
+        # :class:`ThresholdService` cache
+        try:
+            persist_sc_thresholds(
+                bot,
+                roi_drop=roi_drop,
+                error_increase=error_threshold,
+                test_failure_increase=test_failure_threshold,
+                event_bus=self.event_bus,
+            )
+        except Exception:  # pragma: no cover - best effort persistence
+            self.logger.exception("failed to persist thresholds for %s", bot)
         if forecast is not None:
             hist = self._forecast_history.setdefault(
                 bot, {"roi": [], "errors": [], "tests_failed": []}
