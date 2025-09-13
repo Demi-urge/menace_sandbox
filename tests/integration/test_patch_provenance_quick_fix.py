@@ -87,6 +87,7 @@ def test_quick_fix_records_license_and_alerts(tmp_path, monkeypatch):
         retriever=Retriever(),
         patch_logger=PatchLogger(patch_db=db),
         context_builder=DummyBuilder(),
+        helper_fn=lambda *a, **k: "",
     )
     (tmp_path / "mod.py").write_text("x=1\n")  # path-ignore
     monkeypatch.chdir(tmp_path)

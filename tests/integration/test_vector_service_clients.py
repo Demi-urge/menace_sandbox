@@ -93,6 +93,7 @@ def test_quick_fix_engine_uses_vector_service_retriever():
         manager=manager,
         retriever=SpyRetriever(),
         context_builder=DummyBuilder(),
+        helper_fn=lambda *a, **k: "",
     )
     hits, sid, vectors = engine._redundant_retrieve("m", 1)
     assert hits == [] and sid == "" and vectors == []

@@ -3,11 +3,15 @@ import sys
 from pathlib import Path
 import types
 import pytest
-from menace.coding_bot_interface import manager_generate_helper
 
 # Stub modules that these bots depend on to keep tests lightweight.
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+sys.modules.setdefault("license_detector", types.SimpleNamespace())
+
+# Import from the local package to avoid triggering heavy initialisation.
+def manager_generate_helper(manager, description, **kwargs):
+    return ""
 
 
 class RecordingBuilder:
@@ -157,7 +161,7 @@ def test_quick_fix_engine_requires_context_builder():
     error_db = object()
     manager = types.SimpleNamespace()
     with pytest.raises(TypeError):
-        QuickFixEngine(error_db, manager)  # type: ignore[call-arg]
+        QuickFixEngine(error_db, manager, helper_fn=manager_generate_helper)  # type: ignore[call-arg]
 
 
 def test_quick_fix_engine_uses_context_builder(tmp_path, monkeypatch):
@@ -215,7 +219,12 @@ def test_apply_validated_patch_emits_rejection_event(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(qfe, "generate_patch", lambda *a, **k: (1, ["flag"]))
     monkeypatch.setattr(qfe.subprocess, "run", lambda *a, **k: None)
-    engine = QuickFixEngine(object(), mgr, context_builder=builder)
+    engine = QuickFixEngine(
+        object(),
+        mgr,
+        context_builder=builder,
+        helper_fn=manager_generate_helper,
+    )
     passed, pid, _flags = engine.apply_validated_patch(tmp_path / "m.py", "d")
     assert not passed and pid is None
     assert events and events[0] == {
@@ -224,3 +233,44 @@ def test_apply_validated_patch_emits_rejection_event(tmp_path, monkeypatch):
         "flags": ["flag"],
     }
     assert calls and calls[0] == ("bot", str(tmp_path / "m.py"), False, ["flag"])
+
+
+def test_patch_cycle_uses_fresh_builder(tmp_path, monkeypatch):
+    base_builder = RecordingBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+    builders: list[RecordingBuilder] = []
+
+    def helper_fn(manager, description, **kwargs):
+        b = RecordingBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+        builders.append(b)
+        kwargs["context_builder"] = b
+        return "print('ok')"
+
+    class DummyEngine:
+        def apply_patch(self, path, desc, **kwargs):
+            return 1, "", 0.0
+
+    (tmp_path / "mod.py").write_text("x = 1\n")
+    monkeypatch.setattr(qfe, "resolve_path", lambda p: tmp_path / p)
+    monkeypatch.setattr(qfe, "path_for_prompt", lambda p: Path(p).as_posix())
+    monkeypatch.setattr(qfe.subprocess, "run", lambda *a, **k: None)
+
+    def fail_helper(*a, **k):  # pragma: no cover - ensure not called
+        raise AssertionError("global helper used")
+
+    monkeypatch.setattr(qfe, "manager_generate_helper", fail_helper)
+
+    mgr = types.SimpleNamespace(
+        engine=DummyEngine(),
+        register_patch_cycle=lambda *a, **k: None,
+        bot_registry=object(),
+        data_bot=object(),
+    )
+    engine = QuickFixEngine(
+        object(),
+        mgr,
+        context_builder=base_builder,
+        helper_fn=helper_fn,
+    )
+    engine.apply_validated_patch(tmp_path / "mod.py", "d1")
+    engine.apply_validated_patch(tmp_path / "mod.py", "d2")
+    assert len(builders) == 2 and builders[0] is not builders[1]

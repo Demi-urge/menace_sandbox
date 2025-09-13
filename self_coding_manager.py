@@ -62,12 +62,6 @@ except Exception:  # pragma: no cover - fallback for flat layout
         manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER,  # type: ignore
     )
 
-try:  # pragma: no cover - optional dependency for patching helper generation
-    from . import quick_fix_engine as _quick_fix_engine_mod
-except Exception:  # pragma: no cover - fallback for flat layout
-    import quick_fix_engine as _quick_fix_engine_mod  # type: ignore
-
-
 def _manager_generate_helper_with_builder(manager, description: str, **kwargs: Any) -> str:
     """Create a fresh ``ContextBuilder`` and invoke the base helper generator."""
 
@@ -80,10 +74,6 @@ def _manager_generate_helper_with_builder(manager, description: str, **kwargs: A
     except TypeError:
         kwargs.pop("context_builder", None)
         return _BASE_MANAGER_GENERATE_HELPER(manager, description, **kwargs)
-
-
-if _quick_fix_engine_mod is not None:  # pragma: no cover - best effort patching
-    _quick_fix_engine_mod.manager_generate_helper = _manager_generate_helper_with_builder
 
 try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
@@ -383,7 +373,12 @@ class SelfCodingManager:
         db = self.error_db or ErrorDB()
         self.error_db = db
         try:
-            self.quick_fix = QuickFixEngine(db, self, context_builder=builder)
+            self.quick_fix = QuickFixEngine(
+                db,
+                self,
+                context_builder=builder,
+                helper_fn=_manager_generate_helper_with_builder,
+            )
         except Exception as exc:  # pragma: no cover - instantiation errors
             raise RuntimeError(
                 "failed to initialise QuickFixEngine",

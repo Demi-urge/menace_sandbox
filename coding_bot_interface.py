@@ -210,6 +210,9 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                 try:
                     from .quick_fix_engine import QuickFixEngine  # type: ignore
                     from .error_bot import ErrorDB
+                    from .self_coding_manager import (
+                        _manager_generate_helper_with_builder as _helper_fn,
+                    )
                 except Exception as exc:  # pragma: no cover - optional dependency
                     raise RuntimeError(
                         f"{cls.__name__}: QuickFixEngine is required but could not be imported"
@@ -230,7 +233,12 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                             f"{cls.__name__}: failed to initialise ErrorDB for QuickFixEngine"
                         ) from exc
                 try:
-                    manager.quick_fix = QuickFixEngine(error_db, manager, context_builder=builder)
+                    manager.quick_fix = QuickFixEngine(
+                        error_db,
+                        manager,
+                        context_builder=builder,
+                        helper_fn=_helper_fn,
+                    )
                     manager.error_db = error_db
                 except Exception as exc:  # pragma: no cover - instantiation errors
                     raise RuntimeError(
