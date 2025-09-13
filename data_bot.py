@@ -1572,8 +1572,20 @@ class DataBot:
         if bot not in self._thresholds:
             try:
                 self.reload_thresholds(bot)
-            except Exception:  # pragma: no cover - best effort
-                pass
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.warning(
+                    "reload_thresholds failed for %s: %s", bot, exc
+                )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "data:threshold_update_failed",
+                            {"bot": bot, "error": str(exc)},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish threshold update failed event"
+                        )
         tracker = self._baseline.setdefault(
             bot, BaselineTracker(window=self.baseline_window)
         )
@@ -1619,8 +1631,20 @@ class DataBot:
                     error_increase=thresholds.error_threshold,
                     test_failure_increase=thresholds.test_failure_threshold,
                 )
-            except Exception:  # pragma: no cover - best effort
-                pass
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.warning(
+                    "save_sc_thresholds failed for %s: %s", bot, exc
+                )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "data:threshold_update_failed",
+                            {"bot": bot, "error": str(exc)},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish threshold update failed event"
+                        )
             self._last_threshold_refresh[bot] = now
         roi_thresh = thresholds.roi_drop
         err_thresh = thresholds.error_threshold
