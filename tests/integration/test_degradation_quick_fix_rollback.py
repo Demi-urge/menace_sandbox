@@ -53,6 +53,9 @@ class SelfCodingManager:
                 "self_coding:cycle_registered",
                 {"bot": self.bot_name, "description": description},
             )
+        self._last_patch_id = 100
+        self._last_commit_hash = "deadbeef"
+        return 100, "deadbeef"
 
     def run_patch(self, path: Path, description: str, *, context_meta=None, context_builder=None):
         passed, pid, _ = self.quick_fix.apply_validated_patch(
@@ -210,6 +213,7 @@ def test_degradation_applies_patch_and_improves_roi(tmp_path, monkeypatch):
     patched_event = next(p for t, p in bus.events if t == "bot:patched")
     assert patched_event["roi_delta"] > 0
     assert any(t == "self_coding:patch_applied" for t, _ in bus.events)
+    assert any(t == "bot:patch_applied" for t, _ in bus.events)
 
 
 def test_failed_validation_triggers_rollback(tmp_path, monkeypatch):
@@ -233,3 +237,4 @@ def test_failed_validation_triggers_rollback(tmp_path, monkeypatch):
     topics = [t for t, _ in bus.events]
     assert "bot:patch_failed" in topics
     assert "bot:patched" not in topics
+    assert "bot:patch_applied" not in topics

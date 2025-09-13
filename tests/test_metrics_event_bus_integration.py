@@ -74,8 +74,9 @@ def test_event_bus_propagates_degradation(tmp_path, monkeypatch):
             self.bot_name = "b1"
             self.events: list[dict] = []
 
-        def register_patch_cycle(self, event: dict) -> None:
+        def register_patch_cycle(self, event: dict) -> tuple[int, str]:
             self.events.append(event)
+            return 1, "deadbeef"
 
     scm = DummySelfCodingManager()
 

@@ -18,6 +18,7 @@ import subprocess
 import json
 import os
 import threading
+from dataclasses import asdict, is_dataclass
 
 try:
     from .databases import MenaceDB
@@ -118,12 +119,53 @@ class BotRegistry:
                                 orchestrator.register_patch_cycle(event)
                             else:
                                 desc = f"auto_patch_due_to_degradation:{_bot}"
-                                _mgr.register_patch_cycle(desc, event)
+                                result_vals = _mgr.register_patch_cycle(desc, event)
+                                if isinstance(result_vals, tuple):
+                                    patch_id, commit = result_vals
+                                else:
+                                    patch_id, commit = (None, None)
                                 module = self.graph.nodes[_bot].get("module")
                                 if module and hasattr(_mgr, "generate_and_patch"):
-                                    _mgr.generate_and_patch(
+                                    result, new_commit = _mgr.generate_and_patch(
                                         Path(module), desc, context_meta=event
-                                    )[0]
+                                    )
+                                    commit = commit or new_commit
+                                    try:
+                                        ph = self.graph.nodes[_bot].setdefault(
+                                            "patch_history", []
+                                        )
+                                        ph.append(
+                                            {
+                                                "patch_id": patch_id,
+                                                "commit": commit,
+                                                "ts": time.time(),
+                                            }
+                                        )
+                                    except Exception:
+                                        logger.exception(
+                                            "failed to record patch history for %s",
+                                            _bot,
+                                        )
+                                    if self.event_bus:
+                                        try:
+                                            payload: Dict[str, Any] = {
+                                                "bot": _bot,
+                                                "patch_id": patch_id,
+                                                "commit": commit,
+                                                "result": (
+                                                    asdict(result)
+                                                    if is_dataclass(result)
+                                                    else getattr(result, "__dict__", result)
+                                                ),
+                                            }
+                                            self.event_bus.publish(
+                                                "bot:patch_applied", payload
+                                            )
+                                        except Exception as exc:
+                                            logger.error(
+                                                "Failed to publish bot:patch_applied event: %s",
+                                                exc,
+                                            )
                         except Exception as exc:  # pragma: no cover - best effort
                             logger.error("degradation callback failed for %s: %s", _bot, exc)
 

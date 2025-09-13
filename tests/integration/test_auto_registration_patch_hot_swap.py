@@ -48,6 +48,7 @@ def test_auto_registration_patch_hot_swap(tmp_path, monkeypatch):
             self.register_calls.append((desc, ctx))
             self._last_patch_id = 1
             self._last_commit_hash = "deadbeef"
+            return 1, "deadbeef"
 
         def run_patch(self, path: Path, desc: str, *, context_meta=None, context_builder=None):
             self.patch_calls.append((path, desc))
