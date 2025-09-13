@@ -28,6 +28,7 @@ except Exception:  # pragma: no cover - fallback for tests
         pass
 from .self_coding_manager import HelperGenerationError
 from .sandbox_settings import SandboxSettings
+from .threshold_service import threshold_service
 try:  # pragma: no cover - optional dependency
     from . import mutation_logger as MutationLogger
 except Exception:  # pragma: no cover - best effort
@@ -63,8 +64,8 @@ class EvolutionOrchestrator:
     """Monitor metrics and coordinate improvement and evolution cycles.
 
     When ``triggers`` are not provided the ROI and error thresholds are
-    loaded via :func:`self_coding_thresholds.get_thresholds` to ensure
-    consistent behaviour with other components.
+    loaded via :class:`ThresholdService` to ensure consistent behaviour with
+    other components.
     """
 
     def __init__(
@@ -99,7 +100,8 @@ class EvolutionOrchestrator:
         self.history = history_db or EvolutionHistoryDB()
         if triggers is None:
             bot = selfcoding_manager.bot_name if selfcoding_manager else None
-            t = data_bot.reload_thresholds(bot)
+            settings = getattr(data_bot, "settings", None)
+            t = threshold_service.get(bot, settings)
             self.triggers = EvolutionTrigger(
                 error_rate=t.error_threshold, roi_drop=t.roi_drop
             )
@@ -167,7 +169,7 @@ class EvolutionOrchestrator:
                     "self_coding:patch_applied", self._on_patch_applied
                 )
                 self.event_bus.subscribe(
-                    "self_coding:thresholds_updated", self._on_thresholds_updated
+                    "thresholds:updated", self._on_thresholds_updated
                 )
             except Exception:
                 self.logger.exception("event bus subscription failed")
@@ -316,10 +318,9 @@ class EvolutionOrchestrator:
     # ------------------------------------------------------------------
     def _refresh_thresholds(self, bot: str) -> None:
         """Reload thresholds for *bot* to keep decisions fresh."""
-        if not hasattr(self.data_bot, "reload_thresholds"):
-            return
         try:
-            t = self.data_bot.reload_thresholds(bot)
+            settings = getattr(self.data_bot, "settings", None)
+            t = threshold_service.reload(bot, settings)
             self.triggers = EvolutionTrigger(
                 error_rate=float(getattr(t, "error_threshold", self.triggers.error_rate)),
                 roi_drop=float(getattr(t, "roi_drop", self.triggers.roi_drop)),
