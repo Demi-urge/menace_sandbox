@@ -21,6 +21,18 @@ on:
         default: 'false'
 
 jobs:
+  check-coding-bot-decorators:
+    runs-on: ubuntu-latest
+    env:
+      MENACE_SAFE: "1"
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Ensure SelfCodingEngine bots use @self_coding_managed
+        run: python tools/check_coding_bot_decorators.py
+
   path-checks:
     runs-on: ubuntu-latest
     env:
@@ -59,6 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - path-checks
+      - check-coding-bot-decorators
     env:
       MENACE_SAFE: "1"
     steps:

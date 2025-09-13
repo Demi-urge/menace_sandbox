@@ -67,6 +67,7 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+      # Verify that SelfCodingEngine bots declare the self_coding_managed decorator
       - id: check-coding-bot-decorators
         name: Ensure SelfCodingEngine bots use @self_coding_managed
         entry: python tools/check_coding_bot_decorators.py
