@@ -19,5 +19,7 @@ jobs:
         run: bash ./setup_env.sh
       - name: Enforce ContextBuilder usage
         run: python scripts/check_context_builder_usage.py
+      - name: Run self-coding audit
+        run: python self_coding_audit.py
       - name: Retrain ranker
         run: python analytics/retrain_vector_ranker.py --vector-db vector_metrics.db --patch-db metrics.db
