@@ -15,6 +15,11 @@ from pathlib import Path
 
 KNOWN_BOT_BASES = {"AdminBotBase"}
 
+# Some modules share the ``Bot`` suffix but are infrastructure helpers rather
+# than self-coding bots.  Listing them here prevents false positives when this
+# script runs under pre-commit or the test suite.
+EXCLUDED_PATHS = {Path("data_bot.py")}
+
 
 def _inherits_bot_base(cls: ast.ClassDef) -> bool:
     for base in cls.bases:
@@ -62,6 +67,9 @@ def main() -> None:
     offenders: list[tuple[Path, list[str]]] = []
     for path in root.rglob("*_bot.py"):
         if "tests" in path.parts or "unit_tests" in path.parts:
+            continue
+        rel = path.relative_to(root)
+        if rel in EXCLUDED_PATHS:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
