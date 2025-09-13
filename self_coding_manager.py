@@ -19,7 +19,7 @@ import uuid
 import os
 import shlex
 from dataclasses import asdict
-from typing import Dict, Any, TYPE_CHECKING
+from typing import Dict, Any, TYPE_CHECKING, Callable
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
 from .failure_fingerprint_store import (
@@ -553,6 +553,39 @@ class SelfCodingManager:
                 )
                 raise
         return builder
+
+    def generate_patch(
+        self,
+        module: str,
+        description: str = "",
+        *,
+        helper_fn: Callable[..., str] | None = None,
+        context_builder: ContextBuilder | None = None,
+        **kwargs: Any,
+    ):
+        """Generate a quick fix patch for ``module``.
+
+        A fresh :class:`vector_service.ContextBuilder` is created when
+        ``context_builder`` is omitted to ensure patches operate on the latest
+        repository state. ``helper_fn`` defaults to
+        :func:`manager_generate_helper`.
+        """
+
+        if generate_patch is None:
+            raise RuntimeError(
+                "QuickFixEngine is required but generate_patch is unavailable"
+            )
+        builder = context_builder or self.refresh_quick_fix_context()
+        helper = helper_fn or _manager_generate_helper_with_builder
+        return generate_patch(
+            module,
+            self,
+            engine=getattr(self, "engine", None),
+            context_builder=builder,
+            description=description,
+            helper_fn=helper,
+            **kwargs,
+        )
 
     # ------------------------------------------------------------------
     def scan_repo(self) -> None:
@@ -1924,6 +1957,8 @@ def internalize_coding_bot(
         error_rate_threshold=error_threshold,
         **manager_kwargs,
     )
+    if manager.quick_fix is None:
+        raise RuntimeError("QuickFixEngine failed to initialise")
     manager.evolution_orchestrator = evolution_orchestrator
     bot_registry.register_bot(
         bot_name,
