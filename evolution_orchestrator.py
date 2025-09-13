@@ -272,13 +272,56 @@ class EvolutionOrchestrator:
             self.logger.exception("failed to process threshold update")
 
     # ------------------------------------------------------------------
+    def _refresh_thresholds(self, bot: str) -> None:
+        """Reload thresholds for *bot* to keep decisions fresh."""
+        if not hasattr(self.data_bot, "reload_thresholds"):
+            return
+        try:
+            t = self.data_bot.reload_thresholds(bot)
+            self.triggers = EvolutionTrigger(
+                error_rate=float(getattr(t, "error_threshold", self.triggers.error_rate)),
+                roi_drop=float(getattr(t, "roi_drop", self.triggers.roi_drop)),
+                energy_threshold=self.triggers.energy_threshold,
+            )
+        except Exception:
+            self.logger.exception("failed to refresh thresholds for %s", bot)
+
+    # ------------------------------------------------------------------
     def _on_threshold_breach(self, event: dict) -> None:
-        """Track bots that exceed degradation thresholds."""
+        """Register patch cycle when a bot exceeds degradation thresholds."""
         if not self.selfcoding_manager:
             return
         bot = str(event.get("bot", ""))
-        if bot:
-            self._pending_patch_cycle.add(bot)
+        roi = self.data_bot.roi(bot) if hasattr(self.data_bot, "roi") else 0.0
+        err = (
+            self.data_bot.average_errors(bot)
+            if hasattr(self.data_bot, "average_errors")
+            else 0.0
+        )
+        failures = (
+            self.data_bot.average_test_failures(bot)
+            if hasattr(self.data_bot, "average_test_failures")
+            else 0.0
+        )
+        context_meta = {
+            **event,
+            "roi": roi,
+            "error_rate": err,
+            "tests_failed": failures,
+        }
+        desc = (
+            f"auto_patch_due_to_threshold_breach:{bot}"
+            if bot
+            else "auto_patch_due_to_threshold_breach"
+        )
+        try:
+            self.selfcoding_manager.register_patch_cycle(desc, context_meta)
+        except Exception:
+            self.logger.exception("failed to register patch cycle for %s", bot)
+        else:
+            if bot:
+                self._pending_patch_cycle.add(bot)
+        self._refresh_thresholds(bot or getattr(self.selfcoding_manager, "bot_name", ""))
 
     # ------------------------------------------------------------------
     def _on_self_coding_degradation(self, event: dict) -> None:
@@ -300,6 +343,37 @@ class EvolutionOrchestrator:
         if not self.selfcoding_manager:
             return
         bot = str(event.get("bot", ""))
+        roi = self.data_bot.roi(bot) if hasattr(self.data_bot, "roi") else 0.0
+        err = (
+            self.data_bot.average_errors(bot)
+            if hasattr(self.data_bot, "average_errors")
+            else 0.0
+        )
+        failures = (
+            self.data_bot.average_test_failures(bot)
+            if hasattr(self.data_bot, "average_test_failures")
+            else 0.0
+        )
+        context_meta = {
+            **event,
+            "roi": roi,
+            "error_rate": err,
+            "tests_failed": failures,
+        }
+        desc = (
+            f"auto_patch_due_to_degradation:{bot}"
+            if bot
+            else "auto_patch_due_to_degradation"
+        )
+        try:
+            self.selfcoding_manager.register_patch_cycle(desc, context_meta)
+        except Exception:
+            self.logger.exception("failed to register patch cycle for %s", bot)
+        else:
+            if bot:
+                self._pending_patch_cycle.add(bot)
+        self._refresh_thresholds(bot or getattr(self.selfcoding_manager, "bot_name", ""))
+
         bus = (
             getattr(self.selfcoding_manager, "event_bus", None)
             or self.event_bus
@@ -353,17 +427,6 @@ class EvolutionOrchestrator:
                         "failed to log degradation cycle for %s", bot
                     )
 
-            # Capture all supplied metadata so downstream consumers like
-            # ``SelfCodingManager`` receive the complete context for this
-            # degradation event.
-            context_meta = dict(event)
-            desc = f"auto_patch_due_to_degradation:{bot}"
-            try:
-                self.selfcoding_manager.register_patch_cycle(desc, context_meta)
-            except Exception:
-                self.logger.exception("failed to register patch cycle for %s", bot)
-            else:
-                self._pending_patch_cycle.add(bot)
             current_roi = after_roi
             current_err = float(event.get("errors_baseline", 0.0)) + delta_errors
             predicted_roi = current_roi
