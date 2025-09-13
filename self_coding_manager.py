@@ -45,9 +45,9 @@ from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings
 from .patch_attempt_tracker import PatchAttemptTracker
-from .self_coding_thresholds import (
-    get_thresholds as load_sc_thresholds,
-    update_thresholds,
+from .threshold_service import (
+    ThresholdService,
+    threshold_service as _DEFAULT_THRESHOLD_SERVICE,
 )
 
 try:  # pragma: no cover - optional dependency
@@ -138,7 +138,7 @@ class PatchApprovalPolicy:
                 test_command = shlex.split(env_cmd)
             else:
                 try:
-                    test_command = load_sc_thresholds(
+                    test_command = _DEFAULT_THRESHOLD_SERVICE.load(
                         bot_name, SandboxSettings()
                     ).test_command
                 except Exception:
@@ -197,6 +197,7 @@ class SelfCodingManager:
         error_db: ErrorDB | None = None,
         event_bus: UnifiedEventBus | None = None,
         evolution_orchestrator: "EvolutionOrchestrator | None" = None,
+        threshold_service: ThresholdService | None = None,
         roi_drop_threshold: float | None = None,
         error_rate_threshold: float | None = None,
     ) -> None:
@@ -206,12 +207,13 @@ class SelfCodingManager:
         self.pipeline = pipeline
         self.bot_name = bot_name
         self.data_bot = data_bot
+        self.threshold_service = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         self.approval_policy = approval_policy
         self.logger = logging.getLogger(self.__class__.__name__)
         self._last_patch_id: int | None = None
         self._last_event_id: int | None = None
         self._last_commit_hash: str | None = None
-        thresholds = data_bot.get_thresholds(bot_name)
+        thresholds = self.threshold_service.get(bot_name)
         self.roi_drop_threshold = (
             roi_drop_threshold if roi_drop_threshold is not None else thresholds.roi_drop
         )
@@ -321,7 +323,7 @@ class SelfCodingManager:
             self.bot_registry.register_bot(name)
             if self.data_bot:
                 try:
-                    self.data_bot.reload_thresholds(name)
+                    self.threshold_service.reload(name)
                     self.data_bot.check_degradation(
                         name, roi=0.0, errors=0.0, test_failures=0.0
                     )
@@ -359,25 +361,19 @@ class SelfCodingManager:
             self.logger.exception("failed to register bot in registry")
 
     def _refresh_thresholds(self) -> None:
-        """Fetch ROI, error and test-failure thresholds from :class:`DataBot`.
-
-        When values change an event is emitted so other components can react
-        without requiring a restart.
+        """Fetch ROI, error and test-failure thresholds via ``ThresholdService``.
 
         When adaptive thresholding is enabled via :class:`SandboxSettings`,
         rolling metrics from :class:`BaselineTracker` are analysed for long-term
         drift.  Sustained shifts tighten or relax the ROI drop and error rate
-        limits which are then persisted through
-        :func:`self_coding_thresholds.update_thresholds`.
+        limits which are then persisted through the shared service.
         """
 
         if not self.data_bot:
             return
         try:
             prev = getattr(self, "_last_thresholds", None)
-            # Ensure the DataBot refreshes its view of the configuration so
-            # manager decisions use the most recent thresholds.
-            t = self.data_bot.reload_thresholds(self.bot_name)
+            t = self.threshold_service.reload(self.bot_name)
 
             adaptive = False
             try:
@@ -402,31 +398,20 @@ class SelfCodingManager:
                             new_err = max(t.error_threshold + err_drift, 0.0)
                             updated = updated or new_err != t.error_threshold
                     if updated:
-                        update_thresholds(
+                        self.threshold_service.update(
                             self.bot_name,
                             roi_drop=new_roi if new_roi != t.roi_drop else None,
-                            error_increase=new_err if new_err != t.error_threshold else None,
+                            error_threshold=
+                                new_err if new_err != t.error_threshold else None,
                         )
-                        t = self.data_bot.reload_thresholds(self.bot_name)
+                        t = self.threshold_service.reload(self.bot_name)
                 except Exception:  # pragma: no cover - adaptive failures
                     self.logger.exception("adaptive threshold update failed")
 
             self.roi_drop_threshold = t.roi_drop
             self.error_rate_threshold = t.error_threshold
             self.test_failure_threshold = t.test_failure_threshold
-            changed = prev != t
             self._last_thresholds = t
-            if changed and getattr(self, "event_bus", None):
-                payload = {
-                    "bot": self.bot_name,
-                    "roi_drop": t.roi_drop,
-                    "error_threshold": t.error_threshold,
-                    "test_failure_threshold": t.test_failure_threshold,
-                }
-                try:  # pragma: no cover - best effort
-                    self.event_bus.publish("self_coding:thresholds_updated", payload)
-                except Exception:
-                    self.logger.exception("failed to publish threshold update")
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load thresholds for %s", self.bot_name)
 
@@ -1730,10 +1715,9 @@ class SelfCodingManager:
             load_failed_tags()
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to refresh failed tags")
-        if self.data_bot and hasattr(self.data_bot, "reload_thresholds"):
+        if self.data_bot:
             # Refresh thresholds post-patch so subsequent decisions use the
-            # latest configuration.  ``_refresh_thresholds`` will emit an event
-            # if any values change.
+            # latest configuration.
             self._refresh_thresholds()
         return result
 

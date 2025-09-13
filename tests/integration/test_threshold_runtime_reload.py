@@ -29,9 +29,13 @@ def test_threshold_reload_propagates(tmp_path, monkeypatch):
 
     bus = DummyBus()
 
+    import menace.threshold_service as ts
+    svc = ts.ThresholdService(event_bus=bus)
+    monkeypatch.setattr(ts, "threshold_service", svc)
+
     from menace.data_bot import DataBot, MetricsDB
     db = MetricsDB(path=tmp_path / "metrics.db")
-    data_bot = DataBot(db=db, event_bus=bus)
+    data_bot = DataBot(db=db, event_bus=bus, threshold_service=svc)
 
     cbi = types.ModuleType("menace.coding_bot_interface")
     cbi.self_coding_managed = lambda f: f
@@ -61,10 +65,11 @@ def test_threshold_reload_propagates(tmp_path, monkeypatch):
     sys.modules["menace.self_coding_manager"] = scm_stub
 
     class SelfCodingManager:
-        def __init__(self, data_bot, bot_name, event_bus):
+        def __init__(self, data_bot, bot_name, event_bus, threshold_service):
             self.data_bot = data_bot
             self.bot_name = bot_name
             self.event_bus = event_bus
+            self.threshold_service = threshold_service
             self.roi_drop_threshold = 0.0
             self.error_rate_threshold = 0.0
             self.test_failure_threshold = 0.0
@@ -72,22 +77,13 @@ def test_threshold_reload_propagates(tmp_path, monkeypatch):
             self._refresh_thresholds()
 
         def _refresh_thresholds(self):
-            prev = self._last_thresholds
-            t = self.data_bot.reload_thresholds(self.bot_name)
+            t = self.threshold_service.reload(self.bot_name)
             self.roi_drop_threshold = t.roi_drop
             self.error_rate_threshold = t.error_threshold
             self.test_failure_threshold = t.test_failure_threshold
             self._last_thresholds = t
-            if prev != t and self.event_bus:
-                payload = {
-                    "bot": self.bot_name,
-                    "roi_drop": t.roi_drop,
-                    "error_threshold": t.error_threshold,
-                    "test_failure_threshold": t.test_failure_threshold,
-                }
-                self.event_bus.publish("self_coding:thresholds_updated", payload)
 
-    manager = SelfCodingManager(data_bot, "dummy", bus)
+    manager = SelfCodingManager(data_bot, "dummy", bus, svc)
 
     from menace.evolution_orchestrator import EvolutionOrchestrator
     orch = EvolutionOrchestrator(

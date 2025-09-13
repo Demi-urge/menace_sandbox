@@ -43,12 +43,7 @@ except Exception:  # pragma: no cover - flat layout fallback
 import db_router
 from db_router import DBRouter, init_db_router
 
-try:  # pragma: no cover - optional dependency
-    from .self_coding_thresholds import update_thresholds as persist_sc_thresholds
-except Exception:  # pragma: no cover - persistence optional
-    def persist_sc_thresholds(*_a: Any, **_k: Any) -> None:  # type: ignore[override]
-        """Fallback no-op when threshold persistence is unavailable."""
-        pass
+from .threshold_service import threshold_service
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .self_coding_manager import SelfCodingManager
@@ -142,10 +137,10 @@ class BotRegistry:
                         )
             if roi_threshold is not None or error_threshold is not None:
                 try:
-                    persist_sc_thresholds(
+                    threshold_service.update(
                         name,
                         roi_drop=roi_threshold,
-                        error_increase=error_threshold,
+                        error_threshold=error_threshold,
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.error(

@@ -19,13 +19,18 @@ def test_reload_thresholds_persists_and_broadcasts(tmp_path, monkeypatch):
         def publish(self, topic: str, payload: object) -> None:
             self.events.append((topic, payload))
 
+        def subscribe(self, _topic: str, _fn):
+            pass
+
     from menace.data_bot import DataBot, MetricsDB
+    from menace.threshold_service import ThresholdService
 
     bus = DummyBus()
+    svc = ThresholdService(event_bus=bus)
     db = MetricsDB(path=tmp_path / "metrics.db")
-    bot = DataBot(db=db, event_bus=bus, start_server=False)
+    bot = DataBot(db=db, event_bus=bus, threshold_service=svc, start_server=False)
     bot.reload_thresholds("alpha")
 
     data = yaml.safe_load(cfg.read_text())
     assert "alpha" in data.get("bots", {})
-    assert any(topic == "self_coding:thresholds_updated" for topic, _ in bus.events)
+    assert any(topic == "thresholds:updated" for topic, _ in bus.events)

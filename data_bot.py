@@ -63,10 +63,9 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - flat layout fallback
     from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 from .roi_thresholds import ROIThresholds
-from .self_coding_thresholds import (
-    get_thresholds as load_sc_thresholds,
-    update_thresholds as persist_sc_thresholds,
-    _load_config as _load_sc_config,
+from .threshold_service import (
+    ThresholdService,
+    threshold_service as _DEFAULT_THRESHOLD_SERVICE,
 )
 from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
@@ -1035,6 +1034,7 @@ class DataBot:
         trend_predictor: "TrendPredictor" | None = None,
         threshold_update_interval: float | None = None,
         metric_predictor: object | None = None,
+        threshold_service: ThresholdService | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
@@ -1042,6 +1042,7 @@ class DataBot:
         # Use shared event bus when none provided so all components share
         # a single dispatcher instance.
         self.event_bus = event_bus or _SHARED_EVENT_BUS
+        self.threshold_service = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         self.evolution_db = evolution_db
         self.settings = settings or SandboxSettings()
         self.roi_drop_threshold = roi_drop_threshold
@@ -1748,12 +1749,7 @@ class DataBot:
             if thresholds is not None:
                 base = thresholds
             else:
-                sc = load_sc_thresholds(bot)
-                base = ROIThresholds(
-                    roi_drop=sc.roi_drop,
-                    error_threshold=sc.error_increase,
-                    test_failure_threshold=sc.test_failure_increase,
-                )
+                base = self.threshold_service.get(bot, self.settings)
             if ext_pred:
                 roi_thresh = min(base.roi_drop, roi_low - avg_roi)
                 err_thresh = max(base.error_threshold, err_high - avg_err)
@@ -1783,11 +1779,11 @@ class DataBot:
             )
             self._thresholds[bot] = thresholds
             try:
-                persist_sc_thresholds(
+                self.threshold_service.update(
                     bot,
                     roi_drop=roi_thresh,
-                    error_increase=err_thresh,
-                    test_failure_increase=fail_thresh,
+                    error_threshold=err_thresh,
+                    test_failure_threshold=fail_thresh,
                 )
                 if self.event_bus:
                     try:
@@ -2060,12 +2056,12 @@ class DataBot:
     def reload_thresholds(self, bot: str | None = None) -> ROIThresholds:
         """Reload thresholds for ``bot`` from configuration.
 
-        This fetches fresh values via :func:`self_coding_thresholds.get_thresholds`
-        and updates the local cache so long running processes can pick up
-        runtime edits to ``config/self_coding_thresholds.yaml``.
+        This fetches fresh values via :class:`ThresholdService` and updates
+        the local cache so long running processes can pick up runtime edits to
+        ``config/self_coding_thresholds.yaml``.
         """
 
-        t = load_sc_thresholds(bot, self.settings)
+        t = self.threshold_service.reload(bot, self.settings)
         roi_drop = (
             self.roi_drop_threshold
             if self.roi_drop_threshold is not None
@@ -2074,12 +2070,12 @@ class DataBot:
         error_thresh = (
             self.error_threshold
             if self.error_threshold is not None
-            else t.error_increase
+            else t.error_threshold
         )
         fail_thresh = (
             self.test_failure_threshold
             if self.test_failure_threshold is not None
-            else t.test_failure_increase
+            else t.test_failure_threshold
         )
         rt = ROIThresholds(
             roi_drop=roi_drop,
@@ -2087,53 +2083,24 @@ class DataBot:
             test_failure_threshold=fail_thresh,
         )
         key = bot or ""
-        prev = self._thresholds.get(key)
         self._thresholds[key] = rt
 
-        if bot:
-            data = _load_sc_config()
-            bots = data.get("bots", {}) if isinstance(data, dict) else {}
-            if bot not in bots:
-                try:  # pragma: no cover - best effort persistence
-                    persist_sc_thresholds(
-                        bot,
-                        roi_drop=rt.roi_drop,
-                        error_increase=rt.error_threshold,
-                        test_failure_increase=rt.test_failure_threshold,
-                    )
-                except Exception:
-                    self.logger.exception("failed to persist thresholds for %s", bot)
-
-        # Persist explicit overrides back to the configuration file so
-        # subsequent processes observe the updated thresholds without a
-        # restart.
         if bot and (
             self.roi_drop_threshold is not None
             or self.error_threshold is not None
             or self.test_failure_threshold is not None
         ):
             try:  # pragma: no cover - best effort persistence
-                persist_sc_thresholds(
+                self.threshold_service.update(
                     bot,
                     roi_drop=roi_drop if self.roi_drop_threshold is not None else None,
-                    error_increase=
+                    error_threshold=
                         error_thresh if self.error_threshold is not None else None,
-                    test_failure_increase=
+                    test_failure_threshold=
                         fail_thresh if self.test_failure_threshold is not None else None,
                 )
             except Exception:
                 self.logger.exception("failed to persist thresholds for %s", bot)
-        if self.event_bus and bot and prev != rt:
-            payload = {
-                "bot": bot,
-                "roi_drop": rt.roi_drop,
-                "error_threshold": rt.error_threshold,
-                "test_failure_threshold": rt.test_failure_threshold,
-            }
-            try:  # pragma: no cover - best effort publish
-                self.event_bus.publish("self_coding:thresholds_updated", payload)
-            except Exception:
-                self.logger.exception("failed to publish threshold update")
         return rt
 
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
@@ -2158,11 +2125,11 @@ class DataBot:
         forecast: Dict[str, float] | None = None,
     ) -> None:
         """Persist new thresholds for ``bot`` and optionally notify API."""
-        persist_sc_thresholds(
+        self.threshold_service.update(
             bot,
             roi_drop=roi_drop,
-            error_increase=error_threshold,
-            test_failure_increase=test_failure_threshold,
+            error_threshold=error_threshold,
+            test_failure_threshold=test_failure_threshold,
         )
         if forecast is not None:
             hist = self._forecast_history.setdefault(
