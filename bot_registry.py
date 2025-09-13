@@ -147,17 +147,34 @@ class BotRegistry:
                 node["selfcoding_manager"] = manager
             if data_bot is not None:
                 node["data_bot"] = data_bot
+                try:
+                    data_bot.check_degradation(
+                        name, roi=0.0, errors=0.0, test_failures=0.0
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "failed to initialise baseline for %s: %s", name, exc
+                    )
                 if manager is not None:
-                    def _on_degraded(event: dict, _bot=name, _mgr=manager):
-                        if str(event.get("bot")) != _bot:
-                            return
+                    orchestrator = getattr(manager, "evolution_orchestrator", None)
+                    if orchestrator is not None and hasattr(
+                        orchestrator, "register_patch_cycle"
+                    ):
                         try:
-                            orchestrator = getattr(_mgr, "evolution_orchestrator", None)
-                            if orchestrator is not None and hasattr(
-                                orchestrator, "register_patch_cycle"
-                            ):
-                                orchestrator.register_patch_cycle(event)
-                            else:
+                            data_bot.subscribe_degradation(
+                                orchestrator.register_patch_cycle
+                            )
+                        except Exception as exc:  # pragma: no cover - best effort
+                            logger.error(
+                                "failed to subscribe degradation callback for %s: %s",
+                                name,
+                                exc,
+                            )
+                    else:
+                        def _on_degraded(event: dict, _bot=name, _mgr=manager):
+                            if str(event.get("bot")) != _bot:
+                                return
+                            try:
                                 desc = f"auto_patch_due_to_degradation:{_bot}"
                                 result_vals = _mgr.register_patch_cycle(desc, event)
                                 if isinstance(result_vals, tuple):
@@ -207,17 +224,21 @@ class BotRegistry:
                                             "Failed to publish bot:patch_applied event: %s",
                                             exc,
                                         )
-                        except Exception as exc:  # pragma: no cover - best effort
-                            logger.error("degradation callback failed for %s: %s", _bot, exc)
+                            except Exception as exc:  # pragma: no cover - best effort
+                                logger.error(
+                                    "degradation callback failed for %s: %s",
+                                    _bot,
+                                    exc,
+                                )
 
-                    try:
-                        data_bot.subscribe_degradation(_on_degraded)
-                    except Exception as exc:  # pragma: no cover - best effort
-                        logger.error(
-                            "failed to subscribe degradation callback for %s: %s",
-                            name,
-                            exc,
-                        )
+                        try:
+                            data_bot.subscribe_degradation(_on_degraded)
+                        except Exception as exc:  # pragma: no cover - best effort
+                            logger.error(
+                                "failed to subscribe degradation callback for %s: %s",
+                                name,
+                                exc,
+                            )
             if roi_threshold is not None or error_threshold is not None:
                 try:
                     threshold_service.update(
