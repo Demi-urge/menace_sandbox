@@ -15,7 +15,11 @@ from .model_automation_pipeline import ModelAutomationPipeline
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .threshold_service import ThresholdService
-from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+from .self_coding_manager import (
+    SelfCodingManager,
+    internalize_coding_bot,
+    _manager_generate_helper_with_builder as manager_generate_helper,
+)
 from .self_coding_thresholds import get_thresholds
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
@@ -173,7 +177,7 @@ class AutomatedReviewer:
                 ctx = ""
                 vectors = []
             try:
-                self.manager.generate_helper(f"review for bot {bot_id}")
+                manager_generate_helper(self.manager, f"review for bot {bot_id}")
             except Exception:
                 self.logger.exception("helper generation failed")
             try:

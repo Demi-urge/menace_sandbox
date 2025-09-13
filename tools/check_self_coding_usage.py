@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Pre-commit check forbidding direct engine.generate_helper usage.
+"""Pre-commit check for unwrapped engine.generate_helper usage.
 
-This script scans Python files for references to ``engine.generate_helper``
-which should instead be invoked through ``manager_generate_helper``.  Test
-modules and a small set of approved files are ignored.  Any occurrence of the
-pattern elsewhere triggers a failure.
+This script scans Python files for occurrences of ``engine.generate_helper(``
+which should only appear inside :mod:`coding_bot_interface`'s
+``manager_generate_helper`` wrapper.  Any other occurrence indicates direct
+usage of the self-coding engine and triggers a failure.
 """
 from __future__ import annotations
 
@@ -12,11 +12,7 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-ALLOWED_FILES = {
-    "coding_bot_interface.py",  # defines manager_generate_helper
-    "quick_fix_engine.py",      # legacy usage with explicit fallback
-    "check_self_coding_usage.py",  # lint script referencing the pattern
-}
+ALLOWED_FILES = {"coding_bot_interface.py"}
 SCRIPT_NAME = Path(__file__).name
 
 
@@ -30,8 +26,10 @@ def check_file(path: str) -> bool:
         text = p.read_text(encoding="utf-8")
     except Exception:
         return True
-    if "engine.generate_helper" in text:
-        print(f"{p}: direct engine.generate_helper usage is forbidden")
+    if "engine.generate_helper(" in text:
+        print(
+            f"{p}: engine.generate_helper should be wrapped by manager_generate_helper"
+        )
         return False
     return True
 
@@ -45,4 +43,4 @@ def main(argv: Iterable[str]) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    sys.exit(main(sys.argv[1:]))
+    raise SystemExit(main(sys.argv[1:]))
