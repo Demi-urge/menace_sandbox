@@ -35,7 +35,6 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 from collections import Counter
-import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 
@@ -94,16 +93,17 @@ class ErrorClusterPredictor:
         cluster_traces = [t for t, lbl in zip(traces, labels) if lbl == cluster_id]
         return int(cluster_id), cluster_traces, int(count)
 
-from .error_bot import ErrorDB
-from .self_coding_manager import SelfCodingManager
-from .self_coding_engine import MANAGER_CONTEXT
+
+from .error_bot import ErrorDB  # noqa: E402
+from .self_coding_manager import SelfCodingManager  # noqa: E402
+from .self_coding_engine import MANAGER_CONTEXT  # noqa: E402
 try:  # pragma: no cover - optional helper
-    from .self_coding_manager import _manager_generate_helper_with_builder
+    from .self_coding_manager import _manager_generate_helper_with_builder  # noqa: E402
 except Exception:  # pragma: no cover - helper unavailable
     _manager_generate_helper_with_builder = None  # type: ignore
-from .knowledge_graph import KnowledgeGraph
+from .knowledge_graph import KnowledgeGraph  # noqa: E402
 try:  # pragma: no cover - optional dependency
-    from .coding_bot_interface import (
+    from .coding_bot_interface import (  # noqa: E402
         manager_generate_helper as _base_manager_generate_helper,
     )
 except Exception:  # pragma: no cover - fallback when coding engine unavailable
@@ -114,12 +114,12 @@ manager_generate_helper = (
     _manager_generate_helper_with_builder or _base_manager_generate_helper
 )
 try:  # pragma: no cover - optional dependency
-    from .data_bot import DataBot
+    from .data_bot import DataBot  # noqa: E402
 except Exception:  # pragma: no cover - fallback when unavailable
     DataBot = object  # type: ignore
-from .resilience import retry_with_backoff
+from .resilience import retry_with_backoff  # noqa: E402
 try:  # pragma: no cover - fail fast if vector service missing
-    from vector_service.context_builder import (
+    from vector_service.context_builder import (  # noqa: E402
         ContextBuilder,
         Retriever,
         FallbackResult,
@@ -213,8 +213,6 @@ try:  # pragma: no cover - optional dependency
     from .code_database import PatchHistoryDB
 except Exception:  # pragma: no cover - fallback for tests
     PatchHistoryDB = None  # type: ignore
-
-
 
 _VEC_METRICS = None
 
@@ -394,14 +392,14 @@ def generate_patch(
         context_meta["prompt_strategy"] = str(strategy)
     base_description = description
 
+    token = getattr(
+        getattr(manager, "evolution_orchestrator", None),
+        "provenance_token",
+        None,
+    )
     try:
         meta = dict(context_meta)
         meta.setdefault("trigger", "quick_fix_engine")
-        token = getattr(
-            getattr(manager, "evolution_orchestrator", None),
-            "provenance_token",
-            None,
-        )
         manager.register_patch_cycle(description, meta, provenance_token=token)
     except Exception:
         logger.exception("failed to register patch cycle")
@@ -773,6 +771,7 @@ class QuickFixEngine:
             )
         self.db = error_db
         self.manager = manager
+        logger = logging.getLogger(self.__class__.__name__)
         try:
             self.manager.register_bot(self.__class__.__name__)
         except Exception:
@@ -782,7 +781,6 @@ class QuickFixEngine:
         self.risk_threshold = risk_threshold
         self.predictor = predictor
         self.retriever = retriever
-        logger = logging.getLogger(self.__class__.__name__)
         self.context_builder = context_builder
         if patch_logger is None:
             try:
@@ -947,6 +945,11 @@ class QuickFixEngine:
         if session_id:
             context_meta["retrieval_session_id"] = session_id
             context_meta.setdefault("retrieval_vectors", vectors)
+        token = getattr(
+            getattr(self.manager, "evolution_orchestrator", None),
+            "provenance_token",
+            None,
+        )
         patch_id = None
         event_bus = getattr(self.manager, "event_bus", None)
         if event_bus:
@@ -962,6 +965,7 @@ class QuickFixEngine:
                 result = self.manager.run_patch(
                     path,
                     desc,
+                    provenance_token=token,
                     context_meta=context_meta,
                     context_builder=builder,
                 )
@@ -969,6 +973,7 @@ class QuickFixEngine:
                 result = self.manager.run_patch(
                     path,
                     desc,
+                    provenance_token=token,
                     context_meta=context_meta,
                 )
             patch_id = getattr(result, "patch_id", None)
@@ -1118,6 +1123,11 @@ class QuickFixEngine:
             if session_id:
                 meta["retrieval_session_id"] = session_id
                 meta.setdefault("retrieval_vectors", vectors)
+            token = getattr(
+                getattr(self.manager, "evolution_orchestrator", None),
+                "provenance_token",
+                None,
+            )
             patch_id = None
             event_bus = getattr(self.manager, "event_bus", None)
             if event_bus:
@@ -1133,6 +1143,7 @@ class QuickFixEngine:
                     result = self.manager.run_patch(
                         path,
                         desc,
+                        provenance_token=token,
                         context_meta=meta,
                         context_builder=builder,
                     )
@@ -1140,6 +1151,7 @@ class QuickFixEngine:
                     result = self.manager.run_patch(
                         path,
                         desc,
+                        provenance_token=token,
                         context_meta=meta,
                     )
                 patch_id = getattr(result, "patch_id", None)

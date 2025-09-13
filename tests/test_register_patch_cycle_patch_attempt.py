@@ -1,7 +1,6 @@
 import os
 import sys
 import types
-from pathlib import Path
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -23,33 +22,51 @@ dummy_trend.TrendPredictor = object
 sys.modules["menace_sandbox.trend_predictor"] = dummy_trend
 
 dummy_scm = types.ModuleType("menace_sandbox.self_coding_manager")
+
+
 class _HGE(Exception):
     pass
+
+
 dummy_scm.HelperGenerationError = _HGE
 sys.modules["menace_sandbox.self_coding_manager"] = dummy_scm
 
 dummy_settings = types.ModuleType("menace_sandbox.sandbox_settings")
+
+
 class _SS:
     pass
+
+
 dummy_settings.SandboxSettings = _SS
 sys.modules["menace_sandbox.sandbox_settings"] = dummy_settings
 
 dummy_threshold = types.ModuleType("menace_sandbox.threshold_service")
+
+
 class _TS:
     def get(self, *a, **k):
         class T:
             error_threshold = 0.0
             roi_drop = 0.0
+
         return T()
+
     def reload(self, *a, **k):
         return self.get()
+
+
 th = _TS()
 dummy_threshold.threshold_service = th
 sys.modules["menace_sandbox.threshold_service"] = dummy_threshold
 
 dummy_data_bot_mod = types.ModuleType("menace_sandbox.data_bot")
+
+
 class _DataBot:
     pass
+
+
 dummy_data_bot_mod.DataBot = _DataBot
 sys.modules["menace_sandbox.data_bot"] = dummy_data_bot_mod
 
@@ -62,17 +79,22 @@ di.baseline_tracker = bt
 sys.modules["menace_sandbox.self_improvement"] = di
 sys.modules["menace_sandbox.self_improvement.baseline_tracker"] = bt
 
-import menace_sandbox.evolution_orchestrator as eo
-from menace_sandbox.evolution_orchestrator import EvolutionOrchestrator, EvolutionTrigger
-from menace_sandbox.evolution_history_db import EvolutionHistoryDB
-from menace_sandbox.bot_registry import BotRegistry
+import menace_sandbox.evolution_orchestrator as eo  # noqa: E402
+from menace_sandbox.evolution_orchestrator import (  # noqa: E402
+    EvolutionOrchestrator,
+    EvolutionTrigger,
+)
+from menace_sandbox.evolution_history_db import EvolutionHistoryDB  # noqa: E402
+from menace_sandbox.bot_registry import BotRegistry  # noqa: E402
 
 
 class DummyEventBus:
     def __init__(self):
         self.events = []
+
     def publish(self, topic, event):
         self.events.append((topic, event))
+
     def subscribe(self, topic, cb):
         pass
 
@@ -81,12 +103,16 @@ class DummyDataBot:
     def __init__(self):
         self.event_bus = DummyEventBus()
         self.db = types.SimpleNamespace(fetch=lambda limit: [])
+
     def subscribe_degradation(self, cb):
         pass
+
     def roi(self, bot):
         return 2.0
+
     def average_errors(self, bot):
         return 1.0
+
     def average_test_failures(self, bot):
         return 0.0
 
@@ -109,10 +135,22 @@ def test_register_patch_cycle_attempts_patch(monkeypatch, tmp_path):
             self._last_commit_hash = "abc"
             self.reg_calls = []
             self.gen_calls = []
-        def register_patch_cycle(self, desc, ctx):
-            self.reg_calls.append((desc, ctx))
-        def generate_and_patch(self, path, desc, context_meta=None, context_builder=None):
-            self.gen_calls.append((path, desc, context_meta, context_builder))
+
+        def register_patch_cycle(self, desc, ctx, *, provenance_token: str):
+            self.reg_calls.append((desc, ctx, provenance_token))
+
+        def generate_and_patch(
+            self,
+            path,
+            desc,
+            *,
+            context_meta=None,
+            context_builder=None,
+            provenance_token: str,
+        ):
+            self.gen_calls.append(
+                (path, desc, context_meta, context_builder, provenance_token)
+            )
             return None, self._last_commit_hash
 
     scm = SCM()
