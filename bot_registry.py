@@ -118,11 +118,17 @@ class BotRegistry:
                         if str(event.get("bot")) != _bot:
                             return
                         try:
-                            desc = f"auto_patch_due_to_degradation:{_bot}"
-                            _mgr.register_patch_cycle(desc, event)
-                            module = self.graph.nodes[_bot].get("module")
-                            if module and hasattr(_mgr, "generate_and_patch"):
-                                _mgr.generate_and_patch(Path(module), desc, context_meta=event)[0]
+                            orchestrator = getattr(_mgr, "evolution_orchestrator", None)
+                            if orchestrator is not None:
+                                orchestrator.register_patch_cycle(event)
+                            else:
+                                desc = f"auto_patch_due_to_degradation:{_bot}"
+                                _mgr.register_patch_cycle(desc, event)
+                                module = self.graph.nodes[_bot].get("module")
+                                if module and hasattr(_mgr, "generate_and_patch"):
+                                    _mgr.generate_and_patch(
+                                        Path(module), desc, context_meta=event
+                                    )[0]
                         except Exception as exc:  # pragma: no cover - best effort
                             logger.error("degradation callback failed for %s: %s", _bot, exc)
 
