@@ -570,6 +570,7 @@ class EvolutionOrchestrator:
                                 "failed to publish patch_failed for %s", bot
                             )
                     return
+                self.selfcoding_manager.refresh_quick_fix_context()
                 self.selfcoding_manager.run_patch(
                     module_path,
                     desc,
