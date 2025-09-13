@@ -205,6 +205,15 @@ except Exception:  # pragma: no cover - fallback for tests
             "violation_logger.log_violation missing; nothing will be recorded"
         )
         return None
+try:  # pragma: no cover - optional dependency
+    from .advanced_error_management import AutomatedRollbackManager
+except Exception:  # pragma: no cover - fallback for tests
+    AutomatedRollbackManager = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .code_database import PatchHistoryDB
+except Exception:  # pragma: no cover - fallback for tests
+    PatchHistoryDB = None  # type: ignore
+
 
 
 _VEC_METRICS = None
@@ -602,6 +611,52 @@ def generate_patch(
                         )
                     except Exception:
                         logger.debug("failed to capture commit hash", exc_info=True)
+                    approved = True
+                    ap = getattr(manager, "approval_policy", None)
+                    if ap is not None:
+                        try:
+                            approved = bool(ap.approve(path))
+                        except Exception:
+                            logger.exception("approval policy execution failed")
+                            approved = False
+                    if not approved:
+                        rbm = getattr(ap, "rollback_mgr", None)
+                        if rbm is None and AutomatedRollbackManager is not None:
+                            try:
+                                rbm = AutomatedRollbackManager()
+                            except Exception:
+                                rbm = None
+                        if rbm is not None:
+                            try:
+                                rbm.rollback(str(patch_id))
+                            except Exception:
+                                logger.exception("failed to rollback invalid patch")
+                        if PatchHistoryDB is not None:
+                            try:
+                                PatchHistoryDB().record_vector_metrics(
+                                    "",
+                                    [],
+                                    patch_id=patch_id,
+                                    contribution=0.0,
+                                    win=False,
+                                    regret=True,
+                                )
+                            except Exception:
+                                logger.exception("failed to log patch outcome")
+                        event_bus = getattr(manager, "event_bus", None)
+                        if event_bus:
+                            try:
+                                event_bus.publish(
+                                    "quick_fix:approval_failed",
+                                    {
+                                        "bot": getattr(manager, "bot_name", ""),
+                                        "module": path.as_posix(),
+                                        "patch_id": patch_id,
+                                    },
+                                )
+                            except Exception:
+                                logger.exception("failed to publish approval_failed event")
+                        return (None, risk_flags) if return_flags else None
                     try:
                         registry.update_bot(
                             getattr(manager, "bot_name", ""),

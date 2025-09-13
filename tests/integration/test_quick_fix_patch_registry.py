@@ -125,6 +125,31 @@ def _setup_env(tmp_path, monkeypatch):
     db_mod.DataBot = DataBot
     sys.modules["menace_sandbox.data_bot"] = db_mod
 
+    aem = types.ModuleType("menace_sandbox.advanced_error_management")
+
+    class AutomatedRollbackManager:  # pragma: no cover - stub
+        def __init__(self, *a, **k):
+            self.rolled_back = None
+
+        def rollback(self, patch_id):  # pragma: no cover - record call
+            self.rolled_back = patch_id
+
+    aem.AutomatedRollbackManager = AutomatedRollbackManager
+    sys.modules["menace_sandbox.advanced_error_management"] = aem
+
+    code_db = types.ModuleType("menace_sandbox.code_database")
+
+    class PatchHistoryDB:  # pragma: no cover - stub
+        def __init__(self, *a, **k):
+            self.logged = []
+
+        def record_vector_metrics(self, *a, **k):
+            self.logged.append((a, k))
+
+    code_db.PatchHistoryDB = PatchHistoryDB
+    sys.modules["menace_sandbox.code_database"] = code_db
+    sys.modules["code_database"] = code_db
+
     spec = importlib.util.spec_from_file_location(
         "menace_sandbox.quick_fix_engine", ROOT / "quick_fix_engine.py"
     )
@@ -267,3 +292,138 @@ def test_quick_fix_registry_updates_atomic(tmp_path, monkeypatch):
 
     node = registry.graph.nodes[manager.bot_name]
     assert registry.modules[manager.bot_name] == node["module"]
+
+
+def test_quick_fix_runs_approval_policy(tmp_path, monkeypatch):
+    ROOT, qfe, ContextBuilder = _setup_env(tmp_path, monkeypatch)
+
+    class DummyDataBot:
+        def roi(self, _name):
+            return 0.0
+
+        def average_errors(self, _name):
+            return 0.0
+
+    class DummyRegistry:
+        def __init__(self):
+            self.updated = None
+
+        def register_bot(self, _name):
+            pass
+
+        def update_bot(self, name, module, **extra):
+            self.updated = (name, module, extra)
+
+    class DummyEngine:
+        def generate_helper(self, desc, **kwargs):
+            return "helper"
+
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            return 1, "", ""
+
+    class DummyApprovalPolicy:
+        def __init__(self):
+            self.called = False
+
+        def approve(self, _path):
+            self.called = True
+            return True
+
+    class DummyManager:
+        def __init__(self):
+            self.engine = DummyEngine()
+            self.data_bot = DummyDataBot()
+            self.bot_registry = DummyRegistry()
+            self.bot_name = "dummy"
+            self.approval_policy = DummyApprovalPolicy()
+
+        def register_patch_cycle(self, description, context_meta=None):
+            pass
+
+    manager = DummyManager()
+    builder = ContextBuilder()
+    mod = tmp_path / "mod.py"
+    mod.write_text("print('hi')\n")
+    commit = "deadbeef"
+    monkeypatch.setattr(qfe.subprocess, "check_output", lambda *a, **k: commit.encode())
+
+    pid = qfe.generate_patch(str(mod), manager, manager.engine, context_builder=builder)
+
+    assert pid == 1
+    assert manager.approval_policy.called
+    assert manager.bot_registry.updated == (
+        manager.bot_name,
+        str(mod),
+        {"patch_id": 1, "commit": commit},
+    )
+
+
+def test_quick_fix_approval_failure_rolls_back_and_notifies(tmp_path, monkeypatch):
+    ROOT, qfe, ContextBuilder = _setup_env(tmp_path, monkeypatch)
+    aem = importlib.import_module("menace_sandbox.advanced_error_management")
+    code_db = importlib.import_module("menace_sandbox.code_database")
+    rb = aem.AutomatedRollbackManager()
+    phdb = code_db.PatchHistoryDB()
+    monkeypatch.setattr(qfe, "PatchHistoryDB", lambda *a, **k: phdb)
+
+    class Bus:
+        def __init__(self):
+            self.events = []
+
+        def publish(self, name, payload):  # pragma: no cover - record events
+            self.events.append((name, payload))
+
+    bus = Bus()
+
+    class DummyDataBot:
+        def roi(self, _name):
+            return 0.0
+
+        def average_errors(self, _name):
+            return 0.0
+
+    class DummyRegistry:
+        def register_bot(self, _name):
+            pass
+
+        def update_bot(self, *a, **k):
+            raise AssertionError("should not update registry")
+
+    class DummyEngine:
+        def generate_helper(self, desc, **kwargs):
+            return "helper"
+
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            return 2, "", ""
+
+    class DummyApprovalPolicy:
+        rollback_mgr = rb
+
+        def approve(self, _path):
+            return False
+
+    class DummyManager:
+        def __init__(self):
+            self.engine = DummyEngine()
+            self.data_bot = DummyDataBot()
+            self.bot_registry = DummyRegistry()
+            self.bot_name = "dummy"
+            self.approval_policy = DummyApprovalPolicy()
+            self.event_bus = bus
+
+        def register_patch_cycle(self, description, context_meta=None):
+            pass
+
+    manager = DummyManager()
+    builder = ContextBuilder()
+    mod = tmp_path / "mod.py"
+    mod.write_text("print('hi')\n")
+    commit = "deadbeef"
+    monkeypatch.setattr(qfe.subprocess, "check_output", lambda *a, **k: commit.encode())
+
+    result = qfe.generate_patch(str(mod), manager, manager.engine, context_builder=builder)
+
+    assert result is None
+    assert rb.rolled_back == "2"
+    assert phdb.logged
+    assert bus.events and bus.events[0][0] == "quick_fix:approval_failed"
