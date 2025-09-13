@@ -972,7 +972,10 @@ class SelfCodingManager:
                     )
                 except Exception as exc:
                     try:
-                        RollbackManager().rollback("pre_commit_validation", requesting_bot=self.bot_name)
+                        RollbackManager().rollback(
+                            "pre_commit_validation",
+                            requesting_bot=self.bot_name,
+                        )
                     except Exception:
                         self.logger.exception("rollback failed")
                     MutationLogger.log_mutation(
@@ -985,7 +988,10 @@ class SelfCodingManager:
                     raise RuntimeError("quick fix validation failed") from exc
                 if not valid:
                     try:
-                        RollbackManager().rollback("quick_fix_validation_failed", requesting_bot=self.bot_name)
+                        RollbackManager().rollback(
+                            "quick_fix_validation_failed",
+                            requesting_bot=self.bot_name,
+                        )
                     except Exception:
                         self.logger.exception("rollback failed")
                     MutationLogger.log_mutation(
@@ -1441,7 +1447,13 @@ class SelfCodingManager:
                     try:
                         self.event_bus.publish(
                             "bot:update_blocked",
-                            {"bot": self.bot_name, "path": module_path, "patch_id": patch_id, "commit": commit_hash, "reason": "missing_provenance"},
+                            {
+                                "bot": self.bot_name,
+                                "path": module_path,
+                                "patch_id": patch_id,
+                                "commit": commit_hash,
+                                "reason": "missing_provenance",
+                            },
                         )
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception(
@@ -1508,7 +1520,12 @@ class SelfCodingManager:
                     try:
                         self.event_bus.publish(
                             "bot:updated",
-                            {"bot": self.bot_name, "path": module_path, "patch_id": patch_id, "commit": commit_hash},
+                            {
+                                "bot": self.bot_name,
+                                "path": module_path,
+                                "patch_id": patch_id,
+                                "commit": commit_hash,
+                            },
                         )
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception(
@@ -1543,6 +1560,11 @@ class SelfCodingManager:
             load_failed_tags()
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to refresh failed tags")
+        if self.data_bot and hasattr(self.data_bot, "reload_thresholds"):
+            # Refresh thresholds post-patch so subsequent decisions use the
+            # latest configuration.  ``_refresh_thresholds`` will emit an event
+            # if any values change.
+            self._refresh_thresholds()
         return result
 
     # ------------------------------------------------------------------
