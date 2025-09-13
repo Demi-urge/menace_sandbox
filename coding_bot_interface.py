@@ -72,17 +72,15 @@ def _resolve_helpers(
     DataBot,
     EvolutionOrchestrator | None,
     str,
-    SelfCodingManager | None,
+    SelfCodingManager,
 ]:
     """Resolve helper objects for *obj*.
 
     ``BotRegistry`` and ``DataBot`` are mandatory helpers.  When available, the
-    existing ``EvolutionOrchestrator`` and ``SelfCodingManager`` references are
-    also returned so callers can reuse or extend them.  If ``manager`` is
-    provided, it takes precedence over any existing ``manager`` attribute on the
-    object.  A :class:`RuntimeError` is raised if either ``BotRegistry`` or
-    ``DataBot`` cannot be resolved from the provided arguments, instance
-    attributes or the ``manager`` attribute.
+    existing ``EvolutionOrchestrator`` reference is also returned so callers can
+    reuse or extend it.  ``manager`` takes precedence over any existing
+    ``manager`` attribute on the object.  A :class:`RuntimeError` is raised if
+    any mandatory helper cannot be resolved.
     """
 
     manager = manager or getattr(obj, "manager", None)
@@ -110,6 +108,9 @@ def _resolve_helpers(
         module_path = inspect.getfile(obj.__class__)
     except Exception:  # pragma: no cover - best effort
         module_path = ""
+
+    if manager is None:
+        raise RuntimeError("SelfCodingManager is required but was not provided")
 
     return registry, data_bot, orchestrator, module_path, manager
 
@@ -194,7 +195,7 @@ def self_coding_managed(
             orchestrator: EvolutionOrchestrator | None = kwargs.pop(
                 "evolution_orchestrator", None
             )
-            manager_local: SelfCodingManager | None = kwargs.pop("manager", manager)
+            manager_local: SelfCodingManager | None = kwargs.get("manager", manager)
             orig_init(self, *args, **kwargs)
             try:
                 (
@@ -223,18 +224,7 @@ def self_coding_managed(
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("failed to initialise thresholds for %s", name_local)
             if not isinstance(manager_local, SelfCodingManager):
-                try:
-                    manager_local = SelfCodingManager(
-                        getattr(self, "engine", None),
-                        getattr(self, "pipeline", None),
-                        bot_name=name_local,
-                        bot_registry=registry,
-                        data_bot=d_bot,
-                    )
-                except Exception as exc:  # pragma: no cover - best effort
-                    raise RuntimeError(
-                        "failed to initialise SelfCodingManager; provide a manager"
-                    ) from exc
+                raise RuntimeError("SelfCodingManager instance is required")
             self.manager = manager_local
 
             if orchestrator is None:

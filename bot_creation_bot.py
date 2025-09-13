@@ -76,13 +76,13 @@ class BotCreationBot(AdminBotBase):
     COOLDOWN_PERIOD = 3600  # seconds
     MAX_BOTS_PER_PERIOD = 5
 
-    manager: "SelfCodingManager | None" = None
+    manager: SelfCodingManager
 
     def __init__(
         self,
         context_builder: ContextBuilder,
         *,
-        manager: SelfCodingManager | None = None,
+        manager: SelfCodingManager,
         metrics_db: MetricsDB | None = None,
         planner: BotPlanningBot | None = None,
         developer: BotDevelopmentBot | None = None,
@@ -125,15 +125,14 @@ class BotCreationBot(AdminBotBase):
         self.workflow_bot = workflow_bot
         self.trending_scraper = trending_scraper
         self.intent_clusterer = intent_clusterer or IntentClusterer(UniversalRetriever())
-        if self.manager is not None:
-            try:
-                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-                self.manager.register_bot(name)
-                orch = getattr(self.manager, "evolution_orchestrator", None)
-                if orch:
-                    orch.register_bot(name)
-            except Exception:
-                logger.exception("bot registration failed")
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:
+            logger.exception("bot registration failed")
         self.assigned_prediction_bots = []
         if self.prediction_manager:
             try:

@@ -81,7 +81,7 @@ class EnhancementBot:
         *,
         context_builder: ContextBuilder,
         llm_client: LLMClient | None = None,
-        manager: SelfCodingManager | None = None,
+        manager: SelfCodingManager,
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
@@ -93,15 +93,14 @@ class EnhancementBot:
         self.db_weights = self.context_builder.refresh_db_weights()
         self.llm_client = llm_client
         self.manager = manager
-        if self.manager is not None:
-            try:
-                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-                self.manager.register_bot(name)
-                orch = getattr(self.manager, "evolution_orchestrator", None)
-                if orch:
-                    orch.register_bot(name)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("bot registration failed")
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("bot registration failed")
 
     # ------------------------------------------------------------------
     def _hash(self, text: str) -> str:

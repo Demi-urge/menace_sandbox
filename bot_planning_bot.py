@@ -70,12 +70,21 @@ class BotPlan:
 class BotPlanningBot:
     """Analyse tasks and plan bots with hierarchy mapping."""
 
-    manager: "SelfCodingManager | None" = None
+    manager: SelfCodingManager
 
-    def __init__(self, template_manager: Optional[TemplateManager] = None) -> None:
+    def __init__(self, manager: SelfCodingManager, template_manager: Optional[TemplateManager] = None) -> None:
         self.tm = template_manager or TemplateManager()
         self.graph = nx.DiGraph()
         self.regressor = LinearRegression()
+        self.manager = manager
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:
+            logger.exception("bot registration failed")
 
     def evaluate_tasks(self, tasks: Iterable[PlanningTask]) -> List[float]:
         """Predict creation time from task attributes."""

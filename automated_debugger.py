@@ -34,7 +34,7 @@ data_bot = DataBot(start_server=False)
 class AutomatedDebugger:
     """Analyse telemetry logs and trigger self-coding fixes."""
 
-    manager: "SelfCodingManager | None" = None
+    manager: SelfCodingManager
 
     def __init__(
         self,
@@ -53,6 +53,14 @@ class AutomatedDebugger:
         self.context_builder = context_builder
         self.logger = logging.getLogger("AutomatedDebugger")
         self._tracker = PatchAttemptTracker()
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:
+            self.logger.exception("bot registration failed")
 
     # ------------------------------------------------------------------
     def _recent_logs(self, limit: int = 5) -> Iterable[str]:

@@ -195,10 +195,11 @@ class TestingLogDB:
 class BotTestingBot:
     """Run unit and basic integration tests for bots."""
 
-    manager: "SelfCodingManager | None" = None
+    manager: SelfCodingManager
 
     def __init__(
         self,
+        manager: SelfCodingManager,
         db: TestingLogDB | None = None,
         *,
         settings: BotTestingSettings | None = None,
@@ -236,6 +237,14 @@ class BotTestingBot:
             self.logger.warning("Faker not installed; randomized testing disabled")
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = DataBot()
+        self.manager = manager
+        try:
+            self.manager.register_bot(self.name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(self.name)
+        except Exception:
+            logger.exception("bot registration failed")
 
     def _random_arg(self, param: inspect.Parameter) -> Any:
         ann = param.annotation
