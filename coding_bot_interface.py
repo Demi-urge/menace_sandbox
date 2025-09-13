@@ -268,13 +268,14 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                 )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("bot registration failed for %s", name_local)
-            try:
-                orchestrator.register_bot(name_local)
-                logger.info("registered %s with EvolutionOrchestrator", name_local)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception(
-                    "evolution orchestrator registration failed for %s", name_local
-                )
+            if orchestrator is not None:
+                try:
+                    orchestrator.register_bot(name_local)
+                    logger.info("registered %s with EvolutionOrchestrator", name_local)
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception(
+                        "evolution orchestrator registration failed for %s", name_local
+                    )
             if d_bot and getattr(d_bot, "db", None):
                 try:
                     roi = float(d_bot.roi(name_local)) if hasattr(d_bot, "roi") else 0.0
