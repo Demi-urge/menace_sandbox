@@ -397,7 +397,12 @@ def generate_patch(
     try:
         meta = dict(context_meta)
         meta.setdefault("trigger", "quick_fix_engine")
-        manager.register_patch_cycle(description, meta)
+        token = getattr(
+            getattr(manager, "evolution_orchestrator", None),
+            "provenance_token",
+            None,
+        )
+        manager.register_patch_cycle(description, meta, provenance_token=token)
     except Exception:
         logger.exception("failed to register patch cycle")
 

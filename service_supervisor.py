@@ -66,7 +66,7 @@ from .model_automation_pipeline import ModelAutomationPipeline  # noqa: E402
 from .quick_fix_engine import QuickFixEngine  # noqa: E402
 from vector_service.context_builder import ContextBuilder  # noqa: E402
 from context_builder_util import create_context_builder  # noqa: E402
-from .unified_event_bus import UnifiedEventBus  # noqa: E402
+from .shared_event_bus import event_bus as bus  # noqa: E402
 from .bot_registry import BotRegistry  # noqa: E402
 from .data_bot import DataBot  # noqa: E402
 from .coding_bot_interface import self_coding_managed  # noqa: E402
@@ -76,7 +76,9 @@ try:  # optional dependency
 except Exception:  # pragma: no cover - optional
     psutil = None  # type: ignore
 
-bus = UnifiedEventBus()
+# ``bus`` is the shared :class:`UnifiedEventBus` instance so all services
+# exchange events via a common channel.  Creating separate buses would isolate
+# degradation notifications and break global coordination.
 registry = BotRegistry(event_bus=bus)
 data_bot = DataBot(event_bus=bus)
 
