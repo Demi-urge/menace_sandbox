@@ -111,6 +111,16 @@ _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 logger = logging.getLogger(__name__)
 
 
+def persist_sc_thresholds(*_a, **_k) -> None:
+    """Persist self-coding thresholds.
+
+    The real implementation lives elsewhere but tests monkeypatch this
+    function. Providing a stub avoids ``AttributeError`` when tests replace
+    it with a fake implementation.
+    """
+    pass
+
+
 @dataclass
 class MetricRecord:
     """Metrics captured for a bot at a point in time."""
@@ -1856,6 +1866,18 @@ class DataBot:
             "error_breach": delta_err >= err_thresh,
             "test_failure_breach": delta_fail > fail_thresh,
         }
+        # Calculate a composite severity score combining ROI drop, error surge, and
+        # test failures.  Weights bias towards ROI impact but ensure all metrics
+        # contribute.  The result is clamped to ``[0, 1]`` so downstream
+        # consumers can interpret it as a normalized severity value.
+        severity = 0.0
+        if roi_thresh:
+            severity += 0.5 * max(0.0, -delta_roi / abs(roi_thresh))
+        if err_thresh:
+            severity += 0.3 * max(0.0, delta_err / err_thresh)
+        if fail_thresh:
+            severity += 0.2 * max(0.0, delta_fail / fail_thresh)
+        event["severity"] = min(severity, 1.0)
         # Provide a concise summary for consumers that only require high-level
         # degradation indicators.
         event.update(
