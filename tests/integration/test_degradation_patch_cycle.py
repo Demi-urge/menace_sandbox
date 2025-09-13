@@ -70,6 +70,9 @@ class SelfCodingManager:
                 "self_coding:cycle_registered",
                 {"bot": self.bot_name, "description": description},
             )
+        self._last_patch_id = 123
+        self._last_commit_hash = "deadbeef"
+        return 123, "deadbeef"
 
     def should_refactor(self) -> bool:  # noqa: D401 - simple always-true stub
         return True
@@ -207,6 +210,7 @@ def test_degradation_triggers_patch(tmp_path, monkeypatch):
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
     assert "bot:patched" in topics
+    assert "bot:patch_applied" in topics
 
 
 def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
@@ -264,6 +268,7 @@ def test_bot_degraded_event_triggers_patch(tmp_path, monkeypatch):
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
     assert "bot:patched" in topics
+    assert "bot:patch_applied" in topics
 
 
 def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
@@ -338,3 +343,4 @@ def test_decorated_bot_triggers_degradation(tmp_path, monkeypatch):
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics
     assert "bot:patched" in topics
+    assert "bot:patch_applied" in topics

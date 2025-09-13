@@ -116,6 +116,9 @@ class SelfCodingManager:
             self.event_bus.publish(
                 "self_coding:cycle_registered", {"bot": self.bot_name, "description": description}
             )
+        self._last_patch_id = 123
+        self._last_commit_hash = "deadbeef"
+        return 123, "deadbeef"
 
     def run_patch(self, path: Path, description: str, *, context_meta=None, context_builder=None):
         manager_generate_helper(self, description, path=str(path))
@@ -251,4 +254,5 @@ def test_full_self_coding_flow(tmp_path, monkeypatch):
     assert engine.calls, "generate_helper not invoked"
     topics = [t for t, _ in bus.events]
     assert "self_coding:cycle_registered" in topics, "patch cycle not registered"
+    assert "bot:patch_applied" in topics
     assert update_calls and update_calls[-1][0] == "dummy_bot", "update_bot not called"

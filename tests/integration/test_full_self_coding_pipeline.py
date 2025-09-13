@@ -65,6 +65,8 @@ class SelfCodingManager:
             if context_meta:
                 payload.update(context_meta)
             self.event_bus.publish("self_coding:cycle_registered", payload)
+        self._last_commit_hash = "deadbeef"
+        return self._last_patch_id, "deadbeef"
 
     def run_patch(
         self, path: Path, description: str, *, context_meta=None, context_builder=None
@@ -241,6 +243,9 @@ def test_full_self_coding_pipeline(tmp_path, monkeypatch):
 
     patch_event = next(p for t, p in bus.published if t == "self_coding:patch_applied")
     assert patch_event["patch_id"] == 42
+
+    bot_patch_event = next(p for t, p in bus.published if t == "bot:patch_applied")
+    assert bot_patch_event["patch_id"] == cycle_event["patch_id"]
 
     patched = next(p for t, p in bus.published if t == "bot:patched")
     assert patched["bot"] == "dummy_module"

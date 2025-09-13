@@ -84,9 +84,10 @@ class FakeSelfCodingManager:
         self.quick_fix = quick_fix
         self.bot_name = bot_name
 
-    def register_patch_cycle(self, desc: str, event: dict | None = None) -> None:
+    def register_patch_cycle(self, desc: str, event: dict | None = None) -> tuple[int, str]:
         self.quick_fix.apply_patch(desc)
         self.bot_registry.update_bot(self.bot_name, f"{self.bot_name}_patched")
+        return 1, "deadbeef"
 
 
 class FakeEvolutionOrchestrator:
