@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-"""Manage self-coding patches and deployment cycles."""
+"""Manage self-coding patches and deployment cycles.
+
+Many operations require a provenance token issued by the active
+``EvolutionOrchestrator``.  Call :func:`validate_provenance` to verify that
+requests originate from the orchestrator before proceeding.
+"""
 
 from pathlib import Path
 
@@ -561,6 +566,7 @@ class SelfCodingManager:
         *,
         helper_fn: Callable[..., str] | None = None,
         context_builder: ContextBuilder | None = None,
+        provenance_token: str,
         **kwargs: Any,
     ):
         """Generate a quick fix patch for ``module``.
@@ -584,6 +590,7 @@ class SelfCodingManager:
             context_builder=builder,
             description=description,
             helper_fn=helper,
+            provenance_token=provenance_token,
             **kwargs,
         )
 
@@ -661,7 +668,7 @@ class SelfCodingManager:
         return result
 
     # ------------------------------------------------------------------
-    def _validate_provenance(self, token: str | None) -> None:
+    def validate_provenance(self, token: str | None) -> None:
         """Ensure calls originate from the registered ``EvolutionOrchestrator``.
 
         A configured orchestrator is required and ``token`` must match its
@@ -697,7 +704,7 @@ class SelfCodingManager:
         event identifiers are stored for linking with subsequent patch events.
         """
 
-        self._validate_provenance(provenance_token)
+        self.validate_provenance(provenance_token)
 
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         errors = self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
@@ -777,7 +784,7 @@ class SelfCodingManager:
         Returns a tuple of the :class:`AutomationResult` and the commit hash of
         the applied patch, if any.
         """
-        self._validate_provenance(provenance_token)
+        self.validate_provenance(provenance_token)
 
         builder = context_builder or ContextBuilder()
         try:
@@ -890,7 +897,7 @@ class SelfCodingManager:
         ``context_builder`` argument is retained for backwards compatibility but
         ignored.
         """
-        self._validate_provenance(provenance_token)
+        self.validate_provenance(provenance_token)
         self.refresh_quick_fix_context()
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
@@ -1233,7 +1240,10 @@ class SelfCodingManager:
                     raise RuntimeError("QuickFixEngine validation unavailable")
                 try:
                     valid, _flags = self.quick_fix.validate_patch(
-                        module_path, desc, repo_root=clone_root
+                        module_path,
+                        desc,
+                        repo_root=clone_root,
+                        provenance_token=provenance_token,
                     )
                 except Exception as exc:
                     try:
@@ -1269,7 +1279,10 @@ class SelfCodingManager:
                     raise RuntimeError("quick fix validation failed")
                 try:
                     passed, patch_id, flags = self.quick_fix.apply_validated_patch(
-                        module_path, desc, ctx_meta
+                        module_path,
+                        desc,
+                        ctx_meta,
+                        provenance_token=provenance_token,
                     )
                 except Exception as exc:
                     if self.event_bus:
@@ -1575,7 +1588,9 @@ class SelfCodingManager:
             try:
                 _src = path.read_text(encoding="utf-8")
                 valid_post, _flags_post = self.quick_fix.validate_patch(
-                    str(path), description
+                    str(path),
+                    description,
+                    provenance_token=provenance_token,
                 )
                 path.write_text(_src, encoding="utf-8")
                 if not valid_post:
