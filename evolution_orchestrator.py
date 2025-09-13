@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 import time
 import inspect
+import uuid
 
 import numpy as np
 
@@ -139,7 +140,9 @@ class EvolutionOrchestrator:
         if self.event_bus and self.selfcoding_manager:
             def _handle_degradation(topic: str, event: object) -> None:
                 try:
-                    self.selfcoding_manager.register_patch_cycle(event)
+                    self.selfcoding_manager.register_patch_cycle(
+                        event, provenance_token=self.provenance_token
+                    )
                 except Exception:
                     self.logger.exception("register_patch_cycle failed")
 
@@ -151,6 +154,8 @@ class EvolutionOrchestrator:
         self.roi_history: list[float] = []
         self._registered_bots: set[str] = set()
         self._pending_patch_cycle: set[str] = set()
+        # Token used by ``SelfCodingManager`` to verify provenance of patch calls
+        self.provenance_token = uuid.uuid4().hex
         if not self.dataset_path.exists():
             try:
                 self.dataset_path.write_text(
@@ -252,7 +257,9 @@ class EvolutionOrchestrator:
             "reason": "bot degraded",
         }
         try:
-            self.selfcoding_manager.register_patch_cycle(desc, context)
+            self.selfcoding_manager.register_patch_cycle(
+                desc, context, provenance_token=self.provenance_token
+            )
         except Exception:
             self.logger.exception("failed to register patch cycle for %s", bot)
         else:
@@ -312,6 +319,7 @@ class EvolutionOrchestrator:
                 desc,
                 context_meta=context,
                 context_builder=builder,
+                provenance_token=self.provenance_token,
             )
             patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
             commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
@@ -484,7 +492,9 @@ class EvolutionOrchestrator:
             else "auto_patch_due_to_threshold_breach"
         )
         try:
-            self.selfcoding_manager.register_patch_cycle(desc, context_meta)
+            self.selfcoding_manager.register_patch_cycle(
+                desc, context_meta, provenance_token=self.provenance_token
+            )
         except Exception:
             self.logger.exception("failed to register patch cycle for %s", bot)
         else:
@@ -500,7 +510,9 @@ class EvolutionOrchestrator:
         bot = str(event.get("bot", ""))
         desc = f"auto_patch_due_to_degradation:{bot}"
         try:
-            self.selfcoding_manager.register_patch_cycle(desc, event)
+            self.selfcoding_manager.register_patch_cycle(
+                desc, event, provenance_token=self.provenance_token
+            )
             if bot:
                 self._pending_patch_cycle.add(bot)
         except Exception:
@@ -535,7 +547,9 @@ class EvolutionOrchestrator:
             else "auto_patch_due_to_degradation"
         )
         try:
-            self.selfcoding_manager.register_patch_cycle(desc, context_meta)
+            self.selfcoding_manager.register_patch_cycle(
+                desc, context_meta, provenance_token=self.provenance_token
+            )
         except Exception:
             self.logger.exception("failed to register patch cycle for %s", bot)
         else:
@@ -716,6 +730,7 @@ class EvolutionOrchestrator:
                     desc,
                     context_meta=context_meta,
                     context_builder=builder,
+                    provenance_token=self.provenance_token,
                 )
                 patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
                 commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
@@ -953,7 +968,9 @@ class EvolutionOrchestrator:
                     "roi_threshold": self.triggers.roi_drop,
                     "error_threshold": self.triggers.error_rate,
                 }
-                self.selfcoding_manager.register_patch_cycle(reason, meta)
+                self.selfcoding_manager.register_patch_cycle(
+                    reason, meta, provenance_token=self.provenance_token
+                )
                 self.selfcoding_manager.run_patch(
                     path, reason, context_meta=meta
                 )
