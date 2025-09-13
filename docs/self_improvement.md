@@ -52,3 +52,27 @@ Increase verbosity with `--log-level DEBUG` when launching the sandbox and use
 `tail -f logs/*.log` to monitor activity. ROI, synergy and error messages help
 identify regressions during self-improvement cycles.
 
+## Self-Improvement Flow
+
+- **DataBot** collects ROI and error metrics during sandbox runs.
+- Metrics feed ROI/error thresholds in the self-improvement policy.
+- Breaches invoke `QuickFixEngine` to draft patches.
+- Patches run through validation tests and sandbox evaluation.
+- Approved patches are deployed into the repository.
+
+## Registering managed bots
+
+1. Implement a bot class that encapsulates your behaviour.
+2. Import `@self_coding_managed` from `coding_bot_interface`.
+3. Decorate the bot class with `@self_coding_managed` to enable metric tracking.
+4. Instantiate the bot and ensure it is discoverable by `BotRegistry`.
+
+## Thresholds and hot-swapping
+
+ROI or error rates breaching configured limits trigger a refactor loop. The
+system requests fixes from `QuickFixEngine`, which can hot-swap code in place once
+validation passes. This allows rapid remediation without a full restart.
+
+See [self_coding_engine](self_coding_engine.md) and
+[sandbox_self_improvement](sandbox_self_improvement.md) for more details.
+
