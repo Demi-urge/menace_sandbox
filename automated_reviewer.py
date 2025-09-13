@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
-from .coding_bot_interface import self_coding_managed
+from .coding_bot_interface import self_coding_managed, manager_generate_helper
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
@@ -136,10 +136,7 @@ class AutomatedReviewer:
                 ctx = ""
                 vectors = []
             try:
-                self.manager.manager_generate_helper(
-                    f"review for bot {bot_id}",
-                    context_builder=self.context_builder,
-                )
+                manager_generate_helper(self.manager, f"review for bot {bot_id}")
             except Exception:
                 self.logger.exception("helper generation failed")
             try:
