@@ -50,6 +50,8 @@ jobs:
         run: python tools/find_unmanaged_bots.py
       - name: Prevent unwrapped engine.generate_helper usage
         run: "python tools/check_engine_generate_helper_wrapping.py $(git ls-files '*.py')"
+      - name: Ensure helper callers use @self_coding_managed
+        run: python tools/check_self_coding_decorator.py
       - name: Verify patch provenance tags
         run: |
           git fetch --no-tags origin main
@@ -90,6 +92,8 @@ jobs:
         run: python tools/find_unmanaged_bots.py
       - name: Prevent unwrapped engine.generate_helper usage
         run: pre-commit run check-engine-generate-helper --all-files
+      - name: Ensure helper callers use @self_coding_managed
+        run: pre-commit run check-self-coding-decorator --all-files
       - name: Run flake8
         run: pre-commit run flake8 --all-files
       - name: Enforce DB router usage
