@@ -35,6 +35,16 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - best effort
     MutationLogger = None  # type: ignore
 
+try:  # pragma: no cover - allow flat imports
+    from .unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover
+    class UnifiedEventBus:  # type: ignore[override]
+        pass
+try:  # pragma: no cover - allow flat imports
+    from .shared_event_bus import event_bus as _SHARED_EVENT_BUS
+except Exception:  # pragma: no cover - flat layout fallback
+    from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover - for type checkers only
     from .adaptive_roi_predictor import AdaptiveROIPredictor
     from .self_coding_manager import SelfCodingManager
@@ -45,11 +55,6 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers only
     from .experiment_manager import ExperimentManager
     from .evolution_analysis_bot import EvolutionAnalysisBot
     from .evolution_predictor import EvolutionPredictor
-    from .unified_event_bus import UnifiedEventBus
-    try:  # pragma: no cover - allow flat imports
-        from .shared_event_bus import event_bus as _SHARED_EVENT_BUS
-    except Exception:  # pragma: no cover - flat layout fallback
-        from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 
 
 @dataclass
@@ -140,9 +145,7 @@ class EvolutionOrchestrator:
         if self.event_bus and self.selfcoding_manager:
             def _handle_degradation(topic: str, event: object) -> None:
                 try:
-                    self.selfcoding_manager.register_patch_cycle(
-                        event, provenance_token=self.provenance_token
-                    )
+                    self._invoke_register_patch_cycle(event)
                 except Exception:
                     self.logger.exception("register_patch_cycle failed")
 
@@ -197,7 +200,18 @@ class EvolutionOrchestrator:
                 self._degradation_subscribed = True
             except Exception:
                 self.logger.exception("failed to attach degradation callback")
-                self._degradation_subscribed = False
+            self._degradation_subscribed = False
+
+    def _invoke_register_patch_cycle(self, *args: Any) -> None:
+        """Invoke ``register_patch_cycle`` with provenance when supported."""
+        if not self.selfcoding_manager:
+            return
+        try:
+            self.selfcoding_manager.register_patch_cycle(
+                *args, provenance_token=self.provenance_token
+            )
+        except TypeError:
+            self.selfcoding_manager.register_patch_cycle(*args)
 
     # ------------------------------------------------------------------
     def register_bot(self, bot: str) -> None:
@@ -257,9 +271,7 @@ class EvolutionOrchestrator:
             "reason": "bot degraded",
         }
         try:
-            self.selfcoding_manager.register_patch_cycle(
-                desc, context, provenance_token=self.provenance_token
-            )
+            self._invoke_register_patch_cycle(desc, context)
         except Exception:
             self.logger.exception("failed to register patch cycle for %s", bot)
         else:
@@ -492,9 +504,7 @@ class EvolutionOrchestrator:
             else "auto_patch_due_to_threshold_breach"
         )
         try:
-            self.selfcoding_manager.register_patch_cycle(
-                desc, context_meta, provenance_token=self.provenance_token
-            )
+            self._invoke_register_patch_cycle(desc, context_meta)
         except Exception:
             self.logger.exception("failed to register patch cycle for %s", bot)
         else:
@@ -510,9 +520,7 @@ class EvolutionOrchestrator:
         bot = str(event.get("bot", ""))
         desc = f"auto_patch_due_to_degradation:{bot}"
         try:
-            self.selfcoding_manager.register_patch_cycle(
-                desc, event, provenance_token=self.provenance_token
-            )
+            self._invoke_register_patch_cycle(desc, event)
             if bot:
                 self._pending_patch_cycle.add(bot)
         except Exception:
@@ -547,9 +555,7 @@ class EvolutionOrchestrator:
             else "auto_patch_due_to_degradation"
         )
         try:
-            self.selfcoding_manager.register_patch_cycle(
-                desc, context_meta, provenance_token=self.provenance_token
-            )
+            self._invoke_register_patch_cycle(desc, context_meta)
         except Exception:
             self.logger.exception("failed to register patch cycle for %s", bot)
         else:
@@ -968,9 +974,7 @@ class EvolutionOrchestrator:
                     "roi_threshold": self.triggers.roi_drop,
                     "error_threshold": self.triggers.error_rate,
                 }
-                self.selfcoding_manager.register_patch_cycle(
-                    reason, meta, provenance_token=self.provenance_token
-                )
+                self._invoke_register_patch_cycle(reason, meta)
                 self.selfcoding_manager.run_patch(
                     path, reason, context_meta=meta
                 )

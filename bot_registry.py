@@ -53,6 +53,15 @@ else:  # pragma: no cover - runtime placeholders
     SelfCodingManager = Any  # type: ignore
     DataBot = Any  # type: ignore
 
+try:  # pragma: no cover - allow flat imports
+    from .data_bot import persist_sc_thresholds
+except Exception:  # pragma: no cover - fallback for flat layout
+    try:
+        from data_bot import persist_sc_thresholds  # type: ignore
+    except Exception:  # pragma: no cover - last resort stub
+        def persist_sc_thresholds(*_a, **_k):  # type: ignore
+            return None
+
 try:  # pragma: no cover - optional dependency
     from .rollback_manager import RollbackManager
 except Exception:  # pragma: no cover - optional dependency
@@ -115,7 +124,9 @@ class BotRegistry:
                             return
                         try:
                             orchestrator = getattr(_mgr, "evolution_orchestrator", None)
-                            if orchestrator is not None:
+                            if orchestrator is not None and hasattr(
+                                orchestrator, "register_patch_cycle"
+                            ):
                                 orchestrator.register_patch_cycle(event)
                             else:
                                 desc = f"auto_patch_due_to_degradation:{_bot}"
@@ -125,47 +136,48 @@ class BotRegistry:
                                 else:
                                     patch_id, commit = (None, None)
                                 module = self.graph.nodes[_bot].get("module")
+                                result = None
                                 if module and hasattr(_mgr, "generate_and_patch"):
                                     result, new_commit = _mgr.generate_and_patch(
                                         Path(module), desc, context_meta=event
                                     )
                                     commit = commit or new_commit
+                                try:
+                                    ph = self.graph.nodes[_bot].setdefault(
+                                        "patch_history", []
+                                    )
+                                    ph.append(
+                                        {
+                                            "patch_id": patch_id,
+                                            "commit": commit,
+                                            "ts": time.time(),
+                                        }
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "failed to record patch history for %s",
+                                        _bot,
+                                    )
+                                if result is not None and self.event_bus:
                                     try:
-                                        ph = self.graph.nodes[_bot].setdefault(
-                                            "patch_history", []
+                                        payload: Dict[str, Any] = {
+                                            "bot": _bot,
+                                            "patch_id": patch_id,
+                                            "commit": commit,
+                                            "result": (
+                                                asdict(result)
+                                                if is_dataclass(result)
+                                                else getattr(result, "__dict__", result)
+                                            ),
+                                        }
+                                        self.event_bus.publish(
+                                            "bot:patch_applied", payload
                                         )
-                                        ph.append(
-                                            {
-                                                "patch_id": patch_id,
-                                                "commit": commit,
-                                                "ts": time.time(),
-                                            }
+                                    except Exception as exc:
+                                        logger.error(
+                                            "Failed to publish bot:patch_applied event: %s",
+                                            exc,
                                         )
-                                    except Exception:
-                                        logger.exception(
-                                            "failed to record patch history for %s",
-                                            _bot,
-                                        )
-                                    if self.event_bus:
-                                        try:
-                                            payload: Dict[str, Any] = {
-                                                "bot": _bot,
-                                                "patch_id": patch_id,
-                                                "commit": commit,
-                                                "result": (
-                                                    asdict(result)
-                                                    if is_dataclass(result)
-                                                    else getattr(result, "__dict__", result)
-                                                ),
-                                            }
-                                            self.event_bus.publish(
-                                                "bot:patch_applied", payload
-                                            )
-                                        except Exception as exc:
-                                            logger.error(
-                                                "Failed to publish bot:patch_applied event: %s",
-                                                exc,
-                                            )
                         except Exception as exc:  # pragma: no cover - best effort
                             logger.error("degradation callback failed for %s: %s", _bot, exc)
 
@@ -183,6 +195,12 @@ class BotRegistry:
                         name,
                         roi_drop=roi_threshold,
                         error_threshold=error_threshold,
+                    )
+                    persist_sc_thresholds(
+                        name,
+                        roi_drop=roi_threshold,
+                        error_increase=error_threshold,
+                        event_bus=self.event_bus,
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.error(
