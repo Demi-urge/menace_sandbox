@@ -10,7 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List, Optional
+from typing import Deque, Dict, Iterable, List, Optional, TYPE_CHECKING
 from difflib import SequenceMatcher
 from collections import deque
 import re
@@ -26,6 +26,10 @@ from .code_database import CodeRecord
 from .error_bot import ErrorBot
 from .scalability_assessment_bot import ScalabilityAssessmentBot
 from .self_coding_engine import SelfCodingEngine
+from .model_automation_pipeline import ModelAutomationPipeline
+from .code_database import CodeDB
+from .menace_memory_manager import MenaceMemoryManager
+from .threshold_service import ThresholdService
 from .safety_monitor import SafetyMonitor
 from .prediction_manager_bot import PredictionManager
 from .learning_engine import LearningEngine
@@ -33,7 +37,10 @@ from .evolution_analysis_bot import EvolutionAnalysisBot
 from .workflow_evolution_bot import WorkflowEvolutionBot
 from .trending_scraper import TrendingScraper
 from .admin_bot_base import AdminBotBase
-from .self_coding_manager import SelfCodingManager
+from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .evolution_orchestrator import EvolutionOrchestrator
 from datetime import datetime
 from .database_manager import DB_PATH, update_model
 from vector_service.cognition_layer import CognitionLayer
@@ -58,6 +65,22 @@ from .coding_bot_interface import self_coding_managed
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
+_context_builder = ContextBuilder()
+engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
+pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+evolution_orchestrator: EvolutionOrchestrator | None = None
+manager = internalize_coding_bot(
+    "BotCreationBot",
+    engine,
+    pipeline,
+    data_bot=data_bot,
+    bot_registry=registry,
+    evolution_orchestrator=evolution_orchestrator,
+    roi_threshold=-0.1,
+    error_threshold=0.2,
+    threshold_service=ThresholdService(),
+)
+
 
 @dataclass
 class CreationConfig:
@@ -67,7 +90,7 @@ class CreationConfig:
     complexity_threshold: float = 150.0
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class BotCreationBot(AdminBotBase):
     """Identify, build, test and deploy new bots asynchronously."""
 
@@ -82,7 +105,7 @@ class BotCreationBot(AdminBotBase):
         self,
         context_builder: ContextBuilder,
         *,
-        manager: SelfCodingManager,
+        manager: SelfCodingManager | None = None,
         metrics_db: MetricsDB | None = None,
         planner: BotPlanningBot | None = None,
         developer: BotDevelopmentBot | None = None,
@@ -106,7 +129,7 @@ class BotCreationBot(AdminBotBase):
         self.metrics_db = metrics_db or MetricsDB()
         self.planner = planner or BotPlanningBot()
         self.context_builder = context_builder
-        self.manager = manager
+        self.manager = manager or type(self).manager
         self.developer = developer or BotDevelopmentBot(
             context_builder=self.context_builder, db_steward=self.db_router
         )

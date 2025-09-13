@@ -9,12 +9,18 @@ from typing import TYPE_CHECKING
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
-from .coding_bot_interface import self_coding_managed, manager_generate_helper
+from .coding_bot_interface import self_coding_managed
+from .self_coding_engine import SelfCodingEngine
+from .model_automation_pipeline import ModelAutomationPipeline
+from .code_database import CodeDB
+from .menace_memory_manager import MenaceMemoryManager
+from .threshold_service import ThresholdService
+from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
     from .bot_database import BotDB
-    from .self_coding_manager import SelfCodingManager
+    from .evolution_orchestrator import EvolutionOrchestrator
 
 # ``vector_service`` is required.  Fail fast if the import is unavailable.
 try:  # pragma: no cover - optional dependency used in runtime
@@ -44,8 +50,24 @@ from context_builder_util import ensure_fresh_weights
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
+_context_builder = ContextBuilder()
+engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
+pipeline = ModelAutomationPipeline(context_builder=_context_builder)
+evolution_orchestrator: EvolutionOrchestrator | None = None
+manager = internalize_coding_bot(
+    "AutomatedReviewer",
+    engine,
+    pipeline,
+    data_bot=data_bot,
+    bot_registry=registry,
+    evolution_orchestrator=evolution_orchestrator,
+    roi_threshold=-0.1,
+    error_threshold=0.2,
+    threshold_service=ThresholdService(),
+)
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class AutomatedReviewer:
     """Analyse review events and trigger remediation."""
 
@@ -57,7 +79,7 @@ class AutomatedReviewer:
         bot_db: "BotDB" | None = None,
         escalation_manager: "AutoEscalationManager" | None = None,
         *,
-        manager: "SelfCodingManager",
+        manager: "SelfCodingManager" | None = None,
     ) -> None:
         if bot_db is None:
             from .bot_database import BotDB
@@ -70,7 +92,7 @@ class AutomatedReviewer:
             escalation_manager = AutoEscalationManager(context_builder=context_builder)
         self.escalation_manager = escalation_manager
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.manager = manager
+        self.manager = manager or type(self).manager
         try:
             name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
             self.manager.register_bot(name)
@@ -144,7 +166,7 @@ class AutomatedReviewer:
                 ctx = ""
                 vectors = []
             try:
-                manager_generate_helper(self.manager, f"review for bot {bot_id}")
+                self.manager.generate_helper(f"review for bot {bot_id}")
             except Exception:
                 self.logger.exception("helper generation failed")
             try:

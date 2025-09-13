@@ -39,18 +39,17 @@ from .models_repo import (
     ACTIVE_MODEL_FILE,
     ensure_models_repo,
 )
-from .coding_bot_interface import self_coding_managed, manager_generate_helper
+from .coding_bot_interface import self_coding_managed
 from vector_service.context_builder import ContextBuilder, FallbackResult, ErrorResult
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from .self_coding_manager import SelfCodingManager
+from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .data_bot import DataBot
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
-from .unified_event_bus import UnifiedEventBus
 from .bot_registry import BotRegistry
 from .threshold_service import ThresholdService
 
@@ -60,11 +59,16 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-manager = SelfCodingManager(
+evolution_orchestrator: EvolutionOrchestrator | None = None
+manager = internalize_coding_bot(
+    "BotDevelopmentBot",
     engine,
     pipeline,
-    bot_registry=registry,
     data_bot=data_bot,
+    bot_registry=registry,
+    evolution_orchestrator=evolution_orchestrator,
+    roi_threshold=-0.1,
+    error_threshold=0.2,
     threshold_service=ThresholdService(),
 )
 
@@ -75,6 +79,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
+    from .evolution_orchestrator import EvolutionOrchestrator
 
 try:  # pragma: no cover - optional dependency
     from .micro_models.tool_predictor import predict_tools  # type: ignore
@@ -777,7 +782,7 @@ class BotDevelopmentBot:
                 code = path.read_text()
             else:
                 code = self.engine_retry.run(
-                    lambda: manager_generate_helper(manager, prompt),
+                    lambda: manager.generate_helper(prompt),
                     logger=self.logger,
                 )
             return EngineResult(True, code, None)
@@ -1047,15 +1052,14 @@ class BotDevelopmentBot:
                     )
                     registry.update_bot(bot_name, module_path)
                     d_bot.reload_thresholds(bot_name)
-                    manager = SelfCodingManager(
+                    internalize_coding_bot(
+                        bot_name,
                         engine,
                         pipeline,
-                        bot_name=bot_name,
-                        bot_registry=registry,
                         data_bot=d_bot,
+                        bot_registry=registry,
+                        evolution_orchestrator=orchestrator,
                     )
-                    if orchestrator:
-                        orchestrator.register_bot(bot_name)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("dynamic bot registration failed for %s", spec.name)
 
