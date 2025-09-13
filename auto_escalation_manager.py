@@ -18,6 +18,10 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path  # type: ignore
 
+from .bot_registry import BotRegistry
+from .data_bot import DataBot
+from .coding_bot_interface import self_coding_managed
+
 try:
     from vector_service.context_builder import ContextBuilder
 except Exception as exc:  # pragma: no cover - fail fast when dependency missing
@@ -73,6 +77,11 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
             pass
 
 
+registry = BotRegistry()
+data_bot = DataBot()
+
+
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class AutoEscalationManager:
     """Analyse issues and initiate remediation without human input."""
 
@@ -116,9 +125,20 @@ class AutoEscalationManager:
                     from .model_automation_pipeline import ModelAutomationPipeline
 
                     pipeline = ModelAutomationPipeline(
-                        context_builder=self.context_builder
+                        context_builder=self.context_builder,
+                        bot_registry=registry,
+                        event_bus=event_bus,
                     )
-                    manager = SelfCodingManager(engine, pipeline, event_bus=event_bus)
+                    manager = SelfCodingManager(
+                        engine,
+                        pipeline,
+                        bot_name=self.__class__.__name__,
+                        bot_registry=registry,
+                        data_bot=data_bot,
+                        event_bus=event_bus,
+                    )
+                    manager.register_bot(self.__class__.__name__)
+                    self.manager = manager
                 except Exception:
                     class _Mgr:
                         def run_patch(self, *a, **k):

@@ -1930,7 +1930,7 @@ def main(
             try:
                 bus = UnifiedEventBus()
                 registry = BotRegistry(event_bus=bus) if BotRegistry else None
-                data_bot = DataBot() if DataBot else None
+                data_bot = DataBot(event_bus=bus) if DataBot else None
                 pipeline = ModelAutomationPipeline(
                     context_builder=builder, event_bus=bus, bot_registry=registry
                 )
@@ -1941,6 +1941,7 @@ def main(
                     data_bot=data_bot,
                     event_bus=bus,
                 )
+                manager.register_bot("StripeWatchdog")
                 telemetry = TelemetryFeedback(
                     ErrorLogger(context_builder=builder),
                     manager,

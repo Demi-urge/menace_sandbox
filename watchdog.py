@@ -89,6 +89,13 @@ try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - gracefully degrade in tests
     UnifiedEventBus = None  # type: ignore
+from .coding_bot_interface import self_coding_managed
+from .data_bot import DataBot
+from .self_coding_engine import SelfCodingEngine
+from .self_coding_manager import SelfCodingManager
+from .model_automation_pipeline import ModelAutomationPipeline
+from .code_database import CodeDB
+from .menace_memory_manager import MenaceMemoryManager
 from .retry_utils import retry
 
 try:
@@ -98,6 +105,9 @@ except Exception as exc:  # pragma: no cover - fail fast when dependency missing
         "watchdog requires vector_service.ContextBuilder; install the"
         " vector_service package to enable context retrieval"
     ) from exc
+
+REGISTRY = BotRegistry() if BotRegistry is not None else None
+DATA_BOT = DataBot()
 
 if TYPE_CHECKING:
     from .replay_engine import ReplayValidator
@@ -228,6 +238,7 @@ class Notifier:
             self.notify(urgent, attachments)
 
 
+@self_coding_managed(bot_registry=REGISTRY, data_bot=DATA_BOT)
 class Watchdog:
     """Monitor failure metrics and summon a human when thresholds are breached."""
 
@@ -254,8 +265,9 @@ class Watchdog:
         self.notifier = notifier or Notifier()
         if self.notifier.auto_handler is None:
             self.notifier.auto_handler = _default_auto_handler(self.context_builder)
-        self.registry = registry or BotRegistry()
-        self.event_bus = event_bus
+        self.registry = registry or REGISTRY
+        bus_local = event_bus or (UnifiedEventBus() if UnifiedEventBus else None)
+        self.event_bus = bus_local
         self.restart_log = restart_log
         env_hosts = os.getenv("WATCHDOG_FAILOVER_HOSTS", "").split(",")
         f_hosts = [h.strip() for h in env_hosts if h.strip()]
@@ -276,6 +288,28 @@ class Watchdog:
         self.synthetic_faults: list[dict[str, object]] = []
         self.failed_workflows: list[str] = []
         self.heartbeats: dict[str, float] = {}
+        engine = SelfCodingEngine(
+            CodeDB(),
+            MenaceMemoryManager(),
+            event_bus=bus_local,
+            context_builder=self.context_builder,
+        )
+        pipeline = ModelAutomationPipeline(
+            context_builder=self.context_builder,
+            event_bus=bus_local,
+            bot_registry=self.registry,
+        )
+        self.manager = SelfCodingManager(
+            engine,
+            pipeline,
+            bot_name=self.__class__.__name__,
+            bot_registry=self.registry,
+            data_bot=DATA_BOT,
+            event_bus=bus_local,
+        )
+        self.manager.register_bot(self.__class__.__name__)
+        self.evolution_orchestrator = self.manager.evolution_orchestrator
+        self.quick_fix = self.manager.quick_fix
 
     def _log_restart(self, message: str) -> None:
         """Append *message* with timestamp to the restart log."""
@@ -470,30 +504,13 @@ class Watchdog:
 
         try:
             from .automated_debugger import AutomatedDebugger
-            from .self_coding_engine import SelfCodingEngine
-            from .self_coding_manager import SelfCodingManager
-            from .model_automation_pipeline import ModelAutomationPipeline
-            from .code_database import CodeDB
-            from .menace_memory_manager import MenaceMemoryManager
 
             self.context_builder.refresh_db_weights()
-            engine = SelfCodingEngine(
-                CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
-            )
-            try:
-                pipeline = ModelAutomationPipeline(context_builder=self.context_builder)
-                manager = SelfCodingManager(engine, pipeline)
-            except Exception:
-                class _Mgr:
-                    def run_patch(self, *a, **k):
-                        return None
-
-                manager = _Mgr()
             dbg = AutomatedDebugger(
                 _Proxy(self.error_db),
-                engine,
+                self.manager.engine,
                 self.context_builder,
-                manager=manager,
+                manager=self.manager,
             )
             dbg.analyse_and_fix()
             if self.event_bus:
