@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-from .self_coding_manager import SelfCodingManager
+from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
@@ -19,10 +19,13 @@ from vector_service.context_builder import ContextBuilder
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
+from .task_handoff_bot import TaskPackage, TaskInfo
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .evolution_orchestrator import EvolutionOrchestrator
 
 logger = logging.getLogger(__name__)
-
-from .task_handoff_bot import TaskPackage, TaskInfo
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -30,11 +33,16 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-manager = SelfCodingManager(
+evolution_orchestrator: EvolutionOrchestrator | None = None
+manager = internalize_coding_bot(
+    "ImplementationOptimiserBot",
     engine,
     pipeline,
-    bot_registry=registry,
     data_bot=data_bot,
+    bot_registry=registry,
+    evolution_orchestrator=evolution_orchestrator,
+    roi_threshold=-0.1,
+    error_threshold=0.2,
     threshold_service=ThresholdService(),
 )
 
@@ -127,7 +135,9 @@ class ImplementationOptimiserBot:
                     self._strip_blank_docstring(node)
                     return node
 
-                def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):  # type: ignore[override]
+                def visit_AsyncFunctionDef(
+                    self, node: ast.AsyncFunctionDef
+                ):  # type: ignore[override]
                     self.generic_visit(node)
                     self._strip_blank_docstring(node)
                     return node

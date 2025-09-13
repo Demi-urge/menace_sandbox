@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import random
-import sqlite3
 import threading
 import uuid
 import traceback
@@ -25,13 +24,17 @@ from .bot_testing_config import BotTestingSettings
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
-from .self_coding_manager import SelfCodingManager
+from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
 from vector_service.context_builder import ContextBuilder
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .evolution_orchestrator import EvolutionOrchestrator
 
 logger = logging.getLogger("BotTester")
 
@@ -41,11 +44,16 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-manager = SelfCodingManager(
+evolution_orchestrator: EvolutionOrchestrator | None = None
+manager = internalize_coding_bot(
+    "BotTestingBot",
     engine,
     pipeline,
-    bot_registry=registry,
     data_bot=data_bot,
+    bot_registry=registry,
+    evolution_orchestrator=evolution_orchestrator,
+    roi_threshold=-0.1,
+    error_threshold=0.2,
     threshold_service=ThresholdService(),
 )
 
