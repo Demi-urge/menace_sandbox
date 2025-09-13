@@ -62,6 +62,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
         manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER,  # type: ignore
     )
 
+
 def _manager_generate_helper_with_builder(manager, description: str, **kwargs: Any) -> str:
     """Create a fresh ``ContextBuilder`` and invoke the base helper generator."""
 
@@ -74,6 +75,7 @@ def _manager_generate_helper_with_builder(manager, description: str, **kwargs: A
     except TypeError:
         kwargs.pop("context_builder", None)
         return _BASE_MANAGER_GENERATE_HELPER(manager, description, **kwargs)
+
 
 try:  # pragma: no cover - allow package/flat imports
     from .patch_suggestion_db import PatchSuggestionDB
@@ -442,6 +444,23 @@ class SelfCodingManager:
             raise
         return self.quick_fix
 
+    def refresh_quick_fix_context(self) -> ContextBuilder:
+        """Attach a fresh ``ContextBuilder`` to :class:`QuickFixEngine`."""
+
+        builder = ContextBuilder()
+        ensure_fresh_weights(builder)
+        if self.quick_fix is None:
+            self._init_quick_fix_engine(builder)
+        else:
+            try:
+                self.quick_fix.context_builder = builder
+            except Exception:
+                self.logger.exception(
+                    "failed to update QuickFixEngine context builder",
+                )
+                raise
+        return builder
+
     # ------------------------------------------------------------------
     def scan_repo(self) -> None:
         """Invoke the enhancement classifier and queue suggestions."""
@@ -674,6 +693,7 @@ class SelfCodingManager:
         ``context_builder`` argument is retained for backwards compatibility but
         ignored.
         """
+        self.refresh_quick_fix_context()
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
         if self.data_bot:
