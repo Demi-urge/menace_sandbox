@@ -8,7 +8,7 @@ broadcasts a ``bot:updated`` event so other components can react to the
 change.
 """
 
-from typing import List, Tuple, Union, Optional, Dict
+from typing import List, Tuple, Union, Optional, Dict, Any, TYPE_CHECKING
 from pathlib import Path
 import time
 import importlib
@@ -38,6 +38,20 @@ except Exception:  # pragma: no cover
         pass
 import db_router
 from db_router import DBRouter, init_db_router
+
+try:  # pragma: no cover - optional dependency
+    from .self_coding_thresholds import update_thresholds as persist_sc_thresholds
+except Exception:  # pragma: no cover - persistence optional
+    def persist_sc_thresholds(*_a: Any, **_k: Any) -> None:  # type: ignore[override]
+        """Fallback no-op when threshold persistence is unavailable."""
+        pass
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
+    from .self_coding_manager import SelfCodingManager
+    from .data_bot import DataBot
+else:  # pragma: no cover - runtime placeholders
+    SelfCodingManager = Any  # type: ignore
+    DataBot = Any  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from .rollback_manager import RollbackManager
@@ -71,10 +85,60 @@ class BotRegistry:
                     "Failed to load bot registry from %s: %s", self.persist_path, exc
                 )
 
-    def register_bot(self, name: str) -> None:
-        """Ensure *name* exists in the graph."""
+    def register_bot(
+        self,
+        name: str,
+        *,
+        roi_threshold: float | None = None,
+        error_threshold: float | None = None,
+        manager: "SelfCodingManager" | None = None,
+        data_bot: "DataBot" | None = None,
+    ) -> None:
+        """Ensure *name* exists in the graph and persist metadata."""
         with self._lock:
             self.graph.add_node(name)
+            node = self.graph.nodes[name]
+            if roi_threshold is not None:
+                node["roi_threshold"] = float(roi_threshold)
+            if error_threshold is not None:
+                node["error_threshold"] = float(error_threshold)
+            node.setdefault("patch_history", [])
+            if manager is not None:
+                node["selfcoding_manager"] = manager
+            if data_bot is not None:
+                node["data_bot"] = data_bot
+                if manager is not None:
+                    def _on_degraded(event: dict, _bot=name, _mgr=manager):
+                        if str(event.get("bot")) != _bot:
+                            return
+                        try:
+                            desc = f"auto_patch_due_to_degradation:{_bot}"
+                            _mgr.register_patch_cycle(desc, event)
+                            module = self.graph.nodes[_bot].get("module")
+                            if module and hasattr(_mgr, "run_patch"):
+                                _mgr.run_patch(Path(module), desc, context_meta=event)
+                        except Exception as exc:  # pragma: no cover - best effort
+                            logger.error("degradation callback failed for %s: %s", _bot, exc)
+
+                    try:
+                        data_bot.subscribe_degradation(_on_degraded)
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.error(
+                            "failed to subscribe degradation callback for %s: %s",
+                            name,
+                            exc,
+                        )
+            if roi_threshold is not None or error_threshold is not None:
+                try:
+                    persist_sc_thresholds(
+                        name,
+                        roi_drop=roi_threshold,
+                        error_increase=error_threshold,
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.error(
+                        "failed to persist thresholds for %s: %s", name, exc
+                    )
             if self.event_bus:
                 try:
                     self.event_bus.publish("bot:new", {"name": name})
@@ -217,6 +281,11 @@ class BotRegistry:
             node["version"] = int(node.get("version", 0)) + 1
             node["patch_id"] = patch_id
             node["commit"] = commit
+            try:
+                ph = node.setdefault("patch_history", [])
+                ph.append({"patch_id": patch_id, "commit": commit, "ts": time.time()})
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to record patch history for %s", name)
             self.modules[name] = module_path
 
             if self.event_bus:
