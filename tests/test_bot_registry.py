@@ -8,6 +8,7 @@ import pytest
 
 import menace_sandbox.patch_provenance as patch_provenance
 from menace_sandbox.bot_registry import BotRegistry
+from menace_sandbox.override_validator import generate_signature
 
 
 class DummyService:
@@ -41,6 +42,15 @@ def test_update_bot_fetches_missing_metadata_and_hot_swaps(monkeypatch, tmp_path
         lambda: DummyService({1: "commit1"}),
     )
 
+    key_path = tmp_path / "key"
+    key_path.write_text("secret")
+    data = {"patch_id": 1, "commit": "commit1"}
+    sig = generate_signature(data, str(key_path))
+    prov = tmp_path / "prov.json"
+    prov.write_text(json.dumps({"data": data, "signature": sig}))
+    monkeypatch.setenv("PATCH_PROVENANCE_FILE", str(prov))
+    monkeypatch.setenv("PATCH_PROVENANCE_PUBKEY", str(key_path))
+
     registry = BotRegistry()
     registry.update_bot("test", str(module_file), patch_id=1, commit=None)
 
@@ -60,15 +70,36 @@ def test_update_bot_provenance_mismatch_recovery(monkeypatch, tmp_path):
         "PatchProvenanceService",
         lambda: DummyService({1: "c1", 2: "c2"}),
     )
+    key_path = tmp_path / "key"
+    key_path.write_text("secret")
 
     registry = BotRegistry()
+    # first update succeeds
+    data1 = {"patch_id": 1, "commit": "c1"}
+    sig1 = generate_signature(data1, str(key_path))
+    prov1 = tmp_path / "prov1.json"
+    prov1.write_text(json.dumps({"data": data1, "signature": sig1}))
+    monkeypatch.setenv("PATCH_PROVENANCE_FILE", str(prov1))
+    monkeypatch.setenv("PATCH_PROVENANCE_PUBKEY", str(key_path))
     registry.update_bot("bot", str(mod1), patch_id=1, commit="c1")
 
+    # mismatch: commit "wrong" signed correctly but conflicts with provenance DB
+    data_wrong = {"patch_id": 2, "commit": "wrong"}
+    sig_wrong = generate_signature(data_wrong, str(key_path))
+    prov_wrong = tmp_path / "prov_wrong.json"
+    prov_wrong.write_text(json.dumps({"data": data_wrong, "signature": sig_wrong}))
+    monkeypatch.setenv("PATCH_PROVENANCE_FILE", str(prov_wrong))
     with pytest.raises(RuntimeError):
         registry.update_bot("bot", str(mod2), patch_id=2, commit="wrong")
 
     assert registry.graph.nodes["bot"]["module"] == str(mod1)
 
+    # correct update
+    data2 = {"patch_id": 2, "commit": "c2"}
+    sig2 = generate_signature(data2, str(key_path))
+    prov2 = tmp_path / "prov2.json"
+    prov2.write_text(json.dumps({"data": data2, "signature": sig2}))
+    monkeypatch.setenv("PATCH_PROVENANCE_FILE", str(prov2))
     registry.update_bot("bot", str(mod2), patch_id=2, commit="c2")
     assert registry.graph.nodes["bot"]["module"] == str(mod2)
 

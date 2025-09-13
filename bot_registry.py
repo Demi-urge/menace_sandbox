@@ -91,23 +91,32 @@ class BotRegistry:
             "PATCH_PROVENANCE_PUBLIC_KEY"
         )
         if not prov_file or not pubkey:
-            return False
+            raise RuntimeError("signed provenance required")
         try:
             with open(prov_file, "r", encoding="utf-8") as fh:
                 payload = json.load(fh)
             data = payload.get("data") or {}
             signature = payload.get("signature")
             if not signature:
-                return False
+                raise RuntimeError("missing signature")
             if str(data.get("patch_id")) != str(patch_id) or str(
                 data.get("commit")
             ) != str(commit):
-                return False
+                raise RuntimeError("provenance mismatch")
             from .override_validator import verify_signature
 
-            return verify_signature(data, signature, pubkey)
-        except Exception:  # pragma: no cover - best effort
-            return False
+            if not verify_signature(data, signature, pubkey):
+                raise RuntimeError("invalid signature")
+            logger.info(
+                "verified signed provenance for patch_id=%s commit=%s",
+                patch_id,
+                commit,
+            )
+            return True
+        except RuntimeError:
+            raise
+        except Exception as exc:  # pragma: no cover - best effort
+            raise RuntimeError(f"provenance verification failed: {exc}") from exc
 
     def update_bot(
         self,
@@ -162,7 +171,12 @@ class BotRegistry:
             )
             verified = mgr_patch == patch_id and mgr_commit == commit
             if not verified:
-                verified = self._verify_signed_provenance(patch_id, commit)
+                try:
+                    self._verify_signed_provenance(patch_id, commit)
+                    verified = True
+                except RuntimeError as exc:
+                    logger.error("Signed provenance verification failed: %s", exc)
+                    verified = False
             if not verified:
                 if self.event_bus:
                     try:
