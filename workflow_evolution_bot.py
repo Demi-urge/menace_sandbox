@@ -10,13 +10,14 @@ import logging
 from .neuroplasticity import PathwayDB
 from . import mutation_logger as MutationLogger
 from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
+from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
 
@@ -70,6 +71,12 @@ _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator: EvolutionOrchestrator | None = None
+_th = get_thresholds("WorkflowEvolutionBot")
+persist_sc_thresholds(
+    "WorkflowEvolutionBot",
+    roi_drop=_th.roi_drop,
+    error_increase=_th.error_increase,
+)
 manager = internalize_coding_bot(
     "WorkflowEvolutionBot",
     engine,
@@ -78,6 +85,8 @@ manager = internalize_coding_bot(
     bot_registry=registry,
     evolution_orchestrator=evolution_orchestrator,
     threshold_service=ThresholdService(),
+    roi_threshold=_th.roi_drop,
+    error_threshold=_th.error_increase,
 )
 
 

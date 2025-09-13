@@ -90,13 +90,14 @@ from .metrics_exporter import error_bot_exceptions
 from .scope_utils import build_scope_clause, Scope, apply_scope
 from .coding_bot_interface import self_coding_managed
 from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
+from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
@@ -111,6 +112,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
 
 evolution_orchestrator: EvolutionOrchestrator | None = None
+_th = get_thresholds("ErrorBot")
+persist_sc_thresholds(
+    "ErrorBot",
+    roi_drop=_th.roi_drop,
+    error_increase=_th.error_increase,
+)
 manager = internalize_coding_bot(
     "ErrorBot",
     engine,
@@ -119,6 +126,8 @@ manager = internalize_coding_bot(
     bot_registry=registry,
     evolution_orchestrator=evolution_orchestrator,
     threshold_service=ThresholdService(),
+    roi_threshold=_th.roi_drop,
+    error_threshold=_th.error_increase,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only

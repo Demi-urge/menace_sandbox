@@ -19,7 +19,7 @@ bots:
     test_failure_increase: 0.0
   AutomatedReviewer:
     roi_drop: -0.1
-    error_increase: 1.0
+    error_increase: 0.2
     test_failure_increase: 0.0
   AverageMetricBot:
     roi_drop: -0.1
@@ -35,11 +35,11 @@ bots:
     test_failure_increase: 0.0
   BotCreationBot:
     roi_drop: -0.1
-    error_increase: 1.0
+    error_increase: 0.2
     test_failure_increase: 0.0
   BotDevelopmentBot:
     roi_drop: -0.1
-    error_increase: 1.0
+    error_increase: 0.2
     test_failure_increase: 0.0
   BotPlanningBot:
     roi_drop: -0.1
@@ -47,7 +47,7 @@ bots:
     test_failure_increase: 0.0
   BotTestingBot:
     roi_drop: -0.1
-    error_increase: 1.0
+    error_increase: 0.2
     test_failure_increase: 0.0
   CapitalManagementBot:
     roi_drop: -0.05
@@ -267,7 +267,7 @@ bots:
     test_failure_increase: 0.0
   ImplementationOptimiserBot:
     roi_drop: -0.1
-    error_increase: 1.0
+    error_increase: 0.2
     test_failure_increase: 0.0
   InformationSynthesisBot:
     roi_drop: -0.1
