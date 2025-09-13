@@ -168,6 +168,9 @@ adds an extra safeguard by scanning for modules that import
 pre-commit run check-coding-bot-decorators --all-files
 ```
 
+CI runs the same script directly via `python tools/check_coding_bot_decorators.py`
+to ensure the build fails if any `*_bot.py` misses the decorator.
+
 For additional assurance, the test suite includes
 `tests/test_self_coding_compliance.py`, which executes the same scan during
 `pytest`. The test fails if any `*_bot.py` module defines a bot class without
