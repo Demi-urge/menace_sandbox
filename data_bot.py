@@ -338,6 +338,13 @@ class MetricsDB:
         """
         )
         conn.execute(
+            """
+        CREATE TABLE IF NOT EXISTS monitoring_schedule(
+            bot TEXT PRIMARY KEY
+        )
+        """
+        )
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
         )
         conn.execute(
@@ -539,6 +546,23 @@ class MetricsDB:
 
     def _connect(self) -> sqlite3.Connection:
         return self.router.get_connection("metrics")
+
+    def schedule_monitoring(self, bot: str) -> None:
+        """Persist *bot* for periodic degradation checks."""
+
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO monitoring_schedule(bot) VALUES(?)",
+                (bot,),
+            )
+            conn.commit()
+
+    def monitored_bots(self) -> list[str]:
+        """Return the list of bots scheduled for monitoring."""
+
+        with self._connect() as conn:
+            rows = conn.execute("SELECT bot FROM monitoring_schedule").fetchall()
+        return [r[0] for r in rows]
 
     def add(
         self, rec: MetricRecord, *, source_menace_id: object | None = None
@@ -1065,6 +1089,7 @@ class DataBot:
             else getattr(self.settings, "threshold_update_interval", 60.0)
         )
         self._last_threshold_refresh: Dict[str, float] = {}
+        self._monitor_thread: threading.Thread | None = None
         if Gauge:
             self.registry = registry or CollectorRegistry()
             self.gauges = {
@@ -1190,13 +1215,36 @@ class DataBot:
                 port = int(os.getenv("METRICS_PORT", "8001"))
                 start_metrics_server(port)
 
+        monitored: list[str] = []
+        if hasattr(self.db, "monitored_bots"):
+            try:
+                monitored = list(self.db.monitored_bots())
+            except Exception:
+                self.logger.exception("failed to load monitoring schedule")
         if self.event_bus:
             try:
                 self.event_bus.subscribe(
                     "self_coding:patch_applied", self._on_patch_applied
                 )
+                self.event_bus.subscribe("bot:new", self._on_bot_new)
             except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to subscribe to patch_applied events")
+                self.logger.exception("failed to subscribe to events")
+        for name in monitored:
+            try:
+                self.reload_thresholds(name)
+                self._baseline.setdefault(
+                    name, BaselineTracker(window=self.baseline_window)
+                )
+                self._ema_baseline.setdefault(
+                    name,
+                    {"roi": 0.0, "errors": 0.0, "tests_failed": 0.0},
+                )
+            except Exception:
+                self.logger.exception("failed to restore monitoring for %s", name)
+        if monitored:
+            self._monitor_thread = self.start_monitoring(
+                self.threshold_update_interval
+            )
 
     def subscribe_threshold_breaches(
         self, callback: Callable[[dict], None]
@@ -1229,6 +1277,37 @@ class DataBot:
         else:
             self._degradation_callbacks.append(callback)
             self.degradation_callback = callback
+
+    # ------------------------------------------------------------------
+    def _on_bot_new(self, _topic: str, event: object) -> None:
+        """Initialise monitoring for newly registered bots."""
+
+        if not isinstance(event, dict):
+            return
+        name = event.get("name")
+        if not name:
+            return
+        try:
+            self.reload_thresholds(str(name))
+            self._baseline.setdefault(
+                str(name), BaselineTracker(window=self.baseline_window)
+            )
+            self._ema_baseline.setdefault(
+                str(name), {"roi": 0.0, "errors": 0.0, "tests_failed": 0.0}
+            )
+            if hasattr(self.db, "schedule_monitoring"):
+                try:
+                    self.db.schedule_monitoring(str(name))
+                except Exception:
+                    self.logger.exception(
+                        "failed to persist monitoring schedule for %s", name
+                    )
+            if not self._monitor_thread:
+                self._monitor_thread = self.start_monitoring(
+                    self.threshold_update_interval
+                )
+        except Exception:
+            self.logger.exception("failed to initialise monitoring for %s", name)
 
     # ------------------------------------------------------------------
     def _on_patch_applied(self, _topic: str, event: object) -> None:
