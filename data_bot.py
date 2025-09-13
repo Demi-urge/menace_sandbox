@@ -1996,14 +1996,35 @@ class DataBot:
         if self.event_bus:
             try:
                 self.event_bus.publish("metrics:delta", event)
-                if degraded:
-                    self.event_bus.publish("metrics:updated", event)
-                    self.event_bus.publish("degradation:detected", event)
-                    self.event_bus.publish("data:threshold_breach", event)
-                    self.event_bus.publish("bot:degraded", event)
-                    self.event_bus.publish("self_coding:degradation", event)
             except Exception as exc:
-                self.logger.exception("failed to publish metrics event: %s", exc)
+                self.logger.exception(
+                    "failed to publish metrics event: %s", exc
+                )
+            if degraded:
+                payload = {
+                    "bot": bot,
+                    "delta_roi": delta_roi,
+                    "delta_errors": delta_err,
+                    "delta_tests_failed": delta_fail,
+                }
+                try:
+                    self.event_bus.publish("degradation:detected", payload)
+                except Exception as exc:
+                    self.logger.exception(
+                        "failed to publish degradation event: %s", exc
+                    )
+                for topic in (
+                    "metrics:updated",
+                    "data:threshold_breach",
+                    "bot:degraded",
+                    "self_coding:degradation",
+                ):
+                    try:
+                        self.event_bus.publish(topic, event)
+                    except Exception as exc:
+                        self.logger.exception(
+                            "failed to publish %s event: %s", topic, exc
+                        )
         elif degraded and callbacks:
             for cb in callbacks:
                 try:
