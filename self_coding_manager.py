@@ -489,13 +489,17 @@ class SelfCodingManager:
         self,
         description: str,
         context_meta: Dict[str, Any] | None = None,
-    ) -> None:
+        *,
+        patch_id: int | None = None,
+        commit: str | None = None,
+    ) -> tuple[int | None, str | None]:
         """Log baseline metrics for an upcoming patch cycle.
 
-        The baseline ROI and error rates for ``bot_name`` are stored in
-        :class:`PatchHistoryDB` and a ``self_coding:cycle_registered`` event is
-        emitted on the configured event bus.  The generated record and event
-        identifiers are stored for linking with subsequent patch events.
+        Returns the ``(patch_id, commit)`` pair used for provenance
+        verification.  The baseline ROI and error rates for ``bot_name`` are
+        stored in :class:`PatchHistoryDB` and a ``self_coding:cycle_registered``
+        event is emitted on the configured event bus.  The generated record and
+        event identifiers are stored for linking with subsequent patch events.
         """
 
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
@@ -503,8 +507,7 @@ class SelfCodingManager:
             self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
         )
         patch_db = getattr(self.engine, "patch_db", None)
-        patch_id: int | None = None
-        if patch_db:
+        if patch_db and patch_id is None:
             try:
                 rec = PatchRecord(
                     filename=f"{self.bot_name}.cycle",
@@ -518,9 +521,17 @@ class SelfCodingManager:
                     trigger=context_meta.get("trigger") if context_meta else None,
                 )
                 patch_id = patch_db.add(rec)
-                self._last_patch_id = patch_id
             except Exception:
                 self.logger.exception("failed to log patch cycle to DB")
+        self._last_patch_id = patch_id
+        if commit is None:
+            try:
+                commit = (
+                    subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+                )
+            except Exception:
+                commit = None
+        self._last_commit_hash = commit
         event_id: int | None = None
         try:
             trigger = (
@@ -553,6 +564,7 @@ class SelfCodingManager:
                 self.event_bus.publish("self_coding:cycle_registered", payload)
             except Exception:
                 self.logger.exception("failed to publish cycle_registered event")
+        return patch_id, commit
 
     # ------------------------------------------------------------------
     def generate_and_patch(
@@ -1228,6 +1240,8 @@ class SelfCodingManager:
                 )
                 if not commit_hash:
                     raise RuntimeError("failed to retrieve commit hash")
+                self._last_patch_id = patch_id
+                self._last_commit_hash = commit_hash
                 if self.quick_fix and self.bot_registry:
                     self.bot_registry.update_bot(
                         self.bot_name,
