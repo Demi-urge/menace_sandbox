@@ -702,13 +702,18 @@ class SelfCodingManager:
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to publish patch_failed event")
             raise RuntimeError("QuickFixEngine validation unavailable") from exc
-        result = self.run_patch(
-            path,
-            description,
-            context_meta=context_meta,
-            context_builder=builder,
-            **kwargs,
-        )
+        self._last_commit_hash = None
+        try:
+            result = self.run_patch(
+                path,
+                description,
+                context_meta=context_meta,
+                context_builder=builder,
+                **kwargs,
+            )
+        except Exception:
+            self._last_commit_hash = None
+            raise
         return result, getattr(self, "_last_commit_hash", None)
 
     # ------------------------------------------------------------------
