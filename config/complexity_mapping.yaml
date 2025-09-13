@@ -1,0 +1,6 @@
+- multiplier: 1.0
+  severity: minor
+  change: merge_idle_bots
+- multiplier: 2.0
+  severity: major
+  change: redistribute_load

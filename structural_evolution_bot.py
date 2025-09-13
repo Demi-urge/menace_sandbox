@@ -9,6 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Callable
 
+try:  # pragma: no cover - optional dependency
+    import yaml
+except Exception:  # pragma: no cover - ignore missing yaml
+    yaml = None  # type: ignore
+
 from db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 
 try:
@@ -133,21 +138,83 @@ class StructuralEvolutionBot:
         self.logger = logging.getLogger("StructuralEvolution")
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = data_bot
+        self.manager = manager or globals().get("manager")
 
     def take_snapshot(self, limit: int = 100) -> SystemSnapshot:
         df = self.metrics_db.fetch(limit)
         return SystemSnapshot(metrics=df)
 
+    def _load_rules(self) -> List[Dict[str, object]]:
+        path = Path(__file__).with_name("config").joinpath("complexity_mapping.yaml")
+        if not path.exists() or yaml is None:
+            return [
+                {"multiplier": 1.0, "severity": "minor", "change": "merge_idle_bots"},
+                {
+                    "multiplier": 2.0,
+                    "severity": "major",
+                    "change": "redistribute_load",
+                },
+            ]
+        with path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or []
+        if isinstance(data, dict):
+            data = data.get("rules", [])
+        return data  # type: ignore[return-value]
+
+    def _dynamic_threshold(self, bot: str) -> float:
+        base = 100.0
+        service = getattr(self.manager, "threshold_service", None)
+        if service is not None:
+            try:
+                th = service.get(self.name)
+                base = float(getattr(th, "error_threshold", base))
+            except Exception:
+                base = 100.0
+        try:
+            avg_err = float(self.data_bot.average_errors(bot))
+        except Exception:
+            avg_err = 0.0
+        return base + avg_err
+
+    def _compute_impact(self, score: float, metrics: object) -> float:
+        try:
+            if pd is not None and hasattr(metrics, "empty") and not metrics.empty:
+                series = metrics["cpu"] + metrics["memory"]
+                deltas = series.diff().dropna()
+                improvements = [-float(d) for d in deltas if d < 0]
+                if improvements:
+                    return float(sum(improvements) / len(improvements))
+            elif isinstance(metrics, list) and len(metrics) > 1:
+                vals = [r.get("cpu", 0.0) + r.get("memory", 0.0) for r in metrics]
+                improvements = [max(vals[i] - vals[i + 1], 0.0) for i in range(len(vals) - 1)]
+                if improvements:
+                    return float(sum(improvements) / len(improvements))
+        except Exception:
+            pass
+        return float(score * 0.1)
+
     def predict_changes(self, snap: SystemSnapshot) -> List[EvolutionRecord]:
         score = DataBot.complexity_score(snap.metrics)
-        if score > 150:
-            severity = "major"
-            change = "redistribute_load"
-        else:
-            severity = "minor"
-            change = "merge_idle_bots"
-        impact = float(score * 0.1)
-        rec = EvolutionRecord(change=change, impact=impact, severity=severity)
+        bot_name = self.name
+        try:
+            if pd is not None and hasattr(snap.metrics, "empty") and not snap.metrics.empty:
+                bot_name = str(snap.metrics.iloc[-1]["bot"])
+            elif isinstance(snap.metrics, list) and snap.metrics:
+                bot_name = str(snap.metrics[-1].get("bot", self.name))
+        except Exception:
+            pass
+        base_threshold = self._dynamic_threshold(bot_name)
+        rules = self._load_rules()
+        severity = str(rules[-1]["severity"])
+        change = str(rules[-1]["change"])
+        for rule in rules:
+            limit = base_threshold * float(rule.get("multiplier", 1.0))
+            if score <= limit:
+                severity = str(rule["severity"])
+                change = str(rule["change"])
+                break
+        impact = self._compute_impact(score, snap.metrics)
+        rec = EvolutionRecord(change=change, impact=float(impact), severity=severity)
         self.db.add(rec)
         return [rec]
 
