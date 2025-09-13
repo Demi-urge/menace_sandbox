@@ -299,6 +299,14 @@ class SelfCodingManager:
             except Exception:  # pragma: no cover - best effort
                 self.evolution_orchestrator = None
 
+        if self.evolution_orchestrator:
+            try:  # pragma: no cover - best effort
+                self.evolution_orchestrator.register_bot(self.bot_name)
+            except Exception:
+                self.logger.exception(
+                    "failed to register bot with evolution orchestrator"
+                )
+
     def register_bot(self, name: str) -> None:
         """Register *name* with the underlying :class:`BotRegistry`."""
         if not self.bot_registry:
@@ -327,6 +335,13 @@ class SelfCodingManager:
                             self.logger.exception(
                                 "failed to publish threshold update failed event"
                             )
+            if self.evolution_orchestrator:
+                try:  # pragma: no cover - best effort
+                    self.evolution_orchestrator.register_bot(name)
+                except Exception:
+                    self.logger.exception(
+                        "failed to register bot with evolution orchestrator"
+                    )
             if self.data_bot and self.evolution_orchestrator:
                 try:
                     self.data_bot.subscribe_degradation(
