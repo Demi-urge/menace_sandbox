@@ -1848,67 +1848,74 @@ class DataBot:
 
         now = time.time()
         thresholds = self._thresholds.get(bot)
-        last = self._last_threshold_refresh.get(bot, 0.0)
 
-        if thresholds is None or now - last >= self.threshold_update_interval:
-            base = thresholds if thresholds is not None else self.threshold_service.get(bot, self.settings)
+        if models:
+            base = self.threshold_service.get(bot, self.settings)
             roi_thresh = min(base.roi_drop, roi_low - avg_roi)
             err_thresh = max(base.error_threshold, err_high - avg_err)
             fail_thresh = max(base.test_failure_threshold, fail_high - avg_fail)
-            thresholds = ROIThresholds(
+            new_thresholds = ROIThresholds(
                 roi_drop=roi_thresh,
                 error_threshold=err_thresh,
                 test_failure_threshold=fail_thresh,
             )
-            self._thresholds[bot] = thresholds
-            try:
-                self.threshold_service.update(
-                    bot,
-                    roi_drop=roi_thresh,
-                    error_threshold=err_thresh,
-                    test_failure_threshold=fail_thresh,
-                )
-                persist_sc_thresholds(
-                    bot,
-                    roi_drop=roi_thresh,
-                    error_increase=err_thresh,
-                    test_failure_increase=fail_thresh,
-                    forecast_model=meta.get("model"),
-                    confidence=meta.get("confidence"),
-                    model_params=meta.get("params"),
-                    event_bus=self.event_bus,
-                )
-                if self.event_bus:
-                    try:
-                        self.event_bus.publish(
-                            "data:thresholds_refreshed",
-                            {
-                                "bot": bot,
-                                "roi_threshold": roi_thresh,
-                                "error_threshold": err_thresh,
-                                "test_failure_threshold": fail_thresh,
-                            },
-                        )
-                    except Exception:
-                        self.logger.exception(
-                            "failed to publish thresholds refreshed event",
-                        )
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.warning(
-                    "update_thresholds failed for %s: %s", bot, exc
-                )
-                if self.event_bus:
-                    try:
-                        self.event_bus.publish(
-                            "data:threshold_update_failed",
-                            {"bot": bot, "error": str(exc)},
-                        )
-                    except Exception:
-                        self.logger.exception(
-                            "failed to publish threshold update failed event",
-                        )
+            changed = thresholds != new_thresholds
+            self._thresholds[bot] = new_thresholds
+            thresholds = new_thresholds
+            if changed:
+                try:
+                    self.threshold_service.update(
+                        bot,
+                        roi_drop=roi_thresh,
+                        error_threshold=err_thresh,
+                        test_failure_threshold=fail_thresh,
+                    )
+                    persist_sc_thresholds(
+                        bot,
+                        roi_drop=roi_thresh,
+                        error_increase=err_thresh,
+                        test_failure_increase=fail_thresh,
+                        forecast_model=meta.get("model"),
+                        confidence=meta.get("confidence"),
+                        model_params=meta.get("params"),
+                        event_bus=self.event_bus,
+                    )
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "data:thresholds_refreshed",
+                                {
+                                    "bot": bot,
+                                    "roi_threshold": roi_thresh,
+                                    "error_threshold": err_thresh,
+                                    "test_failure_threshold": fail_thresh,
+                                },
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to publish thresholds refreshed event",
+                            )
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.warning(
+                        "update_thresholds failed for %s: %s", bot, exc
+                    )
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish(
+                                "data:threshold_update_failed",
+                                {"bot": bot, "error": str(exc)},
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to publish threshold update failed event",
+                            )
             self._last_threshold_refresh[bot] = now
         else:
+            last = self._last_threshold_refresh.get(bot, 0.0)
+            if thresholds is None or now - last >= self.threshold_update_interval:
+                thresholds = self.threshold_service.get(bot, self.settings)
+                self._thresholds[bot] = thresholds
+                self._last_threshold_refresh[bot] = now
             roi_thresh = thresholds.roi_drop
             err_thresh = thresholds.error_threshold
             fail_thresh = thresholds.test_failure_threshold
