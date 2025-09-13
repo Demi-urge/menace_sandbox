@@ -162,17 +162,29 @@ class BotRegistry:
                     ):
                         bus = getattr(data_bot, "event_bus", None)
                         if bus:
-                            try:
-                                bus.subscribe(
-                                    "degradation:detected",
-                                    lambda _t, e: orchestrator.register_patch_cycle(e),
-                                )
-                            except Exception as exc:  # pragma: no cover - best effort
-                                logger.error(
-                                    "failed to subscribe degradation callback for %s: %s",
-                                    name,
-                                    exc,
-                                )
+                            handler = (
+                                lambda _t, e: orchestrator.register_patch_cycle(e)
+                            )
+
+                            def _subscribe() -> None:
+                                try:
+                                    bus.subscribe("degradation:detected", handler)
+                                except Exception as exc:  # pragma: no cover - best effort
+                                    logger.error(
+                                        "failed to subscribe degradation callback for %s: %s",
+                                        name,
+                                        exc,
+                                    )
+                                    try:
+                                        bus.subscribe("bus:restarted", lambda *_: _subscribe())
+                                    except Exception as sub_exc:  # pragma: no cover - best effort
+                                        logger.error(
+                                            "failed to schedule resubscription for %s: %s",
+                                            name,
+                                            sub_exc,
+                                        )
+
+                            _subscribe()
                         else:
                             try:
                                 data_bot.subscribe_degradation(
