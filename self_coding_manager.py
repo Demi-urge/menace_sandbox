@@ -1333,7 +1333,9 @@ class SelfCodingManager:
                 try:
                     prov_path.unlink()
                 except Exception:
-                    pass
+                    self.logger.exception(
+                        "failed to remove patch provenance file %s", prov_path
+                    )
                 commit_hash = (
                     subprocess.check_output(
                         ["git", "rev-parse", "HEAD"], cwd=str(clone_root)

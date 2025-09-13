@@ -348,7 +348,7 @@ def generate_patch(
                 if region and region.filename.endswith(prompt_path):
                     target_region = region
         except Exception:
-            pass
+            logger.exception("failed to incorporate cluster trace")
     context_block = ""
     cb_session = uuid.uuid4().hex
     context_meta["context_session_id"] = cb_session
@@ -901,7 +901,7 @@ class QuickFixEngine:
             try:
                 desc += "\n\n" + cluster_traces[0]
             except Exception:
-                pass
+                self.logger.exception("failed to append cluster trace to description")
         if ctx_block:
             try:
                 compressed = compress_snippets({"snippet": ctx_block}).get(
@@ -1073,7 +1073,7 @@ class QuickFixEngine:
                 try:
                     desc += "\n\n" + traces[0]
                 except Exception:
-                    pass
+                    self.logger.exception("failed to append trace to description")
             if ctx:
                 try:
                     compressed = compress_snippets({"snippet": ctx}).get("snippet", "")
