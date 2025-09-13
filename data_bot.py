@@ -42,14 +42,6 @@ Example ``self_coding_thresholds.yaml``::
 
 from __future__ import annotations
 
-# ``self_coding_managed`` is optional during import to allow lightweight tests
-# that do not provide the full self-coding stack.  When unavailable the
-# decorator becomes a no-op.
-try:  # pragma: no cover - allow tests to stub missing dependencies
-    from .coding_bot_interface import self_coding_managed
-except Exception:  # pragma: no cover
-    def self_coding_managed(cls):  # type: ignore[override]
-        return cls
 # flake8: noqa
 import sqlite3
 import os
@@ -64,7 +56,6 @@ from typing import Iterable, List, Dict, TYPE_CHECKING, Callable
 
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
-from .bot_registry import BotRegistry
 
 try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
@@ -114,20 +105,13 @@ try:  # pragma: no cover - optional dependency
 except Exception:
     VectorMetricsDB = None  # type: ignore
 
+
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 
 logger = logging.getLogger(__name__)
-class _DataBotStub:
-    def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
-        return ROIThresholds(0.0, 0.0, 0.0)
-
-    def reload_thresholds(self, bot: str | None = None) -> ROIThresholds:
-        return ROIThresholds(0.0, 0.0, 0.0)
 
 
-registry = BotRegistry()
-data_bot = _DataBotStub()
 @dataclass
 class MetricRecord:
     """Metrics captured for a bot at a point in time."""
@@ -997,7 +981,6 @@ class MetricsDB:
             return pd.read_sql(query, conn, params=params)
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class DataBot:
     """Collect metrics, expose them to Prometheus and detect anomalies.
 
@@ -2172,4 +2155,13 @@ class DataBot:
         return float(df["cpu"].mean() + df["memory"].mean())
 
 
-__all__ = ["MetricRecord", "MetricsDB", "DataBot"]
+try:
+    _event_bus = UnifiedEventBus()
+except Exception:  # pragma: no cover - best effort
+    _event_bus = None
+
+_default_db = MetricsDB(Path(__file__).with_name("metrics.db").resolve())
+data_bot = DataBot(db=_default_db, start_server=False, event_bus=_event_bus)
+
+
+__all__ = ["MetricRecord", "MetricsDB", "DataBot", "data_bot"]
