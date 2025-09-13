@@ -3,6 +3,7 @@ from __future__ import annotations
 """Manage self-coding patches and deployment cycles."""
 
 from pathlib import Path
+
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -59,14 +60,18 @@ except Exception:  # pragma: no cover - optional dependency
 from context_builder_util import ensure_fresh_weights
 
 try:  # pragma: no cover - allow flat and package imports
-    from .coding_bot_interface import manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER
+    from .coding_bot_interface import (
+        manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER,
+    )
 except Exception:  # pragma: no cover - fallback for flat layout
     from coding_bot_interface import (
         manager_generate_helper as _BASE_MANAGER_GENERATE_HELPER,  # type: ignore
     )
 
 
-def _manager_generate_helper_with_builder(manager, description: str, **kwargs: Any) -> str:
+def _manager_generate_helper_with_builder(
+    manager, description: str, **kwargs: Any
+) -> str:
     """Create a fresh ``ContextBuilder`` and invoke the base helper generator."""
 
     # Always create a new builder to avoid stale context and refresh weights.
@@ -217,7 +222,9 @@ class SelfCodingManager:
         self._last_commit_hash: str | None = None
         thresholds = self.threshold_service.get(bot_name)
         self.roi_drop_threshold = (
-            roi_drop_threshold if roi_drop_threshold is not None else thresholds.roi_drop
+            roi_drop_threshold
+            if roi_drop_threshold is not None
+            else thresholds.roi_drop
         )
         self.error_rate_threshold = (
             error_rate_threshold
@@ -227,9 +234,11 @@ class SelfCodingManager:
         self.test_failure_threshold = thresholds.test_failure_threshold
         self._refresh_thresholds()
         self._failure_cache = FailureCache()
-        self.suggestion_db = suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
-        self.enhancement_classifier = (
-            enhancement_classifier or getattr(self.engine, "enhancement_classifier", None)
+        self.suggestion_db = suggestion_db or getattr(
+            self.engine, "patch_suggestion_db", None
+        )
+        self.enhancement_classifier = enhancement_classifier or getattr(
+            self.engine, "enhancement_classifier", None
         )
         self.failure_store = failure_store
         self.skip_similarity = skip_similarity
@@ -250,7 +259,9 @@ class SelfCodingManager:
             "errors": [],
             "tests_failed": [],
         }
-        if enhancement_classifier and not getattr(self.engine, "enhancement_classifier", None):
+        if enhancement_classifier and not getattr(
+            self.engine, "enhancement_classifier", None
+        ):
             try:
                 self.engine.enhancement_classifier = enhancement_classifier
             except Exception as exc:
@@ -267,20 +278,18 @@ class SelfCodingManager:
         self.evolution_orchestrator = evolution_orchestrator
         if self.bot_registry:
             try:
-                self.bot_registry.register_bot(self.bot_name)
+                self.bot_registry.register_bot(
+                    self.bot_name, manager=self, data_bot=self.data_bot
+                )
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
 
         clayer = getattr(self.engine, "cognition_layer", None)
         builder = getattr(clayer, "context_builder", None) if clayer else None
         if builder is None:
-            raise RuntimeError(
-                "engine.cognition_layer must provide a context_builder"
-            )
+            raise RuntimeError("engine.cognition_layer must provide a context_builder")
         if QuickFixEngine is None and self.quick_fix is None:
-            raise RuntimeError(
-                "QuickFixEngine is required but could not be imported"
-            )
+            raise RuntimeError("QuickFixEngine is required but could not be imported")
         self._prepare_context_builder(builder)
         self._init_quick_fix_engine(builder)
 
@@ -327,7 +336,7 @@ class SelfCodingManager:
         if not self.bot_registry:
             return
         try:
-            self.bot_registry.register_bot(name)
+            self.bot_registry.register_bot(name, manager=self, data_bot=self.data_bot)
             if self.data_bot:
                 try:
                     self.threshold_service.reload(name)
@@ -408,15 +417,17 @@ class SelfCodingManager:
                         self.threshold_service.update(
                             self.bot_name,
                             roi_drop=new_roi if new_roi != t.roi_drop else None,
-                            error_threshold=
-                                new_err if new_err != t.error_threshold else None,
+                            error_threshold=(
+                                new_err if new_err != t.error_threshold else None
+                            ),
                         )
                         try:  # pragma: no cover - best effort persistence
                             persist_sc_thresholds(
                                 self.bot_name,
                                 roi_drop=new_roi if new_roi != t.roi_drop else None,
-                                error_increase=
-                                    new_err if new_err != t.error_threshold else None,
+                                error_increase=(
+                                    new_err if new_err != t.error_threshold else None
+                                ),
                                 event_bus=self.event_bus,
                             )
                         except Exception:
@@ -546,7 +557,9 @@ class SelfCodingManager:
                     top_scores = [
                         getattr(s, "score", 0.0)
                         for s in sorted(
-                            suggestions, key=lambda s: getattr(s, "score", 0.0), reverse=True
+                            suggestions,
+                            key=lambda s: getattr(s, "score", 0.0),
+                            reverse=True,
                         )[:5]
                     ]
                     event_bus.publish(
@@ -568,7 +581,9 @@ class SelfCodingManager:
                 time.sleep(interval)
                 try:
                     self.scan_repo()
-                    db = self.suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
+                    db = self.suggestion_db or getattr(
+                        self.engine, "patch_suggestion_db", None
+                    )
                     if db:
                         db.log_repo_scan()
                 except Exception:
@@ -591,9 +606,7 @@ class SelfCodingManager:
         # Record metrics so rolling statistics can inform future predictions.
         self.baseline_tracker.update(roi=roi, errors=errors, tests_failed=failures)
 
-        result = self.data_bot.check_degradation(
-            self.bot_name, roi, errors, failures
-        )
+        result = self.data_bot.check_degradation(self.bot_name, roi, errors, failures)
 
         # ``check_degradation`` adapts thresholds based on the latest metrics;
         # refresh the local cache so subsequent decisions reflect the new
@@ -622,9 +635,7 @@ class SelfCodingManager:
             if not token:
                 # No orchestrator configured – log that this bypasses normal
                 # coordination but continue for backwards compatibility.
-                self.logger.warning(
-                    "patch cycle invoked without EvolutionOrchestrator"
-                )
+                self.logger.warning("patch cycle invoked without EvolutionOrchestrator")
 
     # ------------------------------------------------------------------
     def register_patch_cycle(
@@ -648,9 +659,7 @@ class SelfCodingManager:
         self._validate_provenance(provenance_token)
 
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
-        errors = (
-            self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
-        )
+        errors = self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
         patch_db = getattr(self.engine, "patch_db", None)
         if patch_db and patch_id is None:
             try:
@@ -672,16 +681,16 @@ class SelfCodingManager:
         if commit is None:
             try:
                 commit = (
-                    subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+                    subprocess.check_output(["git", "rev-parse", "HEAD"])
+                    .decode()
+                    .strip()
                 )
             except Exception:
                 commit = None
         self._last_commit_hash = commit
         event_id: int | None = None
         try:
-            trigger = (
-                context_meta.get("trigger") if context_meta else "degradation"
-            )
+            trigger = context_meta.get("trigger") if context_meta else "degradation"
             event_id = MutationLogger.log_mutation(
                 change="patch_cycle_start",
                 reason=description,
@@ -804,18 +813,14 @@ class SelfCodingManager:
         if self.data_bot:
             self._refresh_thresholds()
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
-        errors = (
-            self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
-        )
+        errors = self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
         failures = (
             self.data_bot.average_test_failures(self.bot_name) if self.data_bot else 0.0
         )
         if self.data_bot and not self.data_bot.check_degradation(
             self.bot_name, roi, errors, failures
         ):
-            self.logger.info(
-                "ROI and error thresholds not met; skipping patch"
-            )
+            self.logger.info("ROI and error thresholds not met; skipping patch")
             return AutomationResult(None, None)
         before_roi = roi
         err_before = errors
@@ -1022,10 +1027,14 @@ class SelfCodingManager:
                                     )
                                     conn.commit()
                                 except Exception:
-                                    self.logger.exception("failed to record retry status")
+                                    self.logger.exception(
+                                        "failed to record retry status"
+                                    )
                             raise RuntimeError("similar failure detected")
                 if last_fp and self.failure_store:
-                    threshold = getattr(self.engine, "failure_similarity_threshold", None)
+                    threshold = getattr(
+                        self.engine, "failure_similarity_threshold", None
+                    )
                     if threshold is None and self.failure_store is not None:
                         try:
                             threshold = self.failure_store.adaptive_threshold()
@@ -1265,18 +1274,18 @@ class SelfCodingManager:
                 if target_region is None and region_obj is not None:
                     try:
                         target_region = TargetRegion(
-                              file=getattr(
-                                  region_obj,
-                                  "file",
-                                  getattr(region_obj, "filename", ""),
-                              ),
-                              start_line=getattr(region_obj, "start_line", 0),
-                              end_line=getattr(region_obj, "end_line", 0),
-                              function=getattr(
-                                  region_obj,
-                                  "function",
-                                  getattr(region_obj, "func_name", ""),
-                              ),
+                            file=getattr(
+                                region_obj,
+                                "file",
+                                getattr(region_obj, "filename", ""),
+                            ),
+                            start_line=getattr(region_obj, "start_line", 0),
+                            end_line=getattr(region_obj, "end_line", 0),
+                            function=getattr(
+                                region_obj,
+                                "function",
+                                getattr(region_obj, "func_name", ""),
+                            ),
                         )
                     except Exception:
                         target_region = None
@@ -1285,7 +1294,7 @@ class SelfCodingManager:
                 m = re.findall(r'File "[^"]+", line \d+, in ([^\n]+)', stack_trace)
                 if m:
                     function_name = m[-1]
-                m_err = re.findall(r'([\w.]+(?:Error|Exception):.*)', stack_trace)
+                m_err = re.findall(r"([\w.]+(?:Error|Exception):.*)", stack_trace)
                 if m_err:
                     error_msg = m_err[-1]
                 fingerprint = FailureFingerprint.from_failure(
@@ -1408,7 +1417,9 @@ class SelfCodingManager:
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.error("git commit failed: %s", exc)
                 try:
-                    RollbackManager().rollback(str(patch_id), requesting_bot=self.bot_name)
+                    RollbackManager().rollback(
+                        str(patch_id), requesting_bot=self.bot_name
+                    )
                 except Exception:
                     self.logger.exception("rollback failed")
                 raise
@@ -1492,9 +1503,7 @@ class SelfCodingManager:
                     if not valid_post:
                         raise RuntimeError("quick fix validation failed")
                 except Exception as exc:
-                    raise RuntimeError(
-                        "QuickFixEngine validation unavailable"
-                    ) from exc
+                    raise RuntimeError("QuickFixEngine validation unavailable") from exc
             conf = 1.0
             if result is not None and getattr(result, "roi", None) is not None:
                 conf = getattr(result.roi, "confidence", None)  # type: ignore[attr-defined]
@@ -1530,7 +1539,9 @@ class SelfCodingManager:
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.error("git push failed: %s", exc)
                 try:
-                    RollbackManager().rollback(str(patch_id), requesting_bot=self.bot_name)
+                    RollbackManager().rollback(
+                        str(patch_id), requesting_bot=self.bot_name
+                    )
                 except Exception:
                     self.logger.exception("rollback failed")
                 raise
@@ -1571,7 +1582,9 @@ class SelfCodingManager:
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.error("merge to main failed: %s", exc)
                     try:
-                        RollbackManager().rollback(str(patch_id), requesting_bot=self.bot_name)
+                        RollbackManager().rollback(
+                            str(patch_id), requesting_bot=self.bot_name
+                        )
                     except Exception:
                         self.logger.exception("rollback failed")
             self.baseline_tracker.update(confidence=conf)
@@ -1620,9 +1633,7 @@ class SelfCodingManager:
                     parent_event_id=self._last_event_id,
                 )
             except Exception as exc:
-                self.logger.exception(
-                    "failed to log evolution cycle: %s", exc
-                )
+                self.logger.exception("failed to log evolution cycle: %s", exc)
         if self.bot_registry:
             module_path = path_for_prompt(path)
             try:
@@ -1633,11 +1644,11 @@ class SelfCodingManager:
                     "patched",
                     duration=runtime_after,
                     success=True,
-                    resources=(
-                        f"hot_swap:{int(time.time())},patch_id:{patch_id}"
-                    ),
+                    resources=(f"hot_swap:{int(time.time())},patch_id:{patch_id}"),
                 )
-                self.bot_registry.register_bot(self.bot_name)
+                self.bot_registry.register_bot(
+                    self.bot_name, manager=self, data_bot=self.data_bot
+                )
                 self.bot_registry.record_interaction_metadata(
                     self.bot_name,
                     "evolution",
@@ -1748,7 +1759,8 @@ class SelfCodingManager:
                         self.bot_registry.save(target)
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception(
-                            "failed to persist bot registry", extra={"path": str(target)}
+                            "failed to persist bot registry",
+                            extra={"path": str(target)},
                         )
         if self.event_bus:
             try:
@@ -1812,10 +1824,14 @@ class SelfCodingManager:
                             }
                         )
                     except Exception:  # pragma: no cover - best effort
-                        self.logger.exception("failed to record audit log for %s", prompt_module)
+                        self.logger.exception(
+                            "failed to record audit log for %s", prompt_module
+                        )
                 self.run_patch(path, description)
             except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to apply suggestion for %s", prompt_module)
+                self.logger.exception(
+                    "failed to apply suggestion for %s", prompt_module
+                )
             finally:
                 try:
                     self.suggestion_db.conn.execute(

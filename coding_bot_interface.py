@@ -129,9 +129,7 @@ def _ensure_threshold_entry(name: str, thresholds: Any) -> None:
             name,
             roi_drop=getattr(thresholds, "roi_drop", None),
             error_increase=getattr(thresholds, "error_threshold", None),
-            test_failure_increase=getattr(
-                thresholds, "test_failure_threshold", None
-            ),
+            test_failure_increase=getattr(thresholds, "test_failure_threshold", None),
         )
     except Exception:
         logger.exception("failed to persist thresholds for %s", name)
@@ -177,10 +175,14 @@ def self_coding_managed(
                 name,
                 roi_threshold=roi_t,
                 error_threshold=err_t,
+                manager=manager,
                 data_bot=data_bot,
             )
         except TypeError:  # pragma: no cover - legacy registries
-            bot_registry.register_bot(name)
+            try:
+                bot_registry.register_bot(name, manager=manager, data_bot=data_bot)
+            except TypeError:
+                bot_registry.register_bot(name)
         try:
             bot_registry.update_bot(name, module_path)
         except Exception:  # pragma: no cover - best effort
@@ -222,7 +224,9 @@ def self_coding_managed(
                         test_failure_increase=thresholds.test_failure_threshold,
                     )
                 except Exception:  # pragma: no cover - best effort
-                    logger.exception("failed to initialise thresholds for %s", name_local)
+                    logger.exception(
+                        "failed to initialise thresholds for %s", name_local
+                    )
             if not isinstance(manager_local, SelfCodingManager):
                 raise RuntimeError("SelfCodingManager instance is required")
             self.manager = manager_local
@@ -279,7 +283,9 @@ def self_coding_managed(
                     raise RuntimeError(
                         f"{cls.__name__}: QuickFixEngine requires a context_builder"
                     )
-                error_db = getattr(self, "error_db", None) or getattr(manager_local, "error_db", None)
+                error_db = getattr(self, "error_db", None) or getattr(
+                    manager_local, "error_db", None
+                )
                 if error_db is None:
                     try:
                         error_db = ErrorDB()
@@ -333,6 +339,7 @@ def self_coding_managed(
         for method_name in ("run", "execute"):
             orig_method = getattr(cls, method_name, None)
             if callable(orig_method):
+
                 @wraps(orig_method)
                 def wrapped_method(self, *args: Any, _orig=orig_method, **kwargs: Any):
                     start = time.time()
