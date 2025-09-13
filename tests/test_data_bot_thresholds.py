@@ -1,10 +1,13 @@
 import sys
 import types
+import yaml
+
 
 stub_cbi = types.ModuleType("menace.coding_bot_interface")
 stub_cbi.self_coding_managed = lambda cls: cls
 stub_cbi.manager_generate_helper = lambda *_a, **_k: None
 sys.modules["menace.coding_bot_interface"] = stub_cbi
+
 
 class UnifiedEventBus:
     def __init__(self) -> None:
@@ -172,3 +175,92 @@ def test_forecast_threshold_persist(monkeypatch, tmp_path):
 
     assert len(calls) > 1
     assert len(events) > 1
+
+
+def test_internalize_persists_defaults(monkeypatch, tmp_path):
+    stub = types.ModuleType("vector_metrics_db")
+    monkeypatch.setitem(sys.modules, "menace.vector_metrics_db", stub)
+    import importlib
+    sys.modules.pop("menace.sandbox_settings", None)
+    real_settings = importlib.import_module("menace.sandbox_settings")
+    monkeypatch.setitem(sys.modules, "sandbox_settings", real_settings)
+    import menace.chunking as chunking  # noqa: WPS433
+    chunking._SETTINGS = real_settings.SandboxSettings()
+    import menace.self_coding_thresholds as sct  # noqa: WPS433
+    cfg_path = tmp_path / "sc.yaml"
+    monkeypatch.setattr(sct, "_CONFIG_PATH", cfg_path)
+    import menace.data_bot as db  # noqa: WPS433
+    monkeypatch.setattr(db, "psutil", None)
+    stub_th = types.ModuleType("menace.sandbox_runner.test_harness")
+    stub_th.run_tests = lambda *a, **k: None
+    stub_th.TestHarnessResult = object
+    monkeypatch.setitem(sys.modules, "menace.sandbox_runner.test_harness", stub_th)
+    stub_cd = types.ModuleType("menace.code_database")
+    stub_cd.PatchRecord = object
+    monkeypatch.setitem(sys.modules, "menace.code_database", stub_cd)
+    stub_engine = types.ModuleType("menace.self_coding_engine")
+    stub_engine.SelfCodingEngine = object
+    monkeypatch.setitem(sys.modules, "menace.self_coding_engine", stub_engine)
+    stub_ra = types.ModuleType("menace.research_aggregator_bot")
+    stub_ra.ResearchAggregatorBot = object
+    stub_ra.ResearchItem = object
+    monkeypatch.setitem(sys.modules, "menace.research_aggregator_bot", stub_ra)
+    import menace.self_coding_manager as scm  # noqa: WPS433
+    monkeypatch.setattr(
+        scm,
+        "persist_sc_thresholds",
+        lambda bot, roi_drop=None, error_increase=None, test_failure_increase=None, **_: (
+            cfg_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "bots": {
+                            bot: {
+                                "roi_drop": roi_drop,
+                                "error_increase": error_increase,
+                                "test_failure_increase": test_failure_increase,
+                            }
+                        }
+                    },
+                    sort_keys=False,
+                )
+            )
+        ),
+    )
+
+    class DummyManager:
+        def __init__(self, *_a, **_k):
+            self.quick_fix = object()
+            self.logger = types.SimpleNamespace(exception=lambda *a, **k: None)
+
+    monkeypatch.setattr(scm, "SelfCodingManager", DummyManager)
+
+    class DummyRegistry:
+        def register_bot(self, *_a, **_k):
+            return None
+
+    settings = types.SimpleNamespace(
+        self_coding_roi_drop=-0.1,
+        self_coding_error_increase=1.0,
+        self_coding_test_failure_increase=0.0,
+        bot_thresholds={},
+    )
+    data_bot = types.SimpleNamespace(settings=settings, event_bus=None)
+
+    scm.internalize_coding_bot(
+        "bot",
+        engine=object(),
+        pipeline=object(),
+        data_bot=data_bot,
+        bot_registry=DummyRegistry(),
+    )
+
+    data = yaml.safe_load(cfg_path.read_text())
+    bot_cfg = data["bots"]["bot"]
+    assert bot_cfg["roi_drop"] == -0.1
+    assert bot_cfg["error_increase"] == 1.0
+    assert bot_cfg["test_failure_increase"] == 0.0
+
+    thresh = db.load_sc_thresholds("bot", settings, path=cfg_path)
+    assert thresh.roi_drop == -0.1
+    assert thresh.error_increase == 1.0
+    assert thresh.test_failure_increase == 0.0
