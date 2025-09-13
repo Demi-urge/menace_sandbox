@@ -3,7 +3,8 @@ import types
 import pytest
 
 
-def test_context_block_compressed(monkeypatch):
+@pytest.fixture
+def qfe(monkeypatch):
     sr_mod = types.ModuleType("sandbox_runner")
     sr_mod.post_round_orphan_scan = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_mod)
@@ -22,6 +23,12 @@ def test_context_block_compressed(monkeypatch):
     class KnowledgeGraph: ...
     kg_mod.KnowledgeGraph = KnowledgeGraph
     monkeypatch.setitem(sys.modules, "menace_sandbox.knowledge_graph", kg_mod)
+
+    cbi_mod = types.ModuleType("menace_sandbox.coding_bot_interface")
+    def manager_generate_helper(manager, description: str, **kwargs):
+        return manager.engine.generate_helper(description, **kwargs)
+    cbi_mod.manager_generate_helper = manager_generate_helper
+    monkeypatch.setitem(sys.modules, "menace_sandbox.coding_bot_interface", cbi_mod)
 
     vec_cb_mod = types.ModuleType("vector_service.context_builder")
     class ContextBuilder: ...
@@ -82,10 +89,13 @@ def test_context_block_compressed(monkeypatch):
     vl_mod.log_violation = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "menace_sandbox.violation_logger", vl_mod)
 
-    import menace_sandbox.quick_fix_engine as qfe
+    import menace_sandbox.quick_fix_engine as qfe_mod
 
-    monkeypatch.setattr(qfe, "get_chunk_summaries", None)
+    monkeypatch.setattr(qfe_mod, "get_chunk_summaries", None)
+    return qfe_mod
 
+
+def test_context_block_compressed(qfe):
     class DummyPatchLogger:
         def track_contributors(self, *a, **k):
             raise RuntimeError("skip")
@@ -136,9 +146,7 @@ def test_context_block_compressed(monkeypatch):
     assert context_block not in engine.helper_calls[0]
 
 
-def test_generate_patch_errors_without_manager(monkeypatch):
-    import menace_sandbox.quick_fix_engine as qfe
-
+def test_generate_patch_errors_without_manager(qfe):
     class DummyBuilder:
         def refresh_db_weights(self):
             return None
@@ -149,3 +157,86 @@ def test_generate_patch_errors_without_manager(monkeypatch):
     with pytest.raises(RuntimeError):
         qfe.generate_patch("mod", None, context_builder=DummyBuilder())
 
+
+def test_generate_patch_enriches_with_graph(qfe):
+    captured: dict[str, str] = {}
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, description, session_id=None, include_vectors=False):
+            return "", "", []
+
+    class DummyEngine:
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            return 1, "", ""
+
+    def helper_fn(manager, desc, **kwargs):
+        captured["desc"] = desc
+        return "helper"
+
+    class DummyGraph:
+        def related(self, key: str, depth: int = 1) -> list[str]:
+            return ["code:foo.py", "error:ValueError"]
+
+    builder = DummyBuilder()
+    engine = DummyEngine()
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
+    )
+
+    qfe.generate_patch(
+        module="simple_functions",
+        manager=manager,
+        engine=engine,
+        context_builder=builder,
+        description="desc",
+        helper_fn=helper_fn,
+        graph=DummyGraph(),
+    )
+
+    assert "foo.py" in captured["desc"]
+    assert "ValueError" in captured["desc"]
+
+
+def test_generate_patch_graph_failure(qfe):
+    captured: dict[str, str] = {}
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, description, session_id=None, include_vectors=False):
+            return "", "", []
+
+    class DummyEngine:
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            return 1, "", ""
+
+    def helper_fn(manager, desc, **kwargs):
+        captured["desc"] = desc
+        return "helper"
+
+    class FailingGraph:
+        def related(self, *a, **k):
+            raise RuntimeError("boom")
+
+    builder = DummyBuilder()
+    engine = DummyEngine()
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
+    )
+
+    pid = qfe.generate_patch(
+        module="simple_functions",
+        manager=manager,
+        engine=engine,
+        context_builder=builder,
+        description="desc",
+        helper_fn=helper_fn,
+        graph=FailingGraph(),
+    )
+
+    assert pid == 1
+    assert "Related modules" not in captured["desc"]

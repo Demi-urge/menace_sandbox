@@ -98,11 +98,7 @@ try:  # pragma: no cover - optional helper
     from .self_coding_manager import _manager_generate_helper_with_builder
 except Exception:  # pragma: no cover - helper unavailable
     _manager_generate_helper_with_builder = None  # type: ignore
-try:  # pragma: no cover - optional dependency
-    from .knowledge_graph import KnowledgeGraph
-except Exception:  # pragma: no cover - fallback
-    class KnowledgeGraph:  # type: ignore
-        pass
+from .knowledge_graph import KnowledgeGraph
 try:  # pragma: no cover - optional dependency
     from .coding_bot_interface import (
         manager_generate_helper as _base_manager_generate_helper,
@@ -118,6 +114,7 @@ try:  # pragma: no cover - optional dependency
     from .data_bot import DataBot
 except Exception:  # pragma: no cover - fallback when unavailable
     DataBot = object  # type: ignore
+from .resilience import retry_with_backoff
 try:  # pragma: no cover - fail fast if vector service missing
     from vector_service.context_builder import (
         ContextBuilder,
@@ -233,6 +230,7 @@ def generate_patch(
     target_region: "TargetRegion" | None = None,
     return_flags: bool = False,
     helper_fn: Callable[..., str] | None = None,
+    graph: KnowledgeGraph | None = None,
 ) -> int | tuple[int | None, list[str]] | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -298,6 +296,24 @@ def generate_patch(
     context_meta: Dict[str, Any] = {"module": prompt_path, "reason": "preemptive_fix"}
     if context:
         context_meta.update(context)
+    graph_lines: list[str] = []
+    if graph is not None:
+        def _fetch() -> list[str]:
+            return graph.related(f"code:{prompt_path}")
+        try:
+            related_nodes = retry_with_backoff(_fetch, attempts=2, delay=0.1, logger=logger)
+        except Exception:
+            related_nodes = []
+        modules = [n.split(":", 1)[1] for n in related_nodes if n.startswith("code:")]
+        errors = [n.split(":", 1)[1] for n in related_nodes if n.startswith("error:")]
+        if modules:
+            graph_lines.append("Related modules: " + ", ".join(modules[:5]))
+            context_meta["related_modules"] = modules[:5]
+        if errors:
+            graph_lines.append("Related errors: " + ", ".join(errors[:5]))
+            context_meta["related_errors"] = errors[:5]
+    if graph_lines:
+        description += "\n\n" + "\n".join(graph_lines)
     cluster_id: int | None = None
     cluster_traces: list[str] = []
     cluster_size = 0
@@ -1109,6 +1125,7 @@ class QuickFixEngine:
                         engine=getattr(self.manager, "engine", None),
                         context_builder=self.context_builder,
                         helper_fn=self.helper_fn,
+                        graph=self.graph,
                     )
                 except Exception:
                     patch_id = None
@@ -1174,6 +1191,7 @@ class QuickFixEngine:
                 return_flags=True,
                 helper_fn=self.helper_fn,
                 patch_logger=self.patch_logger,
+                graph=self.graph,
             )
         except Exception:
             self.logger.exception("quick fix patch failed")
@@ -1240,6 +1258,7 @@ class QuickFixEngine:
                 return_flags=True,
                 helper_fn=self.helper_fn,
                 patch_logger=self.patch_logger,
+                graph=self.graph,
             )
         except Exception:
             self.logger.exception("quick fix validation failed")
