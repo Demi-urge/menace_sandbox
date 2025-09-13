@@ -18,6 +18,8 @@ import tempfile
 import os
 import uuid
 import time
+import py_compile
+import shlex
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
 
 from .snippet_compressor import compress_snippets
@@ -231,6 +233,7 @@ def generate_patch(
     return_flags: bool = False,
     helper_fn: Callable[..., str] | None = None,
     graph: KnowledgeGraph | None = None,
+    test_command: List[str] | None = None,
 ) -> int | tuple[int | None, list[str]] | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -273,6 +276,13 @@ def generate_patch(
     logger = logging.getLogger("QuickFixEngine")
     helper = helper_fn or manager_generate_helper
     risk_flags: list[str] = []
+    if test_command is None:
+        env_cmd = os.getenv("SELF_CODING_TEST_COMMAND")
+        if env_cmd:
+            try:
+                test_command = shlex.split(env_cmd)
+            except Exception:
+                test_command = [env_cmd]
     if context_builder is None:
         raise TypeError("context_builder is required")
     if manager is None:
@@ -615,6 +625,19 @@ def generate_patch(
                                 "embedding backfill failed", exc_info=True
                             )
                         break
+            try:
+                py_compile.compile(str(path), doraise=True)
+            except Exception as exc:
+                shutil.copy2(before_target, path)
+                logger.error("patch compilation failed: %s", exc)
+                raise RuntimeError("patch compilation failed") from exc
+            if test_command:
+                try:
+                    subprocess.run(test_command, check=True)
+                except Exception as exc:
+                    shutil.copy2(before_target, path)
+                    logger.error("patch tests failed: %s", exc)
+                    raise RuntimeError("patch tests failed") from exc
             if patch_id is not None:
                 registry = getattr(manager, "bot_registry", None)
                 if registry is not None:
