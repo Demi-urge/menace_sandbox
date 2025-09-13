@@ -99,6 +99,10 @@ try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - fallback for flat layout
     from unified_event_bus import UnifiedEventBus  # type: ignore
+try:  # pragma: no cover - allow package/flat imports
+    from .shared_event_bus import event_bus as _SHARED_EVENT_BUS
+except Exception:  # pragma: no cover - flat layout fallback
+    from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 
 try:  # pragma: no cover - allow package/flat imports
     from .code_database import PatchRecord
@@ -253,7 +257,9 @@ class SelfCodingManager:
                 )
                 self.enhancement_classifier = None
         self.bot_registry = bot_registry
-        self.event_bus = event_bus
+        # Ensure all managers use the shared event bus unless a specific one
+        # is supplied.
+        self.event_bus = event_bus or _SHARED_EVENT_BUS
         self.evolution_orchestrator = evolution_orchestrator
         if self.bot_registry:
             try:
