@@ -396,7 +396,7 @@ class SelfCodingManager:
         if not self.data_bot:
             return
         try:
-            prev = getattr(self, "_last_thresholds", None)
+            getattr(self, "_last_thresholds", None)
             t = self.threshold_service.reload(self.bot_name)
 
             adaptive = False
@@ -813,7 +813,12 @@ class SelfCodingManager:
                     self.event_bus.publish("bot:updated", payload)
                     self.event_bus.publish(
                         "self_coding:patch_attempt",
-                        {"bot": self.bot_name, "path": str(path), "patch_id": patch_id, "commit": commit},
+                        {
+                            "bot": self.bot_name,
+                            "path": str(path),
+                            "patch_id": patch_id,
+                            "commit": commit,
+                        },
                     )
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to publish patch events")
@@ -1529,17 +1534,18 @@ class SelfCodingManager:
                     )
                 except Exception:
                     self.logger.exception("failed to record patch outcome")
-            if self.quick_fix is not None:
-                try:
-                    _src = path.read_text(encoding="utf-8")
-                    valid_post, _flags_post = self.quick_fix.validate_patch(
-                        str(path), description
-                    )
-                    path.write_text(_src, encoding="utf-8")
-                    if not valid_post:
-                        raise RuntimeError("quick fix validation failed")
-                except Exception as exc:
-                    raise RuntimeError("QuickFixEngine validation unavailable") from exc
+            if self.quick_fix is None:
+                raise RuntimeError("QuickFixEngine validation unavailable")
+            try:
+                _src = path.read_text(encoding="utf-8")
+                valid_post, _flags_post = self.quick_fix.validate_patch(
+                    str(path), description
+                )
+                path.write_text(_src, encoding="utf-8")
+                if not valid_post:
+                    raise RuntimeError("quick fix validation failed")
+            except Exception as exc:
+                raise RuntimeError("QuickFixEngine validation unavailable") from exc
             conf = 1.0
             if result is not None and getattr(result, "roi", None) is not None:
                 conf = getattr(result.roi, "confidence", None)  # type: ignore[attr-defined]
