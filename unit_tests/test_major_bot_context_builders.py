@@ -209,7 +209,9 @@ def test_apply_validated_patch_emits_rejection_event(tmp_path, monkeypatch):
         engine=object(),
         event_bus=bus,
         data_bot=DB(),
+        bot_registry=object(),
         bot_name="bot",
+        register_bot=lambda *a, **k: None,
     )
     monkeypatch.setattr(qfe, "generate_patch", lambda *a, **k: (1, ["flag"]))
     monkeypatch.setattr(qfe.subprocess, "run", lambda *a, **k: None)

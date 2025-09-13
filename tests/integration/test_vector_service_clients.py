@@ -85,10 +85,12 @@ def test_quick_fix_engine_uses_vector_service_retriever():
 
         def build(self, query, session_id=None, include_vectors=False):
             return ""
-
+    manager = types.SimpleNamespace(
+        bot_registry=object(), data_bot=object(), register_bot=lambda *a, **k: None
+    )
     engine = QuickFixEngine(
         error_db=object(),
-        manager=object(),
+        manager=manager,
         retriever=SpyRetriever(),
         context_builder=DummyBuilder(),
     )

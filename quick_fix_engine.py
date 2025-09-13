@@ -22,7 +22,6 @@ from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING
 
 from .snippet_compressor import compress_snippets
 from .codebase_diff_checker import generate_code_diff, flag_risky_changes
-from .bot_registry import BotRegistry
 
 try:  # pragma: no cover - optional dependency
     from context_builder_util import ensure_fresh_weights
@@ -110,15 +109,10 @@ class ErrorClusterPredictor:
         return int(cluster_id), cluster_traces
 
 from .error_bot import ErrorDB
-try:  # pragma: no cover - optional dependency
-    from .self_coding_manager import (
-        SelfCodingManager,
-        _manager_generate_helper_with_builder,
-    )
-except Exception:  # pragma: no cover - fallback
-    class SelfCodingManager:  # type: ignore
-        pass
-
+from .self_coding_manager import SelfCodingManager
+try:  # pragma: no cover - optional helper
+    from .self_coding_manager import _manager_generate_helper_with_builder
+except Exception:  # pragma: no cover - helper unavailable
     _manager_generate_helper_with_builder = None  # type: ignore
 try:  # pragma: no cover - optional dependency
     from .knowledge_graph import KnowledgeGraph
@@ -127,13 +121,9 @@ except Exception:  # pragma: no cover - fallback
         pass
 try:  # pragma: no cover - optional dependency
     from .coding_bot_interface import (
-        self_coding_managed,
         manager_generate_helper as _base_manager_generate_helper,
     )
 except Exception:  # pragma: no cover - fallback when coding engine unavailable
-    def self_coding_managed(cls):  # type: ignore
-        return cls
-
     def _base_manager_generate_helper(manager, description: str, **kwargs):  # type: ignore
         raise ImportError("Self-coding engine is required for operation")
 
@@ -144,9 +134,6 @@ try:  # pragma: no cover - optional dependency
     from .data_bot import DataBot
 except Exception:  # pragma: no cover - fallback when unavailable
     DataBot = object  # type: ignore
-
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
 try:  # pragma: no cover - fail fast if vector service missing
     from vector_service.context_builder import (
         ContextBuilder,
@@ -648,7 +635,6 @@ def generate_patch(
         return (None, [str(exc)]) if return_flags else None
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class QuickFixEngine:
     """Analyse frequent errors and trigger small patches."""
 
@@ -667,6 +653,20 @@ class QuickFixEngine:
         min_reliability: float | None = None,
         redundancy_limit: int | None = None,
     ) -> None:
+        if context_builder is None:
+            raise RuntimeError("context_builder is required")
+        try:
+            ensure_fresh_weights(context_builder)
+        except Exception as exc:  # pragma: no cover - validation
+            raise RuntimeError(
+                "provided ContextBuilder cannot query local databases"
+            ) from exc
+        if getattr(manager, "bot_registry", None) is None or getattr(
+            manager, "data_bot", None
+        ) is None:
+            raise RuntimeError(
+                "manager must provide bot_registry and data_bot"
+            )
         self.db = error_db
         self.manager = manager
         try:
@@ -679,12 +679,6 @@ class QuickFixEngine:
         self.predictor = predictor
         self.retriever = retriever
         logger = logging.getLogger(self.__class__.__name__)
-        try:
-            ensure_fresh_weights(context_builder)
-        except Exception as exc:  # pragma: no cover - validation
-            raise RuntimeError(
-                "provided ContextBuilder cannot query local databases"
-            ) from exc
         self.context_builder = context_builder
         if patch_logger is None:
             try:
