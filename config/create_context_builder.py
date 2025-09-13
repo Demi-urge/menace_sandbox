@@ -3,12 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder
-except Exception:  # pragma: no cover - fallback for tests
-    class ContextBuilder:  # type: ignore[misc]
-        def __init__(self, *_, **__):  # pragma: no cover - simple stub
-            pass
+from vector_service.context_builder import ContextBuilder
 
 
 def create_context_builder() -> ContextBuilder:
