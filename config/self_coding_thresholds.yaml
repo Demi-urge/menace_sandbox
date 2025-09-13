@@ -457,3 +457,7 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+  auto_patch_cycle_bot:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.0
