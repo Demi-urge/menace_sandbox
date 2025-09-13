@@ -192,6 +192,19 @@ pre-commit run check-engine-generate-helper --all-files
 Run the hook before committing to ensure no direct `engine.generate_helper`
 calls slip into the codebase.
 
+## Helper caller decoration
+
+Any class that invokes `manager_generate_helper` or `generate_helper` must be
+decorated with `@self_coding_managed`.  The `check-self-coding-decorator` hook
+verifies this requirement:
+
+```bash
+pre-commit run check-self-coding-decorator --all-files
+```
+
+CI executes the same script, so missing decorators will cause the build to
+fail.
+
 ## Patch provenance
 
 Commits that modify self-coding infrastructure (`self_coding_manager.py`,

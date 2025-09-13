@@ -4,16 +4,20 @@
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 # Modules where ``self_coding_managed`` is intentionally absent despite
-# calling ``manager_generate_helper``.
+# calling helper functions.
 EXCLUDED_PATHS = {Path("self_coding_engine.py")}
+
+# Helper invocation names that require @self_coding_managed.
+HELPER_NAMES = {"manager_generate_helper", "generate_helper"}
 
 
 def _calls_helper(cls: ast.ClassDef) -> bool:
-    """Return True if *cls* calls manager_generate_helper or generate_helper."""
+    """Return True if *cls* calls one of the helper functions."""
     for node in ast.walk(cls):
         if isinstance(node, ast.Call):
             func = node.func
@@ -22,7 +26,7 @@ def _calls_helper(cls: ast.ClassDef) -> bool:
                 name = func.id
             elif isinstance(func, ast.Attribute):
                 name = func.attr
-            if name in {"manager_generate_helper", "generate_helper"}:
+            if name in HELPER_NAMES:
                 return True
     return False
 
@@ -38,17 +42,24 @@ def _has_decorator(cls: ast.ClassDef) -> bool:
     return False
 
 
-def _iter_python_files(root: Path) -> Iterable[Path]:
-    for path in root.rglob("*.py"):
-        if "tests" in path.parts or "unit_tests" in path.parts:
-            continue
-        yield path
+def _iter_python_files(paths: Iterable[Path]) -> Iterable[Path]:
+    for base in paths:
+        base = base.resolve()
+        if base.is_dir():
+            candidates = base.rglob("*.py")
+        else:
+            candidates = [base]
+        for path in candidates:
+            if "tests" in path.parts or "unit_tests" in path.parts:
+                continue
+            yield path
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
+    paths = [root] if not argv else [root / a for a in argv]
     offenders: list[tuple[Path, str]] = []
-    for path in _iter_python_files(root):
+    for path in _iter_python_files(paths):
         rel = path.relative_to(root)
         if rel in EXCLUDED_PATHS:
             continue
@@ -69,4 +80,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
