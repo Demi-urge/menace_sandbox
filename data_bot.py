@@ -1190,6 +1190,14 @@ class DataBot:
                 port = int(os.getenv("METRICS_PORT", "8001"))
                 start_metrics_server(port)
 
+        if self.event_bus:
+            try:
+                self.event_bus.subscribe(
+                    "self_coding:patch_applied", self._on_patch_applied
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to subscribe to patch_applied events")
+
     def subscribe_threshold_breaches(
         self, callback: Callable[[dict], None]
     ) -> None:
@@ -1221,6 +1229,47 @@ class DataBot:
         else:
             self._degradation_callbacks.append(callback)
             self.degradation_callback = callback
+
+    # ------------------------------------------------------------------
+    def _on_patch_applied(self, _topic: str, event: object) -> None:
+        """Refresh baselines and thresholds after a self-coding patch."""
+        if not isinstance(event, dict):
+            return
+        bot = event.get("bot")
+        roi_after = float(event.get("roi_after", event.get("roi_before", 0.0)))
+        errors_after = float(
+            event.get("errors_after", event.get("errors_before", 0.0))
+        )
+        try:
+            if bot:
+                # Reload thresholds and reset rolling baselines for the bot
+                self.reload_thresholds(bot)
+                tracker = BaselineTracker(window=self.baseline_window)
+                tracker.update(record_momentum=False, roi=roi_after, errors=errors_after)
+                self._baseline[bot] = tracker
+                self._ema_baseline[bot] = {
+                    "roi": roi_after,
+                    "errors": errors_after,
+                    "tests_failed": float(event.get("tests_failed_after", 0.0)),
+                }
+        except Exception:
+            self.logger.exception("failed to refresh baselines after patch")
+        try:
+            patch_id = event.get("patch_id")
+            delta = float(
+                event.get(
+                    "roi_delta",
+                    roi_after - float(event.get("roi_before", roi_after)),
+                )
+            )
+            success = delta >= 0.0
+            session_id = str(event.get("session_id", ""))
+            if patch_id is not None:
+                self.db.log_patch_outcome(
+                    str(patch_id), success, session_id=session_id
+                )
+        except Exception:
+            self.logger.exception("failed to log patch outcome")
 
     def start_monitoring(self, interval: float) -> threading.Thread:
         """Periodically invoke :meth:`check_degradation` for known bots.
