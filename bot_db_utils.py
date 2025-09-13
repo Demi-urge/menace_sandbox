@@ -49,7 +49,10 @@ def wrap_bot_methods(
                     manager_obj = getattr(bot, "manager", None)
                     d_bot = getattr(bot, "data_bot", None)
                     bot_registry.register_bot(
-                        from_name, manager=manager_obj, data_bot=d_bot
+                        from_name,
+                        manager=manager_obj,
+                        data_bot=d_bot,
+                        is_coding_bot=bool(manager_obj and d_bot),
                     )
                 except Exception as exc:
                     logger.warning(

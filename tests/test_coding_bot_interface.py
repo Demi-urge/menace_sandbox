@@ -78,7 +78,7 @@ class DummyRegistry:
         self.registered = []
         self.updated = []
 
-    def register_bot(self, name):
+    def register_bot(self, name, **kwargs):
         self.registered.append(name)
 
     def update_bot(self, name, module_path):

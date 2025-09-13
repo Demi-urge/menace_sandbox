@@ -279,7 +279,10 @@ class SelfCodingManager:
         if self.bot_registry:
             try:
                 self.bot_registry.register_bot(
-                    self.bot_name, manager=self, data_bot=self.data_bot
+                    self.bot_name,
+                    manager=self,
+                    data_bot=self.data_bot,
+                    is_coding_bot=True,
                 )
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
@@ -336,7 +339,12 @@ class SelfCodingManager:
         if not self.bot_registry:
             return
         try:
-            self.bot_registry.register_bot(name, manager=self, data_bot=self.data_bot)
+            self.bot_registry.register_bot(
+                name,
+                manager=self,
+                data_bot=self.data_bot,
+                is_coding_bot=True,
+            )
             if self.data_bot:
                 try:
                     self.threshold_service.reload(name)
@@ -1647,7 +1655,10 @@ class SelfCodingManager:
                     resources=(f"hot_swap:{int(time.time())},patch_id:{patch_id}"),
                 )
                 self.bot_registry.register_bot(
-                    self.bot_name, manager=self, data_bot=self.data_bot
+                    self.bot_name,
+                    manager=self,
+                    data_bot=self.data_bot,
+                    is_coding_bot=True,
                 )
                 self.bot_registry.record_interaction_metadata(
                     self.bot_name,
@@ -1881,6 +1892,7 @@ def internalize_coding_bot(
         error_threshold=error_threshold,
         manager=manager,
         data_bot=data_bot,
+        is_coding_bot=True,
     )
     if evolution_orchestrator is not None:
         evolution_orchestrator.selfcoding_manager = manager
