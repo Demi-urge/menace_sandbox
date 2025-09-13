@@ -1,5 +1,6 @@
 import sys
 import types
+import contextvars
 import pytest
 
 
@@ -18,6 +19,12 @@ def qfe(monkeypatch):
     class SelfCodingManager: ...
     scm_mod.SelfCodingManager = SelfCodingManager
     monkeypatch.setitem(sys.modules, "menace_sandbox.self_coding_manager", scm_mod)
+
+    sce_mod = types.ModuleType("menace_sandbox.self_coding_engine")
+    class SelfCodingEngine: ...
+    sce_mod.SelfCodingEngine = SelfCodingEngine
+    sce_mod.MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=None)
+    monkeypatch.setitem(sys.modules, "menace_sandbox.self_coding_engine", sce_mod)
 
     kg_mod = types.ModuleType("menace_sandbox.knowledge_graph")
     class KnowledgeGraph: ...
@@ -125,9 +132,9 @@ def test_context_block_compressed(qfe):
 
     builder = DummyBuilder()
     engine = DummyEngine()
-    manager = types.SimpleNamespace(
-        engine=engine, register_patch_cycle=lambda *a, **k: None
-    )
+    manager = qfe.SelfCodingManager()
+    manager.engine = engine
+    manager.register_patch_cycle = lambda *a, **k: None
 
     expected = qfe.compress_snippets({"snippet": context_block})["snippet"]
 
@@ -158,6 +165,65 @@ def test_generate_patch_errors_without_manager(qfe):
         qfe.generate_patch("mod", None, context_builder=DummyBuilder())
 
 
+def test_generate_patch_errors_with_wrong_manager(qfe):
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, *a, **k):
+            return ""
+
+    with pytest.raises(RuntimeError):
+        qfe.generate_patch("mod", object(), context_builder=DummyBuilder())
+
+
+def test_generate_patch_uses_manager_context(qfe):
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, *a, **k):
+            return ""
+
+    class DummyEngine:
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            return 1, "", ""
+
+    manager = qfe.SelfCodingManager()
+    manager.engine = DummyEngine()
+    manager.register_patch_cycle = lambda *a, **k: None
+
+    token = qfe.MANAGER_CONTEXT.set(manager)
+    try:
+        qfe.generate_patch("mod", None, context_builder=DummyBuilder())
+    finally:
+        qfe.MANAGER_CONTEXT.reset(token)
+
+
+def test_generate_patch_unmanaged_bypass(qfe):
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, *a, **k):
+            return ""
+
+    class DummyEngine:
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            return 1, "", ""
+
+    engine = DummyEngine()
+    manager = types.SimpleNamespace(engine=engine, register_patch_cycle=lambda *a, **k: None)
+
+    qfe.generate_patch(
+        "mod",
+        manager,
+        engine=engine,
+        context_builder=DummyBuilder(),
+        _allow_unmanaged=True,
+    )
+
+
 def test_generate_patch_enriches_with_graph(qfe):
     captured: dict[str, str] = {}
 
@@ -182,9 +248,9 @@ def test_generate_patch_enriches_with_graph(qfe):
 
     builder = DummyBuilder()
     engine = DummyEngine()
-    manager = types.SimpleNamespace(
-        engine=engine, register_patch_cycle=lambda *a, **k: None
-    )
+    manager = qfe.SelfCodingManager()
+    manager.engine = engine
+    manager.register_patch_cycle = lambda *a, **k: None
 
     qfe.generate_patch(
         module="simple_functions",
@@ -224,9 +290,9 @@ def test_generate_patch_graph_failure(qfe):
 
     builder = DummyBuilder()
     engine = DummyEngine()
-    manager = types.SimpleNamespace(
-        engine=engine, register_patch_cycle=lambda *a, **k: None
-    )
+    manager = qfe.SelfCodingManager()
+    manager.engine = engine
+    manager.register_patch_cycle = lambda *a, **k: None
 
     pid = qfe.generate_patch(
         module="simple_functions",
