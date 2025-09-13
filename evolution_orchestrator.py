@@ -231,10 +231,14 @@ class EvolutionOrchestrator:
         if not self.selfcoding_manager:
             return
         bot = str(event.get("bot", ""))
+        severity = float(event.get("severity", 0.0))
         desc = (
             f"auto_patch_due_to_degradation:{bot}"
             if bot
             else "auto_patch_due_to_degradation"
+        )
+        self.logger.info(
+            "register_patch_cycle for %s with severity %.2f", bot or "unknown", severity
         )
         context = {
             "roi_baseline": event.get("roi_baseline", 0.0),
@@ -243,6 +247,7 @@ class EvolutionOrchestrator:
             "delta_roi": event.get("delta_roi", 0.0),
             "delta_errors": event.get("delta_errors", 0.0),
             "delta_tests_failed": event.get("delta_tests_failed", 0.0),
+            "severity": severity,
             "trigger": "degradation",
             "reason": "bot degraded",
         }
@@ -266,7 +271,12 @@ class EvolutionOrchestrator:
             except Exception:
                 self.logger.exception("bot registry lookup failed for %s", bot)
         if not module_path or not module_path.exists():
-            payload = {"bot": bot, "success": False, "error": "module_path_missing"}
+            payload = {
+                "bot": bot,
+                "success": False,
+                "error": "module_path_missing",
+                "severity": severity,
+            }
             if bus:
                 try:
                     bus.publish("self_coding:patch_attempt", payload)
@@ -351,6 +361,7 @@ class EvolutionOrchestrator:
             "error_delta": err_delta,
             "description": desc,
             "path": str(module_path),
+            "severity": severity,
             "success": success,
         }
         if bus:
