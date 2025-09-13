@@ -40,7 +40,7 @@ jobs:
         run: "python tools/check_dynamic_paths.py $(git ls-files '*.py')"
       - name: Enforce ContextBuilder usage
         run: python scripts/check_context_builder_usage.py
-      - name: Ensure SelfCodingEngine bots use @self_coding_managed
+      - name: Ensure SelfCodingEngine bots are decorated and registered
         run: python tools/check_coding_bot_decorators.py
       - name: Check for direct SelfCodingEngine patch usage
         run: "python tools/check_self_coding_integrity.py $(git ls-files '*.py')"
@@ -101,6 +101,8 @@ jobs:
         run: pre-commit run check-self-coding-integrity --all-files
       - name: ensure all bots are self-coding managed
         run: pre-commit run self-coding-registration --all-files
+      - name: Ensure SelfCodingEngine bots are decorated and registered
+        run: python tools/check_coding_bot_decorators.py
       - name: Check for unmanaged bots
         run: python tools/find_unmanaged_bots.py
       - name: Prevent unwrapped engine.generate_helper usage
