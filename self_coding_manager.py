@@ -291,6 +291,7 @@ class SelfCodingManager:
                         improvement_engine=improv,
                         evolution_manager=evol_mgr,
                         selfcoding_manager=self,
+                        event_bus=self.event_bus,
                     )
             except Exception:  # pragma: no cover - best effort
                 self.evolution_orchestrator = None

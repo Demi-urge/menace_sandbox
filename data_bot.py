@@ -57,11 +57,7 @@ from typing import Iterable, List, Dict, TYPE_CHECKING, Callable
 from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
 
-try:  # pragma: no cover - optional dependency
-    from .unified_event_bus import UnifiedEventBus
-except Exception:  # pragma: no cover
-    class UnifiedEventBus:  # type: ignore[override]
-        pass
+from .unified_event_bus import UnifiedEventBus
 from .roi_thresholds import ROIThresholds
 from .self_coding_thresholds import (
     get_thresholds as load_sc_thresholds,
@@ -1887,6 +1883,8 @@ class DataBot:
             try:
                 self.event_bus.publish("metrics:delta", event)
                 if degraded:
+                    self.event_bus.publish("metrics:updated", event)
+                    self.event_bus.publish("degradation:detected", event)
                     self.event_bus.publish("data:threshold_breach", event)
                     self.event_bus.publish("bot:degraded", event)
                     self.event_bus.publish("self_coding:degradation", event)
@@ -2415,10 +2413,7 @@ class DataBot:
         return float(df["cpu"].mean() + df["memory"].mean())
 
 
-try:
-    _event_bus = UnifiedEventBus()
-except Exception:  # pragma: no cover - best effort
-    _event_bus = None
+_event_bus = UnifiedEventBus()
 
 _default_db = MetricsDB(Path(__file__).with_name("metrics.db").resolve())
 data_bot = DataBot(db=_default_db, start_server=False, event_bus=_event_bus)

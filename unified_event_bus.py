@@ -25,7 +25,15 @@ import logging
 
 from db_router import GLOBAL_ROUTER
 
-from .automated_reviewer import AutomatedReviewer
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from .automated_reviewer import AutomatedReviewer
+else:
+    class AutomatedReviewer(Protocol):  # type: ignore[misc]
+        def handle(self, event: object) -> None:
+            ...
+
 from .resilience import CircuitBreaker, CircuitOpenError, retry_with_backoff
 from .logging_utils import set_correlation_id
 

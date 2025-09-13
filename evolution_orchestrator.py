@@ -128,6 +128,14 @@ class EvolutionOrchestrator:
         self._cycles = 0
         self._last_workflow_benchmark = 0.0
         self._benchmark_interval = 3600
+        if self.event_bus and self.selfcoding_manager:
+            def _handle_degradation(topic: str, event: object) -> None:
+                try:
+                    self.selfcoding_manager.register_patch_cycle(event)
+                except Exception:
+                    self.logger.exception("register_patch_cycle failed")
+
+            self.event_bus.subscribe("degradation:detected", _handle_degradation)
         self._cached_eval_score = 0.0
         self._workflow_roi_history: dict[str, list[float]] = {}
         self._last_mutation_id: int | None = None
