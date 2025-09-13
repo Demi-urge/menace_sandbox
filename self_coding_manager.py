@@ -652,6 +652,7 @@ class SelfCodingManager:
             )
             return AutomationResult(None, None)
         before_roi = roi
+        err_before = errors
         repo_root = Path.cwd().resolve()
         result: AutomationResult | None = None
         after_roi = before_roi
@@ -1218,16 +1219,22 @@ class SelfCodingManager:
                     prov_path.unlink()
                 except Exception:
                     pass
-                try:
-                    commit_hash = (
-                        subprocess.check_output(
-                            ["git", "rev-parse", "HEAD"], cwd=str(clone_root)
-                        )
-                        .decode()
-                        .strip()
+                commit_hash = (
+                    subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"], cwd=str(clone_root)
                     )
-                except Exception:
-                    commit_hash = None
+                    .decode()
+                    .strip()
+                )
+                if not commit_hash:
+                    raise RuntimeError("failed to retrieve commit hash")
+                if self.quick_fix and self.bot_registry:
+                    self.bot_registry.update_bot(
+                        self.bot_name,
+                        module_path,
+                        patch_id=patch_id,
+                        commit=commit_hash,
+                    )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.error("git commit failed: %s", exc)
                 try:
@@ -1242,6 +1249,7 @@ class SelfCodingManager:
                 self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
             )
             roi_delta = after_roi - before_roi
+            err_delta = err_after - err_before
             coverage_delta = coverage_after - coverage_before
             runtime_improvement = runtime_before - runtime_after
             self.logger.info(
@@ -1570,6 +1578,9 @@ class SelfCodingManager:
                     "roi_before": before_roi,
                     "roi_after": after_roi,
                     "roi_delta": roi_delta,
+                    "errors_before": err_before,
+                    "errors_after": err_after,
+                    "error_delta": err_delta,
                 }
                 self.event_bus.publish("self_coding:patch_applied", payload)
             except Exception:  # pragma: no cover - best effort
