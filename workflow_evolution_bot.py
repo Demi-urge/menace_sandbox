@@ -168,6 +168,9 @@ class WorkflowEvolutionBot:
         benchmarking.
         """
 
+        if self.manager and not self.manager.should_refactor():
+            return
+
         emitted: set[str] = set()
         for suggestion in self.analyse(limit):
             parts = suggestion.sequence.split("-")
