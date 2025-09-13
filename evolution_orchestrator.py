@@ -253,6 +253,121 @@ class EvolutionOrchestrator:
         else:
             if bot:
                 self._pending_patch_cycle.add(bot)
+        registry = getattr(self.selfcoding_manager, "bot_registry", None)
+        bus = (
+            getattr(self.selfcoding_manager, "event_bus", None)
+            or self.event_bus
+            or getattr(self.data_bot, "event_bus", None)
+        )
+        module_path: Path | None = None
+        if registry and bot and bot in getattr(registry, "graph", {}):
+            try:
+                module_path = Path(registry.graph.nodes[bot]["module"])
+            except Exception:
+                self.logger.exception("bot registry lookup failed for %s", bot)
+        if not module_path or not module_path.exists():
+            payload = {"bot": bot, "success": False, "error": "module_path_missing"}
+            if bus:
+                try:
+                    bus.publish("self_coding:patch_attempt", payload)
+                except Exception:
+                    self.logger.exception(
+                        "failed to publish patch_attempt for %s", bot
+                    )
+            try:
+                self.history.add(
+                    EvolutionEvent(
+                        action="patch_failed",
+                        before_metric=float(context.get("roi_baseline", 0.0)),
+                        after_metric=float(context.get("roi_baseline", 0.0)),
+                        roi=0.0,
+                        reason=desc,
+                        trigger="degradation",
+                        performance=0.0,
+                    )
+                )
+            except Exception:
+                self.logger.exception("failed to record patch attempt")
+            return
+        try:
+            builder = create_context_builder()
+            try:
+                ensure_fresh_weights(builder)
+            except Exception:
+                self.logger.exception(
+                    "failed to refresh context builder for %s", bot
+                )
+            self.selfcoding_manager.generate_and_patch(
+                module_path,
+                desc,
+                context_meta=context,
+                context_builder=builder,
+            )
+            patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
+            commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
+            success = bool(patch_id and commit)
+        except Exception:
+            self.logger.exception("failed to self patch after degradation of %s", bot)
+            patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
+            commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
+            success = False
+        roi_before = float(context.get("roi_baseline", 0.0))
+        err_before = float(context.get("errors_baseline", 0.0))
+        roi_after = (
+            self.data_bot.roi(bot) if hasattr(self.data_bot, "roi") else roi_before
+        )
+        err_after = (
+            self.data_bot.average_errors(bot)
+            if hasattr(self.data_bot, "average_errors")
+            else err_before
+        )
+        roi_delta = roi_after - roi_before
+        err_delta = err_after - err_before
+        try:
+            self.history.add(
+                EvolutionEvent(
+                    action="patch" if success else "patch_failed",
+                    before_metric=roi_before,
+                    after_metric=roi_after if success else roi_before,
+                    roi=roi_delta if success else 0.0,
+                    patch_id=patch_id,
+                    reason=desc,
+                    trigger="degradation",
+                    performance=roi_delta,
+                    bottleneck=err_delta,
+                )
+            )
+        except Exception:
+            self.logger.exception("failed to record patch result")
+        payload = {
+            "bot": bot,
+            "patch_id": patch_id,
+            "commit": commit,
+            "roi_before": roi_before,
+            "roi_after": roi_after if success else roi_before,
+            "roi_delta": roi_delta if success else 0.0,
+            "errors_before": err_before,
+            "errors_after": err_after,
+            "error_delta": err_delta,
+            "description": desc,
+            "path": str(module_path),
+            "success": success,
+        }
+        if bus:
+            try:
+                bus.publish("self_coding:patch_attempt", payload)
+            except Exception:
+                self.logger.exception(
+                    "failed to publish patch_attempt for %s", bot
+                )
+        if registry and success:
+            try:
+                def _upd() -> None:
+                    registry.update_bot(bot, str(module_path), patch_id=patch_id, commit=commit)
+
+                with_retry(_upd, logger=self.logger)
+            except Exception:
+                self.logger.exception("failed to update bot %s", bot)
 
     def _ensure_degradation_subscription(self, *_args: object) -> None:
         if getattr(self, "_degradation_subscribed", False):
