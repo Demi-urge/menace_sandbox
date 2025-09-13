@@ -1483,7 +1483,9 @@ class SelfCodingEngine:
         optional prompt strategy to the underlying :class:`PromptEngine`.
         """
         path = resolve_path(path)
-        from .coding_bot_interface import manager_generate_helper
+        from .self_coding_manager import (
+            _manager_generate_helper_with_builder as manager_generate_helper,
+        )
 
         manager = MANAGER_CONTEXT.get()
         try:
@@ -1728,7 +1730,9 @@ class SelfCodingEngine:
         # Snapshot of original file to merge patches into
         original_lines = path.read_text(encoding="utf-8").splitlines()
         code = "\n".join(original_lines)
-        from .coding_bot_interface import manager_generate_helper
+        from .self_coding_manager import (
+            _manager_generate_helper_with_builder as manager_generate_helper,
+        )
         manager = MANAGER_CONTEXT.get()
 
         def _verify(snippet: str) -> bool:
