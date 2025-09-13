@@ -56,7 +56,7 @@ repos:
         pass_filenames: true
         files: '\.py$'
       - id: self-coding-registration
-        name: ensure all bots are self-coding managed
+        name: Ensure bots are internalized or self-coding managed
         entry: python tools/check_self_coding_registration.py
         language: system
         pass_filenames: false
