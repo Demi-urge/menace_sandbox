@@ -28,6 +28,9 @@ class DummyDataBot:
     def check_degradation(self, *args, **kwargs):  # pragma: no cover - noop
         pass
 
+    def reload_thresholds(self, _bot):  # pragma: no cover - simple defaults
+        return types.SimpleNamespace(roi_drop=-0.1, error_threshold=1.0)
+
 
 class DummySelfCodingManager:
     def __init__(self, module: Path):

@@ -684,6 +684,16 @@ class EvolutionOrchestrator:
                 self.analysis_bot.train()
             except Exception:
                 self.logger.exception("analysis training failed")
+        if self.selfcoding_manager and self._pending_patch_cycle:
+            pending = list(self._pending_patch_cycle)
+            for bot in pending:
+                try:
+                    self._on_bot_degraded({"bot": bot})
+                except Exception:
+                    self.logger.exception(
+                        "failed to process pending patch for %s", bot
+                    )
+            self._pending_patch_cycle.clear()
         before_roi = self._latest_roi()
         delta_roi = before_roi - self.prev_roi
         self.prev_roi = before_roi
