@@ -91,35 +91,27 @@ from .scope_utils import build_scope_clause, Scope, apply_scope
 from .coding_bot_interface import self_coding_managed
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
-try:  # pragma: no cover - optional self-coding dependency
-    from .self_coding_manager import SelfCodingManager
-except ImportError:  # pragma: no cover - self-coding unavailable
-    SelfCodingManager = Any  # type: ignore
+from .self_coding_manager import SelfCodingManager
+from .self_coding_engine import SelfCodingEngine
+from .model_automation_pipeline import ModelAutomationPipeline
+from .threshold_service import ThresholdService
+from .code_database import CodeDB
+from .gpt_memory import GPTMemoryManager
+from vector_service.context_builder import ContextBuilder
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-
-class _StubThresholds:
-    roi_drop = 0.0
-    error_threshold = 0.0
-    test_failure_threshold = 0.0
-
-
-class _StubThresholdService:
-    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
-        return _StubThresholds()
-
-
-engine = object()
-pipeline = object()
+_context_builder = ContextBuilder()
+engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
+pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 manager = SelfCodingManager(
     engine,
     pipeline,
     bot_registry=registry,
     data_bot=data_bot,
-    threshold_service=_StubThresholdService(),
+    threshold_service=ThresholdService(),
 )
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only

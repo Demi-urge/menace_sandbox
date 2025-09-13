@@ -26,32 +26,27 @@ from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 from .self_coding_manager import SelfCodingManager
+from .self_coding_engine import SelfCodingEngine
+from .model_automation_pipeline import ModelAutomationPipeline
+from .threshold_service import ThresholdService
+from .code_database import CodeDB
+from .gpt_memory import GPTMemoryManager
+from vector_service.context_builder import ContextBuilder
 
 logger = logging.getLogger("BotTester")
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-
-class _StubThresholds:
-    roi_drop = 0.0
-    error_threshold = 0.0
-    test_failure_threshold = 0.0
-
-
-class _StubThresholdService:
-    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
-        return _StubThresholds()
-
-
-engine = object()
-pipeline = object()
+_context_builder = ContextBuilder()
+engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
+pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 manager = SelfCodingManager(
     engine,
     pipeline,
     bot_registry=registry,
     data_bot=data_bot,
-    threshold_service=_StubThresholdService(),
+    threshold_service=ThresholdService(),
 )
 
 # Allow users to register custom randomizers for specific types
