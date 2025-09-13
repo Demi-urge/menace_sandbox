@@ -1768,4 +1768,71 @@ class SelfCodingManager:
                     self.logger.exception("failed to delete suggestion %s", sid)
 
 
-__all__ = ["SelfCodingManager", "PatchApprovalPolicy", "HelperGenerationError"]
+def internalize_coding_bot(
+    bot_name: str,
+    engine: SelfCodingEngine,
+    pipeline: ModelAutomationPipeline,
+    *,
+    data_bot: DataBot,
+    bot_registry: BotRegistry,
+    evolution_orchestrator: "EvolutionOrchestrator | None" = None,
+    roi_threshold: float | None = None,
+    error_threshold: float | None = None,
+    **manager_kwargs: Any,
+) -> SelfCodingManager:
+    """Wire ``bot_name`` into the self‑coding system.
+
+    The helper constructs a :class:`SelfCodingManager`, registers ROI/error
+    thresholds with :class:`BotRegistry` and ensures ``EvolutionOrchestrator``
+    reacts to ``degradation:detected`` events.
+
+    Parameters mirror :class:`SelfCodingManager` while providing explicit
+    ``roi_threshold`` and ``error_threshold`` values.  Additional keyword
+    arguments are forwarded to ``SelfCodingManager``.
+    """
+    manager = SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name=bot_name,
+        data_bot=data_bot,
+        bot_registry=bot_registry,
+        roi_drop_threshold=roi_threshold,
+        error_rate_threshold=error_threshold,
+        **manager_kwargs,
+    )
+    manager.evolution_orchestrator = evolution_orchestrator
+    bot_registry.register_bot(
+        bot_name,
+        roi_threshold=roi_threshold,
+        error_threshold=error_threshold,
+        manager=manager,
+        data_bot=data_bot,
+    )
+    if evolution_orchestrator is not None:
+        evolution_orchestrator.selfcoding_manager = manager
+        try:
+            evolution_orchestrator.register_bot(bot_name)
+        except Exception:  # pragma: no cover - best effort
+            manager.logger.exception(
+                "failed to register %s with EvolutionOrchestrator", bot_name
+            )
+        bus = getattr(evolution_orchestrator, "event_bus", None)
+        if bus:
+            try:
+                bus.subscribe(
+                    "degradation:detected",
+                    lambda _t, e: evolution_orchestrator.register_patch_cycle(e),
+                )
+            except Exception:  # pragma: no cover - best effort
+                manager.logger.exception(
+                    "failed to subscribe degradation events for %s", bot_name
+                )
+    return manager
+
+
+__all__ = [
+    "SelfCodingManager",
+    "PatchApprovalPolicy",
+    "HelperGenerationError",
+    "internalize_coding_bot",
+]
