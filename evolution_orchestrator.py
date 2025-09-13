@@ -360,9 +360,10 @@ class EvolutionOrchestrator:
             desc = f"auto_patch_due_to_degradation:{bot}"
             try:
                 self.selfcoding_manager.register_patch_cycle(desc, context_meta)
-                self._pending_patch_cycle.add(bot)
             except Exception:
                 self.logger.exception("failed to register patch cycle for %s", bot)
+            else:
+                self._pending_patch_cycle.add(bot)
             current_roi = after_roi
             current_err = float(event.get("errors_baseline", 0.0)) + delta_errors
             predicted_roi = current_roi
