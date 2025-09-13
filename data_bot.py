@@ -1034,6 +1034,7 @@ class DataBot:
         smoothing_factor: float | None = None,
         trend_predictor: "TrendPredictor" | None = None,
         threshold_update_interval: float | None = None,
+        metric_predictor: object | None = None,
     ) -> None:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
@@ -1074,6 +1075,8 @@ class DataBot:
                 self.trend_predictor = _TP()
             except Exception:
                 self.trend_predictor = None
+        # Optional external predictor for projected metrics.
+        self.metric_predictor = metric_predictor
         self._baseline: Dict[str, BaselineTracker] = {}
         self._ema_baseline: Dict[str, Dict[str, float]] = {}
         # Per-bot forecast history for adaptive thresholding.
@@ -1244,6 +1247,12 @@ class DataBot:
             self._monitor_thread = self.start_monitoring(
                 self.threshold_update_interval
             )
+
+    # ------------------------------------------------------------------
+    def register_predictor(self, predictor: object) -> None:
+        """Register an external metric predictor."""
+
+        self.metric_predictor = predictor
 
     def subscribe_threshold_breaches(
         self, callback: Callable[[dict], None]
@@ -1686,6 +1695,19 @@ class DataBot:
             except Exception:  # pragma: no cover - prediction best effort
                 prediction = None
 
+        ext_pred = None
+        if self.metric_predictor is not None:
+            try:  # pragma: no cover - predictor optional
+                ext_pred = self.metric_predictor.predict(
+                    bot=bot,
+                    roi=roi,
+                    errors=errors,
+                    tests_failed=test_failures,
+                )
+            except Exception:
+                ext_pred = None
+                self.logger.exception("external predictor failed")
+
         now = time.time()
         thresholds = self._thresholds.get(bot)
         last = self._last_threshold_refresh.get(bot, 0.0)
@@ -1698,6 +1720,20 @@ class DataBot:
         err_high = max(pred_err, avg_err)
         fail_low = min(pred_fail, avg_fail)
         fail_high = max(pred_fail, avg_fail)
+
+        if isinstance(ext_pred, dict):
+            try:
+                r_vals = ext_pred.get("roi")
+                if r_vals:
+                    pred_roi, roi_low, roi_high = r_vals
+                e_vals = ext_pred.get("errors")
+                if e_vals:
+                    pred_err, err_low, err_high = e_vals
+                f_vals = ext_pred.get("tests_failed")
+                if f_vals:
+                    pred_fail, fail_low, fail_high = f_vals
+            except Exception:
+                self.logger.exception("invalid predictor output")
 
         std_roi = tracker.std("roi")
         std_err = tracker.std("errors")
@@ -1716,22 +1752,27 @@ class DataBot:
                     error_threshold=sc.error_increase,
                     test_failure_threshold=sc.test_failure_increase,
                 )
-            roi_thresh = base.roi_drop
-            err_thresh = base.error_threshold
-            fail_thresh = base.test_failure_threshold
-
-            roi_delta_pred = pred_roi - avg_roi
-            err_delta_pred = pred_err - avg_err
-
-            if roi_delta_pred >= 0:
-                roi_thresh = min(0.0, roi_thresh + roi_delta_pred * confidence)
+            if ext_pred:
+                roi_thresh = min(base.roi_drop, roi_low - avg_roi)
+                err_thresh = max(base.error_threshold, err_high - avg_err)
+                fail_thresh = max(base.test_failure_threshold, fail_high - avg_fail)
             else:
-                roi_thresh = min(roi_thresh, roi_delta_pred * confidence)
+                roi_thresh = base.roi_drop
+                err_thresh = base.error_threshold
+                fail_thresh = base.test_failure_threshold
 
-            if err_delta_pred >= 0:
-                err_thresh = max(err_thresh, err_delta_pred * confidence)
-            else:
-                err_thresh = max(0.0, err_thresh + err_delta_pred * confidence)
+                roi_delta_pred = pred_roi - avg_roi
+                err_delta_pred = pred_err - avg_err
+
+                if roi_delta_pred >= 0:
+                    roi_thresh = min(0.0, roi_thresh + roi_delta_pred * confidence)
+                else:
+                    roi_thresh = min(roi_thresh, roi_delta_pred * confidence)
+
+                if err_delta_pred >= 0:
+                    err_thresh = max(err_thresh, err_delta_pred * confidence)
+                else:
+                    err_thresh = max(0.0, err_thresh + err_delta_pred * confidence)
 
             thresholds = ROIThresholds(
                 roi_drop=roi_thresh,
@@ -1746,6 +1787,21 @@ class DataBot:
                     error_increase=err_thresh,
                     test_failure_increase=fail_thresh,
                 )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "data:thresholds_refreshed",
+                            {
+                                "bot": bot,
+                                "roi_threshold": roi_thresh,
+                                "error_threshold": err_thresh,
+                                "test_failure_threshold": fail_thresh,
+                            },
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish thresholds refreshed event"
+                        )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.warning(
                     "update_thresholds failed for %s: %s", bot, exc
