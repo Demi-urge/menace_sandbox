@@ -65,8 +65,7 @@ except Exception:  # pragma: no cover
 from .roi_thresholds import ROIThresholds
 from .self_coding_thresholds import (
     get_thresholds as load_sc_thresholds,
-    update_thresholds as save_sc_thresholds,
-    adaptive_thresholds,
+    update_thresholds as persist_sc_thresholds,
     _load_config as _load_sc_config,
 )
 from .sandbox_settings import SandboxSettings
@@ -1690,29 +1689,66 @@ class DataBot:
         now = time.time()
         thresholds = self._thresholds.get(bot)
         last = self._last_threshold_refresh.get(bot, 0.0)
+        pred_roi = prediction.roi if prediction else avg_roi
+        pred_err = prediction.errors if prediction else avg_err
+        pred_fail = avg_fail
+        roi_low = min(pred_roi, avg_roi)
+        roi_high = max(pred_roi, avg_roi)
+        err_low = min(pred_err, avg_err)
+        err_high = max(pred_err, avg_err)
+        fail_low = min(pred_fail, avg_fail)
+        fail_high = max(pred_fail, avg_fail)
+
+        std_roi = tracker.std("roi")
+        std_err = tracker.std("errors")
+        confidence = 1.0 / (1.0 + std_roi + std_err)
+
         if (
             thresholds is None
             or now - last >= self.threshold_update_interval
         ):
-            thresholds = adaptive_thresholds(
-                bot,
-                roi_baseline=avg_roi,
-                error_baseline=avg_err,
-                failure_baseline=avg_fail,
-                prediction=prediction,
-                predictor=self.trend_predictor,
+            if thresholds is not None:
+                base = thresholds
+            else:
+                sc = load_sc_thresholds(bot)
+                base = ROIThresholds(
+                    roi_drop=sc.roi_drop,
+                    error_threshold=sc.error_increase,
+                    test_failure_threshold=sc.test_failure_increase,
+                )
+            roi_thresh = base.roi_drop
+            err_thresh = base.error_threshold
+            fail_thresh = base.test_failure_threshold
+
+            roi_delta_pred = pred_roi - avg_roi
+            err_delta_pred = pred_err - avg_err
+
+            if roi_delta_pred >= 0:
+                roi_thresh = min(0.0, roi_thresh + roi_delta_pred * confidence)
+            else:
+                roi_thresh = min(roi_thresh, roi_delta_pred * confidence)
+
+            if err_delta_pred >= 0:
+                err_thresh = max(err_thresh, err_delta_pred * confidence)
+            else:
+                err_thresh = max(0.0, err_thresh + err_delta_pred * confidence)
+
+            thresholds = ROIThresholds(
+                roi_drop=roi_thresh,
+                error_threshold=err_thresh,
+                test_failure_threshold=fail_thresh,
             )
             self._thresholds[bot] = thresholds
             try:
-                save_sc_thresholds(
+                persist_sc_thresholds(
                     bot,
-                    roi_drop=thresholds.roi_drop,
-                    error_increase=thresholds.error_threshold,
-                    test_failure_increase=thresholds.test_failure_threshold,
+                    roi_drop=roi_thresh,
+                    error_increase=err_thresh,
+                    test_failure_increase=fail_thresh,
                 )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.warning(
-                    "save_sc_thresholds failed for %s: %s", bot, exc
+                    "update_thresholds failed for %s: %s", bot, exc
                 )
                 if self.event_bus:
                     try:
@@ -1725,20 +1761,10 @@ class DataBot:
                             "failed to publish threshold update failed event"
                         )
             self._last_threshold_refresh[bot] = now
-        roi_thresh = thresholds.roi_drop
-        err_thresh = thresholds.error_threshold
-        fail_thresh = thresholds.test_failure_threshold
-
-        pred_roi = prediction.roi if prediction else avg_roi
-        pred_err = prediction.errors if prediction else avg_err
-        pred_fail = avg_fail
-
-        roi_low = min(pred_roi, avg_roi)
-        roi_high = max(pred_roi, avg_roi)
-        err_low = min(pred_err, avg_err)
-        err_high = max(pred_err, avg_err)
-        fail_low = min(pred_fail, avg_fail)
-        fail_high = max(pred_fail, avg_fail)
+        else:
+            roi_thresh = thresholds.roi_drop
+            err_thresh = thresholds.error_threshold
+            fail_thresh = thresholds.test_failure_threshold
 
         fhist = self._forecast_history.setdefault(
             bot, {"roi": [], "errors": [], "tests_failed": []}
@@ -1761,7 +1787,7 @@ class DataBot:
             "test_failure_confidence_low": fail_low,
             "test_failure_confidence_high": fail_high,
             "forecast_model": "trend",
-            "forecast_confidence": 0.0,
+            "forecast_confidence": confidence,
             "delta_roi": delta_roi,
             "delta_errors": delta_err,
             "delta_tests_failed": delta_fail,
@@ -2009,7 +2035,7 @@ class DataBot:
             bots = data.get("bots", {}) if isinstance(data, dict) else {}
             if bot not in bots:
                 try:  # pragma: no cover - best effort persistence
-                    save_sc_thresholds(
+                    persist_sc_thresholds(
                         bot,
                         roi_drop=rt.roi_drop,
                         error_increase=rt.error_threshold,
@@ -2027,7 +2053,7 @@ class DataBot:
             or self.test_failure_threshold is not None
         ):
             try:  # pragma: no cover - best effort persistence
-                save_sc_thresholds(
+                persist_sc_thresholds(
                     bot,
                     roi_drop=roi_drop if self.roi_drop_threshold is not None else None,
                     error_increase=
@@ -2072,7 +2098,7 @@ class DataBot:
         forecast: Dict[str, float] | None = None,
     ) -> None:
         """Persist new thresholds for ``bot`` and optionally notify API."""
-        save_sc_thresholds(
+        persist_sc_thresholds(
             bot,
             roi_drop=roi_drop,
             error_increase=error_threshold,

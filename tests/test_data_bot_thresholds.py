@@ -3,9 +3,19 @@ import types
 
 stub_cbi = types.ModuleType("menace.coding_bot_interface")
 stub_cbi.self_coding_managed = lambda cls: cls
+stub_cbi.manager_generate_helper = lambda *_a, **_k: None
 sys.modules["menace.coding_bot_interface"] = stub_cbi
 
-from menace.unified_event_bus import UnifiedEventBus
+class UnifiedEventBus:
+    def __init__(self) -> None:
+        self._subs: dict[str, list] = {}
+
+    def subscribe(self, topic: str, handler):
+        self._subs.setdefault(topic, []).append(handler)
+
+    def publish(self, topic: str, payload):
+        for h in self._subs.get(topic, []):
+            h(topic, payload)
 
 
 def test_threshold_event_published(monkeypatch, tmp_path):

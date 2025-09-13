@@ -50,14 +50,7 @@ def test_pending_patch_cycle_processed(monkeypatch):
     monkeypatch.setitem(sys.modules, "menace.vector_metrics_db", stub)
     import menace.data_bot as db
     monkeypatch.setattr(db, "psutil", None)
-    monkeypatch.setattr(
-        db,
-        "adaptive_thresholds",
-        lambda *a, **k: db.ROIThresholds(
-            roi_drop=-0.1, error_threshold=1.0, test_failure_threshold=0.0
-        ),
-    )
-    monkeypatch.setattr(db, "save_sc_thresholds", lambda *a, **k: None)
+    monkeypatch.setattr(db, "persist_sc_thresholds", lambda *a, **k: None)
 
     from menace.evolution_orchestrator import EvolutionOrchestrator, EvolutionTrigger
 
