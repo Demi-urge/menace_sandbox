@@ -160,16 +160,30 @@ class BotRegistry:
                     if orchestrator is not None and hasattr(
                         orchestrator, "register_patch_cycle"
                     ):
-                        try:
-                            data_bot.subscribe_degradation(
-                                orchestrator.register_patch_cycle
-                            )
-                        except Exception as exc:  # pragma: no cover - best effort
-                            logger.error(
-                                "failed to subscribe degradation callback for %s: %s",
-                                name,
-                                exc,
-                            )
+                        bus = getattr(data_bot, "event_bus", None)
+                        if bus:
+                            try:
+                                bus.subscribe(
+                                    "degradation:detected",
+                                    lambda _t, e: orchestrator.register_patch_cycle(e),
+                                )
+                            except Exception as exc:  # pragma: no cover - best effort
+                                logger.error(
+                                    "failed to subscribe degradation callback for %s: %s",
+                                    name,
+                                    exc,
+                                )
+                        else:
+                            try:
+                                data_bot.subscribe_degradation(
+                                    orchestrator.register_patch_cycle
+                                )
+                            except Exception as exc:  # pragma: no cover - best effort
+                                logger.error(
+                                    "failed to subscribe degradation callback for %s: %s",
+                                    name,
+                                    exc,
+                                )
                     else:
                         def _on_degraded(event: dict, _bot=name, _mgr=manager):
                             if str(event.get("bot")) != _bot:
@@ -231,14 +245,28 @@ class BotRegistry:
                                     exc,
                                 )
 
-                        try:
-                            data_bot.subscribe_degradation(_on_degraded)
-                        except Exception as exc:  # pragma: no cover - best effort
-                            logger.error(
-                                "failed to subscribe degradation callback for %s: %s",
-                                name,
-                                exc,
-                            )
+                        bus = getattr(data_bot, "event_bus", None)
+                        if bus:
+                            try:
+                                bus.subscribe(
+                                    "degradation:detected",
+                                    lambda _t, e: _on_degraded(e),
+                                )
+                            except Exception as exc:  # pragma: no cover - best effort
+                                logger.error(
+                                    "failed to subscribe degradation callback for %s: %s",
+                                    name,
+                                    exc,
+                                )
+                        else:
+                            try:
+                                data_bot.subscribe_degradation(_on_degraded)
+                            except Exception as exc:  # pragma: no cover - best effort
+                                logger.error(
+                                    "failed to subscribe degradation callback for %s: %s",
+                                    name,
+                                    exc,
+                                )
             if roi_threshold is not None or error_threshold is not None:
                 try:
                     threshold_service.update(
@@ -578,12 +606,18 @@ class BotRegistry:
             manager = node.get("selfcoding_manager") or node.get("manager")
             if manager and hasattr(manager, "register_patch_cycle"):
                 try:
+                    token = getattr(
+                        getattr(manager, "evolution_orchestrator", None),
+                        "provenance_token",
+                        None,
+                    )
                     manager.register_patch_cycle(
                         f"manual change detected for {name}",
                         {
                             "reason": "provenance_mismatch",
                             "module": module_path,
                         },
+                        provenance_token=token,
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.error(

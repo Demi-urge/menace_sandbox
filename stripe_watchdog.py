@@ -182,7 +182,7 @@ try:  # Optional dependency – telemetry feedback loop
     from data_bot import DataBot  # type: ignore
     from self_coding_manager import SelfCodingManager  # type: ignore
     from model_automation_pipeline import ModelAutomationPipeline  # type: ignore
-    from unified_event_bus import UnifiedEventBus  # type: ignore
+    from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 except Exception:  # pragma: no cover - best effort
     TelemetryFeedback = None  # type: ignore
     ErrorLogger = None  # type: ignore
@@ -190,7 +190,7 @@ except Exception:  # pragma: no cover - best effort
     DataBot = None  # type: ignore
     SelfCodingManager = None  # type: ignore
     ModelAutomationPipeline = None  # type: ignore
-    UnifiedEventBus = None  # type: ignore
+    _SHARED_EVENT_BUS = None  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -1925,10 +1925,10 @@ def main(
             and engine is not None
             and SelfCodingManager
             and ModelAutomationPipeline
-            and UnifiedEventBus
+            and _SHARED_EVENT_BUS
         ):
             try:
-                bus = UnifiedEventBus()
+                bus = _SHARED_EVENT_BUS
                 registry = BotRegistry(event_bus=bus) if BotRegistry else None
                 data_bot = DataBot(event_bus=bus) if DataBot else None
                 pipeline = ModelAutomationPipeline(
