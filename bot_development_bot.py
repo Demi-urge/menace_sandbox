@@ -251,7 +251,7 @@ class PromptTemplateEngine:
 class BotDevelopmentBot:
     """Receive bot specs and generate starter code repositories."""
 
-    manager: "SelfCodingManager | None" = None
+    manager: SelfCodingManager
 
     def __init__(
         self,
@@ -262,7 +262,7 @@ class BotDevelopmentBot:
         *,
         config: BotDevConfig | None = None,
         context_builder: ContextBuilder,
-        manager: SelfCodingManager | None = None,
+        manager: SelfCodingManager,
         engine: SelfCodingEngine | None = None,
     ) -> None:
         self.config = config or BotDevConfig()
@@ -324,46 +324,16 @@ class BotDevelopmentBot:
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        if manager is None:
-            if engine is None:
-                try:
-                    code_db = CodeDB()
-                except Exception as exc:  # pragma: no cover
-                    self.logger.debug("CodeDB init failed: %s", exc)
-                    code_db = None  # type: ignore[arg-type]
-                try:
-                    memory_mgr = MenaceMemoryManager()
-                except Exception as exc:  # pragma: no cover
-                    self.logger.debug("Memory manager init failed: %s", exc)
-                    memory_mgr = None  # type: ignore[arg-type]
-                engine = SelfCodingEngine(
-                    code_db, memory_mgr, context_builder=self.context_builder
-                )
-            bus = UnifiedEventBus()
-            registry = BotRegistry(event_bus=bus)
-            pipeline = ModelAutomationPipeline(
-                context_builder=self.context_builder,
-                event_bus=bus,
-                bot_registry=registry,
-            )
-            manager = SelfCodingManager(
-                engine,
-                pipeline,
-                data_bot=DataBot(event_bus=bus),
-                bot_registry=registry,
-                event_bus=bus,
-            )
         self.manager = manager
         self.engine = getattr(self.manager, "engine", engine)
-        if self.manager is not None:
-            try:
-                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-                self.manager.register_bot(name)
-                orch = getattr(self.manager, "evolution_orchestrator", None)
-                if orch:
-                    orch.register_bot(name)
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("bot registration failed")
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("bot registration failed")
         # warn about missing optional dependencies
         for dep_name, mod in {
             "yaml": yaml,

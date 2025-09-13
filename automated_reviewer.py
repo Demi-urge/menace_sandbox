@@ -49,7 +49,7 @@ data_bot = DataBot(start_server=False)
 class AutomatedReviewer:
     """Analyse review events and trigger remediation."""
 
-    manager: "SelfCodingManager | None" = None
+    manager: SelfCodingManager
 
     def __init__(
         self,
@@ -71,6 +71,14 @@ class AutomatedReviewer:
         self.escalation_manager = escalation_manager
         self.logger = logging.getLogger(self.__class__.__name__)
         self.manager = manager
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("bot registration failed")
         evo = getattr(self.manager, "evolution_orchestrator", None)
         if evo:
             try:  # pragma: no cover - best effort registration

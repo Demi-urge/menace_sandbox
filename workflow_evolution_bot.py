@@ -69,7 +69,7 @@ class WorkflowEvolutionBot:
 
     def __init__(
         self,
-        manager: SelfCodingManager | None = None,
+        manager: SelfCodingManager,
         *,
         pathway_db: PathwayDB | None = None,
         intent_clusterer: IntentClusterer | None = None,
@@ -77,15 +77,14 @@ class WorkflowEvolutionBot:
         self.manager = manager
         self.db = pathway_db or PathwayDB()
         self.intent_clusterer = intent_clusterer or IntentClusterer(UniversalRetriever())
-        if self.manager is not None:
-            try:
-                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-                self.manager.register_bot(name)
-                orch = getattr(self.manager, "evolution_orchestrator", None)
-                if orch:
-                    orch.register_bot(name)
-            except Exception:
-                logger.exception("bot registration failed")
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:
+            logger.exception("bot registration failed")
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = data_bot
         # Track mutation events for rearranged sequences so benchmarking

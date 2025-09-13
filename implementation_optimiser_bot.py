@@ -41,11 +41,11 @@ class ImplementationOptimiserBot:
     the body in basic ``try``/``except`` blocks and emits log messages.
     """
 
-    manager: SelfCodingManager | None = None
+    manager: SelfCodingManager
 
     def __init__(
         self,
-        manager: SelfCodingManager | None = None,
+        manager: SelfCodingManager,
         *,
         context_builder: ContextBuilder,
     ) -> None:
@@ -54,30 +54,28 @@ class ImplementationOptimiserBot:
         self.history: List[TaskPackage] = []
         self.manager = manager
         self.context_builder = context_builder
-        if self.manager is not None:
-            try:
-                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-                self.manager.register_bot(name)
-                orch = getattr(self.manager, "evolution_orchestrator", None)
-                if orch:
-                    orch.register_bot(name)
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("bot registration failed")
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("bot registration failed")
         try:
             self.context_builder.refresh_db_weights()
         except Exception as exc:
             logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        if self.manager is not None:
-            try:
-                eng = getattr(self.manager, "engine", None)
-                if eng is not None:
-                    eng.context_builder = context_builder  # type: ignore[attr-defined]
-                    cb = getattr(eng, "context_builder", None)
-                    if cb and hasattr(cb, "refresh_db_weights"):
-                        cb.refresh_db_weights()  # type: ignore[attr-defined]
-            except Exception:
-                pass
+        try:
+            eng = getattr(self.manager, "engine", None)
+            if eng is not None:
+                eng.context_builder = context_builder  # type: ignore[attr-defined]
+                cb = getattr(eng, "context_builder", None)
+                if cb and hasattr(cb, "refresh_db_weights"):
+                    cb.refresh_db_weights()  # type: ignore[attr-defined]
+        except Exception:
+            pass
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = data_bot
 

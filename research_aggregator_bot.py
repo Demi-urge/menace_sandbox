@@ -767,23 +767,22 @@ class ResearchAggregatorBot:
         db_router: Optional[DBRouter] = None,
         enhancement_interval: float = 300.0,
         cache_ttl: float = 3600.0,
-        manager: SelfCodingManager | None = None,
         *,
+        manager: SelfCodingManager,
         context_builder: ContextBuilder,
     ) -> None:
         builder = context_builder
         if builder is None:
             raise ValueError("ContextBuilder is required")
         self.manager = manager
-        if self.manager is not None:
-            try:
-                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-                self.manager.register_bot(name)
-                orch = getattr(self.manager, "evolution_orchestrator", None)
-                if orch:
-                    orch.register_bot(name)
-            except Exception:
-                logger.exception("bot registration failed")
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:
+            logger.exception("bot registration failed")
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = data_bot
         self.requirements = list(requirements)

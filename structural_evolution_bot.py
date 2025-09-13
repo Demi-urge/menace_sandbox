@@ -98,7 +98,7 @@ class StructuralEvolutionBot:
 
     def __init__(
         self,
-        manager: SelfCodingManager | None = None,
+        manager: SelfCodingManager,
         *,
         metrics_db: MetricsDB | None = None,
         db: EvolutionDB | None = None,
@@ -108,15 +108,14 @@ class StructuralEvolutionBot:
         self.metrics_db = metrics_db or MetricsDB()
         self.db = db or EvolutionDB()
         self.approval_policy = approval_policy or EvolutionApprovalPolicy()
-        if self.manager is not None:
-            try:
-                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-                self.manager.register_bot(name)
-                orch = getattr(self.manager, "evolution_orchestrator", None)
-                if orch:
-                    orch.register_bot(name)
-            except Exception:
-                logger.exception("bot registration failed")
+        try:
+            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+            self.manager.register_bot(name)
+            orch = getattr(self.manager, "evolution_orchestrator", None)
+            if orch:
+                orch.register_bot(name)
+        except Exception:
+            logger.exception("bot registration failed")
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("StructuralEvolution")
         self.name = getattr(self, "name", self.__class__.__name__)
