@@ -299,6 +299,28 @@ class SelfCodingManager:
             return
         try:
             self.bot_registry.register_bot(name)
+            if self.data_bot:
+                try:
+                    self.data_bot.reload_thresholds(name)
+                    self.data_bot.check_degradation(
+                        name, roi=0.0, errors=0.0, test_failures=0.0
+                    )
+                    self.logger.info("seeded thresholds for %s", name)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "failed to seed thresholds for %s: %s", name, exc
+                    )
+                    bus = self.event_bus or getattr(self.data_bot, "event_bus", None)
+                    if bus:
+                        try:  # pragma: no cover - best effort
+                            bus.publish(
+                                "data:threshold_update_failed",
+                                {"bot": name, "error": str(exc)},
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to publish threshold update failed event"
+                            )
             if self.data_bot and self.evolution_orchestrator:
                 try:
                     self.data_bot.subscribe_degradation(
