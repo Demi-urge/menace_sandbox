@@ -664,24 +664,19 @@ class SelfCodingManager:
     def _validate_provenance(self, token: str | None) -> None:
         """Ensure calls originate from the registered ``EvolutionOrchestrator``.
 
-        When an orchestrator is configured a matching ``token`` must be
-        supplied, otherwise the patch cycle is rejected.  If no orchestrator is
-        present the attempt is logged but allowed to proceed so manual testing
-        remains possible.
+        A configured orchestrator is required and ``token`` must match its
+        ``provenance_token``. Otherwise a :class:`PermissionError` is raised.
         """
 
-        if self.evolution_orchestrator:
-            expected = getattr(self.evolution_orchestrator, "provenance_token", None)
-            if not token or token != expected:
-                self.logger.warning(
-                    "patch cycle without valid EvolutionOrchestrator token"
-                )
-                raise PermissionError("invalid provenance token")
-        else:
-            if not token:
-                # No orchestrator configured – log that this bypasses normal
-                # coordination but continue for backwards compatibility.
-                self.logger.warning("patch cycle invoked without EvolutionOrchestrator")
+        orchestrator = getattr(self, "evolution_orchestrator", None)
+        if not orchestrator:
+            raise PermissionError("EvolutionOrchestrator required")
+        expected = getattr(orchestrator, "provenance_token", None)
+        if not token or token != expected:
+            self.logger.warning(
+                "patch cycle without valid EvolutionOrchestrator token",
+            )
+            raise PermissionError("invalid provenance token")
 
     # ------------------------------------------------------------------
     def register_patch_cycle(
@@ -691,7 +686,7 @@ class SelfCodingManager:
         *,
         patch_id: int | None = None,
         commit: str | None = None,
-        provenance_token: str | None = None,
+        provenance_token: str,
     ) -> tuple[int | None, str | None]:
         """Log baseline metrics for an upcoming patch cycle.
 
@@ -774,7 +769,7 @@ class SelfCodingManager:
         *,
         context_meta: Dict[str, Any] | None = None,
         context_builder: ContextBuilder | None = None,
-        provenance_token: str | None = None,
+        provenance_token: str,
         **kwargs: Any,
     ) -> tuple[AutomationResult, str | None]:
         """Patch ``path`` using :meth:`run_patch` with fresh context.
@@ -813,6 +808,7 @@ class SelfCodingManager:
             result = self.run_patch(
                 path,
                 description,
+                provenance_token=provenance_token,
                 context_meta=context_meta,
                 context_builder=builder,
                 **kwargs,
@@ -869,6 +865,7 @@ class SelfCodingManager:
         description: str,
         energy: int = 1,
         *,
+        provenance_token: str,
         context_meta: Dict[str, Any] | None = None,
         context_builder: ContextBuilder | None = None,
         max_attempts: int = 3,
@@ -893,6 +890,7 @@ class SelfCodingManager:
         ``context_builder`` argument is retained for backwards compatibility but
         ignored.
         """
+        self._validate_provenance(provenance_token)
         self.refresh_quick_fix_context()
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")

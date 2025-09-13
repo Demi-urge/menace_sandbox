@@ -190,7 +190,14 @@ class BotRegistry:
                                 return
                             try:
                                 desc = f"auto_patch_due_to_degradation:{_bot}"
-                                result_vals = _mgr.register_patch_cycle(desc, event)
+                                token = getattr(
+                                    getattr(_mgr, "evolution_orchestrator", None),
+                                    "provenance_token",
+                                    None,
+                                )
+                                result_vals = _mgr.register_patch_cycle(
+                                    desc, event, provenance_token=token
+                                )
                                 if isinstance(result_vals, tuple):
                                     patch_id, commit = result_vals
                                 else:
@@ -199,7 +206,10 @@ class BotRegistry:
                                 result = None
                                 if module and hasattr(_mgr, "generate_and_patch"):
                                     result, new_commit = _mgr.generate_and_patch(
-                                        Path(module), desc, context_meta=event
+                                        Path(module),
+                                        desc,
+                                        context_meta=event,
+                                        provenance_token=token,
                                     )
                                     commit = commit or new_commit
                                 try:

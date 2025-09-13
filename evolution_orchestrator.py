@@ -976,7 +976,10 @@ class EvolutionOrchestrator:
                 }
                 self._invoke_register_patch_cycle(reason, meta)
                 self.selfcoding_manager.run_patch(
-                    path, reason, context_meta=meta
+                    path,
+                    reason,
+                    provenance_token=self.provenance_token,
+                    context_meta=meta,
                 )
                 after = self._latest_roi()
                 patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
@@ -1217,7 +1220,9 @@ class EvolutionOrchestrator:
                             )
                             if self.selfcoding_manager.should_refactor():
                                 self.selfcoding_manager.run_patch(
-                                    path, f"auto_patch:{path.name}"
+                                    path,
+                                    f"auto_patch:{path.name}",
+                                    provenance_token=self.provenance_token,
                                 )
                             after_patch = self._latest_roi()
                             delta = after_patch - before_roi
