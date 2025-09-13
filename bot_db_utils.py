@@ -46,10 +46,17 @@ def wrap_bot_methods(
 
             if bot_registry:
                 try:
-                    bot_registry.register_bot(from_name)
+                    manager_obj = getattr(bot, "manager", None)
+                    d_bot = getattr(bot, "data_bot", None)
+                    bot_registry.register_bot(
+                        from_name, manager=manager_obj, data_bot=d_bot
+                    )
                 except Exception as exc:
                     logger.warning(
-                        "bot registration failed for %s: %s", from_name, exc, exc_info=True
+                        "bot registration failed for %s: %s",
+                        from_name,
+                        exc,
+                        exc_info=True,
                     )
 
             call_args = args[1:] if args and args[0] is bot else args
@@ -87,5 +94,9 @@ def wrap_bot_methods(
 
             return __f(*args, **kwargs)
 
-        bound = wrapper.__get__(bot, bot.__class__) if isinstance(attr, types.MethodType) else wrapper
+        bound = (
+            wrapper.__get__(bot, bot.__class__)
+            if isinstance(attr, types.MethodType)
+            else wrapper
+        )
         setattr(bot, name, bound)
