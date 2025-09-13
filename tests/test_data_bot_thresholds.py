@@ -79,6 +79,7 @@ def test_check_degradation_callback(monkeypatch, tmp_path):
         roi_drop_threshold=-0.1,
         error_threshold=1.0,
     )
+    bot.event_bus = None
     events: list[dict] = []
     bot.check_degradation("bot", roi=10.0, errors=0.0)
     bot.check_degradation("bot", roi=0.0, errors=10.0, callback=lambda e: events.append(e))
@@ -113,3 +114,61 @@ def test_forecasting_model_detection(monkeypatch, tmp_path):
     assert bot.check_degradation("bot", roi=0.0, errors=5.0, test_failures=3.0)
     hist = bot._forecast_history["bot"]
     assert len(hist["roi"]) >= 7
+
+
+def test_forecast_threshold_persist(monkeypatch, tmp_path):
+    """Thresholds derived from forecasts are persisted and broadcast."""
+    stub = types.ModuleType("vector_metrics_db")
+    monkeypatch.setitem(sys.modules, "menace.vector_metrics_db", stub)
+    sys.modules.setdefault("sandbox_settings", sys.modules["menace.sandbox_settings"])
+    import menace.data_bot as db  # noqa: WPS433
+    monkeypatch.setattr(db, "psutil", None)
+
+    settings = types.SimpleNamespace(
+        self_coding_roi_drop=-0.1,
+        self_coding_error_increase=1.0,
+        self_coding_test_failure_increase=0.0,
+        bot_thresholds={},
+    )
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    bus = UnifiedEventBus()
+    events: list[dict] = []
+    bus.subscribe("data:thresholds_refreshed", lambda _t, e: events.append(e))
+
+    bot = db.DataBot(mdb, event_bus=bus, settings=settings)
+
+    class Model:
+        def __init__(self) -> None:
+            self.count = 0
+
+        def fit(self, hist):
+            self.count = len(hist)
+            return self
+
+        def forecast(self):
+            # Widen confidence interval on each call to force threshold updates
+            return 5.0, 5.0 - self.count, 5.0 + self.count
+
+    bot.threshold_service = types.SimpleNamespace(
+        get=lambda _b, _s: db.ROIThresholds(-0.1, 1.0, 0.0),
+        update=lambda *a, **k: None,
+    )
+    bot._forecast_models["bot"] = {
+        "roi": Model(),
+        "errors": Model(),
+        "tests_failed": Model(),
+    }
+    bot._forecast_meta["bot"] = {"model": "m", "confidence": 0.9, "params": {}}
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        db,
+        "persist_sc_thresholds",
+        lambda *a, **k: calls.append((a, k)),
+    )
+
+    for _ in range(3):
+        bot.check_degradation("bot", roi=5.0, errors=0.0, test_failures=0.0)
+
+    assert len(calls) > 1
+    assert len(events) > 1
