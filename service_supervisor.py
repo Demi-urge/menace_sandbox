@@ -52,11 +52,11 @@ from .autoscaler import Autoscaler  # noqa: E402
 from .unified_update_service import UnifiedUpdateService  # noqa: E402
 from .self_test_service import SelfTestService  # noqa: E402
 from .auto_escalation_manager import AutoEscalationManager  # noqa: E402
-from .self_coding_manager import (
+from .self_coding_manager import (  # noqa: E402
     PatchApprovalPolicy,
     SelfCodingManager,
     _manager_generate_helper_with_builder as _helper_fn,
-)  # noqa: E402
+)
 from .advanced_error_management import AutomatedRollbackManager  # noqa: E402
 from .error_bot import ErrorDB  # noqa: E402
 from .self_coding_engine import SelfCodingEngine  # noqa: E402
@@ -69,11 +69,16 @@ from context_builder_util import create_context_builder  # noqa: E402
 from .unified_event_bus import UnifiedEventBus  # noqa: E402
 from .bot_registry import BotRegistry  # noqa: E402
 from .data_bot import DataBot  # noqa: E402
+from .coding_bot_interface import self_coding_managed  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - optional
     psutil = None  # type: ignore
+
+bus = UnifiedEventBus()
+registry = BotRegistry(event_bus=bus)
+data_bot = DataBot(event_bus=bus)
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +353,7 @@ def _secret_rotation_worker() -> None:
 
 
 # ---------------------------------------------------------------------------
+@self_coding_managed(bot_registry=registry, data_bot=data_bot)
 class ServiceSupervisor:
     """Supervisor managing Menace background processes."""
 
@@ -381,9 +387,6 @@ class ServiceSupervisor:
         engine = SelfCodingEngine(
             CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
         )
-        bus = UnifiedEventBus()
-        registry = BotRegistry(event_bus=bus)
-        data_bot = DataBot(event_bus=bus)
         pipeline = ModelAutomationPipeline(
             context_builder=self.context_builder,
             event_bus=bus,
@@ -392,13 +395,15 @@ class ServiceSupervisor:
         manager = SelfCodingManager(
             engine,
             pipeline,
-            bot_name="menace",
+            bot_name=self.__class__.__name__,
             approval_policy=self.approval_policy,
             data_bot=data_bot,
             bot_registry=registry,
             event_bus=bus,
         )
+        manager.register_bot(self.__class__.__name__)
         manager.context_builder = self.context_builder
+        self.manager = manager
         self.error_db = ErrorDB()
         self.fix_engine = QuickFixEngine(
             self.error_db,
@@ -407,6 +412,8 @@ class ServiceSupervisor:
             context_builder=self.context_builder,
             helper_fn=_helper_fn,
         )
+        manager.quick_fix = self.fix_engine
+        self.evolution_orchestrator = manager.evolution_orchestrator
 
     def _record_failure(self, etype: str) -> None:
         """Record supervisor issues to the knowledge graph."""
@@ -423,14 +430,10 @@ class ServiceSupervisor:
             from .code_database import CodeDB
             from .menace_memory_manager import MenaceMemoryManager
             from .model_automation_pipeline import ModelAutomationPipeline
-            from .data_bot import DataBot
 
             engine = SelfCodingEngine(
                 CodeDB(), MenaceMemoryManager(), context_builder=self.context_builder
             )
-            bus = UnifiedEventBus()
-            registry = BotRegistry(event_bus=bus)
-            data_bot = DataBot(event_bus=bus)
             pipeline = ModelAutomationPipeline(
                 context_builder=self.context_builder,
                 event_bus=bus,
@@ -439,12 +442,13 @@ class ServiceSupervisor:
             manager = SelfCodingManager(
                 engine,
                 pipeline,
-                bot_name="menace",
+                bot_name=self.__class__.__name__,
                 approval_policy=self.approval_policy,
                 data_bot=data_bot,
                 bot_registry=registry,
                 event_bus=bus,
             )
+            manager.register_bot(self.__class__.__name__)
             manager.context_builder = self.context_builder
             manager.run_patch(path, description)
             added_modules = getattr(engine, "last_added_modules", None)
