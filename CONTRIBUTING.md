@@ -159,6 +159,11 @@ pre-commit run find-unmanaged-bots --all-files
 
 CI fails if unmanaged bots are detected.
 
+For additional assurance, the test suite includes
+`tests/test_self_coding_compliance.py`, which executes the same scan during
+`pytest`. The test fails if any `*_bot.py` module defines a bot class without
+`@self_coding_managed`, ensuring new bots remain self-coding compliant.
+
 
 ## Helper generation wrappers
 

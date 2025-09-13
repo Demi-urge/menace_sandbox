@@ -32,6 +32,8 @@ EXCLUDED_PATHS = {
     Path("investment_engine.py"),
     Path("revenue_amplifier.py"),
     Path("plugins/metrics_prediction.py"),
+    # ``data_bot.py`` is a metrics helper rather than a self-coding bot.
+    Path("data_bot.py"),
 }
 
 
