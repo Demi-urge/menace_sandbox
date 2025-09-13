@@ -44,7 +44,11 @@ from vector_service.context_builder import ContextBuilder, FallbackResult, Error
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
-from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+from .self_coding_manager import (
+    SelfCodingManager,
+    internalize_coding_bot,
+    _manager_generate_helper_with_builder as manager_generate_helper,
+)
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline
 from .data_bot import DataBot, persist_sc_thresholds
@@ -789,7 +793,7 @@ class BotDevelopmentBot:
                 code = path.read_text()
             else:
                 code = self.engine_retry.run(
-                    lambda: manager.generate_helper(prompt),
+                    lambda: manager_generate_helper(manager, prompt),
                     logger=self.logger,
                 )
             return EngineResult(True, code, None)

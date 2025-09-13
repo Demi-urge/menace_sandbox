@@ -80,6 +80,12 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
+      - id: check-self-coding-usage
+        name: Detect direct engine.generate_helper usage
+        entry: python tools/check_self_coding_usage.py
+        language: system
+        pass_filenames: true
+        files: '\.py$'
       - id: check-self-coding-decorator
         name: Ensure helper callers use @self_coding_managed
         entry: python tools/check_self_coding_decorator.py
