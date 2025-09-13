@@ -159,12 +159,28 @@ class ARIMAForecastModel(ForecastModel):
         return pred, low, high
 
 
-def create_model(name: str, confidence: float = 0.95) -> ForecastModel:
+def create_model(
+    name: str,
+    confidence: float = 0.95,
+    **params,
+) -> ForecastModel:
+    """Factory returning a forecast model by *name*.
+
+    Additional keyword arguments are forwarded to the underlying model
+    allowing callers to tweak parameters such as ``alpha`` for exponential
+    smoothing or ``order`` for ARIMA.  Unknown options are ignored by the
+    respective constructors.
+    """
+
     name = (name or "").lower()
     if name in {"exponential", "holt"}:
-        return ExponentialSmoothingModel(confidence=confidence)
+        alpha = float(params.get("alpha", 0.5))
+        return ExponentialSmoothingModel(alpha=alpha, confidence=confidence)
     if name == "arima" and ARIMA is not None:
-        return ARIMAForecastModel(confidence=confidence)
+        order = params.get("order", (1, 0, 0))
+        if isinstance(order, list):
+            order = tuple(int(x) for x in order)
+        return ARIMAForecastModel(order=order, confidence=confidence)
     # fallback to simple linear
     return SimpleLinearForecast(confidence=confidence)
 

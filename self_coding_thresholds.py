@@ -6,7 +6,8 @@ thresholds keyed by bot name.  Each entry may define ``roi_drop``
 increase in errors), ``test_failure_increase`` (allowed growth in
 failing tests) and ``test_command`` (custom test runner).  Forecast
 configuration is also stored allowing each bot to select a forecasting
-model and confidence interval via ``model`` and ``confidence`` fields.
+model, confidence interval and optional parameters via ``model``,
+``confidence`` and ``model_params`` fields.
 
 Long running services cache threshold values after the first lookup.
 When the YAML file is edited at runtime these values can be refreshed by
@@ -23,6 +24,7 @@ Example configuration snippet::
       test_failure_increase: 0.0
       model: exponential
       confidence: 0.95
+      model_params: {alpha: 0.3}
       test_command: ["pytest", "-q"]
     bots:
       example-bot:
@@ -31,6 +33,7 @@ Example configuration snippet::
         test_failure_increase: 0.1
         model: arima
         confidence: 0.9
+        model_params: {order: [1, 1, 1]}
         test_command: ["pytest", "tests/example", "-q"]
 
 You can modify the file directly or use :func:`update_thresholds`::
@@ -74,6 +77,7 @@ class SelfCodingThresholds:
     test_command: list[str] | None = None
     model: str = "exponential"
     confidence: float = 0.95
+    model_params: dict | None = None
 
 
 _CONFIG_PATH = resolve_path("config/self_coding_thresholds.yaml")
@@ -128,6 +132,7 @@ def get_thresholds(
     fail_inc = float(default.get("test_failure_increase", fail_inc))
     model = default.get("model", "exponential")
     conf = float(default.get("confidence", 0.95))
+    params = default.get("model_params", {})
     cmd_cfg = default.get("test_command", cmd)
     if bot and bot in bots:
         cfg = bots[bot] or {}
@@ -136,11 +141,14 @@ def get_thresholds(
         fail_inc = float(cfg.get("test_failure_increase", fail_inc))
         model = cfg.get("model", model)
         conf = float(cfg.get("confidence", conf))
+        params = cfg.get("model_params", params)
         cmd_cfg = cfg.get("test_command", cmd_cfg)
     if isinstance(cmd_cfg, str):
         cmd_cfg = shlex.split(cmd_cfg)
     elif cmd_cfg is not None:
         cmd_cfg = list(cmd_cfg)
+    if not isinstance(params, dict):
+        params = {}
     return SelfCodingThresholds(
         roi_drop=roi_drop,
         error_increase=err_inc,
@@ -148,6 +156,7 @@ def get_thresholds(
         test_command=cmd_cfg,
         model=model,
         confidence=conf,
+        model_params=params,
     )
 
 
@@ -160,6 +169,7 @@ def update_thresholds(
     test_command: list[str] | None = None,
     forecast_model: str | None = None,
     confidence: float | None = None,
+    forecast_params: dict | None = None,
     path: Path | None = None,
 ) -> None:
     """Persist new thresholds for ``bot`` to the configuration file."""
@@ -180,6 +190,8 @@ def update_thresholds(
         cfg["model"] = forecast_model
     if confidence is not None:
         cfg["confidence"] = float(confidence)
+    if forecast_params is not None:
+        cfg["model_params"] = dict(forecast_params)
     try:
         cfg_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     except Exception:

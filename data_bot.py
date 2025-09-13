@@ -22,6 +22,9 @@ Configuration Keys
     ``exponential`` or ``arima``).
 ``confidence``
     Confidence level for the forecast model's interval.
+``model_params``
+    Optional parameters for the selected forecast model (e.g., ``alpha`` or
+    ARIMA ``order``).
 
 Example ``self_coding_thresholds.yaml``::
 
@@ -31,6 +34,7 @@ Example ``self_coding_thresholds.yaml``::
       test_failure_increase: 0.0
       model: exponential
       confidence: 0.95
+      model_params: {alpha: 0.3}
     bots:
       example-bot:
         roi_drop: -0.2
@@ -38,6 +42,7 @@ Example ``self_coding_thresholds.yaml``::
         test_failure_increase: 0.0
         model: arima
         confidence: 0.9
+        model_params: {order: [1, 1, 1]}
 """
 
 from __future__ import annotations
@@ -71,6 +76,7 @@ from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .code_database import PatchHistoryDB
 from .self_improvement.baseline_tracker import BaselineTracker
+from .forecasting import ForecastModel, create_model
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .capital_management_bot import CapitalManagementBot
@@ -124,6 +130,9 @@ def persist_sc_thresholds(
     roi_drop: float | None = None,
     error_increase: float | None = None,
     test_failure_increase: float | None = None,
+    forecast_model: str | None = None,
+    confidence: float | None = None,
+    model_params: dict | None = None,
     path: Path | None = None,
     event_bus: UnifiedEventBus | None = None,
 ) -> None:
@@ -135,7 +144,8 @@ def persist_sc_thresholds(
 
     Parameters mirror :func:`update_thresholds` using ``error_increase`` and
     ``test_failure_increase`` so callers can pass values without converting to
-    the :class:`ROIThresholds` naming scheme.
+    the :class:`ROIThresholds` naming scheme. Forecast configuration can be
+    supplied via ``forecast_model``, ``confidence`` and ``model_params``.
     """
 
     bus = event_bus or _SHARED_EVENT_BUS
@@ -145,6 +155,9 @@ def persist_sc_thresholds(
             roi_drop=roi_drop,
             error_increase=error_increase,
             test_failure_increase=test_failure_increase,
+            forecast_model=forecast_model,
+            confidence=confidence,
+            forecast_params=model_params,
             path=path,
         )
     except Exception as exc:  # pragma: no cover - best effort
@@ -1175,6 +1188,9 @@ class DataBot:
         self._ema_baseline: Dict[str, Dict[str, float]] = {}
         # Per-bot forecast history for adaptive thresholding.
         self._forecast_history: Dict[str, Dict[str, list[float]]] = {}
+        # Configurable forecast models and associated metadata per bot.
+        self._forecast_models: Dict[str, Dict[str, ForecastModel]] = {}
+        self._forecast_meta: Dict[str, dict] = {}
         # Cache per-bot thresholds to avoid unnecessary disk reads.  The
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
@@ -1781,88 +1797,64 @@ class DataBot:
         delta_err = errors - avg_err
         delta_fail = test_failures - avg_fail
 
-        prediction = None
-        if self.trend_predictor is not None:
-            try:
-                self.trend_predictor.train()
-                prediction = self.trend_predictor.predict_future_metrics()
-            except Exception:  # pragma: no cover - prediction best effort
-                prediction = None
+        models = self._forecast_models.get(bot)
+        meta = self._forecast_meta.get(bot, {})
+        hist = tracker.to_dict()
+        roi_hist = hist.get("roi", [])
+        err_hist = hist.get("errors", [])
+        fail_hist = hist.get("tests_failed", [])
+        try:
+            if models:
+                pred_roi, roi_low, roi_high = models["roi"].fit(roi_hist).forecast()
+                pred_err, err_low, err_high = models["errors"].fit(err_hist).forecast()
+                pred_fail, fail_low, fail_high = models["tests_failed"].fit(fail_hist).forecast()
+            else:
+                pred_roi = avg_roi
+                pred_err = avg_err
+                pred_fail = avg_fail
+                roi_low = roi_high = avg_roi
+                err_low = err_high = avg_err
+                fail_low = fail_high = avg_fail
+        except Exception:
+            pred_roi = avg_roi
+            pred_err = avg_err
+            pred_fail = avg_fail
+            roi_low = roi_high = avg_roi
+            err_low = err_high = avg_err
+            fail_low = fail_high = avg_fail
+            self.logger.exception("forecast model failed")
 
-        ext_pred = None
-        if self.metric_predictor is not None:
-            try:  # pragma: no cover - predictor optional
-                ext_pred = self.metric_predictor.predict(
-                    bot=bot,
-                    roi=roi,
-                    errors=errors,
-                    tests_failed=test_failures,
+        if self.event_bus:
+            try:
+                self.event_bus.publish(
+                    "data:forecast",
+                    {
+                        "bot": bot,
+                        "roi": pred_roi,
+                        "errors": pred_err,
+                        "tests_failed": pred_fail,
+                        "roi_confidence_low": roi_low,
+                        "roi_confidence_high": roi_high,
+                        "error_confidence_low": err_low,
+                        "error_confidence_high": err_high,
+                        "test_failure_confidence_low": fail_low,
+                        "test_failure_confidence_high": fail_high,
+                        "model": meta.get("model"),
+                        "confidence": meta.get("confidence"),
+                    },
                 )
             except Exception:
-                ext_pred = None
-                self.logger.exception("external predictor failed")
+                self.logger.exception("failed to publish forecast event")
 
         now = time.time()
         thresholds = self._thresholds.get(bot)
         last = self._last_threshold_refresh.get(bot, 0.0)
-        pred_roi = prediction.roi if prediction else avg_roi
-        pred_err = prediction.errors if prediction else avg_err
-        pred_fail = avg_fail
-        roi_low = min(pred_roi, avg_roi)
-        roi_high = max(pred_roi, avg_roi)
-        err_low = min(pred_err, avg_err)
-        err_high = max(pred_err, avg_err)
-        fail_low = min(pred_fail, avg_fail)
-        fail_high = max(pred_fail, avg_fail)
 
-        if isinstance(ext_pred, dict):
-            try:
-                r_vals = ext_pred.get("roi")
-                if r_vals:
-                    pred_roi, roi_low, roi_high = r_vals
-                e_vals = ext_pred.get("errors")
-                if e_vals:
-                    pred_err, err_low, err_high = e_vals
-                f_vals = ext_pred.get("tests_failed")
-                if f_vals:
-                    pred_fail, fail_low, fail_high = f_vals
-            except Exception:
-                self.logger.exception("invalid predictor output")
-
-        std_roi = tracker.std("roi")
-        std_err = tracker.std("errors")
-        confidence = 1.0 / (1.0 + std_roi + std_err)
-
-        if (
-            thresholds is None
-            or now - last >= self.threshold_update_interval
-        ):
-            if thresholds is not None:
-                base = thresholds
-            else:
-                base = self.threshold_service.get(bot, self.settings)
-            if ext_pred:
-                roi_thresh = min(base.roi_drop, roi_low - avg_roi)
-                err_thresh = max(base.error_threshold, err_high - avg_err)
-                fail_thresh = max(base.test_failure_threshold, fail_high - avg_fail)
-            else:
-                roi_thresh = base.roi_drop
-                err_thresh = base.error_threshold
-                fail_thresh = base.test_failure_threshold
-
-                roi_delta_pred = pred_roi - avg_roi
-                err_delta_pred = pred_err - avg_err
-
-                if roi_delta_pred >= 0:
-                    roi_thresh = min(0.0, roi_thresh + roi_delta_pred * confidence)
-                else:
-                    roi_thresh = min(roi_thresh, roi_delta_pred * confidence)
-
-                if err_delta_pred >= 0:
-                    err_thresh = max(err_thresh, err_delta_pred * confidence)
-                else:
-                    err_thresh = max(0.0, err_thresh + err_delta_pred * confidence)
-
+        if thresholds is None or now - last >= self.threshold_update_interval:
+            base = thresholds if thresholds is not None else self.threshold_service.get(bot, self.settings)
+            roi_thresh = min(base.roi_drop, roi_low - avg_roi)
+            err_thresh = max(base.error_threshold, err_high - avg_err)
+            fail_thresh = max(base.test_failure_threshold, fail_high - avg_fail)
             thresholds = ROIThresholds(
                 roi_drop=roi_thresh,
                 error_threshold=err_thresh,
@@ -1881,6 +1873,9 @@ class DataBot:
                     roi_drop=roi_thresh,
                     error_increase=err_thresh,
                     test_failure_increase=fail_thresh,
+                    forecast_model=meta.get("model"),
+                    confidence=meta.get("confidence"),
+                    model_params=meta.get("params"),
                     event_bus=self.event_bus,
                 )
                 if self.event_bus:
@@ -1896,7 +1891,7 @@ class DataBot:
                         )
                     except Exception:
                         self.logger.exception(
-                            "failed to publish thresholds refreshed event"
+                            "failed to publish thresholds refreshed event",
                         )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.warning(
@@ -1910,7 +1905,7 @@ class DataBot:
                         )
                     except Exception:
                         self.logger.exception(
-                            "failed to publish threshold update failed event"
+                            "failed to publish threshold update failed event",
                         )
             self._last_threshold_refresh[bot] = now
         else:
@@ -1938,8 +1933,8 @@ class DataBot:
             "error_confidence_high": err_high,
             "test_failure_confidence_low": fail_low,
             "test_failure_confidence_high": fail_high,
-            "forecast_model": "trend",
-            "forecast_confidence": confidence,
+            "forecast_model": meta.get("model"),
+            "forecast_confidence": meta.get("confidence"),
             "delta_roi": delta_roi,
             "delta_errors": delta_err,
             "delta_tests_failed": delta_fail,
@@ -2197,6 +2192,19 @@ class DataBot:
         key = bot or ""
         self._thresholds[key] = rt
 
+        # Prepare forecast models for this bot based on configuration
+        params = raw.model_params or {}
+        models = {
+            m: create_model(raw.model, raw.confidence, **params)
+            for m in ("roi", "errors", "tests_failed")
+        }
+        self._forecast_models[key] = models
+        self._forecast_meta[key] = {
+            "model": raw.model,
+            "confidence": raw.confidence,
+            "params": params,
+        }
+
         if bot:
             try:  # pragma: no cover - best effort persistence
                 persist_sc_thresholds(
@@ -2204,6 +2212,9 @@ class DataBot:
                     roi_drop=roi_drop,
                     error_increase=error_thresh,
                     test_failure_increase=fail_thresh,
+                    forecast_model=raw.model,
+                    confidence=raw.confidence,
+                    model_params=params,
                     event_bus=self.event_bus,
                 )
             except Exception:
