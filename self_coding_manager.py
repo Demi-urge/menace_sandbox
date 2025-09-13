@@ -299,6 +299,13 @@ class SelfCodingManager:
             return
         try:
             self.bot_registry.register_bot(name)
+            if self.data_bot and self.evolution_orchestrator:
+                try:
+                    self.data_bot.subscribe_degradation(
+                        lambda e: self.evolution_orchestrator.register_patch_cycle(e)
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to subscribe to degradation events")
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to register bot in registry")
 

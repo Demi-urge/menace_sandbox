@@ -18,7 +18,7 @@ from .system_evolution_manager import SystemEvolutionManager
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .evaluation_history_db import EvaluationHistoryDB
 from .trend_predictor import TrendPredictor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict
 from context_builder_util import create_context_builder, ensure_fresh_weights
 from retry_utils import with_retry
 try:  # pragma: no cover - optional dependency
@@ -209,6 +209,34 @@ class EvolutionOrchestrator:
                     )
             except Exception:
                 self.logger.exception("failed to register bot %s for metrics", name)
+
+    def register_patch_cycle(self, event: Dict[str, Any]) -> None:
+        """Translate degradation *event* into a patch-cycle registration."""
+        if not self.selfcoding_manager:
+            return
+        bot = str(event.get("bot", ""))
+        desc = (
+            f"auto_patch_due_to_degradation:{bot}"
+            if bot
+            else "auto_patch_due_to_degradation"
+        )
+        context = {
+            "roi_baseline": event.get("roi_baseline", 0.0),
+            "errors_baseline": event.get("errors_baseline", 0.0),
+            "tests_failed_baseline": event.get("tests_failed_baseline", 0.0),
+            "delta_roi": event.get("delta_roi", 0.0),
+            "delta_errors": event.get("delta_errors", 0.0),
+            "delta_tests_failed": event.get("delta_tests_failed", 0.0),
+            "trigger": "degradation",
+            "reason": "bot degraded",
+        }
+        try:
+            self.selfcoding_manager.register_patch_cycle(desc, context)
+        except Exception:
+            self.logger.exception("failed to register patch cycle for %s", bot)
+        else:
+            if bot:
+                self._pending_patch_cycle.add(bot)
 
     def _ensure_degradation_subscription(self, *_args: object) -> None:
         if getattr(self, "_degradation_subscribed", False):
