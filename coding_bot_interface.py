@@ -120,7 +120,20 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
             module_path = inspect.getfile(cls)
         except Exception:  # pragma: no cover - best effort
             module_path = ""
-        bot_registry.register_bot(name)
+        roi_t = err_t = None
+        if hasattr(data_bot, "reload_thresholds"):
+            try:
+                t = data_bot.reload_thresholds(name)
+                roi_t = getattr(t, "roi_drop", None)
+                err_t = getattr(t, "error_threshold", None)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("threshold reload failed for %s", name)
+        bot_registry.register_bot(
+            name,
+            roi_threshold=roi_t,
+            error_threshold=err_t,
+            data_bot=data_bot,
+        )
         try:
             bot_registry.update_bot(name, module_path)
         except Exception:  # pragma: no cover - best effort
@@ -147,6 +160,7 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                 raise RuntimeError(f"{cls.__name__}: {exc}") from exc
 
             name_local = getattr(self, "name", getattr(self, "bot_name", name))
+            thresholds = None
             if hasattr(d_bot, "reload_thresholds"):
                 try:
                     thresholds = d_bot.reload_thresholds(name_local)
@@ -244,6 +258,16 @@ def self_coding_managed(*, bot_registry: BotRegistry, data_bot: DataBot) -> Call
                     raise RuntimeError(
                         f"{cls.__name__}: failed to initialise QuickFixEngine"
                     ) from exc
+            try:
+                registry.register_bot(
+                    name_local,
+                    roi_threshold=getattr(thresholds, "roi_drop", None),
+                    error_threshold=getattr(thresholds, "error_threshold", None),
+                    manager=manager,
+                    data_bot=d_bot,
+                )
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("bot registration failed for %s", name_local)
             try:
                 orchestrator.register_bot(name_local)
                 logger.info("registered %s with EvolutionOrchestrator", name_local)
