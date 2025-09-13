@@ -22,10 +22,6 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextvars
 
-MANAGER_CONTEXT: contextvars.ContextVar[object | None] = contextvars.ContextVar(
-    "self_coding_manager", default=None
-)
-
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
 from .trend_predictor import TrendPredictor
@@ -164,6 +160,10 @@ try:  # pragma: no cover - optional codex fallback handler
     from . import codex_fallback_handler
 except Exception:  # pragma: no cover - fallback for flat layout
     import codex_fallback_handler  # type: ignore
+
+MANAGER_CONTEXT: contextvars.ContextVar[object | None] = contextvars.ContextVar(
+    "self_coding_manager", default=None
+)
 
 _PATCH_ATTEMPTS = _me.Gauge(
     "patch_attempts_total",
@@ -1121,7 +1121,10 @@ class SelfCodingEngine:
                 if names:
                     for n in list(dict.fromkeys(names))[:3]:  # preserve order
                         body.append(f"    {n} = None")
-                loop = next((n for n in ast.walk(tree) if isinstance(n, (ast.For, ast.While))), None)
+                loop = next(
+                    (n for n in ast.walk(tree) if isinstance(n, (ast.For, ast.While))),
+                    None,
+                )
                 if loop:
                     if isinstance(loop, ast.For):
                         body.extend(
@@ -1492,8 +1495,12 @@ class SelfCodingEngine:
         optional prompt strategy to the underlying :class:`PromptEngine`.
         """
         path = resolve_path(path)
+        from .coding_bot_interface import manager_generate_helper
+
+        manager = MANAGER_CONTEXT.get()
         try:
-            code = self.generate_helper(
+            code = manager_generate_helper(
+                manager,
                 description,
                 path=path,
                 metadata=context_meta,
@@ -1502,7 +1509,7 @@ class SelfCodingEngine:
                 strategy=strategy,
             )
         except TypeError:
-            code = self.generate_helper(description, strategy=strategy)
+            code = manager_generate_helper(manager, description, strategy=strategy)
         self.logger.info(
             "patch file",
             extra={
@@ -1711,6 +1718,8 @@ class SelfCodingEngine:
         # Snapshot of original file to merge patches into
         original_lines = path.read_text(encoding="utf-8").splitlines()
         code = "\n".join(original_lines)
+        from .coding_bot_interface import manager_generate_helper
+        manager = MANAGER_CONTEXT.get()
 
         def _verify(snippet: str) -> bool:
             if self.formal_verifier:
@@ -1731,7 +1740,8 @@ class SelfCodingEngine:
                 return False
 
         if target_region is not None:
-            generated = self.generate_helper(
+            generated = manager_generate_helper(
+                manager,
                 description,
                 path=path,
                 metadata=context_meta,
@@ -1751,7 +1761,8 @@ class SelfCodingEngine:
                             func_region = None
                     if func_region is None:
                         return None, False, 0.0
-                    generated = self.generate_helper(
+                    generated = manager_generate_helper(
+                        manager,
                         description,
                         path=path,
                         metadata=context_meta,
@@ -1768,7 +1779,8 @@ class SelfCodingEngine:
                 func_region = self._find_function_region(original_lines, target_region.function)
                 if func_region is None:
                     return None, False, 0.0
-                generated = self.generate_helper(
+                generated = manager_generate_helper(
+                    manager,
                     description,
                     path=path,
                     metadata=context_meta,
@@ -1840,7 +1852,8 @@ class SelfCodingEngine:
 
         def _generate(idx: int) -> str:
             try:
-                return self.generate_helper(
+                return manager_generate_helper(
+                    manager,
                     description,
                     path=path,
                     metadata=context_meta,
