@@ -115,8 +115,8 @@ class BotRegistry:
                             desc = f"auto_patch_due_to_degradation:{_bot}"
                             _mgr.register_patch_cycle(desc, event)
                             module = self.graph.nodes[_bot].get("module")
-                            if module and hasattr(_mgr, "run_patch"):
-                                _mgr.run_patch(Path(module), desc, context_meta=event)
+                            if module and hasattr(_mgr, "generate_and_patch"):
+                                _mgr.generate_and_patch(Path(module), desc, context_meta=event)[0]
                         except Exception as exc:  # pragma: no cover - best effort
                             logger.error("degradation callback failed for %s: %s", _bot, exc)
 
