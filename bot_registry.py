@@ -36,6 +36,10 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover
     class UnifiedEventBus:  # type: ignore[override]
         pass
+try:  # pragma: no cover - allow flat imports
+    from .shared_event_bus import event_bus as _SHARED_EVENT_BUS
+except Exception:  # pragma: no cover - flat layout fallback
+    from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 import db_router
 from db_router import DBRouter, init_db_router
 
@@ -73,7 +77,9 @@ class BotRegistry:
         self.graph = nx.DiGraph()
         self.modules: Dict[str, str] = {}
         self.persist_path = Path(persist) if persist else None
-        self.event_bus = event_bus
+        # Default to the shared event bus so all registries participate in the
+        # same publish/subscribe channel unless explicitly overridden.
+        self.event_bus = event_bus or _SHARED_EVENT_BUS
         self.heartbeats: Dict[str, float] = {}
         self.interactions_meta: List[Dict[str, object]] = []
         self._lock = threading.RLock()

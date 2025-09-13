@@ -58,6 +58,10 @@ from db_router import DBRouter, GLOBAL_ROUTER, LOCAL_TABLES, init_db_router
 from .scope_utils import Scope, build_scope_clause, apply_scope
 
 from .unified_event_bus import UnifiedEventBus
+try:  # pragma: no cover - allow flat imports
+    from .shared_event_bus import event_bus as _SHARED_EVENT_BUS
+except Exception:  # pragma: no cover - flat layout fallback
+    from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 from .roi_thresholds import ROIThresholds
 from .self_coding_thresholds import (
     get_thresholds as load_sc_thresholds,
@@ -1035,7 +1039,9 @@ class DataBot:
         self.db = db or MetricsDB()
         self.capital_bot = capital_bot
         self.patch_db = patch_db
-        self.event_bus = event_bus
+        # Use shared event bus when none provided so all components share
+        # a single dispatcher instance.
+        self.event_bus = event_bus or _SHARED_EVENT_BUS
         self.evolution_db = evolution_db
         self.settings = settings or SandboxSettings()
         self.roi_drop_threshold = roi_drop_threshold
@@ -2413,10 +2419,11 @@ class DataBot:
         return float(df["cpu"].mean() + df["memory"].mean())
 
 
-_event_bus = UnifiedEventBus()
-
+# Reuse the shared event bus for the default ``data_bot`` instance so other
+# modules importing ``data_bot`` automatically participate in the global
+# publish/subscribe system.
 _default_db = MetricsDB(Path(__file__).with_name("metrics.db").resolve())
-data_bot = DataBot(db=_default_db, start_server=False, event_bus=_event_bus)
+data_bot = DataBot(db=_default_db, start_server=False, event_bus=_SHARED_EVENT_BUS)
 
 
 __all__ = ["MetricRecord", "MetricsDB", "DataBot", "data_bot"]

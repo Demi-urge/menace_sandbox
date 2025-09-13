@@ -44,6 +44,10 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers only
     from .evolution_analysis_bot import EvolutionAnalysisBot
     from .evolution_predictor import EvolutionPredictor
     from .unified_event_bus import UnifiedEventBus
+    try:  # pragma: no cover - allow flat imports
+        from .shared_event_bus import event_bus as _SHARED_EVENT_BUS
+    except Exception:  # pragma: no cover - flat layout fallback
+        from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 
 
 @dataclass
@@ -110,7 +114,9 @@ class EvolutionOrchestrator:
         self.predictor = predictor
         self.multi_predictor = multi_predictor
         self.trend_predictor = trend_predictor
-        self.event_bus = event_bus
+        # Share a single event bus across components when one is not provided
+        # explicitly so that all orchestrated systems observe the same events.
+        self.event_bus = event_bus or _SHARED_EVENT_BUS
         self.roi_predictor = roi_predictor
         self.roi_gain_floor = float(roi_gain_floor)
         self.roi_confidence_floor = float(roi_confidence_floor)
