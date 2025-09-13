@@ -108,17 +108,94 @@ except Exception:
 _VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
 
 
+from .self_coding_thresholds import (
+    SelfCodingThresholds,
+    update_thresholds as _save_sc_thresholds,
+    get_thresholds as _load_sc_thresholds,
+    _load_config as _load_sc_config,
+)
+
 logger = logging.getLogger(__name__)
 
 
-def persist_sc_thresholds(*_a, **_k) -> None:
-    """Persist self-coding thresholds.
+def persist_sc_thresholds(
+    bot: str,
+    *,
+    roi_drop: float | None = None,
+    error_threshold: float | None = None,
+    test_failure_threshold: float | None = None,
+    path: Path | None = None,
+    event_bus: UnifiedEventBus | None = None,
+) -> None:
+    """Persist self-coding thresholds for *bot*.
 
-    The real implementation lives elsewhere but tests monkeypatch this
-    function. Providing a stub avoids ``AttributeError`` when tests replace
-    it with a fake implementation.
+    Thresholds are written to ``config/self_coding_thresholds.yaml`` via the
+    :func:`update_thresholds` helper.  Failures are logged and propagated on the
+    ``UnifiedEventBus`` so callers can react accordingly.
     """
-    pass
+
+    bus = event_bus or _SHARED_EVENT_BUS
+    try:
+        _save_sc_thresholds(
+            bot,
+            roi_drop=roi_drop,
+            error_increase=error_threshold,
+            test_failure_increase=test_failure_threshold,
+            path=path,
+        )
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("failed to persist thresholds for %s: %s", bot, exc)
+        if bus:
+            try:
+                bus.publish(
+                    "data:threshold_update_failed",
+                    {"bot": bot, "error": str(exc)},
+                )
+            except Exception:
+                logger.exception(
+                    "failed to publish threshold update failed event"
+                )
+        raise
+
+
+def load_sc_thresholds(
+    bot: str | None = None,
+    settings: SandboxSettings | None = None,
+    *,
+    path: Path | None = None,
+    event_bus: UnifiedEventBus | None = None,
+):
+    """Return persisted self-coding thresholds.
+
+    When ``bot`` is provided the corresponding :class:`SelfCodingThresholds`
+    is returned.  Otherwise a mapping of all stored bot thresholds is
+    produced.  Any errors are logged and mirrored to the event bus.
+    """
+
+    bus = event_bus or _SHARED_EVENT_BUS
+    try:
+        if bot:
+            return _load_sc_thresholds(bot, settings, path=path)
+        data = _load_sc_config(path)
+        bots = data.get("bots", {}) if isinstance(data, dict) else {}
+        return {
+            name: _load_sc_thresholds(name, settings, path=path) for name in bots
+        }
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning(
+            "failed to load thresholds for %s: %s", bot or "all bots", exc
+        )
+        if bus:
+            try:
+                bus.publish(
+                    "data:threshold_load_failed",
+                    {"bot": bot, "error": str(exc)},
+                )
+            except Exception:
+                logger.exception(
+                    "failed to publish threshold load failed event"
+                )
+        raise
 
 
 @dataclass
@@ -1098,6 +1175,32 @@ class DataBot:
         # :meth:`reload_thresholds` method refreshes this mapping at runtime
         # when configuration files change.
         self._thresholds: Dict[str, ROIThresholds] = {}
+        try:
+            loaded = load_sc_thresholds(settings=self.settings, event_bus=self.event_bus)
+            items = loaded.items() if isinstance(loaded, dict) else [("", loaded)]
+            for name, val in items:
+                if isinstance(val, SelfCodingThresholds):
+                    rt = ROIThresholds(
+                        roi_drop=val.roi_drop,
+                        error_threshold=val.error_increase,
+                        test_failure_threshold=val.test_failure_increase,
+                    )
+                    self._thresholds[name] = rt
+                    try:
+                        self.threshold_service._thresholds[name] = rt
+                    except Exception:
+                        pass
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.warning("load_sc_thresholds failed: %s", exc)
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "data:threshold_load_failed", {"bot": None, "error": str(exc)}
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to publish threshold load failed event"
+                    )
         self.threshold_update_interval = (
             threshold_update_interval
             if threshold_update_interval is not None
@@ -1794,6 +1897,13 @@ class DataBot:
                     roi_drop=roi_thresh,
                     error_threshold=err_thresh,
                     test_failure_threshold=fail_thresh,
+                )
+                persist_sc_thresholds(
+                    bot,
+                    roi_drop=roi_thresh,
+                    error_threshold=err_thresh,
+                    test_failure_threshold=fail_thresh,
+                    event_bus=self.event_bus,
                 )
                 if self.event_bus:
                     try:
