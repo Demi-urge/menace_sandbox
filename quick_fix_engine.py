@@ -34,65 +34,46 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
 from collections import Counter
 import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 
 class ErrorClusterPredictor:
-    """Cluster stack traces for a module using a lightweight k-means algorithm."""
+    """Cluster stack traces for a module using TF-IDF and scikit-learn k-means."""
 
-    def __init__(self, db: "ErrorDB") -> None:
+    def __init__(
+        self,
+        db: "ErrorDB",
+        *,
+        max_clusters: int = 8,
+        min_cluster_size: int = 2,
+        tfidf_kwargs: dict | None = None,
+        kmeans_kwargs: dict | None = None,
+    ) -> None:
         self.db = db
+        self.max_clusters = max_clusters
+        self.min_cluster_size = min_cluster_size
+        self.vectorizer = TfidfVectorizer(**(tfidf_kwargs or {"stop_words": "english"}))
+        self.kmeans_kwargs = {"n_init": "auto"}
+        if kmeans_kwargs:
+            self.kmeans_kwargs.update(kmeans_kwargs)
 
-    @staticmethod
-    def _vectorize(traces: list[str]) -> np.ndarray:
-        """Convert traces to simple bag-of-words vectors."""
-        vocab: dict[str, int] = {}
-        rows: list[Counter[str]] = []
-        for trace in traces:
-            counts: Counter[str] = Counter(trace.split())
-            rows.append(counts)
-            for token in counts:
-                if token not in vocab:
-                    vocab[token] = len(vocab)
-        vecs = np.zeros((len(traces), len(vocab)), dtype=float)
-        for i, counts in enumerate(rows):
-            for token, count in counts.items():
-                vecs[i, vocab[token]] = float(count)
-        return vecs
+    def _cluster(self, traces: list[str], n_clusters: int) -> list[int]:
+        """Cluster ``traces`` into ``n_clusters`` groups using TF-IDF + KMeans."""
+        matrix = self.vectorizer.fit_transform(traces)
+        if n_clusters <= 1:
+            return [0] * len(traces)
+        km = KMeans(n_clusters=n_clusters, **self.kmeans_kwargs)
+        return km.fit_predict(matrix).tolist()
 
-    @staticmethod
-    def _kmeans(vecs: np.ndarray, n_clusters: int, max_iter: int = 100) -> list[int]:
-        """Minimal k-means implementation using Euclidean distance."""
-        n_samples = vecs.shape[0]
-        n_clusters = min(n_clusters, n_samples) or 1
-        rng = np.random.default_rng(0)
-        indices: list[int] = []
-        for idx in rng.permutation(n_samples):
-            if len(indices) == n_clusters:
-                break
-            if not any(np.array_equal(vecs[idx], vecs[j]) for j in indices):
-                indices.append(idx)
-        while len(indices) < n_clusters:
-            indices.append(rng.integers(0, n_samples))
-        centroids = vecs[indices].copy()
-        labels = np.zeros(n_samples, dtype=int)
-        for _ in range(max_iter):
-            distances = ((vecs[:, None, :] - centroids[None, :, :]) ** 2).sum(axis=2)
-            new_labels = distances.argmin(axis=1)
-            if np.array_equal(labels, new_labels):
-                break
-            labels = new_labels
-            for j in range(n_clusters):
-                members = vecs[labels == j]
-                if len(members):
-                    centroids[j] = members.mean(axis=0)
-        return labels.tolist()
-
-    def best_cluster(self, module: str, n_clusters: int = 3) -> tuple[int | None, list[str]]:
-        """Return ``(cluster_id, traces)`` for ``module``.
+    def best_cluster(
+        self, module: str, n_clusters: int | None = None
+    ) -> tuple[int | None, list[str], int]:
+        """Return ``(cluster_id, traces, size)`` for ``module``.
 
         The ``cluster_id`` corresponds to the cluster with the highest number of
         stack traces. ``traces`` contains stack traces belonging to that
-        cluster.
+        cluster and ``size`` is the number of traces in that cluster.
         """
 
         cur = self.db.conn.execute(
@@ -101,12 +82,15 @@ class ErrorClusterPredictor:
         )
         traces = [row[0] for row in cur.fetchall()]
         if not traces:
-            return None, []
-        vecs = self._vectorize(traces)
-        labels = self._kmeans(vecs, n_clusters)
-        cluster_id, _ = Counter(labels).most_common(1)[0]
+            return None, [], 0
+        n_clusters = n_clusters or max(
+            1, round(len(traces) / self.min_cluster_size)
+        )
+        n_clusters = min(self.max_clusters, n_clusters)
+        labels = self._cluster(traces, n_clusters)
+        cluster_id, count = Counter(labels).most_common(1)[0]
         cluster_traces = [t for t, lbl in zip(traces, labels) if lbl == cluster_id]
-        return int(cluster_id), cluster_traces
+        return int(cluster_id), cluster_traces, int(count)
 
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
@@ -305,13 +289,17 @@ def generate_patch(
         context_meta.update(context)
     cluster_id: int | None = None
     cluster_traces: list[str] = []
+    cluster_size = 0
     error_db = getattr(manager, "error_db", None)
     if error_db is not None:
         try:
             predictor = ErrorClusterPredictor(error_db)
-            cluster_id, cluster_traces = predictor.best_cluster(prompt_path)
+            cluster_id, cluster_traces, cluster_size = predictor.best_cluster(
+                prompt_path
+            )
             if cluster_id is not None:
                 context_meta["error_cluster_id"] = cluster_id
+                context_meta["error_cluster_size"] = cluster_size
         except Exception:
             cluster_id = None
             cluster_traces = []
@@ -763,7 +751,17 @@ class QuickFixEngine:
         if not info:
             return
         etype, module, mods, count = info
-        if count < self.threshold:
+        cluster_id: int | None = None
+        cluster_traces: list[str] = []
+        cluster_size = count
+        try:
+            predictor = ErrorClusterPredictor(self.db)
+            cluster_id, cluster_traces, cluster_size = predictor.best_cluster(module)
+        except Exception:
+            cluster_id = None
+            cluster_traces = []
+            cluster_size = count
+        if cluster_size < self.threshold:
             return
         try:
             path = resolve_path(f"{module}.py")
@@ -771,6 +769,9 @@ class QuickFixEngine:
             return
         prompt_path = path_for_prompt(path)
         context_meta = {"error_type": etype, "module": prompt_path, "bot": bot}
+        if cluster_id is not None:
+            context_meta["error_cluster_id"] = cluster_id
+            context_meta["error_cluster_size"] = cluster_size
         builder = ContextBuilder()
         try:
             ensure_fresh_weights(builder)
@@ -798,6 +799,11 @@ class QuickFixEngine:
         if cb_vectors:
             context_meta["retrieval_vectors"] = cb_vectors
         desc = f"quick fix {etype}"
+        if cluster_traces:
+            try:
+                desc += "\n\n" + cluster_traces[0]
+            except Exception:
+                pass
         if ctx_block:
             try:
                 compressed = compress_snippets({"snippet": ctx_block}).get(
@@ -915,11 +921,18 @@ class QuickFixEngine:
         """
 
         thresh = self.risk_threshold if risk_threshold is None else risk_threshold
+        predictor = ErrorClusterPredictor(self.db)
+        ranked: list[tuple[str, float, int, int | None, list[str]]] = []
         for item in modules:
             if isinstance(item, tuple):
                 module, risk = item
             else:
                 module, risk = item, 1.0
+            cid, traces, size = predictor.best_cluster(module)
+            impact = size * risk
+            ranked.append((module, risk, size, cid, traces, impact))
+        ranked.sort(key=lambda x: x[5], reverse=True)
+        for module, risk, size, cid, traces, _impact in ranked:
             if risk < thresh:
                 continue
             try:
@@ -928,6 +941,9 @@ class QuickFixEngine:
                 continue
             prompt_path = path_for_prompt(path)
             meta = {"module": prompt_path, "reason": "preemptive_patch"}
+            if cid is not None:
+                meta["error_cluster_id"] = cid
+                meta["error_cluster_size"] = size
             builder = ContextBuilder()
             try:
                 ensure_fresh_weights(builder)
@@ -955,6 +971,11 @@ class QuickFixEngine:
             if cb_vectors:
                 meta["retrieval_vectors"] = cb_vectors
             desc = "preemptive_patch"
+            if traces:
+                try:
+                    desc += "\n\n" + traces[0]
+                except Exception:
+                    pass
             if ctx:
                 try:
                     compressed = compress_snippets({"snippet": ctx}).get("snippet", "")

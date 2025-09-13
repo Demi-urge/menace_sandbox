@@ -97,7 +97,8 @@ def test_best_cluster_groups_similar_traces(monkeypatch):
     ]
     db = _make_db(traces)
     predictor = ErrorClusterPredictor(db)
-    cluster_id, cluster_traces = predictor.best_cluster("mod", n_clusters=2)
+    cluster_id, cluster_traces, size = predictor.best_cluster("mod", n_clusters=2)
     assert cluster_id in (0, 1)
-    assert len(cluster_traces) == 2
+    assert size == 2
+    assert len(cluster_traces) == size
     assert all("ValueError" in t for t in cluster_traces)
