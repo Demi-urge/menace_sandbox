@@ -24,6 +24,9 @@ from .roi_results_db import ROIResultsDB
 from context_builder_util import create_context_builder
 import db_router
 from .dynamic_path_router import resolve_path
+from .self_coding_thresholds import update_thresholds as save_sc_thresholds
+from .data_bot import DataBot
+from .unified_event_bus import UnifiedEventBus
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +152,23 @@ def _retrain(args: argparse.Namespace) -> None:
         )
         if params:
             print(f"best params: {params}")
+
+
+# ---------------------------------------------------------------------------
+def _thresholds(args: argparse.Namespace) -> None:
+    """Adjust self-coding thresholds for a bot and broadcast update."""
+    save_sc_thresholds(
+        args.bot,
+        roi_drop=args.roi_drop,
+        error_increase=args.error_increase,
+        test_failure_increase=args.test_failure_increase,
+    )
+    bus = UnifiedEventBus()
+    try:
+        DataBot(event_bus=bus, start_server=False).reload_thresholds(args.bot)
+    finally:
+        bus.close()
+    print(f"thresholds updated for {args.bot}")
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +400,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Restrict training to features listed in the model's meta file",
     )
     p_retrain.set_defaults(func=_retrain)
+
+    p_thresh = sub.add_parser(
+        "threshold", help="update self-coding thresholds for a bot"
+    )
+    p_thresh.add_argument("bot", help="Bot name")
+    p_thresh.add_argument(
+        "--roi-drop", type=float, default=None, help="ROI drop trigger"
+    )
+    p_thresh.add_argument(
+        "--error-increase",
+        type=float,
+        default=None,
+        help="Allowed error rate increase",
+    )
+    p_thresh.add_argument(
+        "--test-failure-increase",
+        type=float,
+        default=None,
+        help="Allowed increase in test failures",
+    )
+    p_thresh.set_defaults(func=_thresholds)
 
     p_refresh = sub.add_parser(
         "refresh", help="periodically rebuild the dataset"
