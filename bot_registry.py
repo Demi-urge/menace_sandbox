@@ -39,6 +39,11 @@ except Exception:  # pragma: no cover
 import db_router
 from db_router import DBRouter, init_db_router
 
+try:  # pragma: no cover - optional dependency
+    from .rollback_manager import RollbackManager
+except Exception:  # pragma: no cover - optional dependency
+    RollbackManager = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -235,10 +240,12 @@ class BotRegistry:
                         self.persist_path,
                         exc,
                     )
+            update_ok = False
             try:
                 self.hot_swap_bot(name)
                 self.health_check_bot(name, prev_state)
-            except Exception:
+                update_ok = True
+            except Exception as exc:
                 if prev_module_entry is None:
                     self.modules.pop(name, None)
                 else:
@@ -254,7 +261,34 @@ class BotRegistry:
                             self.persist_path,
                             exc,
                         )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "bot:update_rolled_back",
+                            {
+                                "name": name,
+                                "module": module_path,
+                                "patch_id": patch_id,
+                                "commit": commit,
+                                "error": str(exc),
+                            },
+                        )
+                    except Exception as pub_exc:
+                        logger.error(
+                            "Failed to publish bot:update_rolled_back event: %s",
+                            pub_exc,
+                        )
+                if RollbackManager is not None:
+                    try:
+                        RollbackManager().rollback(str(patch_id), requesting_bot=name)
+                    except Exception as rb_exc:  # pragma: no cover - best effort
+                        logger.error(
+                            "RollbackManager rollback failed for %s: %s",
+                            name,
+                            rb_exc,
+                        )
                 raise
+            return update_ok
 
     def hot_swap_bot(self, name: str) -> None:
         """Import or reload the module backing ``name`` and refresh references."""
