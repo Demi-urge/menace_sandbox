@@ -1,62 +1,36 @@
+import types
+
 import menace.data_bot as db
-from menace.roi_thresholds import ROIThresholds
 
 
-def test_thresholds_adjust_upward_after_improvements(tmp_path, monkeypatch):
+def test_thresholds_persist_with_forecasts(tmp_path, monkeypatch):
     metrics_db = db.MetricsDB(path=tmp_path / "metrics.db")
     bot = db.DataBot(db=metrics_db, threshold_update_interval=0)
 
-    outputs = iter([
-        ROIThresholds(roi_drop=-0.2, error_threshold=1.0, test_failure_threshold=0.0),
-        ROIThresholds(roi_drop=-0.1, error_threshold=0.5, test_failure_threshold=0.0),
-        ROIThresholds(roi_drop=-0.05, error_threshold=0.25, test_failure_threshold=0.0),
-    ])
+    saved: list[tuple[float | None, float | None, float | None]] = []
 
-    saved = []
-
-    def fake_adaptive(*args, **kwargs):
-        return next(outputs)
-
-    def fake_save(bot_name, *, roi_drop=None, error_increase=None, test_failure_increase=None, **_):
+    def fake_update(bot_name, *, roi_drop=None, error_increase=None, test_failure_increase=None, **_):
         saved.append((roi_drop, error_increase, test_failure_increase))
 
-    monkeypatch.setattr(db, "adaptive_thresholds", fake_adaptive)
-    monkeypatch.setattr(db, "save_sc_thresholds", fake_save)
+    monkeypatch.setattr(db, "persist_sc_thresholds", fake_update)
+
+    class FakePredictor:
+        def __init__(self) -> None:
+            self.roi_seq = iter([1.0, 0.9, 0.8])
+            self.err_seq = iter([0.0, 0.2, 0.4])
+
+        def train(self) -> None:  # pragma: no cover - simple stub
+            pass
+
+        def predict_future_metrics(self):  # pragma: no cover - simple stub
+            return types.SimpleNamespace(roi=next(self.roi_seq), errors=next(self.err_seq))
+
+    bot.trend_predictor = FakePredictor()
 
     for _ in range(3):
         bot.check_degradation("alpha", roi=1.0, errors=0.0)
 
+    assert saved, "update_thresholds should be invoked"
     th = bot.get_thresholds("alpha")
-    assert th.roi_drop == -0.05
-    assert th.error_threshold == 0.25
-    assert saved[-1] == (-0.05, 0.25, 0.0)
+    assert (th.roi_drop, th.error_threshold, th.test_failure_threshold) == saved[-1]
 
-
-def test_thresholds_adjust_downward_after_regressions(tmp_path, monkeypatch):
-    metrics_db = db.MetricsDB(path=tmp_path / "metrics.db")
-    bot = db.DataBot(db=metrics_db, threshold_update_interval=0)
-
-    outputs = iter([
-        ROIThresholds(roi_drop=-0.05, error_threshold=0.5, test_failure_threshold=0.0),
-        ROIThresholds(roi_drop=-0.1, error_threshold=1.0, test_failure_threshold=0.0),
-        ROIThresholds(roi_drop=-0.2, error_threshold=2.0, test_failure_threshold=0.0),
-    ])
-
-    saved = []
-
-    def fake_adaptive(*args, **kwargs):
-        return next(outputs)
-
-    def fake_save(bot_name, *, roi_drop=None, error_increase=None, test_failure_increase=None, **_):
-        saved.append((roi_drop, error_increase, test_failure_increase))
-
-    monkeypatch.setattr(db, "adaptive_thresholds", fake_adaptive)
-    monkeypatch.setattr(db, "save_sc_thresholds", fake_save)
-
-    for _ in range(3):
-        bot.check_degradation("beta", roi=1.0, errors=0.0)
-
-    th = bot.get_thresholds("beta")
-    assert th.roi_drop == -0.2
-    assert th.error_threshold == 2.0
-    assert saved[-1] == (-0.2, 2.0, 0.0)

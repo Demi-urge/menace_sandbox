@@ -1,7 +1,7 @@
 import logging
 
 import menace.data_bot as db
-from menace.data_bot import DataBot, MetricsDB, ROIThresholds
+from menace.data_bot import DataBot, MetricsDB
 
 
 class DummyBus:
@@ -10,6 +10,9 @@ class DummyBus:
 
     def publish(self, topic: str, payload: object) -> None:
         self.events.append((topic, payload))
+
+    def subscribe(self, _topic: str, _handler) -> None:  # pragma: no cover - simple stub
+        pass
 
 
 def _has_event(bus: DummyBus, bot: str, error: str) -> bool:
@@ -44,13 +47,12 @@ def test_save_thresholds_failure_emits_log_and_event(tmp_path, monkeypatch, capl
     bot = DataBot(db=metrics, event_bus=bus, start_server=False)
 
     monkeypatch.setattr(bot, "reload_thresholds", lambda _b: None)
-    monkeypatch.setattr(db, "adaptive_thresholds", lambda *a, **k: ROIThresholds(-0.1, 1.0, 0.0))
 
     def bad_save(*_a, **_k):
         raise RuntimeError("save boom")
 
-    monkeypatch.setattr(db, "save_sc_thresholds", bad_save)
+    monkeypatch.setattr(db, "persist_sc_thresholds", bad_save)
     with caplog.at_level(logging.WARNING, logger=db.__name__):
         bot.check_degradation("beta", 0.0, 0.0)
-    assert any("save_sc_thresholds failed" in m for m in caplog.messages)
+    assert any("update_thresholds failed" in m for m in caplog.messages)
     assert _has_event(bus, "beta", "save boom")
