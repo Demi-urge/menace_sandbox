@@ -1,7 +1,6 @@
-import types
 import subprocess
-import tempfile
-import shutil
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -10,8 +9,6 @@ import pytest
 
 pytest.importorskip("networkx")
 pytest.importorskip("pandas")
-
-import sys
 
 stub_env = types.ModuleType("environment_bootstrap")
 stub_env.EnvironmentBootstrapper = object
@@ -58,6 +55,7 @@ dpr = types.SimpleNamespace(
 )
 sys.modules["dynamic_path_router"] = dpr
 
+
 class _DataBot:
     def roi(self, _bot: str) -> float:
         return 1.0
@@ -69,7 +67,11 @@ class _DataBot:
         return 0.0
 
     def get_thresholds(self, _bot: str):
-        return types.SimpleNamespace(roi_drop=-999.0, error_threshold=999.0, test_failure_threshold=1.0)
+        return types.SimpleNamespace(
+            roi_drop=-999.0,
+            error_threshold=999.0,
+            test_failure_threshold=1.0,
+        )
 
     def check_degradation(self, *_a):
         return True
@@ -77,10 +79,16 @@ class _DataBot:
     def log_evolution_cycle(self, *a, **k):
         pass
 
+
 db_mod = types.ModuleType("menace.data_bot")
 db_mod.DataBot = _DataBot
+db_mod.persist_sc_thresholds = lambda *a, **k: None
 sys.modules["menace.data_bot"] = db_mod
 sys.modules["data_bot"] = db_mod
+
+package = types.ModuleType("menace")
+package.__path__ = [str(Path("."))]
+sys.modules.setdefault("menace", package)
 sys.modules["menace"].RAISE_ERRORS = False
 
 ns = types.ModuleType("neurosales")
@@ -142,6 +150,10 @@ sys.modules.setdefault("menace.rollback_manager", rm_stub)
 mutation_logger_stub = types.ModuleType("menace.mutation_logger")
 mutation_logger_stub.log_mutation = lambda *a, **k: None
 sys.modules.setdefault("menace.mutation_logger", mutation_logger_stub)
+cb_stub = types.ModuleType("coding_bot_interface")
+cb_stub.manager_generate_helper = lambda *a, **k: ""
+sys.modules.setdefault("coding_bot_interface", cb_stub)
+sys.modules.setdefault("menace.coding_bot_interface", cb_stub)
 
 error_logger_stub = types.ModuleType("error_logger")
 error_logger_stub.ErrorLogger = object
@@ -230,10 +242,8 @@ bot_registry_stub.BotRegistry = _BotRegistry
 sys.modules["bot_registry"] = bot_registry_stub
 sys.modules["menace.bot_registry"] = bot_registry_stub
 
-import menace.self_coding_manager as scm
-import menace.self_coding_thresholds as sct
-import menace.model_automation_pipeline as mapl
-import menace.pre_execution_roi_bot as prb
+import menace.self_coding_manager as scm  # noqa: E402
+import menace.self_coding_thresholds as sct  # noqa: E402
 
 # -- Tests ----------------------------------------------------------------
 
@@ -328,8 +338,9 @@ def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
 
     engine = DummyEngine()
     pipeline = DummyPipeline()
+
     class DummyQuickFix:
-        def __init__(self, db, mgr, context_builder=None):
+        def __init__(self, db, mgr, context_builder=None, **kwargs):
             pass
     monkeypatch.setattr(scm, "QuickFixEngine", DummyQuickFix)
     mgr = scm.SelfCodingManager(
@@ -338,6 +349,7 @@ def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
         bot_name="bot",
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
+        evolution_orchestrator=types.SimpleNamespace(register_bot=lambda *a, **k: None),
     )
 
     monkeypatch.setattr(scm, "ensure_fresh_weights", lambda builder: None)
@@ -365,3 +377,47 @@ def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
         mgr.run_patch(file_path, "add", clone_command=["git", "clone", "--depth", "1"])
 
     assert commands and commands[0][:4] == ["git", "clone", "--depth", "1"]
+
+
+def test_run_patch_requires_quick_fix_engine(monkeypatch, tmp_path):
+    class DummyEngine:
+        def __init__(self):
+            builder = types.SimpleNamespace(session_id="", refresh_db_weights=lambda: None)
+            self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+
+    class DummyPipeline:
+        pass
+
+    class DummyRegistry:
+        def register_bot(self, name: str) -> None:
+            pass
+
+    class DummyDataBot(_DataBot):
+        pass
+
+    engine = DummyEngine()
+    pipeline = DummyPipeline()
+
+    class DummyQuickFix:
+        def __init__(self, db, mgr, context_builder=None, **kwargs):
+            pass
+
+    monkeypatch.setattr(scm, "QuickFixEngine", DummyQuickFix)
+    mgr = scm.SelfCodingManager(
+        engine,
+        pipeline,
+        bot_name="bot",
+        data_bot=DummyDataBot(),
+        bot_registry=DummyRegistry(),
+        evolution_orchestrator=types.SimpleNamespace(register_bot=lambda *a, **k: None),
+    )
+
+    monkeypatch.setattr(scm, "QuickFixEngine", None)
+    mgr.quick_fix = None
+
+    file_path = tmp_path / "sample.py"
+    file_path.write_text("def x():\n    pass\n")
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+
+    with pytest.raises(RuntimeError, match="QuickFixEngine is required"):
+        mgr.run_patch(file_path, "add")
