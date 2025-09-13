@@ -177,12 +177,15 @@ def self_coding_managed(
                 error_threshold=err_t,
                 manager=manager,
                 data_bot=data_bot,
+                is_coding_bot=True,
             )
         except TypeError:  # pragma: no cover - legacy registries
             try:
-                bot_registry.register_bot(name, manager=manager, data_bot=data_bot)
+                bot_registry.register_bot(
+                    name, manager=manager, data_bot=data_bot, is_coding_bot=True
+                )
             except TypeError:
-                bot_registry.register_bot(name)
+                bot_registry.register_bot(name, is_coding_bot=True)
         try:
             bot_registry.update_bot(name, module_path)
         except Exception:  # pragma: no cover - best effort
@@ -312,6 +315,7 @@ def self_coding_managed(
                     error_threshold=getattr(thresholds, "error_threshold", None),
                     manager=manager_local,
                     data_bot=d_bot,
+                    is_coding_bot=True,
                 )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("bot registration failed for %s", name_local)

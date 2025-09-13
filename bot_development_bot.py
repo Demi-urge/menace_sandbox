@@ -1040,7 +1040,10 @@ class BotDevelopmentBot:
                     bot_name = spec.name
                     module_path = str(file_path)
                     registry.register_bot(
-                        bot_name, manager=self.manager, data_bot=d_bot
+                        bot_name,
+                        manager=self.manager,
+                        data_bot=d_bot,
+                        is_coding_bot=True,
                     )
                     registry.update_bot(bot_name, module_path)
                     d_bot.reload_thresholds(bot_name)

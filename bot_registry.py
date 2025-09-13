@@ -104,6 +104,7 @@ class BotRegistry:
         error_threshold: float | None = None,
         manager: "SelfCodingManager" | None = None,
         data_bot: "DataBot" | None = None,
+        is_coding_bot: bool | None = None,
     ) -> None:
         """Ensure *name* exists in the graph and persist metadata."""
         with self._lock:
@@ -111,7 +112,11 @@ class BotRegistry:
             node = self.graph.nodes[name]
             existing_mgr = node.get("selfcoding_manager") or node.get("manager")
             existing_data = node.get("data_bot")
-            is_coding_bot = name.lower().endswith("bot")
+            is_coding_bot = (
+                bool(is_coding_bot)
+                if is_coding_bot is not None
+                else name.lower().endswith("bot")
+            )
             if is_coding_bot:
                 missing: list[str] = []
                 mgr = manager or existing_mgr
@@ -321,7 +326,7 @@ class BotRegistry:
                 raise RuntimeError("patch provenance required")
 
         with self._lock:
-            self.register_bot(name)
+            self.register_bot(name, is_coding_bot=False)
             node = self.graph.nodes[name]
 
             manager = node.get("selfcoding_manager") or node.get("manager")
@@ -461,7 +466,7 @@ class BotRegistry:
         """
 
         with self._lock:
-            self.register_bot(name)
+            self.register_bot(name, is_coding_bot=False)
             node = self.graph.nodes[name]
             node["module"] = module_path
             self.modules[name] = module_path
@@ -705,8 +710,8 @@ class BotRegistry:
 
     def register_interaction(self, from_bot: str, to_bot: str, weight: float = 1.0) -> None:
         """Record that *from_bot* interacted with *to_bot*."""
-        self.register_bot(from_bot)
-        self.register_bot(to_bot)
+        self.register_bot(from_bot, is_coding_bot=False)
+        self.register_bot(to_bot, is_coding_bot=False)
         if self.graph.has_edge(from_bot, to_bot):
             self.graph[from_bot][to_bot]["weight"] += weight
         else:
