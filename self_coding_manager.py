@@ -782,7 +782,42 @@ class SelfCodingManager:
         except Exception:
             self._last_commit_hash = None
             raise
-        return result, getattr(self, "_last_commit_hash", None)
+        commit = getattr(self, "_last_commit_hash", None)
+        patch_id = getattr(self, "_last_patch_id", None)
+        module_path = path_for_prompt(path)
+        if commit and patch_id and self.bot_registry:
+            try:
+                self.bot_registry.update_bot(
+                    self.bot_name, module_path, patch_id=patch_id, commit=commit
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "failed to update bot registry",
+                    extra={"bot": self.bot_name, "module_path": module_path},
+                )
+            try:
+                record_patch_metadata(
+                    int(patch_id),
+                    {"commit": commit, "module": str(module_path)},
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to record patch metadata")
+            if self.event_bus:
+                payload = {
+                    "bot": self.bot_name,
+                    "module": str(module_path),
+                    "patch_id": patch_id,
+                    "commit": commit,
+                }
+                try:
+                    self.event_bus.publish("bot:updated", payload)
+                    self.event_bus.publish(
+                        "self_coding:patch_attempt",
+                        {"bot": self.bot_name, "path": str(path), "patch_id": patch_id, "commit": commit},
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to publish patch events")
+        return result, commit
 
     # ------------------------------------------------------------------
     def run_patch(
@@ -1415,13 +1450,6 @@ class SelfCodingManager:
                     raise RuntimeError("failed to retrieve commit hash")
                 self._last_patch_id = patch_id
                 self._last_commit_hash = commit_hash
-                if self.quick_fix and self.bot_registry:
-                    self.bot_registry.update_bot(
-                        self.bot_name,
-                        module_path,
-                        patch_id=patch_id,
-                        commit=commit_hash,
-                    )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.error("git commit failed: %s", exc)
                 try:
