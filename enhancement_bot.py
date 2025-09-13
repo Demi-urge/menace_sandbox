@@ -6,6 +6,28 @@ from .data_bot import DataBot
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
+
+class _StubThresholds:
+    roi_drop = 0.0
+    error_threshold = 0.0
+    test_failure_threshold = 0.0
+
+
+class _StubThresholdService:
+    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
+        return _StubThresholds()
+
+
+engine = object()
+pipeline = object()
+manager = SelfCodingManager(
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+    threshold_service=_StubThresholdService(),
+)
+
 """Automatically validate and merge Codex refactors.
 
 The enhancement workflow depends on :class:`vector_service.ContextBuilder` for
@@ -68,7 +90,7 @@ class RefactorProposal:
     author_bot: str = "codex"
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class EnhancementBot:
     """Automatically validate and merge Codex refactors."""
 
@@ -81,7 +103,7 @@ class EnhancementBot:
         *,
         context_builder: ContextBuilder,
         llm_client: LLMClient | None = None,
-        manager: SelfCodingManager,
+        manager: SelfCodingManager | None = None,
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
@@ -92,15 +114,8 @@ class EnhancementBot:
         self.context_builder = context_builder
         self.db_weights = self.context_builder.refresh_db_weights()
         self.llm_client = llm_client
-        self.manager = manager
-        try:
-            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-            self.manager.register_bot(name)
-            orch = getattr(self.manager, "evolution_orchestrator", None)
-            if orch:
-                orch.register_bot(name)
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("bot registration failed")
+        self.name = getattr(self, "name", self.__class__.__name__)
+        self.data_bot = data_bot
 
     # ------------------------------------------------------------------
     def _hash(self, text: str) -> str:

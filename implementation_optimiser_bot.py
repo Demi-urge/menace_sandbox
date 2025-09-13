@@ -23,6 +23,28 @@ registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
 
+class _StubThresholds:
+    roi_drop = 0.0
+    error_threshold = 0.0
+    test_failure_threshold = 0.0
+
+
+class _StubThresholdService:
+    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
+        return _StubThresholds()
+
+
+engine = object()
+pipeline = object()
+manager = SelfCodingManager(
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+    threshold_service=_StubThresholdService(),
+)
+
+
 @dataclass
 class ImplementationAdvice:
     """Advice or optimised snippet for a task."""
@@ -31,7 +53,7 @@ class ImplementationAdvice:
     optimised_code: str
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class ImplementationOptimiserBot:
     """Receive ``TaskPackage`` objects and refine them.
 
@@ -41,34 +63,23 @@ class ImplementationOptimiserBot:
     the body in basic ``try``/``except`` blocks and emits log messages.
     """
 
-    manager: SelfCodingManager
-
     def __init__(
         self,
-        manager: SelfCodingManager,
         *,
         context_builder: ContextBuilder,
+        manager: SelfCodingManager | None = None,
     ) -> None:
         if context_builder is None:
             raise ValueError("context_builder is required")
         self.history: List[TaskPackage] = []
-        self.manager = manager
         self.context_builder = context_builder
-        try:
-            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-            self.manager.register_bot(name)
-            orch = getattr(self.manager, "evolution_orchestrator", None)
-            if orch:
-                orch.register_bot(name)
-        except Exception:  # pragma: no cover - best effort
-            logger.exception("bot registration failed")
         try:
             self.context_builder.refresh_db_weights()
         except Exception as exc:
             logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
         try:
-            eng = getattr(self.manager, "engine", None)
+            eng = getattr(manager, "engine", None)
             if eng is not None:
                 eng.context_builder = context_builder  # type: ignore[attr-defined]
                 cb = getattr(eng, "context_builder", None)

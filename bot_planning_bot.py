@@ -5,6 +5,7 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
 from .coding_bot_interface import self_coding_managed
+from .self_coding_manager import SelfCodingManager
 from dataclasses import dataclass, field
 from typing import Iterable, List, Dict, Optional
 
@@ -22,6 +23,28 @@ import pulp
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
+
+
+class _StubThresholds:
+    roi_drop = 0.0
+    error_threshold = 0.0
+    test_failure_threshold = 0.0
+
+
+class _StubThresholdService:
+    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
+        return _StubThresholds()
+
+
+engine = object()
+pipeline = object()
+manager = SelfCodingManager(
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+    threshold_service=_StubThresholdService(),
+)
 
 
 class TemplateManager:
@@ -66,25 +89,19 @@ class BotPlan:
     level: str
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class BotPlanningBot:
     """Analyse tasks and plan bots with hierarchy mapping."""
 
-    manager: SelfCodingManager
-
-    def __init__(self, manager: SelfCodingManager, template_manager: Optional[TemplateManager] = None) -> None:
+    def __init__(
+        self,
+        template_manager: Optional[TemplateManager] = None,
+        *,
+        manager: SelfCodingManager | None = None,
+    ) -> None:
         self.tm = template_manager or TemplateManager()
         self.graph = nx.DiGraph()
         self.regressor = LinearRegression()
-        self.manager = manager
-        try:
-            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-            self.manager.register_bot(name)
-            orch = getattr(self.manager, "evolution_orchestrator", None)
-            if orch:
-                orch.register_bot(name)
-        except Exception:
-            logger.exception("bot registration failed")
 
     def evaluate_tasks(self, tasks: Iterable[PlanningTask]) -> List[float]:
         """Predict creation time from task attributes."""

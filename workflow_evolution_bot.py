@@ -57,34 +57,47 @@ registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
 
+class _StubThresholds:
+    roi_drop = 0.0
+    error_threshold = 0.0
+    test_failure_threshold = 0.0
+
+
+class _StubThresholdService:
+    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
+        return _StubThresholds()
+
+
+engine = object()
+pipeline = object()
+manager = SelfCodingManager(
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+    threshold_service=_StubThresholdService(),
+)
+
+
 @dataclass
 class WorkflowSuggestion:
     sequence: str
     expected_roi: float
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class WorkflowEvolutionBot:
     """Suggest workflow improvements from PathwayDB statistics."""
 
     def __init__(
         self,
-        manager: SelfCodingManager,
         *,
         pathway_db: PathwayDB | None = None,
         intent_clusterer: IntentClusterer | None = None,
+        manager: SelfCodingManager | None = None,
     ) -> None:
-        self.manager = manager
         self.db = pathway_db or PathwayDB()
         self.intent_clusterer = intent_clusterer or IntentClusterer(UniversalRetriever())
-        try:
-            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-            self.manager.register_bot(name)
-            orch = getattr(self.manager, "evolution_orchestrator", None)
-            if orch:
-                orch.register_bot(name)
-        except Exception:
-            logger.exception("bot registration failed")
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = data_bot
         # Track mutation events for rearranged sequences so benchmarking

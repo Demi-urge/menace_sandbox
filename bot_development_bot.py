@@ -59,6 +59,28 @@ from .bot_registry import BotRegistry
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
+
+class _StubThresholds:
+    roi_drop = 0.0
+    error_threshold = 0.0
+    test_failure_threshold = 0.0
+
+
+class _StubThresholdService:
+    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
+        return _StubThresholds()
+
+
+engine = object()
+pipeline = object()
+manager = SelfCodingManager(
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+    threshold_service=_StubThresholdService(),
+)
+
 try:  # pragma: no cover - optional dependency
     from . import codex_db_helpers as cdh
 except Exception:  # pragma: no cover - optional dependency
@@ -247,11 +269,9 @@ class PromptTemplateEngine:
         return rendered
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class BotDevelopmentBot:
     """Receive bot specs and generate starter code repositories."""
-
-    manager: SelfCodingManager
 
     def __init__(
         self,
@@ -262,7 +282,7 @@ class BotDevelopmentBot:
         *,
         config: BotDevConfig | None = None,
         context_builder: ContextBuilder,
-        manager: SelfCodingManager,
+        manager: SelfCodingManager | None = None,
         engine: SelfCodingEngine | None = None,
     ) -> None:
         self.config = config or BotDevConfig()
@@ -324,16 +344,7 @@ class BotDevelopmentBot:
         except Exception as exc:
             self.logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        self.manager = manager
-        self.engine = getattr(self.manager, "engine", engine)
-        try:
-            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-            self.manager.register_bot(name)
-            orch = getattr(self.manager, "evolution_orchestrator", None)
-            if orch:
-                orch.register_bot(name)
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("bot registration failed")
+        self.engine = getattr(manager, "engine", engine)
         # warn about missing optional dependencies
         for dep_name, mod in {
             "yaml": yaml,
@@ -1041,7 +1052,9 @@ class BotDevelopmentBot:
                 if registry and d_bot and engine and pipeline:
                     bot_name = spec.name
                     module_path = str(file_path)
-                    registry.register_bot(bot_name)
+                    registry.register_bot(
+                        bot_name, manager=self.manager, data_bot=d_bot
+                    )
                     registry.update_bot(bot_name, module_path)
                     d_bot.reload_thresholds(bot_name)
                     manager = SelfCodingManager(

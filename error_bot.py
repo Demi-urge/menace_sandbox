@@ -100,6 +100,28 @@ from db_dedup import insert_if_unique, ensure_content_hash_column
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
+
+class _StubThresholds:
+    roi_drop = 0.0
+    error_threshold = 0.0
+    test_failure_threshold = 0.0
+
+
+class _StubThresholdService:
+    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
+        return _StubThresholds()
+
+
+engine = object()
+pipeline = object()
+manager = SelfCodingManager(
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+    threshold_service=_StubThresholdService(),
+)
+
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
     from .capital_management_bot import CapitalManagementBot
@@ -975,7 +997,7 @@ class ErrorBot(AdminBotBase):
         metrics_db: MetricsDB | None = None,
         *,
         prediction_manager: "PredictionManager" | None = None,
-        selfcoding_manager: "SelfCodingManager",
+        manager: "SelfCodingManager" | None = None,
         menace_db: "MenaceDB" | None = None,
         bot_db: "BotDB" | None = None,
         enhancement_db: "EnhancementDB" | None = None,
@@ -991,19 +1013,12 @@ class ErrorBot(AdminBotBase):
     ) -> None:
         super().__init__(db_router=db_router)
         self.name = "ErrorBot"
-        if selfcoding_manager is None:
-            raise ValueError("selfcoding_manager is required")
-        self.manager = selfcoding_manager
-        try:
-            self.manager.register_bot(self.name)
-        except Exception:
-            logger.exception("bot registration failed")
-        self.bot_registry = getattr(selfcoding_manager, "bot_registry", None)
-        self.data_bot = getattr(selfcoding_manager, "data_bot", None)
+        if manager is None:
+            raise ValueError("manager is required")
+        self.bot_registry = getattr(manager, "bot_registry", None)
+        self.data_bot = getattr(manager, "data_bot", None)
         if self.bot_registry is None or self.data_bot is None:
-            raise ValueError(
-                "selfcoding_manager must provide bot_registry and data_bot"
-            )
+            raise ValueError("manager must provide bot_registry and data_bot")
         self.db = db or ErrorDB()
         self.graph = graph
         self.context_builder = context_builder
