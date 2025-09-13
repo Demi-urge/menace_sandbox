@@ -6,6 +6,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
+from .self_coding_manager import SelfCodingManager
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -24,9 +25,6 @@ import warnings
 from datetime import datetime
 
 from .chatgpt_enhancement_bot import (
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
     EnhancementDB,
     ChatGPTEnhancementBot,
     Enhancement,
@@ -50,6 +48,8 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 @dataclass
 class ResearchItem:
@@ -767,12 +767,25 @@ class ResearchAggregatorBot:
         db_router: Optional[DBRouter] = None,
         enhancement_interval: float = 300.0,
         cache_ttl: float = 3600.0,
+        manager: SelfCodingManager | None = None,
         *,
         context_builder: ContextBuilder,
     ) -> None:
         builder = context_builder
         if builder is None:
             raise ValueError("ContextBuilder is required")
+        self.manager = manager
+        if self.manager is not None:
+            try:
+                name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
+                self.manager.register_bot(name)
+                orch = getattr(self.manager, "evolution_orchestrator", None)
+                if orch:
+                    orch.register_bot(name)
+            except Exception:
+                logger.exception("bot registration failed")
+        self.name = getattr(self, "name", self.__class__.__name__)
+        self.data_bot = data_bot
         self.requirements = list(requirements)
         self.memory = memory or ResearchMemory()
         self.info_db = info_db or InfoDB()
@@ -1053,6 +1066,8 @@ class ResearchAggregatorBot:
 
     def _maybe_enhance(self, topic: str, reason: str) -> None:
         """Request an enhancement from the enhancement bot if available."""
+        if self.manager and not self.manager.should_refactor():
+            return
         if not self.enhancement_bot:
             return
         ctx = self._compressed_context(topic)
