@@ -182,22 +182,7 @@ from .self_improvement.baseline_tracker import (  # noqa: E402
 try:  # pragma: no cover - optional dependency
     from .self_improvement.init import FileLock, _atomic_write
 except Exception:  # pragma: no cover - fallback for flat layout
-    try:
-        from self_improvement.init import FileLock, _atomic_write  # type: ignore
-    except Exception:  # pragma: no cover - final fallback
-        class FileLock:  # type: ignore[misc]
-            def __init__(self, *_a, **_k) -> None:
-                pass
-
-            def __enter__(self) -> "FileLock":  # pragma: no cover - noop
-                return self
-
-            def __exit__(self, *_a) -> bool:  # pragma: no cover - noop
-                return False
-
-        def _atomic_write(path: str, data: str, *, mode: str = "w") -> None:  # type: ignore[misc]
-            with open(path, mode, encoding="utf-8") as fh:
-                fh.write(data)
+    from self_improvement.init import FileLock, _atomic_write  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -1482,6 +1467,7 @@ class SelfCodingEngine:
         chunk_index: int | None = None,
         target_region: TargetRegion | None = None,
         strategy: str | None = None,
+        lock: FileLock | None = None,
     ) -> tuple[str, bool]:
         """Generate helper code and append it to ``path`` if it passes verification.
 
@@ -1541,13 +1527,19 @@ class SelfCodingEngine:
         if not verified:
             self.logger.warning("pre-verification failed; patch not applied")
             return "", False
+        lock = lock or FileLock(str(path) + ".lock")
         if target_region is not None:
             original_lines = path.read_text(encoding="utf-8").splitlines()
-            if not self._apply_region_patch(path, original_lines, target_region, code):
+            if not self._apply_region_patch(
+                path, original_lines, target_region, code, lock=lock
+            ):
                 return "", False
         else:
-            with open(path, "a", encoding="utf-8") as fh:
-                fh.write("\n" + code)
+            existing = path.read_text(encoding="utf-8") if path.exists() else ""
+            if existing and not existing.endswith("\n"):
+                existing += "\n"
+            existing += code
+            _atomic_write(path, existing, lock=lock)
         self.memory_mgr.store(str(path), code, tags="code")
         self.logger.info(
             "patch applied",
@@ -1566,6 +1558,8 @@ class SelfCodingEngine:
         original_lines: List[str],
         target_region: TargetRegion,
         patch_text: str,
+        *,
+        lock: FileLock | None = None,
     ) -> bool:
         """Replace ``target_region`` lines with ``patch_text`` ensuring AST validity."""
 
@@ -1598,7 +1592,8 @@ class SelfCodingEngine:
             ast.parse(text)
         except SyntaxError:
             return False
-        path.write_text(text, encoding="utf-8")
+        lock = lock or FileLock(str(path) + ".lock")
+        _atomic_write(path, text, lock=lock)
         return True
 
     def _find_function_region(
@@ -1701,6 +1696,7 @@ class SelfCodingEngine:
         context_meta: Dict[str, Any] | None = None,
         requesting_bot: str | None = None,
         target_region: TargetRegion | None = None,
+        lock: FileLock | None = None,
     ) -> tuple[int | None, bool, float]:
         """Apply patches sequentially to each chunk in a large file.
 
@@ -1714,6 +1710,18 @@ class SelfCodingEngine:
         immediate rollback of that chunk so processing can continue with the
         remaining chunks.
         """
+
+        lock = lock or FileLock(str(path) + ".lock")
+        if not lock.is_locked:
+            with lock:
+                return self._apply_patch_chunked(
+                    path,
+                    description,
+                    context_meta=context_meta,
+                    requesting_bot=requesting_bot,
+                    target_region=target_region,
+                    lock=lock,
+                )
 
         # Snapshot of original file to merge patches into
         original_lines = path.read_text(encoding="utf-8").splitlines()
@@ -1751,7 +1759,7 @@ class SelfCodingEngine:
                 return None, False, 0.0
                 if _verify(generated):
                     if not self._apply_region_patch(
-                        path, original_lines, target_region, generated
+                        path, original_lines, target_region, generated, lock=lock
                     ):
                         if target_region.function:
                             func_region = self._find_function_region(
@@ -1770,7 +1778,9 @@ class SelfCodingEngine:
                     )
                     if not generated.strip() or not _verify(generated):
                         return None, False, 0.0
-                    if not self._apply_region_patch(path, original_lines, func_region, generated):
+                    if not self._apply_region_patch(
+                        path, original_lines, func_region, generated, lock=lock
+                    ):
                         return None, False, 0.0
                     target_region = func_region
             else:
@@ -1788,7 +1798,9 @@ class SelfCodingEngine:
                 )
                 if not generated.strip() or not _verify(generated):
                     return None, False, 0.0
-                if not self._apply_region_patch(path, original_lines, func_region, generated):
+                if not self._apply_region_patch(
+                    path, original_lines, func_region, generated, lock=lock
+                ):
                     return None, False, 0.0
                 target_region = func_region
             start = max(target_region.start_line - 1, 0)
@@ -1807,7 +1819,9 @@ class SelfCodingEngine:
                     self.logger.exception("failed to register region patch")
             ci_result = self._run_ci(path)
             if not ci_result.success:
-                path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+                _atomic_write(
+                    path, "\n".join(original_lines) + "\n", lock=lock
+                )
                 if self.rollback_mgr:
                     try:
                         self.rollback_mgr.rollback_region(
@@ -1882,7 +1896,9 @@ class SelfCodingEngine:
             insert_at = ch.end_line + offset
             patch_lines = generated.rstrip().splitlines()
             original_lines[insert_at:insert_at] = patch_lines
-            path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+            _atomic_write(
+                path, "\n".join(original_lines) + "\n", lock=lock
+            )
 
             patch_key = f"{path}:{description}:{idx}"
             if self.rollback_mgr:
@@ -1894,7 +1910,9 @@ class SelfCodingEngine:
             ci_result = self._run_ci(path)
             if not ci_result.success:
                 del original_lines[insert_at:insert_at + len(patch_lines)]
-                path.write_text("\n".join(original_lines) + "\n", encoding="utf-8")
+                _atomic_write(
+                    path, "\n".join(original_lines) + "\n", lock=lock
+                )
                 if self.rollback_mgr:
                     try:
                         self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
@@ -1997,6 +2015,25 @@ class SelfCodingEngine:
             reason = description
         if trigger is None:
             trigger = ""
+        lock = lock or FileLock(str(path) + ".lock")
+        if not lock.is_locked:
+            with lock:
+                return self.apply_patch(
+                    path,
+                    description,
+                    trending_topic=trending_topic,
+                    parent_patch_id=parent_patch_id,
+                    reason=reason,
+                    trigger=trigger,
+                    requesting_bot=requesting_bot,
+                    context_meta=context_meta,
+                    effort_estimate=effort_estimate,
+                    suggestion_id=suggestion_id,
+                    baseline_coverage=baseline_coverage,
+                    baseline_runtime=baseline_runtime,
+                    target_region=target_region,
+                    lock=lock,
+                )
         before_roi = 0.0
         before_err = self._current_errors()
         pred_before_roi = pred_before_err = 0.0
@@ -2059,12 +2096,14 @@ class SelfCodingEngine:
                 context_meta=context_meta,
                 requesting_bot=requesting_bot,
                 target_region=target_region,
+                lock=lock,
             )
         generated_code, pre_verified = self.patch_file(
             path,
             description,
             context_meta=context_meta,
             target_region=target_region,
+            lock=lock,
         )
         self._log_attempt(
             requesting_bot,
@@ -2084,9 +2123,11 @@ class SelfCodingEngine:
                 start = max(target_region.start_line - 1, 0)
                 end = min(target_region.end_line, len(orig_lines))
                 cur_lines[start:end] = orig_lines[start:end]
-                path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+                _atomic_write(
+                    path, "\n".join(cur_lines) + "\n", lock=lock
+                )
             else:
-                path.write_text(original, encoding="utf-8")
+                _atomic_write(path, original, lock=lock)
             ci_result = self._run_ci(path)
             self._store_patch_memory(
                 path,
@@ -2146,9 +2187,11 @@ class SelfCodingEngine:
                     start = max(target_region.start_line - 1, 0)
                     end = min(target_region.end_line, len(orig_lines))
                     cur_lines[start:end] = orig_lines[start:end]
-                    path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+                    _atomic_write(
+                        path, "\n".join(cur_lines) + "\n", lock=lock
+                    )
                 else:
-                    path.write_text(original, encoding="utf-8")
+                    _atomic_write(path, original, lock=lock)
                 ci_result = self._run_ci(path)
                 reverted = True
                 after_roi = before_roi
@@ -2286,9 +2329,11 @@ class SelfCodingEngine:
                 start = max(target_region.start_line - 1, 0)
                 end = min(target_region.end_line, len(orig_lines))
                 cur_lines[start:end] = orig_lines[start:end]
-                path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+                _atomic_write(
+                    path, "\n".join(cur_lines) + "\n", lock=lock
+                )
             else:
-                path.write_text(original, encoding="utf-8")
+                _atomic_write(path, original, lock=lock)
             self._run_ci(path)
             self._store_patch_memory(
                 path,
@@ -2357,9 +2402,11 @@ class SelfCodingEngine:
                 start = max(target_region.start_line - 1, 0)
                 end = min(target_region.end_line, len(orig_lines))
                 cur_lines[start:end] = orig_lines[start:end]
-                path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+                _atomic_write(
+                    path, "\n".join(cur_lines) + "\n", lock=lock
+                )
             else:
-                path.write_text(original, encoding="utf-8")
+                _atomic_write(path, original, lock=lock)
             self._run_ci(path)
             self._store_patch_memory(
                 path,
@@ -2512,9 +2559,11 @@ class SelfCodingEngine:
                 start = max(target_region.start_line - 1, 0)
                 end = min(target_region.end_line, len(orig_lines))
                 cur_lines[start:end] = orig_lines[start:end]
-                path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
+                _atomic_write(
+                    path, "\n".join(cur_lines) + "\n", lock=lock
+                )
             else:
-                path.write_text(original, encoding="utf-8")
+                _atomic_write(path, original, lock=lock)
             self._run_ci(path)
             reverted = True
 
@@ -3130,16 +3179,20 @@ class SelfCodingEngine:
         if not info:
             return
         path, original, session_id, vectors, region = info
-        if region is not None:
-            cur_lines = path.read_text(encoding="utf-8").splitlines()
-            orig_lines = original.splitlines()
-            start = max(region.start_line - 1, 0)
-            end = min(region.end_line, len(orig_lines))
-            cur_lines[start:end] = orig_lines[start:end]
-            path.write_text("\n".join(cur_lines) + "\n", encoding="utf-8")
-        else:
-            path.write_text(original, encoding="utf-8")
-        self._run_ci(path)
+        lock = FileLock(str(path) + ".lock")
+        with lock:
+            if region is not None:
+                cur_lines = path.read_text(encoding="utf-8").splitlines()
+                orig_lines = original.splitlines()
+                start = max(region.start_line - 1, 0)
+                end = min(region.end_line, len(orig_lines))
+                cur_lines[start:end] = orig_lines[start:end]
+                _atomic_write(
+                    path, "\n".join(cur_lines) + "\n", lock=lock
+                )
+            else:
+                _atomic_write(path, original, lock=lock)
+            self._run_ci(path)
         try:
             if self.data_bot:
                 self.data_bot.db.log_patch_outcome(
