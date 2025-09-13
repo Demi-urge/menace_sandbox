@@ -223,6 +223,7 @@ def generate_patch(
     engine: "SelfCodingEngine" | None = None,
     *,
     context_builder: ContextBuilder,
+    provenance_token: str,
     description: str | None = None,
     strategy: PromptStrategy | None = None,
     patch_logger: PatchLogger | None = None,
@@ -257,6 +258,9 @@ def generate_patch(
         :class:`vector_service.ContextBuilder` instance used to retrieve
         contextual information from local databases. The builder must be able
         to query the databases associated with the current repository.
+    provenance_token:
+        Token from :class:`SelfCodingManager.validate_provenance` confirming the
+        call originates from the active ``EvolutionOrchestrator``.
     description:
         Optional patch description.  When omitted, a generic description is
         used.
@@ -299,6 +303,12 @@ def generate_patch(
                 "generate_patch requires a SelfCodingManager instance"
             )
         logger.warning("generate_patch bypassing SelfCodingManager requirement")
+    if not provenance_token:
+        raise RuntimeError("provenance_token is required")
+    try:
+        manager.validate_provenance(provenance_token)
+    except Exception as exc:  # pragma: no cover - validation
+        raise RuntimeError("invalid provenance token") from exc
     builder = context_builder
     try:
         builder.refresh_db_weights()
@@ -392,15 +402,12 @@ def generate_patch(
         context_meta["prompt_strategy"] = str(strategy)
     base_description = description
 
-    token = getattr(
-        getattr(manager, "evolution_orchestrator", None),
-        "provenance_token",
-        None,
-    )
     try:
         meta = dict(context_meta)
         meta.setdefault("trigger", "quick_fix_engine")
-        manager.register_patch_cycle(description, meta, provenance_token=token)
+        manager.register_patch_cycle(
+            description, meta, provenance_token=provenance_token
+        )
     except Exception:
         logger.exception("failed to register patch cycle")
 
@@ -1178,6 +1185,7 @@ class QuickFixEngine:
                         self.manager,
                         engine=getattr(self.manager, "engine", None),
                         context_builder=self.context_builder,
+                        provenance_token=token,
                         helper_fn=self.helper_fn,
                         graph=self.graph,
                     )
@@ -1224,6 +1232,8 @@ class QuickFixEngine:
         module_path: str | Path,
         description: str = "",
         context_meta: Dict[str, Any] | None = None,
+        *,
+        provenance_token: str,
     ) -> Tuple[bool, int | None, List[str]]:
         """Generate and apply a patch returning its success status, id and flags.
 
@@ -1231,6 +1241,12 @@ class QuickFixEngine:
         internal risk checks.  When any validation flags are raised the change
         is reverted and ``False`` is returned along with ``None`` for the
         ``patch_id`` and the list of ``flags``.
+
+        Parameters
+        ----------
+        provenance_token:
+            Verified token confirming the call originates from the active
+            ``EvolutionOrchestrator``.
         """
 
         ctx = context_meta or {}
@@ -1240,6 +1256,7 @@ class QuickFixEngine:
                 self.manager,
                 engine=getattr(self.manager, "engine", None),
                 context_builder=self.context_builder,
+                provenance_token=provenance_token,
                 description=description,
                 context=ctx,
                 return_flags=True,
@@ -1298,8 +1315,16 @@ class QuickFixEngine:
         *,
         target_region: "TargetRegion | None" = None,
         repo_root: Path | str | None = None,
+        provenance_token: str,
     ) -> Tuple[bool, List[str]]:
-        """Run quick-fix validation on ``module_name`` without applying it."""
+        """Run quick-fix validation on ``module_name`` without applying it.
+
+        Parameters
+        ----------
+        provenance_token:
+            Verified token ensuring the request originates from the active
+            ``EvolutionOrchestrator``.
+        """
         flags: List[str]
         try:
             _pid, flags = generate_patch(
@@ -1307,6 +1332,7 @@ class QuickFixEngine:
                 self.manager,
                 engine=getattr(self.manager, "engine", None),
                 context_builder=self.context_builder,
+                provenance_token=provenance_token,
                 description=description,
                 target_region=target_region,
                 return_flags=True,
