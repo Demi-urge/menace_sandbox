@@ -25,11 +25,34 @@ from .bot_testing_config import BotTestingSettings
 from .db_router import DBRouter, GLOBAL_ROUTER, init_db_router
 from .bot_registry import BotRegistry
 from .data_bot import DataBot
+from .self_coding_manager import SelfCodingManager
 
 logger = logging.getLogger("BotTester")
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
+
+
+class _StubThresholds:
+    roi_drop = 0.0
+    error_threshold = 0.0
+    test_failure_threshold = 0.0
+
+
+class _StubThresholdService:
+    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
+        return _StubThresholds()
+
+
+engine = object()
+pipeline = object()
+manager = SelfCodingManager(
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+    threshold_service=_StubThresholdService(),
+)
 
 # Allow users to register custom randomizers for specific types
 CUSTOM_GENERATORS: dict[type[Any], Callable[[], Any]] = {}
@@ -191,18 +214,16 @@ class TestingLogDB:
         ]
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class BotTestingBot:
     """Run unit and basic integration tests for bots."""
 
-    manager: SelfCodingManager
-
     def __init__(
         self,
-        manager: SelfCodingManager,
         db: TestingLogDB | None = None,
         *,
         settings: BotTestingSettings | None = None,
+        manager: SelfCodingManager | None = None,
     ) -> None:
         self.settings = settings or BotTestingSettings()
         self.db = db or TestingLogDB(settings=self.settings)
@@ -237,14 +258,6 @@ class BotTestingBot:
             self.logger.warning("Faker not installed; randomized testing disabled")
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = DataBot()
-        self.manager = manager
-        try:
-            self.manager.register_bot(self.name)
-            orch = getattr(self.manager, "evolution_orchestrator", None)
-            if orch:
-                orch.register_bot(self.name)
-        except Exception:
-            logger.exception("bot registration failed")
 
     def _random_arg(self, param: inspect.Parameter) -> Any:
         ann = param.annotation

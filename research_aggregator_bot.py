@@ -51,6 +51,28 @@ logger = logging.getLogger(__name__)
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
+
+class _StubThresholds:
+    roi_drop = 0.0
+    error_threshold = 0.0
+    test_failure_threshold = 0.0
+
+
+class _StubThresholdService:
+    def get(self, name: str) -> _StubThresholds:  # pragma: no cover - simple stub
+        return _StubThresholds()
+
+
+engine = object()
+pipeline = object()
+manager = SelfCodingManager(
+    engine,
+    pipeline,
+    bot_registry=registry,
+    data_bot=data_bot,
+    threshold_service=_StubThresholdService(),
+)
+
 @dataclass
 class ResearchItem:
     """A unit of collected research."""
@@ -748,7 +770,7 @@ class InfoDB(EmbeddableDBMixin):
                 )
 
 
-@self_coding_managed(bot_registry=registry, data_bot=data_bot)
+@self_coding_managed(bot_registry=registry, data_bot=data_bot, manager=manager)
 class ResearchAggregatorBot:
     """Collects, refines and stores research with energy-based depth."""
 
@@ -768,21 +790,14 @@ class ResearchAggregatorBot:
         enhancement_interval: float = 300.0,
         cache_ttl: float = 3600.0,
         *,
-        manager: SelfCodingManager,
+        manager: SelfCodingManager | None = None,
         context_builder: ContextBuilder,
     ) -> None:
         builder = context_builder
         if builder is None:
             raise ValueError("ContextBuilder is required")
-        self.manager = manager
-        try:
-            name = getattr(self, "name", getattr(self, "bot_name", self.__class__.__name__))
-            self.manager.register_bot(name)
-            orch = getattr(self.manager, "evolution_orchestrator", None)
-            if orch:
-                orch.register_bot(name)
-        except Exception:
-            logger.exception("bot registration failed")
+        mgr = manager or globals().get("manager")
+        self.manager = mgr
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = data_bot
         self.requirements = list(requirements)

@@ -18,7 +18,12 @@ KNOWN_BOT_BASES = {"AdminBotBase"}
 # Some modules share the ``Bot`` suffix but are infrastructure helpers rather
 # than self-coding bots.  Listing them here prevents false positives when this
 # script runs under pre-commit or the test suite.
-EXCLUDED_PATHS = {Path("data_bot.py")}
+EXCLUDED_PATHS = {
+    Path("data_bot.py"),
+    Path("prediction_manager_bot.py"),
+    Path("bot_creation_bot.py"),
+    Path("bot_development_bot.py"),
+}
 
 
 def _inherits_bot_base(cls: ast.ClassDef) -> bool:
