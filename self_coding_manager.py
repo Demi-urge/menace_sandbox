@@ -696,6 +696,16 @@ class SelfCodingManager:
                 except Exception:
                     return 0
 
+            def _tests_run(output: str) -> int:
+                try:
+                    passed_match = re.search(r"(\d+)\s+passed", output)
+                    failed_match = re.search(r"(\d+)\s+failed", output)
+                    passed = int(passed_match.group(1)) if passed_match else 0
+                    failed = int(failed_match.group(1)) if failed_match else 0
+                    return passed + failed
+                except Exception:
+                    return 0
+
             def _run(repo: Path, changed: Path | None) -> TestHarnessResult:
                 try:
                     res = run_tests(repo, changed, backend=backend)
@@ -1228,6 +1238,9 @@ class SelfCodingManager:
 
             result = self.pipeline.run(self.bot_name, energy=energy)
             after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
+            err_after = (
+                self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
+            )
             roi_delta = after_roi - before_roi
             coverage_delta = coverage_after - coverage_before
             runtime_improvement = runtime_before - runtime_after
@@ -1242,6 +1255,17 @@ class SelfCodingManager:
                     "runtime_improvement": runtime_improvement,
                 },
             )
+            if self.data_bot:
+                try:
+                    self.data_bot.collect(
+                        self.bot_name,
+                        revenue=after_roi,
+                        errors=int(err_after),
+                        tests_failed=_failed_tests(harness_result.stdout),
+                        tests_run=_tests_run(harness_result.stdout),
+                    )
+                except Exception:
+                    self.logger.exception("data_bot.collect failed")
             patch_logger = getattr(self.engine, "patch_logger", None)
             vectors = ctx_meta.get("vectors", []) if ctx_meta else []
             retrieval_metadata = (
