@@ -36,7 +36,7 @@ from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 from .error_bot import ErrorDB
 from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
 from . import mutation_logger as MutationLogger
@@ -411,6 +411,19 @@ class SelfCodingManager:
                             error_threshold=
                                 new_err if new_err != t.error_threshold else None,
                         )
+                        try:  # pragma: no cover - best effort persistence
+                            persist_sc_thresholds(
+                                self.bot_name,
+                                roi_drop=new_roi if new_roi != t.roi_drop else None,
+                                error_increase=
+                                    new_err if new_err != t.error_threshold else None,
+                                event_bus=self.event_bus,
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to persist thresholds for %s",
+                                self.bot_name,
+                            )
                         t = self.threshold_service.reload(self.bot_name)
                 except Exception:  # pragma: no cover - adaptive failures
                     self.logger.exception("adaptive threshold update failed")
