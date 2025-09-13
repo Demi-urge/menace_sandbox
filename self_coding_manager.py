@@ -582,6 +582,31 @@ class SelfCodingManager:
         return result
 
     # ------------------------------------------------------------------
+    def _validate_provenance(self, token: str | None) -> None:
+        """Ensure calls originate from the registered ``EvolutionOrchestrator``.
+
+        When an orchestrator is configured a matching ``token`` must be
+        supplied, otherwise the patch cycle is rejected.  If no orchestrator is
+        present the attempt is logged but allowed to proceed so manual testing
+        remains possible.
+        """
+
+        if self.evolution_orchestrator:
+            expected = getattr(self.evolution_orchestrator, "provenance_token", None)
+            if not token or token != expected:
+                self.logger.warning(
+                    "patch cycle without valid EvolutionOrchestrator token"
+                )
+                raise PermissionError("invalid provenance token")
+        else:
+            if not token:
+                # No orchestrator configured – log that this bypasses normal
+                # coordination but continue for backwards compatibility.
+                self.logger.warning(
+                    "patch cycle invoked without EvolutionOrchestrator"
+                )
+
+    # ------------------------------------------------------------------
     def register_patch_cycle(
         self,
         description: str,
@@ -589,6 +614,7 @@ class SelfCodingManager:
         *,
         patch_id: int | None = None,
         commit: str | None = None,
+        provenance_token: str | None = None,
     ) -> tuple[int | None, str | None]:
         """Log baseline metrics for an upcoming patch cycle.
 
@@ -598,6 +624,8 @@ class SelfCodingManager:
         event is emitted on the configured event bus.  The generated record and
         event identifiers are stored for linking with subsequent patch events.
         """
+
+        self._validate_provenance(provenance_token)
 
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         errors = (
@@ -671,6 +699,7 @@ class SelfCodingManager:
         *,
         context_meta: Dict[str, Any] | None = None,
         context_builder: ContextBuilder | None = None,
+        provenance_token: str | None = None,
         **kwargs: Any,
     ) -> tuple[AutomationResult, str | None]:
         """Patch ``path`` using :meth:`run_patch` with fresh context.
@@ -678,6 +707,8 @@ class SelfCodingManager:
         Returns a tuple of the :class:`AutomationResult` and the commit hash of
         the applied patch, if any.
         """
+        self._validate_provenance(provenance_token)
+
         builder = context_builder or ContextBuilder()
         try:
             ensure_fresh_weights(builder)
