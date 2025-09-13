@@ -67,6 +67,7 @@ from .self_coding_thresholds import (
     get_thresholds as load_sc_thresholds,
     update_thresholds as save_sc_thresholds,
     adaptive_thresholds,
+    _load_config as _load_sc_config,
 )
 from .sandbox_settings import SandboxSettings
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
@@ -1848,7 +1849,22 @@ class DataBot:
             test_failure_threshold=fail_thresh,
         )
         key = bot or ""
+        prev = self._thresholds.get(key)
         self._thresholds[key] = rt
+
+        if bot:
+            data = _load_sc_config()
+            bots = data.get("bots", {}) if isinstance(data, dict) else {}
+            if bot not in bots:
+                try:  # pragma: no cover - best effort persistence
+                    save_sc_thresholds(
+                        bot,
+                        roi_drop=rt.roi_drop,
+                        error_increase=rt.error_threshold,
+                        test_failure_increase=rt.test_failure_threshold,
+                    )
+                except Exception:
+                    self.logger.exception("failed to persist thresholds for %s", bot)
 
         # Persist explicit overrides back to the configuration file so
         # subsequent processes observe the updated thresholds without a
@@ -1869,6 +1885,17 @@ class DataBot:
                 )
             except Exception:
                 self.logger.exception("failed to persist thresholds for %s", bot)
+        if self.event_bus and bot and prev != rt:
+            payload = {
+                "bot": bot,
+                "roi_drop": rt.roi_drop,
+                "error_threshold": rt.error_threshold,
+                "test_failure_threshold": rt.test_failure_threshold,
+            }
+            try:  # pragma: no cover - best effort publish
+                self.event_bus.publish("self_coding:thresholds_updated", payload)
+            except Exception:
+                self.logger.exception("failed to publish threshold update")
         return rt
 
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
