@@ -7,8 +7,12 @@ import json
 import logging
 import sqlite3
 
-from code_database import PatchHistoryDB
-from vector_service import PatchLogger
+try:  # pragma: no cover - allow package or flat imports
+    from .code_database import PatchHistoryDB
+    from .vector_service import PatchLogger
+except Exception:  # pragma: no cover - fallback for flat layout
+    from code_database import PatchHistoryDB  # type: ignore
+    from vector_service import PatchLogger  # type: ignore
 
 
 class PatchProvenanceService:
@@ -105,6 +109,25 @@ class PatchProvenanceService:
             )
         except sqlite3.DatabaseError:  # pragma: no cover - best effort
             self.logger.exception("failed to record patch metadata")
+
+    # ------------------------------------------------------------------
+    def get(self, commit: str) -> Dict[str, Any] | None:
+        """Return patch metadata for ``commit`` if present."""
+
+        try:
+            rows = self.db.search_with_ids(commit)
+        except sqlite3.DatabaseError:  # pragma: no cover - best effort
+            self.logger.exception("failed to lookup commit %s", commit)
+            return None
+        for pid, rec in rows:
+            try:
+                data = json.loads(getattr(rec, "summary", "") or "{}")
+            except json.JSONDecodeError:
+                continue
+            if data.get("commit") == commit:
+                data["patch_id"] = pid
+                return data
+        return None
 
     # ------------------------------------------------------------------
     def search_by_vector(
@@ -230,6 +253,12 @@ def record_patch_metadata(
     PatchProvenanceService(patch_db).record_metadata(patch_id, metadata)
 
 
+def get_patch_by_commit(
+    commit: str, *, patch_db: PatchHistoryDB | None = None
+) -> Dict[str, Any] | None:
+    return PatchProvenanceService(patch_db).get(commit)
+
+
 def search_patches_by_vector(
     vector_id: str,
     *,
@@ -304,6 +333,7 @@ __all__ = [
     "search_patches_by_license_fingerprint",
     "search_patches_by_semantic_alert",
     "search_patches",
+    "get_patch_by_commit",
     "build_chain",
     "PatchLogger",
     "record_patch_metadata",
