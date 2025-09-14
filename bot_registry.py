@@ -570,6 +570,17 @@ class BotRegistry:
                 self.hot_swap_bot(name)
                 self.health_check_bot(name, prev_state)
                 update_ok = True
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "thresholds:refresh", {"bot": name}
+                        )
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.error(
+                            "Failed to publish thresholds:refresh event for %s: %s",
+                            name,
+                            exc,
+                        )
             except Exception as exc:
                 if prev_module_entry is None:
                     self.modules.pop(name, None)

@@ -1459,6 +1459,9 @@ class DataBot:
                 )
                 self.event_bus.subscribe("bot:new", self._on_bot_new)
                 self.event_bus.subscribe("bot:updated", self._on_bot_updated)
+                self.event_bus.subscribe(
+                    "thresholds:refresh", self._on_thresholds_refresh
+                )
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to subscribe to events")
         for name in monitored:
@@ -1567,6 +1570,21 @@ class DataBot:
             self.logger.info("refreshed thresholds after update for %s", name)
         except Exception:
             self.logger.exception("failed to refresh baselines for %s", name)
+
+    # ------------------------------------------------------------------
+    def _on_thresholds_refresh(self, _topic: str, event: object) -> None:
+        """Reload thresholds for *bot* on explicit refresh events."""
+
+        if not isinstance(event, dict):
+            return
+        name = event.get("bot") or event.get("name")
+        if not name:
+            return
+        try:
+            self.reload_thresholds(str(name))
+            self.logger.info("reloaded thresholds for %s", name)
+        except Exception:
+            self.logger.exception("failed to reload thresholds for %s", name)
 
     # ------------------------------------------------------------------
     def _on_patch_applied(self, _topic: str, event: object) -> None:
