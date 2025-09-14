@@ -916,43 +916,19 @@ class SelfCodingManager:
             raise
         patch_id = getattr(self, "_last_patch_id", None)
         module_path = path_for_prompt(path)
-        if commit and patch_id and self.bot_registry:
+        if commit and patch_id and self.event_bus:
             try:
-                self.bot_registry.update_bot(
-                    self.bot_name, module_path, patch_id=patch_id, commit=commit
+                self.event_bus.publish(
+                    "self_coding:patch_attempt",
+                    {
+                        "bot": self.bot_name,
+                        "path": str(path),
+                        "patch_id": patch_id,
+                        "commit": commit,
+                    },
                 )
             except Exception:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "failed to update bot registry",
-                    extra={"bot": self.bot_name, "module_path": module_path},
-                )
-            try:
-                record_patch_metadata(
-                    int(patch_id),
-                    {"commit": commit, "module": str(module_path)},
-                )
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to record patch metadata")
-            if self.event_bus:
-                payload = {
-                    "bot": self.bot_name,
-                    "module": str(module_path),
-                    "patch_id": patch_id,
-                    "commit": commit,
-                }
-                try:
-                    self.event_bus.publish("bot:updated", payload)
-                    self.event_bus.publish(
-                        "self_coding:patch_attempt",
-                        {
-                            "bot": self.bot_name,
-                            "path": str(path),
-                            "patch_id": patch_id,
-                            "commit": commit,
-                        },
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    self.logger.exception("failed to publish patch events")
+                self.logger.exception("failed to publish patch_attempt event")
         if self.data_bot:
             try:
                 self.data_bot.collect(
@@ -1905,6 +1881,13 @@ class SelfCodingManager:
                             "version": version,
                         },
                     )
+                    try:
+                        record_patch_metadata(
+                            int(patch_id),
+                            {"commit": commit_hash, "module": str(module_path)},
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to record patch metadata")
                 except Exception:
                     self.logger.exception(
                         "failed to update bot registry",

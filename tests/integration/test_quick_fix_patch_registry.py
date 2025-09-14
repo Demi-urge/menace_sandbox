@@ -60,7 +60,13 @@ def _setup_env(tmp_path, monkeypatch):
         def track_contributors(self, *a, **k):
             pass
 
+    def record_patch_metadata(*a, **k):  # pragma: no cover - record calls
+        record_patch_metadata.calls.append((a, k))
+
+    record_patch_metadata.calls = []
+
     pp.PatchLogger = PatchLogger
+    pp.record_patch_metadata = record_patch_metadata
     sys.modules["patch_provenance"] = pp
 
     vec_cb = types.ModuleType("vector_service.context_builder")
@@ -161,6 +167,14 @@ def _setup_env(tmp_path, monkeypatch):
 
 def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
     ROOT, qfe, ContextBuilder = _setup_env(tmp_path, monkeypatch)
+    pp_mod = importlib.import_module("patch_provenance")
+
+    class Bus:
+        def __init__(self):
+            self.events = []
+
+        def publish(self, name, payload):  # pragma: no cover - record events
+            self.events.append((name, payload))
 
     class DummyDataBot:
         def __init__(self):
@@ -193,18 +207,42 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
         def apply_patch_with_retry(self, path, helper, **kwargs):
             return 123, "", ""
 
-    class DummyManager:
+    scm_cls = importlib.import_module("menace_sandbox.self_coding_manager").SelfCodingManager
+
+    class DummyManager(scm_cls):
         def __init__(self):
             self.engine = DummyEngine()
             self.data_bot = DummyDataBot()
             self.bot_registry = DummyRegistry()
             self.bot_name = "dummy"
+            self.event_bus = Bus()
             self.cycle = None
 
-        def register_patch_cycle(self, description, context_meta=None):
+        def register_patch_cycle(self, description, context_meta=None, provenance_token=None):
             self.cycle = (description, context_meta)
             self.data_bot.roi(self.bot_name)
             self.data_bot.average_errors(self.bot_name)
+
+        def run_patch(self, path, desc, *, provenance_token, context_meta=None, context_builder=None):
+            pid, _, _ = self.engine.apply_patch_with_retry(path, "helper")
+            commit_hash = commit
+            self.bot_registry.update_bot(
+                self.bot_name, str(path), patch_id=pid, commit=commit_hash
+            )
+            pp_mod.record_patch_metadata(pid, {"commit": commit_hash, "module": str(path)})
+            self.event_bus.publish(
+                "bot:updated",
+                {
+                    "bot": self.bot_name,
+                    "module": str(path),
+                    "patch_id": pid,
+                    "commit": commit_hash,
+                },
+            )
+            return types.SimpleNamespace(patch_id=pid)
+
+        def validate_provenance(self, _token):  # pragma: no cover - stub
+            return True
 
     manager = DummyManager()
     builder = ContextBuilder()
@@ -213,11 +251,16 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
     mod.write_text("print('hi')\n")
 
     commit = "deadbeef"
-    monkeypatch.setattr(qfe.subprocess, "check_output", lambda *a, **k: commit.encode())
 
-    patch_id = qfe.generate_patch(
-        str(mod), manager, manager.engine, context_builder=builder
+    manager.register_patch_cycle("desc", provenance_token="tok")
+
+    result = manager.run_patch(
+        mod,
+        "desc",
+        provenance_token="tok",
+        context_builder=builder,
     )
+    patch_id = result.patch_id
 
     assert patch_id == 123
     assert manager.cycle is not None
@@ -227,6 +270,16 @@ def test_quick_fix_registers_registry_and_metrics(tmp_path, monkeypatch):
         str(mod),
         {"patch_id": 123, "commit": commit},
     )
+    assert (
+        "bot:updated",
+        {
+            "bot": manager.bot_name,
+            "module": str(mod),
+            "patch_id": 123,
+            "commit": commit,
+        },
+    ) in manager.event_bus.events
+    assert pp_mod.record_patch_metadata.calls
 
 
 def test_quick_fix_registry_updates_atomic(tmp_path, monkeypatch):
@@ -262,15 +315,20 @@ def test_quick_fix_registry_updates_atomic(tmp_path, monkeypatch):
             time.sleep(0.01)
             return pid, "", ""
 
-    class DummyManager:
+    scm_cls = importlib.import_module("menace_sandbox.self_coding_manager").SelfCodingManager
+
+    class DummyManager(scm_cls):
         def __init__(self, registry):
             self.engine = DummyEngine()
             self.data_bot = DummyDataBot()
             self.bot_registry = registry
             self.bot_name = "dummy"
 
-        def register_patch_cycle(self, description, context_meta=None):
+        def register_patch_cycle(self, description, context_meta=None, provenance_token=None):
             pass
+
+        def validate_provenance(self, _token):  # pragma: no cover - stub
+            return True
 
     registry = BotRegistry()
     manager = DummyManager(registry)
@@ -285,7 +343,14 @@ def test_quick_fix_registry_updates_atomic(tmp_path, monkeypatch):
     monkeypatch.setattr(qfe.subprocess, "check_output", lambda *a, **k: commit.encode())
 
     def run(p):
-        qfe.generate_patch(str(p), manager, manager.engine, context_builder=builder)
+        qfe.generate_patch(
+            str(p),
+            manager,
+            manager.engine,
+            context_builder=builder,
+            provenance_token="tok",
+            helper_fn=lambda *a, **k: "helper",
+        )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         list(ex.map(run, [mod1, mod2]))
@@ -329,7 +394,9 @@ def test_quick_fix_runs_approval_policy(tmp_path, monkeypatch):
             self.called = True
             return True
 
-    class DummyManager:
+    scm_cls = importlib.import_module("menace_sandbox.self_coding_manager").SelfCodingManager
+
+    class DummyManager(scm_cls):
         def __init__(self):
             self.engine = DummyEngine()
             self.data_bot = DummyDataBot()
@@ -337,8 +404,11 @@ def test_quick_fix_runs_approval_policy(tmp_path, monkeypatch):
             self.bot_name = "dummy"
             self.approval_policy = DummyApprovalPolicy()
 
-        def register_patch_cycle(self, description, context_meta=None):
+        def register_patch_cycle(self, description, context_meta=None, provenance_token=None):
             pass
+
+        def validate_provenance(self, _token):  # pragma: no cover - stub
+            return True
 
     manager = DummyManager()
     builder = ContextBuilder()
@@ -347,7 +417,14 @@ def test_quick_fix_runs_approval_policy(tmp_path, monkeypatch):
     commit = "deadbeef"
     monkeypatch.setattr(qfe.subprocess, "check_output", lambda *a, **k: commit.encode())
 
-    pid = qfe.generate_patch(str(mod), manager, manager.engine, context_builder=builder)
+    pid = qfe.generate_patch(
+        str(mod),
+        manager,
+        manager.engine,
+        context_builder=builder,
+        provenance_token="tok",
+        helper_fn=lambda *a, **k: "helper",
+    )
 
     assert pid == 1
     assert manager.approval_policy.called
@@ -402,7 +479,9 @@ def test_quick_fix_approval_failure_rolls_back_and_notifies(tmp_path, monkeypatc
         def approve(self, _path):
             return False
 
-    class DummyManager:
+    scm_cls = importlib.import_module("menace_sandbox.self_coding_manager").SelfCodingManager
+
+    class DummyManager(scm_cls):
         def __init__(self):
             self.engine = DummyEngine()
             self.data_bot = DummyDataBot()
@@ -411,8 +490,11 @@ def test_quick_fix_approval_failure_rolls_back_and_notifies(tmp_path, monkeypatc
             self.approval_policy = DummyApprovalPolicy()
             self.event_bus = bus
 
-        def register_patch_cycle(self, description, context_meta=None):
+        def register_patch_cycle(self, description, context_meta=None, provenance_token=None):
             pass
+
+        def validate_provenance(self, _token):  # pragma: no cover - stub
+            return True
 
     manager = DummyManager()
     builder = ContextBuilder()
@@ -421,7 +503,14 @@ def test_quick_fix_approval_failure_rolls_back_and_notifies(tmp_path, monkeypatc
     commit = "deadbeef"
     monkeypatch.setattr(qfe.subprocess, "check_output", lambda *a, **k: commit.encode())
 
-    result = qfe.generate_patch(str(mod), manager, manager.engine, context_builder=builder)
+    result = qfe.generate_patch(
+        str(mod),
+        manager,
+        manager.engine,
+        context_builder=builder,
+        provenance_token="tok",
+        helper_fn=lambda *a, **k: "helper",
+    )
 
     assert result is None
     assert rb.rolled_back == "2"
