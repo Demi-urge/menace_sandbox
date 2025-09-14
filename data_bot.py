@@ -54,6 +54,7 @@ import logging
 import json
 import threading
 import time
+import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -121,7 +122,78 @@ from .self_coding_thresholds import (
     _load_config as _load_sc_config,
 )
 
+try:  # pragma: no cover - optional dependency
+    sys.modules.pop("watchdog", None)
+    from watchdog.events import FileSystemEventHandler  # type: ignore
+    from watchdog.observers import Observer  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    FileSystemEventHandler = object  # type: ignore
+    Observer = None  # type: ignore
+
 logger = logging.getLogger(__name__)
+
+_SC_WATCHER: "Observer | None" = None
+_SC_CACHE: Dict[str, SelfCodingThresholds] = {}
+_SC_SETTINGS: SandboxSettings | None = None
+_SC_PATH: Path | None = None
+
+
+def _reload_sc_cache(bus: UnifiedEventBus | None = None) -> None:
+    """Reload threshold cache from configuration and publish updates."""
+    if _SC_PATH is None:
+        return
+    try:
+        data = _load_sc_config(_SC_PATH)
+        bots = data.get("bots", {}) if isinstance(data, dict) else {}
+        new_cache: Dict[str, SelfCodingThresholds] = {}
+        for name in bots:
+            sc = _load_sc_thresholds(name, _SC_SETTINGS, path=_SC_PATH)
+            new_cache[name] = sc
+            if bus:
+                try:  # pragma: no cover - best effort only
+                    bus.publish(
+                        "thresholds:updated",
+                        {
+                            "bot": name,
+                            "roi_drop": sc.roi_drop,
+                            "error_threshold": sc.error_increase,
+                            "test_failure_threshold": sc.test_failure_increase,
+                        },
+                    )
+                except Exception:
+                    logger.exception("failed to publish threshold update event")
+        _SC_CACHE.clear()
+        _SC_CACHE.update(new_cache)
+    except Exception:
+        logger.exception("failed to reload self-coding thresholds")
+
+
+def _start_threshold_watcher(bus: UnifiedEventBus | None = None) -> None:
+    """Start watcher on ``self_coding_thresholds.yaml`` if available."""
+    global _SC_WATCHER
+    if _SC_PATH is None or Observer is None or _SC_WATCHER is not None:
+        return
+
+    class _ThresholdHandler(FileSystemEventHandler):
+        def on_modified(self, event):  # type: ignore[override]
+            if getattr(event, "is_directory", False):
+                return
+            try:
+                if Path(event.src_path).resolve() != _SC_PATH.resolve():
+                    return
+            except Exception:
+                return
+            _reload_sc_cache(bus)
+
+        def on_moved(self, event):  # type: ignore[override]
+            self.on_modified(event)
+
+    handler = _ThresholdHandler()
+    observer = Observer()
+    observer.schedule(handler, str(_SC_PATH.parent.resolve()), recursive=False)
+    observer.daemon = True
+    observer.start()
+    _SC_WATCHER = observer
 
 
 def persist_sc_thresholds(
@@ -196,27 +268,40 @@ def load_sc_thresholds(
         raise RuntimeError("threshold helpers are unavailable")
 
     bus = event_bus or _SHARED_EVENT_BUS
+
+    global _SC_SETTINGS, _SC_PATH
+    if settings is not None:
+        _SC_SETTINGS = settings
+    if path is not None:
+        _SC_PATH = Path(path)
+    elif _SC_PATH is None:
+        _SC_PATH = Path("config/self_coding_thresholds.yaml")
+
+    if not _SC_CACHE:
+        _reload_sc_cache()
+
+    _start_threshold_watcher(bus)
+
     try:
         if bot:
-            sc = _load_sc_thresholds(bot, settings, path=path)
+            sc = _SC_CACHE.get(bot)
+            if sc is None:
+                sc = _load_sc_thresholds(bot, settings, path=_SC_PATH)
+                _SC_CACHE[bot] = sc
             params = sc.model_params or {}
             try:
                 create_model(sc.model, sc.confidence, **params)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to create forecast model for %s", bot)
             return sc
-        data = _load_sc_config(path)
-        bots = data.get("bots", {}) if isinstance(data, dict) else {}
-        result = {}
-        for name in bots:
-            sc = _load_sc_thresholds(name, settings, path=path)
+
+        for name, sc in list(_SC_CACHE.items()):
             params = sc.model_params or {}
             try:
                 create_model(sc.model, sc.confidence, **params)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to create forecast model for %s", name)
-            result[name] = sc
-        return result
+        return dict(_SC_CACHE)
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning(
             "failed to load thresholds for %s: %s", bot or "all bots", exc
@@ -229,7 +314,7 @@ def load_sc_thresholds(
                 )
             except Exception:
                 logger.exception(
-                    "failed to publish threshold load failed event"
+                    "failed to publish threshold load failed event",
                 )
         raise
 

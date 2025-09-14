@@ -309,6 +309,11 @@ class SelfCodingManager:
         # Ensure all managers use the shared event bus unless a specific one
         # is supplied.
         self.event_bus = event_bus or _SHARED_EVENT_BUS
+        if self.event_bus:
+            try:  # pragma: no cover - best effort
+                self.event_bus.subscribe("thresholds:updated", self._on_thresholds_updated)
+            except Exception:
+                self.logger.exception("threshold update subscription failed")
         self.evolution_orchestrator = evolution_orchestrator
         if self.bot_registry:
             try:
@@ -499,6 +504,18 @@ class SelfCodingManager:
             self._last_thresholds = t
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load thresholds for %s", self.bot_name)
+    
+    def _on_thresholds_updated(self, _topic: str, event: object) -> None:
+        """Refresh cached thresholds when configuration changes."""
+        if not isinstance(event, dict):
+            return
+        bot = event.get("bot")
+        if bot and bot != self.bot_name:
+            return
+        try:
+            self._refresh_thresholds()
+        except Exception:
+            self.logger.exception("failed to refresh thresholds after update")
 
     def _prepare_context_builder(self, builder: ContextBuilder) -> None:
         """Refresh *builder* weights and log its session id."""
