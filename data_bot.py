@@ -1458,6 +1458,7 @@ class DataBot:
                     "self_coding:patch_applied", self._on_patch_applied
                 )
                 self.event_bus.subscribe("bot:new", self._on_bot_new)
+                self.event_bus.subscribe("bot:updated", self._on_bot_updated)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to subscribe to events")
         for name in monitored:
@@ -1545,6 +1546,27 @@ class DataBot:
                 )
         except Exception:
             self.logger.exception("failed to initialise monitoring for %s", name)
+
+    # ------------------------------------------------------------------
+    def _on_bot_updated(self, _topic: str, event: object) -> None:
+        """Refresh thresholds and baselines after a bot update."""
+
+        if not isinstance(event, dict):
+            return
+        name = event.get("name")
+        if not name:
+            return
+        try:
+            self.reload_thresholds(str(name))
+            self._baseline[str(name)] = BaselineTracker(window=self.baseline_window)
+            self._ema_baseline[str(name)] = {
+                "roi": 0.0,
+                "errors": 0.0,
+                "tests_failed": 0.0,
+            }
+            self.logger.info("refreshed thresholds after update for %s", name)
+        except Exception:
+            self.logger.exception("failed to refresh baselines for %s", name)
 
     # ------------------------------------------------------------------
     def _on_patch_applied(self, _topic: str, event: object) -> None:
