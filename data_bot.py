@@ -2220,6 +2220,13 @@ class DataBot:
             )
         else:
             tracker.update(roi=roi, errors=errors, tests_failed=test_failures)
+        try:
+            base = self.threshold_service.get(bot, self.settings)
+            new_thr = self._recompute_thresholds_from_baseline(tracker, base)
+            self._thresholds[bot] = new_thr
+            self.threshold_service._thresholds[bot] = new_thr
+        except Exception:
+            self.logger.exception("adaptive threshold recompute failed for %s", bot)
         patch_breach = False
         if patch_success is not None:
             patch_breach = delta_patch <= patch_thresh
@@ -2428,6 +2435,32 @@ class DataBot:
             return 0.0
         return 0.0
 
+    # ------------------------------------------------------------------
+    def _recompute_thresholds_from_baseline(
+        self, tracker: BaselineTracker, base: ROIThresholds
+    ) -> ROIThresholds:
+        """Derive adaptive thresholds from recent baseline statistics.
+
+        ``BaselineTracker`` maintains rolling histories for key metrics.  This
+        helper uses the standard deviation of those histories to adjust the
+        configured thresholds so sensitivity follows the bot's recent
+        performance.
+        """
+
+        mult = getattr(self, "anomaly_sensitivity", 1.0)
+        roi_drop = min(base.roi_drop, -tracker.std("roi") * mult)
+        err_thresh = max(base.error_threshold, tracker.std("errors") * mult)
+        fail_thresh = max(base.test_failure_threshold, tracker.std("tests_failed") * mult)
+        patch_thresh = base.patch_success_drop
+        if "patch_success" in tracker.to_dict():
+            patch_thresh = min(patch_thresh, -tracker.std("patch_success") * mult)
+        return ROIThresholds(
+            roi_drop=roi_drop,
+            error_threshold=err_thresh,
+            test_failure_threshold=fail_thresh,
+            patch_success_drop=patch_thresh,
+        )
+
     def reload_thresholds(self, bot: str | None = None) -> ROIThresholds:
         """Reload thresholds for ``bot`` from configuration.
 
@@ -2463,25 +2496,21 @@ class DataBot:
             else raw.test_failure_increase
         )
         patch_thresh = raw.patch_success_drop
-        recalibrated = False
-        if bot and tracker and getattr(raw, "auto_recalibrate", True):
-            mult = getattr(self, "anomaly_sensitivity", 1.0)
-            roi_drop = min(roi_drop, -tracker.std("roi") * mult)
-            error_thresh = max(error_thresh, tracker.std("errors") * mult)
-            fail_thresh = max(
-                fail_thresh, tracker.std("tests_failed") * mult
-            )
-            if "patch_success" in tracker.to_dict():
-                patch_thresh = min(
-                    patch_thresh, -tracker.std("patch_success") * mult
-                )
-            recalibrated = True
-        rt = ROIThresholds(
+        base_rt = ROIThresholds(
             roi_drop=roi_drop,
             error_threshold=error_thresh,
             test_failure_threshold=fail_thresh,
             patch_success_drop=patch_thresh,
         )
+        recalibrated = False
+        if bot and tracker and getattr(raw, "auto_recalibrate", True):
+            base_rt = self._recompute_thresholds_from_baseline(tracker, base_rt)
+            recalibrated = True
+        rt = base_rt
+        roi_drop = rt.roi_drop
+        error_thresh = rt.error_threshold
+        fail_thresh = rt.test_failure_threshold
+        patch_thresh = rt.patch_success_drop
         key = bot or ""
         self._thresholds[key] = rt
 
