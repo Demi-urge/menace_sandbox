@@ -5,13 +5,12 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import self_coding_managed
-try:  # pragma: no cover - optional to avoid circular imports in tests
+try:  # pragma: no cover - fail fast if self-coding manager missing
     from .self_coding_manager import SelfCodingManager, internalize_coding_bot
-except Exception:  # pragma: no cover - provide stubs when unavailable
-    SelfCodingManager = None  # type: ignore
-
-    def internalize_coding_bot(*_a, **_k):  # type: ignore
-        return None
+except Exception as exc:  # pragma: no cover - critical dependency
+    raise RuntimeError(
+        "BotPlanningBot requires SelfCodingManager; install self-coding dependencies."
+    ) from exc
 from .self_coding_engine import SelfCodingEngine
 try:  # pragma: no cover - optional to avoid circular imports in tests
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -67,6 +66,8 @@ manager = internalize_coding_bot(
     error_threshold=_th.error_increase,
     test_failure_threshold=_th.test_failure_increase,
 )
+if not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety check
+    raise RuntimeError("internalize_coding_bot failed to return a SelfCodingManager")
 
 
 class TemplateManager:

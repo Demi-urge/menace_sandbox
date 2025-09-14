@@ -13,15 +13,11 @@ from pathlib import Path
 from .telemetry_feedback import TelemetryFeedback
 from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine
-try:  # pragma: no cover - optional self-coding dependency
+try:  # pragma: no cover - fail fast if self-coding manager missing
     from .self_coding_manager import SelfCodingManager, internalize_coding_bot
-except ImportError as exc:  # pragma: no cover - self-coding unavailable
-    logger.error(
-        "SelfCodingManager is required for DebugLoopService. "
-        "Install self-coding dependencies (e.g., `pip install menace-sandbox[self-coding]`).",
-    )
-    raise ImportError(
-        "DebugLoopService requires SelfCodingManager"
+except Exception as exc:  # pragma: no cover - critical dependency
+    raise RuntimeError(
+        "DebugLoopService requires SelfCodingManager; install self-coding dependencies."
     ) from exc
 from .model_automation_pipeline import ModelAutomationPipeline
 from .unified_event_bus import UnifiedEventBus
@@ -83,6 +79,10 @@ class DebugLoopService:
                 bot_registry=registry,
                 event_bus=bus,
             )
+            if not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety
+                raise RuntimeError(
+                    "internalize_coding_bot failed to return a SelfCodingManager"
+                )
             feedback = TelemetryFeedback(
                 logger,
                 manager,
