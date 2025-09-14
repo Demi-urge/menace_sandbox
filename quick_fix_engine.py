@@ -113,7 +113,6 @@ class ErrorClusterPredictor:
 
 from .error_bot import ErrorDB  # noqa: E402
 from .self_coding_manager import SelfCodingManager  # noqa: E402
-from .self_coding_engine import MANAGER_CONTEXT  # noqa: E402
 try:  # pragma: no cover - optional helper
     from .self_coding_manager import _manager_generate_helper_with_builder  # noqa: E402
 except Exception:  # pragma: no cover - helper unavailable
@@ -221,7 +220,7 @@ _VEC_METRICS = None
 
 def generate_patch(
     module: str,
-    manager: SelfCodingManager | None,
+    manager: SelfCodingManager,
     engine: "SelfCodingEngine" | None = None,
     *,
     context_builder: ContextBuilder,
@@ -236,7 +235,6 @@ def generate_patch(
     helper_fn: Callable[..., str] | None = None,
     graph: KnowledgeGraph | None = None,
     test_command: List[str] | None = None,
-    _allow_unmanaged: bool = False,
 ) -> int | tuple[int | None, list[str]] | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -249,9 +247,8 @@ def generate_patch(
         Target module path or module name without ``.py``.
     manager:
         :class:`~self_coding_manager.SelfCodingManager` providing helper
-        generation context and telemetry hooks.  When ``None`` the manager is
-        retrieved from ``MANAGER_CONTEXT``.  A ``RuntimeError`` is raised if no
-        :class:`SelfCodingManager` is available.
+        generation context and telemetry hooks. A ``RuntimeError`` is raised if
+        no :class:`SelfCodingManager` is supplied.
     engine:
         :class:`~self_coding_engine.SelfCodingEngine` instance. If ``None``,
         the value from ``manager.engine`` is used. A ``RuntimeError`` is raised
@@ -279,8 +276,6 @@ def generate_patch(
     target_region:
         Optional region within the file to patch. When provided only this
         slice is modified.
-    _allow_unmanaged:
-        Internal testing hook to bypass manager type checks.
     """
 
     logger = logging.getLogger("QuickFixEngine")
@@ -298,18 +293,14 @@ def generate_patch(
             "quick_fix_validation_error", "context_builder is required"
         )
     if manager is None:
-        manager = MANAGER_CONTEXT.get()
-    if manager is None:
         raise QuickFixEngineError(
             "quick_fix_init_error", "generate_patch requires a manager"
         )
     if not isinstance(manager, SelfCodingManager):
-        if not _allow_unmanaged:
-            raise QuickFixEngineError(
-                "quick_fix_init_error",
-                "generate_patch requires a SelfCodingManager instance",
-            )
-        logger.warning("generate_patch bypassing SelfCodingManager requirement")
+        raise QuickFixEngineError(
+            "quick_fix_init_error",
+            "generate_patch requires a SelfCodingManager instance",
+        )
     if not provenance_token:
         raise QuickFixEngineError(
             "quick_fix_validation_error", "provenance_token is required"
