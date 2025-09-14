@@ -2329,13 +2329,37 @@ class DataBot:
                 self.threshold_service._thresholds[key] = rt
                 if prev != rt:
                     self.threshold_service._publish(bot, rt)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.exception("failed to sync thresholds for %s", bot)
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "data:threshold_sync_failed",
+                            {"bot": bot, "error": str(exc)},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish threshold sync failure for %s",
+                            bot,
+                        )
+                raise
         else:
             try:
                 self.threshold_service._thresholds[key] = rt
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.exception("failed to sync thresholds for %s", bot)
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "data:threshold_sync_failed",
+                            {"bot": bot, "error": str(exc)},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish threshold sync failure for %s",
+                            bot,
+                        )
+                raise
         return rt
 
     def get_thresholds(self, bot: str | None = None) -> ROIThresholds:
