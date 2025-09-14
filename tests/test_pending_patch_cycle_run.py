@@ -26,9 +26,6 @@ class DummyHistoryDB:
 
 
 def test_pending_patch_cycle_processed(monkeypatch):
-    stub_cbi = types.ModuleType("menace.coding_bot_interface")
-    stub_cbi.self_coding_managed = lambda cls: cls
-    monkeypatch.setitem(sys.modules, "menace.coding_bot_interface", stub_cbi)
     stub_scm = types.ModuleType("menace.self_coding_manager")
     stub_scm.SelfCodingManager = object
     stub_scm.HelperGenerationError = RuntimeError
@@ -46,6 +43,14 @@ def test_pending_patch_cycle_processed(monkeypatch):
     stub_ga_bot.GeneticAlgorithmBot = object
     stub_ga_bot.GARecord = stub_ga_bot.GAStore = object
     monkeypatch.setitem(sys.modules, "menace.genetic_algorithm_bot", stub_ga_bot)
+    stub_mut = types.ModuleType("menace.mutation_logger")
+    stub_mut.log_mutation = lambda *a, **k: None
+    stub_mut.record_mutation_outcome = lambda *a, **k: None
+    class _Ctx:
+        def __enter__(self): return None
+        def __exit__(self, *a): return False
+    stub_mut.log_context = _Ctx
+    monkeypatch.setitem(sys.modules, "menace.mutation_logger", stub_mut)
     stub = types.ModuleType("vector_metrics_db")
     monkeypatch.setitem(sys.modules, "menace.vector_metrics_db", stub)
     import menace.data_bot as db
