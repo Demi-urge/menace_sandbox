@@ -23,10 +23,8 @@ from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from dataclasses import dataclass, field
-from typing import Iterable, List, Dict, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .evolution_orchestrator import EvolutionOrchestrator
+from typing import Iterable, List, Dict, Optional
+from .shared_evolution_orchestrator import get_orchestrator
 
 import networkx as nx
 try:
@@ -46,7 +44,7 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator: EvolutionOrchestrator | None = None
+evolution_orchestrator = get_orchestrator("BotPlanningBot", data_bot, engine)
 _th = get_thresholds("BotPlanningBot")
 persist_sc_thresholds(
     "BotPlanningBot",
@@ -136,19 +134,28 @@ class BotPlanningBot:
         self.regressor.fit(X, y)
         return list(self.regressor.predict(X))
 
-    def optimise_resources(self, tasks: Iterable[PlanningTask], cpu_limit: float = 4) -> List[float]:
+    def optimise_resources(
+        self, tasks: Iterable[PlanningTask], cpu_limit: float = 4
+    ) -> List[float]:
         """Use linear programming to fit tasks within a CPU budget."""
         data = list(tasks)
         if not data:
             return []
         problem = pulp.LpProblem("res", pulp.LpMaximize)
-        vars = [pulp.LpVariable(f"x{i}", lowBound=0, upBound=1) for i in range(len(data))]
+        vars = [
+            pulp.LpVariable(f"x{i}", lowBound=0, upBound=1)
+            for i in range(len(data))
+        ]
         problem += pulp.lpSum(vars)
-        problem += pulp.lpSum(v * data[i].resources.get("cpu", 1) for i, v in enumerate(vars)) <= cpu_limit
+        problem += pulp.lpSum(
+            v * data[i].resources.get("cpu", 1) for i, v in enumerate(vars)
+        ) <= cpu_limit
         problem.solve(pulp.PULP_CBC_CMD(msg=False))
         return [float(v.value()) for v in vars]
 
-    def plan_bots(self, tasks: Iterable[PlanningTask], *, trust_weight: float = 1.0) -> List[BotPlan]:
+    def plan_bots(
+        self, tasks: Iterable[PlanningTask], *, trust_weight: float = 1.0
+    ) -> List[BotPlan]:
         """Create bot plans and build the hierarchy graph.
 
         Parameters

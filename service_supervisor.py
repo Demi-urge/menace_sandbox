@@ -71,6 +71,7 @@ from .bot_registry import BotRegistry  # noqa: E402
 from .data_bot import DataBot, persist_sc_thresholds  # noqa: E402
 from .self_coding_thresholds import get_thresholds  # noqa: E402
 from .coding_bot_interface import self_coding_managed  # noqa: E402
+from .shared_evolution_orchestrator import get_orchestrator  # noqa: E402
 
 try:  # optional dependency
     import psutil  # type: ignore
@@ -395,6 +396,9 @@ class ServiceSupervisor:
             event_bus=bus,
             bot_registry=registry,
         )
+        evolution_orchestrator = get_orchestrator(
+            self.__class__.__name__, data_bot, engine
+        )
         _th = get_thresholds(self.__class__.__name__)
         persist_sc_thresholds(
             self.__class__.__name__,
@@ -414,6 +418,7 @@ class ServiceSupervisor:
             roi_threshold=_th.roi_drop,
             error_threshold=_th.error_increase,
             test_failure_threshold=_th.test_failure_increase,
+            evolution_orchestrator=evolution_orchestrator,
         )
         manager.context_builder = self.context_builder
         self.manager = manager
@@ -426,7 +431,7 @@ class ServiceSupervisor:
             helper_fn=_helper_fn,
         )
         manager.quick_fix = self.fix_engine
-        self.evolution_orchestrator = manager.evolution_orchestrator
+        self.evolution_orchestrator = evolution_orchestrator
 
     def _record_failure(self, etype: str) -> None:
         """Record supervisor issues to the knowledge graph."""
@@ -452,6 +457,9 @@ class ServiceSupervisor:
                 event_bus=bus,
                 bot_registry=registry,
             )
+            evolution_orchestrator = get_orchestrator(
+                self.__class__.__name__, data_bot, engine
+            )
             _th = get_thresholds(self.__class__.__name__)
             persist_sc_thresholds(
                 self.__class__.__name__,
@@ -471,9 +479,11 @@ class ServiceSupervisor:
                 roi_threshold=_th.roi_drop,
                 error_threshold=_th.error_increase,
                 test_failure_threshold=_th.test_failure_increase,
+                evolution_orchestrator=evolution_orchestrator,
             )
             manager.context_builder = self.context_builder
-            manager.run_patch(path, description)
+            token = evolution_orchestrator.provenance_token
+            manager.run_patch(path, description, provenance_token=token)
             added_modules = getattr(engine, "last_added_modules", None)
             if not added_modules:
                 added_modules = getattr(engine, "added_modules", None)
