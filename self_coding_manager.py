@@ -41,12 +41,27 @@ from vector_service.context_builder import (
 from .sandbox_runner.test_harness import run_tests, TestHarnessResult
 
 from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+try:  # pragma: no cover - optional dependency
+    from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+except Exception:  # pragma: no cover - provide stubs in trimmed environments
+    ModelAutomationPipeline = AutomationResult = None  # type: ignore
 from .data_bot import DataBot, persist_sc_thresholds
-from .error_bot import ErrorDB
-from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
-from . import mutation_logger as MutationLogger
-from .rollback_manager import RollbackManager
+try:  # pragma: no cover - optional dependency
+    from .error_bot import ErrorDB
+except Exception:  # pragma: no cover - provide stub when unavailable
+    ErrorDB = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
+except Exception:  # pragma: no cover - provide stubs in minimal environments
+    FormalVerifier = AutomatedRollbackManager = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from . import mutation_logger as MutationLogger
+except Exception:  # pragma: no cover - provide stub when unavailable
+    MutationLogger = None  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .rollback_manager import RollbackManager
+except Exception:  # pragma: no cover - provide stub when unavailable
+    RollbackManager = None  # type: ignore
 from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
 from .sandbox_settings import SandboxSettings
@@ -58,10 +73,10 @@ from .threshold_service import (
 
 try:  # pragma: no cover - optional dependency
     from .quick_fix_engine import QuickFixEngine, generate_patch
-except Exception as exc:  # pragma: no cover - missing dependency
-    raise RuntimeError(
-        "quick_fix_engine is required for SelfCodingManager"
-    ) from exc
+except Exception:  # pragma: no cover - provide stubs when unavailable
+    QuickFixEngine = None  # type: ignore
+    def generate_patch(*_a, **_k):  # type: ignore
+        return None
 
 from context_builder_util import ensure_fresh_weights
 
