@@ -1401,119 +1401,34 @@ class ContextBuilder:
         self,
         query: str,
         *,
+        intent: Dict[str, Any] | None = None,
         intent_metadata: Dict[str, Any] | None = None,
         error_log: str | None = None,
         latent_queries: Iterable[str] | None = None,
         top_k: int = 5,
         **kwargs: Any,
     ) -> Prompt:
-        """Construct a :class:`Prompt` for ``query``.
+        """Construct a :class:`Prompt` for ``query`` using ``self``.
 
-        ``build_prompt`` augments the user *query* with optional *latent_queries*
-        and an error log before invoking :meth:`build_context`. Retrieved
-        snippets are compressed via :func:`snippet_compressor.compress_snippets`,
-        deduplicated and scored by combining ranking similarity, ROI, recency and
-        safety signals. The highest scoring fragments are packed into a
-        :class:`Prompt` suitable for downstream :class:`LLMClient` calls.
+        Parameters
+        ----------
+        intent:
+            Optional intent metadata fused into the returned prompt's
+            ``metadata`` field.  ``intent_metadata`` is accepted as a backwards
+            compatible alias.
         """
 
-        if not isinstance(query, str) or not query.strip():
-            raise MalformedPromptError("query must be a non-empty string")
-
-        queries: List[str] = [query]
-        if latent_queries:
-            queries.extend(q for q in latent_queries if isinstance(q, str) and q)
-        else:
-            expander = getattr(getattr(self, "memory", None), "expand_intent", None)
-            if callable(expander):
-                try:
-                    extra = expander(query)
-                except Exception:
-                    extra = None
-                if extra:
-                    if isinstance(extra, str):
-                        queries.append(extra)
-                    else:
-                        queries.extend(str(q) for q in extra if q)
-
-        if error_log:
-            queries = [f"{q} {error_log}" for q in queries]
-
-        combined_meta: Dict[str, List[Dict[str, Any]]] = {}
-        vectors: List[Tuple[str, str, float]] = []
-        for q in queries:
-            ctx_data = self.build_context(
-                q,
-                top_k=top_k,
-                include_vectors=True,
-                return_metadata=True,
-                **kwargs,
-            )
-            try:
-                ctx, _sid, vecs, meta = ctx_data  # type: ignore[misc]
-            except Exception:
-                ctx = ctx_data  # type: ignore[assignment]
-                vecs = []
-                meta = {}
-            for bucket, items in meta.items():
-                combined_meta.setdefault(bucket, []).extend(items)
-            vectors.extend(vecs)
-
-        dedup: Dict[str, Tuple[float, str]] = {}
-        scores: List[float] = []
-        for items in combined_meta.values():
-            for item in items:
-                try:
-                    item.update(compress_snippets(item))
-                except Exception:
-                    pass
-                desc = str(item.get("desc") or "")
-                if not desc:
-                    continue
-                key = re.sub(r"\s+", " ", desc).strip().lower()
-                score = float(item.get("score") or 0.0)
-                roi = float(item.get("roi") or item.get("roi_delta") or 0.0)
-                recency = float(item.get("recency") or 0.0)
-                risk = float(item.get("risk_score") or 0.0)
-                rec_w = getattr(self, "recency_weight", 1.0)
-                saf_w = getattr(self, "safety_weight", 1.0)
-                priority = (
-                    score * self.prompt_score_weight
-                    + roi * self.roi_weight
-                    + recency * rec_w
-                    - risk * saf_w
-                )
-                scores.append(score)
-                cur = dedup.get(key)
-                if cur is None or priority > cur[0]:
-                    dedup[key] = (priority, desc)
-
-        ranked = sorted(dedup.values(), key=lambda x: x[0], reverse=True)
-        examples: List[str] = []
-        used = 0
-        for _, desc in ranked:
-            tokens = self._count_tokens(desc)
-            if used + tokens > self.prompt_max_tokens:
-                break
-            examples.append(desc)
-            used += tokens
-
-        avg_conf = sum(scores) / len(scores) if scores else None
-        meta_out: Dict[str, Any] = {
-            "vector_confidences": scores,
-            "vectors": vectors,
-        }
-        if intent_metadata:
-            meta_out["intent_metadata"] = intent_metadata
-        if error_log:
-            meta_out["error_log"] = error_log
-        prompt = Prompt(
-            user=query,
-            examples=examples,
-            vector_confidence=avg_conf,
-            metadata=meta_out,
+        if intent is None and intent_metadata is not None:
+            intent = intent_metadata
+        return _build_prompt_internal(
+            query,
+            intent,
+            latent_queries=latent_queries,
+            top_k=top_k,
+            error_log=error_log,
+            context_builder=self,
+            **kwargs,
         )
-        return prompt
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -1572,27 +1487,142 @@ class ContextBuilder:
 
 
 @log_and_measure
-def build_prompt(
+def _build_prompt_internal(
     query: str,
+    intent: Dict[str, Any] | None = None,
     *,
-    intent_metadata: Dict[str, Any] | None = None,
+    latent_queries: Iterable[str] | None = None,
+    top_k: int = 5,
     error_log: str | None = None,
     context_builder: "ContextBuilder" | None = None,
     **kwargs: Any,
 ) -> Prompt:
-    """Return a :class:`Prompt` using a provided or default builder.
+    """Build a :class:`Prompt` for ``query``.
 
-    The helper mirrors :meth:`ContextBuilder.build_prompt` while allowing callers
-    to omit explicit builder construction for quick one-off prompts.
+    The function retrieves context snippets via :func:`build_context`, performs
+    latent query expansion, semantic deduplication and priority scoring before
+    fusing results with ``intent`` metadata.  The highest scoring examples are
+    compressed to respect the configured token budget.
     """
 
+    intent_meta = intent
+    if intent_meta is None and "intent_metadata" in kwargs:
+        intent_meta = kwargs.pop("intent_metadata")
+
     builder = context_builder or ContextBuilder()
-    return builder.build_prompt(
-        query,
-        intent_metadata=intent_metadata,
-        error_log=error_log,
-        **kwargs,
+
+    if not isinstance(query, str) or not query.strip():
+        raise MalformedPromptError("query must be a non-empty string")
+
+    queries: List[str] = [query]
+    if latent_queries:
+        queries.extend(q for q in latent_queries if isinstance(q, str) and q)
+    else:
+        expander = getattr(getattr(builder, "memory", None), "expand_intent", None)
+        if callable(expander):
+            try:
+                extra = expander(query)
+            except Exception:
+                extra = None
+            if extra:
+                if isinstance(extra, str):
+                    queries.append(extra)
+                else:
+                    queries.extend(str(q) for q in extra if q)
+
+    if error_log:
+        queries = [f"{q} {error_log}" for q in queries]
+
+    combined_meta: Dict[str, List[Dict[str, Any]]] = {}
+    vectors: List[Tuple[str, str, float]] = []
+    for q in queries:
+        ctx_data = builder.build_context(
+            q,
+            top_k=top_k,
+            include_vectors=True,
+            return_metadata=True,
+            **kwargs,
+        )
+        try:
+            _ctx, _sid, vecs, meta = ctx_data  # type: ignore[misc]
+        except Exception:
+            vecs = []
+            meta = {}
+        for bucket, items in meta.items():
+            combined_meta.setdefault(bucket, []).extend(items)
+        vectors.extend(vecs)
+
+    dedup: Dict[str, Tuple[float, str]] = {}
+    scores: List[float] = []
+    for items in combined_meta.values():
+        for item in items:
+            try:
+                item.update(compress_snippets(item))
+            except Exception:
+                pass
+            desc = str(item.get("desc") or "")
+            if not desc:
+                continue
+            key = re.sub(r"\s+", " ", desc).strip().lower()
+            score = float(item.get("score") or 0.0)
+            roi = float(item.get("roi") or item.get("roi_delta") or 0.0)
+            recency = float(item.get("recency") or 0.0)
+            risk = float(item.get("risk_score") or 0.0)
+            rec_w = getattr(builder, "recency_weight", 1.0)
+            saf_w = getattr(builder, "safety_weight", 1.0)
+            priority = (
+                score * builder.prompt_score_weight
+                + roi * builder.roi_weight
+                + recency * rec_w
+                - risk * saf_w
+            )
+            scores.append(score)
+            cur = dedup.get(key)
+            if cur is None or priority > cur[0]:
+                dedup[key] = (priority, desc)
+
+    ranked = sorted(dedup.values(), key=lambda x: x[0], reverse=True)
+    examples: List[str] = []
+    used = 0
+    for _, desc in ranked:
+        tokens = builder._count_tokens(desc)
+        if used + tokens > builder.prompt_max_tokens:
+            break
+        examples.append(desc)
+        used += tokens
+
+    avg_conf = sum(scores) / len(scores) if scores else None
+    meta_out: Dict[str, Any] = {
+        "vector_confidences": scores,
+        "vectors": vectors,
+    }
+    if intent_meta:
+        meta_out["intent"] = intent_meta
+    if error_log:
+        meta_out["error_log"] = error_log
+
+    prompt = Prompt(
+        user=query,
+        examples=examples,
+        vector_confidence=avg_conf,
+        metadata=meta_out,
     )
+    return prompt
+
+
+@log_and_measure
+def build_prompt(
+    query: str,
+    intent: Dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> Prompt:
+    """Public wrapper for :func:`_build_prompt_internal`.
+
+    Parameters mirror :func:`_build_prompt_internal` but allow quick one-off
+    calls without explicitly constructing a :class:`ContextBuilder`.
+    """
+
+    return _build_prompt_internal(query, intent, **kwargs)
 
 
 __all__ = ["ContextBuilder", "record_failed_tags", "load_failed_tags", "build_prompt"]

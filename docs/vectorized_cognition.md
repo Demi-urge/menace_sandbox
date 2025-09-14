@@ -33,7 +33,31 @@ context, session_id = build_cognitive_context(
 log_feedback(session_id, True, patch_id="cache-fix-42", context_builder=builder)
 ```
 
-`build_cognitive_context` wraps `vector_service.cognition_layer.CognitionLayer.query` to return a JSON context blob and session id. `log_feedback` forwards patch outcomes so ROI histories and ranking weights can update.
+`build_cognitive_context` wraps `vector_service.cognition_layer.CognitionLayer.query` to return a JSON context blob and session
+id. `log_feedback` forwards patch outcomes so ROI histories and ranking weights can update.
+
+## Generating Prompts with Vector Context
+
+Sometimes a full prompt is required rather than a raw context blob. The
+`build_prompt` helper expands latent queries, removes duplicate snippets and
+prioritises the most relevant examples before packing them into a
+token-limited :class:`Prompt`:
+
+```python
+from vector_service.context_builder import build_prompt
+
+prompt = build_prompt(
+    "optimise cache eviction",
+    intent={"tags": ["performance", "cache"]},
+)
+
+print(prompt.user)
+print(prompt.examples)
+```
+
+The supplied `intent` metadata is merged into the prompt's `metadata` field
+alongside confidence scores for the retrieved vectors, ready for use with an
+LLM client.
 
 ## Registering New Modalities
 
@@ -68,3 +92,4 @@ weights = tracker.retrieval_bias()  # e.g. {"bot": 1.2}
 ```
 
 As feedback accumulates, databases with higher ROI receive larger weights, biasing retrieval toward sources that historically perform better.
+
