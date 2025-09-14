@@ -3,6 +3,7 @@ from __future__ import annotations
 """Bootstrap the sandbox and launch a self-improvement cycle."""
 
 import logging
+import types
 
 from sandbox_settings import SandboxSettings
 from sandbox_runner.bootstrap import (
@@ -10,6 +11,8 @@ from sandbox_runner.bootstrap import (
     _verify_required_dependencies,
 )
 from self_improvement.api import init_self_improvement, start_self_improvement_cycle
+from bot_registry import BotRegistry
+from bot_discovery import discover_and_register_coding_bots
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +37,51 @@ def main() -> int:
     except Exception as exc:  # pragma: no cover - missing helper packages
         logger.exception("self-improvement initialisation failed")
         return 1
+
+    # Discover coding bots so they participate in the self-improvement cycle
+    registry = BotRegistry()
+    orchestrator = None
+    try:  # pragma: no cover - best effort orchestrator initialisation
+        from evolution_orchestrator import EvolutionOrchestrator
+
+        class _DB:
+            def fetch(self, limit: int = 50):  # noqa: D401 - simple stub
+                return []
+
+        class _DataBot:
+            def __init__(self) -> None:
+                self.db = _DB()
+                self.event_bus = None
+                self.settings = None
+
+            def check_degradation(self, *a, **k) -> None:  # pragma: no cover - stub
+                return None
+
+        class _Capital:
+            def __init__(self, data_bot: _DataBot) -> None:  # pragma: no cover - stub
+                self.data_bot = data_bot
+                self.trend_predictor = None
+
+        class _Improvement:
+            def __init__(self, data_bot: _DataBot) -> None:  # pragma: no cover - stub
+                self.data_bot = data_bot
+                self.bot_name = ""
+
+        data_bot = _DataBot()
+        capital = _Capital(data_bot)
+        improv = _Improvement(data_bot)
+        manager = types.SimpleNamespace(bot_registry=registry, bot_name="", event_bus=None)
+        orchestrator = EvolutionOrchestrator(
+            data_bot,
+            capital,
+            improv,
+            types.SimpleNamespace(),
+            selfcoding_manager=manager,
+        )
+    except Exception as exc:  # pragma: no cover - orchestrator optional
+        logger.warning("EvolutionOrchestrator unavailable: %s", exc)
+
+    discover_and_register_coding_bots(registry, orchestrator)
 
     logger.info(
         "starting self-improvement cycle (repo=%s data_dir=%s)",
