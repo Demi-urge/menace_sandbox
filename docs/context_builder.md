@@ -85,19 +85,28 @@ source while lower weights trade recall for diversity.
 
 ## Building prompts
 
-``ContextBuilder.build_prompt`` converts a user intent into a ``Prompt`` dataclass
-ready for downstream LLM calls. The method optionally expands the intent into
-latent queries, deduplicates overlapping snippets and ranks the remaining
-examples by similarity and ROI. The highest scoring examples are packed into
+``ContextBuilder.build_prompt`` converts a user intent into a ``Prompt``
+dataclass ready for downstream LLM calls. The method optionally expands the
+intent into latent queries and ingests error logs or extra metadata. Retrieved
+snippets are compressed, deduplicated and ranked by combining vector similarity,
+ROI, recency and safety signals. The highest scoring examples are packed into
 the prompt while respecting the configured token budget.
 
 ```python
-from vector_service.context_builder import ContextBuilder
+from vector_service.context_builder import ContextBuilder, build_prompt
 
 builder = ContextBuilder()
-prompt = builder.build_prompt("optimise database", latent_queries=["speed up queries"])
+prompt = builder.build_prompt(
+    "optimise database",
+    latent_queries=["speed up queries"],
+    error_log="timeout",
+    intent_metadata={"ticket": 123},
+)
 print(prompt.user)
 print(prompt.examples)
+
+# or use the module level helper
+prompt2 = build_prompt("optimise database")
 ```
 
 Example output::
