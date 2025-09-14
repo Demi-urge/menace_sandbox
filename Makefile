@@ -18,3 +18,4 @@ check-context-builder:
 self-coding-check:
 	python tools/check_self_coding_usage.py
 	python tools/find_unmanaged_bots.py
+	python tools/check_coding_bot_decorators.py

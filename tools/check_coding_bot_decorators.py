@@ -1,10 +1,10 @@
-"""Fail if a SelfCodingEngine bot lacks ``@self_coding_managed`` or registry entry.
+"""Fail if a coding bot lacks ``@self_coding_managed`` or ``internalize_coding_bot``.
 
-This script scans Python sources for modules that import ``SelfCodingEngine``
-and define classes that look like coding bots.  Any such class must be
-decorated with ``@self_coding_managed`` *and* the module must register the bot
-with the ``BotRegistry`` (usually via ``internalize_coding_bot`` or
-``register_bot``).  Test files are ignored.
+The script walks all Python sources looking for modules that define classes
+resembling coding bots.  Any module that imports ``SelfCodingEngine`` or calls
+``internalize_coding_bot`` must both decorate its bot classes with
+``@self_coding_managed`` and invoke ``internalize_coding_bot`` to register the
+bot.  Test files are ignored.
 """
 
 from __future__ import annotations
@@ -65,18 +65,15 @@ def _has_decorator(cls: ast.ClassDef) -> bool:
     return False
 
 
-def _has_registry_entry(tree: ast.AST) -> bool:
-    """Return ``True`` if module registers the bot with ``BotRegistry``."""
+def _has_internalize_call(tree: ast.AST) -> bool:
+    """Return ``True`` if the module calls ``internalize_coding_bot``."""
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name) and func.id == "internalize_coding_bot":
                 return True
-            if isinstance(func, ast.Attribute) and func.attr in {
-                "register_bot",
-                "internalize_coding_bot",
-            }:
+            if isinstance(func, ast.Attribute) and func.attr == "internalize_coding_bot":
                 return True
     return False
 
@@ -95,8 +92,6 @@ def main() -> int:
             tree = ast.parse(text)
         except Exception:
             continue
-        if not _imports_self_coding_engine(tree):
-            continue
         classes = [
             node
             for node in getattr(tree, "body", [])
@@ -105,17 +100,19 @@ def main() -> int:
         ]
         if not classes:
             continue
+        if not (_imports_self_coding_engine(tree) or _has_internalize_call(tree)):
+            continue
         missing = [node.name for node in classes if not _has_decorator(node)]
-        registered = _has_registry_entry(tree)
-        if missing or not registered:
-            offenders.append((rel, missing, registered))
+        internalized = _has_internalize_call(tree)
+        if missing or not internalized:
+            offenders.append((rel, missing, internalized))
     if offenders:
-        for path, classes, registered in offenders:
+        for path, classes, internalized in offenders:
             if classes:
                 cls_list = ", ".join(classes)
                 print(f"{path}: missing @self_coding_managed on {cls_list}")
-            if not registered:
-                print(f"{path}: missing bot_registry entry")
+            if not internalized:
+                print(f"{path}: missing internalize_coding_bot")
         return 1
     return 0
 

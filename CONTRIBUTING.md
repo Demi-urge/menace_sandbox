@@ -179,16 +179,16 @@ These scripts exit with a non-zero status when unmanaged bots are present,
 causing CI to fail.
 
 The `check-coding-bot-decorators` hook (`tools/check_coding_bot_decorators.py`)
-adds an extra safeguard by scanning for modules that import
-`SelfCodingEngine` and flagging any bot classes that lack the
-`@self_coding_managed` decorator. Run it locally when adding new bots:
+scans every bot module and fails if a bot class lacks the
+`@self_coding_managed` decorator or the module omits an
+`internalize_coding_bot` call. Run it locally when adding new bots:
 
 ```bash
 pre-commit run check-coding-bot-decorators --all-files
 ```
 
-CI runs the same script directly via `python tools/check_coding_bot_decorators.py`
-to ensure the build fails if any `*_bot.py` misses the decorator.
+CI invokes the same script via `make self-coding-check` so the build fails when
+an unmanaged bot is introduced.
 
 The repository also ships `self_coding_audit.py`, which scans all Python files
 for classes ending in `Bot` without `@self_coding_managed`. The audit runs as a
