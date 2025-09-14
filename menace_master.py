@@ -62,7 +62,8 @@ from menace.self_coding_manager import (  # noqa: E402
     PatchApprovalPolicy,
     internalize_coding_bot,
 )
-from menace.data_bot import DataBot  # noqa: E402
+from menace.data_bot import DataBot, persist_sc_thresholds  # noqa: E402
+from menace.self_coding_thresholds import get_thresholds  # noqa: E402
 from menace.advanced_error_management import AutomatedRollbackManager  # noqa: E402
 from menace.environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
 from menace.auto_env_setup import ensure_env, interactive_setup  # noqa: E402
@@ -539,6 +540,14 @@ def deploy_patch(
     pipeline = ModelAutomationPipeline(
         context_builder=builder, event_bus=bus, bot_registry=registry
     )
+    _th = get_thresholds("MenaceMaster")
+    persist_sc_thresholds(
+        "MenaceMaster",
+        roi_drop=_th.roi_drop,
+        error_increase=_th.error_increase,
+        test_failure_increase=_th.test_failure_increase,
+        event_bus=bus,
+    )
     manager = internalize_coding_bot(
         "MenaceMaster",
         engine,
@@ -547,6 +556,9 @@ def deploy_patch(
         bot_registry=registry,
         approval_policy=policy,
         event_bus=bus,
+        roi_threshold=_th.roi_drop,
+        error_threshold=_th.error_increase,
+        test_failure_threshold=_th.test_failure_increase,
     )
     manager.context_builder = builder
     try:

@@ -186,16 +186,19 @@ try:  # Optional dependency – telemetry feedback loop
     from telemetry_feedback import TelemetryFeedback  # type: ignore
     from error_logger import ErrorLogger  # type: ignore
     from bot_registry import BotRegistry  # type: ignore
-    from data_bot import DataBot  # type: ignore
+    from data_bot import DataBot, persist_sc_thresholds  # type: ignore
     from model_automation_pipeline import ModelAutomationPipeline  # type: ignore
     from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
+    from self_coding_thresholds import get_thresholds  # type: ignore
 except Exception:  # pragma: no cover - best effort
     TelemetryFeedback = None  # type: ignore
     ErrorLogger = None  # type: ignore
     BotRegistry = None  # type: ignore
     DataBot = None  # type: ignore
+    persist_sc_thresholds = None  # type: ignore
     ModelAutomationPipeline = None  # type: ignore
     _SHARED_EVENT_BUS = None  # type: ignore
+    get_thresholds = None  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -1939,6 +1942,14 @@ def main(
                 pipeline = ModelAutomationPipeline(
                     context_builder=builder, event_bus=bus, bot_registry=registry
                 )
+                _th = get_thresholds("StripeWatchdog")
+                persist_sc_thresholds(
+                    "StripeWatchdog",
+                    roi_drop=_th.roi_drop,
+                    error_increase=_th.error_increase,
+                    test_failure_increase=_th.test_failure_increase,
+                    event_bus=bus,
+                )
                 manager = internalize_coding_bot(
                     "StripeWatchdog",
                     engine,
@@ -1946,6 +1957,9 @@ def main(
                     data_bot=data_bot,
                     bot_registry=registry,
                     event_bus=bus,
+                    roi_threshold=_th.roi_drop,
+                    error_threshold=_th.error_increase,
+                    test_failure_threshold=_th.test_failure_increase,
                 )
                 if not isinstance(manager, SelfCodingManager):  # pragma: no cover
                     raise RuntimeError(

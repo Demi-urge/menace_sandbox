@@ -25,7 +25,8 @@ from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
 from .knowledge_graph import KnowledgeGraph
 from .bot_registry import BotRegistry
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
+from .self_coding_thresholds import get_thresholds
 
 try:  # pragma: no cover - optional vector service dependency
     from vector_service.context_builder import ContextBuilder
@@ -71,6 +72,13 @@ class DebugLoopService:
             pipeline = ModelAutomationPipeline(
                 context_builder=context_builder, event_bus=bus, bot_registry=registry
             )
+            _th = get_thresholds("DebugLoopService")
+            persist_sc_thresholds(
+                "DebugLoopService",
+                roi_drop=_th.roi_drop,
+                error_increase=_th.error_increase,
+                test_failure_increase=_th.test_failure_increase,
+            )
             manager = internalize_coding_bot(
                 "DebugLoopService",
                 engine,
@@ -78,6 +86,9 @@ class DebugLoopService:
                 data_bot=data_bot,
                 bot_registry=registry,
                 event_bus=bus,
+                roi_threshold=_th.roi_drop,
+                error_threshold=_th.error_increase,
+                test_failure_threshold=_th.test_failure_increase,
             )
             if not isinstance(manager, SelfCodingManager):  # pragma: no cover - safety
                 raise RuntimeError(
