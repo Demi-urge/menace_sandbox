@@ -6,7 +6,7 @@ import json
 import os
 import time
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Any, Iterable, Callable, Type
 import importlib.util
@@ -16,6 +16,7 @@ import logging
 import subprocess
 import shutil
 import sys
+import uuid
 from dynamic_path_router import resolve_path
 from context_builder_util import ensure_fresh_weights
 from secret_redactor import redact_secrets
@@ -85,23 +86,8 @@ manager = internalize_coding_bot(
     threshold_service=ThresholdService(),
 )
 
-try:  # pragma: no cover - optional dependency
-    from . import codex_db_helpers as cdh
-except Exception:  # pragma: no cover - optional dependency
-    cdh = None  # type: ignore
-
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
-
-try:  # pragma: no cover - optional dependency
-    from .micro_models.tool_predictor import predict_tools  # type: ignore
-    from .micro_models.prefix_injector import inject_prefix  # type: ignore
-except Exception:  # pragma: no cover - allow running without predictor
-    def predict_tools(spec):  # type: ignore
-        return []
-
-    def inject_prefix(prompt, prefix, conf, role="system"):  # type: ignore
-        return prompt
 
 try:
     import yaml  # type: ignore
@@ -818,8 +804,8 @@ class BotDevelopmentBot:
         *,
         context_builder: ContextBuilder,
         sample_limit: int = 5,
-        sample_sort_by: str = "confidence",
-        sample_with_vectors: bool = True,
+        _sample_sort_by: str = "confidence",
+        _sample_with_vectors: bool = True,
     ) -> Prompt:
         """Return an enriched :class:`Prompt` for code generation.
 
@@ -828,39 +814,16 @@ class BotDevelopmentBot:
         spec:
             Bot specification describing the desired bot.
         sample_limit:
-            Maximum number of training examples fetched via
-            :func:`codex_db_helpers.aggregate_samples`.
-        sample_sort_by:
-            Field used when ranking training examples.
-        sample_with_vectors:
-            Whether to request embedding vectors for the training examples.
+            Maximum number of context snippets retrieved by the
+            :class:`ContextBuilder`.
+        _sample_sort_by:
+            Deprecated, retained for backward compatibility.
+        _sample_with_vectors:
+            Deprecated, retained for backward compatibility.
         """
 
         if context_builder is None:
             raise ValueError("context_builder is required")
-
-        predicted_tool = ""
-        pred_conf = 0.0
-        try:
-            preds = predict_tools(spec)
-            if preds:
-                predicted_tool, pred_conf = preds[0]
-        except Exception:
-            predicted_tool = ""
-            pred_conf = 0.0
-
-        samples = []
-        if cdh is not None:
-            try:
-                samples = cdh.aggregate_samples(
-                    sort_by=sample_sort_by,
-                    limit=sample_limit,
-                    include_embeddings=sample_with_vectors,
-                    scope=cdh.Scope.ALL,
-                )
-            except Exception:
-                samples = []
-        sample_texts = [s.content for s in samples if getattr(s, "content", "")]
 
         problem_lines: list[str] = [
             f"# Bot specification: {spec.name}",
@@ -927,23 +890,17 @@ class BotDevelopmentBot:
             "Expected Output:\n"
             "Return only the complete Python code without explanations or markdown."
         )
-
-        prompt_obj = context_builder.build_prompt(intent_text)
-
-        if sample_texts:
-            for s in sample_texts:
-                if s and s not in prompt_obj.examples:
-                    prompt_obj.examples.append(s)
+        session_id = uuid.uuid4().hex
+        prompt_obj = context_builder.build_prompt(
+            intent_text,
+            intent_metadata=spec.to_dict(),
+            top_k=sample_limit,
+            session_id=session_id,
+        )
 
         meta = dict(getattr(prompt_obj, "metadata", {}) or {})
-        meta.update(
-            {
-                "bot_spec": asdict(spec),
-                "training_samples": sample_texts,
-                "predicted_tool": predicted_tool,
-                "predicted_tool_confidence": pred_conf,
-            }
-        )
+        meta.setdefault("session_ids", []).append(session_id)
+        meta.setdefault("sample_context", list(prompt_obj.examples))
         prompt_obj.metadata = meta
         return prompt_obj
 
