@@ -92,6 +92,12 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
+      - id: check-evolution-orchestrator
+        name: Ensure internalized bots specify evolution orchestrator
+        entry: python tools/check_evolution_orchestrator.py
+        language: system
+        pass_filenames: false
+        files: '\.py$'
       - id: self-coding-audit
         name: Audit for unmanaged bot classes
         entry: python self_coding_audit.py

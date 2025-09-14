@@ -9,3 +9,11 @@ def test_no_unmanaged_bots():
     script = repo_root / "tools" / "find_unmanaged_bots.py"
     result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_internalized_bots_use_orchestrator():
+    """Fail if internalize_coding_bot lacks an evolution orchestrator."""
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "tools" / "check_evolution_orchestrator.py"
+    result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
