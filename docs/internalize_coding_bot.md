@@ -49,6 +49,11 @@ non-zero status.
 To satisfy the hook:
 
 1. Call `internalize_coding_bot` during module initialisation, **or**
-2. Decorate the bot with `@self_coding_managed`.
+2. Decorate the bot with `@self_coding_managed` providing
+   `bot_registry`, `data_bot`, and `SelfCodingManager`.
 
 This ensures all exported bots participate in the self-coding lifecycle.
+
+For a comprehensive audit of the repository, run
+`tools/check_self_coding_decorator.py` which walks all subpackages and fails
+when any class ending in `Bot` lacks the `@self_coding_managed` decorator.

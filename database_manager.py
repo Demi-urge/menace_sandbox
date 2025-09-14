@@ -17,7 +17,17 @@ if TYPE_CHECKING:  # pragma: no cover - for type hints
     from .preliminary_research_bot import PreliminaryResearchBot
 else:  # pragma: no cover - lightweight fallback implementation
     from .preliminary_research_bot import BusinessData
+    from .bot_registry import BotRegistry
+    from .coding_bot_interface import self_coding_managed
+    from .data_bot import DataBot
+    from .self_coding_manager import SelfCodingManager
 
+    bot_registry = BotRegistry()
+    data_bot = DataBot(start_server=False)
+
+    @self_coding_managed(
+        bot_registry=bot_registry, data_bot=data_bot, manager=SelfCodingManager
+    )
     class PreliminaryResearchBot:
         """Minimal fallback that attempts a basic scrape for metrics."""
 

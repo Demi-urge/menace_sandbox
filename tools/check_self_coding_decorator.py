@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure classes using self-coding helpers are decorated."""
+"""Scan all subpackages for bot classes missing ``@self_coding_managed``."""
 
 from __future__ import annotations
 
@@ -68,9 +68,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             tree = ast.parse(text)
         except Exception:
             continue
-        for node in getattr(tree, "body", []):
-            if isinstance(node, ast.ClassDef) and _calls_helper(node):
-                if not _has_decorator(node):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                needs_check = (
+                    node.name.endswith("Bot") and not node.name.startswith("_")
+                ) or _calls_helper(node)
+                if needs_check and not _has_decorator(node):
                     offenders.append((rel, node.name))
     if offenders:
         for path, cls in offenders:

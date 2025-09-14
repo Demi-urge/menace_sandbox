@@ -172,6 +172,7 @@ audits locally before committing:
 ```bash
 python tools/check_self_coding_registration.py
 python tools/find_unmanaged_bots.py
+python tools/check_self_coding_decorator.py
 ```
 
 These scripts exit with a non-zero status when unmanaged bots are present,
