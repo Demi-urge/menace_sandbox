@@ -57,7 +57,12 @@ bots:
 
 The default test command is `pytest -q`.  Override it globally with the
 `SELF_CODING_TEST_COMMAND` environment variable or the corresponding
-`SandboxSettings.self_coding_test_command` field.
+`SandboxSettings.self_coding_test_command` field.  When
+``PatchApprovalPolicy`` is constructed without an explicit ``test_command``
+it queries the active ``threshold_service`` and falls back to
+``SandboxSettings.bot_thresholds`` for per-bot overrides.  The selected
+command can be changed on a running policy via
+``PatchApprovalPolicy.update_test_command``.
 
 ## Security considerations
 - Resource and network limits are controlled through environment variables.
