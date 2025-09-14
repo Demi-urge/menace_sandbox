@@ -47,7 +47,12 @@ db_router_stub.init_db_router = init_db_router
 sys.modules.setdefault("db_router", db_router_stub)
 
 qfe_stub = types.ModuleType("quick_fix_engine")
+
+class QuickFixEngineError(Exception):
+    pass
+
 qfe_stub.QuickFixEngine = object
+qfe_stub.QuickFixEngineError = QuickFixEngineError
 qfe_stub.generate_patch = lambda *a, **k: None
 qfe_stub.manager_generate_helper = lambda *a, **k: ""
 sys.modules.setdefault("quick_fix_engine", qfe_stub)
@@ -196,6 +201,9 @@ def make_manager(skip: bool = False) -> scm.SelfCodingManager:
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
         skip_quick_fix_validation=skip,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
     )
 
 
@@ -254,6 +262,7 @@ def test_patch_uses_refreshed_weights(monkeypatch: pytest.MonkeyPatch) -> None:
         DummyPipeline(),
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
+        evolution_orchestrator=types.SimpleNamespace(register_bot=lambda *a, **k: None),
     )
     import menace.quick_fix_engine as qfe
 
@@ -323,6 +332,9 @@ def test_run_patch_without_quick_fix_engine_errors(
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
         quick_fix=dummy_qf,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
     )
 
     file_path = tmp_path / "sample.py"  # path-ignore
@@ -352,8 +364,8 @@ def test_run_patch_without_quick_fix_engine_errors(
     monkeypatch.setattr(scm, "QuickFixEngine", None)
     mgr.quick_fix = None
 
-    with pytest.raises(RuntimeError) as exc:
-        mgr.run_patch(file_path, "add")
+    with pytest.raises(ImportError) as exc:
+        mgr.run_patch(file_path, "add", provenance_token="token")
 
     assert "QuickFixEngine is required" in str(exc.value)
 

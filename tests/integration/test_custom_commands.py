@@ -119,6 +119,17 @@ sce_stub = types.ModuleType("menace.self_coding_engine")
 sce_stub.SelfCodingEngine = object
 sys.modules["menace.self_coding_engine"] = sce_stub
 
+qfe_stub = types.ModuleType("quick_fix_engine")
+
+class QuickFixEngineError(Exception):
+    pass
+
+qfe_stub.QuickFixEngine = object
+qfe_stub.QuickFixEngineError = QuickFixEngineError
+qfe_stub.generate_patch = lambda *a, **k: None
+sys.modules.setdefault("quick_fix_engine", qfe_stub)
+sys.modules.setdefault("menace.quick_fix_engine", qfe_stub)
+
 prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
 
 
@@ -403,7 +414,7 @@ def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
         pass
 
     class DummyRegistry:
-        def register_bot(self, name: str) -> None:
+        def register_bot(self, name: str, **_k) -> None:
             pass
 
     class DummyDataBot(_DataBot):
@@ -416,13 +427,16 @@ def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
         def __init__(self, db, mgr, context_builder=None, **kwargs):
             pass
     monkeypatch.setattr(scm, "QuickFixEngine", DummyQuickFix)
+    monkeypatch.setattr(scm, "ErrorDB", lambda *a, **k: object())
     mgr = scm.SelfCodingManager(
         engine,
         pipeline,
         bot_name="bot",
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
-        evolution_orchestrator=types.SimpleNamespace(register_bot=lambda *a, **k: None),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
     )
 
     monkeypatch.setattr(scm, "ensure_fresh_weights", lambda builder: None)
@@ -476,13 +490,16 @@ def test_run_patch_requires_quick_fix_engine(monkeypatch, tmp_path):
             pass
 
     monkeypatch.setattr(scm, "QuickFixEngine", DummyQuickFix)
+    monkeypatch.setattr(scm, "ErrorDB", lambda *a, **k: object())
     mgr = scm.SelfCodingManager(
         engine,
         pipeline,
         bot_name="bot",
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
-        evolution_orchestrator=types.SimpleNamespace(register_bot=lambda *a, **k: None),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
     )
 
     monkeypatch.setattr(scm, "QuickFixEngine", None)
@@ -492,5 +509,5 @@ def test_run_patch_requires_quick_fix_engine(monkeypatch, tmp_path):
     file_path.write_text("def x():\n    pass\n")
     monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
 
-    with pytest.raises(RuntimeError, match="QuickFixEngine is required"):
-        mgr.run_patch(file_path, "add")
+    with pytest.raises(ImportError, match="QuickFixEngine is required"):
+        mgr.run_patch(file_path, "add", provenance_token="token")
