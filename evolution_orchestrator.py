@@ -189,7 +189,9 @@ class EvolutionOrchestrator:
         bus = getattr(self.data_bot, "event_bus", None) or self.event_bus
         if bus:
             try:
-                bus.subscribe("data:threshold_breach", lambda _t, e: self._on_threshold_breach(e))
+                bus.subscribe(
+                    "data:threshold_breach", lambda _t, e: self._on_threshold_breach(e)
+                )
                 bus.subscribe("bot:degraded", lambda _t, e: self._on_bot_degraded(e))
                 bus.subscribe(
                     "self_coding:degradation",
@@ -201,10 +203,11 @@ class EvolutionOrchestrator:
         else:
             try:
                 self.data_bot.subscribe_degradation(self._on_bot_degraded)
+                self.data_bot.subscribe_degradation(self._on_threshold_breach)
                 self._degradation_subscribed = True
             except Exception:
                 self.logger.exception("failed to attach degradation callback")
-            self._degradation_subscribed = False
+                self._degradation_subscribed = False
 
     def _invoke_register_patch_cycle(self, *args: Any) -> None:
         """Invoke ``register_patch_cycle`` with provenance and strict validation."""
