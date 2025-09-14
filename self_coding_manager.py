@@ -749,6 +749,9 @@ class SelfCodingManager:
 
         roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
         errors = self.data_bot.average_errors(self.bot_name) if self.data_bot else 0.0
+        failures = (
+            self.data_bot.average_test_failures(self.bot_name) if self.data_bot else 0.0
+        )
         patch_db = getattr(self.engine, "patch_db", None)
         if patch_db and patch_id is None:
             try:
@@ -759,6 +762,8 @@ class SelfCodingManager:
                     roi_after=roi,
                     errors_before=int(errors),
                     errors_after=int(errors),
+                    tests_failed_before=int(failures),
+                    tests_failed_after=int(failures),
                     source_bot=self.bot_name,
                     reason=context_meta.get("reason") if context_meta else None,
                     trigger=context_meta.get("trigger") if context_meta else None,
@@ -766,6 +771,21 @@ class SelfCodingManager:
                 patch_id = patch_db.add(rec)
             except Exception:
                 self.logger.exception("failed to log patch cycle to DB")
+        elif patch_db and patch_id is not None:
+            try:
+                fail_after = (
+                    self.data_bot.average_test_failures(self.bot_name)
+                    if self.data_bot
+                    else failures
+                )
+                conn = patch_db.router.get_connection("patch_history")
+                conn.execute(
+                    "UPDATE patch_history SET tests_failed_after=? WHERE id=?",
+                    (int(fail_after), patch_id),
+                )
+                conn.commit()
+            except Exception:
+                self.logger.exception("failed to update test failure counts")
         self._last_patch_id = patch_id
         if commit is None:
             try:
@@ -800,6 +820,8 @@ class SelfCodingManager:
                     "patch_id": patch_id,
                     "roi_before": roi,
                     "errors_before": errors,
+                    "tests_failed_before": failures,
+                    "tests_failed_after": failures,
                     "description": description,
                 }
                 if context_meta:

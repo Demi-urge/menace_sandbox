@@ -2,9 +2,11 @@ import json
 import sys
 import types
 
-sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
+ueb = types.ModuleType("unified_event_bus")
+ueb.UnifiedEventBus = object
+sys.modules.setdefault("unified_event_bus", ueb)
 
-from code_database import PatchHistoryDB, PatchRecord
+from menace_sandbox.code_database import PatchHistoryDB, PatchRecord
 import importlib
 import menace_cli
 menace_cli = importlib.reload(menace_cli)

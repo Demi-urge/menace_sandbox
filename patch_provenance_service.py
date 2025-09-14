@@ -37,6 +37,8 @@ def _rec_to_dict(rec):
         "roi_after": rec.roi_after,
         "errors_before": rec.errors_before,
         "errors_after": rec.errors_after,
+        "tests_failed_before": rec.tests_failed_before,
+        "tests_failed_after": rec.tests_failed_after,
         "roi_delta": rec.roi_delta,
         "complexity_before": rec.complexity_before,
         "complexity_after": rec.complexity_after,
@@ -92,7 +94,13 @@ def create_app(
             ]
         else:
             patches = [
-                {"id": pid, "filename": rec.filename, "description": rec.description}
+                {
+                    "id": pid,
+                    "filename": rec.filename,
+                    "description": rec.description,
+                    "tests_failed_before": rec.tests_failed_before,
+                    "tests_failed_after": rec.tests_failed_after,
+                }
                 for pid, rec in pdb.list_patches()
             ]
         return jsonify(patches)
