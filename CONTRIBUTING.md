@@ -142,6 +142,9 @@ into `DataBot`, allowing the system to track and improve the bot over time. Bot
 constructors **must** accept `bot_registry`, `data_bot`, and
 `selfcoding_manager` parameters and forward them to the decorator to ensure
 proper registration. Avoid instantiating new coding bots without this decorator.
+When a module needs a `SelfCodingManager`, invoke
+`internalize_coding_bot` instead of calling `SelfCodingManager` directly so
+that registration and ROI/error thresholds are handled automatically.
 The pre-commit hook `self-coding-registration` (backed by
 `tools/check_self_coding_registration.py`) scans all Python sources for classes
 whose names end with `Bot` and verifies they are decorated with

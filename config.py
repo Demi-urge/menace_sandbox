@@ -56,12 +56,11 @@ except Exception:  # pragma: no cover - fallback when module missing
 finally:  # ensure path restoration
     sys.path = _orig_sys_path
 
-import yaml
-from pydantic import (
+import yaml  # noqa: E402
+from pydantic import (  # noqa: E402
     BaseModel,
     ConfigDict,
     Field,
-    ValidationError,
     field_validator,
     model_validator,
 )
@@ -151,7 +150,7 @@ class VectorStoreConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class Bot(BaseModel):
+class BotConfig(BaseModel):
     """Bot tuning parameters."""
 
     learning_rate: float = Field(gt=0)
@@ -178,7 +177,10 @@ class ContextBuilderConfig(BaseModel):
     )
     safety_weight: float = Field(
         1.0,
-        description="Weight applied to safety signals such as win/regret rate and alignment severity",
+        description=(
+            "Weight applied to safety signals such as "
+            "win/regret rate and alignment severity"
+        ),
     )
     regret_penalty: float = Field(
         1.0, description="Penalty multiplier for regret rate when ranking results"
@@ -231,8 +233,6 @@ class ContextBuilderConfig(BaseModel):
         description="Similarity metric for patch examples. Options: cosine or inner_product",
     )
 
-
-
     model_config = ConfigDict(extra="forbid")
 
 
@@ -245,7 +245,7 @@ class Config(BaseModel):
     logging: Logging
     vector: Vector
     vector_store: VectorStoreConfig = VectorStoreConfig()
-    bot: Bot
+    bot: BotConfig
     context_builder: ContextBuilderConfig = ContextBuilderConfig()
     watch_config: bool = True
 
@@ -469,7 +469,6 @@ def load_config(
         if serp_env:
             env_overrides["api_keys"]["serp"] = serp_env
         data = _merge_dict(data, env_overrides)
-
 
     cfg = Config.model_validate(data)
     if overrides:

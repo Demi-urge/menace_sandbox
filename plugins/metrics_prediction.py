@@ -13,10 +13,28 @@ except Exception:  # pragma: no cover - optional dependency
 
 from menace.prediction_manager_bot import PredictionManager
 from menace.roi_tracker import ROITracker
+from menace.coding_bot_interface import self_coding_managed
 
 _manager: PredictionManager | None = None
 _tracker: ROITracker | None = None
 _lt_bot: "LongTermLucrativityBot" | None = None
+
+
+class _StubRegistry:
+    def register_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
+        return None
+
+    def update_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
+        return None
+
+
+class _StubDataBot:
+    def reload_thresholds(self, _name: str):  # pragma: no cover - stub
+        return type("_T", (), {})()
+
+
+_REGISTRY_STUB = _StubRegistry()
+_DATA_BOT_STUB = _StubDataBot()
 
 # metrics collected in ``_sandbox_cycle_runner``
 _METRICS = (
@@ -46,6 +64,7 @@ _METRICS = (
 )
 
 
+@self_coding_managed(bot_registry=_REGISTRY_STUB, data_bot=_DATA_BOT_STUB)
 class LongTermLucrativityBot:
     """Predict long-term lucrativity from ROI and lucrativity history."""
 
@@ -147,7 +166,7 @@ def collect_metrics(
                 if name == "synergy_roi":
                     pred = _tracker.predict_synergy()
                 else:
-                    base = name[len("synergy_") :]
+                    base = name[len("synergy_"):]
                     pred = _tracker.predict_synergy_metric(base, manager=_manager)
             except Exception:
                 pred = 0.0

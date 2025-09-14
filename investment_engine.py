@@ -13,10 +13,28 @@ from dynamic_path_router import resolve_path
 
 from . import stripe_billing_router
 import logging
+from .coding_bot_interface import self_coding_managed
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BOT_ID = "finance:finance_router_bot"
+
+
+class _StubRegistry:
+    def register_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
+        return None
+
+    def update_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
+        return None
+
+
+class _StubDataBot:
+    def reload_thresholds(self, _name: str):  # pragma: no cover - stub
+        return type("_T", (), {})()
+
+
+_REGISTRY_STUB = _StubRegistry()
+_DATA_BOT_STUB = _StubDataBot()
 
 
 @dataclass
@@ -139,6 +157,7 @@ class PredictiveSpendEngine:
         return amount, predicted_roi
 
 
+@self_coding_managed(bot_registry=_REGISTRY_STUB, data_bot=_DATA_BOT_STUB)
 class AutoReinvestmentBot:
     """Automate reinvestment decisions and spending."""
 

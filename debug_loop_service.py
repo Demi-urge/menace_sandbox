@@ -12,9 +12,12 @@ from .telemetry_feedback import TelemetryFeedback
 from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine
 try:  # pragma: no cover - optional self-coding dependency
-    from .self_coding_manager import SelfCodingManager
+    from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 except ImportError:  # pragma: no cover - self-coding unavailable
     SelfCodingManager = Any  # type: ignore
+
+    def internalize_coding_bot(*args: Any, **kwargs: Any) -> Any:  # type: ignore
+        return SelfCodingManager(*args, **kwargs)
 from .model_automation_pipeline import ModelAutomationPipeline
 from .unified_event_bus import UnifiedEventBus
 from .code_database import CodeDB
@@ -63,14 +66,16 @@ class DebugLoopService:
             )
             bus = UnifiedEventBus()
             registry = bot_registry or BotRegistry(event_bus=bus)
+            data_bot = data_bot or DataBot()
             pipeline = ModelAutomationPipeline(
                 context_builder=context_builder, event_bus=bus, bot_registry=registry
             )
-            manager = SelfCodingManager(
+            manager = internalize_coding_bot(
+                "DebugLoopService",
                 engine,
                 pipeline,
-                bot_registry=registry,
                 data_bot=data_bot,
+                bot_registry=registry,
                 event_bus=bus,
             )
             feedback = TelemetryFeedback(

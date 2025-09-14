@@ -120,6 +120,24 @@ from .self_coding_thresholds import (
     get_thresholds as _load_sc_thresholds,
     _load_config as _load_sc_config,
 )
+from .coding_bot_interface import self_coding_managed
+
+
+class _StubRegistry:
+    def register_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
+        return None
+
+    def update_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
+        return None
+
+
+class _StubDataBot:
+    def reload_thresholds(self, _name: str):  # pragma: no cover - stub
+        return type("_T", (), {})()
+
+
+_REGISTRY_STUB = _StubRegistry()
+_DATA_BOT_STUB = _StubDataBot()
 
 logger = logging.getLogger(__name__)
 
@@ -1108,6 +1126,7 @@ class MetricsDB:
             return pd.read_sql(query, conn, params=params)
 
 
+@self_coding_managed(bot_registry=_REGISTRY_STUB, data_bot=_DATA_BOT_STUB)
 class DataBot:
     """Collect metrics, expose them to Prometheus and detect anomalies.
 
