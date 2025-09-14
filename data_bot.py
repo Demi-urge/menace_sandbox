@@ -207,6 +207,7 @@ def persist_sc_thresholds(
     error_weight: float | None = None,
     test_failure_weight: float | None = None,
     patch_success_weight: float | None = None,
+    auto_recalibrate: bool | None = None,
     forecast_model: str | None = None,
     confidence: float | None = None,
     model_params: dict | None = None,
@@ -240,6 +241,7 @@ def persist_sc_thresholds(
             error_weight=error_weight,
             test_failure_weight=test_failure_weight,
             patch_success_weight=patch_success_weight,
+            auto_recalibrate=auto_recalibrate,
             forecast_model=forecast_model,
             confidence=confidence,
             forecast_params=model_params,
@@ -2440,6 +2442,11 @@ class DataBot:
             raw = load_sc_thresholds(bot, self.settings)
         if not isinstance(raw, SelfCodingThresholds):
             raw = _load_sc_thresholds(bot, self.settings)
+        tracker = None
+        if bot:
+            tracker = self._baseline.setdefault(
+                bot, BaselineTracker(window=self.baseline_window)
+            )
         roi_drop = (
             self.roi_drop_threshold
             if self.roi_drop_threshold is not None
@@ -2456,6 +2463,19 @@ class DataBot:
             else raw.test_failure_increase
         )
         patch_thresh = raw.patch_success_drop
+        recalibrated = False
+        if bot and tracker and getattr(raw, "auto_recalibrate", True):
+            mult = getattr(self, "anomaly_sensitivity", 1.0)
+            roi_drop = min(roi_drop, -tracker.std("roi") * mult)
+            error_thresh = max(error_thresh, tracker.std("errors") * mult)
+            fail_thresh = max(
+                fail_thresh, tracker.std("tests_failed") * mult
+            )
+            if "patch_success" in tracker.to_dict():
+                patch_thresh = min(
+                    patch_thresh, -tracker.std("patch_success") * mult
+                )
+            recalibrated = True
         rt = ROIThresholds(
             roi_drop=roi_drop,
             error_threshold=error_thresh,
@@ -2493,6 +2513,23 @@ class DataBot:
                 )
             except Exception:
                 self.logger.exception("failed to persist thresholds for %s", bot)
+
+            if recalibrated and self.event_bus:
+                try:  # pragma: no cover - best effort
+                    self.event_bus.publish(
+                        "data:thresholds_recalibrated",
+                        {
+                            "bot": bot,
+                            "roi_threshold": roi_drop,
+                            "error_threshold": error_thresh,
+                            "test_failure_threshold": fail_thresh,
+                            "patch_success_threshold": patch_thresh,
+                        },
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to publish thresholds recalibrated event"
+                    )
 
             try:  # pragma: no cover - sync service cache & broadcast
                 prev = self.threshold_service._thresholds.get(key)
