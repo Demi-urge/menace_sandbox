@@ -4,7 +4,7 @@ import yaml
 
 
 stub_cbi = types.ModuleType("menace.coding_bot_interface")
-stub_cbi.self_coding_managed = lambda cls: cls
+stub_cbi.self_coding_managed = lambda *a, **k: (lambda cls: cls)
 stub_cbi.manager_generate_helper = lambda *_a, **_k: None
 sys.modules["menace.coding_bot_interface"] = stub_cbi
 
@@ -264,3 +264,48 @@ def test_internalize_persists_defaults(monkeypatch, tmp_path):
     assert thresh.roi_drop == -0.1
     assert thresh.error_increase == 1.0
     assert thresh.test_failure_increase == 0.0
+
+
+def test_internalize_records_thresholds_and_emits_test_failure(monkeypatch, tmp_path):
+    stub = types.ModuleType("vector_metrics_db")
+    monkeypatch.setitem(sys.modules, "menace.vector_metrics_db", stub)
+    sys.modules.setdefault("sandbox_settings", sys.modules["menace.sandbox_settings"])
+    from menace.data_bot import DataBot, MetricsDB  # noqa: WPS433
+    from menace.bot_registry import BotRegistry  # noqa: WPS433
+
+    bus = UnifiedEventBus()
+    settings = types.SimpleNamespace(
+        self_coding_roi_drop=-0.1,
+        self_coding_error_increase=1.0,
+        self_coding_test_failure_increase=0.5,
+        bot_thresholds={},
+    )
+    mdb = MetricsDB(tmp_path / "m.db")
+    data_bot = DataBot(
+        mdb,
+        event_bus=bus,
+        settings=settings,
+        roi_drop_threshold=-0.1,
+        error_threshold=1.0,
+        test_failure_threshold=0.5,
+    )
+    registry = BotRegistry(event_bus=bus)
+    manager = types.SimpleNamespace()
+    registry.register_bot(
+        "sample",
+        roi_threshold=-0.1,
+        error_threshold=1.0,
+        test_failure_threshold=0.5,
+        manager=manager,
+        data_bot=data_bot,
+        is_coding_bot=True,
+    )
+    node = registry.graph.nodes["sample"]
+    assert node["roi_threshold"] == -0.1
+    assert node["error_threshold"] == 1.0
+    assert node["test_failure_threshold"] == 0.5
+
+    events: list[dict] = []
+    bus.subscribe("bot:degraded", lambda _t, e: events.append(e))
+    data_bot.check_degradation("sample", roi=-1.0, errors=0.0, test_failures=1.0)
+    assert events and events[0]["test_failure_breach"]

@@ -40,6 +40,7 @@ persist_sc_thresholds(
     "ImplementationOptimiserBot",
     roi_drop=_th.roi_drop,
     error_increase=_th.error_increase,
+    test_failure_increase=_th.test_failure_increase,
 )
 manager = internalize_coding_bot(
     "ImplementationOptimiserBot",
@@ -50,6 +51,7 @@ manager = internalize_coding_bot(
     evolution_orchestrator=evolution_orchestrator,
     roi_threshold=_th.roi_drop,
     error_threshold=_th.error_increase,
+    test_failure_threshold=_th.test_failure_increase,
     threshold_service=ThresholdService(),
 )
 
