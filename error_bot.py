@@ -99,6 +99,7 @@ from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
+from .shared_evolution_orchestrator import get_orchestrator
 from db_dedup import insert_if_unique, ensure_content_hash_column
 
 registry = BotRegistry()
@@ -111,7 +112,7 @@ pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
 
-evolution_orchestrator: EvolutionOrchestrator | None = None
+evolution_orchestrator = get_orchestrator("ErrorBot", data_bot, engine)
 _th = get_thresholds("ErrorBot")
 persist_sc_thresholds(
     "ErrorBot",

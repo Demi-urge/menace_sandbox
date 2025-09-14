@@ -57,6 +57,7 @@ from .menace_memory_manager import MenaceMemoryManager
 from .bot_registry import BotRegistry
 from .threshold_service import ThresholdService
 from .self_coding_thresholds import get_thresholds
+from .shared_evolution_orchestrator import get_orchestrator
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -64,7 +65,7 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator: EvolutionOrchestrator | None = None
+evolution_orchestrator = get_orchestrator("BotDevelopmentBot", data_bot, engine)
 _th = get_thresholds("BotDevelopmentBot")
 persist_sc_thresholds(
     "BotDevelopmentBot",
