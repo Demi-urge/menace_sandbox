@@ -60,6 +60,17 @@ from snippet_compressor import compress_snippets
 
 logger = logging.getLogger(__name__)
 
+try:  # pragma: no cover - require self-coding manager
+    from self_coding_manager import SelfCodingManager, internalize_coding_bot
+except ImportError as exc:  # pragma: no cover - fail fast if missing
+    logger.error(
+        "SelfCodingManager is required for stripe_watchdog. "
+        "Install self-coding dependencies (e.g., `pip install menace-sandbox[self-coding]`).",
+    )
+    raise ImportError(
+        "stripe_watchdog requires SelfCodingManager"
+    ) from exc
+
 try:  # pragma: no cover - best effort to import sanity layer
     import menace_sanity_layer
     from menace_sanity_layer import (
@@ -180,10 +191,6 @@ try:  # Optional dependency – telemetry feedback loop
     from error_logger import ErrorLogger  # type: ignore
     from bot_registry import BotRegistry  # type: ignore
     from data_bot import DataBot  # type: ignore
-    from self_coding_manager import (
-        SelfCodingManager,
-        internalize_coding_bot,
-    )  # type: ignore
     from model_automation_pipeline import ModelAutomationPipeline  # type: ignore
     from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 except Exception:  # pragma: no cover - best effort
@@ -191,11 +198,6 @@ except Exception:  # pragma: no cover - best effort
     ErrorLogger = None  # type: ignore
     BotRegistry = None  # type: ignore
     DataBot = None  # type: ignore
-    SelfCodingManager = None  # type: ignore
-
-    def internalize_coding_bot(*args, **kwargs):  # type: ignore
-        return None
-
     ModelAutomationPipeline = None  # type: ignore
     _SHARED_EVENT_BUS = None  # type: ignore
 
