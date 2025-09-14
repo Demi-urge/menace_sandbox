@@ -99,11 +99,9 @@ def summarize_code(
     # 2) Fallback to a local LLM client
     try:  # pragma: no cover - optional dependency
         from local_client import OllamaClient
-        from prompt_types import Prompt
     except Exception:  # pragma: no cover - client may be missing
         OllamaClient = None  # type: ignore[assignment]
-        Prompt = None  # type: ignore[assignment]
-    if OllamaClient is not None and Prompt is not None:
+    if OllamaClient is not None:
         try:  # pragma: no cover - defensive against runtime failures
             vec_ctx = ""
             try:
@@ -129,11 +127,15 @@ def summarize_code(
             except Exception:
                 vec_ctx = ""
             client = OllamaClient()  # type: ignore[call-arg]
-            text = f"Summarize the following code:\n{code}\n"
+            text = f"Summarize the following code:\n{code}\nSummary:"
+            meta = {"small_task": True}
             if vec_ctx:
-                text += f"\nContext:\n{vec_ctx}\n"
-            text += "Summary:"
-            prompt = Prompt(text=text, metadata={"small_task": True})
+                meta["retrieved_context"] = vec_ctx
+            prompt = context_builder.build_prompt(
+                text,
+                intent_metadata=meta,
+                top_k=0,
+            )
             result = client.generate(prompt, context_builder=context_builder)
             summary = getattr(result, "text", "").strip()
             if summary:

@@ -826,7 +826,9 @@ class PromptEngine:
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
             self._optimizer_applied = False
-            return Prompt(system=SYSTEM_NOTICE, user=self._static_prompt())
+            prompt_obj = builder.build_prompt(self._static_prompt(), top_k=0)
+            prompt_obj.system = SYSTEM_NOTICE
+            return prompt_obj
 
         try:
             result = retriever.search(task, top_k=self.top_n)
@@ -837,7 +839,9 @@ class PromptEngine:
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
             )
             self._optimizer_applied = False
-            return Prompt(system=SYSTEM_NOTICE, user=self._static_prompt())
+            prompt_obj = builder.build_prompt(self._static_prompt(), top_k=0)
+            prompt_obj.system = SYSTEM_NOTICE
+            return prompt_obj
 
         if isinstance(result, FallbackResult):
             logging.info(
@@ -853,7 +857,9 @@ class PromptEngine:
                 },
             )
             self._optimizer_applied = False
-            return Prompt(system=SYSTEM_NOTICE, user=self._static_prompt())
+            prompt_obj = builder.build_prompt(self._static_prompt(), top_k=0)
+            prompt_obj.system = SYSTEM_NOTICE
+            return prompt_obj
 
         if isinstance(result, tuple):
             records = result[0]
@@ -895,7 +901,9 @@ class PromptEngine:
                 },
             )
             self._optimizer_applied = False
-            return Prompt(system=SYSTEM_NOTICE, user=self._static_prompt())
+            prompt_obj = builder.build_prompt(self._static_prompt(), top_k=0)
+            prompt_obj.system = SYSTEM_NOTICE
+            return prompt_obj
 
         examples: List[str] = []
         outcome_tags: List[str] = []
@@ -1007,15 +1015,16 @@ class PromptEngine:
                 self.last_metadata.update({"target_region": region_meta})
             except Exception:
                 self.last_metadata = {"target_region": region_meta}
-        prompt_obj = Prompt(
-            system=SYSTEM_NOTICE,
-            user=text,
-            examples=examples,
-            vector_confidence=confidence,
-            vector_confidences=scores,
-            tags=outcome_tags,
-            metadata=meta,
+        meta["vector_confidences"] = scores
+        prompt_obj = builder.build_prompt(
+            text,
+            intent_metadata=meta,
+            top_k=0,
         )
+        prompt_obj.system = SYSTEM_NOTICE
+        prompt_obj.examples = examples
+        prompt_obj.vector_confidence = confidence
+        prompt_obj.tags = outcome_tags
         self._optimizer_applied = False
         return prompt_obj
 
