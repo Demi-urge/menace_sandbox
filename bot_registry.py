@@ -45,6 +45,7 @@ import db_router
 from db_router import DBRouter, init_db_router
 
 from .threshold_service import threshold_service
+from .retry_utils import with_retry
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from .self_coding_manager import SelfCodingManager
@@ -271,27 +272,36 @@ class BotRegistry:
                                 )
 
                         bus = getattr(data_bot, "event_bus", None)
-                        if bus:
-                            try:
+
+                        def _subscribe() -> None:
+                            if bus:
                                 bus.subscribe(
                                     "degradation:detected",
                                     lambda _t, e: _on_degraded(e),
                                 )
-                            except Exception as exc:  # pragma: no cover - best effort
-                                logger.error(
-                                    "failed to subscribe degradation callback for %s: %s",
-                                    name,
-                                    exc,
-                                )
-                        else:
-                            try:
+                            else:
                                 data_bot.subscribe_degradation(_on_degraded)
-                            except Exception as exc:  # pragma: no cover - best effort
-                                logger.error(
-                                    "failed to subscribe degradation callback for %s: %s",
-                                    name,
-                                    exc,
-                                )
+
+                        try:
+                            with_retry(_subscribe, attempts=3, delay=1.0, logger=logger)
+                        except Exception as exc:
+                            logger.error(
+                                "failed to subscribe degradation callback for %s: %s",
+                                name,
+                                exc,
+                            )
+                            if self.event_bus:
+                                try:
+                                    self.event_bus.publish(
+                                        "bot:subscription_failed",
+                                        {"bot": name, "error": str(exc)},
+                                    )
+                                except Exception as exc2:  # pragma: no cover - best effort
+                                    logger.error(
+                                        "Failed to publish bot:subscription_failed event: %s",
+                                        exc2,
+                                    )
+                            raise
             if (
                 roi_threshold is not None
                 or error_threshold is not None
