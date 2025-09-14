@@ -207,15 +207,23 @@ class EvolutionOrchestrator:
             self._degradation_subscribed = False
 
     def _invoke_register_patch_cycle(self, *args: Any) -> None:
-        """Invoke ``register_patch_cycle`` with provenance when supported."""
+        """Invoke ``register_patch_cycle`` with provenance and strict validation."""
         if not self.selfcoding_manager:
             return
         try:
             self.selfcoding_manager.register_patch_cycle(
                 *args, provenance_token=self.provenance_token
             )
-        except TypeError:
-            self.selfcoding_manager.register_patch_cycle(*args)
+        except PermissionError as exc:
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "evolution:patch_denied",
+                        {"error": str(exc), "args": args},
+                    )
+                except Exception:
+                    self.logger.exception("failed to publish patch_denied event")
+            raise
 
     # ------------------------------------------------------------------
     def register_bot(self, bot: str) -> None:
@@ -278,6 +286,7 @@ class EvolutionOrchestrator:
             self._invoke_register_patch_cycle(desc, context)
         except Exception:
             self.logger.exception("failed to register patch cycle for %s", bot)
+            return
         else:
             if bot:
                 self._pending_patch_cycle.add(bot)
@@ -330,6 +339,17 @@ class EvolutionOrchestrator:
                 self.logger.exception(
                     "failed to refresh context builder for %s", bot
                 )
+                if bus:
+                    try:
+                        bus.publish(
+                            "bot:patch_failed",
+                            {"bot": bot, "stage": "context", "error": "refresh_db_weights"},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish patch_failed for %s", bot
+                        )
+                return
             self.selfcoding_manager.generate_and_patch(
                 module_path,
                 desc,
