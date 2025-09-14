@@ -16,7 +16,9 @@ def qfe(monkeypatch):
     monkeypatch.setitem(sys.modules, "menace_sandbox.error_bot", eb_mod)
 
     scm_mod = types.ModuleType("menace_sandbox.self_coding_manager")
-    class SelfCodingManager: ...
+    class SelfCodingManager:
+        def validate_provenance(self, token):
+            pass
     scm_mod.SelfCodingManager = SelfCodingManager
     monkeypatch.setitem(sys.modules, "menace_sandbox.self_coding_manager", scm_mod)
 
@@ -64,6 +66,35 @@ def qfe(monkeypatch):
             pass
     patch_mod.PatchLogger = PatchLogger
     monkeypatch.setitem(sys.modules, "patch_provenance", patch_mod)
+
+    cb_util_mod = types.ModuleType("context_builder_util")
+    def ensure_fresh_weights(builder):
+        builder.refresh_db_weights()
+    cb_util_mod.ensure_fresh_weights = ensure_fresh_weights
+    monkeypatch.setitem(sys.modules, "context_builder_util", cb_util_mod)
+
+    data_bot_mod = types.ModuleType("menace_sandbox.data_bot")
+    class DataBot: ...
+    data_bot_mod.DataBot = DataBot
+    monkeypatch.setitem(sys.modules, "menace_sandbox.data_bot", data_bot_mod)
+
+    resilience_mod = types.ModuleType("menace_sandbox.resilience")
+    resilience_mod.retry_with_backoff = lambda fn, *a, **k: fn()
+    monkeypatch.setitem(sys.modules, "menace_sandbox.resilience", resilience_mod)
+
+    aem_mod = types.ModuleType("menace_sandbox.advanced_error_management")
+    class AutomatedRollbackManager: ...
+    aem_mod.AutomatedRollbackManager = AutomatedRollbackManager
+    monkeypatch.setitem(sys.modules, "menace_sandbox.advanced_error_management", aem_mod)
+
+    code_db_mod = types.ModuleType("menace_sandbox.code_database")
+    class PatchHistoryDB: ...
+    code_db_mod.PatchHistoryDB = PatchHistoryDB
+    monkeypatch.setitem(sys.modules, "menace_sandbox.code_database", code_db_mod)
+
+    trg_mod = types.ModuleType("menace_sandbox.target_region")
+    trg_mod.extract_target_region = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "menace_sandbox.target_region", trg_mod)
 
     chunk_mod = types.ModuleType("chunking")
     chunk_mod.get_chunk_summaries = lambda *a, **k: []
@@ -143,6 +174,7 @@ def test_context_block_compressed(qfe):
         manager=manager,
         engine=engine,
         context_builder=builder,
+        provenance_token="tok",
         description="desc",
         patch_logger=DummyPatchLogger(),
     )
@@ -162,7 +194,9 @@ def test_generate_patch_errors_without_manager(qfe):
             return ""
 
     with pytest.raises(RuntimeError):
-        qfe.generate_patch("mod", None, context_builder=DummyBuilder())
+        qfe.generate_patch(
+            "mod", None, context_builder=DummyBuilder(), provenance_token="tok"
+        )
 
 
 def test_generate_patch_errors_with_wrong_manager(qfe):
@@ -174,10 +208,12 @@ def test_generate_patch_errors_with_wrong_manager(qfe):
             return ""
 
     with pytest.raises(RuntimeError):
-        qfe.generate_patch("mod", object(), context_builder=DummyBuilder())
+        qfe.generate_patch(
+            "mod", object(), context_builder=DummyBuilder(), provenance_token="tok"
+        )
 
 
-def test_generate_patch_uses_manager_context(qfe):
+def test_generate_patch_requires_explicit_manager(qfe):
     class DummyBuilder:
         def refresh_db_weights(self):
             pass
@@ -185,22 +221,14 @@ def test_generate_patch_uses_manager_context(qfe):
         def build(self, *a, **k):
             return ""
 
-    class DummyEngine:
-        def apply_patch_with_retry(self, path, helper, **kwargs):
-            return 1, "", ""
-
-    manager = qfe.SelfCodingManager()
-    manager.engine = DummyEngine()
-    manager.register_patch_cycle = lambda *a, **k: None
-
-    token = qfe.MANAGER_CONTEXT.set(manager)
-    try:
-        qfe.generate_patch("mod", None, context_builder=DummyBuilder())
-    finally:
-        qfe.MANAGER_CONTEXT.reset(token)
+    qfe.MANAGER_CONTEXT = contextvars.ContextVar("MANAGER_CONTEXT", default=object())
+    with pytest.raises(RuntimeError):
+        qfe.generate_patch(
+            "mod", None, context_builder=DummyBuilder(), provenance_token="tok"
+        )
 
 
-def test_generate_patch_unmanaged_bypass(qfe):
+def test_generate_patch_rejects_unmanaged(qfe):
     class DummyBuilder:
         def refresh_db_weights(self):
             pass
@@ -213,15 +241,18 @@ def test_generate_patch_unmanaged_bypass(qfe):
             return 1, "", ""
 
     engine = DummyEngine()
-    manager = types.SimpleNamespace(engine=engine, register_patch_cycle=lambda *a, **k: None)
-
-    qfe.generate_patch(
-        "mod",
-        manager,
-        engine=engine,
-        context_builder=DummyBuilder(),
-        _allow_unmanaged=True,
+    manager = types.SimpleNamespace(
+        engine=engine, register_patch_cycle=lambda *a, **k: None
     )
+
+    with pytest.raises(RuntimeError):
+        qfe.generate_patch(
+            "mod",
+            manager,
+            engine=engine,
+            context_builder=DummyBuilder(),
+            provenance_token="tok",
+        )
 
 
 def test_generate_patch_enriches_with_graph(qfe):
@@ -257,6 +288,7 @@ def test_generate_patch_enriches_with_graph(qfe):
         manager=manager,
         engine=engine,
         context_builder=builder,
+        provenance_token="tok",
         description="desc",
         helper_fn=helper_fn,
         graph=DummyGraph(),
@@ -299,6 +331,7 @@ def test_generate_patch_graph_failure(qfe):
         manager=manager,
         engine=engine,
         context_builder=builder,
+        provenance_token="tok",
         description="desc",
         helper_fn=helper_fn,
         graph=FailingGraph(),
