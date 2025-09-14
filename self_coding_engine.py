@@ -130,7 +130,6 @@ from .prompt_engine import (
     PromptEngine,
     _ENCODER,
     diff_within_target_region,
-    build_prompt,
 )
 from .prompt_memory_trainer import PromptMemoryTrainer
 from chunking import split_into_chunks, get_chunk_summaries
@@ -918,33 +917,31 @@ class SelfCodingEngine:
     # ------------------------------------------------------------------
     def build_enriched_prompt(
         self,
-        goal: str,
+        task: str,
         *,
+        error_log: str | None = None,
         context_builder: ContextBuilder,
         **kwargs: Any,
     ) -> Prompt:
-        """Create and store an enriched :class:`Prompt` for ``goal``.
+        """Create and store an enriched :class:`Prompt` for ``task``.
 
-        The helper delegates to :meth:`ContextBuilder.build_prompt` and merges
-        additional pieces of information that callers may provide via
-        ``intent_metadata`` or ``snippets``.  When an ``error_trace`` is
-        available it is persisted alongside vector retrieval metadata so that
-        subsequent :meth:`generate` calls can reference the combined context.
-        The resulting :class:`Prompt` is stored on ``self`` and returned.
+        The helper delegates to :meth:`ContextBuilder.build_prompt` which
+        performs latent query generation and semantic deduplication.  Retrieved
+        snippets, ``intent_metadata`` and the optional ``error_log`` are fused
+        into the resulting :class:`Prompt`'s metadata.  The fully enriched
+        prompt is stored on ``self`` and returned.
         """
 
         intent_meta: Dict[str, Any] = dict(kwargs.pop("intent_metadata", {}) or {})
-        error_trace: str | None = kwargs.pop(
-            "error_trace", None
-        ) or self._last_retry_trace
+        log = error_log or self._last_retry_trace
         snippets = kwargs.pop("snippets", None)
 
-        prompt_obj = context_builder.build_prompt(goal, **kwargs)
+        prompt_obj = context_builder.build_prompt(task, **kwargs)
         meta = dict(getattr(prompt_obj, "metadata", {}) or {})
         if intent_meta:
             meta.update(intent_meta)
-        if error_trace:
-            meta["error_trace"] = error_trace
+        if log:
+            meta["error_log"] = log
         if snippets is not None:
             meta["snippets"] = snippets
         prompt_obj.metadata = meta
@@ -1239,7 +1236,7 @@ class SelfCodingEngine:
         retrieval_context = (
             str(metadata.get("retrieval_context", "")) if metadata else ""
         )
-        retry_trace = self._fetch_retry_trace(metadata)
+        retry_log = self._fetch_retry_trace(metadata)
         if strategy is None and metadata:
             strategy = (
                 metadata.get("strategy")
@@ -1253,7 +1250,7 @@ class SelfCodingEngine:
                 intent_metadata={"retrieval_context": retrieval_context}
                 if retrieval_context
                 else {},
-                error_trace=retry_trace,
+                error_log=retry_log,
                 strategy=strategy,
                 snippets=[
                     (getattr(s, "path", ""), s.code, getattr(s, "score", 0.0))
