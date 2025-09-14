@@ -3,17 +3,15 @@ from __future__ import annotations
 """Service for archiving, compressing, or replacing modules flagged for retirement."""
 
 from pathlib import Path
-from typing import Dict, Iterable, TYPE_CHECKING
+from typing import Dict, Iterable
 import logging
 import shutil
 
 from dynamic_path_router import resolve_path
 
 from module_graph_analyzer import build_import_graph
-from quick_fix_engine import generate_patch
 from vector_service.context_builder import ContextBuilder
-if TYPE_CHECKING:  # pragma: no cover
-    from self_coding_manager import SelfCodingManager
+from self_coding_manager import SelfCodingManager
 from metrics_exporter import (
     update_module_retirement_metrics,
     retired_modules_total,
@@ -30,10 +28,14 @@ class ModuleRetirementService:
         repo_root: Path | str = ".",
         *,
         context_builder: ContextBuilder,
-        manager: "SelfCodingManager" | None = None,
+        manager: SelfCodingManager,
     ) -> None:
         if context_builder is None:
             raise ValueError("ContextBuilder is required")
+        if manager is None:
+            raise ValueError("SelfCodingManager is required")
+        if not isinstance(manager, SelfCodingManager):
+            raise TypeError("manager must be a SelfCodingManager instance")
         self.root = Path(resolve_path(repo_root))
         self.logger = logging.getLogger(self.__class__.__name__)
         try:
@@ -103,12 +105,39 @@ class ModuleRetirementService:
         if not path.exists():
             self.logger.error("module not found: %s", module)
             return False
+        orchestrator = getattr(self.manager, "evolution_orchestrator", None)
+        token = getattr(orchestrator, "provenance_token", None)
+        if not token:
+            self.logger.error("missing EvolutionOrchestrator provenance token")
+            return False
         try:
-            patch_id = generate_patch(
-                str(path), self.manager, context_builder=self._context_builder
+            patch_id = self.manager.generate_patch(
+                str(path),
+                context_builder=self._context_builder,
+                provenance_token=token,
+                description=f"compress:{module}",
             )
             if patch_id is not None:
                 compressed_modules_total.inc()
+                registry = getattr(self.manager, "bot_registry", None)
+                if registry:
+                    try:
+                        commit = getattr(self.manager, "_last_commit_hash", None)
+                        registry.update_bot(
+                            getattr(self.manager, "bot_name", module),
+                            str(path),
+                            patch_id=patch_id,
+                            commit=commit,
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to update bot registry for %s", module)
+                if orchestrator:
+                    try:
+                        orchestrator.register_patch_cycle(
+                            {"bot": getattr(self.manager, "bot_name", "")}
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to notify EvolutionOrchestrator")
                 try:
                     from sandbox_runner import integrate_new_orphans
 
@@ -117,7 +146,7 @@ class ModuleRetirementService:
                     )
                 except Exception:
                     self.logger.exception(
-                        "integrate_new_orphans after compression failed"
+                        "integrate_new_orphans after compression failed",
                     )
                 return True
         except Exception:  # pragma: no cover - patching issues
@@ -136,15 +165,42 @@ class ModuleRetirementService:
         if not path.exists():
             self.logger.error("module not found: %s", module)
             return False
+        orchestrator = getattr(self.manager, "evolution_orchestrator", None)
+        token = getattr(orchestrator, "provenance_token", None)
+        if not token:
+            self.logger.error("missing EvolutionOrchestrator provenance token")
+            return False
         try:
-            patch_id = generate_patch(
-                str(path), self.manager, context_builder=self._context_builder
+            patch_id = self.manager.generate_patch(
+                str(path),
+                context_builder=self._context_builder,
+                provenance_token=token,
+                description=f"replace:{module}",
             )
             if patch_id is not None:
                 replaced_modules_total.inc()
                 self.logger.info(
                     "generated replacement patch %s for %s", patch_id, module
                 )
+                registry = getattr(self.manager, "bot_registry", None)
+                if registry:
+                    try:
+                        commit = getattr(self.manager, "_last_commit_hash", None)
+                        registry.update_bot(
+                            getattr(self.manager, "bot_name", module),
+                            str(path),
+                            patch_id=patch_id,
+                            commit=commit,
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to update bot registry for %s", module)
+                if orchestrator:
+                    try:
+                        orchestrator.register_patch_cycle(
+                            {"bot": getattr(self.manager, "bot_name", "")}
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to notify EvolutionOrchestrator")
                 try:
                     from sandbox_runner import integrate_new_orphans
 
@@ -153,7 +209,7 @@ class ModuleRetirementService:
                     )
                 except Exception:
                     self.logger.exception(
-                        "integrate_new_orphans after replacement failed"
+                        "integrate_new_orphans after replacement failed",
                     )
                 return True
             self.logger.info("no replacement patch generated for %s", module)
