@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional, Any
+from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from pathlib import Path
 from .telemetry_feedback import TelemetryFeedback
@@ -13,11 +15,14 @@ from .error_logger import ErrorLogger
 from .self_coding_engine import SelfCodingEngine
 try:  # pragma: no cover - optional self-coding dependency
     from .self_coding_manager import SelfCodingManager, internalize_coding_bot
-except ImportError:  # pragma: no cover - self-coding unavailable
-    SelfCodingManager = Any  # type: ignore
-
-    def internalize_coding_bot(*args: Any, **kwargs: Any) -> Any:  # type: ignore
-        return SelfCodingManager(*args, **kwargs)
+except ImportError as exc:  # pragma: no cover - self-coding unavailable
+    logger.error(
+        "SelfCodingManager is required for DebugLoopService. "
+        "Install self-coding dependencies (e.g., `pip install menace-sandbox[self-coding]`).",
+    )
+    raise ImportError(
+        "DebugLoopService requires SelfCodingManager"
+    ) from exc
 from .model_automation_pipeline import ModelAutomationPipeline
 from .unified_event_bus import UnifiedEventBus
 from .code_database import CodeDB
