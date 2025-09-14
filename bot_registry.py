@@ -96,6 +96,10 @@ class BotRegistry:
                 logger.error(
                     "Failed to load bot registry from %s: %s", self.persist_path, exc
                 )
+        try:
+            self.schedule_unmanaged_scan()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to schedule unmanaged bot scan")
 
     def register_bot(
         self,
@@ -124,18 +128,63 @@ class BotRegistry:
                 if db is None:
                     missing.append("data_bot")
                 if missing:
-                    if self.event_bus:
-                        try:
-                            self.event_bus.publish(
-                                "bot:unmanaged", {"bot": name, "missing": missing}
-                            )
-                        except Exception as exc:
-                            logger.error(
-                                "Failed to publish bot:unmanaged event: %s", exc
-                            )
-                    raise RuntimeError(
-                        f"coding bot requires {', '.join(missing)}"
-                    )
+                    try:
+                        from .self_coding_manager import internalize_coding_bot
+                        from .self_coding_engine import SelfCodingEngine
+                        from .model_automation_pipeline import ModelAutomationPipeline
+                        from .data_bot import DataBot
+                        from .code_database import CodeDB
+                        from .gpt_memory import GPTMemoryManager
+                        from vector_service.context_builder import ContextBuilder
+                        from .self_coding_thresholds import get_thresholds
+
+                        ctx = ContextBuilder()
+                        engine = SelfCodingEngine(
+                            CodeDB(), GPTMemoryManager(), context_builder=ctx
+                        )
+                        pipeline = ModelAutomationPipeline(
+                            context_builder=ctx, bot_registry=self
+                        )
+                        db = db or DataBot(start_server=False)
+                        th = get_thresholds(name)
+                        internalize_coding_bot(
+                            name,
+                            engine,
+                            pipeline,
+                            data_bot=db,
+                            bot_registry=self,
+                            roi_threshold=getattr(th, "roi_drop", None),
+                            error_threshold=getattr(th, "error_increase", None),
+                            test_failure_threshold=getattr(
+                                th, "test_failure_increase", None
+                            ),
+                        )
+                        if self.event_bus:
+                            try:
+                                self.event_bus.publish(
+                                    "bot:internalized", {"bot": name}
+                                )
+                            except Exception as exc:  # pragma: no cover - best effort
+                                logger.error(
+                                    "Failed to publish bot:internalized event: %s",
+                                    exc,
+                                )
+                        return
+                    except Exception as exc:
+                        if self.event_bus:
+                            try:
+                                self.event_bus.publish(
+                                    "bot:internalization_failed",
+                                    {"bot": name, "error": str(exc)},
+                                )
+                            except Exception as exc2:  # pragma: no cover - best effort
+                                logger.error(
+                                    "Failed to publish bot:internalization_failed event: %s",
+                                    exc2,
+                                )
+                        raise RuntimeError(
+                            "coding bot could not be internalized"
+                        ) from exc
             if roi_threshold is not None:
                 node["roi_threshold"] = float(roi_threshold)
             if error_threshold is not None:
@@ -333,6 +382,38 @@ class BotRegistry:
                     logger.error(
                         "Failed to save bot registry to %s: %s", self.persist_path, exc
                     )
+
+    def schedule_unmanaged_scan(self, interval: float = 3600.0) -> None:
+        """Periodically scan for unmanaged coding bots and register them."""
+
+        root = Path(__file__).resolve().parent
+        script = root / "tools" / "find_unmanaged_bots.py"
+        if not script.exists():
+            return
+
+        def _loop() -> None:
+            while True:
+                time.sleep(interval)
+                try:
+                    result = subprocess.run(
+                        [sys.executable, str(script), str(root)],
+                        capture_output=True,
+                        text=True,
+                    )
+                    for line in result.stdout.splitlines():
+                        if "unmanaged bot classes" in line:
+                            cls_part = line.split("unmanaged bot classes:", 1)[1]
+                            for bot in [c.strip() for c in cls_part.split(",") if c.strip()]:
+                                try:
+                                    self.register_bot(bot, is_coding_bot=True)
+                                except Exception:  # pragma: no cover - best effort
+                                    logger.exception(
+                                        "auto-registration failed for %s", bot
+                                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("scheduled unmanaged bot scan failed")
+
+        threading.Thread(target=_loop, daemon=True).start()
 
     def _verify_signed_provenance(self, patch_id: int, commit: str) -> bool:
         """Return ``True`` if a signed provenance file confirms the update."""
