@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
 
 from logging_utils import get_logger, set_correlation_id, log_record
+from vector_service.context_builder import build_prompt as cb_build_prompt
 try:  # pragma: no cover - allow flat import
     from metrics_exporter import (
         stub_generation_requests_total,
@@ -923,11 +924,15 @@ async def _async_generate_stubs(
                 new_stubs.append(dict(cached))
                 continue
         args = ", ".join(f"{k}={v!r}" for k, v in stub.items())
-        prompt = template.format(name=name, args=args)
+        intent_meta = {"stub_args": dict(stub)}
+        prompt_obj = cb_build_prompt(
+            template.format(name=name, args=args),
+            intent_metadata=intent_meta,
+        )
 
         async def _invoke() -> str:
             call = getattr(gen, "generate", gen)
-            result = call(Prompt(prompt))  # type: ignore[attr-defined]
+            result = call(prompt_obj)  # type: ignore[attr-defined]
             if isinstance(result, asyncio.Task):
                 result = await result
             if hasattr(result, "text"):

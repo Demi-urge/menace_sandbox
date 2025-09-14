@@ -12,7 +12,7 @@ from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from .coding_bot_interface import self_coding_managed
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Any
 from .shared_evolution_orchestrator import get_orchestrator
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -194,16 +194,19 @@ class EnhancementBot:
             except Exception:
                 context = ""
 
+        intent_text = "Summarize the code change."
         if hint:
-            prompt_text = f"Diff summary hint: {hint}\n\n"
-        else:
-            prompt_text = ""
-        prompt_text += f"Summarize the code change.\nBefore:\n{before}\nAfter:\n{after}"
+            intent_text = f"Diff summary hint: {hint}\n\n{intent_text}"
+        intent_meta: Dict[str, Any] = {"before": before, "after": after}
         if context:
-            prompt_text += "\n\n### Retrieved Context\n" + context
-
+            intent_meta["retrieved_context"] = context
+        prompt = self.context_builder.build_prompt(
+            intent_text,
+            intent_metadata=intent_meta,
+            top_k=0,
+        )
         notice = prepend_payment_notice([])[0]["content"]
-        prompt = Prompt(prompt_text, system=notice)
+        prompt.system = notice
 
         if not self.llm_client:
             return ""

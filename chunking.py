@@ -273,7 +273,6 @@ def summarize_snippet(
         pass
 
     if not summary and llm is not None:
-        from prompt_types import Prompt
         context = ""
         try:
             ctx_res = context_builder.build(text)
@@ -299,13 +298,13 @@ def summarize_snippet(
                 )
         except Exception:
             context = ""
-        user_text = text
-        if context:
-            user_text += f"\n\nContext:\n{context}"
-        prompt = Prompt(
-            system="Summarise the following code snippet in one sentence.",
-            user=user_text,
+        intent_meta = {"retrieved_context": context} if context else {}
+        prompt = context_builder.build_prompt(
+            text,
+            intent_metadata=intent_meta,
+            top_k=0,
         )
+        prompt.system = "Summarise the following code snippet in one sentence."
         try:  # pragma: no cover - llm failures
             result = llm.generate(prompt, context_builder=context_builder)
             if getattr(result, "text", "").strip():

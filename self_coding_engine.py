@@ -38,6 +38,7 @@ try:  # pragma: no cover - optional formal verification dependency
 except Exception:  # pragma: no cover - degrade gracefully when missing
     FormalVerifier = object  # type: ignore[misc,assignment]
 from .llm_interface import Prompt, LLMResult, LLMClient
+from vector_service.context_builder import build_prompt as cb_build_prompt
 from .llm_router import client_from_settings
 from .resilience import retry_with_backoff, RetryError
 try:  # shared GPT memory instance
@@ -236,26 +237,17 @@ def call_codex_with_backoff(
 
 
 def strip_prompt_context(prompt_obj: Prompt) -> Prompt:
-    """Return a copy of *prompt_obj* without system or example context.
+    """Return a copy of *prompt_obj* without system or example context."""
 
-    This helper is purely structural and does not require database context.
-    """
-
-    return Prompt(
+    return cb_build_prompt(
         prompt_obj.text,
-        system="",
-        examples=[],
-        metadata=getattr(prompt_obj, "metadata", {}),
+        intent_metadata=getattr(prompt_obj, "metadata", {}),
+        top_k=0,
     )
 
 
 def simplify_prompt(prompt_obj: Prompt) -> Prompt:
-    """Simplify a prompt based on sandbox configuration.
-
-    Strategies include dropping the system message and limiting the number of
-    few-shot examples according to ``simplify_prompt_drop_system`` and
-    ``simplify_prompt_example_limit`` settings.
-    """
+    """Simplify a prompt based on sandbox configuration."""
 
     drop_system = getattr(_settings, "simplify_prompt_drop_system", True)
     example_limit = getattr(_settings, "simplify_prompt_example_limit", 0)
@@ -263,17 +255,13 @@ def simplify_prompt(prompt_obj: Prompt) -> Prompt:
     if drop_system and (example_limit is None or example_limit <= 0):
         return strip_prompt_context(prompt_obj)
 
-    system = "" if drop_system else prompt_obj.system
+    base = strip_prompt_context(prompt_obj)
+    base.system = "" if drop_system else prompt_obj.system
     examples = prompt_obj.examples
     if example_limit is not None:
         examples = examples[: example_limit]
-
-    return Prompt(
-        prompt_obj.text,
-        system=system,
-        examples=examples,
-        metadata=getattr(prompt_obj, "metadata", {}),
-    )
+    base.examples = examples
+    return base
 
 
 class SelfCodingEngine:
@@ -744,7 +732,11 @@ class SelfCodingEngine:
             return
         prompt = getattr(self, "_last_prompt", None)
         if not isinstance(prompt, Prompt):
-            prompt = Prompt(getattr(prompt, "text", str(prompt or "")))
+            prompt = self.build_enriched_prompt(
+                getattr(prompt, "text", str(prompt or "")),
+                context_builder=self.context_builder,
+                top_k=0,
+            )
         parts = [prompt.system, *prompt.examples, prompt.user]
         flat_prompt = "\n".join([p for p in parts if p])
         runtime = getattr(exec_result, "runtime", None) if exec_result else None

@@ -7,6 +7,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Any, TYPE_CHECKING
+from vector_service.context_builder import build_prompt as cb_build_prompt
 from pathlib import Path
 from billing.prompt_notice import prepend_payment_notice
 try:  # pragma: no cover - optional billing dependency
@@ -452,9 +453,7 @@ class ChatGPTClient:
             )
         except Exception:
             logger.exception("failed to build prompt from context builder")
-            from prompt_types import Prompt  # type: ignore
-
-            prompt_obj = Prompt(user="", metadata=intent_meta)
+            prompt_obj = cb_build_prompt("", intent_metadata=intent_meta)
 
         parts: List[str] = [prompt_obj.user]
         if getattr(prompt_obj, "examples", None):
