@@ -39,15 +39,16 @@ recursive integrity and automatic patch cycles.
 
 ## Pre-commit check
 
-Repositories using the provided pre-commit configuration run
-`tools/check_self_coding_registration.py` to ensure every module that exports a
-class or function ending in `Bot` either calls `internalize_coding_bot` or uses
-the `@self_coding_managed` decorator.  If a bot fails these requirements the
-hook exits with a non-zero status and the commit is rejected.
+The pre-commit configuration ships with a `check-self-coding-registration`
+hook powered by `tools/check_self_coding_registration.py`. The hook scans each
+Python module for top-level classes or functions whose names end in `Bot` and
+verifies they either call `internalize_coding_bot` or use the
+`@self_coding_managed` decorator. Commits introducing unmanaged bots fail with a
+non-zero status.
 
-To pass the check:
+To satisfy the hook:
 
 1. Call `internalize_coding_bot` during module initialisation, **or**
 2. Decorate the bot with `@self_coding_managed`.
 
-This guarantees all exported bots participate in the self-coding lifecycle.
+This ensures all exported bots participate in the self-coding lifecycle.
