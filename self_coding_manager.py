@@ -2213,6 +2213,12 @@ def internalize_coding_bot(
         data_bot=data_bot,
         is_coding_bot=True,
     )
+    try:
+        data_bot.schedule_monitoring(bot_name)
+    except Exception:  # pragma: no cover - best effort
+        manager.logger.exception(
+            "failed to schedule monitoring for %s", bot_name
+        )
     settings = getattr(data_bot, "settings", None)
     thresholds = getattr(settings, "bot_thresholds", {}) if settings else {}
     if bot_name not in thresholds:
