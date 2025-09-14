@@ -21,6 +21,7 @@ from dynamic_path_router import resolve_path
 from filelock import FileLock
 
 from redaction_utils import redact_text
+from snippet_compressor import compress_snippets
 
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
@@ -1398,32 +1399,35 @@ class ContextBuilder:
     @log_and_measure
     def build_prompt(
         self,
-        intent: str,
+        query: str,
         *,
+        intent_metadata: Dict[str, Any] | None = None,
+        error_log: str | None = None,
         latent_queries: Iterable[str] | None = None,
         top_k: int = 5,
         **kwargs: Any,
     ) -> Prompt:
-        """Construct a :class:`Prompt` for ``intent``.
+        """Construct a :class:`Prompt` for ``query``.
 
-        The method expands ``intent`` into *latent_queries* when provided and
-        retrieves contextual snippets via :meth:`build_context`.  Retrieved
-        snippets are deduplicated semantically and ranked using a lightweight
-        priority score before being packed into a :class:`Prompt` suitable for
-        downstream LLM calls.
+        ``build_prompt`` augments the user *query* with optional *latent_queries*
+        and an error log before invoking :meth:`build_context`. Retrieved
+        snippets are compressed via :func:`snippet_compressor.compress_snippets`,
+        deduplicated and scored by combining ranking similarity, ROI, recency and
+        safety signals. The highest scoring fragments are packed into a
+        :class:`Prompt` suitable for downstream :class:`LLMClient` calls.
         """
 
-        if not isinstance(intent, str) or not intent.strip():
-            raise MalformedPromptError("intent must be a non-empty string")
+        if not isinstance(query, str) or not query.strip():
+            raise MalformedPromptError("query must be a non-empty string")
 
-        queries: List[str] = [intent]
+        queries: List[str] = [query]
         if latent_queries:
             queries.extend(q for q in latent_queries if isinstance(q, str) and q)
         else:
             expander = getattr(getattr(self, "memory", None), "expand_intent", None)
             if callable(expander):
                 try:
-                    extra = expander(intent)
+                    extra = expander(query)
                 except Exception:
                     extra = None
                 if extra:
@@ -1431,6 +1435,9 @@ class ContextBuilder:
                         queries.append(extra)
                     else:
                         queries.extend(str(q) for q in extra if q)
+
+        if error_log:
+            queries = [f"{q} {error_log}" for q in queries]
 
         combined_meta: Dict[str, List[Dict[str, Any]]] = {}
         vectors: List[Tuple[str, str, float]] = []
@@ -1456,13 +1463,26 @@ class ContextBuilder:
         scores: List[float] = []
         for items in combined_meta.values():
             for item in items:
+                try:
+                    item.update(compress_snippets(item))
+                except Exception:
+                    pass
                 desc = str(item.get("desc") or "")
                 if not desc:
                     continue
                 key = re.sub(r"\s+", " ", desc).strip().lower()
                 score = float(item.get("score") or 0.0)
-                roi = float(item.get("roi") or 0.0)
-                priority = score * self.prompt_score_weight + roi * self.roi_weight
+                roi = float(item.get("roi") or item.get("roi_delta") or 0.0)
+                recency = float(item.get("recency") or 0.0)
+                risk = float(item.get("risk_score") or 0.0)
+                rec_w = getattr(self, "recency_weight", 1.0)
+                saf_w = getattr(self, "safety_weight", 1.0)
+                priority = (
+                    score * self.prompt_score_weight
+                    + roi * self.roi_weight
+                    + recency * rec_w
+                    - risk * saf_w
+                )
                 scores.append(score)
                 cur = dedup.get(key)
                 if cur is None or priority > cur[0]:
@@ -1479,11 +1499,19 @@ class ContextBuilder:
             used += tokens
 
         avg_conf = sum(scores) / len(scores) if scores else None
+        meta_out: Dict[str, Any] = {
+            "vector_confidences": scores,
+            "vectors": vectors,
+        }
+        if intent_metadata:
+            meta_out["intent_metadata"] = intent_metadata
+        if error_log:
+            meta_out["error_log"] = error_log
         prompt = Prompt(
-            user=intent,
+            user=query,
             examples=examples,
             vector_confidence=avg_conf,
-            metadata={"vector_confidences": scores, "vectors": vectors},
+            metadata=meta_out,
         )
         return prompt
 
@@ -1543,4 +1571,28 @@ class ContextBuilder:
         return await asyncio.to_thread(self.build_context, query, **kwargs)
 
 
-__all__ = ["ContextBuilder", "record_failed_tags", "load_failed_tags"]
+@log_and_measure
+def build_prompt(
+    query: str,
+    *,
+    intent_metadata: Dict[str, Any] | None = None,
+    error_log: str | None = None,
+    context_builder: "ContextBuilder" | None = None,
+    **kwargs: Any,
+) -> Prompt:
+    """Return a :class:`Prompt` using a provided or default builder.
+
+    The helper mirrors :meth:`ContextBuilder.build_prompt` while allowing callers
+    to omit explicit builder construction for quick one-off prompts.
+    """
+
+    builder = context_builder or ContextBuilder()
+    return builder.build_prompt(
+        query,
+        intent_metadata=intent_metadata,
+        error_log=error_log,
+        **kwargs,
+    )
+
+
+__all__ = ["ContextBuilder", "record_failed_tags", "load_failed_tags", "build_prompt"]
