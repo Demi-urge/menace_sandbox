@@ -23,23 +23,27 @@ from typing import TYPE_CHECKING, Any, Dict
 from context_builder_util import create_context_builder, ensure_fresh_weights
 from retry_utils import with_retry
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder
-except Exception:  # pragma: no cover - fallback for tests
-    class ContextBuilder:  # type: ignore
-        pass
+    from vector_service.context_builder import ContextBuilder  # noqa: F401
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "vector_service.ContextBuilder is required for EvolutionOrchestrator"
+    ) from exc
 from .self_coding_manager import HelperGenerationError
 from .sandbox_settings import SandboxSettings
 from .threshold_service import threshold_service
 try:  # pragma: no cover - optional dependency
     from . import mutation_logger as MutationLogger
-except Exception:  # pragma: no cover - best effort
-    MutationLogger = None  # type: ignore
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "mutation_logger is required for EvolutionOrchestrator"
+    ) from exc
 
 try:  # pragma: no cover - allow flat imports
     from .unified_event_bus import UnifiedEventBus
-except Exception:  # pragma: no cover
-    class UnifiedEventBus:  # type: ignore[override]
-        pass
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "unified_event_bus.UnifiedEventBus is required for EvolutionOrchestrator"
+    ) from exc
 try:  # pragma: no cover - allow flat imports
     from .shared_event_bus import event_bus as _SHARED_EVENT_BUS
 except Exception:  # pragma: no cover - flat layout fallback
