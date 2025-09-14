@@ -46,6 +46,10 @@ jobs:
         run: "python tools/check_self_coding_integrity.py $(git ls-files '*.py')"
       - name: ensure all bots are self-coding managed
         run: pre-commit run self-coding-registration --all-files
+      - name: Verify self-coding registration
+        run: python tools/check_self_coding_registration.py
+      - name: Scan for unmanaged bots
+        run: python tools/find_unmanaged_bots.py
       - name: Run self-coding checks
         run: make self-coding-check
       - name: Prevent unwrapped engine.generate_helper usage
@@ -101,6 +105,10 @@ jobs:
         run: pre-commit run check-self-coding-integrity --all-files
       - name: ensure all bots are self-coding managed
         run: pre-commit run self-coding-registration --all-files
+      - name: Verify self-coding registration
+        run: python tools/check_self_coding_registration.py
+      - name: Scan for unmanaged bots
+        run: python tools/find_unmanaged_bots.py
       - name: Ensure SelfCodingEngine bots are decorated and registered
         run: python tools/check_coding_bot_decorators.py
       - name: Run self-coding checks

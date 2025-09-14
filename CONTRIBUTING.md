@@ -164,6 +164,19 @@ pre-commit run find-unmanaged-bots --all-files
 
 CI fails if unmanaged bots are detected.
 
+The pipeline also runs `tools/check_self_coding_registration.py` and
+`tools/find_unmanaged_bots.py` to ensure every `*Bot` class is either decorated
+with `@self_coding_managed` or registered via `internalize_coding_bot`. Run the
+audits locally before committing:
+
+```bash
+python tools/check_self_coding_registration.py
+python tools/find_unmanaged_bots.py
+```
+
+These scripts exit with a non-zero status when unmanaged bots are present,
+causing CI to fail.
+
 The `check-coding-bot-decorators` hook (`tools/check_coding_bot_decorators.py`)
 adds an extra safeguard by scanning for modules that import
 `SelfCodingEngine` and flagging any bot classes that lack the
