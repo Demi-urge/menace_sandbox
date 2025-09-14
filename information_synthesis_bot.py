@@ -24,7 +24,10 @@ except Exception:  # pragma: no cover - optional
     requests = None  # type: ignore
 
 from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem
-from .task_handoff_bot import WorkflowDB
+try:  # pragma: no cover - optional dependency
+    from .task_handoff_bot import WorkflowDB
+except Exception:  # pragma: no cover - import may fail in trimmed environments
+    WorkflowDB = None  # type: ignore
 from .unified_event_bus import UnifiedEventBus
 from vector_service.context_builder import ContextBuilder
 

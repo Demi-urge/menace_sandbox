@@ -5,9 +5,19 @@ from __future__ import annotations
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import self_coding_managed
-from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+try:  # pragma: no cover - optional to avoid circular imports in tests
+    from .self_coding_manager import SelfCodingManager, internalize_coding_bot
+except Exception:  # pragma: no cover - provide stubs when unavailable
+    SelfCodingManager = None  # type: ignore
+
+    def internalize_coding_bot(*_a, **_k):  # type: ignore
+        return None
 from .self_coding_engine import SelfCodingEngine
-from .model_automation_pipeline import ModelAutomationPipeline
+try:  # pragma: no cover - optional to avoid circular imports in tests
+    from .model_automation_pipeline import ModelAutomationPipeline
+except Exception:  # pragma: no cover - provide stub when unavailable
+    class ModelAutomationPipeline:  # type: ignore
+        pass
 from .threshold_service import ThresholdService
 from .code_database import CodeDB
 from .gpt_memory import GPTMemoryManager

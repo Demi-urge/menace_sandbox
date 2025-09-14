@@ -210,12 +210,25 @@ def load_sc_thresholds(
     bus = event_bus or _SHARED_EVENT_BUS
     try:
         if bot:
-            return _load_sc_thresholds(bot, settings, path=path)
+            sc = _load_sc_thresholds(bot, settings, path=path)
+            params = sc.model_params or {}
+            try:
+                create_model(sc.model, sc.confidence, **params)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to create forecast model for %s", bot)
+            return sc
         data = _load_sc_config(path)
         bots = data.get("bots", {}) if isinstance(data, dict) else {}
-        return {
-            name: _load_sc_thresholds(name, settings, path=path) for name in bots
-        }
+        result = {}
+        for name in bots:
+            sc = _load_sc_thresholds(name, settings, path=path)
+            params = sc.model_params or {}
+            try:
+                create_model(sc.model, sc.confidence, **params)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to create forecast model for %s", name)
+            result[name] = sc
+        return result
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning(
             "failed to load thresholds for %s: %s", bot or "all bots", exc
@@ -279,7 +292,7 @@ class MetricsDB:
         path: Path | str = "metrics.db",
         router: DBRouter | None = None,
     ) -> None:
-        self.path = str(path)
+        self.path = str(Path(path).absolute())
         LOCAL_TABLES.add("metrics")
         self.router = router or GLOBAL_ROUTER or init_db_router(
             "metrics_db", local_db_path=self.path, shared_db_path=self.path
@@ -1854,6 +1867,21 @@ class DataBot:
 
         models = self._forecast_models.get(bot)
         meta = self._forecast_meta.get(bot, {})
+        if not models:
+            raw = load_sc_thresholds(bot, self.settings, event_bus=self.event_bus)
+            if isinstance(raw, SelfCodingThresholds):
+                params = raw.model_params or {}
+                models = {
+                    m: create_model(raw.model, raw.confidence, **params)
+                    for m in ("roi", "errors", "tests_failed")
+                }
+                self._forecast_models[bot] = models
+                meta = {
+                    "model": raw.model,
+                    "confidence": raw.confidence,
+                    "params": params,
+                }
+                self._forecast_meta[bot] = meta
         hist = tracker.to_dict()
         roi_hist = hist.get("roi", [])
         err_hist = hist.get("errors", [])
