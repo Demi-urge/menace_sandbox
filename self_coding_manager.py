@@ -127,9 +127,12 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from bot_registry import BotRegistry  # type: ignore
 
 try:  # pragma: no cover - allow package/flat imports
-    from .patch_provenance import record_patch_metadata
+    from .patch_provenance import record_patch_metadata, get_patch_by_commit
 except Exception:  # pragma: no cover - fallback for flat layout
-    from patch_provenance import record_patch_metadata  # type: ignore
+    from patch_provenance import (
+        record_patch_metadata,  # type: ignore
+        get_patch_by_commit,  # type: ignore
+    )
 
 try:  # pragma: no cover - optional dependency
     from .unified_event_bus import UnifiedEventBus
@@ -637,33 +640,61 @@ class SelfCodingManager:
 
     # ------------------------------------------------------------------
     def scan_repo(self) -> None:
-        """Invoke the enhancement classifier and queue suggestions."""
-        if not self.enhancement_classifier:
-            return
+        """Invoke the enhancement classifier and check for manual commits."""
+
+        if self.enhancement_classifier:
+            try:
+                suggestions = list(self.enhancement_classifier.scan_repo())
+                db = self.suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
+                if db:
+                    db.queue_suggestions(suggestions)
+                event_bus = getattr(self.engine, "event_bus", None)
+                if event_bus:
+                    try:
+                        top_scores = [
+                            getattr(s, "score", 0.0)
+                            for s in sorted(
+                                suggestions,
+                                key=lambda s: getattr(s, "score", 0.0),
+                                reverse=True,
+                            )[:5]
+                        ]
+                        event_bus.publish(
+                            "enhancement:suggestions",
+                            {"count": len(suggestions), "top_scores": top_scores},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish enhancement suggestions"
+                        )
+            except Exception:
+                self.logger.exception("repo scan failed")
+
         try:
-            suggestions = list(self.enhancement_classifier.scan_repo())
-            db = self.suggestion_db or getattr(self.engine, "patch_suggestion_db", None)
-            if db:
-                db.queue_suggestions(suggestions)
-            event_bus = getattr(self.engine, "event_bus", None)
-            if event_bus:
-                try:
-                    top_scores = [
-                        getattr(s, "score", 0.0)
-                        for s in sorted(
-                            suggestions,
-                            key=lambda s: getattr(s, "score", 0.0),
-                            reverse=True,
-                        )[:5]
-                    ]
-                    event_bus.publish(
-                        "enhancement:suggestions",
-                        {"count": len(suggestions), "top_scores": top_scores},
+            revs = subprocess.check_output(
+                ["git", "rev-list", "--max-count=10", "HEAD"], text=True
+            ).splitlines()
+            for commit in revs:
+                meta = get_patch_by_commit(commit) if get_patch_by_commit else None
+                if not meta or not meta.get("provenance_token"):
+                    bus = getattr(self, "event_bus", None) or getattr(
+                        self.engine, "event_bus", None
                     )
-                except Exception:
-                    self.logger.exception("failed to publish enhancement suggestions")
+                    if bus:
+                        try:
+                            bus.publish(
+                                "self_coding:unauthorised_commit", {"commit": commit}
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to publish unauthorised commit"
+                            )
+                    try:
+                        RollbackManager().rollback(commit)
+                    except Exception:
+                        self.logger.exception("rollback failed")
         except Exception:
-            self.logger.exception("repo scan failed")
+            self.logger.exception("unauthorised commit scan failed")
 
     def schedule_repo_scan(self, interval: float = 3600.0) -> None:
         """Run :meth:`scan_repo` on a background scheduler."""
