@@ -55,8 +55,8 @@ repos:
         language: system
         pass_filenames: true
         files: '\.py$'
-      - id: self-coding-registration
-        name: Ensure bots are internalized or self-coding managed
+      - id: check-self-coding-registration
+        name: Ensure exported bots are internalized or decorated
         entry: python tools/check_self_coding_registration.py
         language: system
         pass_filenames: false
