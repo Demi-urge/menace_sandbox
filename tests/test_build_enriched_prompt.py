@@ -139,7 +139,7 @@ def test_enriched_prompt_merges_metadata():
         intent_metadata={"intent": "meta"},
     )
     assert prompt.metadata["intent"] == "meta"
-    assert prompt.metadata["error_trace"] == "trace"
+    assert prompt.metadata["error_log"] == "trace"
     assert "vectors" in prompt.metadata
     assert engine._last_prompt is prompt
 
