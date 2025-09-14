@@ -11,7 +11,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-import types
+import importlib
 
 from dynamic_path_router import resolve_path
 from db_router import init_db_router
@@ -240,7 +240,6 @@ def handle_patch(args: argparse.Namespace) -> int:
     if not _require_vector_service():
         return 1
     from vector_service.retriever import Retriever
-    import quick_fix_engine
 
     global PatchLogger
     if PatchLogger is None:  # pragma: no cover - lazy import
@@ -269,21 +268,90 @@ def handle_patch(args: argparse.Namespace) -> int:
     except TypeError:  # pragma: no cover - fallback for stub implementations
         db = PatchHistoryDB()
     patch_logger = PatchLogger(patch_db=db)
-    manager = types.SimpleNamespace(
-        engine=None, register_patch_cycle=lambda *a, **k: None
+
+    manager = None
+    if getattr(args, "manager", None):
+        try:
+            mod = importlib.import_module(args.manager)
+            manager = getattr(mod, "manager", None)
+        except Exception as exc:
+            print(f"failed to import manager {args.manager}: {exc}", file=sys.stderr)
+            return 1
+        from self_coding_manager import SelfCodingManager  # type: ignore
+        if not isinstance(manager, SelfCodingManager):  # type: ignore[name-defined]
+            print("manager module must export a SelfCodingManager", file=sys.stderr)
+            return 1
+    else:
+        from self_coding_manager import SelfCodingManager, internalize_coding_bot
+        from self_coding_engine import SelfCodingEngine
+        from model_automation_pipeline import ModelAutomationPipeline
+        from code_database import CodeDB
+        from menace_memory_manager import MenaceMemoryManager
+        from bot_registry import BotRegistry
+        from data_bot import DataBot, persist_sc_thresholds
+        from self_coding_thresholds import get_thresholds
+        from threshold_service import ThresholdService
+
+        bot_name = Path(args.module).stem
+        data_bot = DataBot(start_server=False)
+        registry = BotRegistry()
+        engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=builder)
+        pipeline = ModelAutomationPipeline(context_builder=builder)
+        _th = get_thresholds(bot_name)
+        persist_sc_thresholds(
+            bot_name,
+            roi_drop=_th.roi_drop,
+            error_increase=_th.error_increase,
+            test_failure_increase=_th.test_failure_increase,
+        )
+        manager = internalize_coding_bot(
+            bot_name,
+            engine,
+            pipeline,
+            data_bot=data_bot,
+            bot_registry=registry,
+            roi_threshold=_th.roi_drop,
+            error_threshold=_th.error_increase,
+            test_failure_threshold=_th.test_failure_increase,
+            threshold_service=ThresholdService(),
+        )
+        if not isinstance(manager, SelfCodingManager):  # type: ignore[name-defined]
+            print(
+                "internalize_coding_bot failed to return a SelfCodingManager",
+                file=sys.stderr,
+            )
+            return 1
+
+    provenance_token = getattr(
+        getattr(manager, "evolution_orchestrator", None), "provenance_token", None
     )
-    patch_id = quick_fix_engine.generate_patch(
+    if not provenance_token:
+        print("manager lacks provenance token", file=sys.stderr)
+        return 1
+    patch_id = manager.generate_patch(
         args.module,
-        manager,
-        engine=None,
+        args.desc,
         context_builder=builder,
-        description=args.desc,
         patch_logger=patch_logger,
         context=ctx,
         effort_estimate=args.effort_estimate,
+        provenance_token=provenance_token,
     )
     if not patch_id:
         return 1
+    registry = getattr(manager, "bot_registry", None)
+    commit = getattr(manager, "_last_commit_hash", None)
+    if registry:
+        try:
+            registry.update_bot(
+                getattr(manager, "bot_name", Path(args.module).stem),
+                args.module,
+                patch_id=patch_id,
+                commit=commit,
+            )
+        except Exception as exc:
+            print(f"bot update failed: {exc}", file=sys.stderr)
+            return 1
     record = db.get(patch_id)
     files = [record.filename] if record else []
     print(json.dumps({"patch_id": patch_id, "files": files}))
@@ -631,6 +699,10 @@ def main(argv: list[str] | None = None) -> int:
         "--effort-estimate", type=float, default=None, help="Estimated effort for patch"
     )
     p_quick.add_argument("--db-path", help="Patch history database path")
+    p_quick.add_argument(
+        "--manager",
+        help="Module path exporting a SelfCodingManager instance",
+    )
     p_quick.set_defaults(func=handle_patch)
 
     p_patch = sub.add_parser("patches", help="Patch provenance helpers")
