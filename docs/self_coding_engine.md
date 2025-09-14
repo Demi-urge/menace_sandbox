@@ -19,6 +19,20 @@ For new coding bots use ``internalize_coding_bot`` to instantiate a
 cycle. See [internalize_coding_bot.md](internalize_coding_bot.md) for an
 example.
 
+## Dependencies
+
+The self‑coding stack depends on several internal modules and services. Ensure
+the following are available:
+
+- `vector_service` for context builders and error results
+- `self_improvement.prompt_strategies` for prompt templating
+- `human_alignment_flagger` and `human_alignment_agent` for alignment checks
+- `patch_provenance` to record patch metadata
+- `violation_logger` for policy logging
+- `advanced_error_management` providing rollback support
+- `code_database` for `PatchHistoryDB`
+- `data_bot` for telemetry storage
+
 ## Usage
 
 ```python

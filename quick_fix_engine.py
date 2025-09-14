@@ -27,9 +27,10 @@ from .codebase_diff_checker import generate_code_diff, flag_risky_changes
 
 try:  # pragma: no cover - optional dependency
     from context_builder_util import ensure_fresh_weights
-except Exception:  # pragma: no cover - fallback when utility missing
-    def ensure_fresh_weights(builder) -> None:  # type: ignore
-        builder.refresh_db_weights()
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "context_builder_util.ensure_fresh_weights is required for quick_fix_engine"
+    ) from exc
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -115,8 +116,10 @@ manager_generate_helper = (
 )
 try:  # pragma: no cover - optional dependency
     from .data_bot import DataBot  # noqa: E402
-except Exception:  # pragma: no cover - fallback when unavailable
-    DataBot = object  # type: ignore
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "data_bot.DataBot is required for quick_fix_engine"
+    ) from exc
 from .resilience import retry_with_backoff  # noqa: E402
 try:  # pragma: no cover - fail fast if vector service missing
     from vector_service.context_builder import (  # noqa: E402
@@ -132,12 +135,16 @@ except Exception as exc:  # pragma: no cover - provide actionable error
     ) from exc
 try:  # pragma: no cover - optional dependency
     from patch_provenance import PatchLogger
-except Exception:  # pragma: no cover - fallback when unavailable
-    PatchLogger = object  # type: ignore
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "patch_provenance.PatchLogger is required for quick_fix_engine"
+    ) from exc
 try:  # pragma: no cover - optional dependency
     from chunking import get_chunk_summaries
-except Exception:  # pragma: no cover - chunking unavailable
-    get_chunk_summaries = None  # type: ignore
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "chunking.get_chunk_summaries is required for quick_fix_engine"
+    ) from exc
 try:  # pragma: no cover - optional dependency
     from .target_region import extract_target_region
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -147,21 +154,10 @@ except Exception:  # pragma: no cover - fallback for flat layout
         extract_target_region = None  # type: ignore
 try:  # pragma: no cover - optional dependency
     from self_improvement.prompt_strategies import PromptStrategy, render_prompt
-except Exception:  # pragma: no cover - fallback for tests
-    class PromptStrategy(str):  # type: ignore
-        """Minimal stand-in when prompt strategies are unavailable."""
-
-        def __new__(cls, value: str = ""):
-            logging.getLogger("QuickFixEngine").warning(
-                "self_improvement.prompt_strategies missing; using dummy PromptStrategy"
-            )
-            return str.__new__(cls, value)
-
-    def render_prompt(*a: object, **k: object) -> str:  # type: ignore
-        logging.getLogger("QuickFixEngine").warning(
-            "self_improvement.prompt_strategies missing; render_prompt returning empty string"
-        )
-        return ""
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "self_improvement.prompt_strategies is required for quick_fix_engine"
+    ) from exc
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
     from .self_coding_engine import SelfCodingEngine
@@ -175,44 +171,34 @@ except Exception as exc:  # pragma: no cover - fail fast when unavailable
     ) from exc
 try:  # pragma: no cover - optional dependency
     from .human_alignment_flagger import _collect_diff_data
-except Exception:  # pragma: no cover - fallback for tests
-    def _collect_diff_data(*a, **k):
-        logging.getLogger("QuickFixEngine").warning(
-            "human_alignment_flagger._collect_diff_data missing; returning empty diff data"
-        )
-        return {}
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "human_alignment_flagger._collect_diff_data is required for quick_fix_engine"
+    ) from exc
 try:  # pragma: no cover - optional dependency
     from .human_alignment_agent import HumanAlignmentAgent
-except Exception:  # pragma: no cover - fallback for tests
-    class HumanAlignmentAgent:  # type: ignore
-        """Fallback agent when human alignment module is unavailable."""
-
-        def __init__(self, *a: object, **k: object) -> None:
-            logging.getLogger("QuickFixEngine").warning(
-                "HumanAlignmentAgent missing; alignment checks skipped"
-            )
-
-        def evaluate_changes(self, *a: object, **k: object) -> dict:
-            logging.getLogger("QuickFixEngine").warning(
-                "Fallback HumanAlignmentAgent.evaluate_changes called"
-            )
-            return {}
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "human_alignment_agent is required for quick_fix_engine"
+    ) from exc
 try:  # pragma: no cover - optional dependency
     from .violation_logger import log_violation
-except Exception:  # pragma: no cover - fallback for tests
-    def log_violation(*a, **k):
-        logging.getLogger("QuickFixEngine").warning(
-            "violation_logger.log_violation missing; nothing will be recorded"
-        )
-        return None
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "violation_logger.log_violation is required for quick_fix_engine"
+    ) from exc
 try:  # pragma: no cover - optional dependency
     from .advanced_error_management import AutomatedRollbackManager
-except Exception:  # pragma: no cover - fallback for tests
-    AutomatedRollbackManager = None  # type: ignore
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "advanced_error_management.AutomatedRollbackManager is required for quick_fix_engine"
+    ) from exc
 try:  # pragma: no cover - optional dependency
     from .code_database import PatchHistoryDB
-except Exception:  # pragma: no cover - fallback for tests
-    PatchHistoryDB = None  # type: ignore
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "code_database.PatchHistoryDB is required for quick_fix_engine"
+    ) from exc
 
 _VEC_METRICS = None
 

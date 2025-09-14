@@ -58,9 +58,10 @@ from .threshold_service import (
 
 try:  # pragma: no cover - optional dependency
     from .quick_fix_engine import QuickFixEngine, generate_patch
-except Exception:  # pragma: no cover - optional dependency
-    QuickFixEngine = None  # type: ignore
-    generate_patch = None  # type: ignore
+except Exception as exc:  # pragma: no cover - missing dependency
+    raise RuntimeError(
+        "quick_fix_engine is required for SelfCodingManager"
+    ) from exc
 
 from context_builder_util import ensure_fresh_weights
 
