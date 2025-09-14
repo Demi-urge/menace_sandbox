@@ -200,3 +200,56 @@ def test_allows_build_with_required_builder(tmp_path):
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == []
+
+
+def test_flags_manual_string_prompt(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from vector_service.context_builder import ContextBuilder\n"
+        "def demo(llm):\n"
+        "    builder = ContextBuilder('bots.db', 'code.db', 'errors.db', 'workflows.db')\n"
+        "    llm.generate('hi', context_builder=builder)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (
+            4,
+            "manual string prompt disallowed; use ContextBuilder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+        )
+    ]
+
+
+def test_flags_string_concatenation_prompt(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from vector_service.context_builder import ContextBuilder\n"
+        "def demo(llm):\n"
+        "    builder = ContextBuilder('bots.db', 'code.db', 'errors.db', 'workflows.db')\n"
+        "    llm.generate('hi' + ' there', context_builder=builder)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (
+            4,
+            "manual string prompt disallowed; use ContextBuilder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+        )
+    ]
+
+
+def test_flags_prompt_engine_build_prompt(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from prompt_engine import PromptEngine\n"
+        "def demo():\n"
+        "    PromptEngine.build_prompt('x')\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (3, "PromptEngine.build_prompt disallowed; use ContextBuilder.build_prompt"),
+    ]

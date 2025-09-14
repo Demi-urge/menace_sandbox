@@ -42,6 +42,13 @@ Functions invoking ``ContextBuilder.build`` must accept a non-optional builder
 parameter.  Parameters defaulting to ``None`` or falling back to a new builder
 within the function body are flagged to ensure that callers explicitly inject a
 ``ContextBuilder`` instance.
+
+Manual string prompts sent directly to LLM clients are also detected.  Literal
+strings, f-strings, or concatenated strings passed as ``prompt`` arguments will
+be reported unless they originate from ``ContextBuilder.build_prompt`` or
+``SelfCodingEngine.build_enriched_prompt``.  Additionally, direct invocations of
+``PromptEngine.build_prompt`` are flagged to discourage bypassing the builder
+infrastructure.
 """
 from __future__ import annotations
 
@@ -81,6 +88,18 @@ PROMPT_HELPER_PREFIXES = ("generate_", "build_", "create_")
 PROMPT_HELPER_KEYWORDS = ("prompt", "candidate")
 
 
+def _is_string_expr(node: ast.AST) -> bool:
+    """Return True if *node* represents a string literal or concatenation."""
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return True
+    if isinstance(node, ast.JoinedStr):  # f"{expr}"
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _is_string_expr(node.left) or _is_string_expr(node.right)
+    return False
+
+
 def iter_python_files(root: Path):
     for path in root.rglob("*.py"):
         if any(part in {"tests", "unit_tests"} for part in path.parts):
@@ -99,8 +118,13 @@ def check_file(path: Path) -> list[tuple[int, str]]:
     lines = text.splitlines()
     errors: list[tuple[int, str]] = []
 
-    rel = path.relative_to(ROOT).as_posix()
-    if rel not in NOCB_WHITELIST:
+    try:
+        rel = path.relative_to(ROOT).as_posix()
+        outside_repo = False
+    except ValueError:  # tmp files outside repo
+        rel = path.as_posix()
+        outside_repo = True
+    if not outside_repo and rel not in NOCB_WHITELIST:
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
             if tok.type == tokenize.COMMENT and NOCB_MARK in tok.string:
                 errors.append((tok.start[0], "# nocb marker disallowed"))
@@ -262,6 +286,30 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                                 return True
             return False
 
+        def _check_prompt_strings(self, node: ast.Call, is_llm_call: bool) -> None:
+            if not is_llm_call:
+                return
+
+            candidates: list[ast.AST] = []
+            if node.args:
+                candidates.append(node.args[0])
+            for kw in node.keywords:
+                if kw.arg == "prompt":
+                    candidates.append(kw.value)
+
+            for expr in candidates:
+                if _is_string_expr(expr):
+                    line_no = expr.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "manual string prompt disallowed; use ContextBuilder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+                            )
+                        )
+
         def _check_build_calls(self, node: ast.AST) -> None:
             params: dict[str, ast.AST | None] = {}
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -323,6 +371,20 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             name_full = full_name(node.func)
             name_simple = name_full.split(".")[-1] if name_full else None
 
+            if name_full == "PromptEngine.build_prompt":
+                line_no = node.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append(
+                        (
+                            line_no,
+                            "PromptEngine.build_prompt disallowed; use ContextBuilder.build_prompt",
+                        )
+                    )
+                self.generic_visit(node)
+                return
+
             if name_simple == "getattr":
                 second: ast.AST | None = None
                 third: ast.AST | None = None
@@ -358,9 +420,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 self.generic_visit(node)
                 return
 
+            is_llm_call = False
+
             if isinstance(node.func, ast.Name) and node.func.id in self.generate_aliases:
                 has_kw = any(kw.arg == "context_builder" for kw in node.keywords)
                 target = node.func.id
+                is_llm_call = True
             elif name_simple == DEFAULT_BUILDER_NAME:
                 line_no = node.lineno
                 line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
@@ -379,10 +444,14 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 target = None
                 if name_simple in REQUIRED_NAMES:
                     target = name_simple
+                    if name_simple == "chat_completion_create":
+                        is_llm_call = True
                 elif name_full in OPENAI_NAMES:
                     target = name_full
+                    is_llm_call = True
                 elif name_full and is_generate_wrapper(name_full):
                     target = name_full
+                    is_llm_call = True
                 elif name_simple and any(
                     name_simple.startswith(prefix)
                     and any(key in name_simple for key in PROMPT_HELPER_KEYWORDS)
@@ -403,6 +472,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                                 kw.arg == "context_builder" for kw in inner.keywords
                             )
                             target = gen_name
+                            is_llm_call = True
                 elif (
                     isinstance(node.func, ast.Attribute)
                     and node.func.attr in GENERATE_METHODS
@@ -418,6 +488,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         base_name in self.llm_instances or base_name in ALIAS_NAMES
                     ):
                         target = f"{base_name}.{node.func.attr}"
+                        is_llm_call = True
 
             if (
                 isinstance(node.func, ast.Name)
@@ -434,6 +505,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         )
                     )
 
+            self._check_prompt_strings(node, is_llm_call)
             self.generic_visit(node)
 
         def visit_Import(self, node: ast.Import) -> None:  # noqa: D401
