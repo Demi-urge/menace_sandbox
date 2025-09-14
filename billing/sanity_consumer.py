@@ -112,7 +112,7 @@ class SanityConsumer:
             if path:
                 try:
                     target = resolve_path(path if path.endswith(".py") else f"{path}.py")
-                    self.manager.run_patch(
+                    self.manager.auto_run_patch(
                         target,
                         f"address {event_type} anomaly",
                         context_meta={"reason": event_type, "trigger": "billing_anomaly"},

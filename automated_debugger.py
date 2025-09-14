@@ -218,7 +218,7 @@ class AutomatedDebugger:
                 kwargs: dict[str, Any] = {}
                 if retrieval_context is not None:
                     kwargs["context_meta"] = {"retrieval_context": retrieval_context}
-                self.manager.run_patch(path, "auto_debug", **kwargs)
+                self.manager.auto_run_patch(path, "auto_debug", **kwargs)
 
             try:
                 _apply(module_path, target)

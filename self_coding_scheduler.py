@@ -145,7 +145,7 @@ class SelfCodingScheduler:
                     attempt += 1
 
                     def _run_patch() -> None:
-                        self.manager.run_patch(self.patch_path, self.description)
+                        self.manager.auto_run_patch(self.patch_path, self.description)
 
                     metrics = runner.run(_run_patch, safe_mode=True)
                     module = metrics.modules[0] if getattr(metrics, "modules", None) else None

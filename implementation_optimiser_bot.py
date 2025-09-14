@@ -357,12 +357,7 @@ class ImplementationOptimiserBot:
                     if path_str:
                         try:
                             path = Path(path_str)
-                            token = (
-                                self.manager.evolution_orchestrator.provenance_token
-                                if self.manager.evolution_orchestrator
-                                else ""
-                            )
-                            self.manager.run_patch(path, desc, provenance_token=token)
+                            self.manager.auto_run_patch(path, desc)
                             if getattr(self.manager, "bot_registry", None):
                                 try:
                                     name = getattr(
