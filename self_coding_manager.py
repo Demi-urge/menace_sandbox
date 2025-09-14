@@ -79,6 +79,7 @@ try:  # pragma: no cover - optional dependency
     )
 except Exception:  # pragma: no cover - provide stubs when unavailable
     QuickFixEngine = None  # type: ignore
+
     class QuickFixEngineError(RuntimeError):  # type: ignore
         def __init__(self, code: str = "", message: str = "") -> None:
             super().__init__(message)
@@ -733,7 +734,7 @@ class SelfCodingManager:
         *,
         patch_id: int | None = None,
         commit: str | None = None,
-        provenance_token: str,
+        provenance_token: str | None = None,
     ) -> tuple[int | None, str | None]:
         """Log baseline metrics for an upcoming patch cycle.
 

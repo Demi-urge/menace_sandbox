@@ -2,7 +2,8 @@ import sys
 import types
 import importlib
 from pathlib import Path
-from menace.coding_bot_interface import manager_generate_helper
+
+import pytest
 
 
 def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
@@ -40,13 +41,59 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     ueb.UnifiedEventBus = UnifiedEventBus
     sys.modules["unified_event_bus"] = ueb
 
+    # stub internal menace modules to avoid heavy imports
+    sys.modules["menace.data_bot"] = types.SimpleNamespace(DataBot=object)
+    sys.modules["menace.capital_management_bot"] = types.SimpleNamespace(
+        CapitalManagementBot=object
+    )
+    sys.modules["menace.system_evolution_manager"] = types.SimpleNamespace(
+        SystemEvolutionManager=object
+    )
+    sys.modules["menace.evolution_history_db"] = types.SimpleNamespace(
+        EvolutionHistoryDB=object, EvolutionEvent=object
+    )
+    sys.modules["menace.evaluation_history_db"] = types.SimpleNamespace(
+        EvaluationHistoryDB=object
+    )
+    sys.modules["menace.trend_predictor"] = types.SimpleNamespace(TrendPredictor=object)
+    sys.modules["menace.sandbox_settings"] = types.SimpleNamespace(
+        SandboxSettings=object
+    )
+    sys.modules["menace.threshold_service"] = types.SimpleNamespace(
+        threshold_service=types.SimpleNamespace(
+            get=lambda *a, **k: types.SimpleNamespace(error_threshold=0.1, roi_drop=-0.1)
+        )
+    )
+    sys.modules["menace.mutation_logger"] = types.SimpleNamespace(log_mutation=lambda *a, **k: 0)
+    sys.modules["menace.shared_event_bus"] = types.SimpleNamespace(event_bus=None)
+
     cbi = types.ModuleType("menace.coding_bot_interface")
-    cbi.self_coding_managed = lambda f: f
+
+    def self_coding_managed(*_a, **_k):
+        def _wrap(f):
+            return f
+        return _wrap
+
+    cbi.self_coding_managed = self_coding_managed
+
+    def _manager_generate_helper(self, description, path=None):
+        return self.engine.generate_helper(description)
+
+    cbi.manager_generate_helper = _manager_generate_helper
     sys.modules["menace.coding_bot_interface"] = cbi
+    from menace.coding_bot_interface import manager_generate_helper
 
     metrics_exporter = types.ModuleType("metrics_exporter")
     metrics_exporter.update_relevancy_metrics = lambda *a, **k: None
-    metrics_exporter.Gauge = type("_G", (), {"__call__": lambda self, *a, **k: None})
+
+    class _Gauge:
+        def __init__(self, *a, **k):
+            pass
+
+        def __call__(self, *a, **k):
+            pass
+
+    metrics_exporter.Gauge = _Gauge
     sys.modules["metrics_exporter"] = metrics_exporter
     rmdb = types.ModuleType("relevancy_metrics_db")
     rmdb.RelevancyMetricsDB = object
@@ -58,6 +105,7 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
         pass
 
     scm_stub.HelperGenerationError = HelperGenerationError
+    scm_stub.SelfCodingManager = object
     sys.modules["menace.self_coding_manager"] = scm_stub
 
     # create dummy bot module
@@ -178,8 +226,15 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
             self._last_patch_id = None
             self.bot_registry.register_bot(bot_name, module=str(mod_path))
             self.run_patch_called = False
+            self.evolution_orchestrator = None
 
-        def register_patch_cycle(self, description, context_meta=None):
+        def validate_provenance(self, token):
+            expected = getattr(self.evolution_orchestrator, "provenance_token", None)
+            if not token or token != expected:
+                raise PermissionError("invalid provenance token")
+
+        def register_patch_cycle(self, description, context_meta=None, *, provenance_token=None):
+            self.validate_provenance(provenance_token)
             self.cycle_registered = True
             if self.event_bus:
                 self.event_bus.publish(
@@ -230,7 +285,7 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     quick_fix = DummyQuickFix()
     manager = SelfCodingManager(engine, quick_fix, registry, data_bot, "dummy_bot", bus)
 
-    _ = EvolutionOrchestrator(
+    orchestrator = EvolutionOrchestrator(
         data_bot,
         DummyCapital(),
         DummyImprovement(),
@@ -241,6 +296,8 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
         triggers=EvolutionTrigger(error_rate=0.1, roi_drop=-0.1),
     )
 
+    manager.evolution_orchestrator = orchestrator
+
     data_bot.check_degradation("dummy_bot", roi=1.0, errors=0.0)
     data_bot.check_degradation("dummy_bot", roi=0.5, errors=2.0)
 
@@ -250,3 +307,160 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
     assert registry.updated == ("dummy_bot", str(mod_path), 123, "deadbeef")
     assert len(created_builders) == 1 and created_builders[0].built
     assert manager.run_patch_called
+
+
+def test_invalid_provenance_token_denied(tmp_path, monkeypatch):
+    ROOT = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(tmp_path)
+    sys.path.insert(0, str(ROOT))
+
+    dpr = types.ModuleType("dynamic_path_router")
+    dpr.resolve_path = lambda p: Path(p)
+    dpr.repo_root = lambda: ROOT
+    dpr.resolve_dir = lambda p: Path(p)
+    dpr.path_for_prompt = lambda p: str(p)
+    sys.modules["dynamic_path_router"] = dpr
+
+    alert_mod = types.ModuleType("alert_dispatcher")
+    alert_mod.send_discord_alert = lambda *a, **k: None
+    alert_mod.CONFIG = {}
+    sys.modules["alert_dispatcher"] = alert_mod
+
+    ueb = types.ModuleType("unified_event_bus")
+
+    class UnifiedEventBus:
+        def __init__(self):
+            self.subs = {}
+
+        def subscribe(self, topic, fn):
+            self.subs.setdefault(topic, []).append(fn)
+
+        def publish(self, topic, payload):
+            for fn in self.subs.get(topic, []):
+                fn(topic, payload)
+
+    ueb.UnifiedEventBus = UnifiedEventBus
+    sys.modules["unified_event_bus"] = ueb
+
+    # stub internal menace modules to avoid heavy imports
+    sys.modules["menace.data_bot"] = types.SimpleNamespace(DataBot=object)
+    sys.modules["menace.capital_management_bot"] = types.SimpleNamespace(
+        CapitalManagementBot=object
+    )
+    sys.modules["menace.system_evolution_manager"] = types.SimpleNamespace(
+        SystemEvolutionManager=object
+    )
+    sys.modules["menace.evolution_history_db"] = types.SimpleNamespace(
+        EvolutionHistoryDB=object, EvolutionEvent=object
+    )
+    sys.modules["menace.evaluation_history_db"] = types.SimpleNamespace(
+        EvaluationHistoryDB=object
+    )
+    sys.modules["menace.trend_predictor"] = types.SimpleNamespace(TrendPredictor=object)
+    sys.modules["menace.sandbox_settings"] = types.SimpleNamespace(
+        SandboxSettings=object
+    )
+    sys.modules["menace.threshold_service"] = types.SimpleNamespace(
+        threshold_service=types.SimpleNamespace(
+            get=lambda *a, **k: types.SimpleNamespace(error_threshold=0.1, roi_drop=-0.1)
+        )
+    )
+    sys.modules["menace.mutation_logger"] = types.SimpleNamespace(log_mutation=lambda *a, **k: 0)
+    sys.modules["menace.shared_event_bus"] = types.SimpleNamespace(event_bus=None)
+
+    metrics_exporter = types.ModuleType("metrics_exporter")
+    metrics_exporter.update_relevancy_metrics = lambda *a, **k: None
+
+    class _Gauge:
+        def __init__(self, *a, **k):
+            pass
+
+        def __call__(self, *a, **k):
+            pass
+
+    metrics_exporter.Gauge = _Gauge
+    sys.modules["metrics_exporter"] = metrics_exporter
+
+    vector_service = types.ModuleType("vector_service")
+    vector_service.__path__ = []
+    vs_cb = types.ModuleType("vector_service.context_builder")
+    vs_cb.ContextBuilder = object
+    vector_service.context_builder = vs_cb
+    sys.modules["vector_service"] = vector_service
+    sys.modules["vector_service.context_builder"] = vs_cb
+
+    cbi = types.ModuleType("menace.coding_bot_interface")
+
+    def self_coding_managed(*_a, **_k):
+        def _wrap(f):
+            return f
+        return _wrap
+
+    cbi.self_coding_managed = self_coding_managed
+    cbi.manager_generate_helper = lambda self, d, path=None: "code"
+    sys.modules["menace.coding_bot_interface"] = cbi
+
+    scm_stub = types.ModuleType("menace.self_coding_manager")
+    scm_stub.SelfCodingManager = object
+    scm_stub.HelperGenerationError = RuntimeError
+    sys.modules["menace.self_coding_manager"] = scm_stub
+
+    eo_mod = importlib.import_module("menace.evolution_orchestrator")
+    EvolutionOrchestrator = eo_mod.EvolutionOrchestrator
+    EvolutionTrigger = eo_mod.EvolutionTrigger
+
+    class DummyBus:
+        def __init__(self):
+            self.events = []
+
+        def subscribe(self, topic, fn):
+            pass
+
+        def publish(self, topic, payload):
+            self.events.append((topic, payload))
+
+    bus = DummyBus()
+
+    class SelfCodingManager:
+        def __init__(self, event_bus):
+            self.event_bus = event_bus
+            self.bot_name = "dummy_bot"
+            self.evolution_orchestrator = types.SimpleNamespace(
+                provenance_token="expected"
+            )
+
+        def validate_provenance(self, token):
+            expected = getattr(self.evolution_orchestrator, "provenance_token", None)
+            if not token or token != expected:
+                raise PermissionError("invalid provenance token")
+
+        def register_patch_cycle(self, description, context_meta=None, *, provenance_token=None):
+            self.validate_provenance(provenance_token)
+            return None, None
+
+    manager = SelfCodingManager(bus)
+
+    class DummyHistoryDB:
+        def add(self, *a, **k):
+            pass
+
+    class DummyDataBot:
+        def __init__(self, event_bus):
+            self.event_bus = event_bus
+
+    orchestrator = EvolutionOrchestrator(
+        DummyDataBot(bus),
+        object(),
+        object(),
+        object(),
+        selfcoding_manager=manager,
+        event_bus=bus,
+        history_db=DummyHistoryDB(),
+        triggers=EvolutionTrigger(error_rate=0.1, roi_drop=-0.1),
+    )
+
+    with pytest.raises(PermissionError):
+        orchestrator._invoke_register_patch_cycle("bad", {})
+
+    assert any(topic == "evolution:patch_denied" for topic, _ in bus.events)
