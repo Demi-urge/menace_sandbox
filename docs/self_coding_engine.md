@@ -7,6 +7,10 @@ All coding bots interacting with the self‑coding system must be decorated with
 bot with `BotRegistry` and records ROI/error metrics in `DataBot` so new bots
 remain observable and improvable.
 
+`DataBot` also adapts its degradation thresholds over time. A rolling
+`BaselineTracker` recomputes ROI, error-rate and test-failure limits using
+recent statistics so sensitivity matches the bot's current performance.
+
 When a bot is registered the registry now verifies that both a
 `SelfCodingManager` and `DataBot` reference are supplied.  Missing references
 cause registration to fail and a `bot:unmanaged` event to be published, ensuring
