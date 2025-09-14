@@ -40,6 +40,22 @@ from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 
+class QuickFixEngineError(RuntimeError):
+    """Exception raised when quick fix generation fails.
+
+    Parameters
+    ----------
+    code:
+        Machine-readable error code describing the failure.
+    message:
+        Human-readable explanation of the failure.
+    """
+
+    def __init__(self, code: str, message: str) -> None:  # pragma: no cover - simple
+        super().__init__(message)
+        self.code = code
+
+
 class ErrorClusterPredictor:
     """Cluster stack traces for a module using TF-IDF and scikit-learn k-means."""
 
@@ -278,29 +294,39 @@ def generate_patch(
             except Exception:
                 test_command = [env_cmd]
     if context_builder is None:
-        raise TypeError("context_builder is required")
+        raise QuickFixEngineError(
+            "quick_fix_validation_error", "context_builder is required"
+        )
     if manager is None:
         manager = MANAGER_CONTEXT.get()
     if manager is None:
-        raise RuntimeError("generate_patch requires a manager")
+        raise QuickFixEngineError(
+            "quick_fix_init_error", "generate_patch requires a manager"
+        )
     if not isinstance(manager, SelfCodingManager):
         if not _allow_unmanaged:
-            raise RuntimeError(
-                "generate_patch requires a SelfCodingManager instance"
+            raise QuickFixEngineError(
+                "quick_fix_init_error",
+                "generate_patch requires a SelfCodingManager instance",
             )
         logger.warning("generate_patch bypassing SelfCodingManager requirement")
     if not provenance_token:
-        raise RuntimeError("provenance_token is required")
+        raise QuickFixEngineError(
+            "quick_fix_validation_error", "provenance_token is required"
+        )
     try:
         manager.validate_provenance(provenance_token)
     except Exception as exc:  # pragma: no cover - validation
-        raise RuntimeError("invalid provenance token") from exc
+        raise QuickFixEngineError(
+            "quick_fix_validation_error", "invalid provenance token"
+        ) from exc
     builder = context_builder
     try:
         builder.refresh_db_weights()
     except Exception as exc:  # pragma: no cover - validation
-        raise RuntimeError(
-            "provided ContextBuilder cannot query local databases"
+        raise QuickFixEngineError(
+            "quick_fix_validation_error",
+            "provided ContextBuilder cannot query local databases",
         ) from exc
     mod_str = module if module.endswith(".py") else f"{module}.py"
     try:
@@ -406,9 +432,10 @@ def generate_patch(
     if engine is None:
         engine = getattr(manager, "engine", None)
     if engine is None:
-        raise RuntimeError(
+        raise QuickFixEngineError(
+            "quick_fix_init_error",
             "generate_patch requires a SelfCodingEngine instance. Pass"
-            " manager.engine so improvements originate from SelfCodingManager."
+            " manager.engine so improvements originate from SelfCodingManager.",
         )
 
     try:
@@ -1351,4 +1378,4 @@ class QuickFixEngine:
         self.run(bot)
 
 
-__all__ = ["QuickFixEngine", "generate_patch"]
+__all__ = ["QuickFixEngine", "generate_patch", "QuickFixEngineError"]
