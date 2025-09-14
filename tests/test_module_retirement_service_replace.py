@@ -1,9 +1,9 @@
 import sys
 import types
 
-fake_qfe = types.ModuleType("quick_fix_engine")
-fake_qfe.generate_patch = lambda path, *, context_builder, **kw: 1
-sys.modules["quick_fix_engine"] = fake_qfe
+scm_stub = types.ModuleType("self_coding_manager")
+scm_stub.SelfCodingManager = type("SelfCodingManager", (), {})
+sys.modules["self_coding_manager"] = scm_stub
 
 
 class _DummyBuilder:
@@ -14,7 +14,12 @@ class _DummyBuilder:
         return None
 
 
-sys.modules.setdefault("vector_service", types.SimpleNamespace(ContextBuilder=_DummyBuilder))
+vec_pkg = types.ModuleType("vector_service")
+ctx_mod = types.ModuleType("vector_service.context_builder")
+ctx_mod.ContextBuilder = _DummyBuilder
+vec_pkg.context_builder = ctx_mod
+sys.modules["vector_service"] = vec_pkg
+sys.modules["vector_service.context_builder"] = ctx_mod
 
 import module_retirement_service  # noqa: E402
 from module_retirement_service import ModuleRetirementService  # noqa: E402
@@ -32,11 +37,20 @@ def test_replace_module(monkeypatch, tmp_path):
 
     called = {}
 
-    def fake_generate_patch(path, manager, *, context_builder, **kw):
-        called["path"] = path
-        return 1
+    class DummyManager:
+        def __init__(self):
+            self.engine = None
+            self.bot_name = "demo_bot"
+            self.bot_registry = types.SimpleNamespace(update_bot=lambda *a, **k: None)
+            self.evolution_orchestrator = types.SimpleNamespace(
+                register_patch_cycle=lambda *a, **k: None, provenance_token="tok"
+            )
 
-    monkeypatch.setattr(module_retirement_service, "generate_patch", fake_generate_patch)
+        def generate_patch(self, path, *, context_builder, provenance_token, description=""):
+            called["path"] = path
+            return 1
+
+    monkeypatch.setattr(module_retirement_service, "SelfCodingManager", DummyManager)
 
     class DummyGauge:
         def __init__(self):
@@ -48,7 +62,7 @@ def test_replace_module(monkeypatch, tmp_path):
     gauge = DummyGauge()
     monkeypatch.setattr(module_retirement_service, "replaced_modules_total", gauge)
 
-    mgr = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
+    mgr = DummyManager()
     service = ModuleRetirementService(
         tmp_path, context_builder=_DummyBuilder(), manager=mgr
     )
@@ -65,11 +79,20 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
     called = {}
 
-    def fake_generate_patch(path, manager, *, context_builder, **kw):
-        called["path"] = path
-        return 1
+    class DummyManager:
+        def __init__(self):
+            self.engine = None
+            self.bot_name = "demo_bot"
+            self.bot_registry = types.SimpleNamespace(update_bot=lambda *a, **k: None)
+            self.evolution_orchestrator = types.SimpleNamespace(
+                register_patch_cycle=lambda *a, **k: None, provenance_token="tok"
+            )
 
-    monkeypatch.setattr(module_retirement_service, "generate_patch", fake_generate_patch)
+        def generate_patch(self, path, *, context_builder, provenance_token, description=""):
+            called["path"] = path
+            return 1
+
+    monkeypatch.setattr(module_retirement_service, "SelfCodingManager", DummyManager)
 
     class DummyGauge:
         def __init__(self):
@@ -88,7 +111,7 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
     monkeypatch.setattr(module_retirement_service, "update_module_retirement_metrics", fake_update)
 
-    mgr = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
+    mgr = DummyManager()
     service = ModuleRetirementService(
         tmp_path, context_builder=_DummyBuilder(), manager=mgr
     )
@@ -105,10 +128,19 @@ def test_process_flags_replace_skipped(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)
 
-    def fake_generate_patch(path, manager, *, context_builder, **kw):
-        return None
+    class DummyManager:
+        def __init__(self):
+            self.engine = None
+            self.bot_name = "demo_bot"
+            self.bot_registry = types.SimpleNamespace(update_bot=lambda *a, **k: None)
+            self.evolution_orchestrator = types.SimpleNamespace(
+                register_patch_cycle=lambda *a, **k: None, provenance_token="tok"
+            )
 
-    monkeypatch.setattr(module_retirement_service, "generate_patch", fake_generate_patch)
+        def generate_patch(self, path, *, context_builder, provenance_token, description=""):
+            return None
+
+    monkeypatch.setattr(module_retirement_service, "SelfCodingManager", DummyManager)
 
     class DummyGauge:
         def __init__(self):
@@ -127,7 +159,7 @@ def test_process_flags_replace_skipped(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(module_retirement_service, "update_module_retirement_metrics", fake_update)
 
-    mgr = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
+    mgr = DummyManager()
     service = ModuleRetirementService(
         tmp_path, context_builder=_DummyBuilder(), manager=mgr
     )

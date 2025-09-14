@@ -1,9 +1,9 @@
 import sys
 import types
 
-fake_qfe = types.ModuleType("quick_fix_engine")
-fake_qfe.generate_patch = lambda path, manager, *, context_builder, **kw: 1
-sys.modules["quick_fix_engine"] = fake_qfe
+scm_stub = types.ModuleType("self_coding_manager")
+scm_stub.SelfCodingManager = type("SelfCodingManager", (), {})
+sys.modules["self_coding_manager"] = scm_stub
 
 
 class _DummyBuilder:
@@ -11,7 +11,12 @@ class _DummyBuilder:
         return None
 
 
-sys.modules.setdefault("vector_service", types.SimpleNamespace(ContextBuilder=_DummyBuilder))
+vec_pkg = types.ModuleType("vector_service")
+ctx_mod = types.ModuleType("vector_service.context_builder")
+ctx_mod.ContextBuilder = _DummyBuilder
+vec_pkg.context_builder = ctx_mod
+sys.modules["vector_service"] = vec_pkg
+sys.modules["vector_service.context_builder"] = ctx_mod
 
 import module_retirement_service  # noqa: E402
 from module_retirement_service import ModuleRetirementService  # noqa: E402
@@ -62,7 +67,20 @@ def test_retire_module_zero_impact(monkeypatch, tmp_path):
     gauge = DummyGauge()
     monkeypatch.setattr(module_retirement_service, "retired_modules_total", gauge)
 
-    mgr = types.SimpleNamespace(engine=None, register_patch_cycle=lambda *a, **k: None)
+    class DummyManager:
+        def __init__(self):
+            self.engine = None
+            self.bot_name = "demo_bot"
+            self.bot_registry = types.SimpleNamespace(update_bot=lambda *a, **k: None)
+            self.evolution_orchestrator = types.SimpleNamespace(
+                register_patch_cycle=lambda *a, **k: None, provenance_token="tok"
+            )
+
+        def generate_patch(self, *a, **k):
+            return 1
+
+    monkeypatch.setattr(module_retirement_service, "SelfCodingManager", DummyManager)
+    mgr = DummyManager()
     service = ModuleRetirementService(
         tmp_path, context_builder=_DummyBuilder(), manager=mgr
     )
