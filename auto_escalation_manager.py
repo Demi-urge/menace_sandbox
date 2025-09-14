@@ -139,12 +139,12 @@ class AutoEscalationManager:
                     )
                     manager.register_bot(self.__class__.__name__)
                     self.manager = manager
-                except Exception:
-                    class _Mgr:
-                        def run_patch(self, *a, **k):
-                            return None
-
-                    manager = _Mgr()
+                except Exception as exc:
+                    logger = logging.getLogger(self.__class__.__name__)
+                    logger.exception("failed to initialize SelfCodingManager")
+                    raise RuntimeError(
+                        "SelfCodingManager initialization failed"
+                    ) from exc
                 debugger = AutomatedDebugger(
                     ErrorDB(), engine, self.context_builder, manager=manager
                 )

@@ -3,6 +3,7 @@ import os
 import sys
 import types
 import logging
+import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
@@ -43,8 +44,39 @@ req_mod = types.ModuleType("requests")
 req_mod.Session = lambda: None
 sys.modules.setdefault("requests", req_mod)
 
+# Stub out self-coding interface to avoid heavy dependencies during import.
+coding_iface = types.ModuleType("coding_bot_interface")
+coding_iface.self_coding_managed = lambda *a, **k: (lambda cls: cls)
+sys.modules.setdefault("menace.coding_bot_interface", coding_iface)
+sys.modules.setdefault("coding_bot_interface", coding_iface)
+
+# Lightweight watchdog implementation to avoid importing heavy dependencies.
+watchdog_mod = types.ModuleType("watchdog")
+
+class Notifier:
+    def __init__(self, auto_handler=None):
+        self.auto_handler = auto_handler
+
+    def escalate(self, msg, attachments=None):
+        if self.auto_handler:
+            self.auto_handler.handle(msg, attachments)
+
+watchdog_mod.Notifier = Notifier
+watchdog_mod.AutoEscalationManager = None
+
+def _default_auto_handler(builder):
+    mgr_cls = watchdog_mod.AutoEscalationManager
+    return mgr_cls(context_builder=builder) if mgr_cls else None
+
+watchdog_mod._default_auto_handler = _default_auto_handler
+
+sys.modules.setdefault("menace.watchdog", watchdog_mod)
+
 
 class DummyContextBuilder:
+    def __init__(self, *a, **k):
+        pass
+
     def refresh_db_weights(self):
         pass
 
@@ -149,6 +181,46 @@ def test_publish_retry_and_log(monkeypatch, caplog):
     mgr.handle("x")
     assert len(attempts) == 3
     assert "failed publishing escalation event" in caplog.text
+
+
+def test_init_fails_without_self_coding_manager(monkeypatch):
+    import menace.auto_escalation_manager as aem
+    from vector_service.context_builder import ContextBuilder
+    from pathlib import Path
+
+    class BadManager:
+        def __init__(self, *a, **k):
+            raise RuntimeError("boom")
+
+    class DummyPipeline:
+        def __init__(self, *a, **k):
+            pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "menace.self_coding_manager",
+        types.SimpleNamespace(SelfCodingManager=BadManager),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace.model_automation_pipeline",
+        types.SimpleNamespace(ModelAutomationPipeline=DummyPipeline),
+    )
+    monkeypatch.setattr(aem, "SelfCodingEngine", lambda *a, **k: object())
+    monkeypatch.setattr(aem, "CodeDB", lambda: object())
+    monkeypatch.setattr(aem, "ErrorDB", lambda: object())
+    monkeypatch.setattr(aem, "AutomatedDebugger", lambda *a, **k: object())
+    monkeypatch.setattr(aem, "resolve_path", lambda name: Path(name))
+    monkeypatch.setattr(
+        aem, "init_local_knowledge", lambda *a, **k: types.SimpleNamespace(memory=None)
+    )
+
+    with pytest.raises(RuntimeError):
+        aem.AutoEscalationManager(
+            context_builder=ContextBuilder(
+                "bots.db", "code.db", "errors.db", "workflows.db"
+            )
+        )
 
 
 def test_auto_rollback_service(tmp_path, monkeypatch):
