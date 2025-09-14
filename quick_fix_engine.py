@@ -24,6 +24,7 @@ from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
 
 from .snippet_compressor import compress_snippets
 from .codebase_diff_checker import generate_code_diff, flag_risky_changes
+from .sandbox_settings import SandboxSettings
 
 try:  # pragma: no cover - optional dependency
     from context_builder_util import ensure_fresh_weights
@@ -603,34 +604,34 @@ def generate_patch(
             shutil.copy2(path, after_target)
             diff_struct = generate_code_diff(before_dir, after_dir)
             risk_flags = flag_risky_changes(diff_struct)
-            if risk_flags:
-                logger.warning("risky changes detected: %s", risk_flags)
-            diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
-            workflow_changes = [
-                {"file": path_for_prompt(f), "code": "\n".join(d["added"])}
-                for f, d in diff_data.items()
-                if d["added"]
-            ]
-            if workflow_changes:
-                agent = HumanAlignmentAgent()
-                warnings = agent.evaluate_changes(workflow_changes, None, [])
-                if any(warnings.values()):
-                    log_violation(
-                        str(patch_id) if patch_id is not None else str(path),
-                        "alignment_warning",
-                        1,
-                        {"warnings": warnings},
-                        alignment_warning=True,
+            risk_score = min(1.0, len(risk_flags) / 10.0) if risk_flags else 0.0
+            settings = SandboxSettings()
+            threshold = float(getattr(settings, "diff_risk_threshold", 1.0))
+            event_bus = getattr(manager, "event_bus", None)
+            if event_bus and risk_flags:
+                try:
+                    event_bus.publish(
+                        "quick_fix:risk_flags",
+                        {
+                            "module": path.as_posix(),
+                            "risk_flags": risk_flags,
+                            "risk_score": risk_score,
+                        },
                     )
+                except Exception:
+                    logger.exception("failed to publish risk flags event")
+            high_risk = risk_score > threshold
             if patch_logger is not None:
                 for attempt in range(2):
                     try:
                         patch_logger.track_contributors(
                             [(f"{o}:{vid}", score) for o, vid, score in vectors],
-                            patch_id is not None,
+                            patch_id is not None and not high_risk,
                             patch_id=str(patch_id) if patch_id is not None else "",
                             session_id=cb_session,
                             effort_estimate=effort_estimate,
+                            risk_flags=risk_flags,
+                            diff_risk_score=risk_score,
                         )
                     except Exception:
                         logger.warning(
@@ -653,6 +654,45 @@ def generate_patch(
                                 "embedding backfill failed", exc_info=True
                             )
                         break
+            if high_risk:
+                shutil.copy2(before_target, path)
+                logger.warning(
+                    "patch aborted due to high diff risk %.2f > %.2f", risk_score, threshold
+                )
+                if event_bus:
+                    try:
+                        event_bus.publish(
+                            "quick_fix:risk_aborted",
+                            {
+                                "module": path.as_posix(),
+                                "risk_flags": risk_flags,
+                                "risk_score": risk_score,
+                            },
+                        )
+                    except Exception:
+                        logger.exception(
+                            "failed to publish risk aborted event"
+                        )
+                return (None, risk_flags) if return_flags else None
+            if risk_flags:
+                logger.warning("risky changes detected: %s", risk_flags)
+            diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+            workflow_changes = [
+                {"file": path_for_prompt(f), "code": "\n".join(d["added"])}
+                for f, d in diff_data.items()
+                if d["added"]
+            ]
+            if workflow_changes:
+                agent = HumanAlignmentAgent()
+                warnings = agent.evaluate_changes(workflow_changes, None, [])
+                if any(warnings.values()):
+                    log_violation(
+                        str(patch_id) if patch_id is not None else str(path),
+                        "alignment_warning",
+                        1,
+                        {"warnings": warnings},
+                        alignment_warning=True,
+                    )
             try:
                 py_compile.compile(str(path), doraise=True)
             except Exception as exc:
