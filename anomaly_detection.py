@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Iterable, List
+from statistics import median
 
 import logging
 
@@ -19,6 +20,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional
     torch = None  # type: ignore
     nn = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from .data_bot import MetricsDB  # type: ignore
+except Exception:  # pragma: no cover - optional
+    MetricsDB = None  # type: ignore
 
 
 if nn is not None:  # pragma: no cover - optional
@@ -66,27 +72,57 @@ def _cluster_scores(values: List[float]) -> List[float]:
     return [abs(v - center) for v in values]
 
 
-def anomaly_scores(values: Iterable[float]) -> List[float]:
-    """Return anomaly scores for a sequence of values."""
+def _mad_scores(values: List[float]) -> List[float]:
+    """Robust anomaly scores based on Median Absolute Deviation."""
+    med = median(values)
+    deviations = [abs(v - med) for v in values]
+    mad = median(deviations)
+    if mad == 0:
+        return [0.0 for _ in values]
+    return [d / mad for d in deviations]
+
+
+def anomaly_scores(
+    values: Iterable[float],
+    *,
+    metrics_db: "MetricsDB" | None = None,
+    field: str = "value",
+) -> List[float]:
+    """Return anomaly scores for a sequence of values.
+
+    When provided, ``metrics_db`` receives all calculated scores via
+    :meth:`MetricsDB.log_eval`.
+    """
+
     vals = list(values)
     if not vals:
         return []
+
+    scores: List[float]
     if torch is not None and nn is not None:
         try:
-            return _ae_scores(vals)
+            scores = _ae_scores(vals)
+            if metrics_db:
+                for s in scores:
+                    metrics_db.log_eval("anomaly", field, float(s))
+            return scores
         except Exception:  # pragma: no cover - runtime issues
             logger.exception("_ae_scores failed, falling back to alternative method")
     if KMeans is not None and np is not None:
         try:
-            return _cluster_scores(vals)
+            scores = _cluster_scores(vals)
+            if metrics_db:
+                for s in scores:
+                    metrics_db.log_eval("anomaly", field, float(s))
+            return scores
         except Exception:  # pragma: no cover - runtime issues
-            logger.exception("_cluster_scores failed, falling back to standard deviation")
-    mean = sum(vals) / len(vals)
-    var = sum((v - mean) ** 2 for v in vals) / len(vals)
-    std = var ** 0.5
-    if std == 0:
-        return [0.0 for _ in vals]
-    return [abs(v - mean) / std for v in vals]
+            logger.exception("_cluster_scores failed, falling back to MAD")
+
+    scores = _mad_scores(vals)
+    if metrics_db:
+        for s in scores:
+            metrics_db.log_eval("anomaly", field, float(s))
+    return scores
 
 
 __all__ = ["anomaly_scores"]

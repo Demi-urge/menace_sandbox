@@ -2781,9 +2781,9 @@ class DataBot:
         """Return indices of rows considered anomalies.
 
         When PyTorch or scikit-learn are available this delegates to
-        :mod:`menace.anomaly_detection` and logs the produced anomaly scores
-        via ``metrics_db``.  It falls back to a simple standard deviation based
-        approach otherwise.
+        :mod:`menace.anomaly_detection`, which will log the produced anomaly
+        scores via ``metrics_db``.  It falls back to a simple standard deviation
+        based approach otherwise.
         """
         values: List[float]
         if pd is not None and hasattr(df, "empty") and not getattr(df, "empty", True):
@@ -2801,10 +2801,9 @@ class DataBot:
         try:
             from . import anomaly_detection
 
-            scores = anomaly_detection.anomaly_scores(values)
-            if metrics_db:
-                for score in scores:
-                    metrics_db.log_eval("anomaly", field, float(score))
+            scores = anomaly_detection.anomaly_scores(
+                values, metrics_db=metrics_db, field=field
+            )
             mean_s = sum(scores) / len(scores)
             std_s = (sum((s - mean_s) ** 2 for s in scores) / len(scores)) ** 0.5 or 1.0
             return [i for i, s in enumerate(scores) if s > mean_s + threshold * std_s]
