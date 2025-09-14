@@ -1,9 +1,21 @@
 import importlib
 
 
+import importlib
+import types
+
+
 class DummyBuilder:
     def refresh_db_weights(self):
         pass
+
+
+class DummyManager:
+    def __init__(self):
+        self.evolution_orchestrator = types.SimpleNamespace(provenance_token="tok", event_bus=None)
+
+    def generate_patch(self, module, description="", context_builder=None, provenance_token="", **kwargs):  # pragma: no cover - stub
+        return 1
 
 
 def test_resolve_path_updates_after_repo_move(monkeypatch, tmp_path):
@@ -65,7 +77,7 @@ def test_error_logger_path_for_prompt_cache(monkeypatch, tmp_path):
         def add_telemetry(self, event):
             self.events.append(event)
 
-    logger = el.ErrorLogger(db=DummyDB(), context_builder=DummyBuilder())
+    logger = el.ErrorLogger(db=DummyDB(), context_builder=DummyBuilder(), manager=DummyManager())
     events1 = logger.log_fix_suggestions({}, {})
     assert events1 and events1[0].module == file_a.resolve().as_posix()
 

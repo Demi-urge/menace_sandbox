@@ -59,15 +59,18 @@ except Exception:  # pragma: no cover - package fallback
     from roi_calculator import propose_fix  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from .quick_fix_engine import generate_patch
     from vector_service.context_builder import ContextBuilder
-except Exception:
+except Exception:  # pragma: no cover - builder unavailable
+    ContextBuilder = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - for type hints only
     try:
-        from quick_fix_engine import generate_patch  # type: ignore
-        from vector_service.context_builder import ContextBuilder  # type: ignore
-    except Exception:
-        generate_patch = None  # type: ignore
-        ContextBuilder = None  # type: ignore
+        from .self_coding_manager import SelfCodingManager
+    except Exception:  # pragma: no cover - fallback for flat layout
+        from self_coding_manager import SelfCodingManager  # type: ignore
+else:  # pragma: no cover - lightweight runtime stub
+    class SelfCodingManager:  # type: ignore
+        pass
 
 from governed_embeddings import governed_embed, get_embedder
 try:  # pragma: no cover - allow flat imports
@@ -451,7 +454,10 @@ class ErrorLogger:
         sentry: "SentryClient" | None = None,
         knowledge_graph: "KnowledgeGraph" | None = None,
         context_builder: ContextBuilder,
+        manager: SelfCodingManager,
     ) -> None:
+        if manager is None:
+            raise TypeError("manager is required")
         if db is None:
             try:
                 from .error_bot import ErrorDB as _ErrorDB
@@ -478,6 +484,7 @@ class ErrorLogger:
         if context_builder is None:
             raise TypeError("context_builder is required")
         self.context_builder = context_builder
+        self.manager = manager
         try:
             self.context_builder.refresh_db_weights()
         except Exception as e:  # pragma: no cover - validation issues
@@ -573,6 +580,38 @@ class ErrorLogger:
                 self.replicator.replicate(event)
             except Exception as e:  # pragma: no cover - network issues
                 self.logger.error("failed to replicate telemetry: %s", e)
+        orchestrator = getattr(self.manager, "evolution_orchestrator", None)
+        token = getattr(orchestrator, "provenance_token", "")
+        if root_module:
+            try:
+                self.manager.generate_patch(
+                    root_module,
+                    description=cause,
+                    context_builder=self.context_builder,
+                    provenance_token=token,
+                )
+            except Exception as e:  # pragma: no cover - patch failures
+                self.logger.error(
+                    "self-coding patch failed for %s: %s", root_module, e
+                )
+                bus = (
+                    getattr(self.manager, "event_bus", None)
+                    or getattr(orchestrator, "event_bus", None)
+                )
+                if bus:
+                    try:
+                        bus.publish(
+                            "self_coding:patch_failed",
+                            {
+                                "bot": getattr(self.manager, "bot_name", ""),
+                                "module": root_module,
+                                "reason": str(e),
+                            },
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish patch_failed event"
+                        )
         if category is ErrorCategory.Unknown:
             self._unknown_counter += 1
             if self._unknown_counter >= self._update_threshold:
@@ -674,13 +713,6 @@ class ErrorLogger:
             except Exception:  # pragma: no cover - helper failures
                 discrepancies = []
 
-        prompt_context = "\n".join(
-            s.content for s in samples if getattr(s, "content", "")
-        )
-        discrepancy_context = "\n".join(
-            d.content for d in discrepancies if getattr(d, "content", "")
-        )
-
         for module, hint in suggestions:
             resolved_module = path_for_prompt(module) if module else None
             payload = {
@@ -746,12 +778,15 @@ class ErrorLogger:
                 except Exception as e:  # pragma: no cover - I/O issues
                     self.logger.error("failed to open fix ticket: %s", e)
 
-            if generate_patch is not None and resolved_module:
+            if resolved_module:
+                orchestrator = getattr(self.manager, "evolution_orchestrator", None)
+                token = getattr(orchestrator, "provenance_token", "")
                 try:
-                    patch_id = generate_patch(
+                    patch_id = self.manager.generate_patch(
                         resolved_module,
-                        getattr(self, "manager", None),
+                        description=hint,
                         context_builder=self.context_builder,
+                        provenance_token=token,
                     )
                     if patch_id is not None:
                         try:
@@ -770,17 +805,33 @@ class ErrorLogger:
                             )
                 except Exception as e:  # pragma: no cover - patch failures
                     self.logger.error(
-                        "quick fix generation failed for %s: %s",
+                        "self-coding patch failed for %s: %s",
                         resolved_module,
                         e,
                     )
+                    bus = (
+                        getattr(self.manager, "event_bus", None)
+                        or getattr(orchestrator, "event_bus", None)
+                    )
+                    if bus:
+                        try:
+                            bus.publish(
+                                "self_coding:patch_failed",
+                                {
+                                    "bot": getattr(self.manager, "bot_name", ""),
+                                    "module": resolved_module,
+                                    "reason": str(e),
+                                },
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "failed to publish patch_failed event"
+                            )
             else:
-                prompt = f"Fix bottleneck in {resolved_module or 'unknown module'}: {hint}"
-                if prompt_context:
-                    prompt += "\n\n### Training Examples\n" + prompt_context
-                if discrepancy_context:
-                    prompt += "\n\n### Discrepancy Examples\n" + discrepancy_context
-                self.logger.info("Codex prompt: %s", prompt)
+                self.logger.warning(
+                    "self-coding disabled or module unresolved for fix suggestion: %s",
+                    hint,
+                )
 
             events.append(event)
 

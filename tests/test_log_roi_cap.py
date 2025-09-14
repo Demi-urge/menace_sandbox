@@ -1,11 +1,20 @@
 import json
 import types
 import menace.error_logger as elog
+import types
 
 
 class DummyBuilder:
     def refresh_db_weights(self):
         pass
+
+
+class DummyManager:
+    def __init__(self):
+        self.evolution_orchestrator = types.SimpleNamespace(provenance_token="tok", event_bus=None)
+
+    def generate_patch(self, module, description="", context_builder=None, provenance_token="", **kwargs):  # pragma: no cover - stub
+        return 1
 
 
 class StubReplicator:
@@ -29,7 +38,7 @@ def test_log_roi_cap_emits_roibottleneck_event(monkeypatch):
     monkeypatch.setattr(elog, "TelemetryReplicator", StubReplicator)
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = types.SimpleNamespace(add_telemetry=lambda e: None)
-    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder(), manager=DummyManager())
     profile = {
         "weights": {
             "profitability": 0.25,
@@ -69,7 +78,7 @@ def test_log_roi_cap_logs_when_no_replicator(monkeypatch):
     monkeypatch.delenv("KAFKA_HOSTS", raising=False)
     monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = types.SimpleNamespace(add_telemetry=lambda e: None)
-    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder(), manager=DummyManager())
 
     class StubLogger:
         def __init__(self):
