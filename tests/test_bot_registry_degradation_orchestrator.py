@@ -49,7 +49,7 @@ def test_degradation_flows_through_orchestrator():
     manager.evolution_orchestrator = orchestrator
 
     registry = BotRegistry()
-    registry.register_bot("sample", manager=manager, data_bot=data_bot)
+    registry.register_bot("sample", manager=manager, data_bot=data_bot, is_coding_bot=True)
 
     data_bot.check_degradation("sample", roi=0.0, errors=5.0)
 

@@ -195,7 +195,7 @@ def test_full_self_coding_flow(tmp_path, monkeypatch):
     # Decorator capturing registration and update
     def self_coding_decorator(cls):
         module_path = inspect.getfile(cls)
-        registry.register_bot(cls.name, manager=object(), data_bot=data_bot)
+        registry.register_bot(cls.name, manager=object(), data_bot=data_bot, is_coding_bot=True)
         registry.update_bot(cls.name, module_path)
         return cls
 
