@@ -895,7 +895,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.patches_cmd == "list":
             rows = db.list_patches(args.limit)
             patches = [
-                {"id": pid, "filename": rec.filename, "description": rec.description}
+                {
+                    "id": pid,
+                    "filename": rec.filename,
+                    "description": rec.description,
+                    "tests_failed_before": rec.tests_failed_before,
+                    "tests_failed_after": rec.tests_failed_after,
+                }
                 for pid, rec in rows
             ]
             print(json.dumps(patches))

@@ -1,6 +1,12 @@
 import types
+import sys
 
 import pytest
+
+db_stub = types.SimpleNamespace(
+    DBRouter=object, GLOBAL_ROUTER=object(), init_db_router=lambda *a, **k: object()
+)
+sys.modules.setdefault("db_router", db_stub)
 
 from vector_service.patch_logger import PatchLogger
 from enhancement_score import EnhancementMetrics, compute_enhancement_score
@@ -22,6 +28,7 @@ class DummyPatchDB:
         regret,
         lines_changed,
         tests_passed,
+        tests_failed_after,
         context_tokens,
         patch_difficulty,
         effort_estimate,

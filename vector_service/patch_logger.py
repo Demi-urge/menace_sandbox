@@ -684,6 +684,7 @@ class PatchLogger:
                             regret=not result,
                             lines_changed=lines_changed,
                             tests_passed=tests_passed,
+                            tests_failed_after=tests_failed_count,
                             context_tokens=context_tokens_val,
                             patch_difficulty=patch_difficulty,
                             effort_estimate=effort_estimate_val,

@@ -8,6 +8,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+db_stub = types.SimpleNamespace(
+    DBRouter=object, GLOBAL_ROUTER=object(), init_db_router=lambda *a, **k: object()
+)
+sys.modules.setdefault("db_router", db_stub)
+
 from vector_service.patch_logger import PatchLogger
 from vector_metrics_db import VectorMetricsDB
 from enhancement_score import EnhancementMetrics, compute_enhancement_score
@@ -17,7 +22,7 @@ class SimplePatchDB:
     def __init__(self, path):
         self.conn = sqlite3.connect(path)
         self.conn.execute(
-            "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, patch_difficulty INTEGER, time_to_completion REAL, error_trace_count INTEGER, effort_estimate REAL, enhancement_score REAL)"
+            "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, patch_difficulty INTEGER, time_to_completion REAL, error_trace_count INTEGER, effort_estimate REAL, enhancement_score REAL, tests_failed_after INTEGER)"
         )
 
     def add(self):
@@ -49,6 +54,7 @@ class SimplePatchDB:
         regret,
         lines_changed=None,
         tests_passed=None,
+        tests_failed_after=None,
         context_tokens=None,
         patch_difficulty=None,
         effort_estimate=None,
@@ -66,13 +72,14 @@ class SimplePatchDB:
         enhancement_score=None,
     ):
         self.conn.execute(
-            "UPDATE patch_history SET patch_difficulty=?, time_to_completion=?, error_trace_count=?, effort_estimate=?, enhancement_score=? WHERE id=?",
+            "UPDATE patch_history SET patch_difficulty=?, time_to_completion=?, error_trace_count=?, effort_estimate=?, enhancement_score=?, tests_failed_after=? WHERE id=?",
             (
                 patch_difficulty,
                 time_to_completion,
                 error_trace_count,
                 effort_estimate,
                 enhancement_score,
+                tests_failed_after,
                 patch_id,
             ),
         )
