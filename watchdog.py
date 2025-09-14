@@ -90,7 +90,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - gracefully degrade in tests
     UnifiedEventBus = None  # type: ignore
 from .coding_bot_interface import self_coding_managed
-from .data_bot import DataBot
+from .data_bot import DataBot, persist_sc_thresholds
 from .self_coding_engine import SelfCodingEngine
 from .self_coding_manager import internalize_coding_bot
 from .model_automation_pipeline import ModelAutomationPipeline
@@ -298,6 +298,12 @@ class Watchdog:
             context_builder=self.context_builder,
             event_bus=bus_local,
             bot_registry=self.registry,
+        )
+        persist_sc_thresholds(
+            self.__class__.__name__,
+            roi_drop=self.thresholds.roi_loss_percent,
+            error_increase=self.thresholds.error_trend,
+            event_bus=bus_local,
         )
         self.manager = internalize_coding_bot(
             self.__class__.__name__,

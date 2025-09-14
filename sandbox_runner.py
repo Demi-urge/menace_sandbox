@@ -193,7 +193,8 @@ except Exception:  # pragma: no cover - fallback for test stubs
     from patch_suggestion_db import PatchSuggestionDB
 from menace.audit_trail import AuditTrail
 from menace.error_bot import ErrorBot, ErrorDB
-from menace.data_bot import MetricsDB, DataBot
+from menace.data_bot import MetricsDB, DataBot, persist_sc_thresholds
+from menace.self_coding_thresholds import get_thresholds
 from menace.composite_workflow_scorer import CompositeWorkflowScorer
 from menace.neuroplasticity import PathwayDB
 from sandbox_runner.metrics_plugins import (
@@ -965,6 +966,13 @@ def _sandbox_init(
 
     bus = UnifiedEventBus()
     registry = BotRegistry(event_bus=bus)
+    _th = get_thresholds("menace")
+    persist_sc_thresholds(
+        "menace",
+        roi_drop=_th.roi_drop,
+        error_increase=_th.error_increase,
+        test_failure_increase=_th.test_failure_increase,
+    )
     quick_manager = internalize_coding_bot(
         "menace",
         engine,
@@ -974,6 +982,9 @@ def _sandbox_init(
         data_bot=data_bot,
         bot_registry=registry,
         event_bus=bus,
+        roi_threshold=_th.roi_drop,
+        error_threshold=_th.error_increase,
+        test_failure_threshold=_th.test_failure_increase,
     )
     quick_fix_engine = QuickFixEngine(
         telem_db,

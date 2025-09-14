@@ -68,7 +68,8 @@ from vector_service.context_builder import ContextBuilder  # noqa: E402
 from context_builder_util import create_context_builder  # noqa: E402
 from .shared_event_bus import event_bus as bus  # noqa: E402
 from .bot_registry import BotRegistry  # noqa: E402
-from .data_bot import DataBot  # noqa: E402
+from .data_bot import DataBot, persist_sc_thresholds  # noqa: E402
+from .self_coding_thresholds import get_thresholds  # noqa: E402
 from .coding_bot_interface import self_coding_managed  # noqa: E402
 
 try:  # optional dependency
@@ -394,6 +395,14 @@ class ServiceSupervisor:
             event_bus=bus,
             bot_registry=registry,
         )
+        _th = get_thresholds(self.__class__.__name__)
+        persist_sc_thresholds(
+            self.__class__.__name__,
+            roi_drop=_th.roi_drop,
+            error_increase=_th.error_increase,
+            test_failure_increase=_th.test_failure_increase,
+            event_bus=bus,
+        )
         manager = internalize_coding_bot(
             self.__class__.__name__,
             engine,
@@ -402,6 +411,9 @@ class ServiceSupervisor:
             bot_registry=registry,
             approval_policy=self.approval_policy,
             event_bus=bus,
+            roi_threshold=_th.roi_drop,
+            error_threshold=_th.error_increase,
+            test_failure_threshold=_th.test_failure_increase,
         )
         manager.context_builder = self.context_builder
         self.manager = manager
@@ -440,6 +452,14 @@ class ServiceSupervisor:
                 event_bus=bus,
                 bot_registry=registry,
             )
+            _th = get_thresholds(self.__class__.__name__)
+            persist_sc_thresholds(
+                self.__class__.__name__,
+                roi_drop=_th.roi_drop,
+                error_increase=_th.error_increase,
+                test_failure_increase=_th.test_failure_increase,
+                event_bus=bus,
+            )
             manager = internalize_coding_bot(
                 self.__class__.__name__,
                 engine,
@@ -448,6 +468,9 @@ class ServiceSupervisor:
                 bot_registry=registry,
                 approval_policy=self.approval_policy,
                 event_bus=bus,
+                roi_threshold=_th.roi_drop,
+                error_threshold=_th.error_increase,
+                test_failure_threshold=_th.test_failure_increase,
             )
             manager.context_builder = self.context_builder
             manager.run_patch(path, description)
