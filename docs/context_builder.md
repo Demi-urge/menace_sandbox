@@ -83,6 +83,38 @@ source while lower weights trade recall for diversity.
 }
 ```
 
+## Building prompts
+
+``ContextBuilder.build_prompt`` converts a user intent into a ``Prompt`` dataclass
+ready for downstream LLM calls. The method optionally expands the intent into
+latent queries, deduplicates overlapping snippets and ranks the remaining
+examples by similarity and ROI. The highest scoring examples are packed into
+the prompt while respecting the configured token budget.
+
+```python
+from vector_service.context_builder import ContextBuilder
+
+builder = ContextBuilder()
+prompt = builder.build_prompt("optimise database", latent_queries=["speed up queries"])
+print(prompt.user)
+print(prompt.examples)
+```
+
+Example output::
+
+```
+Prompt(user='optimise database', examples=['index existing tables', 'cache results'])
+```
+
+Configuration knobs controlling this method live under ``context_builder`` in the
+main settings file:
+
+```yaml
+context_builder:
+  prompt_max_tokens: 400       # token budget for build_prompt
+  prompt_score_weight: 1.2     # bias similarity vs ROI when ranking examples
+```
+
 Enhancement entries derive their text from the record's title or description and
 use ROI or adoption metrics when available to bias ranking. Information entries
 pull from titles or summaries and include any recorded lessons to guide model

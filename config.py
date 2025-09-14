@@ -232,6 +232,14 @@ class ContextBuilderConfig(BaseModel):
         "cosine",
         description="Similarity metric for patch examples. Options: cosine or inner_product",
     )
+    prompt_max_tokens: int = Field(
+        800,
+        description="Token budget for prompts generated via ContextBuilder.build_prompt",
+    )
+    prompt_score_weight: float = Field(
+        1.0,
+        description="Multiplier applied to similarity scores when ranking prompt examples",
+    )
 
     model_config = ConfigDict(extra="forbid")
 

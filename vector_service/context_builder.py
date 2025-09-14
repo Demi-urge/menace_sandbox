@@ -36,6 +36,7 @@ from .embedding_backfill import (
     EmbeddingBackfill,
     schedule_backfill,
 )
+from prompt_types import Prompt
 
 try:  # pragma: no cover - optional precise tokenizer
     import tiktoken
@@ -297,6 +298,12 @@ class ContextBuilder:
         embedding_check_interval: float = getattr(
             ContextBuilderConfig(), "embedding_check_interval", 0
         ),
+        prompt_score_weight: float = getattr(
+            ContextBuilderConfig(), "prompt_score_weight", 1.0
+        ),
+        prompt_max_tokens: int = getattr(
+            ContextBuilderConfig(), "prompt_max_tokens", 800
+        ),
     ) -> None:
         self.roi_tag_penalties = roi_tag_penalties
         self.retriever = retriever or Retriever(context_builder=self)
@@ -371,6 +378,8 @@ class ContextBuilder:
         self.patch_safety.max_alert_severity = max_alignment_severity
         self.patch_safety.max_alerts = max_alerts
         self.patch_safety.license_denylist = self.license_denylist
+        self.prompt_score_weight = prompt_score_weight
+        self.prompt_max_tokens = prompt_max_tokens
 
         # Attempt to use tokenizer from retriever or embedder if provided.
         tok = getattr(self.retriever, "tokenizer", None)
@@ -1384,6 +1393,99 @@ class ContextBuilder:
         if return_stats:
             return context, stats
         return context
+
+    # ------------------------------------------------------------------
+    @log_and_measure
+    def build_prompt(
+        self,
+        intent: str,
+        *,
+        latent_queries: Iterable[str] | None = None,
+        top_k: int = 5,
+        **kwargs: Any,
+    ) -> Prompt:
+        """Construct a :class:`Prompt` for ``intent``.
+
+        The method expands ``intent`` into *latent_queries* when provided and
+        retrieves contextual snippets via :meth:`build_context`.  Retrieved
+        snippets are deduplicated semantically and ranked using a lightweight
+        priority score before being packed into a :class:`Prompt` suitable for
+        downstream LLM calls.
+        """
+
+        if not isinstance(intent, str) or not intent.strip():
+            raise MalformedPromptError("intent must be a non-empty string")
+
+        queries: List[str] = [intent]
+        if latent_queries:
+            queries.extend(q for q in latent_queries if isinstance(q, str) and q)
+        else:
+            expander = getattr(getattr(self, "memory", None), "expand_intent", None)
+            if callable(expander):
+                try:
+                    extra = expander(intent)
+                except Exception:
+                    extra = None
+                if extra:
+                    if isinstance(extra, str):
+                        queries.append(extra)
+                    else:
+                        queries.extend(str(q) for q in extra if q)
+
+        combined_meta: Dict[str, List[Dict[str, Any]]] = {}
+        vectors: List[Tuple[str, str, float]] = []
+        for q in queries:
+            ctx_data = self.build_context(
+                q,
+                top_k=top_k,
+                include_vectors=True,
+                return_metadata=True,
+                **kwargs,
+            )
+            try:
+                ctx, _sid, vecs, meta = ctx_data  # type: ignore[misc]
+            except Exception:
+                ctx = ctx_data  # type: ignore[assignment]
+                vecs = []
+                meta = {}
+            for bucket, items in meta.items():
+                combined_meta.setdefault(bucket, []).extend(items)
+            vectors.extend(vecs)
+
+        dedup: Dict[str, Tuple[float, str]] = {}
+        scores: List[float] = []
+        for items in combined_meta.values():
+            for item in items:
+                desc = str(item.get("desc") or "")
+                if not desc:
+                    continue
+                key = re.sub(r"\s+", " ", desc).strip().lower()
+                score = float(item.get("score") or 0.0)
+                roi = float(item.get("roi") or 0.0)
+                priority = score * self.prompt_score_weight + roi * self.roi_weight
+                scores.append(score)
+                cur = dedup.get(key)
+                if cur is None or priority > cur[0]:
+                    dedup[key] = (priority, desc)
+
+        ranked = sorted(dedup.values(), key=lambda x: x[0], reverse=True)
+        examples: List[str] = []
+        used = 0
+        for _, desc in ranked:
+            tokens = self._count_tokens(desc)
+            if used + tokens > self.prompt_max_tokens:
+                break
+            examples.append(desc)
+            used += tokens
+
+        avg_conf = sum(scores) / len(scores) if scores else None
+        prompt = Prompt(
+            user=intent,
+            examples=examples,
+            vector_confidence=avg_conf,
+            metadata={"vector_confidences": scores, "vectors": vectors},
+        )
+        return prompt
 
     # ------------------------------------------------------------------
     @log_and_measure
