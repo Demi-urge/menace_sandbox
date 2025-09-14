@@ -21,6 +21,7 @@ from .self_coding_manager import (
     _manager_generate_helper_with_builder as manager_generate_helper,
 )
 from .self_coding_thresholds import get_thresholds
+from .shared_evolution_orchestrator import get_orchestrator
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
@@ -58,7 +59,7 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator: EvolutionOrchestrator | None = None
+evolution_orchestrator = get_orchestrator("AutomatedReviewer", data_bot, engine)
 _th = get_thresholds("AutomatedReviewer")
 persist_sc_thresholds(
     "AutomatedReviewer",

@@ -15,6 +15,7 @@ from .gpt_memory import GPTMemoryManager
 from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
+from .shared_evolution_orchestrator import get_orchestrator
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
@@ -65,7 +66,7 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator: EvolutionOrchestrator | None = None
+evolution_orchestrator = get_orchestrator("ResearchAggregatorBot", data_bot, engine)
 _th = get_thresholds("ResearchAggregatorBot")
 persist_sc_thresholds(
     "ResearchAggregatorBot",
