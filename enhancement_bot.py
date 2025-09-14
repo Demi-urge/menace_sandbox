@@ -1,4 +1,5 @@
 from __future__ import annotations
+# flake8: noqa
 
 from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
@@ -12,6 +13,7 @@ from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from .coding_bot_interface import self_coding_managed
 from typing import TYPE_CHECKING
+from .shared_evolution_orchestrator import get_orchestrator
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
@@ -22,7 +24,7 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator: EvolutionOrchestrator | None = None
+evolution_orchestrator = get_orchestrator("EnhancementBot", data_bot, engine)
 _th = get_thresholds("EnhancementBot")
 persist_sc_thresholds(
     "EnhancementBot",
@@ -247,7 +249,12 @@ class EnhancementBot:
 
         if self.manager is not None:
             desc = f"apply enhancement from {proposal.author_bot}\n\n{proposal.new_code}"
-            self.manager.run_patch(file_path, desc)
+            token = (
+                self.manager.evolution_orchestrator.provenance_token
+                if self.manager.evolution_orchestrator
+                else ""
+            )
+            self.manager.run_patch(file_path, desc, provenance_token=token)
             registry = getattr(self.manager, "bot_registry", None)
             if registry is not None:
                 try:

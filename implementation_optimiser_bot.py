@@ -21,10 +21,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import self_coding_managed
 from .task_handoff_bot import TaskPackage, TaskInfo
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .evolution_orchestrator import EvolutionOrchestrator
+from .shared_evolution_orchestrator import get_orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +31,9 @@ data_bot = DataBot(start_server=False)
 _context_builder = ContextBuilder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
-evolution_orchestrator: EvolutionOrchestrator | None = None
+evolution_orchestrator = get_orchestrator(
+    "ImplementationOptimiserBot", data_bot, engine
+)
 _th = get_thresholds("ImplementationOptimiserBot")
 persist_sc_thresholds(
     "ImplementationOptimiserBot",
@@ -358,7 +357,12 @@ class ImplementationOptimiserBot:
                     if path_str:
                         try:
                             path = Path(path_str)
-                            self.manager.run_patch(path, desc)
+                            token = (
+                                self.manager.evolution_orchestrator.provenance_token
+                                if self.manager.evolution_orchestrator
+                                else ""
+                            )
+                            self.manager.run_patch(path, desc, provenance_token=token)
                             if getattr(self.manager, "bot_registry", None):
                                 try:
                                     name = getattr(
