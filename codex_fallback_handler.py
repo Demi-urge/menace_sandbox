@@ -70,21 +70,12 @@ class _ContextClient:
         self._builder = context_builder
 
     def generate(self, prompt: Prompt) -> LLMResult:
-        context = ""
         try:
-            ctx_res = self._builder.build(prompt.user)
-            context = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-        except Exception:
-            context = ""
-        if context:
-            prompt = Prompt(
-                f"{context}\n\n{prompt.user}",
-                system=prompt.system,
-                examples=prompt.examples,
-                vector_confidence=prompt.vector_confidence,
-                tags=prompt.tags,
-                metadata=prompt.metadata,
+            prompt = self._builder.build_prompt(
+                prompt.user, intent_metadata=prompt.metadata
             )
+        except Exception:
+            pass
         return self._client.generate(prompt, context_builder=self._builder)
 
 

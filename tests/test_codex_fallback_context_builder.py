@@ -4,8 +4,8 @@ import codex_fallback_handler as cf
 
 
 class DummyBuilder:
-    def build(self, *_):
-        return ""
+    def build_prompt(self, user: str, *, intent_metadata=None):
+        return Prompt(user, metadata=intent_metadata or {})
 
 
 def test_fallback_generation_requires_context_builder(monkeypatch):
