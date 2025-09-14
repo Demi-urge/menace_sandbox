@@ -130,6 +130,11 @@ def test_manual_commit_mismatch_rejected(tmp_path, monkeypatch):
     _set_manager(reg, 1, "a")
     reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
     importlib.invalidate_caches()
+
+    def fail(self, *_a, **_k):
+        raise RuntimeError("bad sig")
+
+    monkeypatch.setattr(BotRegistry, "_verify_signed_provenance", fail)
     with pytest.raises(RuntimeError, match="update blocked"):
         reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="b")
     assert dummy.greet() == "old"
@@ -157,6 +162,11 @@ def test_missing_provenance_blocks_update(tmp_path, monkeypatch):
     reg.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
     importlib.invalidate_caches()
     _set_manager(reg, 2, "b")
+
+    def fail(self, *_a, **_k):
+        raise RuntimeError("bad sig")
+
+    monkeypatch.setattr(BotRegistry, "_verify_signed_provenance", fail)
     with pytest.raises(RuntimeError, match="update blocked"):
         reg.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="")
     assert dummy.greet() == "old"
