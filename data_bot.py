@@ -267,6 +267,8 @@ class MetricRecord:
     risk_index: float = 0.0
     maintainability: float = 0.0
     code_quality: float = 0.0
+    patch_success: float | None = None
+    patch_failure_reason: str = ""
     ts: str = datetime.utcnow().isoformat()
 
 
@@ -317,6 +319,8 @@ class MetricsDB:
                 risk_index REAL DEFAULT 0,
                 maintainability REAL DEFAULT 0,
                 code_quality REAL DEFAULT 0,
+                patch_success REAL,
+                patch_failure_reason TEXT,
                 ts TEXT,
                 source_menace_id TEXT NOT NULL
             )
@@ -657,6 +661,14 @@ class MetricsDB:
             conn.execute(
                 "ALTER TABLE metrics ADD COLUMN code_quality REAL DEFAULT 0"
             )
+        if "patch_success" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN patch_success REAL"
+            )
+        if "patch_failure_reason" not in cols:
+            conn.execute(
+                "ALTER TABLE metrics ADD COLUMN patch_failure_reason TEXT"
+            )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_bot ON metrics(bot)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)")
         conn.execute(
@@ -699,9 +711,10 @@ class MetricsDB:
                     flexibility, gpu_usage, projected_lucrativity,
                     profitability, patch_complexity, patch_entropy, energy_consumption,
                     resilience, network_latency, throughput, risk_index,
-                    maintainability, code_quality, ts, source_menace_id)
+                    maintainability, code_quality, patch_success, patch_failure_reason,
+                    ts, source_menace_id)
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -735,6 +748,8 @@ class MetricsDB:
                     rec.risk_index,
                     rec.maintainability,
                     rec.code_quality,
+                    rec.patch_success,
+                    rec.patch_failure_reason,
                     rec.ts,
                     menace_id,
                 ),
@@ -1093,7 +1108,7 @@ class MetricsDB:
             " antifragility, shannon_entropy, efficiency, flexibility, gpu_usage,"
             " projected_lucrativity, profitability, patch_complexity, patch_entropy,"
             " energy_consumption, resilience, network_latency, throughput,"
-            " risk_index, maintainability, code_quality, ts FROM metrics"
+            " risk_index, maintainability, code_quality, patch_success, patch_failure_reason, ts FROM metrics"
         )
         params: List[object] = []
         clauses: List[str] = []
@@ -1576,6 +1591,8 @@ class DataBot:
         risk_index: float = 0.0,
         maintainability: float = 0.0,
         code_quality: float = 0.0,
+        patch_success: float | None = None,
+        patch_failure_reason: str | None = None,
         bottleneck: float | None = None,
     ) -> MetricRecord:
         if psutil:
@@ -1684,6 +1701,8 @@ class DataBot:
             risk_index=risk_index,
             maintainability=maintainability,
             code_quality=code_quality,
+            patch_success=patch_success,
+            patch_failure_reason=patch_failure_reason or "",
         )
         self.db.add(rec)
         # compute efficiency/bottleneck metrics if not explicitly provided
@@ -1708,6 +1727,8 @@ class DataBot:
                 current_roi,
                 float(errors),
                 test_failures=float(tests_failed),
+                patch_success=patch_success,
+                patch_failure_reason=patch_failure_reason,
             )
         for name, gauge in self.gauges.items():
             gauge.labels(bot=bot).set(getattr(rec, name))
@@ -1774,6 +1795,8 @@ class DataBot:
         errors: float,
         test_failures: float = 0.0,
         *,
+        patch_success: float | None = None,
+        patch_failure_reason: str | None = None,
         callback: Callable[[dict], None] | None = None,
     ) -> bool:
         """Compare current metrics against configured degradation thresholds.
@@ -1807,14 +1830,27 @@ class DataBot:
         )
         ema = self._ema_baseline.setdefault(
             bot,
-            {"roi": float(roi), "errors": float(errors), "tests_failed": float(test_failures)},
+            {
+                "roi": float(roi),
+                "errors": float(errors),
+                "tests_failed": float(test_failures),
+                **(
+                    {"patch_success": float(patch_success)}
+                    if patch_success is not None
+                    else {}
+                ),
+            },
         )
         avg_roi = float(ema["roi"])
         avg_err = float(ema["errors"])
         avg_fail = float(ema["tests_failed"])
+        avg_patch = float(ema.get("patch_success", 0.0))
         delta_roi = roi - avg_roi
         delta_err = errors - avg_err
         delta_fail = test_failures - avg_fail
+        delta_patch = (
+            float(patch_success) - avg_patch if patch_success is not None else 0.0
+        )
 
         models = self._forecast_models.get(bot)
         meta = self._forecast_meta.get(bot, {})
@@ -1858,6 +1894,7 @@ class DataBot:
                         "error_confidence_high": err_high,
                         "test_failure_confidence_low": fail_low,
                         "test_failure_confidence_high": fail_high,
+                        "patch_success": patch_success,
                         "model": meta.get("model"),
                         "confidence": meta.get("confidence"),
                     },
@@ -1968,6 +2005,10 @@ class DataBot:
             "roi_baseline": avg_roi,
             "errors_baseline": avg_err,
             "tests_failed_baseline": avg_fail,
+            "patch_success": patch_success,
+            "patch_success_baseline": avg_patch,
+            "delta_patch_success": delta_patch,
+            "patch_failure_reason": patch_failure_reason,
             "roi_threshold": roi_thresh,
             "error_threshold": err_thresh,
             "test_failure_threshold": fail_thresh,
@@ -1986,6 +2027,8 @@ class DataBot:
             severity += 0.3 * max(0.0, delta_err / err_thresh)
         if fail_thresh:
             severity += 0.2 * max(0.0, delta_fail / fail_thresh)
+        if patch_success is not None:
+            severity += 0.1 * max(0.0, -delta_patch)
         event["severity"] = min(severity, 1.0)
         # Provide a concise summary for consumers that only require high-level
         # degradation indicators.
@@ -2001,11 +2044,25 @@ class DataBot:
         ema["roi"] = alpha * roi + (1.0 - alpha) * avg_roi
         ema["errors"] = alpha * errors + (1.0 - alpha) * avg_err
         ema["tests_failed"] = alpha * test_failures + (1.0 - alpha) * avg_fail
-        tracker.update(roi=roi, errors=errors, tests_failed=test_failures)
+        if patch_success is not None:
+            ema["patch_success"] = alpha * patch_success + (1.0 - alpha) * avg_patch
+            tracker.update(
+                roi=roi,
+                errors=errors,
+                tests_failed=test_failures,
+                patch_success=float(patch_success),
+            )
+        else:
+            tracker.update(roi=roi, errors=errors, tests_failed=test_failures)
+        patch_breach = False
+        if patch_success is not None:
+            patch_breach = delta_patch < -0.2
+        event["patch_success_breach"] = patch_breach
         degraded = (
             event["roi_breach"]
             or event["error_breach"]
             or event["test_failure_breach"]
+            or patch_breach
         )
 
         callbacks = []

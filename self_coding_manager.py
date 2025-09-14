@@ -432,6 +432,13 @@ class SelfCodingManager:
                         if abs(err_drift) > 0.01:
                             new_err = max(t.error_threshold + err_drift, 0.0)
                             updated = updated or new_err != t.error_threshold
+                    success_deltas = self.baseline_tracker.delta_history("patch_success")
+                    if success_deltas and len(success_deltas) >= self.baseline_tracker.window:
+                        success_drift = sum(success_deltas) / len(success_deltas)
+                        if abs(success_drift) > 0.01:
+                            new_roi = max(min(new_roi + success_drift, 0.0), -1.0)
+                            new_err = max(new_err - success_drift, 0.0)
+                            updated = True
                     if updated:
                         self.threshold_service.update(
                             self.bot_name,
@@ -812,6 +819,8 @@ class SelfCodingManager:
                     self.logger.exception("failed to publish patch_failed event")
             raise RuntimeError("QuickFixEngine validation unavailable") from exc
         self._last_commit_hash = None
+        success = False
+        failure_reason = ""
         try:
             result = self.run_patch(
                 path,
@@ -821,10 +830,25 @@ class SelfCodingManager:
                 context_builder=builder,
                 **kwargs,
             )
-        except Exception:
+            commit = getattr(self, "_last_commit_hash", None)
+            success = bool(commit)
+            if not success:
+                failure_reason = "no_commit"
+        except Exception as exc:
+            commit = None
+            failure_reason = str(exc)
+            if self.data_bot:
+                try:
+                    self.data_bot.collect(
+                        self.bot_name,
+                        patch_success=0.0,
+                        patch_failure_reason=failure_reason,
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to report patch outcome")
+            self.baseline_tracker.update(patch_success=0.0)
             self._last_commit_hash = None
             raise
-        commit = getattr(self, "_last_commit_hash", None)
         patch_id = getattr(self, "_last_patch_id", None)
         module_path = path_for_prompt(path)
         if commit and patch_id and self.bot_registry:
@@ -864,6 +888,16 @@ class SelfCodingManager:
                     )
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to publish patch events")
+        if self.data_bot:
+            try:
+                self.data_bot.collect(
+                    self.bot_name,
+                    patch_success=1.0 if success else 0.0,
+                    patch_failure_reason=None if success else failure_reason,
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to report patch outcome")
+        self.baseline_tracker.update(patch_success=1.0 if success else 0.0)
         return result, commit
 
     # ------------------------------------------------------------------
