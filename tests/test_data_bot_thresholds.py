@@ -192,6 +192,7 @@ def test_internalize_persists_defaults(monkeypatch, tmp_path):
     monkeypatch.setattr(sct, "_CONFIG_PATH", cfg_path)
     import menace.data_bot as db  # noqa: WPS433
     monkeypatch.setattr(db, "psutil", None)
+    monkeypatch.setattr(db, "persist_sc_thresholds", lambda *a, **k: None)
     stub_th = types.ModuleType("menace.sandbox_runner.test_harness")
     stub_th.run_tests = lambda *a, **k: None
     stub_th.TestHarnessResult = object
@@ -207,26 +208,27 @@ def test_internalize_persists_defaults(monkeypatch, tmp_path):
     stub_ra.ResearchItem = object
     monkeypatch.setitem(sys.modules, "menace.research_aggregator_bot", stub_ra)
     import menace.self_coding_manager as scm  # noqa: WPS433
-    monkeypatch.setattr(
-        scm,
-        "persist_sc_thresholds",
-        lambda bot, roi_drop=None, error_increase=None, test_failure_increase=None, **_: (
-            cfg_path.write_text(
-                yaml.safe_dump(
-                    {
-                        "bots": {
-                            bot: {
-                                "roi_drop": roi_drop,
-                                "error_increase": error_increase,
-                                "test_failure_increase": test_failure_increase,
-                            }
-                        }
-                    },
-                    sort_keys=False,
-                )
-            )
-        ),
-    )
+
+    def _persist(
+        bot,
+        roi_drop=None,
+        error_increase=None,
+        test_failure_increase=None,
+        patch_success_drop=None,
+        **_,
+    ):
+        cfg = {
+            "roi_drop": roi_drop,
+            "error_increase": error_increase,
+            "test_failure_increase": test_failure_increase,
+        }
+        if patch_success_drop is not None:
+            cfg["patch_success_drop"] = patch_success_drop
+        cfg_path.write_text(
+            yaml.safe_dump({"bots": {bot: cfg}}, sort_keys=False)
+        )
+
+    monkeypatch.setattr(scm, "persist_sc_thresholds", _persist)
 
     class DummyManager:
         def __init__(self, *_a, **_k):
@@ -310,3 +312,74 @@ def test_internalize_records_thresholds_and_emits_test_failure(monkeypatch, tmp_
     bus.subscribe("bot:degraded", lambda _t, e: events.append(e))
     data_bot.check_degradation("sample", roi=-1.0, errors=0.0, test_failures=1.0)
     assert events and events[0]["test_failure_breach"]
+
+
+def test_reload_thresholds_includes_patch_success(monkeypatch, tmp_path):
+    stub = types.ModuleType("vector_metrics_db")
+    monkeypatch.setitem(sys.modules, "menace.vector_metrics_db", stub)
+    sys.modules.setdefault("sandbox_settings", sys.modules["menace.sandbox_settings"])
+    import menace.self_coding_thresholds as sct  # noqa: WPS433
+    import menace.data_bot as db  # noqa: WPS433
+    monkeypatch.setattr(db, "psutil", None)
+
+    cfg = tmp_path / "sc.yaml"
+    cfg.write_text(
+        (
+            "default:\n"
+            "  roi_drop: -0.1\n"
+            "  error_increase: 1.0\n"
+            "  test_failure_increase: 0.0\n"
+            "  patch_success_drop: -0.05\n"
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sct, "_CONFIG_PATH", cfg)
+    monkeypatch.setattr(db, "_SC_PATH", cfg)
+    db._SC_CACHE.clear()
+    db.load_sc_thresholds(bot="alpha", settings=db.SandboxSettings(), path=cfg)
+    monkeypatch.setattr(db, "persist_sc_thresholds", lambda *a, **k: None)
+
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    bot = db.DataBot(mdb, settings=db.SandboxSettings())
+    rt = bot.reload_thresholds("alpha")
+    assert rt.patch_success_drop == -0.05
+
+
+def test_patch_success_breach_detection(monkeypatch, tmp_path):
+    stub = types.ModuleType("vector_metrics_db")
+    monkeypatch.setitem(sys.modules, "menace.vector_metrics_db", stub)
+    sys.modules.setdefault("sandbox_settings", sys.modules["menace.sandbox_settings"])
+    import menace.self_coding_thresholds as sct  # noqa: WPS433
+    import menace.data_bot as db  # noqa: WPS433
+    monkeypatch.setattr(db, "psutil", None)
+
+    cfg = tmp_path / "sc.yaml"
+    cfg.write_text(
+        (
+            "default:\n"
+            "  roi_drop: -0.1\n"
+            "  error_increase: 1.0\n"
+            "  test_failure_increase: 0.0\n"
+            "  patch_success_drop: -0.05\n"
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sct, "_CONFIG_PATH", cfg)
+    monkeypatch.setattr(db, "_SC_PATH", cfg)
+    db._SC_CACHE.clear()
+
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    bot = db.DataBot(mdb, settings=db.SandboxSettings(), smoothing_factor=1.0)
+    bot.reload_thresholds("alpha")
+    # establish baseline
+    assert not bot.check_degradation(
+        "alpha", roi=1.0, errors=0.0, test_failures=0.0, patch_success=1.0
+    )
+    # small drop within threshold
+    assert not bot.check_degradation(
+        "alpha", roi=1.0, errors=0.0, test_failures=0.0, patch_success=0.97
+    )
+    # large drop exceeding threshold triggers breach
+    assert bot.check_degradation(
+        "alpha", roi=1.0, errors=0.0, test_failures=0.0, patch_success=0.7
+    )
