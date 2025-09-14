@@ -3,9 +3,10 @@ import types
 import yaml
 
 
-stub_cbi = types.ModuleType("menace.coding_bot_interface")
+stub_cbi = types.ModuleType("coding_bot_interface")
 stub_cbi.self_coding_managed = lambda *a, **k: (lambda cls: cls)
 stub_cbi.manager_generate_helper = lambda *_a, **_k: None
+sys.modules["coding_bot_interface"] = stub_cbi
 sys.modules["menace.coding_bot_interface"] = stub_cbi
 
 

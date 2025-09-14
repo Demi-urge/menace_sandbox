@@ -120,24 +120,6 @@ from .self_coding_thresholds import (
     get_thresholds as _load_sc_thresholds,
     _load_config as _load_sc_config,
 )
-from .coding_bot_interface import self_coding_managed
-
-
-class _StubRegistry:
-    def register_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
-        return None
-
-    def update_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
-        return None
-
-
-class _StubDataBot:
-    def reload_thresholds(self, _name: str):  # pragma: no cover - stub
-        return type("_T", (), {})()
-
-
-_REGISTRY_STUB = _StubRegistry()
-_DATA_BOT_STUB = _StubDataBot()
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +147,9 @@ def persist_sc_thresholds(
     the :class:`ROIThresholds` naming scheme. Forecast configuration can be
     supplied via ``forecast_model``, ``confidence`` and ``model_params``.
     """
+
+    if _save_sc_thresholds is None:  # pragma: no cover - dependency check
+        raise RuntimeError("update_thresholds helper is unavailable")
 
     bus = event_bus or _SHARED_EVENT_BUS
     try:
@@ -206,6 +191,9 @@ def load_sc_thresholds(
     is returned.  Otherwise a mapping of all stored bot thresholds is
     produced.  Any errors are logged and mirrored to the event bus.
     """
+
+    if _load_sc_thresholds is None or _load_sc_config is None:  # pragma: no cover
+        raise RuntimeError("threshold helpers are unavailable")
 
     bus = event_bus or _SHARED_EVENT_BUS
     try:
@@ -1154,7 +1142,6 @@ class MetricsDB:
             return pd.read_sql(query, conn, params=params)
 
 
-@self_coding_managed(bot_registry=_REGISTRY_STUB, data_bot=_DATA_BOT_STUB)
 class DataBot:
     """Collect metrics, expose them to Prometheus and detect anomalies.
 
