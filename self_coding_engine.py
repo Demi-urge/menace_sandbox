@@ -915,6 +915,55 @@ class SelfCodingEngine:
                 self.logger.debug("failed to load analysis log", exc_info=True)
         return self._last_retry_trace
 
+    # ------------------------------------------------------------------
+    def build_enriched_prompt(
+        self,
+        goal: str,
+        *,
+        context_builder: ContextBuilder,
+        **kwargs: Any,
+    ) -> Prompt:
+        """Create and store an enriched :class:`Prompt` for ``goal``.
+
+        The helper delegates to :meth:`ContextBuilder.build_prompt` and merges
+        additional pieces of information that callers may provide via
+        ``intent_metadata`` or ``snippets``.  When an ``error_trace`` is
+        available it is persisted alongside vector retrieval metadata so that
+        subsequent :meth:`generate` calls can reference the combined context.
+        The resulting :class:`Prompt` is stored on ``self`` and returned.
+        """
+
+        intent_meta: Dict[str, Any] = dict(kwargs.pop("intent_metadata", {}) or {})
+        error_trace: str | None = kwargs.pop(
+            "error_trace", None
+        ) or self._last_retry_trace
+        snippets = kwargs.pop("snippets", None)
+
+        prompt_obj = context_builder.build_prompt(goal, **kwargs)
+        meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+        if intent_meta:
+            meta.update(intent_meta)
+        if error_trace:
+            meta["error_trace"] = error_trace
+        if snippets is not None:
+            meta["snippets"] = snippets
+        prompt_obj.metadata = meta
+        self._last_prompt = prompt_obj
+        self._last_prompt_metadata = meta
+        return prompt_obj
+
+    # ------------------------------------------------------------------
+    def _invoke_llm(self) -> LLMResult:
+        """Invoke the underlying LLM using the previously built prompt."""
+
+        if self._last_prompt is None:
+            raise RuntimeError("build_enriched_prompt must be called before inference")
+        return call_codex_with_backoff(
+            self.llm_client,
+            self._last_prompt,
+            logger=self.logger,
+        )
+
     @staticmethod
     def _get_repo_layout(limit: int) -> str:
         """Return a short list of top-level Python files in the repo."""
@@ -1198,44 +1247,30 @@ class SelfCodingEngine:
                 or metadata.get("prompt_strategy")
             )
         try:
-            prompt_obj = build_prompt(
+            prompt_obj = self.build_enriched_prompt(
                 description,
-                context=context_block,
-                retrieval_context=retrieval_context,
-                retry_trace=retry_trace,
-                tone=self.prompt_tone,
-                summaries=summaries,
-                target_region=target_region,
+                context_builder=self.context_builder,
+                intent_metadata={"retrieval_context": retrieval_context}
+                if retrieval_context
+                else {},
+                error_trace=retry_trace,
                 strategy=strategy,
-                context_builder=self.context_builder,
-            )
-        except TypeError:
-            if target_region is not None:
-                path_hint = path_for_prompt(path) if path else None
-                instr = (
-                    f"Modify only lines {target_region.start_line}-{target_region.end_line}"
-                )
-                if path_hint:
-                    instr += f" in {path_hint}"
-                instr += " unless dependent code requires changes."
-                context_block = (
-                    "\n".join([instr, context_block])
-                    if context_block
-                    else instr
-                )
-            prompt_obj = build_prompt(
-                description,
-                context=context_block,
-                retrieval_context=retrieval_context,
-                retry_trace=retry_trace,
-                summaries=summaries,
-                context_builder=self.context_builder,
+                snippets=[
+                    (getattr(s, "path", ""), s.code, getattr(s, "score", 0.0))
+                    for s in snippets
+                ],
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
             self._last_prompt_metadata = {}
             return _fallback()
-        self._last_prompt = prompt_obj
+
+        if context_block:
+            prompt_obj.user = "\n\n".join([context_block, prompt_obj.user]).strip()
+        if summaries:
+            summary_text = "\n".join(summaries).strip()
+            if summary_text:
+                prompt_obj.user = "\n\n".join([summary_text, prompt_obj.user]).strip()
         meta = dict(getattr(self.prompt_engine, "last_metadata", {}))
         meta.update(
             {
@@ -1253,7 +1288,7 @@ class SelfCodingEngine:
                     rc_text = str(rc)
             else:
                 rc_text = rc
-            prompt_obj.text += "\n\n### Retrieval context\n" + rc_text
+            prompt_obj.user += "\n\n### Retrieval context\n" + rc_text
 
         billing_notes = (
             metadata.get("billing_instructions")
@@ -1350,11 +1385,7 @@ class SelfCodingEngine:
 
         result = LLMResult()
         try:
-            result = call_codex_with_backoff(
-                self.llm_client,
-                prompt_obj,
-                logger=self.logger,
-            )
+            result = self._invoke_llm()
         except RetryError as exc:
             self._last_retry_trace = str(exc)
             self.logger.warning(
@@ -1362,12 +1393,9 @@ class SelfCodingEngine:
                 extra={"description": description},
             )
             prompt_obj = self.simplify_prompt(prompt_obj)
+            self._last_prompt = prompt_obj
             try:
-                result = call_codex_with_backoff(
-                    self.llm_client,
-                    prompt_obj,
-                    logger=self.logger,
-                )
+                result = self._invoke_llm()
             except RetryError as exc:
                 self._last_retry_trace = str(exc)
                 result = LLMResult(raw=str(exc))
