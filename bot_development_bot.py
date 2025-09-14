@@ -6,7 +6,7 @@ import json
 import os
 import time
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import List, Dict, Any, Iterable, Callable, Type
 import importlib.util
@@ -17,8 +17,6 @@ import subprocess
 import shutil
 import sys
 from dynamic_path_router import resolve_path
-import uuid
-from snippet_compressor import compress_snippets
 from context_builder_util import ensure_fresh_weights
 from secret_redactor import redact_secrets
 
@@ -40,7 +38,8 @@ from .models_repo import (
     ensure_models_repo,
 )
 from .coding_bot_interface import self_coding_managed
-from vector_service.context_builder import ContextBuilder, FallbackResult, ErrorResult
+from vector_service.context_builder import ContextBuilder
+from prompt_types import Prompt
 from .codex_output_analyzer import (
     validate_stripe_usage,
 )
@@ -93,7 +92,6 @@ except Exception:  # pragma: no cover - optional dependency
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
-    from .evolution_orchestrator import EvolutionOrchestrator
 
 try:  # pragma: no cover - optional dependency
     from .micro_models.tool_predictor import predict_tools  # type: ignore
@@ -733,16 +731,21 @@ class BotDevelopmentBot:
 
     # ------------------------------------------------------------------
     def _call_codex_api(
-        self, messages: list[dict[str, str]], path: Path | None = None
+        self, prompt: Prompt | list[dict[str, str]], path: Path | None = None
     ) -> EngineResult:
-        """Produce helper code via :class:`SelfCodingManager`.
+        """Produce helper code via :class:`SelfCodingManager`."""
 
-        All messages are concatenated with their role tags to form a single
-        prompt for :meth:`SelfCodingManager.run_patch`.  If no user prompt is
-        provided, the error is escalated and the method returns an
-        :class:`EngineResult` describing the failure or raises
-        :class:`ValueError` when :attr:`BotDevConfig.raise_errors` is true.
-        """
+        if isinstance(prompt, Prompt):
+            content = prompt.user
+            if prompt.examples:
+                content += "\n\n" + "\n".join(prompt.examples)
+            messages: list[dict[str, str]] = [
+                {"role": "user", "content": content}
+            ]
+            if prompt.system:
+                messages.insert(0, {"role": "system", "content": prompt.system})
+        else:
+            messages = prompt
 
         prompt_parts: list[str] = []
         user_found = False
@@ -817,8 +820,8 @@ class BotDevelopmentBot:
         sample_limit: int = 5,
         sample_sort_by: str = "confidence",
         sample_with_vectors: bool = True,
-    ) -> str:
-        """Return the final prompt for code generation.
+    ) -> Prompt:
+        """Return an enriched :class:`Prompt` for code generation.
 
         Parameters
         ----------
@@ -832,26 +835,9 @@ class BotDevelopmentBot:
         sample_with_vectors:
             Whether to request embedding vectors for the training examples.
         """
+
         if context_builder is None:
             raise ValueError("context_builder is required")
-        query = spec.description or spec.purpose or spec.name
-        session_id = uuid.uuid4().hex
-        ctx_result = context_builder.build(
-            query, session_id=session_id, include_vectors=True
-        )
-        context_session_id = session_id
-        vector_metadata: list[tuple[str, str, float]] = []
-        retrieval_context: str | Dict[str, Any] = ""
-        if isinstance(ctx_result, (ErrorResult, FallbackResult)):
-            retrieval_context = ""
-        else:
-            if isinstance(ctx_result, tuple):
-                retrieval_context, context_session_id, vector_metadata = ctx_result
-            else:
-                retrieval_context = ctx_result
-            retrieval_context = compress_snippets({"snippet": retrieval_context}).get(
-                "snippet", retrieval_context
-            )
 
         predicted_tool = ""
         pred_conf = 0.0
@@ -863,7 +849,6 @@ class BotDevelopmentBot:
             predicted_tool = ""
             pred_conf = 0.0
 
-        # Gather historical examples to provide additional prompt context
         samples = []
         if cdh is not None:
             try:
@@ -875,9 +860,7 @@ class BotDevelopmentBot:
                 )
             except Exception:
                 samples = []
-        sample_context = "\n".join(
-            s.content for s in samples if getattr(s, "content", "")
-        )
+        sample_texts = [s.content for s in samples if getattr(s, "content", "")]
 
         problem_lines: list[str] = [
             f"# Bot specification: {spec.name}",
@@ -933,7 +916,7 @@ class BotDevelopmentBot:
         implementation_instructions = "\n".join(instruction_lines)
         developer_constraints = "\n".join(constraint_lines)
 
-        prompt = (
+        intent_text = (
             "INSTRUCTION MODE: Generate Python code based on the inputs below.\n"
             "Problem Context:\n"
             f"{problem_context}\n\n"
@@ -944,26 +927,25 @@ class BotDevelopmentBot:
             "Expected Output:\n"
             "Return only the complete Python code without explanations or markdown."
         )
-        if predicted_tool:
-            prompt = inject_prefix(
-                prompt,
-                f"Suggested Tool: {predicted_tool}",
-                pred_conf,
-                role="system",
-            )
-        if retrieval_context:
-            if not isinstance(retrieval_context, str):
-                retrieval_context = json.dumps(retrieval_context, indent=2)
-            prompt += "\n\nContext:\n" + retrieval_context
-            meta_block = json.dumps(
-                {"context_session_id": context_session_id, "vectors": vector_metadata},
-                indent=2,
-            )
-            prompt += "\n\nContext Metadata:\n" + meta_block
-        if sample_context:
-            prompt += "\n\n### Training Examples\n" + sample_context
 
-        return prompt
+        prompt_obj = context_builder.build_prompt(intent_text)
+
+        if sample_texts:
+            for s in sample_texts:
+                if s and s not in prompt_obj.examples:
+                    prompt_obj.examples.append(s)
+
+        meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+        meta.update(
+            {
+                "bot_spec": asdict(spec),
+                "training_samples": sample_texts,
+                "predicted_tool": predicted_tool,
+                "predicted_tool_confidence": pred_conf,
+            }
+        )
+        prompt_obj.metadata = meta
+        return prompt_obj
 
     def build_bot(
         self,
@@ -1032,11 +1014,10 @@ class BotDevelopmentBot:
                 sample_sort_by=sample_sort_by,
                 sample_with_vectors=sample_with_vectors,
             )
-            messages = [{"role": "user", "content": prompt}]
             file_path = Path(resolve_path(repo_dir)) / f"{spec.name}.py"
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.touch(exist_ok=True)
-            result = self._call_codex_api(messages, path=file_path)
+            result = self._call_codex_api(prompt, path=file_path)
             if not result.success or not result.code:
                 errors = 1
                 raise RuntimeError(result.error or "engine request failed")

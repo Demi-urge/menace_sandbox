@@ -8,13 +8,16 @@ from llm_interface import LLMResult
 
 # Stub heavy dependencies before importing the targets
 
+
 @dataclass
 class _CodeRecord:
     code: str
 
+
 @dataclass
 class _BotRecord:
     name: str = ""
+
 
 sys.modules.setdefault(
     "menace.code_database",
@@ -36,11 +39,23 @@ sys.modules.setdefault(
         init_db_router=lambda *a, **k: None,
     ),
 )
-sys.modules.setdefault("menace.unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
-sys.modules.setdefault("menace.trend_predictor", types.SimpleNamespace(TrendPredictor=object))
-sys.modules.setdefault("menace.menace_memory_manager", types.SimpleNamespace(MenaceMemoryManager=object))
-sys.modules.setdefault("menace.safety_monitor", types.SimpleNamespace(SafetyMonitor=object))
-sys.modules.setdefault("menace.advanced_error_management", types.SimpleNamespace(FormalVerifier=object))
+sys.modules.setdefault(
+    "menace.unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object)
+)
+sys.modules.setdefault(
+    "menace.trend_predictor", types.SimpleNamespace(TrendPredictor=object)
+)
+sys.modules.setdefault(
+    "menace.menace_memory_manager",
+    types.SimpleNamespace(MenaceMemoryManager=object),
+)
+sys.modules.setdefault(
+    "menace.safety_monitor", types.SimpleNamespace(SafetyMonitor=object)
+)
+sys.modules.setdefault(
+    "menace.advanced_error_management",
+    types.SimpleNamespace(FormalVerifier=object),
+)
 sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
 sys.modules.setdefault(
     "menace.gpt_memory",
@@ -60,7 +75,10 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault(
     "menace.local_knowledge_module",
-    types.SimpleNamespace(LocalKnowledgeModule=object, init_local_knowledge=lambda *a, **k: None),
+    types.SimpleNamespace(
+        LocalKnowledgeModule=object,
+        init_local_knowledge=lambda *a, **k: None,
+    ),
 )
 sys.modules.setdefault(
     "menace.gpt_knowledge_service", types.SimpleNamespace(GPTKnowledgeService=object)
@@ -78,11 +96,18 @@ for name in [
     "gpt_knowledge_service",
 ]:
     sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
-sys.modules.setdefault("menace.rollback_manager", types.SimpleNamespace(RollbackManager=object))
-sys.modules.setdefault("menace.audit_trail", types.SimpleNamespace(AuditTrail=lambda *a, **k: object()))
+sys.modules.setdefault(
+    "menace.rollback_manager", types.SimpleNamespace(RollbackManager=object)
+)
+sys.modules.setdefault(
+    "menace.audit_trail",
+    types.SimpleNamespace(AuditTrail=lambda *a, **k: object()),
+)
 sys.modules.setdefault(
     "menace.access_control",
-    types.SimpleNamespace(READ=object(), WRITE=object(), check_permission=lambda *a, **k: None),
+    types.SimpleNamespace(
+        READ=object(), WRITE=object(), check_permission=lambda *a, **k: None
+    ),
 )
 sys.modules.setdefault(
     "menace.patch_suggestion_db",
@@ -110,18 +135,20 @@ for name in [
 ]:
     sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
 
-from menace.vector_service import ContextBuilder
+from menace.vector_service import ContextBuilder  # noqa: E402
 
-vs_mod = sys.modules.setdefault("vector_service", sys.modules["menace.vector_service"])
+vs_mod = sys.modules.setdefault(
+    "vector_service", sys.modules["menace.vector_service"]
+)
 setattr(vs_mod, "ErrorResult", Exception)
 
-from menace.self_coding_engine import SelfCodingEngine
-from menace.bot_development_bot import BotDevelopmentBot, BotSpec
-from menace.config import Config
-import menace.vector_service.decorators as dec
-from menace.vector_service.exceptions import MalformedPromptError
-import pytest
-from vector_metrics_db import VectorMetricsDB
+from menace.self_coding_engine import SelfCodingEngine  # noqa: E402
+from menace.bot_development_bot import BotDevelopmentBot, BotSpec  # noqa: E402
+from menace.config import Config  # noqa: E402
+import menace.vector_service.decorators as dec  # noqa: E402
+from menace.vector_service.exceptions import MalformedPromptError  # noqa: E402
+import pytest  # noqa: E402
+from vector_metrics_db import VectorMetricsDB  # noqa: E402
 
 
 class DummyClient:
@@ -259,12 +286,12 @@ def test_self_coding_engine_includes_context(monkeypatch):
 
 def test_bot_development_bot_includes_context(monkeypatch, tmp_path):
     builder, expected = make_builder(monkeypatch)
-    ctx = builder.build_context("alpha issue")
+    ctx_prompt = builder.build_prompt("alpha issue")
     bot = BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
     spec = BotSpec(name="demo", purpose="alpha issue")
     prompt = bot._build_prompt(spec, context_builder=builder)
-    assert "\n\nContext:\n" in prompt
-    assert ctx in prompt
+    for ex in ctx_prompt.examples:
+        assert ex in prompt.examples
 
 
 def test_weighted_ordering():

@@ -85,6 +85,9 @@ class _CB:
     def build(self, *_a, **_k):
         return ""
 
+    def build_prompt(self, query, **_k):
+        return types.SimpleNamespace(user=query, examples=[], metadata={})
+
     def refresh_db_weights(self):
         pass
 
@@ -216,7 +219,7 @@ def test_prompt_contains_docstrings(tmp_path):
                 context_builder=builder,
                 engine=_engine(),
             )
-            self.prompts: list[str] = []
+            self.prompts: list[bdb.Prompt] = []
 
         def build_bot(self, spec: bdb.BotSpec, *, context_builder, model_id=None) -> Path:  # type: ignore[override]
             prompt = self._build_prompt(spec, context_builder=context_builder)
@@ -274,8 +277,8 @@ def run():
     ]
 
     pipeline.run(tasks)
-    assert any("Module doc" in p for p in developer.prompts)
-    assert any("- run: Run task" in p for p in developer.prompts)
+    assert any("Module doc" in p.user for p in developer.prompts)
+    assert any("- run: Run task" in p.user for p in developer.prompts)
 
 
 def test_prompt_includes_guideline_sections(tmp_path):
@@ -286,7 +289,7 @@ def test_prompt_includes_guideline_sections(tmp_path):
                 context_builder=builder,
                 engine=_engine(),
             )
-            self.prompt = ""
+            self.prompt = None
 
         def build_bot(self, spec: bdb.BotSpec, *, context_builder, model_id=None) -> Path:  # type: ignore[override]
             self.prompt = self._build_prompt(spec, context_builder=context_builder)
@@ -313,12 +316,13 @@ def test_prompt_includes_guideline_sections(tmp_path):
 
     pipeline.run(tasks)
     prompt = developer.prompt
-    assert "INSTRUCTION MODE" in prompt
-    assert "Coding Standards:" in prompt
-    assert "Repository Layout:" in prompt
-    assert "Metadata:" in prompt
-    assert "Version Control:" in prompt
-    assert "Testing:" in prompt
+    assert prompt is not None
+    assert "INSTRUCTION MODE" in prompt.user
+    assert "Coding Standards:" in prompt.user
+    assert "Repository Layout:" in prompt.user
+    assert "Metadata:" in prompt.user
+    assert "Version Control:" in prompt.user
+    assert "Testing:" in prompt.user
 
 
 def test_retry_handoff_and_plan_generation(tmp_path):
@@ -527,7 +531,7 @@ def test_pipeline_uses_local_context_builder(tmp_path, monkeypatch):
                 context_builder=_ctx_builder(),
                 engine=_engine(),
             )
-            self.prompt = ""
+            self.prompt: bdb.Prompt | None = None
             self.used_builder = None
 
         def build_bot(
@@ -580,7 +584,8 @@ def test_pipeline_uses_local_context_builder(tmp_path, monkeypatch):
     assert pipeline_builder.calls > 0
     assert dev_builder.calls == 0
     assert developer.used_builder is pipeline_builder
-    assert "LOCAL_DB" in developer.prompt
+    assert developer.prompt is not None
+    assert "LOCAL_DB" in developer.prompt.user
 
 def test_pipeline_engine_error_not_raised(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(bdb, "Repo", None)
