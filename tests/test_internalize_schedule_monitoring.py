@@ -1,7 +1,22 @@
 import types
 import sys
 from pathlib import Path
+import pytest
 
+menace_pkg = types.ModuleType("menace")
+menace_pkg.__path__ = [str(Path("."))]
+sys.modules.setdefault("menace", menace_pkg)
+
+qfe_stub = types.ModuleType("quick_fix_engine")
+
+class QuickFixEngineError(Exception):
+    pass
+
+qfe_stub.QuickFixEngine = object
+qfe_stub.QuickFixEngineError = QuickFixEngineError
+qfe_stub.generate_patch = lambda *a, **k: None
+sys.modules["quick_fix_engine"] = qfe_stub
+sys.modules["menace.quick_fix_engine"] = qfe_stub
 stub_dpr = types.SimpleNamespace(
     resolve_path=lambda p: Path(p),
     path_for_prompt=lambda p: p,
@@ -78,3 +93,31 @@ def test_schedule_monitoring_invoked_without_event_bus(monkeypatch):
     )
 
     assert calls == ["bot"]
+
+
+def test_internalization_requires_quick_fix_engine(monkeypatch):
+    class DummyDataBot:
+        def __init__(self):
+            self.settings = types.SimpleNamespace(bot_thresholds={})
+
+    class DummyManager:
+        def __init__(self, *_a, **_k):
+            self.quick_fix = None
+            self.logger = types.SimpleNamespace(exception=lambda *a, **k: None)
+
+    class DummyRegistry:
+        def register_bot(self, *_a, **_k):
+            return None
+
+    monkeypatch.setattr(scm, "SelfCodingManager", DummyManager)
+    monkeypatch.setattr(scm, "persist_sc_thresholds", lambda *a, **k: None)
+    monkeypatch.setattr(scm, "QuickFixEngine", None, raising=False)
+
+    with pytest.raises(ImportError, match="QuickFixEngine"):
+        scm.internalize_coding_bot(
+            "bot",
+            engine=object(),
+            pipeline=object(),
+            data_bot=DummyDataBot(),
+            bot_registry=DummyRegistry(),
+        )

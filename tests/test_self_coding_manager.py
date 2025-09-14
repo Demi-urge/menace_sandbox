@@ -74,9 +74,15 @@ cb_stub = types.ModuleType("coding_bot_interface")
 cb_stub.manager_generate_helper = lambda *a, **k: ""
 sys.modules.setdefault("coding_bot_interface", cb_stub)
 qfe_stub = types.ModuleType("quick_fix_engine")
+
+class QuickFixEngineError(Exception):
+    pass
+
 qfe_stub.QuickFixEngine = object
+qfe_stub.QuickFixEngineError = QuickFixEngineError
 qfe_stub.generate_patch = lambda *a, **k: (1, [])
 sys.modules.setdefault("quick_fix_engine", qfe_stub)
+sys.modules.setdefault("menace.quick_fix_engine", qfe_stub)
 prb_stub = types.ModuleType("menace.pre_execution_roi_bot")
 class ROIResult:
     def __init__(self, roi, errors, proi, perr, risk):
@@ -163,7 +169,7 @@ class DummyRegistry:
     def __init__(self) -> None:
         self.graph = self.Graph()
 
-    def register_bot(self, name: str) -> None:
+    def register_bot(self, name: str, **_k) -> None:
         pass
 
     def record_validation(self, *a, **k) -> None:
@@ -915,6 +921,9 @@ def test_run_patch_requires_quick_fix_engine(monkeypatch, tmp_path):
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
         quick_fix=quick_fix,
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
     )
 
     monkeypatch.setattr(scm, "QuickFixEngine", None)
@@ -939,8 +948,8 @@ def test_run_patch_requires_quick_fix_engine(monkeypatch, tmp_path):
         scm.subprocess, "run", lambda cmd, *a, **kw: subprocess.CompletedProcess(cmd, 0)
     )
 
-    with pytest.raises(RuntimeError, match="QuickFixEngine is required"):
-        mgr.run_patch(file_path, "add")
+    with pytest.raises(ImportError, match="QuickFixEngine is required"):
+        mgr.run_patch(file_path, "add", provenance_token="token")
 
 
 def test_registry_update_and_hot_swap(monkeypatch, tmp_path):

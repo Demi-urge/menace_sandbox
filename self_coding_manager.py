@@ -76,16 +76,10 @@ try:  # pragma: no cover - optional dependency
         QuickFixEngineError,
         generate_patch,
     )
-except Exception:  # pragma: no cover - provide stubs when unavailable
-    QuickFixEngine = None  # type: ignore
-
-    class QuickFixEngineError(RuntimeError):  # type: ignore
-        def __init__(self, code: str = "", message: str = "") -> None:
-            super().__init__(message)
-            self.code = code
-
-    def generate_patch(*_a, **_k):  # type: ignore
-        return None
+except Exception as exc:  # pragma: no cover - fail fast when unavailable
+    raise ImportError(
+        "QuickFixEngine is required but could not be imported"
+    ) from exc
 
 from context_builder_util import ensure_fresh_weights
 
@@ -340,8 +334,6 @@ class SelfCodingManager:
         builder = getattr(clayer, "context_builder", None) if clayer else None
         if builder is None:
             raise RuntimeError("engine.cognition_layer must provide a context_builder")
-        if QuickFixEngine is None and self.quick_fix is None:
-            raise RuntimeError("QuickFixEngine is required but could not be imported")
         self._prepare_context_builder(builder)
         self._init_quick_fix_engine(builder)
 
@@ -555,13 +547,12 @@ class SelfCodingManager:
         if self.quick_fix is not None:
             return
         if QuickFixEngine is None:
-            self.logger.error(
+            msg = (
                 "QuickFixEngine is required but could not be imported; "
-                "pip install menace[quickfix]",
+                "pip install menace[quickfix]"
             )
-            raise RuntimeError(
-                "QuickFixEngine is required but could not be imported",
-            )
+            self.logger.error(msg)
+            raise ImportError(msg)
         db = self.error_db or ErrorDB()
         self.error_db = db
         try:
@@ -649,7 +640,7 @@ class SelfCodingManager:
         """
 
         if generate_patch is None:
-            raise RuntimeError(
+            raise ImportError(
                 "QuickFixEngine is required but generate_patch is unavailable"
             )
         builder = context_builder or self.refresh_quick_fix_context()
@@ -1196,7 +1187,7 @@ class SelfCodingManager:
                                 "failed to publish patch_failed event",
                             )
                     if QuickFixEngine is None or self.quick_fix is None:
-                        raise RuntimeError(
+                        raise ImportError(
                             "QuickFixEngine is required but not installed",
                         ) from exc
                     raise RuntimeError(
@@ -2202,7 +2193,7 @@ def internalize_coding_bot(
         **manager_kwargs,
     )
     if manager.quick_fix is None:
-        raise RuntimeError("QuickFixEngine failed to initialise")
+        raise ImportError("QuickFixEngine failed to initialise")
     manager.evolution_orchestrator = evolution_orchestrator
     bot_registry.register_bot(
         bot_name,
