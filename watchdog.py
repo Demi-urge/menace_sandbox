@@ -92,7 +92,7 @@ except Exception:  # pragma: no cover - gracefully degrade in tests
 from .coding_bot_interface import self_coding_managed
 from .data_bot import DataBot
 from .self_coding_engine import SelfCodingEngine
-from .self_coding_manager import SelfCodingManager
+from .self_coding_manager import internalize_coding_bot
 from .model_automation_pipeline import ModelAutomationPipeline
 from .code_database import CodeDB
 from .menace_memory_manager import MenaceMemoryManager
@@ -299,15 +299,16 @@ class Watchdog:
             event_bus=bus_local,
             bot_registry=self.registry,
         )
-        self.manager = SelfCodingManager(
+        self.manager = internalize_coding_bot(
+            self.__class__.__name__,
             engine,
             pipeline,
-            bot_name=self.__class__.__name__,
-            bot_registry=self.registry,
             data_bot=DATA_BOT,
+            bot_registry=self.registry,
+            roi_threshold=self.thresholds.roi_loss_percent,
+            error_threshold=self.thresholds.error_trend,
             event_bus=bus_local,
         )
-        self.manager.register_bot(self.__class__.__name__)
         self.evolution_orchestrator = self.manager.evolution_orchestrator
         self.quick_fix = self.manager.quick_fix
 
