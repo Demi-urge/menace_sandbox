@@ -3,6 +3,8 @@ import types
 from pathlib import Path
 import os
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 sandbox_runner_pkg = types.ModuleType("sandbox_runner")
 sandbox_runner_pkg.__path__ = [str(Path(__file__).resolve().parent / "sandbox_runner")]
 sys.modules.setdefault("sandbox_runner", sandbox_runner_pkg)
@@ -73,3 +75,18 @@ sys.modules.setdefault(
     ),
 )
 
+import pytest
+from menace_sandbox.bot_registry import BotRegistry as SandboxBotRegistry
+from menace.bot_registry import BotRegistry as RootBotRegistry
+
+
+@pytest.fixture(autouse=True)
+def _auto_verify_signed_provenance(monkeypatch):
+    """Default to accepting signed provenance during tests.
+
+    Individual tests can override this behaviour by monkeypatching the
+    :meth:`BotRegistry._verify_signed_provenance` method.
+    """
+
+    for cls in (SandboxBotRegistry, RootBotRegistry):
+        monkeypatch.setattr(cls, "_verify_signed_provenance", lambda self, p, c: True)

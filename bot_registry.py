@@ -496,20 +496,10 @@ class BotRegistry:
             self.register_bot(name, is_coding_bot=False)
             node = self.graph.nodes[name]
 
-            manager = node.get("selfcoding_manager") or node.get("manager")
-            mgr_patch = getattr(manager, "_last_patch_id", None) if manager else None
-            mgr_commit = (
-                getattr(manager, "_last_commit_hash", None) if manager else None
-            )
-            verified = mgr_patch == patch_id and mgr_commit == commit
-            if not verified:
-                try:
-                    self._verify_signed_provenance(patch_id, commit)
-                    verified = True
-                except RuntimeError as exc:
-                    logger.error("Signed provenance verification failed: %s", exc)
-                    verified = False
-            if not verified:
+            try:
+                self._verify_signed_provenance(patch_id, commit)
+            except RuntimeError as exc:
+                logger.error("Signed provenance verification failed: %s", exc)
                 if self.event_bus:
                     try:
                         self.event_bus.publish(
@@ -520,23 +510,26 @@ class BotRegistry:
                                 "patch_id": patch_id,
                                 "commit": commit,
                                 "reason": "unverified_provenance",
+                                "error": str(exc),
                             },
                         )
-                    except Exception as exc:
+                    except Exception as exc2:
                         logger.error(
-                            "Failed to publish bot:update_blocked event: %s", exc
+                            "Failed to publish bot:update_blocked event: %s", exc2
                         )
                 node["update_blocked"] = True
                 if self.persist_path:
                     try:
                         self.save(self.persist_path)
-                    except Exception as exc:  # pragma: no cover - best effort
+                    except Exception as exc2:  # pragma: no cover - best effort
                         logger.error(
                             "Failed to save bot registry to %s: %s",
                             self.persist_path,
-                            exc,
+                            exc2,
                         )
-                raise RuntimeError("update blocked: provenance verification failed")
+                raise RuntimeError(
+                    "update blocked: provenance verification failed"
+                ) from exc
 
             prev_state = dict(node)
             prev_module_entry = self.modules.get(name)
@@ -610,16 +603,18 @@ class BotRegistry:
                             "Failed to publish bot:update_rolled_back event: %s",
                             pub_exc,
                         )
-            if RollbackManager is not None:
-                try:
-                    RollbackManager().rollback(str(patch_id), requesting_bot=name)
-                except Exception as rb_exc:  # pragma: no cover - best effort
-                    logger.error(
-                        "RollbackManager rollback failed for %s: %s",
-                        name,
-                        rb_exc,
-                    )
-            raise
+                if RollbackManager is not None:
+                    try:
+                        RollbackManager().rollback(
+                            str(patch_id), requesting_bot=name
+                        )
+                    except Exception as rb_exc:  # pragma: no cover - best effort
+                        logger.error(
+                            "RollbackManager rollback failed for %s: %s",
+                            name,
+                            rb_exc,
+                        )
+                raise
         return update_ok
 
     def hot_swap(self, name: str, module_path: str) -> None:

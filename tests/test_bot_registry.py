@@ -103,3 +103,47 @@ def test_update_bot_provenance_mismatch_recovery(monkeypatch, tmp_path):
     registry.update_bot("bot", str(mod2), patch_id=2, commit="c2")
     assert registry.graph.nodes["bot"]["module"] == str(mod2)
 
+
+def test_update_bot_verifies_signed_provenance(monkeypatch, tmp_path):
+    module = tmp_path / "bot.py"
+    module.write_text("VAL=1\n")
+    registry = BotRegistry()
+    calls: list[tuple[int, str]] = []
+
+    monkeypatch.setattr(
+        patch_provenance,
+        "PatchProvenanceService",
+        lambda: DummyService({7: "deadbeef"}),
+    )
+
+    def ok(self, pid, commit):
+        calls.append((pid, commit))
+        return True
+
+    monkeypatch.setattr(BotRegistry, "_verify_signed_provenance", ok)
+    registry.update_bot("bot", str(module), patch_id=7, commit="deadbeef")
+    assert calls == [(7, "deadbeef")]
+
+
+def test_update_bot_verification_failure(monkeypatch, tmp_path):
+    class Bus:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict]] = []
+
+        def publish(self, name: str, payload: dict) -> None:
+            self.events.append((name, payload))
+
+    module = tmp_path / "bot.py"
+    module.write_text("VAL=1\n")
+    bus = Bus()
+    registry = BotRegistry(event_bus=bus)
+
+    def fail(self, *_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(BotRegistry, "_verify_signed_provenance", fail)
+    with pytest.raises(RuntimeError, match="update blocked"):
+        registry.update_bot("bot", str(module), patch_id=1, commit="abc")
+    assert bus.events[-1][0] == "bot:update_blocked"
+    assert bus.events[-1][1]["reason"] == "unverified_provenance"
+

@@ -50,6 +50,10 @@ def test_manual_commit_requires_provenance(tmp_path, monkeypatch):
     registry.graph.nodes["dummy"]["selfcoding_manager"] = manager
     registry.update_bot("dummy", module_old.as_posix(), patch_id=1, commit="a")
 
+    def fail(self, *_a, **_k):
+        raise RuntimeError("bad sig")
+
+    monkeypatch.setattr(BotRegistry, "_verify_signed_provenance", fail)
     with pytest.raises(RuntimeError, match="update blocked"):
         registry.update_bot("dummy", module_new.as_posix(), patch_id=2, commit="b")
 
