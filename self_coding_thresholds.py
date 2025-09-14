@@ -74,6 +74,10 @@ class SelfCodingThresholds:
     roi_drop: float
     error_increase: float
     test_failure_increase: float = 0.0
+    roi_weight: float = 0.5
+    error_weight: float = 0.3
+    test_failure_weight: float = 0.2
+    patch_success_weight: float = 0.1
     test_command: list[str] | None = None
     model: str = "exponential"
     confidence: float = 0.95
@@ -114,6 +118,10 @@ def get_thresholds(
     roi_drop = getattr(s, "self_coding_roi_drop", -0.1)
     err_inc = getattr(s, "self_coding_error_increase", 1.0)
     fail_inc = getattr(s, "self_coding_test_failure_increase", 0.0)
+    roi_weight = getattr(s, "self_coding_roi_weight", 0.5)
+    err_weight = getattr(s, "self_coding_error_weight", 0.3)
+    fail_weight = getattr(s, "self_coding_test_failure_weight", 0.2)
+    patch_weight = getattr(s, "self_coding_patch_success_weight", 0.1)
     cmd: list[str] | None
     env_cmd = os.getenv("SELF_CODING_TEST_COMMAND")
     if env_cmd:
@@ -130,6 +138,10 @@ def get_thresholds(
     roi_drop = float(default.get("roi_drop", roi_drop))
     err_inc = float(default.get("error_increase", err_inc))
     fail_inc = float(default.get("test_failure_increase", fail_inc))
+    roi_weight = float(default.get("roi_weight", roi_weight))
+    err_weight = float(default.get("error_weight", err_weight))
+    fail_weight = float(default.get("test_failure_weight", fail_weight))
+    patch_weight = float(default.get("patch_success_weight", patch_weight))
     model = default.get("model", "exponential")
     conf = float(default.get("confidence", 0.95))
     params = default.get("model_params", {})
@@ -139,6 +151,10 @@ def get_thresholds(
         roi_drop = float(cfg.get("roi_drop", roi_drop))
         err_inc = float(cfg.get("error_increase", err_inc))
         fail_inc = float(cfg.get("test_failure_increase", fail_inc))
+        roi_weight = float(cfg.get("roi_weight", roi_weight))
+        err_weight = float(cfg.get("error_weight", err_weight))
+        fail_weight = float(cfg.get("test_failure_weight", fail_weight))
+        patch_weight = float(cfg.get("patch_success_weight", patch_weight))
         model = cfg.get("model", model)
         conf = float(cfg.get("confidence", conf))
         params = cfg.get("model_params", params)
@@ -153,6 +169,10 @@ def get_thresholds(
         roi_drop=roi_drop,
         error_increase=err_inc,
         test_failure_increase=fail_inc,
+        roi_weight=roi_weight,
+        error_weight=err_weight,
+        test_failure_weight=fail_weight,
+        patch_success_weight=patch_weight,
         test_command=cmd_cfg,
         model=model,
         confidence=conf,
@@ -166,6 +186,10 @@ def update_thresholds(
     roi_drop: float | None = None,
     error_increase: float | None = None,
     test_failure_increase: float | None = None,
+    roi_weight: float | None = None,
+    error_weight: float | None = None,
+    test_failure_weight: float | None = None,
+    patch_success_weight: float | None = None,
     test_command: list[str] | None = None,
     forecast_model: str | None = None,
     confidence: float | None = None,
@@ -184,6 +208,14 @@ def update_thresholds(
         cfg["error_increase"] = float(error_increase)
     if test_failure_increase is not None:
         cfg["test_failure_increase"] = float(test_failure_increase)
+    if roi_weight is not None:
+        cfg["roi_weight"] = float(roi_weight)
+    if error_weight is not None:
+        cfg["error_weight"] = float(error_weight)
+    if test_failure_weight is not None:
+        cfg["test_failure_weight"] = float(test_failure_weight)
+    if patch_success_weight is not None:
+        cfg["patch_success_weight"] = float(patch_success_weight)
     if test_command is not None:
         cfg["test_command"] = list(test_command)
     if forecast_model is not None:
