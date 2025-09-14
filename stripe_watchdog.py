@@ -180,7 +180,10 @@ try:  # Optional dependency – telemetry feedback loop
     from error_logger import ErrorLogger  # type: ignore
     from bot_registry import BotRegistry  # type: ignore
     from data_bot import DataBot  # type: ignore
-    from self_coding_manager import SelfCodingManager  # type: ignore
+    from self_coding_manager import (
+        SelfCodingManager,
+        internalize_coding_bot,
+    )  # type: ignore
     from model_automation_pipeline import ModelAutomationPipeline  # type: ignore
     from shared_event_bus import event_bus as _SHARED_EVENT_BUS  # type: ignore
 except Exception:  # pragma: no cover - best effort
@@ -189,6 +192,10 @@ except Exception:  # pragma: no cover - best effort
     BotRegistry = None  # type: ignore
     DataBot = None  # type: ignore
     SelfCodingManager = None  # type: ignore
+
+    def internalize_coding_bot(*args, **kwargs):  # type: ignore
+        return None
+
     ModelAutomationPipeline = None  # type: ignore
     _SHARED_EVENT_BUS = None  # type: ignore
 
@@ -1934,14 +1941,14 @@ def main(
                 pipeline = ModelAutomationPipeline(
                     context_builder=builder, event_bus=bus, bot_registry=registry
                 )
-                manager = SelfCodingManager(
+                manager = internalize_coding_bot(
+                    "StripeWatchdog",
                     engine,
                     pipeline,
-                    bot_registry=registry,
                     data_bot=data_bot,
+                    bot_registry=registry,
                     event_bus=bus,
                 )
-                manager.register_bot("StripeWatchdog")
                 telemetry = TelemetryFeedback(
                     ErrorLogger(context_builder=builder),
                     manager,

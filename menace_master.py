@@ -58,7 +58,11 @@ from menace.unified_config_store import UnifiedConfigStore  # noqa: E402
 from menace.dependency_self_check import self_check  # noqa: E402
 
 from menace.menace_orchestrator import MenaceOrchestrator  # noqa: E402
-from menace.self_coding_manager import PatchApprovalPolicy, SelfCodingManager  # noqa: E402
+from menace.self_coding_manager import (  # noqa: E402
+    PatchApprovalPolicy,
+    internalize_coding_bot,
+)
+from menace.data_bot import DataBot  # noqa: E402
 from menace.advanced_error_management import AutomatedRollbackManager  # noqa: E402
 from menace.environment_bootstrap import EnvironmentBootstrapper  # noqa: E402
 from menace.auto_env_setup import ensure_env, interactive_setup  # noqa: E402
@@ -531,14 +535,17 @@ def deploy_patch(
     )
     bus = UnifiedEventBus()
     registry = BotRegistry(event_bus=bus)
+    data_bot = DataBot()
     pipeline = ModelAutomationPipeline(
         context_builder=builder, event_bus=bus, bot_registry=registry
     )
-    manager = SelfCodingManager(
+    manager = internalize_coding_bot(
+        "MenaceMaster",
         engine,
         pipeline,
-        approval_policy=policy,
+        data_bot=data_bot,
         bot_registry=registry,
+        approval_policy=policy,
         event_bus=bus,
     )
     manager.context_builder = builder

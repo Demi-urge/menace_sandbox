@@ -952,7 +952,10 @@ def _sandbox_init(
         gpt_memory=gpt_memory,
         context_builder=context_builder,
     )
-    from menace.self_coding_manager import SelfCodingManager
+    from menace.self_coding_manager import (
+        SelfCodingManager,
+        internalize_coding_bot,
+    )
     from menace.self_coding_manager import (
         _manager_generate_helper_with_builder as _helper_fn,
     )
@@ -962,12 +965,13 @@ def _sandbox_init(
 
     bus = UnifiedEventBus()
     registry = BotRegistry(event_bus=bus)
-    quick_manager = SelfCodingManager(
+    quick_manager = internalize_coding_bot(
+        "menace",
         engine,
         ModelAutomationPipeline(
             context_builder=context_builder, event_bus=bus, bot_registry=registry
         ),
-        bot_name="menace",
+        data_bot=data_bot,
         bot_registry=registry,
         event_bus=bus,
     )

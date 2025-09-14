@@ -15,10 +15,28 @@ from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
 from .db_router import GLOBAL_ROUTER, init_db_router
 from .scope_utils import Scope, build_scope_clause
+from .coding_bot_interface import self_coding_managed
 
 router = GLOBAL_ROUTER or init_db_router("revenue_amplifier")
 
 logger = logging.getLogger(__name__)
+
+
+class _StubRegistry:
+    def register_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
+        return None
+
+    def update_bot(self, *args, **kwargs) -> None:  # pragma: no cover - stub
+        return None
+
+
+class _StubDataBot:
+    def reload_thresholds(self, _name: str):  # pragma: no cover - stub
+        return type("_T", (), {})()
+
+
+_REGISTRY_STUB = _StubRegistry()
+_DATA_BOT_STUB = _StubDataBot()
 
 
 @dataclass
@@ -329,6 +347,7 @@ class LeadPerformanceMonitor:
     def conversion_rate(self, model_id: str) -> float:
         return self.db.conversion_rate(model_id)
 
+@self_coding_managed(bot_registry=_REGISTRY_STUB, data_bot=_DATA_BOT_STUB)
 class RevenueSpikeEvaluatorBot:
     """Detect revenue surges using exponential weighting."""
 
@@ -358,6 +377,7 @@ class RevenueSpikeEvaluatorBot:
             return False
         return last > avg + self.threshold * std
 
+@self_coding_managed(bot_registry=_REGISTRY_STUB, data_bot=_DATA_BOT_STUB)
 class CapitalAllocationBot:
     """Rebalance resources to favour surging models."""
 
