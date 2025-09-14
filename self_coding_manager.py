@@ -72,9 +72,18 @@ from .threshold_service import (
 )
 
 try:  # pragma: no cover - optional dependency
-    from .quick_fix_engine import QuickFixEngine, generate_patch
+    from .quick_fix_engine import (
+        QuickFixEngine,
+        QuickFixEngineError,
+        generate_patch,
+    )
 except Exception:  # pragma: no cover - provide stubs when unavailable
     QuickFixEngine = None  # type: ignore
+    class QuickFixEngineError(RuntimeError):  # type: ignore
+        def __init__(self, code: str = "", message: str = "") -> None:
+            super().__init__(message)
+            self.code = code
+
     def generate_patch(*_a, **_k):  # type: ignore
         return None
 
@@ -553,16 +562,24 @@ class SelfCodingManager:
         if builder is None:
             builder = ContextBuilder()
 
-        self._init_quick_fix_engine(builder)
-
-        self._prepare_context_builder(builder)
         try:
+            self._init_quick_fix_engine(builder)
+        except Exception as exc:
+            raise QuickFixEngineError(
+                "quick_fix_init_error", "failed to initialise QuickFixEngine"
+            ) from exc
+
+        try:
+            self._prepare_context_builder(builder)
             self.quick_fix.context_builder = builder
-        except Exception:
+        except Exception as exc:
             self.logger.exception(
                 "failed to update QuickFixEngine context builder",
             )
-            raise
+            raise QuickFixEngineError(
+                "quick_fix_validation_error",
+                "QuickFixEngine context validation failed",
+            ) from exc
         return self.quick_fix
 
     def refresh_quick_fix_context(self) -> ContextBuilder:
@@ -823,6 +840,27 @@ class SelfCodingManager:
         clayer.context_builder = builder
         try:
             self._ensure_quick_fix_engine(builder)
+        except QuickFixEngineError as exc:
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "bot:patch_failed",
+                        {"bot": self.bot_name, "reason": exc.code},
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to publish patch_failed event")
+            if self.data_bot:
+                try:
+                    self.data_bot.collect(
+                        self.bot_name,
+                        patch_success=0.0,
+                        patch_failure_reason=exc.code,
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to report patch outcome")
+            self.baseline_tracker.update(patch_success=0.0)
+            self._last_commit_hash = None
+            raise
         except Exception as exc:
             if self.event_bus:
                 try:
@@ -832,6 +870,17 @@ class SelfCodingManager:
                     )
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to publish patch_failed event")
+            if self.data_bot:
+                try:
+                    self.data_bot.collect(
+                        self.bot_name,
+                        patch_success=0.0,
+                        patch_failure_reason=str(exc),
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to report patch outcome")
+            self.baseline_tracker.update(patch_success=0.0)
+            self._last_commit_hash = None
             raise RuntimeError("QuickFixEngine validation unavailable") from exc
         self._last_commit_hash = None
         success = False
