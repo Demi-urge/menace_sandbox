@@ -70,6 +70,7 @@ persist_sc_thresholds(
     "BotDevelopmentBot",
     roi_drop=_th.roi_drop,
     error_increase=_th.error_increase,
+    test_failure_increase=_th.test_failure_increase,
 )
 manager = internalize_coding_bot(
     "BotDevelopmentBot",
@@ -80,6 +81,7 @@ manager = internalize_coding_bot(
     evolution_orchestrator=evolution_orchestrator,
     roi_threshold=_th.roi_drop,
     error_threshold=_th.error_increase,
+    test_failure_threshold=_th.test_failure_increase,
     threshold_service=ThresholdService(),
 )
 
@@ -1055,19 +1057,23 @@ class BotDevelopmentBot:
                 if registry and d_bot and engine and pipeline:
                     bot_name = spec.name
                     module_path = str(file_path)
+                    _th = get_thresholds(bot_name)
                     registry.register_bot(
                         bot_name,
                         manager=self.manager,
                         data_bot=d_bot,
                         is_coding_bot=True,
+                        roi_threshold=_th.roi_drop,
+                        error_threshold=_th.error_increase,
+                        test_failure_threshold=_th.test_failure_increase,
                     )
                     registry.update_bot(bot_name, module_path)
                     d_bot.reload_thresholds(bot_name)
-                    _th = get_thresholds(bot_name)
                     persist_sc_thresholds(
                         bot_name,
                         roi_drop=_th.roi_drop,
                         error_increase=_th.error_increase,
+                        test_failure_increase=_th.test_failure_increase,
                     )
                     internalize_coding_bot(
                         bot_name,
@@ -1078,6 +1084,7 @@ class BotDevelopmentBot:
                         evolution_orchestrator=orchestrator,
                         roi_threshold=_th.roi_drop,
                         error_threshold=_th.error_increase,
+                        test_failure_threshold=_th.test_failure_increase,
                     )
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("dynamic bot registration failed for %s", spec.name)

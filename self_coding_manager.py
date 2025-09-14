@@ -2002,17 +2002,18 @@ def internalize_coding_bot(
     evolution_orchestrator: "EvolutionOrchestrator | None" = None,
     roi_threshold: float | None = None,
     error_threshold: float | None = None,
+    test_failure_threshold: float | None = None,
     **manager_kwargs: Any,
 ) -> SelfCodingManager:
     """Wire ``bot_name`` into the self‑coding system.
 
-    The helper constructs a :class:`SelfCodingManager`, registers ROI/error
-    thresholds with :class:`BotRegistry` and ensures ``EvolutionOrchestrator``
-    reacts to ``degradation:detected`` events.
+    The helper constructs a :class:`SelfCodingManager`, registers ROI/error/test
+    failure thresholds with :class:`BotRegistry` and ensures
+    ``EvolutionOrchestrator`` reacts to ``degradation:detected`` events.
 
     Parameters mirror :class:`SelfCodingManager` while providing explicit
-    ``roi_threshold`` and ``error_threshold`` values.  Additional keyword
-    arguments are forwarded to ``SelfCodingManager``.
+    ``roi_threshold``, ``error_threshold`` and ``test_failure_threshold`` values.
+    Additional keyword arguments are forwarded to ``SelfCodingManager``.
     """
     manager = SelfCodingManager(
         engine,
@@ -2031,6 +2032,7 @@ def internalize_coding_bot(
         bot_name,
         roi_threshold=roi_threshold,
         error_threshold=error_threshold,
+        test_failure_threshold=test_failure_threshold,
         manager=manager,
         data_bot=data_bot,
         is_coding_bot=True,
@@ -2051,8 +2053,12 @@ def internalize_coding_bot(
                     if error_threshold is not None
                     else getattr(settings, "self_coding_error_increase", None)
                 ),
-                test_failure_increase=getattr(
-                    settings, "self_coding_test_failure_increase", None
+                test_failure_increase=(
+                    test_failure_threshold
+                    if test_failure_threshold is not None
+                    else getattr(
+                        settings, "self_coding_test_failure_increase", None
+                    )
                 ),
                 event_bus=getattr(data_bot, "event_bus", None),
             )

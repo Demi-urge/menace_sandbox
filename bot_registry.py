@@ -102,6 +102,7 @@ class BotRegistry:
         *,
         roi_threshold: float | None = None,
         error_threshold: float | None = None,
+        test_failure_threshold: float | None = None,
         manager: "SelfCodingManager" | None = None,
         data_bot: "DataBot" | None = None,
         is_coding_bot: bool | None = None,
@@ -142,6 +143,8 @@ class BotRegistry:
                 node["roi_threshold"] = float(roi_threshold)
             if error_threshold is not None:
                 node["error_threshold"] = float(error_threshold)
+            if test_failure_threshold is not None:
+                node["test_failure_threshold"] = float(test_failure_threshold)
             node.setdefault("patch_history", [])
             if manager is not None:
                 node["selfcoding_manager"] = manager
@@ -289,17 +292,23 @@ class BotRegistry:
                                     name,
                                     exc,
                                 )
-            if roi_threshold is not None or error_threshold is not None:
+            if (
+                roi_threshold is not None
+                or error_threshold is not None
+                or test_failure_threshold is not None
+            ):
                 try:
                     threshold_service.update(
                         name,
                         roi_drop=roi_threshold,
                         error_threshold=error_threshold,
+                        test_failure_threshold=test_failure_threshold,
                     )
                     persist_sc_thresholds(
                         name,
                         roi_drop=roi_threshold,
                         error_increase=error_threshold,
+                        test_failure_increase=test_failure_threshold,
                         event_bus=self.event_bus,
                     )
                 except Exception as exc:  # pragma: no cover - best effort
