@@ -26,6 +26,9 @@ class _CB:
         pass
     def build(self, *_a, **_k):
         return ""
+
+    def build_prompt(self, query, **_k):
+        return types.SimpleNamespace(user=query, examples=[], metadata={})
     def refresh_db_weights(self):
         pass
 vec_stub.ContextBuilder = _CB
@@ -224,12 +227,12 @@ def test_build_prompt_with_docs(tmp_path):
         function_docs={"run_task": "Run tasks", "helper": "Assist"},
     )
     prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
-    assert "INSTRUCTION MODE" in prompt
-    assert "Module desc" in prompt
-    assert "Level: L2" in prompt
-    assert "IO Format: json" in prompt
-    assert "- run_task: Run tasks" in prompt
-    assert "- helper: Assist" in prompt
+    assert "INSTRUCTION MODE" in prompt.user
+    assert "Module desc" in prompt.user
+    assert "Level: L2" in prompt.user
+    assert "IO Format: json" in prompt.user
+    assert "- run_task: Run tasks" in prompt.user
+    assert "- helper: Assist" in prompt.user
 
 
 def test_prompt_includes_standards(tmp_path):
@@ -238,15 +241,15 @@ def test_prompt_includes_standards(tmp_path):
     )
     spec = bdb.BotSpec(name="std_bot", purpose="demo")
     prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
-    assert "INSTRUCTION MODE" in prompt
-    assert "Coding Standards:" in prompt
-    assert "PEP8" in prompt
-    assert "Repository Layout:" in prompt
-    assert "Metadata:" in prompt
-    assert "meta.yaml" in prompt
-    assert "Version Control:" in prompt
-    assert "Testing:" in prompt
-    assert "setup_tests.sh" in prompt
+    assert "INSTRUCTION MODE" in prompt.user
+    assert "Coding Standards:" in prompt.user
+    assert "PEP8" in prompt.user
+    assert "Repository Layout:" in prompt.user
+    assert "Metadata:" in prompt.user
+    assert "meta.yaml" in prompt.user
+    assert "Version Control:" in prompt.user
+    assert "Testing:" in prompt.user
+    assert "setup_tests.sh" in prompt.user
 
 
 def test_prompt_includes_function_guidance(tmp_path):
@@ -255,20 +258,23 @@ def test_prompt_includes_function_guidance(tmp_path):
     )
     spec = bdb.BotSpec(name="guide_bot", purpose="demo", functions=["click_target"])
     prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
-    assert "Function Guidance:" in prompt
-    assert "click_target:" in prompt
+    assert "Function Guidance:" in prompt.user
+    assert "click_target:" in prompt.user
 
 
-def test_prompt_includes_vector_context(tmp_path):
+def test_prompt_routes_through_context_builder(tmp_path):
     class DummyBuilder(bdb.ContextBuilder):
         def __init__(self):
-            self.calls = []
+            self.calls: list[str] = []
 
-        def build(
-            self, query, *, session_id=None, include_vectors=False
-        ):  # type: ignore[override]
-            self.calls.append((query, session_id, include_vectors))
-            return "retrieved context", session_id, [("origin", "vid", 0.1)]
+        def build_prompt(self, intent, **_):  # type: ignore[override]
+            self.calls.append(intent)
+            examples = ["dup", "dup", "extra"]
+            deduped: list[str] = []
+            for e in examples:
+                if e not in deduped:
+                    deduped.append(e)
+            return bdb.Prompt(user=intent, examples=deduped)
 
     builder = DummyBuilder()
     bot = bdb.BotDevelopmentBot(
@@ -276,12 +282,8 @@ def test_prompt_includes_vector_context(tmp_path):
     )
     spec = bdb.BotSpec(name="ctx_bot", purpose="demo", description="demo")
     prompt = bot._build_prompt(spec, context_builder=builder)
-    assert builder.calls, "context_builder.build was not invoked"
-    q, sid, inc_vec = builder.calls[0]
-    assert inc_vec is True
-    assert sid in prompt
-    assert "retrieved context" in prompt
-    assert "Context Metadata" in prompt
+    assert builder.calls, "context_builder.build_prompt was not invoked"
+    assert prompt.examples == ["dup", "extra"]
 
 
 def test_engine_failure_fallback(tmp_path, monkeypatch, caplog):
@@ -382,9 +384,10 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
         def __init__(self):
             self.calls = []
             self.retriever = DummyRetriever()
-        def build(self, query, **_):
+        def build_prompt(self, query, **_):  # type: ignore[override]
             self.calls.append(query)
-            return self.retriever.search(query, session_id="s")
+            self.retriever.search(query, session_id="s")
+            return bdb.Prompt(user=query, examples=[])
 
     builder = DummyBuilder()
     bot = bdb.BotDevelopmentBot(
@@ -394,7 +397,8 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
     prompt = bot._build_prompt(spec, context_builder=bot.context_builder)
     assert builder.calls == ["demo"]
     assert g1.inc_calls == 1
-    assert "sentinel_fallback" not in prompt
+    assert "sentinel_fallback" not in prompt.user
+    assert all("sentinel_fallback" not in ex for ex in prompt.examples)
 
 
 def test_build_from_plan_passes_context_builder(tmp_path):
@@ -443,8 +447,10 @@ def test_prompt_context_compression(tmp_path, monkeypatch):
         def __init__(self, **dbs):
             self.dbs = dbs
 
-        def build(self, *_, **__):
-            return "RAW-" + ",".join(sorted(self.dbs.values()))
+        def build_prompt(self, intent, **_):  # type: ignore[override]
+            raw = "RAW-" + ",".join(sorted(self.dbs.values()))
+            comp = bdb.compress_snippets({"snippet": raw}).get("snippet", raw)
+            return bdb.Prompt(user=intent, examples=[comp])
 
         def refresh_db_weights(self):
             pass
@@ -466,8 +472,11 @@ def test_prompt_context_compression(tmp_path, monkeypatch):
     )
     spec = bdb.BotSpec(name="sentinel", purpose="demo")
     prompt = bot._build_prompt(spec, context_builder=builder)
-    assert "COMPRESSED-bots.db,code.db,errors.db,workflows.db" in prompt
-    assert "RAW-bots.db,code.db,errors.db,workflows.db" not in prompt
+    assert any(
+        "COMPRESSED-bots.db,code.db,errors.db,workflows.db" in ex
+        for ex in prompt.examples
+    )
+    assert all("RAW-bots.db" not in ex for ex in prompt.examples)
 
     with pytest.raises(ValueError):
         bdb.BotDevelopmentBot(
