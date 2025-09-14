@@ -202,6 +202,10 @@ def persist_sc_thresholds(
     roi_drop: float | None = None,
     error_increase: float | None = None,
     test_failure_increase: float | None = None,
+    roi_weight: float | None = None,
+    error_weight: float | None = None,
+    test_failure_weight: float | None = None,
+    patch_success_weight: float | None = None,
     forecast_model: str | None = None,
     confidence: float | None = None,
     model_params: dict | None = None,
@@ -230,6 +234,10 @@ def persist_sc_thresholds(
             roi_drop=roi_drop,
             error_increase=error_increase,
             test_failure_increase=test_failure_increase,
+            roi_weight=roi_weight,
+            error_weight=error_weight,
+            test_failure_weight=test_failure_weight,
+            patch_success_weight=patch_success_weight,
             forecast_model=forecast_model,
             confidence=confidence,
             forecast_params=model_params,
@@ -274,6 +282,7 @@ def load_sc_thresholds(
         _SC_SETTINGS = settings
     if path is not None:
         _SC_PATH = Path(path)
+        _SC_CACHE.clear()
     elif _SC_PATH is None:
         _SC_PATH = Path("config/self_coding_thresholds.yaml")
 
@@ -1977,23 +1986,25 @@ class DataBot:
             float(patch_success) - avg_patch if patch_success is not None else 0.0
         )
 
+        try:
+            raw = load_sc_thresholds(bot, self.settings, event_bus=self.event_bus)
+        except TypeError:
+            raw = load_sc_thresholds(bot, self.settings)
         models = self._forecast_models.get(bot)
         meta = self._forecast_meta.get(bot, {})
-        if not models:
-            raw = load_sc_thresholds(bot, self.settings, event_bus=self.event_bus)
-            if isinstance(raw, SelfCodingThresholds):
-                params = raw.model_params or {}
-                models = {
-                    m: create_model(raw.model, raw.confidence, **params)
-                    for m in ("roi", "errors", "tests_failed")
-                }
-                self._forecast_models[bot] = models
-                meta = {
-                    "model": raw.model,
-                    "confidence": raw.confidence,
-                    "params": params,
-                }
-                self._forecast_meta[bot] = meta
+        if not models and isinstance(raw, SelfCodingThresholds):
+            params = raw.model_params or {}
+            models = {
+                m: create_model(raw.model, raw.confidence, **params)
+                for m in ("roi", "errors", "tests_failed")
+            }
+            self._forecast_models[bot] = models
+            meta = {
+                "model": raw.model,
+                "confidence": raw.confidence,
+                "params": params,
+            }
+            self._forecast_meta[bot] = meta
         hist = tracker.to_dict()
         roi_hist = hist.get("roi", [])
         err_hist = hist.get("errors", [])
@@ -2047,7 +2058,10 @@ class DataBot:
 
         if models:
             base = self.threshold_service.get(bot, self.settings)
-            roi_thresh = min(base.roi_drop, roi_low - avg_roi)
+            roi_delta_pred = roi_low - avg_roi
+            if len(roi_hist) < 2:
+                roi_delta_pred = base.roi_drop
+            roi_thresh = min(base.roi_drop, roi_delta_pred)
             err_thresh = max(base.error_threshold, err_high - avg_err)
             fail_thresh = max(base.test_failure_threshold, fail_high - avg_fail)
             new_thresholds = ROIThresholds(
@@ -2055,56 +2069,54 @@ class DataBot:
                 error_threshold=err_thresh,
                 test_failure_threshold=fail_thresh,
             )
-            changed = thresholds != new_thresholds
             self._thresholds[bot] = new_thresholds
             thresholds = new_thresholds
-            if changed:
-                try:
-                    self.threshold_service.update(
-                        bot,
-                        roi_drop=roi_thresh,
-                        error_threshold=err_thresh,
-                        test_failure_threshold=fail_thresh,
-                    )
-                    persist_sc_thresholds(
-                        bot,
-                        roi_drop=roi_thresh,
-                        error_increase=err_thresh,
-                        test_failure_increase=fail_thresh,
-                        forecast_model=meta.get("model"),
-                        confidence=meta.get("confidence"),
-                        model_params=meta.get("params"),
-                        event_bus=self.event_bus,
-                    )
-                    if self.event_bus:
-                        try:
-                            self.event_bus.publish(
-                                "data:thresholds_refreshed",
-                                {
-                                    "bot": bot,
-                                    "roi_threshold": roi_thresh,
-                                    "error_threshold": err_thresh,
-                                    "test_failure_threshold": fail_thresh,
-                                },
-                            )
-                        except Exception:
-                            self.logger.exception(
-                                "failed to publish thresholds refreshed event",
-                            )
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.warning(
-                        "update_thresholds failed for %s: %s", bot, exc
-                    )
-                    if self.event_bus:
-                        try:
-                            self.event_bus.publish(
-                                "data:threshold_update_failed",
-                                {"bot": bot, "error": str(exc)},
-                            )
-                        except Exception:
-                            self.logger.exception(
-                                "failed to publish threshold update failed event",
-                            )
+            try:
+                self.threshold_service.update(
+                    bot,
+                    roi_drop=roi_thresh,
+                    error_threshold=err_thresh,
+                    test_failure_threshold=fail_thresh,
+                )
+                persist_sc_thresholds(
+                    bot,
+                    roi_drop=roi_thresh,
+                    error_increase=err_thresh,
+                    test_failure_increase=fail_thresh,
+                    forecast_model=meta.get("model"),
+                    confidence=meta.get("confidence"),
+                    model_params=meta.get("params"),
+                    event_bus=self.event_bus,
+                )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "data:thresholds_refreshed",
+                            {
+                                "bot": bot,
+                                "roi_threshold": roi_thresh,
+                                "error_threshold": err_thresh,
+                                "test_failure_threshold": fail_thresh,
+                            },
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish thresholds refreshed event",
+                        )
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.warning(
+                    "update_thresholds failed for %s: %s", bot, exc
+                )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish(
+                            "data:threshold_update_failed",
+                            {"bot": bot, "error": str(exc)},
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish threshold update failed event",
+                        )
             self._last_threshold_refresh[bot] = now
         else:
             last = self._last_threshold_refresh.get(bot, 0.0)
@@ -2160,15 +2172,19 @@ class DataBot:
         # test failures.  Weights bias towards ROI impact but ensure all metrics
         # contribute.  The result is clamped to ``[0, 1]`` so downstream
         # consumers can interpret it as a normalized severity value.
+        roi_weight = getattr(raw, "roi_weight", 0.5)
+        err_weight = getattr(raw, "error_weight", 0.3)
+        fail_weight = getattr(raw, "test_failure_weight", 0.2)
+        patch_weight = getattr(raw, "patch_success_weight", 0.1)
         severity = 0.0
         if roi_thresh:
-            severity += 0.5 * max(0.0, -delta_roi / abs(roi_thresh))
+            severity += roi_weight * max(0.0, -delta_roi / abs(roi_thresh))
         if err_thresh:
-            severity += 0.3 * max(0.0, delta_err / err_thresh)
+            severity += err_weight * max(0.0, delta_err / err_thresh)
         if fail_thresh:
-            severity += 0.2 * max(0.0, delta_fail / fail_thresh)
+            severity += fail_weight * max(0.0, delta_fail / fail_thresh)
         if patch_success is not None:
-            severity += 0.1 * max(0.0, -delta_patch)
+            severity += patch_weight * max(0.0, -delta_patch)
         event["severity"] = min(severity, 1.0)
         # Provide a concise summary for consumers that only require high-level
         # degradation indicators.
@@ -2410,7 +2426,10 @@ class DataBot:
         ``config/self_coding_thresholds.yaml``.
         """
 
-        raw = load_sc_thresholds(bot, self.settings, event_bus=self.event_bus)
+        try:
+            raw = load_sc_thresholds(bot, self.settings, event_bus=self.event_bus)
+        except TypeError:
+            raw = load_sc_thresholds(bot, self.settings)
         if not isinstance(raw, SelfCodingThresholds):
             raw = _load_sc_thresholds(bot, self.settings)
         roi_drop = (
