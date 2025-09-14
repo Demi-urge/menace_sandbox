@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import uuid
 from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
@@ -107,7 +106,6 @@ try:  # pragma: no cover - optional
 except Exception:  # pragma: no cover - fallback when service missing
     ContextBuilder = Any  # type: ignore
 
-from snippet_compressor import compress_snippets  # noqa: E402
 DEFAULT_IDEA_DB = database_manager.DB_PATH
 IDEA_DB_PATH = Path(resolve_path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB))))
 
@@ -430,76 +428,33 @@ class ChatGPTClient:
     def build_prompt_with_memory(
         self,
         tags: list[str],
-        prompt: str,
         *,
         prior: str | None = None,
         context_builder: ContextBuilder,
+        intent_metadata: Dict[str, Any] | None = None,
     ) -> List[Dict[str, Any]]:
         """Build a :class:`Prompt` via ``context_builder`` including memory."""
 
         if context_builder is None:
             raise ValueError("context_builder is required")
 
-        session_id = uuid.uuid4().hex
-
-        # Collect GPT memory snippets so the context builder can deduplicate
-        mem_snippets: list[str] = []
-        if self.gpt_memory is not None:
-            try:
-                entries: Iterable[Any] | None = None
-                if hasattr(self.gpt_memory, "search_context"):
-                    entries = self.gpt_memory.search_context("", tags=tags)
-                elif hasattr(self.gpt_memory, "fetch_context"):
-                    entries = self.gpt_memory.fetch_context(tags)
-                if entries:
-                    seen: set[str] = set()
-                    for e in entries:
-                        text = f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}".strip()
-                        if not text or text in seen:
-                            continue
-                        seen.add(text)
-                        mem_snippets.append(
-                            compress_snippets({"snippet": text}).get("snippet", text)
-                        )
-            except Exception:
-                logger.exception("failed to fetch memory context")
-
         intent_meta: Dict[str, Any] = {"tags": list(tags)}
         if prior:
             intent_meta["prior_ideas"] = prior
+        if intent_metadata:
+            intent_meta.update(intent_metadata)
 
         try:
             prompt_obj = context_builder.build_prompt(
-                prompt,
+                tags,
+                prior=prior,
                 intent_metadata=intent_meta,
-                snippets=mem_snippets,
-                session_id=session_id,
             )
         except Exception:
             logger.exception("failed to build prompt from context builder")
             from prompt_types import Prompt  # type: ignore
 
-            prompt_obj = Prompt(user=prompt, metadata={})
-
-        # Ensure intent metadata and snippets are preserved even if the builder
-        # ignores them so downstream components can reference the enriched
-        # context.
-        meta = dict(getattr(prompt_obj, "metadata", {}) or {})
-        meta.update(intent_meta)
-        if mem_snippets:
-            meta.setdefault("snippets", mem_snippets)
-            # Merge memory snippets into examples for LLM consumption
-            prompt_obj.examples.extend(mem_snippets)
-            dedup: list[str] = []
-            seen_ex: set[str] = set()
-            for ex in prompt_obj.examples:
-                key = ex.strip().lower()
-                if key in seen_ex:
-                    continue
-                seen_ex.add(key)
-                dedup.append(ex)
-            prompt_obj.examples = dedup
-        prompt_obj.metadata = meta
+            prompt_obj = Prompt(user="", metadata=intent_meta)
 
         parts: List[str] = [prompt_obj.user]
         if getattr(prompt_obj, "examples", None):
@@ -509,7 +464,6 @@ class ChatGPTClient:
         if getattr(prompt_obj, "system", None):
             messages.append({"role": "system", "content": prompt_obj.system})
         msg_meta = dict(getattr(prompt_obj, "metadata", {}) or {})
-        msg_meta.setdefault("retrieval_session_id", session_id)
         messages.append(
             {"role": "user", "content": "\n".join(parts), "metadata": msg_meta}
         )
@@ -525,19 +479,9 @@ def build_prompt(
     """Construct a prompt and fetch memory-aware messages via ``client``."""
     if context_builder is None:
         raise ValueError("context_builder is required")
-    parts = ["Suggest five new online business models"]
-    if prior:
-        parts.append(f"building on {prior}")
-    if tags:
-        parts.append("with a focus on " + ", ".join(tags))
-    prompt = (
-        " ".join(parts)
-        + ". Respond in JSON list format with fields name, description and tags."
-    )
     base_tags = [IMPROVEMENT_PATH, *tags]
     return client.build_prompt_with_memory(
         base_tags,
-        prompt,
         prior=prior,
         context_builder=context_builder,
     )
