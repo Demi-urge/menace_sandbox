@@ -320,6 +320,79 @@ def test_patch_approval_policy_handles_failure(monkeypatch, tmp_path):
     assert not policy.approve(tmp_path)
 
 
+def test_patch_approval_policy_threshold_service(monkeypatch, tmp_path):
+    monkeypatch.delenv("SELF_CODING_TEST_COMMAND", raising=False)
+    calls = {}
+
+    def fake_run(cmd, check=True):
+        calls["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    class DummySvc:
+        def load(self, bot, settings=None):
+            return types.SimpleNamespace(test_command=["echo", "svc"])
+
+    monkeypatch.setattr(scm, "_DEFAULT_THRESHOLD_SERVICE", DummySvc())
+    verifier = types.SimpleNamespace(verify=lambda path: True)
+    policy = scm.PatchApprovalPolicy(verifier=verifier)
+    assert policy.approve(tmp_path)
+    assert calls["cmd"] == ["echo", "svc"]
+
+
+def test_patch_approval_policy_bot_thresholds(monkeypatch, tmp_path):
+    monkeypatch.delenv("SELF_CODING_TEST_COMMAND", raising=False)
+    calls = {}
+
+    def fake_run(cmd, check=True):
+        calls["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    class DummySvc:
+        def load(self, bot, settings=None):
+            return types.SimpleNamespace(test_command=None)
+
+    monkeypatch.setattr(scm, "_DEFAULT_THRESHOLD_SERVICE", DummySvc())
+
+    class DummySettings:
+        def __init__(self):
+            self.bot_thresholds = {
+                "custom": types.SimpleNamespace(test_command=["echo", "bot"])
+            }
+
+    monkeypatch.setattr(scm, "SandboxSettings", DummySettings)
+    verifier = types.SimpleNamespace(verify=lambda path: True)
+    policy = scm.PatchApprovalPolicy(verifier=verifier, bot_name="custom")
+    assert policy.approve(tmp_path)
+    assert calls["cmd"] == ["echo", "bot"]
+
+
+def test_patch_approval_policy_update_runtime(monkeypatch, tmp_path):
+    monkeypatch.delenv("SELF_CODING_TEST_COMMAND", raising=False)
+    calls = {"cmds": []}
+
+    def fake_run(cmd, check=True):
+        calls["cmds"].append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    class DummySvc:
+        def load(self, bot, settings=None):
+            return types.SimpleNamespace(test_command=["echo", "svc"])
+
+    monkeypatch.setattr(scm, "_DEFAULT_THRESHOLD_SERVICE", DummySvc())
+    verifier = types.SimpleNamespace(verify=lambda path: True)
+    policy = scm.PatchApprovalPolicy(verifier=verifier)
+    assert policy.approve(tmp_path)
+    policy.update_test_command(["echo", "new"])
+    assert policy.approve(tmp_path)
+    assert calls["cmds"] == [["echo", "svc"], ["echo", "new"]]
+
+
 def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
     class DummyEngine:
         def __init__(self):

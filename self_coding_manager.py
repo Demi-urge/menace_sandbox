@@ -22,7 +22,6 @@ import re
 import json
 import uuid
 import os
-import shlex
 from dataclasses import asdict
 from typing import Dict, Any, TYPE_CHECKING, Callable
 
@@ -157,6 +156,8 @@ class PatchApprovalPolicy:
     """Run formal verification and tests before patching.
 
     The test runner command can be customised via ``test_command``.
+    When omitted the command is loaded from the ``threshold_service`` or
+    per-bot configuration.
     """
 
     def __init__(
@@ -166,23 +167,32 @@ class PatchApprovalPolicy:
         rollback_mgr: AutomatedRollbackManager | None = None,
         bot_name: str = "menace",
         test_command: list[str] | None = None,
+        threshold_service: ThresholdService | None = None,
     ) -> None:
         self.verifier = verifier or FormalVerifier()
         self.rollback_mgr = rollback_mgr
         self.bot_name = bot_name
         self.logger = logging.getLogger(self.__class__.__name__)
+        svc = threshold_service or _DEFAULT_THRESHOLD_SERVICE
         if test_command is None:
-            env_cmd = os.getenv("SELF_CODING_TEST_COMMAND")
-            if env_cmd:
-                test_command = shlex.split(env_cmd)
-            else:
+            settings = SandboxSettings()
+            try:
+                test_command = svc.load(bot_name, settings).test_command
+            except Exception:  # pragma: no cover - service issues
+                test_command = None
+            if not test_command:
                 try:
-                    test_command = _DEFAULT_THRESHOLD_SERVICE.load(
-                        bot_name, SandboxSettings()
-                    ).test_command
-                except Exception:
+                    bt = settings.bot_thresholds.get(bot_name)
+                    if bt and bt.test_command:
+                        test_command = list(bt.test_command)
+                except Exception:  # pragma: no cover - settings issues
                     test_command = None
-        self.test_command = test_command or ["pytest", "-q"]
+        self.test_command = list(test_command) if test_command else ["pytest", "-q"]
+
+    # ------------------------------------------------------------------
+    def update_test_command(self, new_cmd: list[str]) -> None:
+        """Refresh the command used for running tests."""
+        self.test_command = list(new_cmd)
 
     def approve(self, path: Path) -> bool:
         ok = True
@@ -504,7 +514,7 @@ class SelfCodingManager:
             self._last_thresholds = t
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load thresholds for %s", self.bot_name)
-    
+
     def _on_thresholds_updated(self, _topic: str, event: object) -> None:
         """Refresh cached thresholds when configuration changes."""
         if not isinstance(event, dict):
@@ -985,7 +995,6 @@ class SelfCodingManager:
             self._last_commit_hash = None
             raise
         patch_id = getattr(self, "_last_patch_id", None)
-        module_path = path_for_prompt(path)
         if commit and patch_id and self.event_bus:
             try:
                 self.event_bus.publish(
