@@ -528,6 +528,9 @@ def deploy_patch(
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
     from menace.model_automation_pipeline import ModelAutomationPipeline
+    from menace.capital_management_bot import CapitalManagementBot
+    from menace.system_evolution_manager import SystemEvolutionManager
+    from menace.evolution_orchestrator import EvolutionOrchestrator
 
     builder = context_builder
     builder.refresh_db_weights()
@@ -537,6 +540,11 @@ def deploy_patch(
     bus = UnifiedEventBus()
     registry = BotRegistry(event_bus=bus)
     data_bot = DataBot()
+    capital_bot = CapitalManagementBot()
+    evolution_manager = SystemEvolutionManager(bots=["MenaceMaster"])
+    orchestrator = EvolutionOrchestrator(
+        data_bot, capital_bot, engine, evolution_manager
+    )
     pipeline = ModelAutomationPipeline(
         context_builder=builder, event_bus=bus, bot_registry=registry
     )
@@ -559,10 +567,12 @@ def deploy_patch(
         roi_threshold=_th.roi_drop,
         error_threshold=_th.error_increase,
         test_failure_threshold=_th.test_failure_increase,
+        evolution_orchestrator=orchestrator,
     )
     manager.context_builder = builder
     try:
-        manager.run_patch(path, description)
+        provenance_token = orchestrator.provenance_token
+        manager.run_patch(path, description, provenance_token=provenance_token)
     except Exception:
         rb.auto_rollback("latest", [])
 
