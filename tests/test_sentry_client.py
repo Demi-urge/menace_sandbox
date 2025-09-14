@@ -2,12 +2,21 @@ import sys
 import types
 import importlib
 import menace.error_logger as elog
+import types
 import menace.sentry_client as sc
 
 
 class DummyBuilder:
     def refresh_db_weights(self):
         pass
+
+
+class DummyManager:
+    def __init__(self):
+        self.evolution_orchestrator = types.SimpleNamespace(provenance_token="tok", event_bus=None)
+
+    def generate_patch(self, module, description="", context_builder=None, provenance_token="", **kwargs):  # pragma: no cover - stub
+        return 1
 
 
 class StubSDK:
@@ -31,7 +40,7 @@ def test_error_logger_with_sentry(monkeypatch):
     sentry = sc.SentryClient("http://dsn")
     events = []
     db = types.SimpleNamespace(add_telemetry=lambda e: events.append(e))
-    logger = elog.ErrorLogger(db, sentry=sentry, context_builder=DummyBuilder())
+    logger = elog.ErrorLogger(db, sentry=sentry, context_builder=DummyBuilder(), manager=DummyManager())
     try:
         raise RuntimeError("boom")
     except Exception as exc:

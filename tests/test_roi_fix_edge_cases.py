@@ -1,11 +1,22 @@
 import menace.error_bot as eb
 import menace.error_logger as elog
+import types
 from roi_calculator import propose_fix
 
 
 class DummyBuilder:
     def refresh_db_weights(self):
         pass
+
+
+class DummyManager:
+    def __init__(self):
+        self.calls = []
+        self.evolution_orchestrator = types.SimpleNamespace(provenance_token="tok", event_bus=None)
+
+    def generate_patch(self, module, description="", context_builder=None, provenance_token="", **kwargs):  # pragma: no cover - stub
+        self.calls.append(module)
+        return 1
 
 
 def test_propose_fix_highlights_missing_metrics():
@@ -36,14 +47,8 @@ def test_propose_fix_prioritises_vetoed_bottlenecks():
 
 def test_log_fix_suggestions_attaches_and_triggers_hooks(tmp_path, monkeypatch, caplog):
     db = eb.ErrorDB(tmp_path / "e.db")
-    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
-    patch_calls = []
-
-    def fake_patch(module, *a, **k):
-        patch_calls.append(module)
-        return 1
-
-    monkeypatch.setattr(elog, "generate_patch", fake_patch, raising=False)
+    manager = DummyManager()
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder(), manager=manager)
     monkeypatch.setattr(
         elog,
         "propose_fix",
@@ -57,9 +62,6 @@ def test_log_fix_suggestions_attaches_and_triggers_hooks(tmp_path, monkeypatch, 
 
     assert [e.fix_suggestions for e in events] == [["hint1"], ["generic hint"]]
     assert [e.bottlenecks for e in events] == [["mod1"], []]
-    assert patch_calls == ["mod1"]
+    assert manager.calls == ["mod1"]
     assert ticket_file.read_text().strip()
-    assert any(
-        "Codex prompt" in r.message and "generic hint" in r.message
-        for r in caplog.records
-    )
+    assert not any("Codex prompt" in r.message for r in caplog.records)

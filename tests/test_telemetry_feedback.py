@@ -82,6 +82,14 @@ class DummyBuilder:
         pass
 
 
+class LoggerManager:
+    def __init__(self):
+        self.evolution_orchestrator = types.SimpleNamespace(provenance_token="tok", event_bus=None)
+
+    def generate_patch(self, module, description="", context_builder=None, provenance_token="", **kwargs):  # pragma: no cover - stub
+        return 1
+
+
 class DummyEngine:
     def __init__(self):
         self.calls = []
@@ -150,7 +158,7 @@ def _setup(tmp_path, monkeypatch):
         "category TEXT, module TEXT, count INTEGER, PRIMARY KEY(category, module)"
         ")"
     )
-    logger = elog.ErrorLogger(db, context_builder=DummyBuilder())
+    logger = elog.ErrorLogger(db, context_builder=DummyBuilder(), manager=LoggerManager())
     engine = DummyEngine()
     mod = tmp_path / "bot.py"  # path-ignore
     mod.write_text("def x():\n    pass\n")
