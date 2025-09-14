@@ -48,7 +48,10 @@ strings, f-strings, or concatenated strings passed as ``prompt`` arguments will
 be reported unless they originate from ``ContextBuilder.build_prompt`` or
 ``SelfCodingEngine.build_enriched_prompt``.  Additionally, direct invocations of
 ``PromptEngine.build_prompt`` are flagged to discourage bypassing the builder
-infrastructure.
+infrastructure.  ``Prompt(...)`` calls must likewise receive output from
+``context_builder.build_prompt`` or ``SelfCodingEngine.build_enriched_prompt``.
+Lists or dicts supplied directly as ``messages`` to ``.generate`` methods are
+also disallowed; use the canonical builders instead.
 """
 from __future__ import annotations
 
@@ -165,6 +168,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         def __init__(self) -> None:
             self.generate_aliases: set[str] = set()
             self.llm_instances: set[str] = set()
+            self.prompt_vars: set[str] = set()
 
         @staticmethod
         def _has_default(arg: ast.arg, default: ast.AST | None) -> bool:
@@ -249,6 +253,21 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     ):
                         self.llm_instances.update(names)
 
+        def _record_prompt_var(
+            self, targets: list[ast.expr], value: ast.AST
+        ) -> None:
+            if not isinstance(value, ast.Call):
+                return
+            call_name = full_name(value.func)
+            if call_name not in {
+                "context_builder.build_prompt",
+                "SelfCodingEngine.build_enriched_prompt",
+            }:
+                return
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    self.prompt_vars.add(target.id)
+
         def _has_builder_fallback(self, node: ast.AST, name: str) -> bool:
             for inner in ast.walk(node):
                 if isinstance(inner, ast.Assign):
@@ -306,7 +325,35 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         errors.append(
                             (
                                 line_no,
-                                "manual string prompt disallowed; use ContextBuilder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+                                "manual string prompt disallowed; use "
+                                "context_builder.build_prompt or "
+                                "SelfCodingEngine.build_enriched_prompt",
+                            )
+                        )
+
+        def _check_message_literals(self, node: ast.Call, is_llm_call: bool) -> None:
+            if not is_llm_call:
+                return
+
+            candidates: list[ast.AST] = []
+            if node.args:
+                candidates.append(node.args[0])
+            for kw in node.keywords:
+                if kw.arg == "messages":
+                    candidates.append(kw.value)
+
+            for expr in candidates:
+                if isinstance(expr, (ast.List, ast.Dict)):
+                    line_no = expr.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "direct message list/dict disallowed; use "
+                                "ContextBuilder.build_prompt or "
+                                "SelfCodingEngine.build_enriched_prompt",
                             )
                         )
 
@@ -357,6 +404,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         def visit_Assign(self, node: ast.Assign) -> None:  # noqa: D401
             self._record_alias(node.targets, node.value)
             self._record_instance(node.targets, node.value)
+            self._record_prompt_var(node.targets, node.value)
             self.generic_visit(node)
 
         def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: D401
@@ -365,11 +413,37 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             if value is not None:
                 self._record_alias([target], value)
                 self._record_instance([target], value)
+                self._record_prompt_var([target], value)
             self.generic_visit(node)
 
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
             name_full = full_name(node.func)
             name_simple = name_full.split(".")[-1] if name_full else None
+
+            if name_simple == "Prompt":
+                arg = node.args[0] if node.args else None
+                valid = False
+                if isinstance(arg, ast.Call):
+                    arg_name = full_name(arg.func)
+                    if arg_name in {
+                        "context_builder.build_prompt",
+                        "SelfCodingEngine.build_enriched_prompt",
+                    }:
+                        valid = True
+                elif isinstance(arg, ast.Name) and arg.id in self.prompt_vars:
+                    valid = True
+                if not valid:
+                    line_no = node.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "Prompt call requires context_builder.build_prompt "
+                                "or SelfCodingEngine.build_enriched_prompt",
+                            )
+                        )
 
             if name_full == "PromptEngine.build_prompt":
                 line_no = node.lineno
@@ -506,6 +580,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     )
 
             self._check_prompt_strings(node, is_llm_call)
+            self._check_message_literals(node, is_llm_call)
             self.generic_visit(node)
 
         def visit_Import(self, node: ast.Import) -> None:  # noqa: D401
