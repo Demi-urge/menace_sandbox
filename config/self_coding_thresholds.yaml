@@ -2,6 +2,7 @@ default:
   roi_drop: -0.1
   error_increase: 1.0
   test_failure_increase: 0.0
+  patch_success_drop: -0.2
   model: exponential
   confidence: 0.95
 bots:
@@ -437,6 +438,10 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   finance_router:
     roi_drop: -0.05
     error_increase: 0.5
@@ -457,7 +462,19 @@ bots:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}
   auto_patch_cycle_bot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+  sample:
+    roi_drop: -0.1
+    error_increase: 1.0
+    test_failure_increase: 0.5
+    patch_success_drop: -0.2
+    model: exponential
+    confidence: 0.95
+    model_params: {}

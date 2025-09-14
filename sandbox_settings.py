@@ -28,7 +28,7 @@ try:  # pragma: no cover - compatibility shim
     from pydantic import field_validator
 except Exception:  # pragma: no cover
     from pydantic import validator as field_validator  # type: ignore
- 
+
 SELF_CODING_ROI_DROP: float = float(os.getenv("SELF_CODING_ROI_DROP", "-0.1"))
 SELF_CODING_ERROR_INCREASE: float = float(
     os.getenv("SELF_CODING_ERROR_INCREASE", "1.0")
@@ -140,6 +140,7 @@ class BotThresholds(BaseModel):
     roi_drop: float | None = None
     error_threshold: float | None = None
     test_failure_threshold: float | None = None
+    patch_success_drop: float | None = None
     test_command: list[str] | None = None
 
 
@@ -1562,6 +1563,11 @@ class SandboxSettings(BaseSettings):
         1.0,
         env="SELF_CODING_ERROR_INCREASE",
         description="Error increase triggering self-coding.",
+    )
+    self_coding_patch_success_drop: float = Field(
+        -0.2,
+        env="SELF_CODING_PATCH_SUCCESS_DROP",
+        description="Patch success rate drop triggering self-coding.",
     )
     self_coding_test_command: list[str] | None = Field(
         None,

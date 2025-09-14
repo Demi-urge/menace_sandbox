@@ -44,6 +44,7 @@ class ThresholdService:
             "roi_drop": rt.roi_drop,
             "error_threshold": rt.error_threshold,
             "test_failure_threshold": rt.test_failure_threshold,
+            "patch_success_drop": rt.patch_success_drop,
         }
         try:  # pragma: no cover - best effort
             self.event_bus.publish("thresholds:updated", payload)
@@ -71,6 +72,7 @@ class ThresholdService:
             roi_drop=raw.roi_drop,
             error_threshold=raw.error_increase,
             test_failure_threshold=raw.test_failure_increase,
+            patch_success_drop=raw.patch_success_drop,
         )
         key = bot or ""
         prev = self._thresholds.get(key)
@@ -84,6 +86,7 @@ class ThresholdService:
                     roi_drop=rt.roi_drop,
                     error_increase=rt.error_threshold,
                     test_failure_increase=rt.test_failure_threshold,
+                    patch_success_drop=rt.patch_success_drop,
                 )
         if bot and prev != rt:
             self._publish(bot, rt)
@@ -109,6 +112,7 @@ class ThresholdService:
         roi_drop: float | None = None,
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
+        patch_success_drop: float | None = None,
     ) -> None:
         """Persist new thresholds for *bot* and broadcast changes."""
         update_thresholds(
@@ -116,16 +120,26 @@ class ThresholdService:
             roi_drop=roi_drop,
             error_increase=error_threshold,
             test_failure_increase=test_failure_threshold,
+            patch_success_drop=patch_success_drop,
         )
         current = self._thresholds.get(bot)
         if current is None:
             current = self.reload(bot)
         new_rt = ROIThresholds(
             roi_drop=roi_drop if roi_drop is not None else current.roi_drop,
-            error_threshold=
-                error_threshold if error_threshold is not None else current.error_threshold,
-            test_failure_threshold=
-                test_failure_threshold if test_failure_threshold is not None else current.test_failure_threshold,
+            error_threshold=(
+                error_threshold if error_threshold is not None else current.error_threshold
+            ),
+            test_failure_threshold=(
+                test_failure_threshold
+                if test_failure_threshold is not None
+                else current.test_failure_threshold
+            ),
+            patch_success_drop=(
+                patch_success_drop
+                if patch_success_drop is not None
+                else current.patch_success_drop
+            ),
         )
         prev = self._thresholds.get(bot)
         self._thresholds[bot] = new_rt

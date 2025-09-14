@@ -202,6 +202,7 @@ def persist_sc_thresholds(
     roi_drop: float | None = None,
     error_increase: float | None = None,
     test_failure_increase: float | None = None,
+    patch_success_drop: float | None = None,
     roi_weight: float | None = None,
     error_weight: float | None = None,
     test_failure_weight: float | None = None,
@@ -234,6 +235,7 @@ def persist_sc_thresholds(
             roi_drop=roi_drop,
             error_increase=error_increase,
             test_failure_increase=test_failure_increase,
+            patch_success_drop=patch_success_drop,
             roi_weight=roi_weight,
             error_weight=error_weight,
             test_failure_weight=test_failure_weight,
@@ -2064,10 +2066,12 @@ class DataBot:
             roi_thresh = min(base.roi_drop, roi_delta_pred)
             err_thresh = max(base.error_threshold, err_high - avg_err)
             fail_thresh = max(base.test_failure_threshold, fail_high - avg_fail)
+            patch_thresh = base.patch_success_drop
             new_thresholds = ROIThresholds(
                 roi_drop=roi_thresh,
                 error_threshold=err_thresh,
                 test_failure_threshold=fail_thresh,
+                patch_success_drop=patch_thresh,
             )
             self._thresholds[bot] = new_thresholds
             thresholds = new_thresholds
@@ -2077,12 +2081,14 @@ class DataBot:
                     roi_drop=roi_thresh,
                     error_threshold=err_thresh,
                     test_failure_threshold=fail_thresh,
+                    patch_success_drop=patch_thresh,
                 )
                 persist_sc_thresholds(
                     bot,
                     roi_drop=roi_thresh,
                     error_increase=err_thresh,
                     test_failure_increase=fail_thresh,
+                    patch_success_drop=patch_thresh,
                     forecast_model=meta.get("model"),
                     confidence=meta.get("confidence"),
                     model_params=meta.get("params"),
@@ -2127,6 +2133,7 @@ class DataBot:
             roi_thresh = thresholds.roi_drop
             err_thresh = thresholds.error_threshold
             fail_thresh = thresholds.test_failure_threshold
+            patch_thresh = thresholds.patch_success_drop
 
         fhist = self._forecast_history.setdefault(
             bot, {"roi": [], "errors": [], "tests_failed": []}
@@ -2164,6 +2171,7 @@ class DataBot:
             "roi_threshold": roi_thresh,
             "error_threshold": err_thresh,
             "test_failure_threshold": fail_thresh,
+            "patch_success_threshold": patch_thresh,
             "roi_breach": delta_roi <= roi_thresh,
             "error_breach": delta_err >= err_thresh,
             "test_failure_breach": delta_fail > fail_thresh,
@@ -2183,8 +2191,8 @@ class DataBot:
             severity += err_weight * max(0.0, delta_err / err_thresh)
         if fail_thresh:
             severity += fail_weight * max(0.0, delta_fail / fail_thresh)
-        if patch_success is not None:
-            severity += patch_weight * max(0.0, -delta_patch)
+        if patch_success is not None and patch_thresh:
+            severity += patch_weight * max(0.0, -delta_patch / abs(patch_thresh))
         event["severity"] = min(severity, 1.0)
         # Provide a concise summary for consumers that only require high-level
         # degradation indicators.
@@ -2212,7 +2220,7 @@ class DataBot:
             tracker.update(roi=roi, errors=errors, tests_failed=test_failures)
         patch_breach = False
         if patch_success is not None:
-            patch_breach = delta_patch < -0.2
+            patch_breach = delta_patch <= patch_thresh
         event["patch_success_breach"] = patch_breach
         degraded = (
             event["roi_breach"]
@@ -2447,10 +2455,12 @@ class DataBot:
             if self.test_failure_threshold is not None
             else raw.test_failure_increase
         )
+        patch_thresh = raw.patch_success_drop
         rt = ROIThresholds(
             roi_drop=roi_drop,
             error_threshold=error_thresh,
             test_failure_threshold=fail_thresh,
+            patch_success_drop=patch_thresh,
         )
         key = bot or ""
         self._thresholds[key] = rt
@@ -2475,6 +2485,7 @@ class DataBot:
                     roi_drop=roi_drop,
                     error_increase=error_thresh,
                     test_failure_increase=fail_thresh,
+                    patch_success_drop=patch_thresh,
                     forecast_model=raw.model,
                     confidence=raw.confidence,
                     model_params=params,
@@ -2540,6 +2551,7 @@ class DataBot:
         roi_drop: float | None = None,
         error_threshold: float | None = None,
         test_failure_threshold: float | None = None,
+        patch_success_drop: float | None = None,
         forecast: Dict[str, float] | None = None,
     ) -> None:
         """Persist new thresholds for ``bot`` and optionally notify API."""
@@ -2548,6 +2560,7 @@ class DataBot:
             roi_drop=roi_drop,
             error_threshold=error_threshold,
             test_failure_threshold=test_failure_threshold,
+            patch_success_drop=patch_success_drop,
         )
         # mirror updates in the self-coding configuration so future
         # processes see the new limits without relying solely on the
@@ -2558,6 +2571,7 @@ class DataBot:
                 roi_drop=roi_drop,
                 error_increase=error_threshold,
                 test_failure_increase=test_failure_threshold,
+                patch_success_drop=patch_success_drop,
                 event_bus=self.event_bus,
             )
         except Exception:  # pragma: no cover - best effort persistence

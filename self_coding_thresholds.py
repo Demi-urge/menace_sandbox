@@ -74,6 +74,7 @@ class SelfCodingThresholds:
     roi_drop: float
     error_increase: float
     test_failure_increase: float = 0.0
+    patch_success_drop: float = -0.2
     roi_weight: float = 0.5
     error_weight: float = 0.3
     test_failure_weight: float = 0.2
@@ -118,6 +119,7 @@ def get_thresholds(
     roi_drop = getattr(s, "self_coding_roi_drop", -0.1)
     err_inc = getattr(s, "self_coding_error_increase", 1.0)
     fail_inc = getattr(s, "self_coding_test_failure_increase", 0.0)
+    patch_drop = getattr(s, "self_coding_patch_success_drop", -0.2)
     roi_weight = getattr(s, "self_coding_roi_weight", 0.5)
     err_weight = getattr(s, "self_coding_error_weight", 0.3)
     fail_weight = getattr(s, "self_coding_test_failure_weight", 0.2)
@@ -138,6 +140,7 @@ def get_thresholds(
     roi_drop = float(default.get("roi_drop", roi_drop))
     err_inc = float(default.get("error_increase", err_inc))
     fail_inc = float(default.get("test_failure_increase", fail_inc))
+    patch_drop = float(default.get("patch_success_drop", patch_drop))
     roi_weight = float(default.get("roi_weight", roi_weight))
     err_weight = float(default.get("error_weight", err_weight))
     fail_weight = float(default.get("test_failure_weight", fail_weight))
@@ -151,6 +154,7 @@ def get_thresholds(
         roi_drop = float(cfg.get("roi_drop", roi_drop))
         err_inc = float(cfg.get("error_increase", err_inc))
         fail_inc = float(cfg.get("test_failure_increase", fail_inc))
+        patch_drop = float(cfg.get("patch_success_drop", patch_drop))
         roi_weight = float(cfg.get("roi_weight", roi_weight))
         err_weight = float(cfg.get("error_weight", err_weight))
         fail_weight = float(cfg.get("test_failure_weight", fail_weight))
@@ -169,6 +173,7 @@ def get_thresholds(
         roi_drop=roi_drop,
         error_increase=err_inc,
         test_failure_increase=fail_inc,
+        patch_success_drop=patch_drop,
         roi_weight=roi_weight,
         error_weight=err_weight,
         test_failure_weight=fail_weight,
@@ -186,6 +191,7 @@ def update_thresholds(
     roi_drop: float | None = None,
     error_increase: float | None = None,
     test_failure_increase: float | None = None,
+    patch_success_drop: float | None = None,
     roi_weight: float | None = None,
     error_weight: float | None = None,
     test_failure_weight: float | None = None,
@@ -208,6 +214,8 @@ def update_thresholds(
         cfg["error_increase"] = float(error_increase)
     if test_failure_increase is not None:
         cfg["test_failure_increase"] = float(test_failure_increase)
+    if patch_success_drop is not None:
+        cfg["patch_success_drop"] = float(patch_success_drop)
     if roi_weight is not None:
         cfg["roi_weight"] = float(roi_weight)
     if error_weight is not None:
@@ -274,12 +282,14 @@ def adaptive_thresholds(
         roi_drop=roi_thresh,
         error_increase=err_thresh,
         test_failure_increase=fail_thresh,
+        patch_success_drop=current.patch_success_drop,
     )
 
     return ROIThresholds(
         roi_drop=roi_thresh,
         error_threshold=err_thresh,
         test_failure_threshold=fail_thresh,
+        patch_success_drop=current.patch_success_drop,
     )
 
 
