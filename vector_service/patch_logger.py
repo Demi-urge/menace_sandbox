@@ -328,6 +328,8 @@ class PatchLogger:
         error_traces: Sequence[Mapping[str, Any]] | None = None,
         roi_tag: RoiTag | str | None = None,
         effort_estimate: float | None = None,
+        risk_flags: Sequence[str] | None = None,
+        diff_risk_score: float | None = None,
     ) -> dict[str, float]:
         """Log patch outcome for vectors contributing to a patch.
 
@@ -845,6 +847,10 @@ class PatchLogger:
         }
         if patch_id:
             payload["patch_id"] = patch_id
+        if risk_flags:
+            payload["risk_flags"] = list(risk_flags)
+        if diff_risk_score is not None:
+            payload["diff_risk_score"] = float(diff_risk_score)
 
         # Persist risk summaries for audit
         try:
@@ -899,6 +905,10 @@ class PatchLogger:
             "roi_tag": roi_tag_val.value,
             "enhancement_score": enhancement_score,
         }
+        if risk_flags:
+            summary_payload["risk_flags"] = list(risk_flags)
+        if diff_risk_score is not None:
+            summary_payload["diff_risk_score"] = float(diff_risk_score)
         if error_summary is not None:
             summary_payload["error_summary"] = error_summary
         if self.event_bus is not None:

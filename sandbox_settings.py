@@ -1302,6 +1302,11 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_PATCH_RETRY_DELAY",
         description="Delay in seconds between patch generation attempts.",
     )
+    diff_risk_threshold: float = Field(
+        0.5,
+        env="DIFF_RISK_THRESHOLD",
+        description="Abort patches whose diff risk exceeds this score.",
+    )
     flakiness_runs: int = Field(
         5,
         env="FLAKINESS_RUNS",

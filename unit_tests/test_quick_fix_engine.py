@@ -339,3 +339,47 @@ def test_generate_patch_graph_failure(qfe):
 
     assert pid == 1
     assert "Related modules" not in captured["desc"]
+
+
+def test_high_risk_aborts_patch(qfe, monkeypatch):
+    monkeypatch.setenv("DIFF_RISK_THRESHOLD", "0.0")
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, *a, **k):
+            return ""
+
+    class DummyEngine:
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            return 1, "", ""
+
+    class DummyPatchLogger:
+        def __init__(self):
+            self.flags = None
+
+        def track_contributors(self, *a, **k):
+            self.flags = k.get("risk_flags")
+
+    builder = DummyBuilder()
+    engine = DummyEngine()
+    manager = qfe.SelfCodingManager()
+    manager.engine = engine
+    manager.register_patch_cycle = lambda *a, **k: None
+
+    monkeypatch.setattr(qfe, "flag_risky_changes", lambda *a, **k: ["danger"])
+
+    patch_logger = DummyPatchLogger()
+    res = qfe.generate_patch(
+        module="simple_functions",
+        manager=manager,
+        engine=engine,
+        context_builder=builder,
+        provenance_token="tok",
+        patch_logger=patch_logger,
+        return_flags=True,
+    )
+
+    assert res == (None, ["danger"])
+    assert patch_logger.flags == ["danger"]
