@@ -1,4 +1,4 @@
-.PHONY: mypy synergy-graph install-self-improvement-deps check-context-builder
+.PHONY: mypy synergy-graph install-self-improvement-deps check-context-builder self-coding-check
 mypy:
 	mypy --config mypy.ini self_* sandbox_runner
 	python scripts/check_governed_embeddings.py
@@ -14,3 +14,7 @@ install-self-improvement-deps:
 
 check-context-builder:
 	python scripts/check_context_builder_usage.py
+
+self-coding-check:
+	python tools/check_self_coding_usage.py
+	python tools/find_unmanaged_bots.py

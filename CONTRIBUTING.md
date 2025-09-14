@@ -204,6 +204,17 @@ pre-commit run check-engine-generate-helper --all-files
 Run the hook before committing to ensure no direct `engine.generate_helper`
 calls slip into the codebase.
 
+To run the same validation alongside the unmanaged bot scan, use the combined
+Makefile target:
+
+```bash
+make self-coding-check
+```
+
+It executes `tools/check_self_coding_usage.py` and
+`tools/find_unmanaged_bots.py`, failing if any unwrapped helper calls or
+unmanaged bots are detected. CI runs this target automatically.
+
 ## Helper caller decoration
 
 Any class that invokes `manager_generate_helper` or `generate_helper` must be

@@ -4,7 +4,8 @@ The script walks all modules matching ``*_bot.py`` (excluding tests) and
 reports any classes that end with ``Bot`` or inherit from known bot bases but
 lack the ``@self_coding_managed`` decorator.  Modules that explicitly call
 ``BotRegistry.register_bot`` and log evaluations via ``log_eval`` are treated as
-managed.
+managed.  The optional positional argument allows specifying an alternate
+repository root to scan.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import ast
 import sys
 from pathlib import Path
+from typing import Iterable
 
 KNOWN_BOT_BASES = {"AdminBotBase"}
 
@@ -77,8 +79,12 @@ def _register_missing_refs(tree: ast.AST) -> bool:
     return False
 
 
-def main() -> None:
-    root = Path(__file__).resolve().parents[1]
+def main(argv: Iterable[str] | None = None) -> int:
+    argv = list(argv or sys.argv[1:])
+    if argv:
+        root = Path(argv[0])
+    else:
+        root = Path(__file__).resolve().parents[1]
     offenders: list[tuple[Path, list[str]]] = []
     bad_calls: list[Path] = []
     for path in root.rglob("*_bot.py"):
@@ -107,9 +113,9 @@ def main() -> None:
             print(f"{path}: register_bot missing manager/data_bot")
         for path, classes in offenders:
             print(f"{path}: unmanaged bot classes: {', '.join(classes)}")
-        sys.exit(1)
-    sys.exit(0)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    main()
+    raise SystemExit(main())
