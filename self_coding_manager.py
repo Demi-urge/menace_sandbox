@@ -1021,6 +1021,21 @@ class SelfCodingManager:
         return result, commit
 
     # ------------------------------------------------------------------
+    def auto_run_patch(self, path: Path, description: str, **kwargs: Any) -> AutomationResult:
+        """Run :meth:`run_patch` using the orchestrator's provenance token.
+
+        This helper reduces the chance of provenance related errors by
+        automatically retrieving the token from the attached
+        ``evolution_orchestrator``.
+        """
+
+        orchestrator = getattr(self, "evolution_orchestrator", None)
+        token = getattr(orchestrator, "provenance_token", None)
+        if not token:
+            raise PermissionError("missing provenance token")
+        return self.run_patch(path, description, provenance_token=token, **kwargs)
+
+    # ------------------------------------------------------------------
     def run_patch(
         self,
         path: Path,
@@ -2138,7 +2153,7 @@ class SelfCodingManager:
                         self.logger.exception(
                             "failed to record audit log for %s", prompt_module
                         )
-                self.run_patch(path, description)
+                self.auto_run_patch(path, description)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception(
                     "failed to apply suggestion for %s", prompt_module

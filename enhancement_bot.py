@@ -249,12 +249,7 @@ class EnhancementBot:
 
         if self.manager is not None:
             desc = f"apply enhancement from {proposal.author_bot}\n\n{proposal.new_code}"
-            token = (
-                self.manager.evolution_orchestrator.provenance_token
-                if self.manager.evolution_orchestrator
-                else ""
-            )
-            self.manager.run_patch(file_path, desc, provenance_token=token)
+            self.manager.auto_run_patch(file_path, desc)
             registry = getattr(self.manager, "bot_registry", None)
             if registry is not None:
                 try:

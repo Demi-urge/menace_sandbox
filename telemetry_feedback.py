@@ -120,7 +120,7 @@ class TelemetryFeedback:
             return
         desc = f"fix {error_type}: {module}"
         try:
-            self.manager.run_patch(
+            self.manager.auto_run_patch(
                 path,
                 desc,
                 context_meta={"reason": desc, "trigger": "telemetry_feedback"},

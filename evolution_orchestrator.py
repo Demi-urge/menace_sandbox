@@ -1002,10 +1002,9 @@ class EvolutionOrchestrator:
                     "error_threshold": self.triggers.error_rate,
                 }
                 self._invoke_register_patch_cycle(reason, meta)
-                self.selfcoding_manager.run_patch(
+                self.selfcoding_manager.auto_run_patch(
                     path,
                     reason,
-                    provenance_token=self.provenance_token,
                     context_meta=meta,
                 )
                 after = self._latest_roi()
@@ -1246,10 +1245,9 @@ class EvolutionOrchestrator:
                                 before_metric=before_roi,
                             )
                             if self.selfcoding_manager.should_refactor():
-                                self.selfcoding_manager.run_patch(
+                                self.selfcoding_manager.auto_run_patch(
                                     path,
                                     f"auto_patch:{path.name}",
-                                    provenance_token=self.provenance_token,
                                 )
                             after_patch = self._latest_roi()
                             delta = after_patch - before_roi

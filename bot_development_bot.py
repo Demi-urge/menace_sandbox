@@ -534,7 +534,7 @@ class BotDevelopmentBot:
         def writer() -> None:
             if self.manager is not None:
                 desc = f"update {path.name} content\n\n{data}"
-                self.manager.run_patch(path, desc)
+                self.manager.auto_run_patch(path, desc)
                 registry = getattr(self.manager, "bot_registry", None)
                 if registry is not None:
                     try:
@@ -789,7 +789,7 @@ class BotDevelopmentBot:
         try:
             if path is not None:
                 self.engine_retry.run(
-                    lambda: manager.run_patch(path, prompt),
+                    lambda: manager.auto_run_patch(path, prompt),
                     logger=self.logger,
                 )
                 code = path.read_text()

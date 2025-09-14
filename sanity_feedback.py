@@ -119,7 +119,7 @@ class SanityFeedback:
         if path:
             try:
                 path_obj = resolve_path(path if path.endswith(".py") else f"{path}.py")
-                self.manager.run_patch(
+                self.manager.auto_run_patch(
                     path_obj,
                     desc,
                     context_meta={"reason": desc, "trigger": "sanity_feedback"},

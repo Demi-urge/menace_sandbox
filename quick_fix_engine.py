@@ -996,11 +996,6 @@ class QuickFixEngine:
         if session_id:
             context_meta["retrieval_session_id"] = session_id
             context_meta.setdefault("retrieval_vectors", vectors)
-        token = getattr(
-            getattr(self.manager, "evolution_orchestrator", None),
-            "provenance_token",
-            None,
-        )
         patch_id = None
         event_bus = getattr(self.manager, "event_bus", None)
         if event_bus:
@@ -1011,20 +1006,32 @@ class QuickFixEngine:
                 )
             except Exception:
                 self.logger.exception("failed to publish patch_start event")
-        try:
-            try:
-                result = self.manager.run_patch(
+        patch_fn = getattr(self.manager, "auto_run_patch", None)
+        if patch_fn is None:
+            token = getattr(
+                getattr(self.manager, "evolution_orchestrator", None),
+                "provenance_token",
+                None,
+            )
+            def patch_fn(path: Path, desc: str, **kw):
+                return self.manager.run_patch(
                     path,
                     desc,
                     provenance_token=token,
+                    **kw,
+                )
+        try:
+            try:
+                result = patch_fn(
+                    path,
+                    desc,
                     context_meta=context_meta,
                     context_builder=builder,
                 )
             except TypeError:
-                result = self.manager.run_patch(
+                result = patch_fn(
                     path,
                     desc,
-                    provenance_token=token,
                     context_meta=context_meta,
                 )
             patch_id = getattr(result, "patch_id", None)
@@ -1189,20 +1196,32 @@ class QuickFixEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to publish patch_start event")
-            try:
-                try:
-                    result = self.manager.run_patch(
+            patch_fn = getattr(self.manager, "auto_run_patch", None)
+            if patch_fn is None:
+                token = getattr(
+                    getattr(self.manager, "evolution_orchestrator", None),
+                    "provenance_token",
+                    None,
+                )
+                def patch_fn(path: Path, desc: str, **kw):
+                    return self.manager.run_patch(
                         path,
                         desc,
                         provenance_token=token,
+                        **kw,
+                    )
+            try:
+                try:
+                    result = patch_fn(
+                        path,
+                        desc,
                         context_meta=meta,
                         context_builder=builder,
                     )
                 except TypeError:
-                    result = self.manager.run_patch(
+                    result = patch_fn(
                         path,
                         desc,
-                        provenance_token=token,
                         context_meta=meta,
                     )
                 patch_id = getattr(result, "patch_id", None)

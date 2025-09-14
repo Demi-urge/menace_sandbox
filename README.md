@@ -135,7 +135,7 @@ from self_coding_manager import PatchApprovalPolicy
 
 policy = PatchApprovalPolicy(test_command=["pytest", "-q"])
 manager.approval_policy = policy
-manager.run_patch(Path("sandbox_runner.py"), "tweak", clone_command=["git", "clone", "--depth", "1"])
+manager.auto_run_patch(Path("sandbox_runner.py"), "tweak", clone_command=["git", "clone", "--depth", "1"])
 ```
 
 If ``test_command`` is omitted, :class:`PatchApprovalPolicy` derives the value

@@ -482,8 +482,7 @@ class ServiceSupervisor:
                 evolution_orchestrator=evolution_orchestrator,
             )
             manager.context_builder = self.context_builder
-            token = evolution_orchestrator.provenance_token
-            manager.run_patch(path, description, provenance_token=token)
+            manager.auto_run_patch(path, description)
             added_modules = getattr(engine, "last_added_modules", None)
             if not added_modules:
                 added_modules = getattr(engine, "added_modules", None)

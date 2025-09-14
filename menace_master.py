@@ -571,8 +571,7 @@ def deploy_patch(
     )
     manager.context_builder = builder
     try:
-        provenance_token = orchestrator.provenance_token
-        manager.run_patch(path, description, provenance_token=provenance_token)
+        manager.auto_run_patch(path, description)
     except Exception:
         rb.auto_rollback("latest", [])
 
