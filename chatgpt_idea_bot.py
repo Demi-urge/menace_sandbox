@@ -435,51 +435,84 @@ class ChatGPTClient:
         prior: str | None = None,
         context_builder: ContextBuilder,
     ) -> List[Dict[str, Any]]:
-        """Prepend builder and memory-derived context to ``prompt``."""
+        """Build a :class:`Prompt` via ``context_builder`` including memory."""
 
         if context_builder is None:
             raise ValueError("context_builder is required")
 
-        builder = context_builder
-        builder_ctx = ""
         session_id = uuid.uuid4().hex
-        try:
-            query_parts = [*tags]
-            if prior:
-                query_parts.append(prior)
-            query = " ".join(query_parts)
-            ctx_res = builder.build(query, session_id=session_id)
-            builder_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-            if isinstance(builder_ctx, (FallbackResult, ErrorResult)):
-                builder_ctx = ""
-            elif builder_ctx:
-                builder_ctx = compress_snippets({"snippet": builder_ctx}).get(
-                    "snippet", builder_ctx
-                )
-        except Exception:
-            logger.exception("failed to build vector context")
 
-        mem_ctx = ""
+        # Collect GPT memory snippets so the context builder can deduplicate
+        mem_snippets: list[str] = []
         if self.gpt_memory is not None:
             try:
+                entries: Iterable[Any] | None = None
                 if hasattr(self.gpt_memory, "search_context"):
                     entries = self.gpt_memory.search_context("", tags=tags)
-                    if entries:
-                        mem_ctx = "\n".join(
-                            f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}"
-                            for e in entries
-                        )
                 elif hasattr(self.gpt_memory, "fetch_context"):
-                    mem_ctx = self.gpt_memory.fetch_context(tags)
+                    entries = self.gpt_memory.fetch_context(tags)
+                if entries:
+                    seen: set[str] = set()
+                    for e in entries:
+                        text = f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}".strip()
+                        if not text or text in seen:
+                            continue
+                        seen.add(text)
+                        mem_snippets.append(
+                            compress_snippets({"snippet": text}).get("snippet", text)
+                        )
             except Exception:
                 logger.exception("failed to fetch memory context")
 
-        combined_ctx = "\n".join(part for part in [builder_ctx, mem_ctx] if part)
-        if combined_ctx:
-            prompt = f"{prompt}\n{combined_ctx}"
+        intent_meta: Dict[str, Any] = {"tags": list(tags)}
+        if prior:
+            intent_meta["prior_ideas"] = prior
 
-        messages: List[Dict[str, Any]] = [{"role": "user", "content": prompt}]
-        messages[0].setdefault("metadata", {})["retrieval_session_id"] = session_id
+        try:
+            prompt_obj = context_builder.build_prompt(
+                prompt,
+                intent_metadata=intent_meta,
+                snippets=mem_snippets,
+                session_id=session_id,
+            )
+        except Exception:
+            logger.exception("failed to build prompt from context builder")
+            from prompt_types import Prompt  # type: ignore
+
+            prompt_obj = Prompt(user=prompt, metadata={})
+
+        # Ensure intent metadata and snippets are preserved even if the builder
+        # ignores them so downstream components can reference the enriched
+        # context.
+        meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+        meta.update(intent_meta)
+        if mem_snippets:
+            meta.setdefault("snippets", mem_snippets)
+            # Merge memory snippets into examples for LLM consumption
+            prompt_obj.examples.extend(mem_snippets)
+            dedup: list[str] = []
+            seen_ex: set[str] = set()
+            for ex in prompt_obj.examples:
+                key = ex.strip().lower()
+                if key in seen_ex:
+                    continue
+                seen_ex.add(key)
+                dedup.append(ex)
+            prompt_obj.examples = dedup
+        prompt_obj.metadata = meta
+
+        parts: List[str] = [prompt_obj.user]
+        if getattr(prompt_obj, "examples", None):
+            parts.append("\n".join(prompt_obj.examples))
+
+        messages: List[Dict[str, Any]] = []
+        if getattr(prompt_obj, "system", None):
+            messages.append({"role": "system", "content": prompt_obj.system})
+        msg_meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+        msg_meta.setdefault("retrieval_session_id", session_id)
+        messages.append(
+            {"role": "user", "content": "\n".join(parts), "metadata": msg_meta}
+        )
         return messages
 
 

@@ -1,22 +1,40 @@
 import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
 import json  # noqa: E402
+import types
 import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
 
 
 def test_build_prompt():
+    class FakeMemory:
+        def search_context(self, _q, tags=None):
+            entry = types.SimpleNamespace(prompt="P", response="R")
+            return [entry]
+
     class DummyBuilder:
+        def __init__(self):
+            self.last_kwargs = None
+
         def refresh_db_weights(self):
             pass
 
-        def build(self, query, **_):
-            return ""
+        def build_prompt(self, intent, **kwargs):
+            self.last_kwargs = (intent, kwargs)
+            Prompt = types.SimpleNamespace
+            return Prompt(user=intent, examples=["ctx"], metadata={"m": 1})
 
     builder = DummyBuilder()
-    client = cib.ChatGPTClient("key", context_builder=builder)
+    client = cib.ChatGPTClient("key", context_builder=builder, gpt_memory=FakeMemory())
     msg = cib.build_prompt(client, builder, ["ai", "fintech"], prior="e-commerce")
-    assert "e-commerce" in msg[-1]["content"]
-    assert "ai, fintech" in msg[-1]["content"]
+
+    intent, kwargs = builder.last_kwargs
+    assert kwargs["intent_metadata"]["tags"] == ["ai", "fintech"]
+    assert kwargs["intent_metadata"]["prior_ideas"] == "e-commerce"
+    assert kwargs["snippets"] == ["P R"]
+    assert "ctx" in msg[-1]["content"]
+    assert "P R" in msg[-1]["content"]
+    assert msg[-1]["metadata"]["tags"] == ["ai", "fintech"]
+    assert msg[-1]["metadata"]["prior_ideas"] == "e-commerce"
 
 
 def test_parse_ideas():
