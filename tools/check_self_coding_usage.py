@@ -4,7 +4,8 @@
 This script scans Python files for occurrences of ``engine.generate_helper(``
 which should only appear inside :mod:`coding_bot_interface`'s
 ``manager_generate_helper`` wrapper.  Any other occurrence indicates direct
-usage of the self-coding engine and triggers a failure.
+usage of the self-coding engine and triggers a failure.  When invoked without
+arguments it walks the repository and checks every ``.py`` file.
 """
 from __future__ import annotations
 
@@ -35,8 +36,12 @@ def check_file(path: str) -> bool:
 
 
 def main(argv: Iterable[str]) -> int:
+    paths = list(argv)
+    if not paths:
+        root = Path(__file__).resolve().parents[1]
+        paths = [str(p) for p in root.rglob("*.py")]
     ok = True
-    for file_path in argv:
+    for file_path in paths:
         if not check_file(file_path):
             ok = False
     return 0 if ok else 1
