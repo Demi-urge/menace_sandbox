@@ -79,6 +79,7 @@ class SelfCodingThresholds:
     error_weight: float = 0.3
     test_failure_weight: float = 0.2
     patch_success_weight: float = 0.1
+    auto_recalibrate: bool = True
     test_command: list[str] | None = None
     model: str = "exponential"
     confidence: float = 0.95
@@ -124,6 +125,7 @@ def get_thresholds(
     err_weight = getattr(s, "self_coding_error_weight", 0.3)
     fail_weight = getattr(s, "self_coding_test_failure_weight", 0.2)
     patch_weight = getattr(s, "self_coding_patch_success_weight", 0.1)
+    auto_recal = getattr(s, "self_coding_auto_recalibrate", True)
     cmd: list[str] | None
     env_cmd = os.getenv("SELF_CODING_TEST_COMMAND")
     if env_cmd:
@@ -145,6 +147,7 @@ def get_thresholds(
     err_weight = float(default.get("error_weight", err_weight))
     fail_weight = float(default.get("test_failure_weight", fail_weight))
     patch_weight = float(default.get("patch_success_weight", patch_weight))
+    auto_recal = bool(default.get("auto_recalibrate", auto_recal))
     model = default.get("model", "exponential")
     conf = float(default.get("confidence", 0.95))
     params = default.get("model_params", {})
@@ -159,6 +162,7 @@ def get_thresholds(
         err_weight = float(cfg.get("error_weight", err_weight))
         fail_weight = float(cfg.get("test_failure_weight", fail_weight))
         patch_weight = float(cfg.get("patch_success_weight", patch_weight))
+        auto_recal = bool(cfg.get("auto_recalibrate", auto_recal))
         model = cfg.get("model", model)
         conf = float(cfg.get("confidence", conf))
         params = cfg.get("model_params", params)
@@ -178,6 +182,7 @@ def get_thresholds(
         error_weight=err_weight,
         test_failure_weight=fail_weight,
         patch_success_weight=patch_weight,
+        auto_recalibrate=auto_recal,
         test_command=cmd_cfg,
         model=model,
         confidence=conf,
@@ -196,6 +201,7 @@ def update_thresholds(
     error_weight: float | None = None,
     test_failure_weight: float | None = None,
     patch_success_weight: float | None = None,
+    auto_recalibrate: bool | None = None,
     test_command: list[str] | None = None,
     forecast_model: str | None = None,
     confidence: float | None = None,
@@ -224,6 +230,8 @@ def update_thresholds(
         cfg["test_failure_weight"] = float(test_failure_weight)
     if patch_success_weight is not None:
         cfg["patch_success_weight"] = float(patch_success_weight)
+    if auto_recalibrate is not None:
+        cfg["auto_recalibrate"] = bool(auto_recalibrate)
     if test_command is not None:
         cfg["test_command"] = list(test_command)
     if forecast_model is not None:
