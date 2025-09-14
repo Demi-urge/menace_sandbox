@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
-"""Audit bot classes for missing ``@self_coding_managed`` decorators.
+"""Audit bot classes and patch provenance.
 
-Walks the repository to find classes whose names end with ``Bot``. Any such
-class lacking ``@self_coding_managed`` is reported.
+Walks the repository to find classes whose names end with ``Bot`` lacking the
+``@self_coding_managed`` decorator.  With ``--verify`` the script also checks
+recent git commits for associated patch provenance recorded via
+``SelfCodingManager.register_patch_cycle``.
 
 Usage:
     python self_coding_audit.py
+    python self_coding_audit.py --verify
 """
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 from typing import Iterable, List, Tuple
+import argparse
+import subprocess
 import sys
+import os
+
+ROOT = Path(__file__).resolve().parent
+if str(ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(ROOT.parent))
+
+from menace_sandbox.patch_provenance import PatchProvenanceService
 
 DECORATOR = "self_coding_managed"
 EXCLUDED_PATHS = {
@@ -88,7 +100,46 @@ def find_unmanaged_bots(root: Path) -> List[Tuple[Path, str, int]]:
     return unmanaged
 
 
-def main() -> None:
+def _verify_commits(limit: int) -> int:
+    """Verify recent commits have patch provenance."""
+
+    os.environ.setdefault("PATCH_HISTORY_DB_PATH", str(ROOT / "patch_history.db"))
+    svc = PatchProvenanceService()
+    revs = subprocess.check_output(
+        ["git", "rev-list", f"--max-count={limit}", "HEAD"], text=True
+    ).splitlines()
+    missing: List[str] = []
+    for commit in revs:
+        meta = svc.get(commit)
+        if not meta or "patch_id" not in meta:
+            missing.append(commit)
+    if missing:
+        print("Commits missing patch provenance:")
+        for c in missing:
+            print(f" - {c}")
+        return 1
+    print("All recent commits have patch provenance.")
+    return 0
+
+
+def main(argv: List[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Audit self-coding compliance")
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="verify recent commits have registered patch cycles",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="number of recent commits to scan",
+    )
+    args = parser.parse_args(argv)
+
+    if args.verify:
+        sys.exit(_verify_commits(args.limit))
+
     root = Path(__file__).resolve().parent
     unmanaged = find_unmanaged_bots(root)
     if unmanaged:
@@ -98,9 +149,8 @@ def main() -> None:
             print(f" - {rel_path}:{lineno} -> {name} missing @self_coding_managed")
         print("Consider applying @self_coding_managed to the classes above.")
         sys.exit(1)
-    else:
-        print("All bot classes are managed.")
-        sys.exit(0)
+    print("All bot classes are managed.")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
