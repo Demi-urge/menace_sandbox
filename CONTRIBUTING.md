@@ -135,6 +135,14 @@ rejected unless produced by `ContextBuilder.build_prompt` or
 outside `vector_service/context_builder.py`, and direct calls to
 `PromptEngine.build_prompt` are disallowed.
 
+When `pre-commit run check-context-builder-usage --all-files` reports
+"Prompt instantiation disallowed", replace the `Prompt(...)` constructor with
+`context_builder.build_prompt(...)` or
+`SelfCodingEngine.build_enriched_prompt(...)` and pass the resulting dataclass
+directly to the client. Only modules listed in the hook's whitelist may build
+`Prompt` objects directly. In exceptional cases the warning can be suppressed
+with `# nocb`, but refactoring to use the standard builders is preferred.
+
 ## Coding bot registration
 
 All new coding bots must be created via the `@self_coding_managed` decorator

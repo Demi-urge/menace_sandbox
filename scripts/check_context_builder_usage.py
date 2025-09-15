@@ -48,11 +48,11 @@ strings, f-strings, or concatenated strings passed as ``prompt`` arguments will
 be reported unless they originate from ``ContextBuilder.build_prompt`` or
 ``SelfCodingEngine.build_enriched_prompt``.  Additionally, direct invocations of
 ``PromptEngine.build_prompt`` are flagged to discourage bypassing the builder
-infrastructure.  ``Prompt(...)`` calls must likewise receive output from
-``context_builder.build_prompt`` or ``SelfCodingEngine.build_enriched_prompt``;
-outside ``vector_service/context_builder.py`` direct ``Prompt`` construction is
-rejected.  Lists or dicts supplied directly as ``messages`` to ``.generate``
-methods are also disallowed; use the canonical builders instead.
+infrastructure.  Direct ``Prompt(...)`` construction is forbidden outside
+``vector_service/context_builder.py``; instead pass the result of
+``ContextBuilder.build_prompt`` or ``SelfCodingEngine.build_enriched_prompt``
+directly to the client.  Lists or dicts supplied directly as ``messages`` to
+``.generate`` methods are also disallowed; use the canonical builders instead.
 """
 from __future__ import annotations
 
@@ -427,29 +427,19 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             name_simple = name_full.split(".")[-1] if name_full else None
 
             if name_simple == "Prompt" and rel not in PROMPT_WHITELIST:
-                arg = node.args[0] if node.args else None
-                valid = False
-                if isinstance(arg, ast.Call):
-                    arg_name = full_name(arg.func)
-                    if arg_name in {
-                        "context_builder.build_prompt",
-                        "SelfCodingEngine.build_enriched_prompt",
-                    }:
-                        valid = True
-                elif isinstance(arg, ast.Name) and arg.id in self.prompt_vars:
-                    valid = True
-                if not valid:
-                    line_no = node.lineno
-                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
-                    prev = lines[line_no - 2] if line_no >= 2 else ""
-                    if NOCB_MARK not in line and NOCB_MARK not in prev:
-                        errors.append(
-                            (
-                                line_no,
-                                "Prompt call requires context_builder.build_prompt "
-                                "or SelfCodingEngine.build_enriched_prompt",
-                            )
+                line_no = node.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append(
+                        (
+                            line_no,
+                            "direct Prompt instantiation disallowed; use "
+                            "context_builder.build_prompt",
                         )
+                    )
+                self.generic_visit(node)
+                return
 
             if name_full == "PromptEngine.build_prompt":
                 line_no = node.lineno

@@ -42,9 +42,10 @@ repos:
         language: system
         pass_filenames: false
         files: '\.py$'
-      # Ensure functions that generate prompts always supply a context_builder.
+      # Ensure functions that generate prompts always supply a context_builder
+      # and ban direct Prompt instantiation.
       - id: check-context-builder-usage
-        name: Enforce ContextBuilder usage
+        name: Enforce ContextBuilder usage and disallow direct Prompt()
         entry: python scripts/check_context_builder_usage.py
         language: system
         pass_filenames: false
