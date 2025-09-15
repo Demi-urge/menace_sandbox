@@ -5,6 +5,7 @@ import sys
 import types
 import menace
 from prompt_types import Prompt
+from llm_interface import LLMClient, LLMResult
 
 
 class DummyBuilder:
@@ -18,8 +19,24 @@ class DummyBuilder:
         return ""
 
     def build_prompt(self, query, *, intent=None, **_):
-        self.last_prompt = Prompt(query, metadata=intent)
+        meta = {"intent": intent or {}, "vector_confidences": [1.0], "vectors": []}
+        self.last_prompt = Prompt(query, metadata=meta, origin="context_builder")
         return self.last_prompt
+
+
+class RecordingLLM(LLMClient):
+    def __init__(self, text: str) -> None:
+        super().__init__(model="dummy", log_prompts=False)
+        self._text = text
+        self.calls = 0
+        self.last_prompt: Prompt | None = None
+        self.last_builder = None
+
+    def _generate(self, prompt, *, context_builder):  # type: ignore[override]
+        self.calls += 1
+        self.last_prompt = prompt
+        self.last_builder = context_builder
+        return LLMResult(text=self._text)
 
 
 _ctx_mod = types.SimpleNamespace(
@@ -65,7 +82,6 @@ sys.modules.setdefault("menace.coding_bot_interface", types.SimpleNamespace(self
 sys.modules.setdefault("coding_bot_interface", types.SimpleNamespace(self_coding_managed=decorator_stub))
 
 import menace.chatgpt_enhancement_bot as ceb
-import menace.chatgpt_idea_bot as cib
 
 
 def test_summarise_text():
@@ -76,20 +92,12 @@ def test_summarise_text():
 
 
 def test_propose(monkeypatch, tmp_path):
-    resp = {
-        "choices": [
-            {"message": {"content": json.dumps([{"idea": "New", "rationale": "More efficient"}])}}
-        ]
-    }
+    response_text = json.dumps([{"idea": "New", "rationale": "More efficient"}])
     builder = DummyBuilder()
-    client = cib.ChatGPTClient("key", context_builder=builder)
-    captured: dict[str, Prompt] = {}
 
-    def fake_ask(prompt, *a, **k):
-        captured["prompt"] = prompt
-        return resp
+    client = RecordingLLM(response_text)
+    client.context_builder = builder  # satisfy ChatGPTEnhancementBot requirements
 
-    monkeypatch.setattr(client, "ask", fake_ask)
     router = ceb.init_db_router("enhprop", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     monkeypatch.setattr(ceb, "SHARED_TABLES", [])
     db = ceb.EnhancementDB(tmp_path / "enh.db", router=router)
@@ -98,7 +106,36 @@ def test_propose(monkeypatch, tmp_path):
     monkeypatch.setattr(bot, "_feasible", lambda e: True)
     results = bot.propose("Improve", num_ideas=1, context="ctx")
     assert results and results[0].context == "ctx"
-    assert captured["prompt"] is builder.last_prompt
+    assert client.calls == 1
+    assert client.last_prompt is builder.last_prompt
+    assert builder.last_prompt is not None
+    assert builder.last_prompt.origin == "context_builder"
+    assert client.last_builder is builder
+
+
+def test_propose_requires_context_builder_origin(monkeypatch, tmp_path):
+    response_text = json.dumps([{"idea": "New", "rationale": "More efficient"}])
+
+    class BadBuilder(DummyBuilder):
+        def build_prompt(self, query, *, intent=None, **_):
+            meta = {"intent": intent or {}, "vector_confidences": [1.0], "vectors": []}
+            self.last_prompt = Prompt(query, metadata=meta)
+            return self.last_prompt
+
+    builder = BadBuilder()
+    client = RecordingLLM(response_text)
+    client.context_builder = builder
+
+    router = ceb.init_db_router("enhprop_bad", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
+    monkeypatch.setattr(ceb, "SHARED_TABLES", [])
+    db = ceb.EnhancementDB(tmp_path / "enh_bad.db", router=router)
+    db.add_embedding = lambda *a, **k: None
+    bot = ceb.ChatGPTEnhancementBot(client, db=db, context_builder=builder)
+    results = bot.propose("Improve", num_ideas=1)
+    assert results == []
+    assert builder.last_prompt is not None
+    assert builder.last_prompt.origin == ""
+    assert client.calls == 0
 
 
 def test_requires_client_context_builder(tmp_path):
