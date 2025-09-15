@@ -54,7 +54,7 @@ __all__ = ["ask_with_memory"]
 def ask_with_memory(
     client: Any,
     key: str,
-    prompt: str,
+    prompt: str | Prompt,
     *,
     memory: LocalKnowledgeModule,
     context_builder: ContextBuilder,
@@ -63,6 +63,10 @@ def ask_with_memory(
     metadata: Dict[str, Any] | None = None,
 ) -> str:
     """Query ``client`` with ``prompt`` augmented by prior context.
+
+    ``prompt`` may be either a raw string or a pre-built :class:`Prompt`.
+    When a :class:`Prompt` is provided, it is used directly and any supplied
+    ``intent`` metadata is merged into its ``metadata`` field.
 
     Parameters
     ----------
@@ -73,16 +77,18 @@ def ask_with_memory(
         Identifier used to retrieve related feedback, improvement paths and
         error fixes from ``memory``.
     prompt:
-        The new user prompt.
+        The new user prompt or existing :class:`Prompt`.
     memory:
         :class:`LocalKnowledgeModule` used to build context and record
         interactions.
     context_builder:
-        :class:`ContextBuilder` used to retrieve vector-based context snippets.
+        :class:`ContextBuilder` used to retrieve vector-based context snippets
+        when ``prompt`` is a raw string.
     tags:
         Tags applied when logging the interaction.
     intent:
-        Optional intent metadata forwarded to ``context_builder``.
+        Optional intent metadata forwarded to ``context_builder`` or merged into
+        ``prompt`` when provided.
     metadata:
         Backwards compatible alias for ``intent``.
     """
@@ -95,9 +101,17 @@ def ask_with_memory(
         mem_ctx = ""
 
     session_id = uuid.uuid4().hex
-    prompt_obj = context_builder.build_prompt(
-        prompt, intent=intent_payload, session_id=session_id
-    )
+    if isinstance(prompt, Prompt):
+        prompt_obj = prompt
+        if intent_payload:
+            try:
+                prompt_obj.metadata.update(intent_payload)
+            except Exception:
+                prompt_obj.metadata = dict(intent_payload)
+    else:
+        prompt_obj = context_builder.build_prompt(
+            prompt, intent=intent_payload, session_id=session_id
+        )
 
     if mem_ctx:
         prompt_obj.examples.insert(0, mem_ctx)

@@ -76,6 +76,9 @@ class DummyDataBot:
         pass
 
 
+from prompt_types import Prompt
+
+
 class DummyBuilder:
     def __init__(self, ctx: str = ""):
         self.ctx = ctx
@@ -83,8 +86,13 @@ class DummyBuilder:
     def refresh_db_weights(self):
         pass
 
-    def build(self, query, **kwargs):
-        return self.ctx or f"ctx:{query}"
+    def build_prompt(self, query, **kwargs):
+        p = Prompt(user=query)
+        if self.ctx:
+            p.examples.append(self.ctx)
+        if kwargs.get("intent"):
+            p.metadata.update(kwargs["intent"])
+        return p
 
     def collect(self, *a, **k):
         pass
@@ -1072,20 +1080,20 @@ def test_auto_prompt_selection(monkeypatch):
     prompt = sandbox_runner.build_section_prompt(
         "a", T(sec_drop=True), context_builder=DummyBuilder()
     )
-    assert "SECURITY FOCUS" in prompt
+    assert "SECURITY FOCUS" in prompt.metadata.get("instruction", "")
     assert len(sandbox_runner._AUTO_TEMPLATES) >= 3
     cached = sandbox_runner._AUTO_TEMPLATES
 
     prompt = sandbox_runner.build_section_prompt(
         "a", T(eff_drop=True), context_builder=DummyBuilder()
     )
-    assert "EFFICIENCY FOCUS" in prompt
+    assert "EFFICIENCY FOCUS" in prompt.metadata.get("instruction", "")
     assert sandbox_runner._AUTO_TEMPLATES is cached
 
     prompt = sandbox_runner.build_section_prompt(
         "a", T(), context_builder=DummyBuilder()
     )
-    assert "ROI IMPROVEMENT" in prompt
+    assert "ROI IMPROVEMENT" in prompt.metadata.get("instruction", "")
 
 
 def test_prompt_truncation_and_metrics(monkeypatch):
@@ -1167,10 +1175,11 @@ def test_prompt_truncation_and_metrics(monkeypatch):
         max_prompt_length=200,
     )
 
-    assert "ROI deltas" in prompt
-    assert "efficiency=" in prompt
-    assert "Metrics summary:" in prompt
-    assert "# ..." in prompt
+    instr = prompt.metadata.get("instruction", "")
+    assert "ROI deltas" in instr
+    assert "efficiency=" in instr
+    assert "Metrics summary:" in instr
+    assert "# ..." in instr
 
 
 def test_prompt_synergy_and_length(monkeypatch):
@@ -1253,9 +1262,10 @@ def test_prompt_synergy_and_length(monkeypatch):
         max_prompt_length=80,
     )
 
-    assert "Synergy" in prompt
-    assert "Synergy summary:" in prompt
-    assert len(prompt) <= 80
+    instr = prompt.metadata.get("instruction", "")
+    assert "Synergy" in instr
+    assert "Synergy summary:" in instr
+    assert len(prompt.user) <= 80
 
 
 def test_build_section_prompt_vector_context():
@@ -1272,7 +1282,7 @@ def test_build_section_prompt_vector_context():
     prompt = sandbox_runner.build_section_prompt(
         "mod", T(), context_builder=builder
     )
-    assert "vector ctx" in prompt
+    assert any("vector ctx" in ex for ex in prompt.examples)
 
 
 def test_preset_adaptation(monkeypatch, tmp_path):
@@ -1682,7 +1692,10 @@ def test_brainstorm_trigger_on_low_roi(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "build_section_prompt",
-        lambda *a, **k: "Brainstorm high level improvements to increase ROI.",
+        lambda *a, **k: Prompt(
+            user="Brainstorm high level improvements to increase ROI.",
+            metadata={"instruction": "Brainstorm high level improvements to increase ROI."},
+        ),
     )
     monkeypatch.setattr(
         sandbox_runner,
@@ -1773,7 +1786,10 @@ def test_brainstorm_trigger_on_resilience_drop(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "build_section_prompt",
-        lambda *a, **k: "Brainstorm high level improvements to increase ROI.",
+        lambda *a, **k: Prompt(
+            user="Brainstorm high level improvements to increase ROI.",
+            metadata={"instruction": "Brainstorm high level improvements to increase ROI."},
+        ),
     )
     monkeypatch.setattr(
         sandbox_runner,
