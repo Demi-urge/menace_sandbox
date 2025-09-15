@@ -131,7 +131,8 @@ helpers like `generate_candidates` that omit a `context_builder` keyword, or
 imports of `get_default_context_builder`, and CI fails when these patterns
 appear.  Literal prompt strings passed directly to LLM clients are likewise
 rejected unless produced by `ContextBuilder.build_prompt` or
-`SelfCodingEngine.build_enriched_prompt`, and direct calls to
+`SelfCodingEngine.build_enriched_prompt`.  Direct `Prompt(...)` calls are banned
+outside `vector_service/context_builder.py`, and direct calls to
 `PromptEngine.build_prompt` are disallowed.
 
 ## Coding bot registration

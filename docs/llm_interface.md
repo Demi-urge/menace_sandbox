@@ -3,21 +3,26 @@
 The `llm_interface` module supplies a tiny interface for working with language models. It defines
 the `Prompt` and `LLMResult` dataclasses together with the `LLMClient` base class which exposes a
 single `generate` method. `LLMResult` captures both the raw text produced by the model and an
-optional parsed representation.
+optional parsed representation.  ``Prompt`` objects should be created via
+``ContextBuilder.build_prompt`` or ``SelfCodingEngine.build_enriched_prompt``;
+constructing them directly in application code is prohibited.
 
 ## Basic usage
 
 ```python
 from llm_interface import Prompt, LLMResult, LLMClient
+from vector_service.context_builder import ContextBuilder
 
 class EchoClient(LLMClient):
-    def generate(self, prompt: Prompt) -> LLMResult:
+    def generate(self, prompt: Prompt, *, context_builder: ContextBuilder) -> LLMResult:
         # ``parsed`` may contain structured data such as a JSON dict.  It is
         # optional and defaults to ``None``.
         return LLMResult(text=prompt.text.upper())
 
 client = EchoClient()
-result = client.generate(Prompt(text="hello"))
+builder = ContextBuilder()
+prompt = builder.build_prompt("hello")
+result = client.generate(prompt, context_builder=builder)
 print(result.text)
 ```
 
@@ -28,7 +33,11 @@ Use `retry_utils.with_retry` to add exponential backoff around LLM calls:
 ```python
 from retry_utils import with_retry
 
-response = with_retry(lambda: client.generate(Prompt("hi")), attempts=3, delay=1.0)
+response = with_retry(
+    lambda: client.generate(builder.build_prompt("hi"), context_builder=builder),
+    attempts=3,
+    delay=1.0,
+)
 ```
 
 ## Prompt logging
@@ -39,6 +48,7 @@ sufficient for tests or temporary sessions:
 ```python
 import sqlite3
 from prompt_db import PromptDB
+from vector_service.context_builder import ContextBuilder
 
 class MemoryRouter:
     def __init__(self):
@@ -47,7 +57,9 @@ class MemoryRouter:
         return self.conn
 
 memory_db = PromptDB(model="demo", router=MemoryRouter())
-memory_db.log(Prompt("hi", outcome_tags=["tag"], vector_confidences=[0.9]), LLMResult(text="ok", parsed={}))
+builder = ContextBuilder()
+prompt = builder.build_prompt("hi")
+memory_db.log(prompt, LLMResult(text="ok", parsed={}))
 ```
 
 ## Fallback routing
@@ -56,9 +68,12 @@ memory_db.log(Prompt("hi", outcome_tags=["tag"], vector_confidences=[0.9]), LLMR
 
 ```python
 from llm_router import LLMRouter
+from vector_service.context_builder import ContextBuilder
 
 router = LLMRouter(remote=remote_client, local=backup_client, size_threshold=500)
-result = router.generate(Prompt("data"))
+builder = ContextBuilder()
+prompt = builder.build_prompt("data")
+result = router.generate(prompt, context_builder=builder)
 ```
 
 ## Extending

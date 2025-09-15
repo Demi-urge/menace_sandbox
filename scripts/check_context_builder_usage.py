@@ -49,9 +49,10 @@ be reported unless they originate from ``ContextBuilder.build_prompt`` or
 ``SelfCodingEngine.build_enriched_prompt``.  Additionally, direct invocations of
 ``PromptEngine.build_prompt`` are flagged to discourage bypassing the builder
 infrastructure.  ``Prompt(...)`` calls must likewise receive output from
-``context_builder.build_prompt`` or ``SelfCodingEngine.build_enriched_prompt``.
-Lists or dicts supplied directly as ``messages`` to ``.generate`` methods are
-also disallowed; use the canonical builders instead.
+``context_builder.build_prompt`` or ``SelfCodingEngine.build_enriched_prompt``;
+outside ``vector_service/context_builder.py`` direct ``Prompt`` construction is
+rejected.  Lists or dicts supplied directly as ``messages`` to ``.generate``
+methods are also disallowed; use the canonical builders instead.
 """
 from __future__ import annotations
 
@@ -66,6 +67,11 @@ NOCB_MARK = "# nocb"
 
 # Paths relative to repo root where ``# nocb`` markers are permitted.
 NOCB_WHITELIST: set[str] = {"scripts/check_context_builder_usage.py"}
+
+# Files allowed to instantiate ``Prompt`` directly.  These modules expose the
+# canonical builders and may construct prompts internally without going through
+# ``ContextBuilder.build_prompt``.
+PROMPT_WHITELIST: set[str] = {"vector_service/context_builder.py"}
 
 DEFAULT_BUILDER_NAME = "get_default_context_builder"
 HELPER_NAMES = {
@@ -420,7 +426,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             name_full = full_name(node.func)
             name_simple = name_full.split(".")[-1] if name_full else None
 
-            if name_simple == "Prompt":
+            if name_simple == "Prompt" and rel not in PROMPT_WHITELIST:
                 arg = node.args[0] if node.args else None
                 valid = False
                 if isinstance(arg, ast.Call):
