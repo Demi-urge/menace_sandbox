@@ -319,6 +319,31 @@ def test_flags_ask_with_memory(tmp_path):
     ]
 
 
+def test_flags_ask_with_memory_import(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = "from memory_aware_gpt_client import ask_with_memory\n"
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (1, "ask_with_memory disallowed; use ContextBuilder.build_prompt")
+    ]
+
+
+def test_flags_ask_with_memory_attribute(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "import memory_aware_gpt_client\n"
+        "func = memory_aware_gpt_client.ask_with_memory\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (2, "ask_with_memory disallowed; use ContextBuilder.build_prompt")
+    ]
+
+
 def test_flags_builder_build_concat_via_var(tmp_path):
     from scripts.check_context_builder_usage import check_file
 
