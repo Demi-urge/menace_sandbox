@@ -149,19 +149,27 @@ def test_reroute_includes_retrieved_context(monkeypatch):
         def generate(self, prompt: Prompt, *, context_builder=None) -> LLMResult:
             captured["prompt"] = prompt.user
             captured["builder"] = context_builder
+            captured["system"] = prompt.system
+            captured["examples"] = prompt.examples
+            captured["tags"] = getattr(prompt, "tags", [])
             return LLMResult(text="ok")
 
     class Builder:
         def refresh_db_weights(self, *a, **k):
             return None
 
-        def build(self, _):
-            return "ctx"
+        def build_prompt(self, query: str, **kwargs) -> Prompt:
+            return Prompt(f"ctx\n\n{query}")
 
     builder = Builder()
     monkeypatch.setattr(cf, "LLMClient", DummyClient)
     cf._settings = types.SimpleNamespace(codex_fallback_model="dummy")
 
-    cf.reroute_to_fallback_model(Prompt("hi"), context_builder=builder)
+    p = Prompt("hi", system="sys", examples=["e1"])
+    p.tags = ["t1"]
+    cf.reroute_to_fallback_model(p, context_builder=builder)
     assert captured["prompt"] == "ctx\n\nhi"
     assert captured["builder"] is builder
+    assert captured["system"] == "sys"
+    assert captured["examples"] == ["e1"]
+    assert captured["tags"] == ["t1"]
