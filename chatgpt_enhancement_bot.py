@@ -31,10 +31,7 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
 from . import RAISE_ERRORS
-from vector_service.context_builder import (
-    ContextBuilder,
-    build_prompt as cb_build_prompt,
-)
+from vector_service.context_builder import ContextBuilder
 try:  # canonical tag constants
     from .log_tags import IMPROVEMENT_PATH, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1084,22 +1081,8 @@ class ChatGPTEnhancementBot:
             "instruction": instruction,
             "num_ideas": num_ideas,
         }
-        latent: List[str] | None = None
         if context:
             intent_meta["context"] = context
-            latent = [context]
-        try:
-            prompt_obj = self.context_builder.build_prompt(
-                instruction,
-                intent=intent_meta,
-                latent_queries=latent,
-            )
-        except Exception:
-            logger.exception("failed to build prompt from context builder")
-            prompt_obj = cb_build_prompt(
-                instruction, intent_metadata=intent_meta, latent_queries=latent
-            )
-        logger.debug("sending prompt to ChatGPT: %s", prompt_obj.user)
         try:
             base_tags = [IMPROVEMENT_PATH, INSIGHT]
             if tags:
@@ -1107,7 +1090,7 @@ class ChatGPTEnhancementBot:
             data = ask_with_memory(
                 self.client,
                 "chatgpt_enhancement_bot.propose",
-                prompt_obj,
+                instruction,
                 memory=self.gpt_memory,
                 context_builder=self.context_builder,
                 tags=base_tags,
