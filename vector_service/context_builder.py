@@ -132,7 +132,7 @@ def _get_failed_tags() -> set[str]:
 try:  # pragma: no cover - best effort
     load_failed_tags()
 except Exception:
-    pass
+    logger.exception("load_failed_tags failed")
 
 
 def _ensure_vector_service() -> None:
@@ -322,7 +322,7 @@ class ContextBuilder:
                 if not self.patch_retriever.roi_tag_weights:
                     self.patch_retriever.roi_tag_weights = roi_tag_penalties
             except Exception:
-                pass
+                logger.exception("patch_retriever configuration failed")
         self.similarity_metric = similarity_metric
         self.enhancement_weight = enhancement_weight
 
@@ -343,7 +343,7 @@ class ContextBuilder:
                         if isinstance(data, dict) and data.get("current"):
                             model_path = Path(str(data["current"]))
                     except Exception:
-                        pass
+                        logger.exception("failed to parse retrieval_ranker.json")
                 self.ranking_model = _rr.load_model(model_path)
             except Exception:
                 self.ranking_model = None
@@ -371,7 +371,7 @@ class ContextBuilder:
             try:
                 self.refresh_db_weights()
             except Exception:
-                pass
+                logger.exception("refresh_db_weights failed")
         self.max_tokens = max_tokens
         self.precise_token_count = precise_token_count
         self.max_diff_lines = max_diff_lines
@@ -401,7 +401,7 @@ class ContextBuilder:
             self.retriever.max_alerts = max_alerts
             self.retriever.license_denylist = self.license_denylist
         except Exception:
-            pass
+            logger.exception("failed to propagate thresholds to retriever")
 
         self._embedding_check_interval = embedding_check_interval
         if embedding_check_interval > 0:
@@ -510,7 +510,7 @@ class ContextBuilder:
             try:  # pragma: no cover - defensive against tokeniser failures
                 return len(self._tokenizer.encode(text))
             except Exception:
-                pass
+                logger.exception("tokenizer encode failed; falling back to regex")
         if self.precise_token_count:
             if self._fallback_tokenizer is None:
                 raise RuntimeError(
