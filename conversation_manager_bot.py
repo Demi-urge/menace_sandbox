@@ -145,24 +145,43 @@ class ConversationManagerBot:
             return self.cache[prompt]
 
         intent_meta = {"query": prompt, "tags": [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]}
-        try:
-            prompt_obj = self.client.context_builder.build_prompt(
-                prompt, intent_metadata=intent_meta
-            )
-        except Exception as exc:
-            logger.exception("ContextBuilder.build_prompt failed")
-            raise RuntimeError("prompt building failed") from exc
+        prompt_obj = self.client.context_builder.build_prompt(
+            prompt, intent_metadata=intent_meta
+        )
 
-        data = self.client.ask(
-            prompt_obj,
-            tags=intent_meta["tags"],
-            memory_manager=self.gpt_memory,
-        )
-        text = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
+        text: str
+        generator = getattr(self.client, "generate", None)
+        if callable(generator):
+            try:
+                result = generator(
+                    prompt_obj, context_builder=self.client.context_builder
+                )
+            except TypeError:
+                result = generator(prompt_obj)
+
+            if isinstance(result, str):
+                text = result
+            elif hasattr(result, "text"):
+                text = getattr(result, "text", "")
+            elif isinstance(result, dict):
+                text = (
+                    result.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+            else:
+                text = ""
+        else:
+            data = self.client.ask(
+                prompt_obj,
+                tags=intent_meta["tags"],
+                memory_manager=self.gpt_memory,
+            )
+            text = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
         self._update_memory(prompt_obj.user, text)
         logger.debug("prompt: %s\nresponse: %s", prompt_obj.user, text)
         self.cache[prompt] = text
