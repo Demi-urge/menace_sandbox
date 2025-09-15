@@ -39,12 +39,12 @@ class AutomatedDebugger:
     def __init__(
         self,
         telemetry_db: object,
+        context_builder: ContextBuilder,
         engine: SelfCodingEngine | None = None,
-        context_builder: ContextBuilder | None = None,
         *,
         manager: SelfCodingManager,
     ) -> None:
-        if not isinstance(context_builder, ContextBuilder):
+        if context_builder is None or not isinstance(context_builder, ContextBuilder):
             raise TypeError("context_builder must be a ContextBuilder instance")
         context_builder.refresh_db_weights()
         self.telemetry_db = telemetry_db

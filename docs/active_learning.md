@@ -21,7 +21,7 @@ bus = UnifiedEventBus()
 ctx = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 err_bot = ErrorBot(context_builder=ctx)
 builder = CurriculumBuilder(err_bot, bus, threshold=5)
-coord = SelfLearningCoordinator(bus, curriculum_builder=builder)
+coord = SelfLearningCoordinator(bus, curriculum=builder)
 coord.start()
 builder.publish()
 ```

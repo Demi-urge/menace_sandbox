@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, TYPE_CHECKING, Tuple
+from typing import Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
@@ -249,7 +249,7 @@ def summarize_snippet(
     text: str,
     llm: LLMClient | None = None,
     *,
-    context_builder: "ContextBuilder" | None = None,
+    context_builder: "ContextBuilder",
 ) -> str:
     """Return a short summary for ``text`` using available helpers with caching."""
 

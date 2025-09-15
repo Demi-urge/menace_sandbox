@@ -65,7 +65,7 @@ def _heuristic_summary(code: str, limit: int) -> str:
 def summarize_code(
     code: str,
     *,
-    context_builder: "ContextBuilder" | None = None,
+    context_builder: "ContextBuilder" | None,
     max_summary_tokens: int = 128,
 ) -> str:
     """Return a short description of ``code``.

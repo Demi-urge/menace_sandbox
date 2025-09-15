@@ -1028,7 +1028,6 @@ class SelfCodingManager:
         *,
         provenance_token: str,
         context_meta: Dict[str, Any] | None = None,
-        context_builder: ContextBuilder | None = None,
         max_attempts: int = 3,
         confidence_threshold: float = 0.5,
         review_branch: str | None = None,
@@ -1046,10 +1045,8 @@ class SelfCodingManager:
         exceeds ``confidence_threshold``.  ``backend`` selects the test
         execution environment; ``"venv"`` uses a virtual environment while
         ``"docker"`` runs tests inside a Docker container. ``clone_command``
-        customises the VCS command used to clone the repository. A fresh
-        :class:`ContextBuilder` is created for each attempt; the optional
-        ``context_builder`` argument is retained for backwards compatibility but
-        ignored.
+        customises the VCS command used to clone the repository. A new
+        :class:`ContextBuilder` is created for each attempt.
         """
         self.validate_provenance(provenance_token)
         self.refresh_quick_fix_context()

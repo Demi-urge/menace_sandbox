@@ -50,7 +50,7 @@ class SelfLearningCoordinator:
         metrics_db: MetricsDB | None = None,
         error_bot: ErrorBot | None = None,
         summary_interval: int | None = None,
-        curriculum_builder: CurriculumBuilder | None = None,
+        curriculum: CurriculumBuilder | None = None,
     ) -> None:
         self.event_bus = event_bus
         self.learning_engine = learning_engine
@@ -73,7 +73,7 @@ class SelfLearningCoordinator:
             if summary_interval is not None
             else getattr(settings, "self_learning_summary_interval", 0)
         )
-        self.curriculum_builder = curriculum_builder
+        self.curriculum_builder = curriculum
         self._success_tracker = BaselineTracker()
         self._lock = threading.Lock()
         self._summary_count = 0

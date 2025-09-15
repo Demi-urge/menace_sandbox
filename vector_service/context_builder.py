@@ -1494,7 +1494,7 @@ def _build_prompt_internal(
     latent_queries: Iterable[str] | None = None,
     top_k: int = 5,
     error_log: str | None = None,
-    context_builder: "ContextBuilder" | None = None,
+    context_builder: "ContextBuilder",
     **kwargs: Any,
 ) -> Prompt:
     """Build a :class:`Prompt` for ``query``.
@@ -1509,7 +1509,9 @@ def _build_prompt_internal(
     if intent_meta is None and "intent_metadata" in kwargs:
         intent_meta = kwargs.pop("intent_metadata")
 
-    builder = context_builder or ContextBuilder()
+    if context_builder is None:
+        raise ValueError("context_builder is required")
+    builder = context_builder
 
     if not isinstance(query, str) or not query.strip():
         raise MalformedPromptError("query must be a non-empty string")
@@ -1619,7 +1621,7 @@ def build_prompt(
     intent_metadata: Dict[str, Any] | None = None,
     latent_queries: Iterable[str] | None = None,
     top_k: int = 5,
-    context_builder: "ContextBuilder" | None = None,
+    context_builder: "ContextBuilder",
     **kwargs: Any,
 ) -> Prompt:
     """Build a :class:`Prompt` for ``goal`` using vectorised context.
@@ -1635,7 +1637,6 @@ def build_prompt(
 
     if context_builder is None:
         raise ValueError("context_builder is required")
-
     builder = context_builder
 
     queries: List[str] = [goal]
