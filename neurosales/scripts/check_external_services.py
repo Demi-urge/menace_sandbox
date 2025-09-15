@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from neurosales import config
 from billing.openai_wrapper import chat_completion_create
 from context_builder_util import create_context_builder
+from prompt_types import Prompt
 
 load_dotenv()
 
@@ -14,13 +15,21 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
         return True
     try:
         builder = create_context_builder()
+        prompt: Prompt = builder.build_prompt("ping")
     except Exception as e:
-        print(f"ContextBuilder initialization error: {e}")
+        print(f"ContextBuilder error: {e}")
         return False
     try:
         os.environ.setdefault("OPENAI_API_KEY", cfg.openai_key)
+        messages = []
+        if prompt.system:
+            messages.append({"role": "system", "content": prompt.system})
+        content = prompt.user
+        if prompt.examples:
+            content += "\n\n" + "\n".join(prompt.examples)
+        messages.append({"role": "user", "content": content})
         chat_completion_create(
-            [{"role": "user", "content": "ping"}],
+            messages,
             model="gpt-3.5-turbo",
             context_builder=builder,
         )

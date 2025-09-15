@@ -220,7 +220,11 @@ def test_check_external_services_injects_notice(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "context_builder_util",
-        SimpleNamespace(create_context_builder=lambda: SimpleNamespace(build=lambda _: "CTX")),
+        SimpleNamespace(
+            create_context_builder=lambda: SimpleNamespace(
+                build_prompt=lambda *_args, **_kwargs: Prompt(user="CTX")
+            )
+        ),
     )
     from neurosales.scripts import check_external_services as ces
     monkeypatch.setattr(ces.config, "is_openai_enabled", lambda cfg: True)
