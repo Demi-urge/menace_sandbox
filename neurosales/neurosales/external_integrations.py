@@ -6,8 +6,7 @@ from . import config
 import os
 import logging
 import requests
-import asyncio
-from llm_interface import OpenAIProvider
+from billing.openai_wrapper import chat_completion_create
 
 try:  # optional dependency
     import pinecone  # type: ignore
@@ -109,13 +108,8 @@ class GPT4Client:
         self.api_key = api_key
         self.context_builder = context_builder
         self.enabled = api_key is not None
-        self.client: OpenAIProvider | None = None
         if self.enabled:
-            try:
-                self.client = OpenAIProvider(model="gpt-4", api_key=api_key)
-            except Exception:  # pragma: no cover - best effort
-                self.enabled = False
-                logger.warning("GPT4Client disabled: backend unavailable")
+            os.environ.setdefault("OPENAI_API_KEY", api_key)
         else:  # pragma: no cover - warning path
             logger.warning("GPT4Client disabled: backend unavailable")
 
@@ -127,7 +121,7 @@ class GPT4Client:
         objective: str,
         text: str,
     ) -> Iterator[str]:
-        if not self.enabled or self.client is None:
+        if not self.enabled:
             logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
             return
@@ -140,10 +134,13 @@ class GPT4Client:
             },
         )
         try:
-            result = self.client.generate(prompt, context_builder=self.context_builder)
-            if asyncio.iscoroutine(result) or isinstance(result, asyncio.Task):
-                result = asyncio.get_event_loop().run_until_complete(result)
-            yield result.text
+            resp = chat_completion_create(prompt, model="gpt-4")
+            content = ""
+            try:
+                content = resp["choices"][0]["message"]["content"]
+            except Exception:
+                pass
+            yield content
         except Exception:  # pragma: no cover - best effort
             logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
