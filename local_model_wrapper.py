@@ -20,6 +20,7 @@ class LocalModelWrapper:
     def __init__(self, hf_model: Any, tokenizer: Any) -> None:
         self.hf_model = hf_model
         self.tokenizer = tokenizer
+        self.last_prompt: Prompt | None = None
 
     def generate(
         self,
@@ -45,12 +46,20 @@ class LocalModelWrapper:
         else:
             prompt_obj = prompt
 
+        self.last_prompt = prompt_obj
+
         pieces: list[str] = []
         if getattr(prompt_obj, "system", None):
             pieces.append(prompt_obj.system)
         pieces.extend(prompt_obj.examples)
         pieces.append(prompt_obj.user)
         prompt_text = "\n\n".join(pieces)
+
+        if (prompt_obj.metadata or getattr(prompt_obj, "tags", None)) and "metadata" not in gen_kwargs:
+            meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+            if getattr(prompt_obj, "tags", None):
+                meta.setdefault("tags", list(prompt_obj.tags))
+            gen_kwargs["metadata"] = meta
 
         input_ids = self.tokenizer.encode(prompt_text, return_tensors="pt")
         try:
