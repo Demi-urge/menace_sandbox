@@ -106,7 +106,7 @@ print(prompt.metadata["intent"])
 print(prompt.metadata["vectors"][:1])
 
 # or use the module level helper
-prompt2 = build_prompt("optimise database")
+prompt2 = build_prompt("optimise database", context_builder=builder)
 ```
 
 Example output::

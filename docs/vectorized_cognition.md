@@ -44,10 +44,12 @@ prioritises the most relevant examples before packing them into a
 token-limited :class:`Prompt`:
 
 ```python
-from vector_service.context_builder import build_prompt
+from vector_service.context_builder import ContextBuilder, build_prompt
 
+builder = ContextBuilder()
 prompt = build_prompt(
     "optimise cache eviction",
+    context_builder=builder,
     intent={"tags": ["performance", "cache"]},
 )
 
