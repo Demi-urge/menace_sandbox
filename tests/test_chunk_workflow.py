@@ -138,7 +138,7 @@ def test_prompt_from_summaries_under_limit(tmp_path, monkeypatch):
         confidence_threshold=-1.0,
         token_threshold=50,
         chunk_token_threshold=20,
-        context_builder=object(),
+        context_builder=DummyBuilder(),
     )
 
     if pc._count_tokens(code) > engine.token_threshold:

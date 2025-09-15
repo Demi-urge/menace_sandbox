@@ -3,13 +3,6 @@ from code_summarizer import summarize_code
 
 
 class DummyBuilder:
-    def __init__(self):
-        self.calls = 0
-
-    def build_context(self, *args, **kwargs):  # pragma: no cover - simple stub
-        self.calls += 1
-        return ""
-
     def build_prompt(self, text, **kwargs):  # pragma: no cover - simple stub
         return types.SimpleNamespace(user=text, metadata={}, examples=[])
 
@@ -75,4 +68,54 @@ def test_summarize_code_heuristic(monkeypatch):
 
     code = "# header\n\nclass Foo:\n    pass\n"
     summary = summarize_code(code, context_builder=DummyBuilder(), max_summary_tokens=10)
+    assert summary.startswith("class Foo")
+
+
+def test_summarize_code_enriched_context(monkeypatch):
+    monkeypatch.setattr("micro_models.diff_summarizer.summarize_diff", lambda *a, **k: "")
+
+    captured = {}
+
+    class DummyClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def generate(self, prompt, context_builder=None):
+            captured["prompt"] = prompt
+            return types.SimpleNamespace(text="summary")
+
+    monkeypatch.setattr("local_client.OllamaClient", DummyClient)
+
+    class RichBuilder:
+        def build_prompt(self, text, *, intent=None, top_k=5):
+            from prompt_types import Prompt
+
+            meta = {
+                "vector_confidences": [0.7],
+                "vectors": [("s", "id", 0.7)],
+            }
+            prompt = Prompt(user=text, metadata=meta)
+            prompt.vector_confidence = 0.7
+            return prompt
+
+    builder = RichBuilder()
+    summary = summarize_code("print('hi')", context_builder=builder, max_summary_tokens=5)
+    assert summary == "summary"
+    prompt = captured["prompt"]
+    assert prompt.metadata["vectors"] == [("s", "id", 0.7)]
+    assert prompt.metadata["vector_confidences"] == [0.7]
+    assert prompt.vector_confidence == 0.7
+
+
+def test_summarize_code_no_builder_falls_back(monkeypatch):
+    monkeypatch.setattr("micro_models.diff_summarizer.summarize_diff", lambda *a, **k: "")
+
+    class DummyClient:
+        def __init__(self, *a, **k):  # pragma: no cover - should not run
+            raise AssertionError("LLM client should not be used")
+
+    monkeypatch.setattr("local_client.OllamaClient", DummyClient)
+
+    code = "# header\n\nclass Foo:\n    pass\n"
+    summary = summarize_code(code, context_builder=None, max_summary_tokens=10)
     assert summary.startswith("class Foo")
