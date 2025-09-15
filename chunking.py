@@ -298,13 +298,16 @@ def summarize_snippet(
                 )
         except Exception:
             context = ""
-        intent_meta = {"retrieved_context": context} if context else {}
+        intent_meta = {
+            "instruction": "Summarise the following code snippet in one sentence.",
+        }
+        if context:
+            intent_meta["retrieved_context"] = context
         prompt = context_builder.build_prompt(
             text,
-            intent_metadata=intent_meta,
+            intent=intent_meta,
             top_k=0,
         )
-        prompt.system = "Summarise the following code snippet in one sentence."
         try:  # pragma: no cover - llm failures
             result = llm.generate(prompt, context_builder=context_builder)
             if getattr(result, "text", "").strip():
