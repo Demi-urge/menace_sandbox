@@ -62,6 +62,18 @@ class DBContextBuilder:
                     parts.append(row[0])
         return "\n".join(parts)
 
+    def build_prompt(self, tags, prior=None, intent_metadata=None):
+        session_id = "sid"
+        context = self.build(" ".join(tags), session_id=session_id)
+        parts = [prior, context]
+        user = "\n".join(p for p in parts if p)
+        return types.SimpleNamespace(
+            user=user,
+            examples=None,
+            system=None,
+            metadata={"retrieval_session_id": session_id},
+        )
+
 
 def _init_db(path: Path, content: str) -> None:
     with sqlite3.connect(path) as conn:
@@ -85,7 +97,7 @@ def test_prompts_embed_local_db_data(tmp_path):
 
     builder = DBContextBuilder(paths)
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(["x"], "y", context_builder=builder)
+    msgs = client.build_prompt_with_memory(["x"], prior="y", context_builder=builder)
 
     content = msgs[0]["content"]
     for text in db_contents.values():

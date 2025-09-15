@@ -64,9 +64,37 @@ def test_build_prompt_with_memory():
         def build(self, query, **_):
             return ""
 
+        def build_prompt(self, tags, prior=None, intent_metadata=None):
+            session_id = "sid"
+            context = self.build(" ".join(tags), session_id=session_id)
+            memory_ctx = ""
+            mem = getattr(self, "memory", None)
+            if mem:
+                fetch = getattr(mem, "fetch_context", None)
+                if callable(fetch):
+                    memory_ctx = fetch(tags)
+                else:
+                    search = getattr(mem, "search_context", None)
+                    if callable(search):
+                        entries = search("", tags=tags)
+                        if entries:
+                            first = entries[0]
+                            memory_ctx = getattr(first, "prompt", "") or getattr(first, "response", "")
+            parts = [prior, memory_ctx, context]
+            user = "\n".join(p for p in parts if p)
+            return types.SimpleNamespace(
+                user=user,
+                examples=None,
+                system=None,
+                metadata={"retrieval_session_id": session_id},
+            )
+
     builder = DummyBuilder()
+    builder.memory = mem
     client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
-    msgs = client.build_prompt_with_memory(["ai"], "hello", context_builder=builder)
+    msgs = client.build_prompt_with_memory(
+        ["ai"], prior="hello", context_builder=builder
+    )
     assert msgs[0]["role"] == "user"
     assert "hello" in msgs[0]["content"]
     assert "ctx:ai" in msgs[0]["content"]
@@ -82,7 +110,33 @@ def test_ask_logs_interaction(monkeypatch):
         def build(self, query, **_):
             return ""
 
-    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
+        def build_prompt(self, tags, prior=None, intent_metadata=None):
+            session_id = "sid"
+            context = self.build(" ".join(tags), session_id=session_id)
+            memory_ctx = ""
+            mem = getattr(self, "memory", None)
+            if mem:
+                fetch = getattr(mem, "fetch_context", None)
+                if callable(fetch):
+                    memory_ctx = fetch(tags)
+                else:
+                    search = getattr(mem, "search_context", None)
+                    if callable(search):
+                        entries = search("", tags=tags)
+                        if entries:
+                            first = entries[0]
+                            memory_ctx = getattr(first, "prompt", "") or getattr(first, "response", "")
+            parts = [prior, memory_ctx, context]
+            user = "\n".join(p for p in parts if p)
+            return types.SimpleNamespace(
+                user=user,
+                examples=None,
+                system=None,
+                metadata={"retrieval_session_id": session_id},
+            )
+    builder = DummyBuilder()
+    builder.memory = mem
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
     client.session = None  # force offline response
     monkeypatch.setattr(
         client,

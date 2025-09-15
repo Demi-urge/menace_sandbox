@@ -53,12 +53,39 @@ class DummyBuilder:
         self.kwargs.append(kwargs)
         return "vector:" + query
 
+    def build_prompt(self, tags, prior=None, intent_metadata=None):
+        session_id = "sid"
+        context = self.build(" ".join(tags), session_id=session_id)
+        if context and len(context) > 200:
+            context = context[:197] + "..."
+        memory_ctx = ""
+        mem = getattr(self, "memory", None)
+        if mem:
+            fetch = getattr(mem, "fetch_context", None)
+            if callable(fetch):
+                memory_ctx = fetch(tags)
+            else:
+                search = getattr(mem, "search_context", None)
+                if callable(search):
+                    entries = search("", tags=tags)
+                    if entries:
+                        first = entries[0]
+                        memory_ctx = getattr(first, "prompt", "") or getattr(first, "response", "")
+        parts = [prior, memory_ctx, context]
+        user = "\n".join(p for p in parts if p)
+        return types.SimpleNamespace(
+            user=user,
+            examples=None,
+            system=None,
+            metadata={"retrieval_session_id": session_id},
+        )
+
 
 def test_builder_context_included():
     builder = DummyBuilder()
     client = cib.ChatGPTClient(context_builder=builder)
     msgs = client.build_prompt_with_memory(
-        ["alpha", "beta"], "hi", context_builder=builder
+        ["alpha", "beta"], prior="hi", context_builder=builder
     )
     assert builder.calls == ["alpha beta"]
     assert "session_id" in builder.kwargs[0]
@@ -79,7 +106,9 @@ def test_fallback_result_empty_context():
 
     builder = FB()
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(["alpha"], "hi", context_builder=builder)
+    msgs = client.build_prompt_with_memory(
+        ["alpha"], prior="hi", context_builder=builder
+    )
     assert builder.calls == ["alpha"]
     assert "session_id" in builder.kwargs[0]
     assert msgs[0]["role"] == "user"
@@ -91,7 +120,7 @@ def test_requires_context_builder():
     builder = DummyBuilder()
     client = cib.ChatGPTClient(context_builder=builder)
     with pytest.raises(ValueError):
-        client.build_prompt_with_memory(["alpha"], "hi", context_builder=None)
+        client.build_prompt_with_memory(["alpha"], prior="hi", context_builder=None)
 
 
 def test_builder_context_compressed():
@@ -104,7 +133,9 @@ def test_builder_context_compressed():
 
     builder = LongBuilder()
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(["alpha"], "hi", context_builder=builder)
+    msgs = client.build_prompt_with_memory(
+        ["alpha"], prior="hi", context_builder=builder
+    )
     content = msgs[0]["content"].split("\n", 1)[1]
     assert len(content) <= 200
     assert content.endswith("...")

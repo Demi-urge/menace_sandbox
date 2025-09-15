@@ -67,7 +67,33 @@ def test_memory_based_context(monkeypatch):
         def build(self, query, **_):
             return ""
 
+        def build_prompt(self, tags, prior=None, intent_metadata=None):
+            session_id = "sid"
+            context = self.build(" ".join(tags), session_id=session_id)
+            memory_ctx = ""
+            mem = getattr(self, "memory", None)
+            if mem:
+                fetch = getattr(mem, "fetch_context", None)
+                if callable(fetch):
+                    memory_ctx = fetch(tags)
+                else:
+                    search = getattr(mem, "search_context", None)
+                    if callable(search):
+                        entries = search("", tags=tags)
+                        if entries:
+                            first = entries[0]
+                            memory_ctx = getattr(first, "prompt", "") or getattr(first, "response", "")
+            parts = [prior, memory_ctx, context]
+            user = "\n".join(p for p in parts if p)
+            return types.SimpleNamespace(
+                user=user,
+                examples=None,
+                system=None,
+                metadata={"retrieval_session_id": session_id},
+            )
+
     builder = DummyBuilder()
+    builder.memory = mem
     client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
     client.session = None  # force offline response
 
@@ -86,7 +112,7 @@ def test_memory_based_context(monkeypatch):
     monkeypatch.setattr(client, "_offline_response", offline_response)
 
     messages = client.build_prompt_with_memory(
-        [IMPROVEMENT_PATH], "What's next?", context_builder=builder
+        [IMPROVEMENT_PATH], prior="What's next?", context_builder=builder
     )
     result = client.ask(messages, use_memory=False)
     text = result["choices"][0]["message"]["content"]
