@@ -231,7 +231,7 @@ builder are reported as well. Variables assigned from these classes are
 tracked and aliases such as `llm` or `model` are heuristically inspected.
 Manual string prompts, direct `Prompt` construction, message lists/dicts,
 concatenating `context_builder.build` results with other strings or lists, and
-direct `ask_with_memory` calls are all flagged:
+deprecated `ask_with_memory` calls are all flagged:
 
 ```bash
 python scripts/check_context_builder_usage.py
@@ -762,20 +762,19 @@ stop.set()
 
 ### Memory-aware GPT wrapper
 
-Use `memory_aware_gpt_client.ask_with_memory` to automatically prepend past
-feedback, improvement paths and error fixes to a new prompt.  Callers must
-provide a ``key`` identifying the module and action so related interactions can
-be retrieved and logged.  Direct `ask_with_memory` calls are flagged by
-`scripts/check_context_builder_usage.py` since the helper may bypass
-`ContextBuilder.build_prompt`; build prompts via the context builder before
-invoking the wrapper. Example:
+The helper `memory_aware_gpt_client.ask_with_memory` is deprecated. Build
+prompts with ``ContextBuilder.build_prompt`` and pass them directly to your
+client. Example:
 
 ```python
-from memory_aware_gpt_client import ask_with_memory
+from vector_service.context_builder import ContextBuilder
 from log_tags import ERROR_FIX
 
-result = ask_with_memory(client, "coding_bot_interface.manager_generate_helper", "Write tests",
-                         memory=gpt_memory, tags=[ERROR_FIX], manager=manager)
+prompt = context_builder.build_prompt(
+    "Write tests", intent_metadata={"user_query": "Write tests"}
+)
+result = client.ask(prompt, use_memory=False, memory_manager=None,
+                    tags=[ERROR_FIX], manager=manager)
 ```
 
 For a deeper overview of the `LocalKnowledgeModule`, required tags, environment

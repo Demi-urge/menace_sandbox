@@ -45,28 +45,25 @@ environment variable:
 export GPT_MEMORY_DB="persistent.db"
 ```
 
-## Querying with `ask_with_memory`
+## Deprecated helper `ask_with_memory`
 
-The helper `memory_aware_gpt_client.ask_with_memory` pulls recent context from a
-`LocalKnowledgeModule`, prepends it to the new prompt and logs the response back
-to memory.  Callers must supply a ``key`` in ``module.action`` form so related
-interactions can be grouped, plus a ``tags`` list describing the intent.  Direct
-`ask_with_memory` calls are flagged by `scripts/check_context_builder_usage.py`
-because the helper may bypass `ContextBuilder.build_prompt`; ensure prompts are
-constructed via the builder before invoking it.
+The helper `memory_aware_gpt_client.ask_with_memory` is deprecated. Build
+prompts explicitly via ``ContextBuilder.build_prompt`` and pass the result to
+your client:
 
 ```python
-from memory_aware_gpt_client import ask_with_memory
+from vector_service.context_builder import ContextBuilder
 from log_tags import FEEDBACK
 
-resp = ask_with_memory(client, "demo.run", "How did it go?",
-                       memory=module, tags=[FEEDBACK])
+prompt = context_builder.build_prompt("How did it go?",
+                                      intent_metadata={"user_query": "How did it go?"})
+resp = client.ask(prompt, use_memory=False, memory_manager=None, tags=[FEEDBACK])
 ```
 
-`ask_with_memory` automatically augments the tag list with ``module:`` and
-``action:`` markers derived from the key.  Tags should use the canonical labels
-from `log_tags.py` (`FEEDBACK`, `IMPROVEMENT_PATH`, `ERROR_FIX`, `INSIGHT`) so
-other tools can query the history consistently.
+Calls to ``ask_with_memory`` will emit a deprecation warning and are flagged by
+``scripts/check_context_builder_usage.py``. Tags should use the canonical labels
+from ``log_tags.py`` (``FEEDBACK``, ``IMPROVEMENT_PATH``, ``ERROR_FIX``,
+``INSIGHT``) so other tools can query the history consistently.
 
 ## Configuration
 
@@ -78,45 +75,6 @@ Several environment variables influence how memory behaves:
   many entries of each type are kept when the store is compacted.
 - **`GPT_AUTO_REFRESH_INSIGHTS`** – when set to `0`/`false`, disables the
   background refresh of summarised insights triggered after each log.
-
-## Example: context growth across runs
-
-Reusing the same database lets context accumulate over time.  The second run in
-the example below automatically includes the previous response when building the
-prompt:
-
-```bash
-# first run
-python - <<'PY'
-from local_knowledge_module import LocalKnowledgeModule
-from memory_aware_gpt_client import ask_with_memory
-from log_tags import FEEDBACK
-
-class Echo:
-    def ask(self, msgs, **_):
-        return {"choices": [{"message": {"content": "first"}}]}
-
-module = LocalKnowledgeModule("demo.db")
-ask_with_memory(Echo(), "demo.echo", "Hello", memory=module, tags=[FEEDBACK])
-PY
-
-# later run
-python - <<'PY'
-from local_knowledge_module import LocalKnowledgeModule
-from memory_aware_gpt_client import ask_with_memory
-from log_tags import FEEDBACK
-
-class Echo:
-    def ask(self, msgs, **_):
-        return {"choices": [{"message": {"content": "second"}}]}
-
-module = LocalKnowledgeModule("demo.db")
-ask_with_memory(Echo(), "demo.echo", "More", memory=module, tags=[FEEDBACK])
-PY
-```
-
-The second invocation prepends feedback from the first call, demonstrating how
-context grows across sessions.
 
 ## Unified interface
 

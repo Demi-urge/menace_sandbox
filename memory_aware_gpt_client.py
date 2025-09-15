@@ -13,6 +13,7 @@ module.
 from typing import Sequence, Any, Dict
 import logging
 import uuid
+import warnings
 
 try:  # pragma: no cover - optional dependency
     from memory_logging import ensure_tags
@@ -64,7 +65,9 @@ def ask_with_memory(
     intent: Dict[str, Any] | None = None,
     metadata: Dict[str, Any] | None = None,
 ) -> str:
-    """Query ``client`` with ``prompt`` augmented by prior context.
+    """DEPRECATED: use :meth:`ContextBuilder.build_prompt` instead.
+
+    Query ``client`` with ``prompt`` augmented by prior context.
 
     ``prompt`` may be either a raw string or a pre-built :class:`Prompt`.
     When a :class:`Prompt` is provided, it is used directly and any supplied
@@ -94,6 +97,12 @@ def ask_with_memory(
     metadata:
         Backwards compatible alias for ``intent``.
     """
+
+    warnings.warn(
+        "ask_with_memory is deprecated; use ContextBuilder.build_prompt",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     intent_payload = intent or metadata
 

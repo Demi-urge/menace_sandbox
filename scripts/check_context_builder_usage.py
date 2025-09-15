@@ -56,7 +56,7 @@ directly to the client.  Lists or dicts supplied directly as ``messages`` to
 ``.generate`` methods are also disallowed; use the canonical builders instead.
 Results of ``context_builder.build(...)`` must be passed directly to the
 client; concatenating them with additional strings or lists is reported.
-Direct ``ask_with_memory`` calls are likewise flagged.  ``Prompt``
+Direct ``ask_with_memory`` usages (calls, imports or references) are likewise flagged.  ``Prompt``
 instantiations inside exception handlers or fallback branches after
 ``build_prompt`` failures are reported.
 """
@@ -682,7 +682,6 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                             "ask_with_memory disallowed; use ContextBuilder.build_prompt",
                         )
                     )
-                self.generic_visit(node)
                 return
 
             if name_full == "PromptEngine.build_prompt":
@@ -855,6 +854,17 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                                 f"{DEFAULT_BUILDER_NAME} disallowed or missing context_builder",
                             )
                         )
+                if name == "ask_with_memory" or alias.asname == "ask_with_memory":
+                    line_no = node.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "ask_with_memory disallowed; use ContextBuilder.build_prompt",
+                            )
+                        )
             self.generic_visit(node)
 
         def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # noqa: D401
@@ -870,6 +880,47 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                                 f"{DEFAULT_BUILDER_NAME} disallowed or missing context_builder",
                             )
                         )
+                if alias.name == "ask_with_memory" or alias.asname == "ask_with_memory":
+                    line_no = node.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "ask_with_memory disallowed; use ContextBuilder.build_prompt",
+                            )
+                        )
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:  # noqa: D401
+            if node.id == "ask_with_memory" and isinstance(node.ctx, ast.Load):
+                line_no = node.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append(
+                        (
+                            line_no,
+                            "ask_with_memory disallowed; use ContextBuilder.build_prompt",
+                        )
+                    )
+                return
+            self.generic_visit(node)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:  # noqa: D401
+            if node.attr == "ask_with_memory" and isinstance(node.ctx, ast.Load):
+                line_no = node.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append(
+                        (
+                            line_no,
+                            "ask_with_memory disallowed; use ContextBuilder.build_prompt",
+                        )
+                    )
+                return
             self.generic_visit(node)
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: D401
