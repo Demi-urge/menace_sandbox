@@ -50,10 +50,6 @@ try:  # helper for GPT memory tagging
     from .memory_logging import log_with_tags
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_logging import log_with_tags  # type: ignore
-try:  # memory-aware wrapper
-    from .memory_aware_gpt_client import ask_with_memory
-except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .local_knowledge_module import LocalKnowledgeModule
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -596,14 +592,26 @@ def follow_up(
     """Request additional insight for a single idea."""
     prompt = "Provide deeper insight or variations for this business model."
     try:
-        idea.insight = ask_with_memory(
-            client,
-            "chatgpt_idea_bot.follow_up",
+        prompt_obj = context_builder.build_prompt(
             prompt,
-            memory=LOCAL_KNOWLEDGE_MODULE,
-            context_builder=context_builder,
+            intent_metadata={
+                "idea_name": idea.name,
+                "description": idea.description,
+            },
+        )
+        messages: List[Dict[str, str]] = []
+        if prompt_obj.system:
+            messages.append({"role": "system", "content": prompt_obj.system})
+        for ex in getattr(prompt_obj, "examples", []):
+            messages.append({"role": "system", "content": ex})
+        messages.append({"role": "user", "content": prompt_obj.user})
+        data = client.ask(
+            messages,
+            knowledge=LOCAL_KNOWLEDGE_MODULE,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-            intent={"idea_name": idea.name, "description": idea.description},
+        )
+        idea.insight = (
+            data.get("choices", [{}])[0].get("message", {}).get("content", "")
         )
     except Exception as exc:  # pragma: no cover - network/parse failures
         logger.exception("follow-up request failed: %s", exc)
@@ -627,15 +635,20 @@ def generate_and_filter(
         "Suggest five new online business models. "
         "Respond in JSON list format with fields name, description and tags."
     )
+    prompt_obj = context_builder.build_prompt(
+        prompt, intent_metadata={"tags": list(tags)}
+    )
+    messages: List[Dict[str, str]] = []
+    if prompt_obj.system:
+        messages.append({"role": "system", "content": prompt_obj.system})
+    for ex in getattr(prompt_obj, "examples", []):
+        messages.append({"role": "system", "content": ex})
+    messages.append({"role": "user", "content": prompt_obj.user})
     ideas = parse_ideas(
-        ask_with_memory(
-            client,
-            "chatgpt_idea_bot.generate_and_filter",
-            prompt,
-            memory=LOCAL_KNOWLEDGE_MODULE,
-            context_builder=context_builder,
+        client.ask(
+            messages,
+            knowledge=LOCAL_KNOWLEDGE_MODULE,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-            intent={"tags": list(tags)},
         )
     )
     novel: List[Idea] = []
