@@ -441,7 +441,7 @@ def test_run_patch_custom_clone_command(monkeypatch, tmp_path):
 
     monkeypatch.setattr(scm, "ensure_fresh_weights", lambda builder: None)
 
-    def _fake_qf():
+    def _fake_qf(_builder=None):
         mgr.quick_fix = types.SimpleNamespace()
         return mgr.quick_fix
 

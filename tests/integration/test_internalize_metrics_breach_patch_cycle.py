@@ -110,6 +110,7 @@ class SelfCodingManager:
         description: str,
         *,
         context_meta: dict | None = None,
+        context_builder=None,
         provenance_token: str | None = None,
         **kwargs,
     ) -> tuple[None, str]:
@@ -169,7 +170,11 @@ class EvolutionOrchestrator:
         if self.selfcoding_manager:
             self.selfcoding_manager.register_patch_cycle(desc, context_meta=event)
             self.selfcoding_manager.generate_and_patch(
-                self.module_path, desc, context_meta=event, provenance_token="prov"
+                self.module_path,
+                desc,
+                context_meta=event,
+                context_builder=object(),
+                provenance_token="prov",
             )
 
 

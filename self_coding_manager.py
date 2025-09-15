@@ -567,22 +567,16 @@ class SelfCodingManager:
                 "failed to initialise QuickFixEngine",
             ) from exc
 
-    def _ensure_quick_fix_engine(
-        self, builder: ContextBuilder | None = None
-    ) -> QuickFixEngine:
+    def _ensure_quick_fix_engine(self, builder: ContextBuilder) -> QuickFixEngine:
         """Return an initialised :class:`QuickFixEngine`.
 
-        A fresh *builder* updates the engine's context. When no engine is
-        present a new instance is created so patches always undergo
-        validation.
+        *builder* must be supplied by the caller and is attached to the
+        underlying :class:`QuickFixEngine` instance. When no engine is present a
+        new instance is created so patches always undergo validation.
         """
 
-        if builder is None:
-            clayer = getattr(self.engine, "cognition_layer", None)
-            builder = getattr(clayer, "context_builder", None)
-
-        if builder is None:
-            builder = ContextBuilder()
+        if builder is None:  # pragma: no cover - defensive
+            raise ValueError("ContextBuilder is required")
 
         try:
             self._init_quick_fix_engine(builder)
@@ -627,29 +621,30 @@ class SelfCodingManager:
         description: str = "",
         *,
         helper_fn: Callable[..., str] | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         provenance_token: str,
         **kwargs: Any,
     ):
         """Generate a quick fix patch for ``module``.
 
-        A fresh :class:`vector_service.ContextBuilder` is created when
-        ``context_builder`` is omitted to ensure patches operate on the latest
-        repository state. ``helper_fn`` defaults to
+        ``context_builder`` must be provided by the caller and will be used for
+        validation via :class:`QuickFixEngine`. ``helper_fn`` defaults to
         :func:`manager_generate_helper`.
         """
 
+        if context_builder is None:  # pragma: no cover - defensive
+            raise ValueError("ContextBuilder is required")
         if generate_patch is None:
             raise ImportError(
                 "QuickFixEngine is required but generate_patch is unavailable"
             )
-        builder = context_builder or self.refresh_quick_fix_context()
+        self._ensure_quick_fix_engine(context_builder)
         helper = helper_fn or _manager_generate_helper_with_builder
         return generate_patch(
             module,
             self,
             engine=getattr(self, "engine", None),
-            context_builder=builder,
+            context_builder=context_builder,
             description=description,
             helper_fn=helper,
             provenance_token=provenance_token,
@@ -887,18 +882,16 @@ class SelfCodingManager:
         description: str,
         *,
         context_meta: Dict[str, Any] | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         provenance_token: str,
         **kwargs: Any,
     ) -> tuple[AutomationResult, str | None]:
-        """Patch ``path`` using :meth:`run_patch` with fresh context.
-
-        Returns a tuple of the :class:`AutomationResult` and the commit hash of
-        the applied patch, if any.
-        """
+        """Patch ``path`` using :meth:`run_patch` with the supplied context."""
         self.validate_provenance(provenance_token)
 
-        builder = context_builder or ContextBuilder()
+        if context_builder is None:  # pragma: no cover - defensive
+            raise ValueError("ContextBuilder is required")
+        builder = context_builder
         try:
             ensure_fresh_weights(builder)
         except Exception as exc:

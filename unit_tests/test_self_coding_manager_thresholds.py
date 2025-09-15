@@ -253,28 +253,42 @@ def test_should_refactor_on_failed_tests(monkeypatch):
 
 
 def test_missing_context_builder_raises(tmp_path):
+    class Engine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(context_builder=object())
+
     mgr = scm.SelfCodingManager(
-        scm.SelfCodingEngine(),
+        Engine(),
         scm.ModelAutomationPipeline(),
         bot_name="x",
         data_bot=scm.DataBot(),
         bot_registry=scm.BotRegistry(),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
     )
     path = tmp_path / "mod.py"
     path.write_text("print('hi')\n")
-    with pytest.raises(RuntimeError, match="ContextBuilder"):
+    with pytest.raises(ValueError, match="ContextBuilder"):
         mgr.generate_and_patch(path, "desc")
 
 
 def test_missing_quick_fix_engine_raises(monkeypatch):
+    class Engine:
+        def __init__(self) -> None:
+            self.cognition_layer = types.SimpleNamespace(context_builder=object())
+
     mgr = scm.SelfCodingManager(
-        scm.SelfCodingEngine(),
+        Engine(),
         scm.ModelAutomationPipeline(),
         bot_name="x",
         data_bot=scm.DataBot(),
         bot_registry=scm.BotRegistry(),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="tok"
+        ),
     )
     monkeypatch.setattr(scm, "QuickFixEngine", None)
     mgr.quick_fix = None
     with pytest.raises(RuntimeError, match="QuickFixEngine"):
-        mgr._ensure_quick_fix_engine()
+        mgr._ensure_quick_fix_engine(scm.ContextBuilder())

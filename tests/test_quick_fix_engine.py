@@ -51,7 +51,11 @@ qfe_stub = types.ModuleType("quick_fix_engine")
 class QuickFixEngineError(Exception):
     pass
 
-qfe_stub.QuickFixEngine = object
+class QuickFixEngine:
+    def __init__(self, *a, **k):
+        pass
+
+qfe_stub.QuickFixEngine = QuickFixEngine
 qfe_stub.QuickFixEngineError = QuickFixEngineError
 qfe_stub.generate_patch = lambda *a, **k: None
 qfe_stub.manager_generate_helper = lambda *a, **k: ""
@@ -113,7 +117,10 @@ prb_stub.ROIResult = ROIResult
 sys.modules["menace.pre_execution_roi_bot"] = prb_stub
 
 error_bot_stub = types.ModuleType("menace.error_bot")
-error_bot_stub.ErrorDB = object
+class ErrorDB:
+    def __init__(self, *a, **k):
+        pass
+error_bot_stub.ErrorDB = ErrorDB
 sys.modules.setdefault("menace.error_bot", error_bot_stub)
 
 aem_stub = types.ModuleType("menace.advanced_error_management")
@@ -194,13 +201,12 @@ class DummyErrorDB:
     pass
 
 
-def make_manager(skip: bool = False) -> scm.SelfCodingManager:
+def make_manager() -> scm.SelfCodingManager:
     return scm.SelfCodingManager(
         DummyEngine(),
         DummyPipeline(),
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
-        skip_quick_fix_validation=skip,
         evolution_orchestrator=types.SimpleNamespace(
             register_bot=lambda *a, **k: None, provenance_token="token"
         ),
@@ -214,22 +220,21 @@ def _patch_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_missing_quick_fix_engine_errors(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    monkeypatch.setattr(scm, "QuickFixEngine", None)
     mgr = make_manager()
+    monkeypatch.setattr(scm, "QuickFixEngine", None)
+    mgr.quick_fix = None
     with caplog.at_level(logging.ERROR):
-        with pytest.raises(RuntimeError):
-            mgr._ensure_quick_fix_engine()
+        with pytest.raises(scm.QuickFixEngineError):
+            mgr._ensure_quick_fix_engine(scm.ContextBuilder())
     assert "pip install menace[quickfix]" in caplog.text
 
 
 def test_skip_quick_fix_engine(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    mgr = make_manager()
     monkeypatch.setattr(scm, "QuickFixEngine", None)
-    mgr = make_manager(skip=True)
+    mgr.quick_fix = types.SimpleNamespace()
     with caplog.at_level(logging.WARNING):
-        assert mgr._ensure_quick_fix_engine() is None
-    text = caplog.text
-    assert "pip install menace[quickfix]" in text
-    assert "skipping validation" in text
+        assert mgr._ensure_quick_fix_engine(scm.ContextBuilder()) is mgr.quick_fix
 
 
 def test_patch_uses_refreshed_weights(monkeypatch: pytest.MonkeyPatch) -> None:

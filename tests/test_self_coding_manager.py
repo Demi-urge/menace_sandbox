@@ -122,6 +122,9 @@ class PatchHistoryDB:
     pass
 code_db_stub.PatchRecord = PatchRecord
 code_db_stub.PatchHistoryDB = PatchHistoryDB
+class CodeDB:
+    pass
+code_db_stub.CodeDB = CodeDB
 sys.modules["menace.code_database"] = code_db_stub
 sys.modules["code_database"] = code_db_stub
 import menace.self_coding_manager as scm
@@ -1114,6 +1117,9 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
         quick_fix=object(),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
     )
     file_path = tmp_path / "sample.py"
     file_path.write_text("pass\n")
@@ -1129,14 +1135,11 @@ def test_generate_and_patch_delegates(monkeypatch, tmp_path):
     assert any(c[0] == "patch" and c[1] == file_path and c[3] is builder for c in calls)
 
 
-def test_generate_and_patch_failure(monkeypatch, tmp_path):
+def test_generate_patch_requires_builder(monkeypatch, tmp_path):
     class Engine:
         def __init__(self) -> None:
             base_builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
             self.cognition_layer = types.SimpleNamespace(context_builder=base_builder)
-
-        def apply_patch(self, path: Path, desc: str, **_: object):
-            return 1, False, 0.0
 
     engine = Engine()
     pipeline = DummyPipeline()
@@ -1147,24 +1150,23 @@ def test_generate_and_patch_failure(monkeypatch, tmp_path):
         data_bot=DummyDataBot(),
         bot_registry=DummyRegistry(),
         quick_fix=object(),
+        evolution_orchestrator=types.SimpleNamespace(
+            register_bot=lambda *a, **k: None, provenance_token="token"
+        ),
     )
+    with pytest.raises(TypeError):
+        mgr.generate_patch("module.py", provenance_token="token")
+
+
+def test_generate_and_patch_requires_builder(tmp_path):
+    mgr = object.__new__(scm.SelfCodingManager)
+    mgr.validate_provenance = lambda _token: None
     file_path = tmp_path / "sample.py"
     file_path.write_text("pass\n")
-
-    def bad_run_patch(*a, **k):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(mgr, "run_patch", bad_run_patch)
-    monkeypatch.setattr(mgr, "_ensure_quick_fix_engine", lambda *_a, **_k: object())
-
-    class DummyBuilder:
-        def refresh_db_weights(self) -> None:
-            return None
-
-    monkeypatch.setattr(scm, "ContextBuilder", DummyBuilder)
-
-    with pytest.raises(RuntimeError):
-        mgr.generate_and_patch(file_path, "fix")
+    with pytest.raises(TypeError):
+        scm.SelfCodingManager.generate_and_patch(
+            mgr, file_path, "fix", provenance_token="tok"
+        )
 
 
 def test_generate_and_patch_refreshes_builder(monkeypatch, tmp_path):
