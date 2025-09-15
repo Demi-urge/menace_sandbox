@@ -353,3 +353,68 @@ def test_client_ask_literal_messages_nocb(tmp_path):
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == []
+
+
+def test_flags_prompt_exception_fallback(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(context_builder):\n"
+        "    try:\n"
+        "        context_builder.build_prompt(['tag'], context_builder=context_builder)\n"
+        "    except Exception:\n"
+        "        Prompt('x')\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    errors = check_file(path)
+    assert (
+        5,
+        "Prompt fallback disallowed; handle build_prompt errors upstream",
+    ) in errors
+
+
+def test_flags_prompt_none_fallback(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(context_builder):\n"
+        "    prompt = context_builder.build_prompt(['tag'], context_builder=context_builder)\n"
+        "    if not prompt:\n"
+        "        prompt = Prompt('x')\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    errors = check_file(path)
+    assert (
+        4,
+        "Prompt fallback disallowed; handle build_prompt errors upstream",
+    ) in errors
+
+
+def test_flags_module_level_context_builder(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from vector_service.context_builder import ContextBuilder\n"
+        "builder = ContextBuilder('bots.db','code.db','errors.db','workflows.db')\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (2, "module-level ContextBuilder disallowed; inject via parameter")
+    ]
+
+
+def test_flags_builder_default_none(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(context_builder=None):\n"
+        "    pass\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (1, "context_builder default disallowed or missing context_builder")
+    ]
