@@ -1421,50 +1421,40 @@ def _sandbox_cycle_runner(
                     path = ctx.repo / module_name
                     if path.exists():
                         text = path.read_text(encoding="utf-8")[:500]
-                    prompt = build_section_prompt(
+                    context_builder = ctx.context_builder
+                    base_prompt = build_section_prompt(
                         mod,
                         tracker,
-                        context_builder=ctx.context_builder,
+                        context_builder=context_builder,
                         snippet=text,
                         prior=brainstorm_summary if brainstorm_summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
-                    if insight:
-                        prompt.user = f"{insight}\n\n{prompt.user}"
-                    gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
-                    lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
                     history: list[Prompt] = ctx.conversations.get(memory_key, [])
-                    if history:
-                        conv = ctx.context_builder.build_prompt(
-                            "history",
-                            context="\n".join(h.user for h in history),
-                            top_k=0,
-                        )
-                        if conv.user:
-                            prompt.examples.insert(0, conv.user)
-                        prompt.examples[0:0] = getattr(conv, "examples", [])
-                    from memory_aware_gpt_client import ask_with_memory
-                    resp = ask_with_memory(
-                        ctx.gpt_client,
-                        f"sandbox_runner.cycle.{memory_key}",
-                        prompt,
-                        memory=gpt_mem,
-                        context_builder=ctx.context_builder,
-                        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                        intent={"module": mod, "memory_key": memory_key, "insight": insight},
+                    history_text = "\n".join(h.user for h in history)
+                    lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
+                    intent_meta = dict(base_prompt.metadata.get("intent", {}))
+                    intent_meta.update({"module": mod, "memory_key": memory_key})
+                    if insight:
+                        intent_meta["insight"] = insight
+                    if brainstorm_summary:
+                        intent_meta["prior"] = brainstorm_summary
+                    if history_text:
+                        intent_meta["history"] = history_text
+                    prompt = ctx.engine.build_enriched_prompt(
+                        {"query": base_prompt.user, **intent_meta},
+                        context_builder=context_builder,
                     )
-                    suggestion = (
-                        resp.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                        .strip()
+                    resp = ctx.gpt_client.generate(
+                        prompt, context_builder=context_builder
                     )
-                    new_hist = history + [
-                        ctx.context_builder.build_prompt(prompt.user, top_k=0)
-                    ]
+                    suggestion = resp.text.strip()
+                    new_hist = history + [prompt]
                     if suggestion:
                         new_hist.append(
-                            ctx.context_builder.build_prompt(suggestion, top_k=0)
+                            ctx.engine.build_enriched_prompt(
+                                suggestion, context_builder=context_builder
+                            )
                         )
                         if lkm:
                             try:
@@ -1543,25 +1533,6 @@ def _sandbox_cycle_runner(
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
                     )
-                    if gpt_mem:
-                        try:
-                            result_text = "success" if patch_id else "failure"
-                            from memory_logging import log_with_tags
-                            log_with_tags(
-                                gpt_mem,
-                                f"sandbox_runner.cycle.{memory_key}.patch_id",
-                                str(patch_id),
-                                tags=[f"sandbox_runner.cycle.{memory_key}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                            )
-                            from memory_logging import log_with_tags
-                            log_with_tags(
-                                gpt_mem,
-                                f"sandbox_runner.cycle.{memory_key}.result",
-                                result_text,
-                                tags=[f"sandbox_runner.cycle.{memory_key}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                            )
-                        except Exception:
-                            logger.exception("memory logging failed for %s", mod)
                 except PermissionError as exc:
                     logger.error("patch permission denied for %s: %s", mod, exc)
                     raise
@@ -1689,7 +1660,7 @@ def _sandbox_cycle_runner(
                                 )
                             except Exception:
                                 insight = ""
-                        prompt = build_section_prompt(
+                        base_prompt = build_section_prompt(
                             "overall",
                             tracker,
                             context_builder=ctx.context_builder,
@@ -1697,47 +1668,37 @@ def _sandbox_cycle_runner(
                             prior=prior if prior else None,
                             max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                         )
-                        if insight:
-                            prompt.user = f"{insight}\n\n{prompt.user}"
-                        gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
+                        context_builder = ctx.context_builder
                         hist: list[Prompt] = ctx.conversations.get("brainstorm", [])
                         lkm = getattr(
                             __import__("sys").modules.get("sandbox_runner"),
                             "LOCAL_KNOWLEDGE_MODULE",
                             None,
                         )
-                        if hist:
-                            conv = ctx.context_builder.build_prompt(
-                                "history",
-                                context="\n".join(h.user for h in hist),
-                                top_k=0,
-                            )
-                            if conv.user:
-                                prompt.examples.insert(0, conv.user)
-                            prompt.examples[0:0] = getattr(conv, "examples", [])
-                        from memory_aware_gpt_client import ask_with_memory
-                        resp = ask_with_memory(
-                            ctx.gpt_client,
-                            "sandbox_runner.cycle.brainstorm",
-                            prompt,
-                            memory=gpt_mem,
-                            context_builder=ctx.context_builder,
-                            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                            intent={"section": "overall", "summary": summary, "prior": prior},
+                        history_text = "\n".join(h.user for h in hist)
+                        intent_meta = dict(base_prompt.metadata.get("intent", {}))
+                        intent_meta.update({"section": "overall", "summary": summary})
+                        if prior:
+                            intent_meta["prior"] = prior
+                        if insight:
+                            intent_meta["insight"] = insight
+                        if history_text:
+                            intent_meta["history"] = history_text
+                        prompt = ctx.engine.build_enriched_prompt(
+                            {"query": base_prompt.user, **intent_meta},
+                            context_builder=context_builder,
                         )
-                        idea = (
-                            resp.get("choices", [{}])[0]
-                            .get("message", {})
-                            .get("content", "")
-                            .strip()
+                        resp = ctx.gpt_client.generate(
+                            prompt, context_builder=context_builder
                         )
-                        new_hist = hist + [
-                            ctx.context_builder.build_prompt(prompt.user, top_k=0)
-                        ]
+                        idea = resp.text.strip()
+                        new_hist = hist + [prompt]
                         if idea:
                             ctx.brainstorm_history.append(idea)
                             new_hist.append(
-                                ctx.context_builder.build_prompt(idea, top_k=0)
+                                ctx.engine.build_enriched_prompt(
+                                    idea, context_builder=context_builder
+                                )
                             )
                             logger.info("brainstorm", extra={"idea": idea})
                             if lkm:
@@ -1796,7 +1757,7 @@ def _sandbox_cycle_runner(
                             insight = knowledge_service.get_recent_insights("brainstorm")
                         except Exception:
                             insight = ""
-                    prompt = build_section_prompt(
+                    base_prompt = build_section_prompt(
                         "overall",
                         tracker,
                         context_builder=ctx.context_builder,
@@ -1804,9 +1765,7 @@ def _sandbox_cycle_runner(
                         prior=summary if summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
-                    if insight:
-                        prompt.user = f"{insight}\n\n{prompt.user}"
-                    gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
+                    context_builder = ctx.context_builder
                     hist: list[Prompt] = ctx.conversations.get("brainstorm", [])
                     lkm = getattr(
                         __import__("sys").modules.get("sandbox_runner"),
@@ -1814,36 +1773,30 @@ def _sandbox_cycle_runner(
                         None,
                     )
                     if hist:
-                        conv = ctx.context_builder.build_prompt(
-                            "history",
-                            context="\n".join(h.user for h in hist),
-                            top_k=0,
-                        )
-                        if conv.user:
-                            prompt.examples.insert(0, conv.user)
-                        prompt.examples[0:0] = getattr(conv, "examples", [])
-                    from memory_aware_gpt_client import ask_with_memory
-                    resp = ask_with_memory(
-                        ctx.gpt_client,
-                        "sandbox_runner.cycle.brainstorm",
-                        prompt,
-                        memory=gpt_mem,
-                        context_builder=ctx.context_builder,
-                        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                        intent={"section": "overall", "summary": summary},
+                        history_text = "\n".join(h.user for h in hist)
+                    else:
+                        history_text = ""
+                    intent_meta = dict(base_prompt.metadata.get("intent", {}))
+                    intent_meta.update({"section": "overall", "summary": summary})
+                    if insight:
+                        intent_meta["insight"] = insight
+                    if history_text:
+                        intent_meta["history"] = history_text
+                    prompt = ctx.engine.build_enriched_prompt(
+                        {"query": base_prompt.user, **intent_meta},
+                        context_builder=context_builder,
                     )
-                    idea = (
-                        resp.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
+                    resp = ctx.gpt_client.generate(
+                        prompt, context_builder=context_builder
                     )
-                    new_hist = hist + [
-                        ctx.context_builder.build_prompt(prompt.user, top_k=0)
-                    ]
+                    idea = resp.text.strip()
+                    new_hist = hist + [prompt]
                     if idea:
                         ctx.brainstorm_history.append(idea)
                         new_hist.append(
-                            ctx.context_builder.build_prompt(idea, top_k=0)
+                            ctx.engine.build_enriched_prompt(
+                                idea, context_builder=context_builder
+                            )
                         )
                         logger.info("brainstorm", extra={"idea": idea})
                         if lkm:
