@@ -98,12 +98,12 @@ from vector_service.context_builder import ContextBuilder, build_prompt
 builder = ContextBuilder()
 prompt = builder.build_prompt(
     "optimise database",
-    latent_queries=["speed up queries"],
+    intent={"ticket": 123, "intent_tags": ["perf"]},
     error_log="timeout",
-    intent_metadata={"ticket": 123},
+    latent_queries=["speed up queries"],
 )
-print(prompt.user)
-print(prompt.examples)
+print(prompt.metadata["intent"])
+print(prompt.metadata["vectors"][:1])
 
 # or use the module level helper
 prompt2 = build_prompt("optimise database")
@@ -112,8 +112,17 @@ prompt2 = build_prompt("optimise database")
 Example output::
 
 ```
-Prompt(user='optimise database', examples=['index existing tables', 'cache results'])
+{'ticket': 123, 'intent_tags': ['perf']}
+[('errors:17', 0.8)]
 ```
+
+Intent metadata and retrieved vector identifiers are merged into the returned
+prompt's ``metadata`` so downstream components can reason about both the user's
+intent and the surrounding context.
+
+Avoid constructing prompt strings inline; always call ``build_prompt`` and run
+``python scripts/check_context_builder_usage.py`` to statically flag any missing
+``context_builder`` wiring.
 
 Configuration knobs controlling this method live under ``context_builder`` in the
 main settings file:
