@@ -40,7 +40,6 @@ GLOBAL_ROUTER = init_db_router(MENACE_ID, LOCAL_DB_PATH, SHARED_DB_PATH)
 router = GLOBAL_ROUTER
 
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
-from memory_aware_gpt_client import ask_with_memory
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
 from vector_service import FallbackResult, ContextBuilder
 from prompt_types import Prompt
@@ -1685,7 +1684,7 @@ def _sandbox_main(
                         for k in sorted(combined_metrics)
                     )
                     prior = "; ".join(ctx.brainstorm_history[-3:])
-                    prompt = build_section_prompt(
+                    base_prompt = build_section_prompt(
                         "overall",
                         ctx.tracker,
                         context_builder=ctx.context_builder,
@@ -1694,26 +1693,20 @@ def _sandbox_main(
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
                     module = _get_local_knowledge()
-                    prompt = ctx.context_builder.build_prompt(
-                        prompt.user,
-                        intent=getattr(prompt, "metadata", {}),
-                        top_k=0,
+                    intent_meta = dict(
+                        getattr(base_prompt, "metadata", {}).get("intent", {})
                     )
-                    resp = ask_with_memory(
-                        ctx.gpt_client,
-                        "sandbox_runner.brainstorm",
-                        prompt,
-                        memory=getattr(ctx.gpt_client, "gpt_memory", None),
+                    intent_meta.update(
+                        {"section": "overall", "summary": summary, "prior": prior}
+                    )
+                    prompt = ctx.engine.build_enriched_prompt(
+                        {"query": base_prompt.user, **intent_meta},
                         context_builder=ctx.context_builder,
-                        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                        intent={"section": "overall", "summary": summary, "prior": prior},
                     )
-                    idea = (
-                        resp.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                        .strip()
+                    resp = ctx.gpt_client.generate(
+                        prompt, context_builder=ctx.context_builder
                     )
+                    idea = resp.text.strip()
                     if idea:
                         ctx.brainstorm_history.append(idea)
                         logger.info("brainstorm", extra=log_record(idea=idea))
