@@ -40,6 +40,7 @@ from .admin_bot_base import AdminBotBase
 from .self_coding_manager import SelfCodingManager, internalize_coding_bot
 from .self_coding_thresholds import get_thresholds
 from .shared_evolution_orchestrator import get_orchestrator
+from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
@@ -67,7 +68,7 @@ from .coding_bot_interface import self_coding_managed
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = ContextBuilder()
+_context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator = get_orchestrator("BotCreationBot", data_bot, engine)

@@ -22,6 +22,7 @@ from .self_coding_manager import (
 )
 from .self_coding_thresholds import get_thresholds
 from .shared_evolution_orchestrator import get_orchestrator
+from context_builder_util import create_context_builder, ensure_fresh_weights
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
@@ -50,13 +51,12 @@ except Exception:  # pragma: no cover - module missing the attribute
         pass
 
 from snippet_compressor import compress_snippets
-from context_builder_util import ensure_fresh_weights
 
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = ContextBuilder()
+_context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator = get_orchestrator("AutomatedReviewer", data_bot, engine)
