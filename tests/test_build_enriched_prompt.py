@@ -133,12 +133,12 @@ def test_enriched_prompt_merges_metadata():
     engine.context_builder = DummyBuilder()
     engine._last_retry_trace = "trace"
     engine._last_prompt_metadata = {}
+    intent = {"query": "do things", "intent": "meta"}
     prompt = engine.build_enriched_prompt(
-        "do things",
+        intent,
         context_builder=engine.context_builder,
-        intent_metadata={"intent": "meta"},
     )
-    assert prompt.metadata["intent"] == "meta"
+    assert prompt.metadata["intent"]["intent"] == "meta"
     assert prompt.metadata["error_log"] == "trace"
     assert "vectors" in prompt.metadata
     assert engine._last_prompt is prompt
