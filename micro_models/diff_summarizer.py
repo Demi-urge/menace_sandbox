@@ -64,19 +64,17 @@ def summarize_diff(
     diff = before + "\n" + after
     hint = after.splitlines()[0] if after else (before.splitlines()[0] if before else "")
     top_k = 5 if hint else 0
-    intent = {"hint": hint} if hint else None
+    intent: dict[str, str] = {"diff": diff}
+    if hint:
+        intent["hint"] = hint
     prompt_obj = context_builder.build_prompt(
-        "Summarize the code change.",
-        context=diff,
+        "Summarize the code change.\nSummary:",
         intent_metadata=intent,
         top_k=top_k,
+        retriever=getattr(context_builder, "patch_retriever", None),
     )
-    prompt_text = ""
-    if getattr(prompt_obj, "system", ""):
-        prompt_text += prompt_obj.system + "\n"
-    prompt_text += prompt_obj.user + "\nSummary:"
 
-    inputs = tokenizer(prompt_text, return_tensors="pt")  # type: ignore[call-arg]
+    inputs = tokenizer(str(prompt_obj), return_tensors="pt")  # type: ignore[call-arg]
     if torch is not None:
         inputs = {k: v.to(hf_model.device) for k, v in inputs.items()}  # type: ignore[attr-defined]
     output = hf_model.generate(**inputs, max_new_tokens=max_new_tokens)  # type: ignore[call-arg]

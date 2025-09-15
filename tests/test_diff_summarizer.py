@@ -1,5 +1,6 @@
 import micro_models.diff_summarizer as ds
 from prompt_types import Prompt
+from vector_service.context_builder import ContextBuilder
 
 
 class DummyTokenizer:
@@ -31,23 +32,26 @@ def test_context_inclusion(monkeypatch):
     captured = {}
 
     class DummyBuilder:
-        def build_prompt(self, goal, *, context, intent_metadata=None, top_k=0, **kwargs):
+        patch_retriever = object()
+
+        def build_prompt(self, goal, *, intent_metadata=None, top_k=0, **kwargs):
             captured.update(
                 goal=goal,
-                context=context,
                 intent=intent_metadata,
                 top_k=top_k,
+                kwargs=kwargs,
                 builder=self,
             )
-            return Prompt(user=f"retrieved\n{context}", system="PAY")
+            return Prompt(user="retrieved", system="PAY")
 
     builder = DummyBuilder()
     res = ds.summarize_diff("before", "after", context_builder=builder)
     assert res.startswith("ok")
-    assert tok.prompt.startswith("PAY\n")
-    assert "retrieved" in tok.prompt
-    assert captured["context"] == "before\nafter"
+    assert tok.prompt == "retrieved"
+    assert captured["intent"]["diff"] == "before\nafter"
     assert captured["intent"]["hint"] == "after"
+    assert "context" not in captured["kwargs"]
+    assert captured["kwargs"]["retriever"] is builder.patch_retriever
     assert captured["builder"] is builder
     assert captured["top_k"] == 5
 
@@ -61,7 +65,9 @@ def test_hint_weighting(monkeypatch):
     topks = []
 
     class DummyBuilder:
-        def build_prompt(self, goal, *, context, intent_metadata=None, top_k=0, **kwargs):
+        patch_retriever = object()
+
+        def build_prompt(self, goal, *, intent_metadata=None, top_k=0, **kwargs):
             topks.append(top_k)
             return Prompt(user="", system="")
 
@@ -69,3 +75,29 @@ def test_hint_weighting(monkeypatch):
     ds.summarize_diff("before", "after", context_builder=builder)
     ds.summarize_diff("", "", context_builder=builder)
     assert topks == [5, 0]
+
+
+def test_real_context_builder(monkeypatch):
+    tok = DummyTokenizer()
+    model = DummyModel()
+    monkeypatch.setattr(ds, "_load_model", lambda: (tok, model))
+    monkeypatch.setattr(ds, "torch", None)
+
+    class DummyRetriever:
+        def search(self, query, top_k=5, session_id="", **kwargs):
+            return []
+
+    captured = {}
+    orig_build = ContextBuilder.build_prompt
+
+    def capture(self, *a, **k):
+        prompt = orig_build(self, *a, **k)
+        prompt.examples.append("print('hi')")
+        captured["prompt"] = prompt
+        return prompt
+
+    monkeypatch.setattr(ContextBuilder, "build_prompt", capture)
+    builder = ContextBuilder(retriever=DummyRetriever())
+    res = ds.summarize_diff("before", "after", context_builder=builder)
+    assert res.startswith("ok")
+    assert "print('hi')" in captured["prompt"].examples[0]
