@@ -57,13 +57,16 @@ def test_flags_chat_completion_wrapper(tmp_path):
 
     code = (
         "from billing.openai_wrapper import chat_completion_create\n"
-        "def demo(x):\n"
-        "    chat_completion_create(x)\n"
+        "def demo():\n"
+        "    chat_completion_create([])\n"
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == [
-        (3, "chat_completion_create disallowed or missing context_builder")
+        (
+            3,
+            "direct message list/dict disallowed; use ContextBuilder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+        )
     ]
 
 
@@ -73,7 +76,7 @@ def test_allows_nocb_comment(tmp_path):
     code = (
         "from billing.openai_wrapper import chat_completion_create\n"
         "def demo():\n"
-        "    chat_completion_create([], model='x')  # nocb\n"
+        "    chat_completion_create([])  # nocb\n"
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
