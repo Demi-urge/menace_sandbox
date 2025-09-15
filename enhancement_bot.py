@@ -194,15 +194,17 @@ class EnhancementBot:
             except Exception:
                 context = ""
 
-        intent_text = "Summarize the code change."
+        intent_meta: Dict[str, Any] = {
+            "before_hash": self._hash(before),
+            "after_hash": self._hash(after),
+        }
         if hint:
-            intent_text = f"Diff summary hint: {hint}\n\n{intent_text}"
-        intent_meta: Dict[str, Any] = {"before": before, "after": after}
+            intent_meta["refactor_summary"] = hint
         if context:
             intent_meta["retrieved_context"] = context
         prompt = self.context_builder.build_prompt(
-            intent_text,
-            intent_metadata=intent_meta,
+            "Summarize the code change.",
+            intent=intent_meta,
             top_k=0,
         )
         notice = prepend_payment_notice([])[0]["content"]
