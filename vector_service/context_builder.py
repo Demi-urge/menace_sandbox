@@ -1612,17 +1612,109 @@ def _build_prompt_internal(
 
 @log_and_measure
 def build_prompt(
-    query: str,
+    goal: str,
+    *,
     intent: Dict[str, Any] | None = None,
+    intent_metadata: Dict[str, Any] | None = None,
+    latent_queries: Iterable[str] | None = None,
+    top_k: int = 5,
+    context_builder: "ContextBuilder" | None = None,
     **kwargs: Any,
 ) -> Prompt:
-    """Public wrapper for :func:`_build_prompt_internal`.
+    """Build a :class:`Prompt` for ``goal`` using vectorised context.
 
-    Parameters mirror :func:`_build_prompt_internal` but allow quick one-off
-    calls without explicitly constructing a :class:`ContextBuilder`.
+    The helper retrieves relevant context snippets via
+    :meth:`ContextBuilder.build_context`, performs semantic de-duplication and
+    priority scoring, merges ``intent`` metadata and delegates construction of
+    the final prompt text to :func:`prompt_engine.build_prompt`.
     """
 
-    return _build_prompt_internal(query, intent, **kwargs)
+    if intent is None and intent_metadata is not None:
+        intent = intent_metadata
+
+    builder = context_builder or ContextBuilder()
+
+    queries: List[str] = [goal]
+    if latent_queries:
+        queries.extend(q for q in latent_queries if isinstance(q, str) and q)
+
+    combined_meta: Dict[str, List[Dict[str, Any]]] = {}
+    vectors: List[Tuple[str, str, float]] = []
+    scores: List[float] = []
+    for q in queries:
+        ctx_data = builder.build_context(
+            q,
+            top_k=top_k,
+            include_vectors=True,
+            return_metadata=True,
+            **kwargs,
+        )
+        try:
+            _ctx, _sid, vecs, meta = ctx_data  # type: ignore[misc]
+        except Exception:
+            vecs = []
+            meta = {}
+        for bucket, items in meta.items():
+            combined_meta.setdefault(bucket, []).extend(items)
+        vectors.extend(vecs)
+        for items in meta.values():
+            for item in items:
+                try:
+                    scores.append(float(item.get("score") or 0.0))
+                except Exception:
+                    pass
+
+    dedup: Dict[str, Tuple[float, str]] = {}
+    for items in combined_meta.values():
+        for item in items:
+            try:
+                item.update(compress_snippets(item))
+            except Exception:
+                pass
+            desc = str(item.get("desc") or "")
+            if not desc:
+                continue
+            key = re.sub(r"\s+", " ", desc).strip().lower()
+            score = float(item.get("score") or 0.0)
+            roi = float(item.get("roi") or item.get("roi_delta") or 0.0)
+            recency = float(item.get("recency") or 0.0)
+            risk = float(item.get("risk_score") or 0.0)
+            priority = (
+                score * builder.prompt_score_weight
+                + roi * builder.roi_weight
+                + recency * getattr(builder, "recency_weight", 1.0)
+                - risk * getattr(builder, "safety_weight", 1.0)
+            )
+            cur = dedup.get(key)
+            if cur is None or priority > cur[0]:
+                dedup[key] = (priority, desc)
+
+    ranked = [desc for _, desc in sorted(dedup.values(), key=lambda x: x[0], reverse=True)]
+    retrieval_context = "\n".join(ranked)
+
+    from prompt_engine import build_prompt as _pe_build_prompt  # local import to avoid cycle
+
+    prompt = _pe_build_prompt(
+        goal,
+        retrieval_context=retrieval_context,
+        context_builder=builder,
+        **kwargs,
+    )
+
+    avg_conf = sum(scores) / len(scores) if scores else None
+    meta_out: Dict[str, Any] = {"vector_confidences": scores, "vectors": vectors}
+    if intent:
+        meta_out["intent"] = intent
+    if prompt.metadata:
+        prompt.metadata.update(meta_out)
+    else:
+        prompt.metadata = meta_out
+    if avg_conf is not None:
+        try:
+            prompt.vector_confidence = avg_conf
+        except Exception:
+            prompt.metadata.setdefault("vector_confidence", avg_conf)
+    return prompt
 
 
 __all__ = ["ContextBuilder", "record_failed_tags", "load_failed_tags", "build_prompt"]
