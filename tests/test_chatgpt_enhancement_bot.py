@@ -3,6 +3,7 @@ import logging
 import pytest
 import sys
 import types
+import menace
 
 
 class DummyBuilder:
@@ -12,12 +13,21 @@ class DummyBuilder:
     def build(self, query, **_):
         return ""
 
+    def build_prompt(self, query, *, intent=None, **_):
+        return types.SimpleNamespace(system=None, examples=[], user=query, metadata=intent)
+
 
 _ctx_mod = types.SimpleNamespace(
     ContextBuilder=DummyBuilder, ErrorResult=Exception, FallbackResult=Exception
 )
 sys.modules.setdefault("vector_service", types.SimpleNamespace(context_builder=_ctx_mod))
 sys.modules["vector_service.context_builder"] = _ctx_mod
+sys.modules["menace.self_coding_engine"] = types.SimpleNamespace(
+    MANAGER_CONTEXT=types.SimpleNamespace(set=lambda *a, **k: None, reset=lambda *a, **k: None)
+)
+sys.modules["menace.self_coding_manager"] = types.SimpleNamespace(
+    SelfCodingManager=object
+)
 
 import menace.chatgpt_enhancement_bot as ceb
 import menace.chatgpt_idea_bot as cib
@@ -38,7 +48,7 @@ def test_propose(monkeypatch, tmp_path):
     }
     builder = DummyBuilder()
     client = cib.ChatGPTClient("key", context_builder=builder)
-    monkeypatch.setattr(ceb, "ask_with_memory", lambda *a, **k: resp)
+    monkeypatch.setattr(client, "ask", lambda *a, **k: resp)
     router = ceb.init_db_router("enhprop", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     db = ceb.EnhancementDB(tmp_path / "enh.db", router=router)
     db.add_embedding = lambda *a, **k: None

@@ -23,13 +23,10 @@ from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
+from prompt_types import Prompt
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-try:  # pragma: no cover - allow flat imports
-    from .memory_aware_gpt_client import ask_with_memory
-except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
 from . import RAISE_ERRORS
 from vector_service.context_builder import ContextBuilder
 try:  # canonical tag constants
@@ -1087,14 +1084,31 @@ class ChatGPTEnhancementBot:
             base_tags = [IMPROVEMENT_PATH, INSIGHT]
             if tags:
                 base_tags.extend(tags)
-            data = ask_with_memory(
-                self.client,
-                "chatgpt_enhancement_bot.propose",
-                instruction,
-                memory=self.gpt_memory,
-                context_builder=self.context_builder,
+            try:
+                prompt_obj = self.context_builder.build_prompt(
+                    instruction, intent=intent_meta
+                )
+            except Exception:
+                logger.exception("ContextBuilder.build_prompt failed")
+                prompt_obj = Prompt(user=instruction)
+
+            messages: List[Dict[str, Any]] = []
+            if getattr(prompt_obj, "system", None):
+                messages.append({"role": "system", "content": prompt_obj.system})
+            for ex in getattr(prompt_obj, "examples", []):
+                messages.append({"role": "system", "content": ex})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": prompt_obj.user,
+                    "metadata": getattr(prompt_obj, "metadata", {}) or {},
+                }
+            )
+
+            data = self.client.ask(
+                messages,
                 tags=base_tags,
-                intent=intent_meta,
+                memory_manager=self.gpt_memory,
             )
         except Exception as exc:
             logger.exception("chatgpt request failed: %s", exc)
