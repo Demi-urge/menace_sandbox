@@ -101,11 +101,12 @@ from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from .shared_evolution_orchestrator import get_orchestrator
 from db_dedup import insert_if_unique, ensure_content_hash_column
+from context_builder_util import create_context_builder
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = ContextBuilder()
+_context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 

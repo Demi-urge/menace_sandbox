@@ -22,13 +22,14 @@ from .data_bot import DataBot, persist_sc_thresholds
 from .coding_bot_interface import self_coding_managed
 from .task_handoff_bot import TaskPackage, TaskInfo
 from .shared_evolution_orchestrator import get_orchestrator
+from context_builder_util import create_context_builder
 
 logger = logging.getLogger(__name__)
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = ContextBuilder()
+_context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator = get_orchestrator(

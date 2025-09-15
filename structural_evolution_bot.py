@@ -34,6 +34,7 @@ from .self_coding_thresholds import get_thresholds
 from vector_service.context_builder import ContextBuilder
 from typing import TYPE_CHECKING
 from .shared_evolution_orchestrator import get_orchestrator
+from context_builder_util import create_context_builder
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .evolution_orchestrator import EvolutionOrchestrator
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = ContextBuilder()
+_context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), GPTMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator = get_orchestrator("StructuralEvolutionBot", data_bot, engine)

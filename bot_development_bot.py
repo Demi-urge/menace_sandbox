@@ -18,7 +18,7 @@ import shutil
 import sys
 import uuid
 from dynamic_path_router import resolve_path
-from context_builder_util import ensure_fresh_weights
+from context_builder_util import ensure_fresh_weights, create_context_builder
 from secret_redactor import redact_secrets
 
 try:
@@ -62,7 +62,7 @@ from .shared_evolution_orchestrator import get_orchestrator
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
-_context_builder = ContextBuilder()
+_context_builder = create_context_builder()
 engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), context_builder=_context_builder)
 pipeline = ModelAutomationPipeline(context_builder=_context_builder)
 evolution_orchestrator = get_orchestrator("BotDevelopmentBot", data_bot, engine)
