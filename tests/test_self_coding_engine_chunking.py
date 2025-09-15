@@ -5,7 +5,7 @@ import sys
 import types
 import importlib.util
 import pytest
-from menace.coding_bot_interface import manager_generate_helper
+from llm_interface import Prompt
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,7 @@ _setmod(
 builder = types.SimpleNamespace(
     build_context=lambda *a, **k: {},
     refresh_db_weights=lambda *a, **k: None,
+    build_prompt=lambda query, intent=None, error_log=None, top_k=5: Prompt(query),
 )
 
 code_db_mod = types.ModuleType("code_database")
@@ -198,6 +199,7 @@ roi_mod.ROITracker = lambda: object()
 _setmod("roi_tracker", roi_mod)
 
 
+from menace.coding_bot_interface import manager_generate_helper  # noqa: E402
 import menace_sandbox.self_coding_engine as sce  # noqa: E402
 from chunking import CodeChunk  # noqa: E402
 from chunk_summary_cache import ChunkSummaryCache  # noqa: E402
@@ -389,7 +391,12 @@ def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
     target.write_text("a=1\nb=2\nc=3\n")
     region = sce.TargetRegion(start_line=2, end_line=2, function="f")
 
-    manager_generate_helper(types.SimpleNamespace(engine=engine), "do something", path=target, target_region=region)
+    manager_generate_helper(
+        types.SimpleNamespace(engine=engine),
+        "do something",
+        path=target,
+        target_region=region,
+    )
 
     ctx = captured["context"]
     assert "Modify only lines 2-2" in ctx

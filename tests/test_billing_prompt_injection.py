@@ -1,8 +1,6 @@
 import sys
 import types
 import logging
-import pytest
-from menace.coding_bot_interface import manager_generate_helper
 
 # Stub heavy dependencies before importing the module under test
 sys.modules["vector_service"] = types.SimpleNamespace(
@@ -26,26 +24,18 @@ sys.modules["menace.shared_gpt_memory"] = types.SimpleNamespace(
 )
 sys.modules["shared_gpt_memory"] = sys.modules["menace.shared_gpt_memory"]
 
-import menace.self_coding_engine as sce
-from menace.llm_interface import LLMResult
+sys.modules.setdefault("safety_monitor", types.SimpleNamespace(SafetyMonitor=object))
+sys.modules.setdefault("menace.safety_monitor", sys.modules["safety_monitor"])
 
+import menace.self_coding_engine as sce  # noqa: E402
+from menace.llm_interface import LLMResult, Prompt  # noqa: E402
 
-class DummyPrompt:
-    def __init__(self, text: str = "base") -> None:
-        self.text = text
-        self.system = ""
-        self.examples = []
-        self.metadata = {}
-
-    def __str__(self) -> str:  # pragma: no cover - simple repr
-        return self.text
+from menace.coding_bot_interface import manager_generate_helper  # noqa: E402
 
 
 def test_billing_instructions_in_prompt(monkeypatch):
     engine = object.__new__(sce.SelfCodingEngine)
-    engine.prompt_engine = types.SimpleNamespace(
-        build_prompt=lambda *a, **k: DummyPrompt("start")
-    )
+    engine.prompt_engine = types.SimpleNamespace()
     engine.llm_client = object()
     engine.logger = logging.getLogger("test")
     engine.gpt_memory = None
@@ -57,6 +47,7 @@ def test_billing_instructions_in_prompt(monkeypatch):
     engine.context_builder = types.SimpleNamespace(
         build_context=lambda *a, **k: {},
         refresh_db_weights=lambda *a, **k: None,
+        build_prompt=lambda q, intent=None, error_log=None, top_k=5: Prompt(q),
     )
     engine.prompt_tone = None
     engine._last_prompt_metadata = {}
