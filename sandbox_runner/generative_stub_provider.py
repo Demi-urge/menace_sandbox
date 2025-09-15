@@ -47,7 +47,6 @@ except Exception:  # pragma: no cover - fallback when packaged
 from .input_history_db import InputHistoryDB
 from sandbox_settings import SandboxSettings
 from model_registry import get_client
-from llm_interface import Prompt
 
 # Optional dependencies loaded lazily
 pipeline = None  # type: ignore
@@ -796,7 +795,11 @@ def _aggregate(records: List[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def async_generate_stubs(
-    stubs: List[Dict[str, Any]], ctx: dict, config: StubProviderConfig | None = None
+    stubs: List[Dict[str, Any]],
+    ctx: dict,
+    config: StubProviderConfig | None = None,
+    *,
+    context_builder: ContextBuilder | None = None,
 ) -> List[Dict[str, Any]]:
     cid = ctx.get("correlation_id") or f"stub-{uuid.uuid4()}"
     set_correlation_id(cid)
@@ -805,7 +808,7 @@ async def async_generate_stubs(
         "stub generation start", extra=log_record(strategy=ctx.get("strategy"))
     )
     try:
-        return await _async_generate_stubs(stubs, ctx, config)
+        return await _async_generate_stubs(stubs, ctx, context_builder, config)
     except Exception:
         stub_generation_failures_total.inc()
         logger.exception(
@@ -817,12 +820,15 @@ async def async_generate_stubs(
 
 
 async def _async_generate_stubs(
-    stubs: List[Dict[str, Any]], ctx: dict, config: StubProviderConfig | None = None
+    stubs: List[Dict[str, Any]],
+    ctx: dict,
+    context_builder: ContextBuilder | None,
+    config: StubProviderConfig | None = None,
 ) -> List[Dict[str, Any]]:
     """Generate or enhance ``stubs`` using recent history or a language model."""
     config = config or get_config()
 
-    builder: ContextBuilder | None = ctx.get("context_builder")
+    context_builder = context_builder or ctx.get("context_builder")
 
     strategy = ctx.get("strategy")
 
@@ -931,8 +937,8 @@ async def _async_generate_stubs(
 
         async def _invoke() -> str:
             prompt_obj = (
-                builder.build_prompt(query, intent_metadata=intent_meta)
-                if builder is not None
+                context_builder.build_prompt(query, intent_metadata=intent_meta)
+                if context_builder is not None
                 else cb_build_prompt(query, intent_metadata=intent_meta)
             )
             call = getattr(gen, "generate", gen)
@@ -984,14 +990,23 @@ async def _async_generate_stubs(
 
 
 def generate_stubs(
-    stubs: List[Dict[str, Any]], ctx: dict, config: StubProviderConfig | None = None
+    stubs: List[Dict[str, Any]],
+    ctx: dict,
+    config: StubProviderConfig | None = None,
+    *,
+    context_builder: ContextBuilder | None = None,
 ) -> List[Dict[str, Any]]:
     """Synchronous wrapper for :func:`async_generate_stubs`."""
     config = config or get_config()
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # no loop is running
-        return asyncio.run(async_generate_stubs(stubs, ctx, config))
+        return asyncio.run(
+            async_generate_stubs(stubs, ctx, config, context_builder=context_builder)
+        )
     else:  # pragma: no cover - requires active event loop
-        fut = asyncio.ensure_future(async_generate_stubs(stubs, ctx, config), loop=loop)
+        fut = asyncio.ensure_future(
+            async_generate_stubs(stubs, ctx, config, context_builder=context_builder),
+            loop=loop,
+        )
         return loop.run_until_complete(fut)
