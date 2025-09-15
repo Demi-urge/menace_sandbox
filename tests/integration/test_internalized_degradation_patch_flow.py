@@ -210,7 +210,11 @@ class EvolutionOrchestrator:
         desc = f"auto_patch_due_to_degradation:{event.get('bot', '')}"
         if self.selfcoding_manager:
             self.selfcoding_manager.generate_and_patch(
-                self.module_path, desc, context_meta=event, provenance_token="prov"
+                self.module_path,
+                desc,
+                context_meta=event,
+                context_builder=object(),
+                provenance_token="prov",
             )
 
 # ---------------------------------------------------------------------------

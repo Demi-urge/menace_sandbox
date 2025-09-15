@@ -270,6 +270,7 @@ class BotRegistry:
                                         Path(module),
                                         desc,
                                         context_meta=event,
+                                        context_builder=_mgr.refresh_quick_fix_context(),
                                         provenance_token=token,
                                     )
                                     commit = commit or new_commit
