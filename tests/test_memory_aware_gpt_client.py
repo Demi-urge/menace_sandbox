@@ -1,5 +1,9 @@
 from types import SimpleNamespace
+
+import pytest
+
 import memory_aware_gpt_client as magc
+from vector_service.exceptions import VectorServiceError
 
 
 class DummyKnowledge:
@@ -45,3 +49,22 @@ def test_context_injection_and_logging():
     assert "fix1" in sent_prompt
     assert "imp1" in sent_prompt
     assert knowledge.logged and knowledge.logged[0][0].endswith("Do it")
+
+
+def test_context_builder_failure_raises():
+    class FailingBuilder:
+        def build_prompt(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    knowledge = DummyKnowledge()
+    client = SimpleNamespace(ask=lambda *a, **k: None)
+    builder = FailingBuilder()
+
+    with pytest.raises(VectorServiceError):
+        magc.ask_with_memory(
+            client,
+            "mod.act",
+            "Do it",
+            memory=knowledge,
+            context_builder=builder,
+        )
