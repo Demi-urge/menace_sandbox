@@ -697,7 +697,7 @@ class SandboxContext:
     roi_history_file: Path
     foresight_history_file: Path
     brainstorm_history: List[str]
-    conversations: Dict[str, List[Dict[str, str]]]
+    conversations: Dict[str, List[Prompt]]
     offline_suggestions: bool = False
     adapt_presets: bool = True
     suggestion_cache: Dict[str, str] = field(default_factory=dict)
@@ -1101,7 +1101,7 @@ def _sandbox_init(
     extra_metrics = SANDBOX_EXTRA_METRICS
 
     brainstorm_history: list[str] = []
-    conversations: Dict[str, List[Dict[str, str]]] = {}
+    conversations: Dict[str, List[Prompt]] = {}
     offline_suggestions = bool(
         getattr(args, "offline_suggestions", False)
         or os.getenv("SANDBOX_OFFLINE_SUGGESTIONS", "0") == "1"
@@ -1693,13 +1693,17 @@ def _sandbox_main(
                         prior=prior if prior else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
-                    hist = ctx.conversations.get("brainstorm", [])
+                    hist: list[Prompt] = ctx.conversations.get("brainstorm", [])
                     module = _get_local_knowledge()
-                    history_text = "\n".join(
-                        f"{m.get('role')}: {m.get('content')}" for m in hist
-                    )
-                    if history_text:
-                        prompt.examples.insert(0, history_text)
+                    if hist:
+                        conv = ctx.context_builder.build_prompt(
+                            "history",
+                            context="\n".join(h.user for h in hist),
+                            top_k=0,
+                        )
+                        if conv.user:
+                            prompt.examples.insert(0, conv.user)
+                        prompt.examples[0:0] = getattr(conv, "examples", [])
                     resp = ask_with_memory(
                         ctx.gpt_client,
                         "sandbox_runner.brainstorm",
@@ -1715,10 +1719,14 @@ def _sandbox_main(
                         .get("content", "")
                         .strip()
                     )
-                    hist = hist + [{"role": "user", "content": prompt.user}]
+                    new_hist = hist + [
+                        ctx.context_builder.build_prompt(prompt.user, top_k=0)
+                    ]
                     if idea:
                         ctx.brainstorm_history.append(idea)
-                        hist.append({"role": "assistant", "content": idea})
+                        new_hist.append(
+                            ctx.context_builder.build_prompt(idea, top_k=0)
+                        )
                         logger.info("brainstorm", extra=log_record(idea=idea))
                     module = _get_local_knowledge()
                     try:
@@ -1729,9 +1737,9 @@ def _sandbox_main(
                         )
                     except Exception:
                         logger.exception("local knowledge logging failed")
-                    if len(hist) > 6:
-                        hist = hist[-6:]
-                    ctx.conversations["brainstorm"] = hist
+                    if len(new_hist) > 6:
+                        new_hist = new_hist[-6:]
+                    ctx.conversations["brainstorm"] = new_hist
                 except Exception:
                     logger.exception("synergy brainstorming failed")
             if stall or ctx.synergy_needed:

@@ -26,6 +26,7 @@ from db_router import GLOBAL_ROUTER, init_db_router
 from alert_dispatcher import dispatch_alert
 from dynamic_path_router import resolve_path, path_for_prompt
 from error_parser import ErrorParser
+from prompt_types import Prompt
 
 
 # ``vector_service`` is an essential dependency but importing it at module load
@@ -1432,12 +1433,16 @@ def _sandbox_cycle_runner(
                         prompt.user = f"{insight}\n\n{prompt.user}"
                     gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
                     lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
-                    history = ctx.conversations.get(memory_key, [])
-                    history_text = "\n".join(
-                        f"{m.get('role')}: {m.get('content')}" for m in history
-                    )
-                    if history_text:
-                        prompt.examples.insert(0, history_text)
+                    history: list[Prompt] = ctx.conversations.get(memory_key, [])
+                    if history:
+                        conv = ctx.context_builder.build_prompt(
+                            "history",
+                            context="\n".join(h.user for h in history),
+                            top_k=0,
+                        )
+                        if conv.user:
+                            prompt.examples.insert(0, conv.user)
+                        prompt.examples[0:0] = getattr(conv, "examples", [])
                     from memory_aware_gpt_client import ask_with_memory
                     resp = ask_with_memory(
                         ctx.gpt_client,
@@ -1454,9 +1459,13 @@ def _sandbox_cycle_runner(
                         .get("content", "")
                         .strip()
                     )
-                    history = history + [{"role": "user", "content": prompt.user}]
+                    new_hist = history + [
+                        ctx.context_builder.build_prompt(prompt.user, top_k=0)
+                    ]
                     if suggestion:
-                        history.append({"role": "assistant", "content": suggestion})
+                        new_hist.append(
+                            ctx.context_builder.build_prompt(suggestion, top_k=0)
+                        )
                         if lkm:
                             try:
                                 lkm.log(
@@ -1466,9 +1475,9 @@ def _sandbox_cycle_runner(
                                 )
                             except Exception:
                                 logger.exception("local knowledge logging failed for %s", mod)
-                    if len(history) > 6:
-                        history = history[-6:]
-                    ctx.conversations[memory_key] = history
+                    if len(new_hist) > 6:
+                        new_hist = new_hist[-6:]
+                    ctx.conversations[memory_key] = new_hist
                 except Exception:
                     logger.exception("gpt suggestion failed for %s", mod)
                     continue
@@ -1691,13 +1700,21 @@ def _sandbox_cycle_runner(
                         if insight:
                             prompt.user = f"{insight}\n\n{prompt.user}"
                         gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
-                        hist = ctx.conversations.get("brainstorm", [])
-                        lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
-                        history_text = "\n".join(
-                            f"{m.get('role')}: {m.get('content')}" for m in hist
+                        hist: list[Prompt] = ctx.conversations.get("brainstorm", [])
+                        lkm = getattr(
+                            __import__("sys").modules.get("sandbox_runner"),
+                            "LOCAL_KNOWLEDGE_MODULE",
+                            None,
                         )
-                        if history_text:
-                            prompt.examples.insert(0, history_text)
+                        if hist:
+                            conv = ctx.context_builder.build_prompt(
+                                "history",
+                                context="\n".join(h.user for h in hist),
+                                top_k=0,
+                            )
+                            if conv.user:
+                                prompt.examples.insert(0, conv.user)
+                            prompt.examples[0:0] = getattr(conv, "examples", [])
                         from memory_aware_gpt_client import ask_with_memory
                         resp = ask_with_memory(
                             ctx.gpt_client,
@@ -1714,10 +1731,14 @@ def _sandbox_cycle_runner(
                             .get("content", "")
                             .strip()
                         )
-                        hist = hist + [{"role": "user", "content": prompt.user}]
+                        new_hist = hist + [
+                            ctx.context_builder.build_prompt(prompt.user, top_k=0)
+                        ]
                         if idea:
                             ctx.brainstorm_history.append(idea)
-                            hist.append({"role": "assistant", "content": idea})
+                            new_hist.append(
+                                ctx.context_builder.build_prompt(idea, top_k=0)
+                            )
                             logger.info("brainstorm", extra={"idea": idea})
                             if lkm:
                                 try:
@@ -1728,9 +1749,9 @@ def _sandbox_cycle_runner(
                                     )
                                 except Exception:
                                     logger.exception("local knowledge logging failed")
-                        if len(hist) > 6:
-                            hist = hist[-6:]
-                        ctx.conversations["brainstorm"] = hist
+                        if len(new_hist) > 6:
+                            new_hist = new_hist[-6:]
+                        ctx.conversations["brainstorm"] = new_hist
                     except Exception:
                         logger.exception("brainstorming failed during stall")
                 ctx.prev_roi = roi
@@ -1786,13 +1807,21 @@ def _sandbox_cycle_runner(
                     if insight:
                         prompt.user = f"{insight}\n\n{prompt.user}"
                     gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
-                    hist = ctx.conversations.get("brainstorm", [])
-                    lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
-                    history_text = "\n".join(
-                        f"{m.get('role')}: {m.get('content')}" for m in hist
+                    hist: list[Prompt] = ctx.conversations.get("brainstorm", [])
+                    lkm = getattr(
+                        __import__("sys").modules.get("sandbox_runner"),
+                        "LOCAL_KNOWLEDGE_MODULE",
+                        None,
                     )
-                    if history_text:
-                        prompt.examples.insert(0, history_text)
+                    if hist:
+                        conv = ctx.context_builder.build_prompt(
+                            "history",
+                            context="\n".join(h.user for h in hist),
+                            top_k=0,
+                        )
+                        if conv.user:
+                            prompt.examples.insert(0, conv.user)
+                        prompt.examples[0:0] = getattr(conv, "examples", [])
                     from memory_aware_gpt_client import ask_with_memory
                     resp = ask_with_memory(
                         ctx.gpt_client,
@@ -1808,10 +1837,14 @@ def _sandbox_cycle_runner(
                         .get("message", {})
                         .get("content", "")
                     )
-                    hist = hist + [{"role": "user", "content": prompt.user}]
+                    new_hist = hist + [
+                        ctx.context_builder.build_prompt(prompt.user, top_k=0)
+                    ]
                     if idea:
                         ctx.brainstorm_history.append(idea)
-                        hist.append({"role": "assistant", "content": idea})
+                        new_hist.append(
+                            ctx.context_builder.build_prompt(idea, top_k=0)
+                        )
                         logger.info("brainstorm", extra={"idea": idea})
                         if lkm:
                             try:
@@ -1822,9 +1855,9 @@ def _sandbox_cycle_runner(
                                 )
                             except Exception:
                                 logger.exception("local knowledge logging failed")
-                    if len(hist) > 6:
-                        hist = hist[-6:]
-                    ctx.conversations["brainstorm"] = hist
+                    if len(new_hist) > 6:
+                        new_hist = new_hist[-6:]
+                    ctx.conversations["brainstorm"] = new_hist
                 except Exception:
                     logger.exception("brainstorming failed")
                 low_roi_streak = 0
