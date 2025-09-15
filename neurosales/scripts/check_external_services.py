@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from neurosales import config
 from billing.openai_wrapper import chat_completion_create
 from context_builder_util import create_context_builder
-from prompt_types import Prompt
 
 load_dotenv()
 
@@ -14,14 +13,15 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
         print("OpenAI disabled")
         return True
     try:
-        builder = create_context_builder()
-        prompt: Prompt = builder.build_prompt("ping")
+        context_builder = create_context_builder()
     except Exception as e:
         print(f"ContextBuilder error: {e}")
         return False
     try:
         os.environ.setdefault("OPENAI_API_KEY", cfg.openai_key)
-        chat_completion_create(prompt, model="gpt-3.5-turbo")
+        chat_completion_create(
+            context_builder.build_prompt("ping"), model="gpt-3.5-turbo"
+        )
         print("OpenAI reachable")
         return True
     except Exception as e:

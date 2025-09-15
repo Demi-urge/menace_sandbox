@@ -8,6 +8,16 @@ def test_context_builder_static_analysis_runs():
     subprocess.run([sys.executable, str(script)])
 
 
+def test_check_external_services_passes_linter():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "neurosales"
+        / "scripts"
+        / "check_external_services.py"
+    )
+    subprocess.run(["flake8", str(path)], check=True)
+
+
 def test_flags_missing_context_builder(tmp_path):
     from scripts.check_context_builder_usage import check_file
 
