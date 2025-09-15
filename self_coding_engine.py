@@ -917,35 +917,46 @@ class SelfCodingEngine:
     # ------------------------------------------------------------------
     def build_enriched_prompt(
         self,
-        intent: Dict[str, Any],
+        goal: str | Mapping[str, Any],
         *,
+        error_log: str | None = None,
+        intent: Mapping[str, Any] | None = None,
         context_builder: ContextBuilder,
     ) -> Prompt:
-        """Create and store an enriched :class:`Prompt` for ``intent``.
+        """Create and store an enriched :class:`Prompt` for ``goal``.
 
-        Failure logs, patch history and retrieved vectors are fused into the
-        prompt metadata.  Context snippets are compressed and ranked before
-        enrichment.  The resulting prompt is cached on ``self`` and also logged
-        for reproducibility.
+        ``ContextBuilder.build_prompt`` provides the base prompt and vectorised
+        context.  This helper merges recent errors, intent tags and retrieved
+        vectors, deduplicating entries while keeping metadata from the builder
+        intact.  The resulting prompt is cached on ``self`` and logged for
+        reproducibility.
         """
 
-        query = str(
-            intent.get("query")
-            or intent.get("task")
-            or intent.get("text")
-            or ""
-        ).strip()
+        if isinstance(goal, Mapping):
+            intent = dict(goal) if intent is None else {**goal, **intent}
+            query = str(
+                intent.get("query")
+                or intent.get("task")
+                or intent.get("text")
+                or ""
+            ).strip()
+            if error_log is None:
+                error_log = intent.pop("error_log", None)
+        else:
+            query = str(goal).strip()
+            intent = dict(intent or {})
         if not query:
-            raise ValueError("intent must supply a non-empty query")
+            raise ValueError("goal must supply a non-empty query")
 
-        error_log = intent.get("error_log") or self._last_retry_trace
+        if error_log is None:
+            error_log = self._last_retry_trace
 
         try:
             prompt_obj = context_builder.build_prompt(
                 query,
                 intent=intent,
                 error_log=error_log,
-                top_k=int(intent.get("top_k", 5)),
+                top_k=int(intent.get("top_k", 5)) if isinstance(intent, Mapping) else 5,
             )
         except Exception as exc:
             self.logger.exception("context builder failed")
@@ -953,44 +964,47 @@ class SelfCodingEngine:
 
         meta = dict(getattr(prompt_obj, "metadata", {}) or {})
 
-        # ------------------------------------------------------------------
-        # Patch history
-        history: List[Mapping[str, Any]] = []
-        if getattr(self, "patch_db", None):
-            try:
-                for rec in self.patch_db.top_patches(5):
-                    history.append(
-                        {
-                            "desc": getattr(rec, "description", ""),
-                            "snippet": getattr(rec, "diff", ""),
-                            "roi_delta": getattr(rec, "roi_delta", 0.0),
-                        }
-                    )
-            except Exception:
-                pass
-        if history:
-            ranked = sorted(history, key=lambda x: float(x.get("roi_delta", 0.0)), reverse=True)
-            meta["patch_history"] = [compress_snippets(h) for h in ranked]
-
-        # ------------------------------------------------------------------
-        # Retrieved vectors already attached by ContextBuilder; ensure sorted
-        vectors = meta.get("vectors")
-        if isinstance(vectors, list):
-            try:
-                vectors.sort(key=lambda v: float(v[2]), reverse=True)
-            except Exception:
-                pass
+        vectors = list(meta.get("vectors") or [])
+        confidences = list(meta.get("vector_confidences") or [])
+        if vectors:
+            seen: set[Any] = set()
+            dedup_vecs: List[Any] = []
+            dedup_conf: List[float] = []
+            for idx, vec in enumerate(vectors):
+                key = vec[0] if isinstance(vec, (list, tuple)) else vec
+                if key in seen:
+                    continue
+                seen.add(key)
+                dedup_vecs.append(vec)
+                if idx < len(confidences):
+                    dedup_conf.append(confidences[idx])
+            meta["vectors"] = dedup_vecs
+            if confidences:
+                meta["vector_confidences"] = dedup_conf
 
         if error_log:
-            meta["error_log"] = error_log
+            existing = meta.get("error_log")
+            if existing and isinstance(existing, str) and error_log not in existing:
+                meta["error_log"] = "\n".join(dict.fromkeys([existing, error_log]))
+            else:
+                meta["error_log"] = error_log
 
-        meta["intent"] = intent
+        tags: List[str] = []
+        if meta.get("intent_tags"):
+            tags.extend(list(meta.get("intent_tags")))
+        if isinstance(intent, Mapping):
+            tags.extend(list(intent.get("intent_tags", [])))
+            tags.extend(list(intent.get("tags", [])))
+        if tags:
+            meta["intent_tags"] = list(dict.fromkeys([str(t) for t in tags]))
 
-        snippets = intent.get("snippets")
+        meta["intent"] = dict(intent or {})
+
+        snippets = meta.get("snippets") or (intent.get("snippets") if isinstance(intent, Mapping) else None)
         if snippets:
             meta["snippets"] = snippets
 
-        roi_tag = intent.get("roi_tag")
+        roi_tag = intent.get("roi_tag") if isinstance(intent, Mapping) else None
         if roi_tag is None and getattr(self, "roi_tracker", None) is not None:
             try:
                 last = float(getattr(self.roi_tracker, "last_raroi", 0.0))
