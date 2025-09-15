@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 try:
     import requests  # type: ignore
@@ -38,14 +38,10 @@ try:  # canonical tag constants for logging
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
-try:  # shared GPT memory instance
-    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+try:  # helper for tagging log entries
+    from .memory_logging import ensure_tags
 except Exception:  # pragma: no cover - fallback for flat layout
-    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
-try:  # memory-aware wrapper
-    from .memory_aware_gpt_client import ask_with_memory
-except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+    from memory_logging import ensure_tags  # type: ignore
 
 from db_router import GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
@@ -273,14 +269,30 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
     if not isinstance(client, _Client):  # pragma: no cover - type check
         return ""
     prompt = "Suggest monetisation strategies for this event."
-    return ask_with_memory(
-        client,
-        "newsreader_bot.monetise_event",
-        prompt,
-        memory=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
-        context_builder=client.context_builder,
-        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-        intent={"title": event.title, "summary": event.summary},
+    base_tags = [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]
+    full_tags = ensure_tags("newsreader_bot.monetise_event", base_tags)
+    intent = {"title": event.title, "summary": event.summary}
+    try:
+        prompt_obj = client.context_builder.build_prompt(
+            prompt, intent_metadata=intent, tags=full_tags
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("failed to build prompt")
+        return ""
+
+    messages: List[Dict[str, Any]] = []
+    if getattr(prompt_obj, "system", None):
+        messages.append({"role": "system", "content": prompt_obj.system})
+    content_parts = list(getattr(prompt_obj, "examples", []))
+    content_parts.append(prompt_obj.user)
+    meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+    messages.append({"role": "user", "content": "\n".join(content_parts), "metadata": meta})
+
+    data = client.ask(messages, use_memory=False, memory_manager=None, tags=full_tags)
+    return (
+        data.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
     )
 
 
