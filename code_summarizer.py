@@ -127,15 +127,13 @@ def summarize_code(
             except Exception:
                 vec_ctx = ""
             client = OllamaClient()  # type: ignore[call-arg]
-            text = f"Summarize the following code:\n{code}\nSummary:"
-            meta = {"small_task": True}
+            prompt_kwargs = {
+                "intent": {"task": "summarize_code", "small_task": True},
+                "top_k": 0,
+            }
             if vec_ctx:
-                meta["retrieved_context"] = vec_ctx
-            prompt = context_builder.build_prompt(
-                text,
-                intent_metadata=meta,
-                top_k=0,
-            )
+                prompt_kwargs["retrieval_context"] = vec_ctx
+            prompt = context_builder.build_prompt(code, **prompt_kwargs)
             result = client.generate(prompt, context_builder=context_builder)
             summary = getattr(result, "text", "").strip()
             if summary:
