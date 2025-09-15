@@ -30,18 +30,18 @@ def test_context_inclusion(monkeypatch):
 
     captured = {}
 
-    def fake_build_prompt(goal, *, context, intent=None, top_k=0, context_builder=None, **kwargs):
-        captured.update(
-            goal=goal,
-            context=context,
-            intent=intent,
-            top_k=top_k,
-            builder=context_builder,
-        )
-        return Prompt(user=f"retrieved\n{context}", system="PAY")
+    class DummyBuilder:
+        def build_prompt(self, goal, *, context, intent_metadata=None, top_k=0, **kwargs):
+            captured.update(
+                goal=goal,
+                context=context,
+                intent=intent_metadata,
+                top_k=top_k,
+                builder=self,
+            )
+            return Prompt(user=f"retrieved\n{context}", system="PAY")
 
-    monkeypatch.setattr(ds, "_build_prompt", fake_build_prompt)
-    builder = object()
+    builder = DummyBuilder()
     res = ds.summarize_diff("before", "after", context_builder=builder)
     assert res.startswith("ok")
     assert tok.prompt.startswith("PAY\n")
@@ -60,12 +60,12 @@ def test_hint_weighting(monkeypatch):
 
     topks = []
 
-    def fake_build_prompt(goal, *, context, intent=None, top_k=0, context_builder=None, **kwargs):
-        topks.append(top_k)
-        return Prompt(user="", system="")
+    class DummyBuilder:
+        def build_prompt(self, goal, *, context, intent_metadata=None, top_k=0, **kwargs):
+            topks.append(top_k)
+            return Prompt(user="", system="")
 
-    monkeypatch.setattr(ds, "_build_prompt", fake_build_prompt)
-    builder = object()
+    builder = DummyBuilder()
     ds.summarize_diff("before", "after", context_builder=builder)
     ds.summarize_diff("", "", context_builder=builder)
     assert topks == [5, 0]
