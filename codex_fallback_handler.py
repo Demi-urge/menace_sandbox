@@ -70,10 +70,22 @@ class _ContextClient:
         self._builder = context_builder
 
     def generate(self, prompt: Prompt) -> LLMResult:
+        """Generate a completion with vector-enriched context."""
+
+        # Preserve original prompt context so it can be reattached after
+        # ``build_prompt`` constructs the vector-based prefix.
+        system_msg = getattr(prompt, "system", "")
+        examples = getattr(prompt, "examples", [])
+        tags = getattr(prompt, "tags", [])
+        intent = dict(getattr(prompt, "metadata", {}) or {})
+        intent.setdefault("system", system_msg)
+        intent.setdefault("examples", examples)
+        intent.setdefault("tags", tags)
         try:
-            prompt = self._builder.build_prompt(
-                prompt.user, intent_metadata=prompt.metadata
-            )
+            prompt = self._builder.build_prompt(prompt.user, intent=intent)
+            prompt.system = system_msg
+            prompt.examples = examples
+            prompt.tags = tags
         except Exception:
             pass
         return self._client.generate(prompt, context_builder=self._builder)
