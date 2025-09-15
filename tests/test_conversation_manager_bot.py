@@ -4,10 +4,8 @@ from pathlib import Path  # noqa: E402
 
 import menace.report_generation_bot as rgb  # noqa: E402
 import menace.data_bot as db  # noqa: E402
-
 import menace.conversation_manager_bot as cmb  # noqa: E402
 import menace.chatgpt_idea_bot as cib  # noqa: E402
-
 
 from prompt_types import Prompt
 
@@ -24,8 +22,9 @@ def test_cache(monkeypatch):
     client = cib.ChatGPTClient("key", context_builder=DummyBuilder())
     calls = []
 
-    def fake_ask(msgs):
-        calls.append(1)
+    def fake_ask(prompt_obj, **_):
+        calls.append(prompt_obj)
+        assert isinstance(prompt_obj, Prompt)
         return {"choices": [{"message": {"content": "reply"}}]}
 
     monkeypatch.setattr(client, "ask", fake_ask)
@@ -33,7 +32,7 @@ def test_cache(monkeypatch):
     r1 = bot.ask("hello")
     r2 = bot.ask("hello")
     assert r1 == "reply" and r2 == "reply"
-    assert len(calls) == 1
+    assert len(calls) == 1 and isinstance(calls[0], Prompt)
 
 
 def test_audio_flow(monkeypatch, tmp_path: Path):
@@ -41,7 +40,7 @@ def test_audio_flow(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         client,
         "ask",
-        lambda msgs: {"choices": [{"message": {"content": "answer"}}]},
+        lambda prompt_obj, **_: {"choices": [{"message": {"content": "answer"}}]},
     )
     bot = cmb.ConversationManagerBot(
         client, stage7_bots={"data": lambda q: "data"}
@@ -73,3 +72,20 @@ def test_request_report(tmp_path: Path):
     assert report.exists()
     notes = bot.get_notifications()
     assert notes and "Report" in notes[0]
+
+
+def test_builder_failure_raises(monkeypatch):
+    class FailingBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build_prompt(self, query, **_):
+            raise RuntimeError("boom")
+
+    client = cib.ChatGPTClient("key", context_builder=FailingBuilder())
+    calls: list[object] = []
+    monkeypatch.setattr(client, "ask", lambda *a, **k: calls.append(1))
+    bot = cmb.ConversationManagerBot(client)
+    with pytest.raises(RuntimeError):
+        bot.ask("hello")
+    assert not calls

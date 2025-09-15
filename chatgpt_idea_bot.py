@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
 from billing.prompt_notice import prepend_payment_notice
+from prompt_types import Prompt
 try:  # pragma: no cover - optional billing dependency
     import stripe_billing_router  # noqa: F401
 except Exception:  # pragma: no cover - best effort
@@ -153,7 +154,7 @@ class ChatGPTClient:
 
     def ask(
         self,
-        messages: List[Dict[str, str]],
+        messages: Prompt | List[Dict[str, str]],
         *,
         timeout: int | None = None,
         max_retries: int | None = None,
@@ -166,6 +167,25 @@ class ChatGPTClient:
         relevance_threshold: float = 0.0,
         max_summary_length: int = 500,
     ) -> Dict[str, object]:
+        # Normalize messages to OpenAI chat format, accepting Prompt objects.
+        prompt_obj: Prompt | None
+        if isinstance(messages, Prompt):
+            prompt_obj = messages
+            if tags is None and prompt_obj.tags:
+                tags = list(prompt_obj.tags)
+            norm_messages: List[Dict[str, str]] = []
+            if prompt_obj.system:
+                norm_messages.append({"role": "system", "content": prompt_obj.system})
+            for ex in getattr(prompt_obj, "examples", []) or []:
+                norm_messages.append({"role": "user", "content": ex})
+            user_msg: Dict[str, Any] = {"role": "user", "content": prompt_obj.user}
+            if getattr(prompt_obj, "metadata", None):
+                user_msg["metadata"] = dict(prompt_obj.metadata)
+            norm_messages.append(user_msg)
+            messages = norm_messages
+        else:
+            prompt_obj = None
+
         memory: Any | None = memory_manager or knowledge or self.gpt_memory
         use_mem = use_memory if use_memory is not None else memory is not None
 

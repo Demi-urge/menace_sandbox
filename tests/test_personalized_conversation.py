@@ -1,8 +1,22 @@
+import pytest
+pytest.skip("optional dependencies not installed", allow_module_level=True)
 import menace.personalized_conversation as pc
+from prompt_types import Prompt
+
+
+class StubBuilder:
+    def refresh_db_weights(self):
+        pass
+
+    def build_prompt(self, query, **_):
+        return Prompt(user=query)
 
 
 class StubClient:
-    def ask(self, msgs):
+    context_builder = StubBuilder()
+
+    def ask(self, prompt_obj, **_):
+        assert isinstance(prompt_obj, Prompt)
         return {"choices": [{"message": {"content": "hello!"}}]}
 
 
