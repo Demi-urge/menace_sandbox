@@ -275,7 +275,7 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
     prompt = (
         f"Suggest monetisation strategies for this event: {event.title} - {event.summary}"
     )
-    data = ask_with_memory(
+    return ask_with_memory(
         client,
         "newsreader_bot.monetise_event",
         prompt,
@@ -283,7 +283,6 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
         context_builder=client.context_builder,
         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
     )
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
 def send_to_evaluation_bot(event: Event, strategy: str) -> None:

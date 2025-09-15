@@ -554,13 +554,16 @@ class SocialValidator:
         return self._twitter_search(idea_name) and self._reddit_search(idea_name)
 
 
-def parse_ideas(data: Dict[str, object]) -> List[Idea]:
+def parse_ideas(data: Dict[str, object] | str) -> List[Idea]:
     """Parse JSON ideas from ChatGPT response."""
-    text = (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-    )
+    if isinstance(data, str):
+        text = data
+    else:
+        text = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
     try:
         items = json.loads(text)
         if not isinstance(items, list):
@@ -593,18 +596,13 @@ def follow_up(
         f"{idea.description}"
     )
     try:
-        data = ask_with_memory(
+        idea.insight = ask_with_memory(
             client,
             "chatgpt_idea_bot.follow_up",
             prompt,
             memory=LOCAL_KNOWLEDGE_MODULE,
             context_builder=context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-        )
-        idea.insight = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
         )
     except Exception as exc:  # pragma: no cover - network/parse failures
         logger.exception("follow-up request failed: %s", exc)
@@ -631,15 +629,16 @@ def generate_and_filter(
         " ".join(parts)
         + ". Respond in JSON list format with fields name, description and tags."
     )
-    response = ask_with_memory(
-        client,
-        "chatgpt_idea_bot.generate_and_filter",
-        prompt,
-        memory=LOCAL_KNOWLEDGE_MODULE,
-        context_builder=context_builder,
-        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+    ideas = parse_ideas(
+        ask_with_memory(
+            client,
+            "chatgpt_idea_bot.generate_and_filter",
+            prompt,
+            memory=LOCAL_KNOWLEDGE_MODULE,
+            context_builder=context_builder,
+            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+        )
     )
-    ideas = parse_ideas(response)
     novel: List[Idea] = []
     for idea in ideas:
         if not validator.is_unique_online(idea.name):

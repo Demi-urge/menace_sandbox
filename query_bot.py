@@ -215,16 +215,13 @@ class QueryBot:
         except Exception:
             vec_prompt = "{}"
         prompt = f"Summarize the following data: {json.dumps(data)}\nContext: {vec_prompt}"
-        answer = ask_with_memory(
+        text = ask_with_memory(
             self.client,
             "query_bot.process",
             prompt,
             memory=self.local_knowledge,
             context_builder=self.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-        )
-        text = (
-            answer.get("choices", [{}])[0].get("message", {}).get("content", "")
         )
         return QueryResult(text=text, data=data)
 

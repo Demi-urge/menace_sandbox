@@ -9,12 +9,15 @@ import menace.conversation_manager_bot as cmb  # noqa: E402
 import menace.chatgpt_idea_bot as cib  # noqa: E402
 
 
+from prompt_types import Prompt
+
+
 class DummyBuilder:
     def refresh_db_weights(self):
         pass
 
-    def build(self, query, **_):
-        return ""
+    def build_prompt(self, query, **_):
+        return Prompt(user=query)
 
 
 def test_cache(monkeypatch):

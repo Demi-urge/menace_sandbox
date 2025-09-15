@@ -3,6 +3,7 @@ pytest.skip("optional dependencies not installed", allow_module_level=True)
 import menace.query_bot as qb  # noqa: E402
 import menace.chatgpt_idea_bot as cib  # noqa: E402
 from vector_service.context_builder import ContextBuilder  # noqa: E402
+from prompt_types import Prompt  # noqa: E402
 
 
 def test_nlu():
@@ -23,14 +24,14 @@ def test_process(monkeypatch):
     builder.refresh_db_weights()
     monkeypatch.setattr(
         builder,
-        "build_context",
-        lambda q, **k: ("{}", {"code": [{"snippet": "x"}]}),
+        "build_prompt",
+        lambda q, **k: Prompt(user=q, examples=["x"]),
     )
     client = cib.ChatGPTClient("k", context_builder=builder)
     captured = {}
 
     def fake_ask(msgs, **_):
-        captured["prompt"] = msgs[-1]["content"]
+        captured["messages"] = msgs
         return {"choices": [{"message": {"content": "ok"}}]}
 
     monkeypatch.setattr(client, "ask", fake_ask)
@@ -40,7 +41,7 @@ def test_process(monkeypatch):
     assert result.data == {"foo": {"val": 1}}
     assert result.text == "ok"
     assert "get foo" in bot.history("cid")
-    assert "x" in captured["prompt"]
+    assert any("x" in m.get("content", "") for m in captured["messages"])
 
 
 def test_requires_context_builder():
