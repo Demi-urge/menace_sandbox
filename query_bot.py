@@ -6,12 +6,10 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 import logging
-import uuid
 
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
@@ -35,7 +33,6 @@ from .chatgpt_idea_bot import ChatGPTClient
 from vector_service.context_builder import ContextBuilder
 from gpt_memory_interface import GPTMemoryInterface
 from . import database_manager
-from snippet_compressor import compress_snippets
 try:  # memory-aware wrapper
     from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -203,25 +200,17 @@ class QueryBot:
         ents = [t[1] for t in parsed.get("entities", [])]
         data = self.fetcher.fetch(ents)
         self.store.add(context_id, query)
-        try:
-            _, meta = self.context_builder.build(
-                query, session_id=uuid.uuid4().hex, return_metadata=True
-            )
-            compressed = {
-                k: [compress_snippets(m) for m in v]
-                for k, v in meta.items()
-            }
-            vec_prompt = json.dumps(compressed)
-        except Exception:
-            vec_prompt = "{}"
-        prompt = f"Summarize the following data: {json.dumps(data)}\nContext: {vec_prompt}"
+        prompt = self.context_builder.build_prompt(
+            "Summarize the following data", intent={"data": data}
+        )
         text = ask_with_memory(
             self.client,
             "query_bot.process",
-            prompt,
+            prompt.user,
             memory=self.local_knowledge,
             context_builder=self.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+            intent=prompt.metadata,
         )
         return QueryResult(text=text, data=data)
 
