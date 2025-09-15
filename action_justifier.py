@@ -175,10 +175,11 @@ def _llm_justification(
             logger.exception("failed reading justification cache")
     try:
         wrapper = LocalModelWrapper(model, tokenizer)
+        prompt_obj = context_builder.build_prompt(payload)
+        prompt_obj.user = base_prompt
         explanation = wrapper.generate(
-            base_prompt,
+            prompt_obj,
             context_builder=context_builder,
-            cb_input=payload,
             max_new_tokens=60,
             do_sample=False,
         ).strip()

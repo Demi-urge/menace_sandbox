@@ -654,7 +654,14 @@ class ChatGPTResearchBot:
             tokens = tokens[:limit]
         return " ".join(tokens)
 
-    def _ask(self, prompt: str, attempts: int | None = None, delay: float | None = None) -> str:
+    def _ask(
+        self,
+        prompt: str,
+        *,
+        context_builder: ContextBuilder,
+        attempts: int | None = None,
+        delay: float | None = None,
+    ) -> str:
         """Query the ChatGPT client with retries and exponential backoff."""
         attempts = attempts or self.settings.ask_attempts
         delay = delay or self.settings.ask_backoff
@@ -672,7 +679,7 @@ class ChatGPTResearchBot:
             if mem_ctx:
                 intent_meta["memory_context"] = mem_ctx
             intent_meta.setdefault("user_query", b_prompt)
-            prompt_obj = self.context_builder.build_prompt(
+            prompt_obj = context_builder.build_prompt(
                 b_prompt, intent=intent_meta
             )
             if mem_ctx:
@@ -729,7 +736,7 @@ class ChatGPTResearchBot:
         convo: List[Exchange] = []
         prompt = instruction
         for i in range(depth):
-            response = self._ask(prompt)
+            response = self._ask(prompt, context_builder=self.context_builder)
             convo.append(Exchange(prompt=prompt, response=response))
             if i + 1 >= depth:
                 break

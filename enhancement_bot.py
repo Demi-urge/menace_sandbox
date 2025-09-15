@@ -175,7 +175,7 @@ class EnhancementBot:
         *,
         hint: str = "",
         confidence: float = 0.0,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> str:
         """Summarise the code change using the internal LLM interface.
 
@@ -187,7 +187,6 @@ class EnhancementBot:
         fetch a broader context window.
         """
 
-        context_builder = context_builder or self.context_builder
         context = ""
         if confidence > 0.0:
             try:  # pragma: no cover - builder failures are non fatal
@@ -251,6 +250,7 @@ class EnhancementBot:
             proposal.new_code,
             hint=summary,
             confidence=confidence,
+            context_builder=self.context_builder,
         )
         if codex_summary:
             summary = codex_summary
