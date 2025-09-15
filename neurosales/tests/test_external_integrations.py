@@ -10,11 +10,10 @@ from neurosales.external_integrations import (
     InfluenceGraphUpdater,
 )
 from unittest.mock import patch, MagicMock
-import types
 import pytest
-from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
 from typing import Any
-from llm_interface import LLMClient, LLMResult
+from llm_interface import LLMResult, Prompt, OpenAIProvider
+from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
 
 
 def test_reddit_harvester_basic():
@@ -49,44 +48,38 @@ def test_twitter_tracker_refresh():
 def test_gpt4_client_stream(monkeypatch):
     captured: dict[str, Any] = {}
 
-    def fake_chat(messages, *, context_builder, **kwargs):
-        msgs = prepend_payment_notice(messages)
-        captured["messages"] = msgs
-        return {"choices": [{"message": {"content": "Hi!"}}]}
+    def fake_generate(self, prompt: Prompt, *, context_builder):
+        captured["prompt_user"] = prompt.user
+        captured["intent"] = prompt.metadata.get("intent")
+        return LLMResult(text="Hi!")
 
-    monkeypatch.setitem(
-        sys.modules,
-        "billing.openai_wrapper",
-        types.SimpleNamespace(chat_completion_create=fake_chat),
-    )
+    monkeypatch.setattr(OpenAIProvider, "generate", fake_generate)
 
     class DummyBuilder:
-        def build(self, query: str) -> str:  # pragma: no cover - simple stub
-            return "CTX"
+        def build_prompt(self, query: str, *, intent=None, **kwargs):
+            captured["query"] = query
+            captured["intent_called"] = intent
+            return Prompt(user=query)
 
     client = GPT4Client("k", context_builder=DummyBuilder())
     out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
     assert "".join(out) == "Hi!"
-    assert captured["messages"][0]["content"].startswith(PAYMENT_ROUTER_NOTICE)
+    assert captured["query"] == "hello"
+    assert captured["intent_called"]["objective"] == "persuade"
 
 
 def test_gpt4_client_stream_with_context_builder(monkeypatch):
     captured: dict[str, str] = {}
 
     class DummyBuilder:
-        def build(self, query: str) -> str:
+        def build_prompt(self, query: str, *, intent=None, **kwargs):
             captured["query"] = query
-            return "CTX"
+            return Prompt(user="CTX")
 
-    def fake_chat(messages, *, context_builder, **kwargs):
-        context_builder.build(messages[-1]["content"])
-        return {"choices": [{"message": {"content": "Hi!"}}]}
+    def fake_generate(self, prompt: Prompt, *, context_builder):
+        return LLMResult(text="Hi!")
 
-    monkeypatch.setitem(
-        sys.modules,
-        "billing.openai_wrapper",
-        types.SimpleNamespace(chat_completion_create=fake_chat),
-    )
+    monkeypatch.setattr(OpenAIProvider, "generate", fake_generate)
 
     client = GPT4Client("k", context_builder=DummyBuilder())
     out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
@@ -103,8 +96,8 @@ def test_gpt4_client_env(monkeypatch, caplog):
     caplog.set_level("WARNING")
 
     class DummyBuilder:
-        def build(self, query: str) -> str:  # pragma: no cover - simple stub
-            return "CTX"
+        def build_prompt(self, query: str, *, intent=None, **kwargs):  # pragma: no cover - simple stub
+            return Prompt(user="CTX")
 
     monkeypatch.setenv("NEURO_OPENAI_KEY", "env-k")
     client = GPT4Client(None, context_builder=DummyBuilder())
@@ -159,8 +152,8 @@ def test_pinecone_logger_missing_conf(monkeypatch, caplog):
 
 def test_gpt4_client_stream_warns_when_unavailable(monkeypatch, caplog):
     class DummyBuilder:
-        def build(self, query: str) -> str:  # pragma: no cover - simple stub
-            return "CTX"
+        def build_prompt(self, query: str, *, intent=None, **kwargs):  # pragma: no cover - simple stub
+            return Prompt(user="CTX")
 
     client = GPT4Client(None, context_builder=DummyBuilder())
     caplog.set_level("WARNING")
@@ -218,10 +211,19 @@ def test_check_external_services_injects_notice(monkeypatch):
         return {}
 
     from types import SimpleNamespace
+    import sys
+    monkeypatch.setitem(
+        sys.modules,
+        "billing.openai_wrapper",
+        SimpleNamespace(chat_completion_create=fake_chat),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "context_builder_util",
+        SimpleNamespace(create_context_builder=lambda: SimpleNamespace(build=lambda _: "CTX")),
+    )
     from neurosales.scripts import check_external_services as ces
     monkeypatch.setattr(ces.config, "is_openai_enabled", lambda cfg: True)
-    monkeypatch.setattr(ces, "ContextBuilder", lambda: SimpleNamespace(build=lambda _: "CTX"))
-    monkeypatch.setattr(ces, "chat_completion_create", fake_chat)
 
     cfg = SimpleNamespace(openai_key="k")
     assert ces.check_openai(cfg)
