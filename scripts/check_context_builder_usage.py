@@ -125,6 +125,28 @@ def _contains_builder_build(node: ast.AST) -> bool:
     return any(_is_builder_build_call(n) for n in ast.walk(node))
 
 
+def _is_builder_concat_expr(expr: ast.AST) -> bool:
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+        return _contains_builder_build(expr)
+    if isinstance(expr, ast.JoinedStr):
+        return any(_contains_builder_build(v) for v in expr.values)
+    if isinstance(expr, ast.List):
+        return _contains_builder_build(expr) and not (
+            len(expr.elts) == 1 and _is_builder_build_call(expr.elts[0])
+        )
+    return False
+
+
+def _is_message_literal_expr(expr: ast.AST) -> bool:
+    if isinstance(expr, (ast.List, ast.Dict)):
+        return True
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+        return _is_message_literal_expr(expr.left) or _is_message_literal_expr(
+            expr.right
+        )
+    return False
+
+
 def iter_python_files(root: Path):
     for path in root.rglob("*.py"):
         if any(part in {"tests", "unit_tests"} for part in path.parts):
@@ -191,6 +213,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             self.generate_aliases: set[str] = set()
             self.llm_instances: set[str] = set()
             self.prompt_vars: set[str] = set()
+            self.builder_concat_vars: set[str] = set()
+            self.literal_message_vars: set[str] = set()
             self._checked_builder_nodes: set[int] = set()
 
         @staticmethod
@@ -291,6 +315,22 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 if isinstance(target, ast.Name):
                     self.prompt_vars.add(target.id)
 
+        def _record_builder_concat_var(
+            self, targets: list[ast.expr], value: ast.AST
+        ) -> None:
+            if _is_builder_concat_expr(value):
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        self.builder_concat_vars.add(target.id)
+
+        def _record_message_literal_var(
+            self, targets: list[ast.expr], value: ast.AST
+        ) -> None:
+            if _is_message_literal_expr(value):
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        self.literal_message_vars.add(target.id)
+
         def _has_builder_fallback(self, node: ast.AST, name: str) -> bool:
             for inner in ast.walk(node):
                 if isinstance(inner, ast.Assign):
@@ -332,44 +372,29 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             if id(expr) in self._checked_builder_nodes:
                 return
             self._checked_builder_nodes.add(id(expr))
-            if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
-                if _contains_builder_build(expr):
-                    line_no = expr.lineno
-                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
-                    prev = lines[line_no - 2] if line_no >= 2 else ""
-                    if NOCB_MARK not in line and NOCB_MARK not in prev:
-                        errors.append(
-                            (
-                                line_no,
-                                "context_builder.build result concatenation disallowed; pass directly",
-                            )
+            if isinstance(expr, ast.Name) and expr.id in self.builder_concat_vars:
+                line_no = expr.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append(
+                        (
+                            line_no,
+                            "context_builder.build result concatenation disallowed; pass directly",
                         )
-            elif isinstance(expr, ast.JoinedStr):
-                if any(_contains_builder_build(v) for v in expr.values):
-                    line_no = expr.lineno
-                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
-                    prev = lines[line_no - 2] if line_no >= 2 else ""
-                    if NOCB_MARK not in line and NOCB_MARK not in prev:
-                        errors.append(
-                            (
-                                line_no,
-                                "context_builder.build result concatenation disallowed; pass directly",
-                            )
+                    )
+                return
+            if _is_builder_concat_expr(expr):
+                line_no = expr.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append(
+                        (
+                            line_no,
+                            "context_builder.build result concatenation disallowed; pass directly",
                         )
-            elif isinstance(expr, ast.List):
-                if _contains_builder_build(expr) and not (
-                    len(expr.elts) == 1 and _is_builder_build_call(expr.elts[0])
-                ):
-                    line_no = expr.lineno
-                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
-                    prev = lines[line_no - 2] if line_no >= 2 else ""
-                    if NOCB_MARK not in line and NOCB_MARK not in prev:
-                        errors.append(
-                            (
-                                line_no,
-                                "context_builder.build result concatenation disallowed; pass directly",
-                            )
-                        )
+                    )
 
         def _check_prompt_strings(self, node: ast.Call, is_llm_call: bool) -> None:
             if not is_llm_call:
@@ -437,6 +462,19 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                                 "SelfCodingEngine.build_enriched_prompt",
                             )
                         )
+                elif isinstance(expr, ast.Name) and expr.id in self.literal_message_vars:
+                    line_no = expr.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "direct message list/dict disallowed; use "
+                                "ContextBuilder.build_prompt or "
+                                "SelfCodingEngine.build_enriched_prompt",
+                            )
+                        )
 
         def _check_build_calls(self, node: ast.AST) -> None:
             params: dict[str, ast.AST | None] = {}
@@ -486,6 +524,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             self._record_alias(node.targets, node.value)
             self._record_instance(node.targets, node.value)
             self._record_prompt_var(node.targets, node.value)
+            self._record_builder_concat_var(node.targets, node.value)
+            self._record_message_literal_var(node.targets, node.value)
             self.generic_visit(node)
 
         def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: D401
@@ -495,6 +535,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 self._record_alias([target], value)
                 self._record_instance([target], value)
                 self._record_prompt_var([target], value)
+                self._record_builder_concat_var([target], value)
+                self._record_message_literal_var([target], value)
             self.generic_visit(node)
 
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
@@ -608,6 +650,24 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     is_llm_call = True
                 elif name_simple == "chat_completion_create":
                     is_llm_call = True
+                elif (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "ask"
+                ):
+                    base = node.func.value
+                    if isinstance(base, ast.Name):
+                        base_name = base.id
+                    elif isinstance(base, ast.Attribute):
+                        base_name = base.attr
+                    else:
+                        base_name = None
+                    if base_name and (
+                        base_name in self.llm_instances
+                        or base_name in ALIAS_NAMES
+                        or base_name == "client"
+                        or base_name.lower().endswith("client")
+                    ):
+                        is_llm_call = True
                 elif name_full and is_generate_wrapper(name_full):
                     target = name_full
                     is_llm_call = True
