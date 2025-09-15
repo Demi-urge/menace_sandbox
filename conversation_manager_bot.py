@@ -28,7 +28,6 @@ from .report_generation_bot import ReportGenerationBot, ReportOptions
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
-from prompt_types import Prompt
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -152,25 +151,10 @@ class ConversationManagerBot:
             )
         except Exception:
             logger.exception("ContextBuilder.build_prompt failed")
-            prompt_obj = Prompt(user=prompt)
-
-        parts: List[str] = [prompt_obj.user]
-        if getattr(prompt_obj, "examples", None):
-            parts.append("\n".join(prompt_obj.examples))
-
-        messages: List[Dict[str, object]] = []
-        if getattr(prompt_obj, "system", None):
-            messages.append({"role": "system", "content": prompt_obj.system})
-        messages.append(
-            {
-                "role": "user",
-                "content": "\n".join(parts),
-                "metadata": getattr(prompt_obj, "metadata", {}) or {},
-            }
-        )
+            raise
 
         data = self.client.ask(
-            messages,
+            prompt_obj,
             tags=intent_meta["tags"],
             memory_manager=self.gpt_memory,
         )
