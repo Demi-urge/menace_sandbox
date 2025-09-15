@@ -7,16 +7,14 @@ for remote payment notices. This module still exposes
 :func:`chat_completion_create`, which mirrors
 ``openai.ChatCompletion.create`` for components that have not yet migrated.
 It prepends :data:`~stripe_policy.PAYMENT_ROUTER_NOTICE` to the ``messages``
-list and appends compressed retrieval context. A ``ContextBuilder``
-instance is required and a custom ``openai_client`` can be supplied for
-testing.
+list and expands the latest user query via ``ContextBuilder.build_prompt``
+before forwarding the request. A ``ContextBuilder`` instance is required and a
+custom ``openai_client`` can be supplied for testing.
 """
 
-import json
 from typing import Any, Dict, List, Optional
 
 from vector_service.context_builder import ContextBuilder
-from snippet_compressor import compress_snippets
 
 from resilience import retry_with_backoff
 from sandbox_settings import SandboxSettings
@@ -48,16 +46,31 @@ def chat_completion_create(
     if client is None:  # pragma: no cover - import guard
         raise RuntimeError("openai library not available")
 
-    msgs = prepend_payment_notice(messages)
+    top_k = int(kwargs.pop("top_k", 5) or 5)
+    intent = kwargs.pop("intent", None)
 
-    # Build retrieval context from the latest user message and compress it
-    query = messages[-1]["content"] if messages else ""
-    ctx_res = context_builder.build(query)
-    ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-    if isinstance(ctx, (dict, list)):
-        ctx = json.dumps(ctx, separators=(",", ":"))
-    ctx = compress_snippets({"snippet": ctx}).get("snippet", ctx)
-    msgs.append({"role": "system", "content": ctx})
+    query = ""
+    last_user = None
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            last_user = i
+            query = messages[i].get("content", "")
+            break
+
+    updated_msgs = list(messages)
+    if query.strip():
+        prompt = context_builder.build_prompt(query, top_k=top_k, intent=intent)
+        content = prompt.user
+        if prompt.examples:
+            content += "\n\n" + "\n".join(prompt.examples)
+        if last_user is not None:
+            updated_msgs[last_user]["content"] = content
+        else:
+            updated_msgs.append({"role": "user", "content": content})
+        if prompt.system:
+            updated_msgs.insert(0, {"role": "system", "content": prompt.system})
+
+    msgs = prepend_payment_notice(updated_msgs)
 
     _settings = SandboxSettings()
     delays = list(getattr(_settings, "codex_retry_delays", [2, 5, 10]))
