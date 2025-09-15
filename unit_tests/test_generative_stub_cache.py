@@ -31,13 +31,22 @@ def test_cache_evict_lru(monkeypatch):
     key1 = ("f1", "1")
     key2 = ("f2", "2")
     key3 = ("f3", "3")
-    monkeypatch.setattr(gsp, "_CACHE_MAX", 2)
+    cfg = gsp.StubProviderConfig(
+        timeout=1.0,
+        retries=1,
+        retry_base=0.1,
+        retry_max=0.1,
+        cache_max=2,
+        cache_path=Path("/dev/null"),
+        fallback_model="none",
+        save_timeout=1.0,
+    )
     with gsp._CACHE_LOCK:
         gsp._CACHE.clear()
         gsp._CACHE[key1] = {"a": 1}
         gsp._CACHE[key2] = {"b": 2}
         gsp._CACHE[key3] = {"c": 3}
-        gsp._cache_evict()
+        gsp._cache_evict(cfg)
         assert list(gsp._CACHE.keys()) == [key2, key3]
         gsp._CACHE.clear()
 
@@ -62,8 +71,13 @@ def test_move_to_end_logging(monkeypatch, caplog):
     monkeypatch.setattr(gsp, "_aload_generator", _fake_aload_generator)
 
     ctx = {"target": _dummy_func}
+    builder = types.SimpleNamespace(
+        build_prompt=lambda q, *, intent_metadata=None, **k: q
+    )
     with caplog.at_level(logging.WARNING):
-        result = asyncio.run(gsp.async_generate_stubs([{"a": 1}], ctx))
+        result = asyncio.run(
+            gsp.async_generate_stubs([{"a": 1}], ctx, context_builder=builder)
+        )
     assert result == [{"a": 1}]
     assert any("failed to update cache LRU" in rec.message for rec in caplog.records)
     with gsp._CACHE_LOCK:
@@ -71,7 +85,16 @@ def test_move_to_end_logging(monkeypatch, caplog):
 
 
 def test_thread_safe_cache_eviction(monkeypatch):
-    monkeypatch.setattr(gsp, "_CACHE_MAX", 1)
+    cfg = gsp.StubProviderConfig(
+        timeout=1.0,
+        retries=1,
+        retry_base=0.1,
+        retry_max=0.1,
+        cache_max=1,
+        cache_path=Path("/dev/null"),
+        fallback_model="none",
+        save_timeout=1.0,
+    )
     with gsp._CACHE_LOCK:
         gsp._CACHE.clear()
 
@@ -79,7 +102,7 @@ def test_thread_safe_cache_eviction(monkeypatch):
         key = (f"k{val}", str(val))
         with gsp._CACHE_LOCK:
             gsp._CACHE[key] = {"a": val}
-            gsp._cache_evict()
+            gsp._cache_evict(cfg)
 
     with ThreadPoolExecutor(max_workers=4) as ex:
         list(ex.map(_worker, range(4)))

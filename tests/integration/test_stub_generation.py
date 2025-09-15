@@ -33,5 +33,7 @@ def test_history_stub_generation(monkeypatch):
     monkeypatch.setattr(gsp, "_get_history_db", lambda: HistDB())
     gsp._CACHE.clear()
 
-    stubs = gsp.generate_stubs([{}], {"target": sample_func, "strategy": "history"})[0]
+    stubs = gsp.generate_stubs(
+        [{}], {"target": sample_func, "strategy": "history"}, context_builder=types.SimpleNamespace(build_prompt=lambda q, *, intent_metadata=None, **k: q)
+    )[0]
     assert stubs == {"name": "foo", "count": 2, "active": True}

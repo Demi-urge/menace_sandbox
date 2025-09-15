@@ -2,6 +2,7 @@ import os
 import sys
 import types
 
+import pytest
 from dynamic_path_router import resolve_path
 
 sys.modules.setdefault(
@@ -86,3 +87,9 @@ def test_context_builder_used_for_retries(monkeypatch, tmp_path):
     assert result == [{"a": 1}]
     assert builder.calls == 2
     assert builder.last_query and "x=1" in builder.last_query
+
+
+def test_missing_context_builder_raises(monkeypatch):
+    _reset(monkeypatch)
+    with pytest.raises(ValueError):
+        gsp.generate_stubs([{"x": 1}], {"target": None}, context_builder=None)

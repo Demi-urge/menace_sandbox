@@ -33,6 +33,11 @@ class DummyGen:
         return [{"generated_text": "{\"x\": 1}"}]
 
 
+class DummyBuilder:
+    def build_prompt(self, query, *, intent_metadata=None, **kwargs):
+        return query
+
+
 def test_generate_stubs_cache(monkeypatch, tmp_path):
     path = tmp_path / "cache.json"
     monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
@@ -48,8 +53,13 @@ def test_generate_stubs_cache(monkeypatch, tmp_path):
     def target(x: int) -> None:
         pass
 
-    first = gsp_mod.generate_stubs([{"x": 0}], {"strategy": "synthetic", "target": target})
-    second = gsp_mod.generate_stubs([{"x": 0}], {"strategy": "synthetic", "target": target})
+    builder = DummyBuilder()
+    first = gsp_mod.generate_stubs(
+        [{"x": 0}], {"strategy": "synthetic", "target": target}, context_builder=builder
+    )
+    second = gsp_mod.generate_stubs(
+        [{"x": 0}], {"strategy": "synthetic", "target": target}, context_builder=builder
+    )
 
     assert first == [{"x": 1}]
     assert second == [{"x": 1}]
@@ -74,8 +84,13 @@ async def test_async_generate_stubs_cache(monkeypatch, tmp_path):
         pass
 
     ctx = {"strategy": "synthetic", "target": target}
-    first = await gsp_mod.async_generate_stubs([{"x": 0}], ctx)
-    second = await gsp_mod.async_generate_stubs([{"x": 0}], ctx)
+    builder = DummyBuilder()
+    first = await gsp_mod.async_generate_stubs(
+        [{"x": 0}], ctx, context_builder=builder
+    )
+    second = await gsp_mod.async_generate_stubs(
+        [{"x": 0}], ctx, context_builder=builder
+    )
 
     assert first == [{"x": 1}]
     assert second == [{"x": 1}]
@@ -102,7 +117,10 @@ def test_async_generate_returns_json(monkeypatch, tmp_path):
         pass
 
     ctx = {"strategy": "synthetic", "target": target}
-    result = asyncio.run(gsp_mod.async_generate_stubs([{"y": 0}], ctx))
+    builder = DummyBuilder()
+    result = asyncio.run(
+        gsp_mod.async_generate_stubs([{"y": 0}], ctx, context_builder=builder)
+    )
     assert result == [{"y": 2}]
 
 
@@ -120,7 +138,9 @@ def test_rule_based_fallback(monkeypatch, tmp_path):
         pass
 
     ctx = {"strategy": "synthetic", "target": target}
-    res = gsp_mod.generate_stubs([{}], ctx)[0]
+    res = gsp_mod.generate_stubs(
+        [{}], ctx, context_builder=DummyBuilder()
+    )[0]
     assert gsp_mod._type_matches(res["a"], int)
     assert gsp_mod._type_matches(res["b"], float)
     assert gsp_mod._type_matches(res["c"], bool)
@@ -148,7 +168,7 @@ def test_generation_failure_propagates(monkeypatch, tmp_path):
 
     ctx = {"strategy": "synthetic", "target": target}
     with pytest.raises(RuntimeError):
-        gsp_mod.generate_stubs([{"x": 0}], ctx)
+        gsp_mod.generate_stubs([{"x": 0}], ctx, context_builder=DummyBuilder())
 
 
 @pytest.mark.asyncio
@@ -177,7 +197,8 @@ async def test_async_cache_file(tmp_path, monkeypatch):
 
     start = time.perf_counter()
     ctx = {"strategy": "synthetic", "target": target}
-    await gsp_mod.async_generate_stubs([{"x": 0}], ctx)
+    builder = DummyBuilder()
+    await gsp_mod.async_generate_stubs([{"x": 0}], ctx, context_builder=builder)
     duration = time.perf_counter() - start
     assert duration < 0.1
     await asyncio.sleep(0.15)
@@ -202,7 +223,9 @@ async def test_async_cache_file(tmp_path, monkeypatch):
     start = time.perf_counter()
     ctx = {"strategy": "synthetic", "target": target}
     res, _ = await asyncio.gather(
-        gsp_mod.async_generate_stubs([{"x": 0}], ctx),
+        gsp_mod.async_generate_stubs(
+            [{"x": 0}], ctx, context_builder=builder
+        ),
         marker(),
     )
     assert marker_time - start < 0.1
@@ -255,9 +278,11 @@ def test_generated_stub_missing_fields(monkeypatch, tmp_path, caplog):
 
     caplog.set_level(logging.ERROR)
     with pytest.raises(RuntimeError):
-        gsp_mod.generate_stubs([
-            {"x": 0, "y": 0}
-        ], {"strategy": "synthetic", "target": target})
+        gsp_mod.generate_stubs(
+            [{"x": 0, "y": 0}],
+            {"strategy": "synthetic", "target": target},
+            context_builder=DummyBuilder(),
+        )
 
 
 def test_generated_stub_bad_type(monkeypatch, tmp_path, caplog):
@@ -282,9 +307,11 @@ def test_generated_stub_bad_type(monkeypatch, tmp_path, caplog):
 
     caplog.set_level(logging.ERROR)
     with pytest.raises(RuntimeError):
-        gsp_mod.generate_stubs([
-            {"x": 0, "y": 0}
-        ], {"strategy": "synthetic", "target": target})
+        gsp_mod.generate_stubs(
+            [{"x": 0, "y": 0}],
+            {"strategy": "synthetic", "target": target},
+            context_builder=DummyBuilder(),
+        )
 
 
 def test_import_exit_no_errors(tmp_path):
@@ -373,10 +400,11 @@ def test_cache_persist_after_failure(monkeypatch, tmp_path):
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    builder = DummyBuilder()
     try:
         loop.run_until_complete(
             gsp_mod.async_generate_stubs(
-                [{"x": 0}], {"strategy": "synthetic", "target": target}
+                [{"x": 0}], {"strategy": "synthetic", "target": target}, context_builder=builder
             )
         )
 
@@ -394,7 +422,7 @@ def test_cache_persist_after_failure(monkeypatch, tmp_path):
         with pytest.raises(RuntimeError):
             loop.run_until_complete(
                 gsp_mod.async_generate_stubs(
-                    [{"x": 1}], {"strategy": "synthetic", "target": target}
+                    [{"x": 1}], {"strategy": "synthetic", "target": target}, context_builder=builder
                 )
             )
     finally:
@@ -434,8 +462,9 @@ async def test_concurrent_stub_generation(monkeypatch, tmp_path):
         pass
 
     ctx = {"strategy": "synthetic", "target": target}
+    builder = DummyBuilder()
     results = await asyncio.gather(
-        *(gsp_mod.async_generate_stubs([{"x": 0}], ctx) for _ in range(5))
+        *(gsp_mod.async_generate_stubs([{"x": 0}], ctx, context_builder=builder) for _ in range(5))
     )
 
     assert all(res == [{"x": 1}] for res in results)
@@ -452,7 +481,9 @@ def test_stub_generation_aborts_on_model_error(monkeypatch):
 
     monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
     ctx = {"strategy": "synthetic", "target": None}
-    assert gsp_mod.generate_stubs([{"x": 1}], ctx) == [{"x": 1}]
+    assert gsp_mod.generate_stubs(
+        [{"x": 1}], ctx, context_builder=DummyBuilder()
+    ) == [{"x": 1}]
 
 
 def test_env_reload_updates_retries(monkeypatch, tmp_path):
@@ -480,7 +511,7 @@ def test_env_reload_updates_retries(monkeypatch, tmp_path):
         gsp_mod._CACHE = {}
         ctx = {"strategy": "synthetic", "target": None}
         with pytest.raises(RuntimeError):
-            gsp_mod.generate_stubs([{"x": 1}], ctx)
+            gsp_mod.generate_stubs([{"x": 1}], ctx, context_builder=DummyBuilder())
         return gen.calls
 
     monkeypatch.setenv("SANDBOX_STUB_RETRIES", "1")

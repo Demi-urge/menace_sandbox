@@ -97,7 +97,9 @@ def test_full_initialisation_and_cycle_with_stub(tmp_path, monkeypatch):
     def fake_main(_args):
         ft = ForesightTracker(max_cycles=1)
         tracker = DummyROITracker([1.0])
-        stub = gsp.generate_stubs([{}], {"target": sample_func})[0]
+        stub = gsp.generate_stubs(
+            [{}], {"target": sample_func}, context_builder=types.SimpleNamespace(build_prompt=lambda q, *, intent_metadata=None, **k: q)
+        )[0]
         gsp._save_cache()
         events.append(stub["count"])
         engine = MiniSelfImprovementEngine(tracker, ft)
@@ -147,9 +149,10 @@ def test_stub_generation_handles_corrupt_cache(tmp_path, monkeypatch):
     async def fake_aload_generator():
         return None
     monkeypatch.setattr(gsp, "_aload_generator", fake_aload_generator)
+    builder = types.SimpleNamespace(build_prompt=lambda q, *, intent_metadata=None, **k: q)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        stub = gsp.generate_stubs([{}], {"target": sample_func})[0]
+        stub = gsp.generate_stubs([{}], {"target": sample_func}, context_builder=builder)[0]
     assert any(isinstance(item.message, gsp.StubCacheWarning) for item in w)
     assert cache_file.with_suffix(".corrupt").exists()
     assert gsp._type_matches(stub["count"], int)
@@ -167,8 +170,9 @@ def test_stub_generation_handles_invalid_entry(tmp_path, monkeypatch):
     async def fake_aload_generator():
         return None
     monkeypatch.setattr(gsp, "_aload_generator", fake_aload_generator)
+    builder = types.SimpleNamespace(build_prompt=lambda q, *, intent_metadata=None, **k: q)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        stub = gsp.generate_stubs([{}], {"target": sample_func})[0]
+        stub = gsp.generate_stubs([{}], {"target": sample_func}, context_builder=builder)[0]
     assert any(isinstance(item.message, gsp.StubCacheWarning) for item in w)
     assert isinstance(stub["count"], int)

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
 
 from logging_utils import get_logger, set_correlation_id, log_record
-from vector_service.context_builder import ContextBuilder, build_prompt as cb_build_prompt
+from vector_service.context_builder import ContextBuilder
 try:  # pragma: no cover - allow flat import
     from metrics_exporter import (
         stub_generation_requests_total,
@@ -799,7 +799,7 @@ async def async_generate_stubs(
     ctx: dict,
     config: StubProviderConfig | None = None,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     cid = ctx.get("correlation_id") or f"stub-{uuid.uuid4()}"
     set_correlation_id(cid)
@@ -807,6 +807,8 @@ async def async_generate_stubs(
     logger.info(
         "stub generation start", extra=log_record(strategy=ctx.get("strategy"))
     )
+    if context_builder is None:
+        raise ValueError("context_builder is required")
     try:
         return await _async_generate_stubs(stubs, ctx, context_builder, config)
     except Exception:
@@ -822,13 +824,14 @@ async def async_generate_stubs(
 async def _async_generate_stubs(
     stubs: List[Dict[str, Any]],
     ctx: dict,
-    context_builder: ContextBuilder | None,
+    context_builder: ContextBuilder,
     config: StubProviderConfig | None = None,
 ) -> List[Dict[str, Any]]:
     """Generate or enhance ``stubs`` using recent history or a language model."""
     config = config or get_config()
 
-    context_builder = context_builder or ctx.get("context_builder")
+    if context_builder is None:
+        raise ValueError("context_builder is required")
 
     strategy = ctx.get("strategy")
 
@@ -936,10 +939,8 @@ async def _async_generate_stubs(
         query = template.format(name=name, args=args)
 
         async def _invoke() -> str:
-            prompt_obj = (
-                context_builder.build_prompt(query, intent_metadata=intent_meta)
-                if context_builder is not None
-                else cb_build_prompt(query, intent_metadata=intent_meta)
+            prompt_obj = context_builder.build_prompt(
+                query, intent_metadata=intent_meta
             )
             call = getattr(gen, "generate", gen)
             result = call(prompt_obj)  # type: ignore[attr-defined]
@@ -994,17 +995,21 @@ def generate_stubs(
     ctx: dict,
     config: StubProviderConfig | None = None,
     *,
-    context_builder: ContextBuilder | None = None,
+    context_builder: ContextBuilder,
 ) -> List[Dict[str, Any]]:
     """Synchronous wrapper for :func:`async_generate_stubs`."""
     config = config or get_config()
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # no loop is running
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         return asyncio.run(
             async_generate_stubs(stubs, ctx, config, context_builder=context_builder)
         )
     else:  # pragma: no cover - requires active event loop
+        if context_builder is None:
+            raise ValueError("context_builder is required")
         fut = asyncio.ensure_future(
             async_generate_stubs(stubs, ctx, config, context_builder=context_builder),
             loop=loop,
