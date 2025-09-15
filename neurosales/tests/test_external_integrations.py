@@ -12,7 +12,7 @@ from neurosales.external_integrations import (
 from unittest.mock import patch, MagicMock
 import pytest
 from typing import Any
-from llm_interface import LLMResult, Prompt, OpenAIProvider
+from prompt_types import Prompt
 from billing.prompt_notice import PAYMENT_ROUTER_NOTICE, prepend_payment_notice
 
 
@@ -48,12 +48,14 @@ def test_twitter_tracker_refresh():
 def test_gpt4_client_stream(monkeypatch):
     captured: dict[str, Any] = {}
 
-    def fake_generate(self, prompt: Prompt, *, context_builder):
+    def fake_chat(prompt: Prompt, **kwargs):
         captured["prompt_user"] = prompt.user
         captured["intent"] = prompt.metadata.get("intent")
-        return LLMResult(text="Hi!")
+        return {"choices": [{"message": {"content": "Hi!"}}]}
 
-    monkeypatch.setattr(OpenAIProvider, "generate", fake_generate)
+    monkeypatch.setattr(
+        "neurosales.external_integrations.chat_completion_create", fake_chat
+    )
 
     class DummyBuilder:
         def build_prompt(self, query: str, *, intent=None, **kwargs):
@@ -76,10 +78,12 @@ def test_gpt4_client_stream_with_context_builder(monkeypatch):
             captured["query"] = query
             return Prompt(user="CTX")
 
-    def fake_generate(self, prompt: Prompt, *, context_builder):
-        return LLMResult(text="Hi!")
+    def fake_chat(prompt: Prompt, **kwargs):
+        return {"choices": [{"message": {"content": "Hi!"}}]}
 
-    monkeypatch.setattr(OpenAIProvider, "generate", fake_generate)
+    monkeypatch.setattr(
+        "neurosales.external_integrations.chat_completion_create", fake_chat
+    )
 
     client = GPT4Client("k", context_builder=DummyBuilder())
     out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
@@ -207,12 +211,12 @@ def test_check_external_services_injects_notice(monkeypatch):
     captured: dict[str, Any] = {}
 
     def fake_chat(prompt, **kwargs):
-        content = prompt.user
-        if prompt.examples:
-            content += "\n\n" + "\n".join(prompt.examples)
-        messages = [{"role": "user", "content": content}]
+        messages = []
         if prompt.system:
-            messages.insert(0, {"role": "system", "content": prompt.system})
+            messages.append({"role": "system", "content": prompt.system})
+        for ex in prompt.examples:
+            messages.append({"role": "system", "content": ex})
+        messages.append({"role": "user", "content": prompt.user})
         captured["messages"] = prepend_payment_notice(messages)
         return {}
 

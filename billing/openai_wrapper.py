@@ -11,7 +11,7 @@ forwarding the request. A :class:`~prompt_types.Prompt` instance is required
 and a custom ``openai_client`` can be supplied for testing.
 """
 
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List
 
 from prompt_types import Prompt
 
@@ -45,13 +45,12 @@ def chat_completion_create(
     if client is None:  # pragma: no cover - import guard
         raise RuntimeError("openai library not available")
 
-    content = prompt.user
-    if prompt.examples:
-        content += "\n\n" + "\n".join(prompt.examples)
-
-    msgs = [{"role": "user", "content": content}]
+    msgs: List[Dict[str, str]] = []
     if prompt.system:
-        msgs.insert(0, {"role": "system", "content": prompt.system})
+        msgs.append({"role": "system", "content": prompt.system})
+    for ex in prompt.examples:
+        msgs.append({"role": "system", "content": ex})
+    msgs.append({"role": "user", "content": prompt.user})
 
     msgs = prepend_payment_notice(msgs)
 
