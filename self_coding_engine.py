@@ -1020,6 +1020,7 @@ class SelfCodingEngine:
             meta["roi_tag"] = RoiTag.validate(roi_tag).value
 
         prompt_obj.metadata = meta
+        prompt_obj.origin = "self_coding_engine"
         self._last_prompt = prompt_obj
         self._last_prompt_metadata = meta
 

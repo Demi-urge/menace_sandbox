@@ -15,7 +15,11 @@ def test_promptdb_logs_to_memory(tmp_path):
     router = DBRouter("prompts", str(tmp_path / "local.db"), str(tmp_path / "shared.db"))
     db = PromptDB(model="test", router=router)
     prompt = Prompt(
-        text="hi", examples=["ex"], outcome_tags=["tag"], vector_confidences=[0.4]
+        text="hi",
+        examples=["ex"],
+        outcome_tags=["tag"],
+        vector_confidences=[0.4],
+        origin="context_builder",
     )
     result = LLMResult(raw={"r": 1}, text="res")
     db.log(prompt, result)
@@ -69,7 +73,7 @@ class EchoClient(LLMClient):
 
 def test_router_fallback_on_error():
     router = LLMRouter(remote=FailingClient(), local=EchoClient(), size_threshold=1)
-    res = router.generate(Prompt(text="hi"))
+    res = router.generate(Prompt(text="hi", origin="context_builder"))
     assert res.text == "local"
 
 
@@ -138,7 +142,7 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     counter = iter([0.0, 1.0, 2.0, 3.0])
     monkeypatch.setattr(time, "perf_counter", lambda: next(counter))
 
-    prompt = Prompt(text="hi", metadata={"tags": ["t"], "vector_confidences": [0.7]})
+    prompt = Prompt(text="hi", metadata={"tags": ["t"], "vector_confidences": [0.7]}, origin="context_builder")
     result = provider.generate(prompt)
 
     # Second response consumed and logged
@@ -184,7 +188,7 @@ def test_router_fallback_logs(monkeypatch):
             return LLMResult(text="ok")
 
     router = LLMRouter(remote=BoomClient(), local=LocalClient(), size_threshold=1)
-    res = router.generate(Prompt(text="task", metadata={"tags": ["x"]}))
+    res = router.generate(Prompt(text="task", metadata={"tags": ["x"]}, origin="context_builder"))
     assert res.text == "ok"
     assert res.raw["backend"] == "local"
     assert logged == ["local"]
@@ -206,7 +210,7 @@ def test_client_backends_fallback():
             return LLMResult(text="local")
 
     client = LLMClient(backends=[BoomBackend(), LocalBackend()], log_prompts=False)
-    res = client.generate(Prompt(text="hi"))
+    res = client.generate(Prompt(text="hi", origin="context_builder"))
     assert res.text == "local"
 
 
@@ -226,7 +230,7 @@ def test_client_small_task_uses_local():
             return LLMResult(text="ok")
 
     client = LLMClient(backends=[RemoteBackend(), LocalBackend()], log_prompts=False)
-    res = client.generate(Prompt(text="task", metadata={"small_task": True}))
+    res = client.generate(Prompt(text="task", metadata={"small_task": True}, origin="context_builder"))
     assert res.text == "ok"
 
 
@@ -241,7 +245,7 @@ def test_generate_applies_parse_fn():
     client = Dummy()
     builder = create_context_builder()
     res = client.generate(
-        Prompt(text="hi"), parse_fn=parse_json, context_builder=builder
+        Prompt(text="hi", origin="context_builder"), parse_fn=parse_json, context_builder=builder
     )
     assert res.parsed == {"a": 1}
 
@@ -258,7 +262,7 @@ def test_generate_parse_fn_error_ignored():
         raise ValueError("fail")
 
     client = Dummy()
-    res = client.generate(Prompt(text="hi"), parse_fn=bad)
+    res = client.generate(Prompt(text="hi", origin="context_builder"), parse_fn=bad)
     assert res.parsed is None
 
 
@@ -286,7 +290,7 @@ def test_successful_call_logs_and_returns_raw_and_parsed(monkeypatch):
             return LLMResult(raw={"x": 1, "backend": "dummy"}, text="{\"a\":1}")
 
     client = DummyClient()
-    prompt = Prompt(text="hi")
+    prompt = Prompt(text="hi", origin="context_builder")
     result = client.generate(prompt, parse_fn=parse_json)
 
     assert result.raw == {"x": 1, "backend": "dummy"}
@@ -334,7 +338,7 @@ def test_openai_provider_retries_on_server_error(monkeypatch):
     provider = OpenAIProvider(max_retries=2)
     monkeypatch.setattr(provider._session, "post", fake_post)
 
-    result = provider.generate(Prompt(text="hi"))
+    result = provider.generate(Prompt(text="hi", origin="context_builder"))
 
     assert result.parsed == {"b": 2}
     assert result.raw["choices"][0]["message"]["content"] == "{\"b\":2}"
@@ -353,6 +357,7 @@ def test_prompt_serialization_roundtrip():
         vector_confidence=0.5,
         tags=["t"],
         metadata={"k": "v"},
+        origin="context_builder",
     )
 
     data = asdict(prompt)
@@ -409,7 +414,7 @@ def test_openai_provider_async_stream(monkeypatch):
     chunks: list[str] = []
 
     async def run():
-        async for part in provider.async_generate(Prompt(text="hi")):
+        async for part in provider.async_generate(Prompt(text="hi", origin="context_builder")):
             chunks.append(part)
 
     asyncio.run(run())
@@ -436,7 +441,7 @@ def test_openai_provider_async_logging(monkeypatch):
     provider = OpenAIProvider()
 
     async def run():
-        async for _ in provider.async_generate(Prompt(text="hi")):
+        async for _ in provider.async_generate(Prompt(text="hi", origin="context_builder")):
             pass
 
     asyncio.run(run())
@@ -451,7 +456,7 @@ def test_openai_provider_streaming_sync_wrapper(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     provider = OpenAIProvider()
 
-    result = provider.generate(Prompt(text="hi"))
+    result = provider.generate(Prompt(text="hi", origin="context_builder"))
     assert result.text == "Hello"
 
 
@@ -503,7 +508,7 @@ def test_rest_backend_async_stream(monkeypatch):
     chunks: list[str] = []
 
     async def run():
-        async for part in client.async_generate(Prompt(text="hi")):
+        async for part in client.async_generate(Prompt(text="hi", origin="context_builder")):
             chunks.append(part)
 
     asyncio.run(run())
@@ -531,7 +536,7 @@ def test_rest_backend_async_logging(monkeypatch):
     client = LLMClient(model="m", backends=[backend], log_prompts=True)
 
     async def run():
-        async for _ in client.async_generate(Prompt(text="hi")):
+        async for _ in client.async_generate(Prompt(text="hi", origin="context_builder")):
             pass
 
     asyncio.run(run())
@@ -587,7 +592,7 @@ def test_rest_backend_async_stream_sse(monkeypatch):
     chunks: list[str] = []
 
     async def run():
-        async for part in client.async_generate(Prompt(text="hi")):
+        async for part in client.async_generate(Prompt(text="hi", origin="context_builder")):
             chunks.append(part)
 
     asyncio.run(run())

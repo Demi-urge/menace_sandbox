@@ -24,7 +24,7 @@ def test_router_uses_local_for_small_prompts():
     local = StubClient("local")
     remote = StubClient("remote")
     router = LLMRouter(remote=remote, local=local, size_threshold=5)
-    res = router.generate(Prompt(text="hi"))
+    res = router.generate(Prompt(text="hi", origin="context_builder"))
     assert res.text == "local"
     assert local.calls == 1
     assert remote.calls == 0
@@ -34,7 +34,7 @@ def test_router_uses_remote_for_large_prompts():
     local = StubClient("local")
     remote = StubClient("remote")
     router = LLMRouter(remote=remote, local=local, size_threshold=5)
-    res = router.generate(Prompt(text="this is a long prompt for testing"))
+    res = router.generate(Prompt(text="this is a long prompt for testing", origin="context_builder"))
     assert res.text == "remote"
     assert remote.calls == 1
 
@@ -43,7 +43,7 @@ def test_router_fallback_on_failure():
     local = StubClient("local", fail=True)
     remote = StubClient("remote")
     router = LLMRouter(remote=remote, local=local, size_threshold=5)
-    res = router.generate(Prompt(text="hi"))
+    res = router.generate(Prompt(text="hi", origin="context_builder"))
 
     assert res.text == "remote"
     assert remote.calls == 1
@@ -53,9 +53,9 @@ def test_router_respects_roi_tags():
     local = StubClient("local")
     remote = StubClient("remote")
     router = LLMRouter(remote=remote, local=local, size_threshold=5)
-    res = router.generate(Prompt(text="hi", tags=["high_roi"]))
+    res = router.generate(Prompt(text="hi", tags=["high_roi"], origin="context_builder"))
     assert res.text == "remote"
-    res = router.generate(Prompt(text="this is a long prompt for testing", tags=["low_roi"]))
+    res = router.generate(Prompt(text="this is a long prompt for testing", tags=["low_roi"], origin="context_builder"))
     assert res.text == "local"
 
 
@@ -67,12 +67,12 @@ def test_router_avoids_recent_failures(monkeypatch):
     now = [0.0]
     monkeypatch.setattr(llm_router.time, "time", lambda: now[0])
 
-    router.generate(Prompt(text="this is a long prompt for testing"))
+    router.generate(Prompt(text="this is a long prompt for testing", origin="context_builder"))
     assert remote.calls == 1
 
     remote.fail = False
     now[0] = 1.0
-    router.generate(Prompt(text="this is a long prompt for testing"))
+    router.generate(Prompt(text="this is a long prompt for testing", origin="context_builder"))
     assert remote.calls == 1
     assert local.calls == 2
 
@@ -91,7 +91,7 @@ def test_router_logs_backend_choice(monkeypatch):
 
     monkeypatch.setattr(lr, "PromptDB", DummyDB)
     router = LLMRouter(remote=StubClient("remote"), local=StubClient("local"), size_threshold=5)
-    res = router.generate(Prompt(text="hi"))
+    res = router.generate(Prompt(text="hi", origin="context_builder"))
     assert logged == ["local"]
     assert res.raw["backend"] == "local"
 
@@ -112,7 +112,7 @@ def test_router_logs_prompt_metadata(monkeypatch):
 
     monkeypatch.setattr(lr, "PromptDB", DummyDB)
     router = LLMRouter(remote=StubClient("remote"), local=StubClient("local"), size_threshold=5)
-    prompt = Prompt(text="hi", examples=["ex"], outcome_tags=["tag"], vector_confidence=0.8)
+    prompt = Prompt(text="hi", examples=["ex"], outcome_tags=["tag"], vector_confidence=0.8, origin="context_builder")
     router.generate(prompt)
 
     assert logged["backend"] == "local"
@@ -138,11 +138,11 @@ def test_client_from_settings_dynamic_backend(monkeypatch):
         available_backends={"custom": "tests.test_llm_router.custom_factory"},
     )
     client = client_from_settings(settings)
-    res = client.generate(Prompt(text="hi"))
+    res = client.generate(Prompt(text="hi", origin="context_builder"))
     assert res.text == "custom"
 
 
 def test_registry_decorator_helper():
     client = create_backend("decorator")
-    res = client.generate(Prompt(text="hi"))
+    res = client.generate(Prompt(text="hi", origin="context_builder"))
     assert res.text == "decorator"

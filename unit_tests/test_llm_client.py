@@ -18,6 +18,21 @@ def _patch_config(monkeypatch):
     return cfg
 
 
+def test_requires_origin():
+    class Dummy(LLMClient):
+        def __init__(self):
+            super().__init__("dummy", log_prompts=False)
+
+        def _generate(self, prompt: Prompt) -> LLMResult:
+            return LLMResult(text="ok", raw={"backend": "dummy"})
+
+    client = Dummy()
+    with pytest.raises(ValueError):
+        client.generate(Prompt("hi"))
+    with pytest.raises(ValueError):
+        client.generate(Prompt("hi", origin="unknown"))
+    assert client.generate(Prompt("hi", origin="context_builder")).text == "ok"
+
 def test_parse_fn_handling():
     class Dummy(LLMClient):
         def __init__(self):
@@ -27,7 +42,7 @@ def test_parse_fn_handling():
             return LLMResult(text="123", raw={"backend": "dummy"})
 
     client = Dummy()
-    prompt = Prompt("hello")
+    prompt = Prompt("hello", origin="context_builder")
 
     res = client.generate(prompt, parse_fn=int)
     assert res.parsed == 123
@@ -60,7 +75,7 @@ def test_backend_retry_fallback():
     b1 = FailBackend()
     b2 = OkBackend()
     client = LLMClient(model="router", backends=[b1, b2], log_prompts=False)
-    result = client.generate(Prompt("hi"))
+    result = client.generate(Prompt("hi", origin="context_builder"))
     assert result.text == "ok"
     assert b1.calls == 1 and b2.calls == 1
 
@@ -89,7 +104,7 @@ def test_promptdb_logging(monkeypatch):
             return LLMResult(text="txt", raw={"backend": "dummy"})
 
     client = Dummy()
-    client.generate(Prompt("x"))
+    client.generate(Prompt("x", origin="context_builder"))
     assert logged and logged[0][2] == "dummy"
 
 
@@ -127,7 +142,7 @@ def test_openai_provider_retries(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(provider._session, "post", fake_post)
-    result = provider._generate(Prompt("hi"))
+    result = provider._generate(Prompt("hi", origin="context_builder"))
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
@@ -169,7 +184,7 @@ def test_anthropic_client_retries(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(ac.requests, "post", fake_post)
-    result = client.generate(Prompt("hi"))
+    result = client.generate(Prompt("hi", origin="context_builder"))
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
@@ -202,7 +217,7 @@ def test_openai_cost_calculation(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(provider._session, "post", fake_post)
-    res = provider._generate(Prompt("hi"))
+    res = provider._generate(Prompt("hi", origin="context_builder"))
     assert res.cost == pytest.approx(2 * 0.1 + 3 * 0.2)
 
 
@@ -235,7 +250,7 @@ def test_anthropic_cost_calculation(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(ac.requests, "post", fake_post)
-    res = client.generate(Prompt("hi"))
+    res = client.generate(Prompt("hi", origin="context_builder"))
     assert res.cost == pytest.approx(2 * 0.1 + 3 * 0.2)
 
 
@@ -256,7 +271,7 @@ def test_ollama_backend_retries(monkeypatch):
         return {"text": "ok"}
 
     monkeypatch.setattr(backend, "_post", fake_post)
-    result = backend.generate(Prompt("hi"))
+    result = backend.generate(Prompt("hi", origin="context_builder"))
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
@@ -279,7 +294,7 @@ def test_vllm_backend_retries(monkeypatch):
         return {"text": "ok"}
 
     monkeypatch.setattr(backend, "_post", fake_post)
-    result = backend.generate(Prompt("hi"))
+    result = backend.generate(Prompt("hi", origin="context_builder"))
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
@@ -347,7 +362,7 @@ def test_local_weights_streaming(monkeypatch):
 
     async def collect():
         parts = []
-        async for part in client.async_generate(Prompt("hi")):
+        async for part in client.async_generate(Prompt("hi", origin="context_builder")):
             parts.append(part)
         return "".join(parts)
 
@@ -365,7 +380,7 @@ def test_openai_generate_inside_running_loop(monkeypatch):
     monkeypatch.setattr(OpenAIProvider, "_async_generate", fake_async_gen)
 
     async def run():
-        return await provider.generate(Prompt("hi"))
+        return await provider.generate(Prompt("hi", origin="context_builder"))
 
     result = asyncio.run(run())
     assert result.text == "hi"

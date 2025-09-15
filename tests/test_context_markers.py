@@ -14,8 +14,8 @@ class DummyClient(LLMClient):
 def test_generate_requires_context_builder_markers():
     client = DummyClient()
     with pytest.raises(ValueError):
-        client.generate(Prompt(text="hi"), context_builder=object())
+        client.generate(Prompt(text="hi", origin="context_builder"), context_builder=object())
 
-    prompt = Prompt(text="hi", metadata={"vector_confidences": [1.0]})
+    prompt = Prompt(text="hi", metadata={"vector_confidences": [1.0]}, origin="context_builder")
     res = client.generate(prompt, context_builder=object())
     assert res.text == "ok"

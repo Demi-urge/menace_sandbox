@@ -72,7 +72,7 @@ def test_openai_rate_limit_retry(monkeypatch, tmp_path):
 
     monkeypatch.setattr(client._session, "post", fake_post)
 
-    res = client.generate(Prompt(text="hi"), context_builder=create_context_builder())
+    res = client.generate(Prompt(text="hi", origin="context_builder"), context_builder=create_context_builder())
     assert res.text == "ok"
     assert sleeps == [1.0]
     assert not responses

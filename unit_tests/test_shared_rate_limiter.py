@@ -36,10 +36,10 @@ def test_clients_share_token_bucket(monkeypatch):
     c1 = Dummy(30)
     c2 = Dummy(50)
 
-    c1.generate(Prompt("hi"))
+    c1.generate(Prompt("hi", origin="context_builder"))
     assert bucket.tokens == 70
 
-    c2.generate(Prompt("hi"))
+    c2.generate(Prompt("hi", origin="context_builder"))
     assert bucket.tokens == 20
 
     assert c1._rate_limiter is bucket and c2._rate_limiter is bucket

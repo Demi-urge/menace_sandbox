@@ -30,6 +30,7 @@ class Prompt:
     vector_confidence: float | None = None
     tags: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    origin: str = ""
 
     def __init__(
         self,
@@ -43,6 +44,7 @@ class Prompt:
         vector_confidences: List[float] | None = None,
         text: str | None = None,
         metadata: Dict[str, Any] | None = None,
+        origin: str | None = None,
     ) -> None:
         if text is not None and not user:
             user = text
@@ -71,6 +73,7 @@ class Prompt:
         else:
             self.tags = []
         self.metadata = meta
+        self.origin = origin or meta.get("origin", "")
 
     # ------------------------------------------------------------------
     def __str__(self) -> str:  # pragma: no cover - trivial

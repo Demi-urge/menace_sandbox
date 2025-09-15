@@ -46,6 +46,8 @@ except Exception:  # pragma: no cover - allow stub during tests
         """Fallback stub for typing when context builder is unavailable."""
         pass
 
+VALID_PROMPT_ORIGINS = {"context_builder", "self_coding_engine"}
+
 
 # ---------------------------------------------------------------------------
 # Data containers
@@ -222,10 +224,10 @@ class LLMClient:
         """
 
         meta = getattr(prompt, "metadata", {})
+        if getattr(prompt, "origin", None) not in VALID_PROMPT_ORIGINS:
+            raise ValueError("prompt.origin missing or unrecognized")
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
-            raise ValueError(
-                "prompt.metadata missing context-builder markers"
-            )
+            raise ValueError("prompt.metadata missing context-builder markers")
 
         # If explicit backends are configured act as a router
         if self.backends:
@@ -275,10 +277,10 @@ class LLMClient:
     ) -> AsyncGenerator[str, None]:
         """Asynchronously yield completion chunks for *prompt* and log the result."""
         meta = getattr(prompt, "metadata", {})
+        if getattr(prompt, "origin", None) not in VALID_PROMPT_ORIGINS:
+            raise ValueError("prompt.origin missing or unrecognized")
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
-            raise ValueError(
-                "prompt.metadata missing context-builder markers"
-            )
+            raise ValueError("prompt.metadata missing context-builder markers")
 
         cfg = llm_config.get_config()
 
@@ -597,6 +599,8 @@ class OpenAIProvider(LLMClient):
         is returned directly.
         """
 
+        if getattr(prompt, "origin", None) not in VALID_PROMPT_ORIGINS:
+            raise ValueError("prompt.origin missing or unrecognized")
         payload = self._prepare_payload(prompt)
         prompt_tokens = rate_limit.estimate_tokens(
             " ".join(m.get("content", "") for m in payload["messages"]),
