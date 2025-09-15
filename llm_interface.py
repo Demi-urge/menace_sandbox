@@ -221,6 +221,12 @@ class LLMClient:
         called directly.
         """
 
+        meta = getattr(prompt, "metadata", {})
+        if not any(k in meta for k in ("vector_confidences", "intent_tags")):
+            raise ValueError(
+                "prompt.metadata missing context-builder markers"
+            )
+
         # If explicit backends are configured act as a router
         if self.backends:
             order = list(self.backends)
@@ -268,6 +274,11 @@ class LLMClient:
         self, prompt: Prompt, *, context_builder: ContextBuilder
     ) -> AsyncGenerator[str, None]:
         """Asynchronously yield completion chunks for *prompt* and log the result."""
+        meta = getattr(prompt, "metadata", {})
+        if not any(k in meta for k in ("vector_confidences", "intent_tags")):
+            raise ValueError(
+                "prompt.metadata missing context-builder markers"
+            )
 
         cfg = llm_config.get_config()
 
