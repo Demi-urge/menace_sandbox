@@ -23,7 +23,6 @@ from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
-from prompt_types import Prompt
 registry = BotRegistry()
 data_bot = DataBot(start_server=False)
 
@@ -1085,12 +1084,13 @@ class ChatGPTEnhancementBot:
             if tags:
                 base_tags.extend(tags)
             try:
-                prompt_obj = self.context_builder.build_prompt(
+                context_builder = self.context_builder
+                prompt_obj = context_builder.build_prompt(
                     instruction, intent=intent_meta
                 )
             except Exception:
                 logger.exception("ContextBuilder.build_prompt failed")
-                prompt_obj = Prompt(user=instruction)
+                raise
 
             messages: List[Dict[str, Any]] = []
             if getattr(prompt_obj, "system", None):
