@@ -62,10 +62,6 @@ except BaseException:  # pragma: no cover - missing or failing dependency
 from gpt_memory_interface import GPTMemoryInterface  # noqa: E402
 from snippet_compressor import compress_snippets  # noqa: E402
 from vector_service.context_builder import ContextBuilder, FallbackResult  # noqa: E402
-try:  # memory-aware wrapper
-    from .memory_aware_gpt_client import ask_with_memory  # noqa: E402
-except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore  # noqa: E402
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # noqa: E402
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -918,15 +914,47 @@ class ChatGPTPredictionBot:
         if client is not None:
             try:
                 prompt = "Evaluate the following enhancement and provide brief feedback."
-                ask_with_memory(
-                    client,
-                    "chatgpt_prediction_bot.evaluate_enhancement",
-                    prompt,
-                    memory=self.gpt_memory,
-                    context_builder=self.context_builder,
-                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                    intent={"idea": clean_idea, "rationale": clean_rationale},
+                mem_ctx = ""
+                if self.gpt_memory is not None:
+                    try:
+                        mem_ctx = self.gpt_memory.build_context(
+                            "chatgpt_prediction_bot.evaluate_enhancement", limit=5
+                        )
+                    except Exception:
+                        mem_ctx = ""
+                intent_meta = {"idea": clean_idea, "rationale": clean_rationale}
+                if mem_ctx:
+                    intent_meta["memory_context"] = mem_ctx
+                prompt_obj = self.context_builder.build_prompt(
+                    prompt, intent_metadata=intent_meta
                 )
+                if mem_ctx:
+                    examples = list(getattr(prompt_obj, "examples", []))
+                    examples.append(mem_ctx)
+                    prompt_obj.examples = examples
+                resp = client.ask(
+                    prompt_obj,
+                    use_memory=False,
+                    memory_manager=None,
+                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                )
+                text = (
+                    resp.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+                if self.gpt_memory is not None:
+                    try:
+                        log_prompt = "\n\n".join(prompt_obj.examples + [prompt_obj.user])
+                        if prompt_obj.system:
+                            log_prompt = f"{prompt_obj.system}\n\n{log_prompt}"
+                        self.gpt_memory.log(
+                            log_prompt,
+                            text,
+                            [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 logger.debug("ChatGPT evaluation failed", exc_info=True)
         return EnhancementEvaluation(
