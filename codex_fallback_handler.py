@@ -72,20 +72,18 @@ class _ContextClient:
     def generate(self, prompt: Prompt) -> LLMResult:
         """Generate a completion with vector-enriched context."""
 
-        # Preserve original prompt context so it can be reattached after
-        # ``build_prompt`` constructs the vector-based prefix.
         system_msg = getattr(prompt, "system", "")
         examples = getattr(prompt, "examples", [])
         tags = getattr(prompt, "tags", [])
         intent = dict(getattr(prompt, "metadata", {}) or {})
-        intent.setdefault("system", system_msg)
-        intent.setdefault("examples", examples)
-        intent.setdefault("tags", tags)
         try:
-            prompt = self._builder.build_prompt(prompt.user, intent=intent)
-            prompt.system = system_msg
-            prompt.examples = examples
-            prompt.tags = tags
+            prompt = self._builder.build_prompt(
+                prompt.user,
+                intent=intent,
+                system=system_msg,
+                examples=examples,
+                tags=tags,
+            )
         except Exception:
             pass
         return self._client.generate(prompt, context_builder=self._builder)
@@ -141,10 +139,6 @@ def handle(
     try:
         try:
             context_builder.refresh_db_weights()
-        except Exception:
-            pass
-        try:
-            context_builder.build(prompt.user)
         except Exception:
             pass
         result = reroute_to_fallback_model(prompt, context_builder=context_builder)
