@@ -1,9 +1,10 @@
 from types import SimpleNamespace
+import sys
 
 import pytest
 
 import memory_aware_gpt_client as magc
-from vector_service.exceptions import VectorServiceError
+from prompt_types import Prompt
 
 
 class DummyKnowledge:
@@ -23,13 +24,12 @@ def test_context_injection_and_logging():
     client = SimpleNamespace()
     recorded = {}
 
-    def fake_ask(msgs, **kw):
-        recorded["messages"] = msgs
+    def fake_ask(prompt, **kw):
+        recorded["prompt"] = prompt
         return {"choices": [{"message": {"content": "response"}}]}
 
     client.ask = fake_ask
     knowledge = DummyKnowledge()
-    from prompt_types import Prompt
 
     builder = SimpleNamespace(
         build_prompt=lambda q, **k: Prompt(user=q)
@@ -44,23 +44,41 @@ def test_context_injection_and_logging():
         tags=["feedback"],
     )
 
-    sent_prompt = recorded["messages"][0]["content"]
-    assert "fb1" in sent_prompt
-    assert "fix1" in sent_prompt
-    assert "imp1" in sent_prompt
+    sent_prompt = recorded["prompt"]
+    assert isinstance(sent_prompt, Prompt)
+    joined = "\n".join(sent_prompt.examples)
+    assert "fb1" in joined
+    assert "fix1" in joined
+    assert "imp1" in joined
     assert knowledge.logged and knowledge.logged[0][0].endswith("Do it")
 
 
-def test_context_builder_failure_raises():
+def test_context_builder_failure_raises_and_no_call(monkeypatch):
     class FailingBuilder:
         def build_prompt(self, *args, **kwargs):
             raise RuntimeError("boom")
 
+    class DummyEngine:
+        def build_enriched_prompt(self, *a, **k):
+            raise RuntimeError("sce boom")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "self_coding_engine",
+        SimpleNamespace(SelfCodingEngine=DummyEngine),
+    )
+
     knowledge = DummyKnowledge()
-    client = SimpleNamespace(ask=lambda *a, **k: None)
+    called = False
+
+    def fake_ask(*a, **k):
+        nonlocal called
+        called = True
+
+    client = SimpleNamespace(ask=fake_ask)
     builder = FailingBuilder()
 
-    with pytest.raises(VectorServiceError):
+    with pytest.raises(RuntimeError):
         magc.ask_with_memory(
             client,
             "mod.act",
@@ -68,3 +86,43 @@ def test_context_builder_failure_raises():
             memory=knowledge,
             context_builder=builder,
         )
+
+    assert not called
+
+
+def test_context_builder_failure_uses_self_coding_engine(monkeypatch):
+    class FailingBuilder:
+        def build_prompt(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    class DummyEngine:
+        def build_enriched_prompt(self, goal, *, intent, context_builder):
+            return Prompt(user=f"{goal}!", examples=["sce"], metadata={})
+
+    monkeypatch.setitem(
+        sys.modules,
+        "self_coding_engine",
+        SimpleNamespace(SelfCodingEngine=DummyEngine),
+    )
+
+    captured = {}
+
+    def fake_ask(prompt, **kw):
+        captured["prompt"] = prompt
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    knowledge = DummyKnowledge()
+    client = SimpleNamespace(ask=fake_ask)
+    builder = FailingBuilder()
+
+    magc.ask_with_memory(
+        client,
+        "mod.act",
+        "Do it",
+        memory=knowledge,
+        context_builder=builder,
+    )
+
+    sent_prompt = captured["prompt"]
+    assert isinstance(sent_prompt, Prompt)
+    assert sent_prompt.user.endswith("!")

@@ -22,12 +22,8 @@ except Exception:  # pragma: no cover - fallback when logging unavailable
 
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder
-    from vector_service.exceptions import VectorServiceError
 except Exception:  # pragma: no cover - fallback when vector service missing
     ContextBuilder = Any  # type: ignore
-
-    class VectorServiceError(RuntimeError):
-        pass
 
 try:  # pragma: no cover - optional dependency
     from prompt_types import Prompt
@@ -134,9 +130,17 @@ def ask_with_memory(
         )
     except Exception as exc:
         logger.exception("ContextBuilder.build_prompt failed")
-        if not isinstance(exc, VectorServiceError):
-            raise VectorServiceError("failed to build prompt") from exc
-        raise
+        try:
+            from self_coding_engine import SelfCodingEngine  # type: ignore
+
+            engine = object.__new__(SelfCodingEngine)
+            engine._last_retry_trace = None  # type: ignore[attr-defined]
+            engine.logger = logger  # type: ignore[attr-defined]
+            prompt_obj = engine.build_enriched_prompt(
+                prompt_text, intent=intent_meta, context_builder=context_builder
+            )
+        except Exception:
+            raise exc
 
     if extra_examples or mem_ctx:
         merged = list(extra_examples)
@@ -159,15 +163,8 @@ def ask_with_memory(
         meta.setdefault("retrieved_context", retrieved_context)
     prompt_obj.metadata = meta
 
-    messages: list[dict[str, str]] = []
-    if prompt_obj.system:
-        messages.append({"role": "system", "content": prompt_obj.system})
-    for ex in getattr(prompt_obj, "examples", []):
-        messages.append({"role": "system", "content": ex})
-    messages.append({"role": "user", "content": prompt_obj.user})
-
     data = client.ask(
-        messages, use_memory=False, memory_manager=None, tags=full_tags
+        prompt_obj, use_memory=False, memory_manager=None, tags=full_tags
     )
     text = (
         data.get("choices", [{}])[0]
