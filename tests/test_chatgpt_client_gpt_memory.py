@@ -54,7 +54,35 @@ stub_st.SentenceTransformer = _DummyModel
 sys.modules.setdefault("sentence_transformers", stub_st)
 
 import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
-from gpt_memory import GPTMemoryManager  # noqa: E402
+
+
+class StubMemory:
+    def __init__(self):
+        self.entries: list[types.SimpleNamespace] = []
+
+    def log_interaction(self, prompt, response, tags):
+        self.entries.append(
+            types.SimpleNamespace(prompt=prompt, response=response, tags=list(tags))
+        )
+
+    def fetch_context(self, tags):
+        for e in reversed(self.entries):
+            if set(tags) & set(e.tags):
+                return e.prompt
+        return ""
+
+    def search_context(self, query, tags=None):
+        if tags:
+            return [e for e in self.entries if set(tags) & set(e.tags)]
+        return list(self.entries)
+
+    def compact(self, limits):
+        for tag, limit in limits.items():
+            tagged = [e for e in self.entries if tag in e.tags]
+            if len(tagged) > limit:
+                for e in tagged[:-limit]:
+                    if "summary" not in e.tags:
+                        e.tags.append("summary")
 
 
 class DummyBuilder:
@@ -64,40 +92,81 @@ class DummyBuilder:
     def build(self, query, **_):
         return ""
 
+    def build_prompt(self, tags, prior=None, intent_metadata=None):
+        session_id = "sid"
+        context = self.build(" ".join(tags), session_id=session_id)
+        memory_ctx = ""
+        mem = getattr(self, "memory", None)
+        if mem:
+            fetch = getattr(mem, "fetch_context", None)
+            if callable(fetch):
+                memory_ctx = fetch(tags)
+            else:
+                search = getattr(mem, "search_context", None)
+                if callable(search):
+                    entries = search("", tags=tags)
+                    if entries:
+                        first = entries[0]
+                        memory_ctx = getattr(first, "prompt", "") or getattr(first, "response", "")
+        parts = [prior, memory_ctx, context]
+        user = "\n".join(p for p in parts if p)
+        return types.SimpleNamespace(
+            user=user,
+            examples=None,
+            system=None,
+            metadata={"retrieval_session_id": session_id},
+        )
+
 
 def test_build_prompt_injects_summary_and_logs(monkeypatch):
-    mem = GPTMemoryManager(db_path=":memory:")
-    # previous interaction stored for tag 'topic'
+    mem = StubMemory()
     mem.log_interaction("early prompt", "early resp", ["topic"])
 
-    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
+    builder = DummyBuilder()
+    builder.memory = mem
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
     client.session = None  # offline mode
     monkeypatch.setattr(
         client,
         "_offline_response",
         lambda msgs: {"choices": [{"message": {"content": "later resp"}}]},
     )
+    monkeypatch.setattr(
+        cib,
+        "log_with_tags",
+        lambda memobj, prompt, response, tags: memobj.log_interaction(
+            prompt, response, tags
+        ),
+    )
 
     msgs = client.build_prompt_with_memory(
-        ["topic"], "new question", context_builder=client.context_builder
+        ["topic"], prior="new question", context_builder=client.context_builder
     )
     assert msgs[0]["role"] == "user"
     assert "early prompt" in msgs[0]["content"]
 
     client.ask(msgs)
-    # confirm interaction was logged with default tags
     entries = mem.search_context("new question")
     assert any(e.response == "later resp" for e in entries)
 
 
 def test_summarize_and_prune_via_client(monkeypatch):
-    mem = GPTMemoryManager(db_path=":memory:")
-    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=DummyBuilder())
+    mem = StubMemory()
+    builder = DummyBuilder()
+    builder.memory = mem
+    client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
     client.session = None
     monkeypatch.setattr(
         client,
         "_offline_response",
         lambda msgs: {"choices": [{"message": {"content": "resp"}}]},
+    )
+    monkeypatch.setattr(
+        cib,
+        "log_with_tags",
+        lambda memobj, prompt, response, tags: memobj.log_interaction(
+            prompt, response, tags
+        ),
     )
 
     for i in range(3):
