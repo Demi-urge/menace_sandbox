@@ -128,19 +128,9 @@ def ask_with_memory(
         prompt_obj = context_builder.build_prompt(
             prompt_text, intent_metadata=intent_meta, session_id=session_id
         )
-    except Exception as exc:
+    except Exception:
         logger.exception("ContextBuilder.build_prompt failed")
-        try:
-            from self_coding_engine import SelfCodingEngine  # type: ignore
-
-            engine = object.__new__(SelfCodingEngine)
-            engine._last_retry_trace = None  # type: ignore[attr-defined]
-            engine.logger = logger  # type: ignore[attr-defined]
-            prompt_obj = engine.build_enriched_prompt(
-                prompt_text, intent=intent_meta, context_builder=context_builder
-            )
-        except Exception:
-            raise exc
+        raise
 
     if extra_examples or mem_ctx:
         merged = list(extra_examples)
