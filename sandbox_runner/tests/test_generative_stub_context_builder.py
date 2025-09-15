@@ -79,7 +79,10 @@ def test_context_builder_used_for_retries(monkeypatch, tmp_path):
     cfg.retry_max = 0.0
     cfg.cache_path = tmp_path / "cache.json"
 
-    result = gsp.generate_stubs([{"x": 1}], {"context_builder": builder, "target": None}, cfg)
+    result = gsp.generate_stubs(
+        [{"x": 1}], {"target": None}, context_builder=builder, config=cfg
+    )
 
     assert result == [{"a": 1}]
     assert builder.calls == 2
+    assert builder.last_query and "x=1" in builder.last_query
