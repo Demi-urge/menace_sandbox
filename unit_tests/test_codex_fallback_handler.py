@@ -1,5 +1,8 @@
 import json
 import types
+import sys
+
+sys.modules.setdefault("sentence_transformers", types.ModuleType("sentence_transformers"))
 
 import menace.codex_fallback_handler as cf
 from menace.prompt_types import Prompt
@@ -25,9 +28,32 @@ def test_queue_failed_writes_jsonl(tmp_path):
 
 
 def test_handle_reroutes(monkeypatch, tmp_path):
-    prompt = Prompt("hi")
+    captured = {}
 
-    called = {}
+    class DummyClient:
+        def __init__(self, *, model: str) -> None:
+            self.model = model
+
+        def generate(self, prompt: Prompt, *, context_builder=None) -> LLMResult:
+            captured["prompt"] = prompt
+            captured["builder"] = context_builder
+            return LLMResult(text="ok", raw={"model": self.model})
+
+    class Builder:
+        def refresh_db_weights(self, *a, **k):
+            return None
+
+        def build_prompt(self, query: str, **kwargs) -> Prompt:
+            return Prompt(
+                f"ctx\n\n{query}",
+                system=kwargs.get("system", ""),
+                examples=list(kwargs.get("examples", []) or []),
+                tags=list(kwargs.get("tags", []) or []),
+            )
+
+    builder = Builder()
+
+    monkeypatch.setattr(cf, "LLMClient", DummyClient)
 
     cf._settings = types.SimpleNamespace(
         codex_fallback_model="alt-model",
@@ -35,14 +61,15 @@ def test_handle_reroutes(monkeypatch, tmp_path):
         codex_fallback_strategy="reroute",
     )
 
-    def fake_reroute(p: Prompt, *, context_builder=None) -> LLMResult:
-        called["prompt"] = p.user
-        return LLMResult(text="ok", raw={"model": cf._settings.codex_fallback_model})
+    p = Prompt("hi", system="sys", examples=["e1"])
+    p.tags = ["t1"]
 
-    monkeypatch.setattr(cf, "reroute_to_fallback_model", fake_reroute)
-
-    result = cf.handle(prompt, "oops", context_builder=DummyBuilder())
-    assert called["prompt"] == "hi"
+    result = cf.handle(p, "oops", context_builder=builder)
+    assert captured["prompt"].user == "ctx\n\nhi"
+    assert captured["prompt"].system == "sys"
+    assert captured["prompt"].examples == ["e1"]
+    assert captured["prompt"].tags == ["t1"]
+    assert captured["builder"] is builder
     assert isinstance(result, LLMResult)
     assert result.text == "ok"
     assert result.raw["model"] == "alt-model"
@@ -147,7 +174,7 @@ def test_reroute_includes_retrieved_context(monkeypatch):
             self.model = model
 
         def generate(self, prompt: Prompt, *, context_builder=None) -> LLMResult:
-            captured["prompt"] = prompt.user
+            captured["prompt"] = prompt
             captured["builder"] = context_builder
             captured["system"] = prompt.system
             captured["examples"] = prompt.examples
@@ -159,7 +186,17 @@ def test_reroute_includes_retrieved_context(monkeypatch):
             return None
 
         def build_prompt(self, query: str, **kwargs) -> Prompt:
-            return Prompt(f"ctx\n\n{query}")
+            captured["args"] = (
+                kwargs.get("system"),
+                kwargs.get("examples"),
+                kwargs.get("tags"),
+            )
+            return Prompt(
+                f"ctx\n\n{query}",
+                system=kwargs.get("system", ""),
+                examples=list(kwargs.get("examples", []) or []),
+                tags=list(kwargs.get("tags", []) or []),
+            )
 
     builder = Builder()
     monkeypatch.setattr(cf, "LLMClient", DummyClient)
@@ -168,8 +205,9 @@ def test_reroute_includes_retrieved_context(monkeypatch):
     p = Prompt("hi", system="sys", examples=["e1"])
     p.tags = ["t1"]
     cf.reroute_to_fallback_model(p, context_builder=builder)
-    assert captured["prompt"] == "ctx\n\nhi"
+    assert captured["prompt"].user == "ctx\n\nhi"
     assert captured["builder"] is builder
+    assert captured["args"] == ("sys", ["e1"], ["t1"])
     assert captured["system"] == "sys"
     assert captured["examples"] == ["e1"]
     assert captured["tags"] == ["t1"]
