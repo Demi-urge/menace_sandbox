@@ -20,15 +20,9 @@ except Exception:  # pragma: no cover - fallback when logging unavailable
         return [key, *(tags or [])]
 
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import (
-        ContextBuilder,
-        build_prompt as build_context_prompt,
-    )
+    from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback when vector service missing
     ContextBuilder = Any  # type: ignore
-
-    def build_context_prompt(goal: str, **_: Any) -> "Prompt":  # type: ignore
-        return Prompt(goal)
 
 try:  # pragma: no cover - optional dependency
     from prompt_types import Prompt
@@ -123,36 +117,38 @@ def ask_with_memory(
         orig_meta = {}
         prompt_text = prompt
 
-    ctx_parts = [ex for ex in extra_examples if ex]
+    intent_meta: Dict[str, Any] = dict(intent_payload or {})
     if mem_ctx:
-        ctx_parts.append(mem_ctx)
-    context_str = "\n".join(ctx_parts) if ctx_parts else None
+        intent_meta["memory_context"] = mem_ctx
+    intent_meta.setdefault("user_query", prompt_text)
 
     try:
-        prompt_obj = build_context_prompt(
-            prompt_text,
-            intent=intent_payload,
-            session_id=session_id,
-            context_builder=context_builder,
-            context=context_str,
+        prompt_obj = context_builder.build_prompt(
+            prompt_text, intent_metadata=intent_meta, session_id=session_id
         )
     except Exception:
-        if hasattr(context_builder, "build_prompt"):
-            prompt_obj = context_builder.build_prompt(
-                prompt_text, intent=intent_payload, session_id=session_id
-            )
-        else:
-            prompt_obj = Prompt(user=prompt_text)
-        if context_str:
-            prompt_obj.examples.insert(0, context_str)
+        prompt_obj = Prompt(user=prompt_text)
 
+    if extra_examples or mem_ctx:
+        merged = list(extra_examples)
+        if mem_ctx:
+            merged.append(mem_ctx)
+        merged.extend(getattr(prompt_obj, "examples", []))
+        prompt_obj.examples = merged
     if base_system:
         prompt_obj.system = base_system
-    if orig_meta:
-        try:
-            prompt_obj.metadata.update(orig_meta)
-        except Exception:
-            prompt_obj.metadata = dict(orig_meta)
+
+    full_tags = ensure_tags(key, tags)
+    meta = getattr(prompt_obj, "metadata", {}) or {}
+    meta.update(orig_meta)
+    meta.setdefault("session_id", session_id)
+    meta.setdefault("tags", full_tags)
+    if mem_ctx:
+        meta.setdefault("memory_context", mem_ctx)
+    retrieved_context = "\n".join(getattr(prompt_obj, "examples", []))
+    if retrieved_context:
+        meta.setdefault("retrieved_context", retrieved_context)
+    prompt_obj.metadata = meta
 
     messages: list[dict[str, str]] = []
     if prompt_obj.system:
@@ -161,7 +157,6 @@ def ask_with_memory(
         messages.append({"role": "system", "content": ex})
     messages.append({"role": "user", "content": prompt_obj.user})
 
-    full_tags = ensure_tags(key, tags)
     data = client.ask(
         messages, use_memory=False, memory_manager=None, tags=full_tags
     )

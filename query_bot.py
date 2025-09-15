@@ -200,17 +200,14 @@ class QueryBot:
         ents = [t[1] for t in parsed.get("entities", [])]
         data = self.fetcher.fetch(ents)
         self.store.add(context_id, query)
-        prompt = self.context_builder.build_prompt(
-            "Summarize the following data", intent={"data": data}
-        )
         text = ask_with_memory(
             self.client,
             "query_bot.process",
-            prompt.user,
+            "Summarize the following data",
             memory=self.local_knowledge,
             context_builder=self.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-            intent=prompt.metadata,
+            intent={"data": data},
         )
         return QueryResult(text=text, data=data)
 
