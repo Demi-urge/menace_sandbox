@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
@@ -274,10 +274,19 @@ def summarize_snippet(
 
     if not summary and llm is not None:
         context = ""
+        vectors: List[Tuple[str, str, float]] = []
+        meta: Dict[str, Any] = {}
         try:
-            ctx_res = context_builder.build(text)
+            ctx_res = context_builder.build(
+                text, include_vectors=True, return_metadata=True
+            )
             if isinstance(ctx_res, tuple):
-                context = ctx_res[0]
+                try:
+                    context, _sid, vectors, meta = ctx_res  # type: ignore[misc]
+                except Exception:
+                    context = ctx_res[0]
+                    vectors = []
+                    meta = {}
             else:
                 context = ctx_res
             try:  # pragma: no cover - optional dependency
@@ -298,7 +307,10 @@ def summarize_snippet(
                 )
         except Exception:
             context = ""
-        intent_meta = {
+            vectors = []
+            meta = {}
+
+        intent_meta: Dict[str, Any] = {
             "instruction": "Summarise the following code snippet in one sentence.",
         }
         if context:
@@ -308,6 +320,14 @@ def summarize_snippet(
             intent=intent_meta,
             top_k=0,
         )
+        scores = [float(v[2]) for v in vectors]
+        if scores:
+            prompt.vector_confidence = sum(scores) / len(scores)
+            prompt.metadata.setdefault("vector_confidences", scores)
+        if vectors:
+            prompt.metadata.setdefault("vectors", vectors)
+        if meta:
+            prompt.metadata.setdefault("retrieval_metadata", meta)
         try:  # pragma: no cover - llm failures
             result = llm.generate(prompt, context_builder=context_builder)
             if getattr(result, "text", "").strip():
