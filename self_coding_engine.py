@@ -192,6 +192,9 @@ if TYPE_CHECKING:  # pragma: no cover - type hints
 # logger is defined after imports to satisfy linting rules
 logger = logging.getLogger(__name__)
 
+# track repeated failures when logging prompt attempts
+_log_prompt_attempt_failures = 0
+
 # Load prompt configuration from settings instead of environment variables
 _settings = SandboxSettings()
 PROMPT_REPO_LAYOUT_LINES = getattr(_settings, "prompt_repo_layout_lines", 200)
@@ -1026,8 +1029,10 @@ class SelfCodingEngine:
 
         try:  # pragma: no cover - logging best effort
             log_prompt_attempt(prompt_obj.user, meta)
-        except Exception:
-            self.logger.exception("log_prompt_attempt failed")
+        except Exception:  # pragma: no cover - defensive
+            global _log_prompt_attempt_failures
+            _log_prompt_attempt_failures += 1
+            logger.exception("log_prompt_attempt failed")
 
         return prompt_obj
 

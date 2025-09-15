@@ -38,6 +38,7 @@ sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBu
 sys.modules.setdefault("trend_predictor", types.SimpleNamespace(TrendPredictor=object))
 sys.modules.setdefault("gpt_memory_interface", types.SimpleNamespace(GPTMemoryInterface=object))
 sys.modules.setdefault("safety_monitor", types.SimpleNamespace(SafetyMonitor=object))
+sys.modules.setdefault("menace.safety_monitor", sys.modules["safety_monitor"])
 sys.modules.setdefault("advanced_error_management", types.SimpleNamespace(FormalVerifier=object))
 sys.modules.setdefault("chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
 sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
@@ -72,6 +73,18 @@ sys.modules.setdefault("access_control", access_mod)
 sys.modules.setdefault("patch_suggestion_db", types.SimpleNamespace(PatchSuggestionDB=object, SuggestionRecord=object))
 sys.modules.setdefault("sandbox_runner.workflow_sandbox_runner", types.SimpleNamespace(WorkflowSandboxRunner=object))
 sys.modules.setdefault(
+    "self_improvement.init",
+    types.SimpleNamespace(
+        FileLock=type("DummyLock", (), {
+            "__init__": lambda self, *a, **k: None,
+            "__enter__": lambda self: self,
+            "__exit__": lambda self, *a: None,
+        }),
+        _atomic_write=lambda *a, **k: None,
+    ),
+)
+sys.modules.setdefault("menace.self_improvement.init", sys.modules["self_improvement.init"])
+sys.modules.setdefault(
     "sandbox_settings",
     types.SimpleNamespace(
         SandboxSettings=lambda: types.SimpleNamespace(
@@ -82,13 +95,14 @@ sys.modules.setdefault(
 _msl_stub = types.SimpleNamespace(fetch_recent_billing_issues=lambda: [])
 sys.modules.setdefault("menace_sanity_layer", _msl_stub)
 sys.modules.setdefault("menace.menace_sanity_layer", _msl_stub)
-roi_mod = types.ModuleType("roi_tracker")
-roi_mod.ROITracker = lambda: object()
-sys.modules.setdefault("roi_tracker", roi_mod)
 
 # Import the SelfCodingEngine after stubs
 import importlib
 menace_pkg = importlib.import_module("menace")
+roi_mod = types.ModuleType("menace.roi_tracker")
+roi_mod.ROITracker = lambda: object()
+sys.modules["menace.roi_tracker"] = roi_mod
+sys.modules.setdefault("roi_tracker", roi_mod)
 sys.modules["code_database"] = code_db_mod
 sys.modules["menace.code_database"] = code_db_mod
 import menace.self_coding_engine as sce
@@ -213,3 +227,28 @@ def test_tempfile_cleanup_logging(monkeypatch, caplog, tmp_path):
     target.write_text("print('hi')\n")
     engine.patch_file(target, "desc")
     assert any("temporary file cleanup failed" in r.message for r in caplog.records)
+
+
+def test_log_prompt_attempt_error_is_logged(monkeypatch, caplog):
+    builder = types.SimpleNamespace(
+        build_prompt=lambda q, **_: types.SimpleNamespace(user="bob", metadata={}),
+        refresh_db_weights=lambda: None,
+    )
+    llm = types.SimpleNamespace(gpt_memory=None, generate=lambda p: LLMResult(text="ok"))
+    engine = SelfCodingEngine(
+        object(),
+        DummyMemory(),
+        llm_client=llm,
+        gpt_memory=types.SimpleNamespace(search_context=lambda *a, **k: []),
+        context_builder=builder,
+    )
+
+    def boom(*a, **k):
+        raise Exception("boom")
+
+    monkeypatch.setattr(sce, "log_prompt_attempt", boom)
+    failures_before = sce._log_prompt_attempt_failures
+    with caplog.at_level(logging.ERROR):
+        engine.build_enriched_prompt("task", context_builder=builder)
+    assert any("log_prompt_attempt failed" in r.message for r in caplog.records)
+    assert sce._log_prompt_attempt_failures == failures_before + 1
