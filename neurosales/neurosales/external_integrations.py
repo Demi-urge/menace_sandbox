@@ -6,6 +6,8 @@ from . import config
 import os
 import logging
 import requests
+import asyncio
+from llm_interface import OpenAIProvider
 
 try:  # optional dependency
     import pinecone  # type: ignore
@@ -107,7 +109,14 @@ class GPT4Client:
         self.api_key = api_key
         self.context_builder = context_builder
         self.enabled = api_key is not None
-        if not self.enabled:  # pragma: no cover - warning path
+        self.client: OpenAIProvider | None = None
+        if self.enabled:
+            try:
+                self.client = OpenAIProvider(model="gpt-4", api_key=api_key)
+            except Exception:  # pragma: no cover - best effort
+                self.enabled = False
+                logger.warning("GPT4Client disabled: backend unavailable")
+        else:  # pragma: no cover - warning path
             logger.warning("GPT4Client disabled: backend unavailable")
 
     # ------------------------------------------------------------------
@@ -118,20 +127,23 @@ class GPT4Client:
         objective: str,
         text: str,
     ) -> Iterator[str]:
-        if not self.enabled:
+        if not self.enabled or self.client is None:
             logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
             return
-        from billing.openai_wrapper import chat_completion_create
-
-        messages = [{"role": "user", "content": text}]
+        prompt = self.context_builder.build_prompt(
+            text,
+            intent={
+                "archetype": archetype,
+                "emotion_tensor": emotion_tensor,
+                "objective": objective,
+            },
+        )
         try:
-            result = chat_completion_create(
-                messages,
-                model="gpt-4",
-                context_builder=self.context_builder,
-            )
-            yield result["choices"][0]["message"]["content"]
+            result = self.client.generate(prompt, context_builder=self.context_builder)
+            if asyncio.iscoroutine(result) or isinstance(result, asyncio.Task):
+                result = asyncio.get_event_loop().run_until_complete(result)
+            yield result.text
         except Exception:  # pragma: no cover - best effort
             logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
