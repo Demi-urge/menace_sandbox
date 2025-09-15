@@ -2,6 +2,7 @@ import json
 
 import action_justifier as aj
 import local_model_wrapper as lmw
+from prompt_types import Prompt
 
 
 class DummyTokenizer:
@@ -44,9 +45,9 @@ class Builder:
     def __init__(self):
         self.queries = []
 
-    def build(self, query, **_):
+    def build_prompt(self, query, **_):
         self.queries.append(query)
-        return "builder-context"
+        return Prompt(user=query, examples=["builder-context"])
 
 
 def test_llm_justification_includes_vector_context(monkeypatch, tmp_path):

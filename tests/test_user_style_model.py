@@ -1,6 +1,19 @@
 from __future__ import annotations
+import sys
+import types
+from prompt_types import Prompt
+
+
+class _MirrorStub:
+    def fetch(self, n):  # pragma: no cover - simple stub
+        return []
+
+
+dummy_mb = types.ModuleType("menace.mirror_bot")
+dummy_mb.MirrorDB = _MirrorStub
+sys.modules.setdefault("menace.mirror_bot", dummy_mb)
+
 import menace.user_style_model as usm
-import local_model_wrapper as lmw
 
 
 def test_generate_requires_context_builder():
@@ -16,7 +29,7 @@ def test_generate_requires_context_builder():
 
     class DummyTokenizer:
         def encode(self, text, return_tensors=None):  # pragma: no cover - simple stub
-            return [1]
+            return [[1]]
 
         def decode(self, ids, skip_special_tokens=True):  # pragma: no cover - simple stub
             return "out"
@@ -42,19 +55,14 @@ def test_generate_injects_context(monkeypatch):
     class DummyTokenizer:
         def encode(self, text, return_tensors=None):
             captured["prompt"] = text
-            return [1]
+            return [[1]]
 
         def decode(self, ids, skip_special_tokens=True):
             return "out"
 
     class DummyBuilder:
-        def build(self, query, include_vectors=False):  # pragma: no cover - simple stub
-            return "context"
-
-    def fake_compress(meta, **_):
-        return {"snippet": "COMP-" + meta.get("snippet", "")}
-
-    monkeypatch.setattr(lmw, "compress_snippets", fake_compress)
+        def build_prompt(self, query, **_):  # pragma: no cover - simple stub
+            return Prompt(user=query, examples=["context"])
 
     class DummyDB:
         def fetch(self, n):  # pragma: no cover - simple stub
@@ -66,4 +74,4 @@ def test_generate_injects_context(monkeypatch):
 
     result = model.generate("hello", context_builder=DummyBuilder())
     assert result == "out"
-    assert captured["prompt"] == "COMP-context\n\nhello"
+    assert captured["prompt"] == "context\n\nhello"

@@ -4,21 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from snippet_compressor import compress_snippets
+from snippet_compressor import compress_snippets  # noqa: F401 - retained for tests
 
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder, FallbackResult
+    from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback stubs
     ContextBuilder = Any  # type: ignore
 
-    class FallbackResult(list):  # type: ignore[misc]
-        pass
-
-try:  # pragma: no cover - optional dependency
-    from vector_service import ErrorResult
-except Exception:  # pragma: no cover - fallback stub
-    class ErrorResult(Exception):  # type: ignore[override]
-        pass
+from prompt_types import Prompt
 
 
 class LocalModelWrapper:
@@ -30,44 +23,46 @@ class LocalModelWrapper:
 
     def generate(
         self,
-        prompt: str,
+        prompt: Prompt | str,
         *,
         context_builder: ContextBuilder,
         cb_input: str | None = None,
         **gen_kwargs: Any,
     ) -> str | list[str]:
-        """Generate text with contextual snippets prepended.
+        """Generate text using a pre-built :class:`Prompt`.
 
-        ``context_builder`` must be supplied as a keyword argument.  ``cb_input``
-        allows providing a different query for retrieval; when omitted the
-        ``prompt`` itself is used.
+        ``context_builder`` must be supplied as a keyword argument.  When
+        ``prompt`` is provided as a plain string it is first converted into a
+        :class:`Prompt` via :meth:`ContextBuilder.build_prompt`.  ``cb_input``
+        allows supplying a different retrieval query in that case; the final
+        user text remains ``prompt``.
         """
 
-        ctx_text = ""
-        try:  # pragma: no cover - best effort context retrieval
-            ctx_res = context_builder.build(cb_input or prompt)
-            ctx_text = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-            if isinstance(ctx_text, (FallbackResult, ErrorResult)):
-                ctx_text = ""
-            elif ctx_text:
-                ctx_text = compress_snippets({"snippet": ctx_text}).get(
-                    "snippet", ctx_text
-                )
-        except Exception:
-            ctx_text = ""
+        if not isinstance(prompt, Prompt):
+            prompt_obj = context_builder.build_prompt(cb_input or prompt)
+            if cb_input:
+                prompt_obj.user = str(prompt)
+        else:
+            prompt_obj = prompt
 
-        final_prompt = f"{ctx_text}\n\n{prompt}" if ctx_text else prompt
-        input_ids = self.tokenizer.encode(final_prompt, return_tensors="pt")
+        pieces: list[str] = []
+        if getattr(prompt_obj, "system", None):
+            pieces.append(prompt_obj.system)
+        pieces.extend(prompt_obj.examples)
+        pieces.append(prompt_obj.user)
+        prompt_text = "\n\n".join(pieces)
+
+        input_ids = self.tokenizer.encode(prompt_text, return_tensors="pt")
+        try:
+            prompt_len = input_ids.shape[-1]
+        except Exception:  # pragma: no cover - generic tensor/seq handling
+            prompt_len = len(input_ids[0]) if input_ids else 0
+
         outputs: Sequence[Any] = self.hf_model.generate(input_ids, **gen_kwargs)
         decoded = [
-            self.tokenizer.decode(o, skip_special_tokens=True)
+            self.tokenizer.decode(o[prompt_len:], skip_special_tokens=True)
             for o in outputs
         ]
-
-        def _strip(text: str) -> str:
-            return text[len(final_prompt):] if text.startswith(final_prompt) else text
-
-        decoded = [_strip(d) for d in decoded]
         return decoded[0] if len(decoded) == 1 else list(decoded)
 
 
