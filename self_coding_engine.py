@@ -154,6 +154,8 @@ except Exception:  # pragma: no cover - fallback for flat layout
             return None
 from .failure_fingerprint import FailureFingerprint, find_similar, log_fingerprint
 from .failure_retry_utils import check_similarity_and_warn, record_failure
+from snippet_compressor import compress_snippets
+from vector_service.roi_tags import RoiTag
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me
 except Exception:  # pragma: no cover - fallback when executed directly
@@ -733,9 +735,11 @@ class SelfCodingEngine:
         prompt = getattr(self, "_last_prompt", None)
         if not isinstance(prompt, Prompt):
             prompt = self.build_enriched_prompt(
-                getattr(prompt, "text", str(prompt or "")),
+                {
+                    "query": getattr(prompt, "text", str(prompt or "")),
+                    "top_k": 0,
+                },
                 context_builder=self.context_builder,
-                top_k=0,
             )
         parts = [prompt.system, *prompt.examples, prompt.user]
         flat_prompt = "\n".join([p for p in parts if p])
@@ -909,36 +913,103 @@ class SelfCodingEngine:
     # ------------------------------------------------------------------
     def build_enriched_prompt(
         self,
-        task: str,
+        intent: Dict[str, Any],
         *,
-        error_log: str | None = None,
         context_builder: ContextBuilder,
-        **kwargs: Any,
     ) -> Prompt:
-        """Create and store an enriched :class:`Prompt` for ``task``.
+        """Create and store an enriched :class:`Prompt` for ``intent``.
 
-        The helper delegates to :meth:`ContextBuilder.build_prompt` which
-        performs latent query generation and semantic deduplication.  Retrieved
-        snippets, ``intent_metadata`` and the optional ``error_log`` are fused
-        into the resulting :class:`Prompt`'s metadata.  The fully enriched
-        prompt is stored on ``self`` and returned.
+        Failure logs, patch history and retrieved vectors are fused into the
+        prompt metadata.  Context snippets are compressed and ranked before
+        enrichment.  The resulting prompt is cached on ``self`` and also logged
+        for reproducibility.
         """
 
-        intent_meta: Dict[str, Any] = dict(kwargs.pop("intent_metadata", {}) or {})
-        log = error_log or self._last_retry_trace
-        snippets = kwargs.pop("snippets", None)
+        query = str(
+            intent.get("query")
+            or intent.get("task")
+            or intent.get("text")
+            or ""
+        ).strip()
+        if not query:
+            raise ValueError("intent must supply a non-empty query")
 
-        prompt_obj = context_builder.build_prompt(task, **kwargs)
+        error_log = intent.get("error_log") or self._last_retry_trace
+
+        try:
+            prompt_obj = context_builder.build_prompt(
+                query,
+                intent=intent,
+                error_log=error_log,
+                top_k=int(intent.get("top_k", 5)),
+            )
+        except Exception as exc:
+            self.logger.exception("context builder failed")
+            raise exc
+
         meta = dict(getattr(prompt_obj, "metadata", {}) or {})
-        if intent_meta:
-            meta.update(intent_meta)
-        if log:
-            meta["error_log"] = log
-        if snippets is not None:
+
+        # ------------------------------------------------------------------
+        # Patch history
+        history: List[Mapping[str, Any]] = []
+        if getattr(self, "patch_db", None):
+            try:
+                for rec in self.patch_db.top_patches(5):
+                    history.append(
+                        {
+                            "desc": getattr(rec, "description", ""),
+                            "snippet": getattr(rec, "diff", ""),
+                            "roi_delta": getattr(rec, "roi_delta", 0.0),
+                        }
+                    )
+            except Exception:
+                pass
+        if history:
+            ranked = sorted(history, key=lambda x: float(x.get("roi_delta", 0.0)), reverse=True)
+            meta["patch_history"] = [compress_snippets(h) for h in ranked]
+
+        # ------------------------------------------------------------------
+        # Retrieved vectors already attached by ContextBuilder; ensure sorted
+        vectors = meta.get("vectors")
+        if isinstance(vectors, list):
+            try:
+                vectors.sort(key=lambda v: float(v[2]), reverse=True)
+            except Exception:
+                pass
+
+        if error_log:
+            meta["error_log"] = error_log
+
+        meta["intent"] = intent
+
+        snippets = intent.get("snippets")
+        if snippets:
             meta["snippets"] = snippets
+
+        roi_tag = intent.get("roi_tag")
+        if roi_tag is None and getattr(self, "roi_tracker", None) is not None:
+            try:
+                last = float(getattr(self.roi_tracker, "last_raroi", 0.0))
+                if last > 0:
+                    roi_tag = RoiTag.HIGH_ROI.value
+                elif last < 0:
+                    roi_tag = RoiTag.LOW_ROI.value
+                else:
+                    roi_tag = RoiTag.SUCCESS.value
+            except Exception:
+                roi_tag = RoiTag.SUCCESS.value
+        if roi_tag is not None:
+            meta["roi_tag"] = RoiTag.validate(roi_tag).value
+
         prompt_obj.metadata = meta
         self._last_prompt = prompt_obj
         self._last_prompt_metadata = meta
+
+        try:  # pragma: no cover - logging best effort
+            log_prompt_attempt(prompt_obj.user, meta)
+        except Exception:
+            pass
+
         return prompt_obj
 
     # ------------------------------------------------------------------
@@ -1236,18 +1307,20 @@ class SelfCodingEngine:
                 or metadata.get("prompt_strategy")
             )
         try:
+            intent: Dict[str, Any] = {"query": description}
+            if retrieval_context:
+                intent["retrieval_context"] = retrieval_context
+            if strategy is not None:
+                intent["strategy"] = strategy
+            if retry_log:
+                intent["error_log"] = retry_log
+            intent["snippets"] = [
+                (getattr(s, "path", ""), s.code, getattr(s, "score", 0.0))
+                for s in snippets
+            ]
             prompt_obj = self.build_enriched_prompt(
-                description,
+                intent,
                 context_builder=self.context_builder,
-                intent_metadata={"retrieval_context": retrieval_context}
-                if retrieval_context
-                else {},
-                error_log=retry_log,
-                strategy=strategy,
-                snippets=[
-                    (getattr(s, "path", ""), s.code, getattr(s, "score", 0.0))
-                    for s in snippets
-                ],
             )
         except Exception as exc:
             self._last_retry_trace = str(exc)
