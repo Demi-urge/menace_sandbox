@@ -124,8 +124,16 @@ The pre-commit hook `check-context-builder-usage` wraps
 pre-commit run check-context-builder-usage --all-files
 ```
 
-Continuous integration runs this hook and fails the build when missing or
-implicit `ContextBuilder` usage is detected. The script also flags disallowed
+For the most thorough signal, run the standalone script as well:
+
+```bash
+python scripts/check_context_builder_usage.py
+```
+
+The script prints every violation and exits with a non-zero status when issues
+are found. Continuous integration runs both the pre-commit hook and the
+standalone script, and any emitted output causes the build to fail. The script
+also flags disallowed
 defaults for `context_builder` parameters (including sentinel objects), calls to
 helpers like `generate_candidates` that omit a `context_builder` keyword, or
 imports of `get_default_context_builder`, and CI fails when these patterns
