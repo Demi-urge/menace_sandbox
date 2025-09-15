@@ -591,10 +591,7 @@ def follow_up(
     context_builder: ContextBuilder,
 ) -> str:
     """Request additional insight for a single idea."""
-    prompt = (
-        f"Provide deeper insight or variations for this business model: {idea.name} - "
-        f"{idea.description}"
-    )
+    prompt = "Provide deeper insight or variations for this business model."
     try:
         idea.insight = ask_with_memory(
             client,
@@ -603,6 +600,7 @@ def follow_up(
             memory=LOCAL_KNOWLEDGE_MODULE,
             context_builder=context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+            intent={"idea_name": idea.name, "description": idea.description},
         )
     except Exception as exc:  # pragma: no cover - network/parse failures
         logger.exception("follow-up request failed: %s", exc)
@@ -622,12 +620,9 @@ def generate_and_filter(
 ) -> List[Idea]:
     """Generate ideas and filter them for novelty."""
     logger.info("requesting ideas for tags: %s", ", ".join(tags))
-    parts = ["Suggest five new online business models"]
-    if tags:
-        parts.append("with a focus on " + ", ".join(tags))
     prompt = (
-        " ".join(parts)
-        + ". Respond in JSON list format with fields name, description and tags."
+        "Suggest five new online business models. "
+        "Respond in JSON list format with fields name, description and tags."
     )
     ideas = parse_ideas(
         ask_with_memory(
@@ -637,6 +632,7 @@ def generate_and_filter(
             memory=LOCAL_KNOWLEDGE_MODULE,
             context_builder=context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+            intent={"tags": list(tags)},
         )
     )
     novel: List[Idea] = []

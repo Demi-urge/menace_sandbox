@@ -272,9 +272,7 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
 
     if not isinstance(client, _Client):  # pragma: no cover - type check
         return ""
-    prompt = (
-        f"Suggest monetisation strategies for this event: {event.title} - {event.summary}"
-    )
+    prompt = "Suggest monetisation strategies for this event."
     return ask_with_memory(
         client,
         "newsreader_bot.monetise_event",
@@ -282,6 +280,7 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
         memory=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
         context_builder=client.context_builder,
         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+        intent={"title": event.title, "summary": event.summary},
     )
 
 
