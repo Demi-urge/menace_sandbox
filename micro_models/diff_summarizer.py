@@ -6,15 +6,11 @@ from pathlib import Path
 from typing import Tuple, TYPE_CHECKING
 
 from dynamic_path_router import resolve_path
-from snippet_compressor import compress_snippets
 from context_builder_util import ensure_fresh_weights
+from vector_service.context_builder import build_prompt as _build_prompt
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
-    from vector_service.context_builder import (
-        ContextBuilder,
-        FallbackResult,
-        ErrorResult,
-    )
+    from vector_service.context_builder import ContextBuilder
 
 try:
     _MODEL_PATH = resolve_path("micro_models/diff_summarizer_model")
@@ -66,47 +62,28 @@ def summarize_diff(
     if tokenizer is None or hf_model is None:
         return ""
 
-    vec_ctx = ""
-    try:
-        ctx_res = context_builder.build_context(before + "\n" + after)
-        if isinstance(ctx_res, tuple):
-            vec_ctx = ctx_res[0]
-        else:
-            vec_ctx = ctx_res
-        try:  # optional dependency - isinstance checks
-            from vector_service.context_builder import (  # pragma: no cover
-                FallbackResult,
-                ErrorResult,
-            )
-
-            if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
-                vec_ctx = ""
-        except Exception:  # pragma: no cover - best effort
-            pass
-    except Exception:
-        vec_ctx = ""
-    if vec_ctx:
-        vec_ctx = compress_snippets({"snippet": vec_ctx}).get("snippet", vec_ctx)
-
-    prompt = (
-        "Summarize the code change.\nBefore:\n"
-        + before
-        + "\nAfter:\n"
-        + after
-        + "\n"
+    diff = before + "\n" + after
+    hint = after.splitlines()[0] if after else (before.splitlines()[0] if before else "")
+    top_k = 5 if hint else 0
+    intent = {"hint": hint} if hint else None
+    prompt_obj = _build_prompt(
+        "Summarize the code change.",
+        context=diff,
+        intent=intent,
+        top_k=top_k,
+        context_builder=context_builder,
     )
-    if vec_ctx:
-        prompt = f"Context:\n{vec_ctx}\n" + prompt
-    prompt += "Summary:"
+    prompt_text = ""
+    if getattr(prompt_obj, "system", ""):
+        prompt_text += prompt_obj.system + "\n"
+    prompt_text += prompt_obj.user + "\nSummary:"
 
-    inputs = tokenizer(prompt, return_tensors="pt")  # type: ignore[call-arg]
+    inputs = tokenizer(prompt_text, return_tensors="pt")  # type: ignore[call-arg]
     if torch is not None:
         inputs = {k: v.to(hf_model.device) for k, v in inputs.items()}  # type: ignore[attr-defined]
     output = hf_model.generate(**inputs, max_new_tokens=max_new_tokens)  # type: ignore[call-arg]
     text = tokenizer.decode(output[0], skip_special_tokens=True)  # type: ignore[call-arg]
     summary = text.split("Summary:")[-1].strip()
-    if vec_ctx:
-        summary += f"\n\nContext:\n{vec_ctx}"
     return summary
 
 
