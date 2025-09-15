@@ -67,6 +67,39 @@ from vector_service.context_builder import ContextBuilder
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 ```
 
+### Prompt building
+
+``ContextBuilder.build_prompt`` converts a free-form goal and optional intent
+metadata into a ``Prompt``. ``SelfCodingEngine.build_enriched_prompt`` then
+fuses intent tags and recent error traces with the retrieved vector context.
+
+```python
+from vector_service.context_builder import ContextBuilder
+from self_coding_engine import SelfCodingEngine
+from menace_memory_manager import MenaceMemoryManager
+from code_database import CodeDB
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+prompt = builder.build_prompt(
+    "optimise database",
+    intent={"intent_tags": ["perf"], "ticket": 7},
+)
+
+engine = SelfCodingEngine(CodeDB("code.db"), MenaceMemoryManager("mem.db"), context_builder=builder)
+enriched = engine.build_enriched_prompt(
+    "optimise database",
+    intent={"intent_tags": ["perf"]},
+    error_log="timeout stack",
+    context_builder=builder,
+)
+print(enriched.metadata["intent_tags"])
+print(enriched.metadata["vectors"][:1])
+```
+
+Avoid inline ``Prompt(...)`` strings; run
+``python scripts/check_context_builder_usage.py`` to statically flag missing
+``context_builder`` wiring.
+
 ### BotDevelopmentBot
 
 ```python

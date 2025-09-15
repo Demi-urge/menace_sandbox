@@ -60,6 +60,35 @@ engine.apply_patch(resolve_path('utils.py'), 'normalize text')
 The builder queries `bots.db`, `code.db`, `errors.db` and `workflows.db`, then
 compresses relevant snippets before they are embedded in prompts.
 
+## Enriched prompt building
+
+``SelfCodingEngine.build_enriched_prompt`` wraps
+``ContextBuilder.build_prompt`` and adds error logs or explicit intent metadata
+to the retrieved vector context.
+
+```python
+from vector_service.context_builder import ContextBuilder
+from self_coding_engine import SelfCodingEngine
+from menace_memory_manager import MenaceMemoryManager
+from code_database import CodeDB
+
+builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
+engine = SelfCodingEngine(CodeDB("code.db"), MenaceMemoryManager("mem.db"), context_builder=builder)
+prompt = engine.build_enriched_prompt(
+    "refactor parser",
+    intent={"intent_tags": ["maintenance"], "ticket": 42},
+    error_log="Traceback...",
+    context_builder=builder,
+)
+print(prompt.metadata["intent_tags"])
+print(prompt.metadata["vectors"][:1])
+```
+
+Vector identifiers and intent tags are deduplicated and stored in the
+``Prompt``'s metadata so later LLM calls can reference them directly. Avoid
+inline ``Prompt(...)`` construction; run ``python scripts/check_context_builder_usage.py``
+to catch any prompt helpers that bypass the builder.
+
 Set `MENACE_ROOT` or `SANDBOX_REPO_PATH` to point the resolver at a different
 clone. For multi-root setups specify `MENACE_ROOTS` or `SANDBOX_REPO_PATHS` and
 pass `repo_hint` to `resolve_path` when targeting a specific checkout:
