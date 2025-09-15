@@ -23,7 +23,12 @@ class MediumFetcher:
     def __init__(self, session: requests.Session | None = None) -> None:
         self.session = session or requests.Session()
 
-    def fetch_posts(self, user: str, keywords: Iterable[str], limit: int = 5) -> List[Dict[str, str]]:
+    def fetch_posts(
+        self,
+        user: str,
+        keywords: Iterable[str],
+        limit: int = 5,
+    ) -> List[Dict[str, str]]:
         url = f"https://medium.com/feed/@{user}"
         resp = self.session.get(url, timeout=10)
         posts: List[Dict[str, str]] = []
@@ -121,7 +126,15 @@ class TrendMonitor:
     # ------------------------------------------------------------------
     def generate_content(self, trend: Dict[str, Any]) -> Dict[str, Any]:
         text = trend["text"]
-        summary = "".join(self.gpt4.stream_chat("monitor", [0.0], "summary", text))
+        summary = "".join(
+            self.gpt4.stream_chat(
+                "monitor",
+                [0.0],
+                "summary",
+                text,
+                context_builder=self.gpt4.context_builder,
+            )
+        )
         trend["summary"] = summary
         self.vector.log("trend", [0.0] * 1536, summary)
         return trend
