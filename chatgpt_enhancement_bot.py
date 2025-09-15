@@ -1008,9 +1008,12 @@ def summarise_text(text: str, ratio: float = DEFAULT_SUMMARY_RATIO) -> str:
     return ". ".join(sentences[:count]) + "."
 
 
-def parse_enhancements(data: dict[str, object]) -> List[Enhancement]:
+def parse_enhancements(data: dict[str, object] | str) -> List[Enhancement]:
     """Parse enhancements from ChatGPT JSON response."""
-    text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if isinstance(data, str):
+        text = data
+    else:
+        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
     try:
         items = json.loads(text)
         if not isinstance(items, list):

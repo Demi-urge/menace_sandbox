@@ -25,7 +25,11 @@ def test_context_injection_and_logging():
 
     client.ask = fake_ask
     knowledge = DummyKnowledge()
-    builder = SimpleNamespace(build=lambda *a, **k: "")
+    from prompt_types import Prompt
+
+    builder = SimpleNamespace(
+        build_prompt=lambda q, **k: Prompt(user=q)
+    )
 
     magc.ask_with_memory(
         client,

@@ -10,7 +10,7 @@ delegating to ``ChatGPTClient`` and the interaction is logged back to the
 module.
 """
 
-from typing import Sequence, Any
+from typing import Sequence, Any, Dict
 import uuid
 
 try:  # pragma: no cover - optional dependency
@@ -18,21 +18,21 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when logging unavailable
     def ensure_tags(key: str, tags: Sequence[str] | None) -> list[str]:
         return [key, *(tags or [])]
-from snippet_compressor import compress_snippets
 
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder, FallbackResult
+    from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback when vector service missing
     ContextBuilder = Any  # type: ignore
 
-    class FallbackResult(list):  # type: ignore
-        """Fallback placeholder when vector service is unavailable."""
-
 try:  # pragma: no cover - optional dependency
-    from vector_service import ErrorResult  # type: ignore
-except Exception:  # pragma: no cover - fallback when service missing
-    class ErrorResult(Exception):  # type: ignore
-        """Fallback placeholder when vector service is unavailable."""
+    from prompt_types import Prompt
+except Exception:  # pragma: no cover - minimal stub
+    class Prompt:  # type: ignore
+        def __init__(self, user: str = "", **_: Any) -> None:
+            self.system = ""
+            self.user = user
+            self.examples: list[str] = []
+            self.metadata: Dict[str, Any] = {}
 
 try:  # pragma: no cover - allow flat imports
     from .local_knowledge_module import LocalKnowledgeModule
@@ -59,7 +59,9 @@ def ask_with_memory(
     memory: LocalKnowledgeModule,
     context_builder: ContextBuilder,
     tags: Sequence[str] | None = None,
-) -> dict:
+    intent: Dict[str, Any] | None = None,
+    metadata: Dict[str, Any] | None = None,
+) -> str:
     """Query ``client`` with ``prompt`` augmented by prior context.
 
     Parameters
@@ -79,31 +81,34 @@ def ask_with_memory(
         :class:`ContextBuilder` used to retrieve vector-based context snippets.
     tags:
         Tags applied when logging the interaction.
+    intent:
+        Optional intent metadata forwarded to ``context_builder``.
+    metadata:
+        Backwards compatible alias for ``intent``.
     """
 
-    try:
-        ctx = memory.build_context(key, limit=5)
-    except Exception:
-        ctx = ""
-    full_prompt = f"{ctx}\n\n{prompt}" if ctx else prompt
+    intent_payload = intent or metadata
 
-    vec_ctx = ""
+    try:
+        mem_ctx = memory.build_context(key, limit=5)
+    except Exception:
+        mem_ctx = ""
+
     session_id = uuid.uuid4().hex
-    try:
-        ctx_res = context_builder.build(key, session_id=session_id)
-        vec_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-        if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
-            vec_ctx = ""
-        elif vec_ctx:
-            vec_ctx = compress_snippets({"snippet": vec_ctx}).get(
-                "snippet", vec_ctx
-            )
-    except Exception:
-        vec_ctx = ""
-    if vec_ctx:
-        full_prompt = f"{vec_ctx}\n\n{full_prompt}"
+    prompt_obj = context_builder.build_prompt(
+        prompt, intent=intent_payload, session_id=session_id
+    )
 
-    messages = [{"role": "user", "content": full_prompt}]
+    if mem_ctx:
+        prompt_obj.examples.insert(0, mem_ctx)
+
+    messages: list[dict[str, str]] = []
+    if prompt_obj.system:
+        messages.append({"role": "system", "content": prompt_obj.system})
+    for ex in getattr(prompt_obj, "examples", []):
+        messages.append({"role": "system", "content": ex})
+    messages.append({"role": "user", "content": prompt_obj.user})
+
     full_tags = ensure_tags(key, tags)
     data = client.ask(
         messages, use_memory=False, memory_manager=None, tags=full_tags
@@ -114,7 +119,10 @@ def ask_with_memory(
         .get("content", "")
     )
     try:
-        memory.log(full_prompt, text, full_tags)
+        log_prompt = "\n\n".join(prompt_obj.examples + [prompt_obj.user])
+        if prompt_obj.system:
+            log_prompt = f"{prompt_obj.system}\n\n{log_prompt}"
+        memory.log(log_prompt, text, full_tags)
     except Exception:
         pass
-    return data
+    return text

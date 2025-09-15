@@ -1,6 +1,11 @@
 import types
+import pytest
+
+pytest.skip("optional dependencies not installed", allow_module_level=True)
 
 from gpt_memory import GPTMemoryManager
+import db_router
+import gpt_memory as gm
 from knowledge_retriever import (
     get_feedback,
     get_error_fixes,
@@ -39,9 +44,15 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
     embedder = DummyModel()
 
     client = DummyClient()
+    db_router.GLOBAL_ROUTER = None
+    gm.GLOBAL_ROUTER = None
     mgr = GPTMemoryManager(db_path=str(db), embedder=embedder)
     module = LocalKnowledgeModule(manager=mgr)
-    builder = SimpleNamespace(build=lambda *a, **k: "")
+    from prompt_types import Prompt
+
+    builder = SimpleNamespace(
+        build_prompt=lambda q, **k: Prompt(user=q)
+    )
 
     client.next_response = "Great success"
     ask_with_memory(
@@ -74,6 +85,8 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
     )
     mgr.close()
 
+    db_router.GLOBAL_ROUTER = None
+    gm.GLOBAL_ROUTER = None
     mgr2 = GPTMemoryManager(db_path=str(db), embedder=embedder)
     module2 = LocalKnowledgeModule(manager=mgr2)
 

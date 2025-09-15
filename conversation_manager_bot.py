@@ -144,18 +144,13 @@ class ConversationManagerBot:
     def _chatgpt(self, prompt: str) -> str:
         if prompt in self.cache:
             return self.cache[prompt]
-        data = ask_with_memory(
+        text = ask_with_memory(
             self.client,
             "conversation_manager_bot._chatgpt",
             prompt,
             memory=self.gpt_memory,
             context_builder=self.client.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-        )
-        text = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
         )
         self.cache[prompt] = text
         return text

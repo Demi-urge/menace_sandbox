@@ -2,6 +2,7 @@ import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
 import json  # noqa: E402
 import types
+from prompt_types import Prompt  # noqa: E402
 import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
 
 
@@ -63,8 +64,8 @@ def test_generate_and_filter(monkeypatch):
         def refresh_db_weights(self):
             pass
 
-        def build(self, query, **_):
-            return ""
+        def build_prompt(self, query, **_):
+            return Prompt(user=query)
     builder = DummyBuilder()
     client = cib.ChatGPTClient("key", context_builder=builder)
     monkeypatch.setattr(client, "ask", lambda msgs, **kw: fake_resp)

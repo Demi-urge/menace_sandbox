@@ -2,6 +2,8 @@ from types import SimpleNamespace
 
 from memory_aware_gpt_client import ask_with_memory
 from local_knowledge_module import LocalKnowledgeModule
+import db_router
+import gpt_memory as gm
 from gpt_memory import (
     FEEDBACK,
     ERROR_FIX,
@@ -40,8 +42,14 @@ def test_memory_continuity_across_sessions(tmp_path):
     client = DummyClient(
         [responses[FEEDBACK], responses[ERROR_FIX], responses[IMPROVEMENT_PATH]]
     )
+    db_router.GLOBAL_ROUTER = None
+    gm.GLOBAL_ROUTER = None
     module_a = LocalKnowledgeModule(db_path=db_file)
-    builder = SimpleNamespace(build=lambda *a, **k: "")
+    from prompt_types import Prompt
+
+    builder = SimpleNamespace(
+        build_prompt=lambda q, **k: Prompt(user=q)
+    )
 
     ask_with_memory(
         client,
@@ -77,6 +85,8 @@ def test_memory_continuity_across_sessions(tmp_path):
     )
     module_a.memory.close()
 
+    db_router.GLOBAL_ROUTER = None
+    gm.GLOBAL_ROUTER = None
     module_b = LocalKnowledgeModule(db_path=db_file)
 
     fb_entries = [e for e in module_b.memory.retrieve("", tags=[FEEDBACK]) if INSIGHT not in e.tags]
