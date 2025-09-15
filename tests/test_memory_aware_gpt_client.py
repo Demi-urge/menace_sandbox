@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-import sys
 
 import pytest
 
@@ -53,20 +52,10 @@ def test_context_injection_and_logging():
     assert knowledge.logged and knowledge.logged[0][0].endswith("Do it")
 
 
-def test_context_builder_failure_raises_and_no_call(monkeypatch):
+def test_context_builder_failure_raises_and_no_call():
     class FailingBuilder:
         def build_prompt(self, *args, **kwargs):
             raise RuntimeError("boom")
-
-    class DummyEngine:
-        def build_enriched_prompt(self, *a, **k):
-            raise RuntimeError("sce boom")
-
-    monkeypatch.setitem(
-        sys.modules,
-        "self_coding_engine",
-        SimpleNamespace(SelfCodingEngine=DummyEngine),
-    )
 
     knowledge = DummyKnowledge()
     called = False
@@ -90,39 +79,23 @@ def test_context_builder_failure_raises_and_no_call(monkeypatch):
     assert not called
 
 
-def test_context_builder_failure_uses_self_coding_engine(monkeypatch):
-    class FailingBuilder:
-        def build_prompt(self, *args, **kwargs):
-            raise RuntimeError("boom")
-
-    class DummyEngine:
-        def build_enriched_prompt(self, goal, *, intent, context_builder):
-            return Prompt(user=f"{goal}!", examples=["sce"], metadata={})
-
-    monkeypatch.setitem(
-        sys.modules,
-        "self_coding_engine",
-        SimpleNamespace(SelfCodingEngine=DummyEngine),
-    )
-
-    captured = {}
-
-    def fake_ask(prompt, **kw):
-        captured["prompt"] = prompt
-        return {"choices": [{"message": {"content": "ok"}}]}
-
+def test_missing_context_builder_raises():
     knowledge = DummyKnowledge()
+    called = False
+
+    def fake_ask(*a, **k):
+        nonlocal called
+        called = True
+
     client = SimpleNamespace(ask=fake_ask)
-    builder = FailingBuilder()
 
-    magc.ask_with_memory(
-        client,
-        "mod.act",
-        "Do it",
-        memory=knowledge,
-        context_builder=builder,
-    )
+    with pytest.raises(AttributeError):
+        magc.ask_with_memory(
+            client,
+            "mod.act",
+            "Do it",
+            memory=knowledge,
+            context_builder=None,  # type: ignore[arg-type]
+        )
 
-    sent_prompt = captured["prompt"]
-    assert isinstance(sent_prompt, Prompt)
-    assert sent_prompt.user.endswith("!")
+    assert not called
