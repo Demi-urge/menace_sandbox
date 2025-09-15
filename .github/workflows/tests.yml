@@ -40,6 +40,8 @@ jobs:
         run: "python tools/check_dynamic_paths.py $(git ls-files '*.py')"
       - name: Enforce ContextBuilder usage
         run: pre-commit run check-context-builder-usage --all-files
+      - name: Run context builder usage script
+        run: python scripts/check_context_builder_usage.py
       - name: Ensure SelfCodingEngine bots are decorated and registered
         run: python tools/check_coding_bot_decorators.py
       - name: Check for direct SelfCodingEngine patch usage
@@ -93,6 +95,8 @@ jobs:
         run: pip install pre-commit
       - name: Enforce ContextBuilder usage
         run: pre-commit run check-context-builder-usage --all-files
+      - name: Run context builder usage script
+        run: python scripts/check_context_builder_usage.py
       - name: Check for ungoverned embedding calls
         run: pre-commit run check-governed-embeddings --all-files
       - name: Check for direct sqlite3 connections
