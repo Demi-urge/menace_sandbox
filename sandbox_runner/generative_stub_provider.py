@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
 
 from logging_utils import get_logger, set_correlation_id, log_record
-from vector_service.context_builder import build_prompt as cb_build_prompt
+from vector_service.context_builder import ContextBuilder, build_prompt as cb_build_prompt
 try:  # pragma: no cover - allow flat import
     from metrics_exporter import (
         stub_generation_requests_total,
@@ -822,6 +822,8 @@ async def _async_generate_stubs(
     """Generate or enhance ``stubs`` using recent history or a language model."""
     config = config or get_config()
 
+    builder: ContextBuilder | None = ctx.get("context_builder")
+
     strategy = ctx.get("strategy")
 
     if not _CACHE:
@@ -925,12 +927,14 @@ async def _async_generate_stubs(
                 continue
         args = ", ".join(f"{k}={v!r}" for k, v in stub.items())
         intent_meta = {"stub_args": dict(stub)}
-        prompt_obj = cb_build_prompt(
-            template.format(name=name, args=args),
-            intent_metadata=intent_meta,
-        )
+        query = template.format(name=name, args=args)
 
         async def _invoke() -> str:
+            prompt_obj = (
+                builder.build_prompt(query, intent_metadata=intent_meta)
+                if builder is not None
+                else cb_build_prompt(query, intent_metadata=intent_meta)
+            )
             call = getattr(gen, "generate", gen)
             result = call(prompt_obj)  # type: ignore[attr-defined]
             if isinstance(result, asyncio.Task):
