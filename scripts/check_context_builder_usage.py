@@ -53,6 +53,9 @@ infrastructure.  Direct ``Prompt(...)`` construction is forbidden outside
 ``ContextBuilder.build_prompt`` or ``SelfCodingEngine.build_enriched_prompt``
 directly to the client.  Lists or dicts supplied directly as ``messages`` to
 ``.generate`` methods are also disallowed; use the canonical builders instead.
+Results of ``context_builder.build(...)`` must be passed directly to the
+client; concatenating them with additional strings or lists is reported.
+Direct ``ask_with_memory`` calls are likewise flagged.
 """
 from __future__ import annotations
 
@@ -107,6 +110,20 @@ def _is_string_expr(node: ast.AST) -> bool:
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _is_string_expr(node.left) or _is_string_expr(node.right)
     return False
+
+
+def _is_builder_build_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "build"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "context_builder"
+    )
+
+
+def _contains_builder_build(node: ast.AST) -> bool:
+    return any(_is_builder_build_call(n) for n in ast.walk(node))
 
 
 def iter_python_files(root: Path):
@@ -175,6 +192,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             self.generate_aliases: set[str] = set()
             self.llm_instances: set[str] = set()
             self.prompt_vars: set[str] = set()
+            self._checked_builder_nodes: set[int] = set()
 
         @staticmethod
         def _has_default(arg: ast.arg, default: ast.AST | None) -> bool:
@@ -311,6 +329,49 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                                 return True
             return False
 
+        def _check_builder_concat(self, expr: ast.AST) -> None:
+            if id(expr) in self._checked_builder_nodes:
+                return
+            self._checked_builder_nodes.add(id(expr))
+            if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+                if _contains_builder_build(expr):
+                    line_no = expr.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "context_builder.build result concatenation disallowed; pass directly",
+                            )
+                        )
+            elif isinstance(expr, ast.JoinedStr):
+                if any(_contains_builder_build(v) for v in expr.values):
+                    line_no = expr.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "context_builder.build result concatenation disallowed; pass directly",
+                            )
+                        )
+            elif isinstance(expr, ast.List):
+                if _contains_builder_build(expr) and not (
+                    len(expr.elts) == 1 and _is_builder_build_call(expr.elts[0])
+                ):
+                    line_no = expr.lineno
+                    line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                    prev = lines[line_no - 2] if line_no >= 2 else ""
+                    if NOCB_MARK not in line and NOCB_MARK not in prev:
+                        errors.append(
+                            (
+                                line_no,
+                                "context_builder.build result concatenation disallowed; pass directly",
+                            )
+                        )
+
         def _check_prompt_strings(self, node: ast.Call, is_llm_call: bool) -> None:
             if not is_llm_call:
                 return
@@ -323,6 +384,9 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     candidates.append(kw.value)
 
             for expr in candidates:
+                self._check_builder_concat(expr)
+                if _contains_builder_build(expr):
+                    continue
                 if _is_string_expr(expr):
                     line_no = expr.lineno
                     line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
@@ -343,12 +407,24 @@ def check_file(path: Path) -> list[tuple[int, str]]:
 
             candidates: list[ast.AST] = []
             if node.args:
-                candidates.append(node.args[0])
+                first = node.args[0]
+                if isinstance(first, (ast.List, ast.Dict)) or (
+                    isinstance(first, ast.BinOp)
+                    and isinstance(first.op, ast.Add)
+                    and (
+                        isinstance(first.left, (ast.List, ast.Dict))
+                        or isinstance(first.right, (ast.List, ast.Dict))
+                    )
+                ):
+                    candidates.append(first)
             for kw in node.keywords:
                 if kw.arg == "messages":
                     candidates.append(kw.value)
 
             for expr in candidates:
+                self._check_builder_concat(expr)
+                if _contains_builder_build(expr):
+                    continue
                 if isinstance(expr, (ast.List, ast.Dict)):
                     line_no = expr.lineno
                     line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
@@ -436,6 +512,20 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                             line_no,
                             "direct Prompt instantiation disallowed; use "
                             "context_builder.build_prompt",
+                        )
+                    )
+                self.generic_visit(node)
+                return
+
+            if name_simple == "ask_with_memory":
+                line_no = node.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append(
+                        (
+                            line_no,
+                            "ask_with_memory disallowed; use ContextBuilder.build_prompt",
                         )
                     )
                 self.generic_visit(node)

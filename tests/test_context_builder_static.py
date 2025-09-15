@@ -42,8 +42,8 @@ def test_flags_openai_calls(tmp_path):
 
     code = (
         "import openai\n"
-        "def demo():\n"
-        "    openai.ChatCompletion.create([])\n"
+        "def demo(x):\n"
+        "    openai.ChatCompletion.create(x)\n"
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
@@ -57,8 +57,8 @@ def test_flags_chat_completion_wrapper(tmp_path):
 
     code = (
         "from billing.openai_wrapper import chat_completion_create\n"
-        "def demo():\n"
-        "    chat_completion_create([])\n"
+        "def demo(x):\n"
+        "    chat_completion_create(x)\n"
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
@@ -216,7 +216,7 @@ def test_flags_manual_string_prompt(tmp_path):
     assert check_file(path) == [
         (
             4,
-            "manual string prompt disallowed; use ContextBuilder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+            "manual string prompt disallowed; use context_builder.build_prompt or SelfCodingEngine.build_enriched_prompt",
         )
     ]
 
@@ -235,7 +235,7 @@ def test_flags_string_concatenation_prompt(tmp_path):
     assert check_file(path) == [
         (
             4,
-            "manual string prompt disallowed; use ContextBuilder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+            "manual string prompt disallowed; use context_builder.build_prompt or SelfCodingEngine.build_enriched_prompt",
         )
     ]
 
@@ -252,4 +252,46 @@ def test_flags_prompt_engine_build_prompt(tmp_path):
     path.write_text(code)
     assert check_file(path) == [
         (3, "PromptEngine.build_prompt disallowed; use ContextBuilder.build_prompt"),
+    ]
+
+
+def test_flags_context_builder_build_concatenation(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(llm, context_builder):\n"
+        "    llm.generate(context_builder.build('x') + 'y', context_builder=context_builder)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (2, "context_builder.build result concatenation disallowed; pass directly")
+    ]
+
+
+def test_flags_context_builder_build_list_concatenation(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(llm, context_builder):\n"
+        "    llm.generate(context_builder.build('x') + ['y'], context_builder=context_builder)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (2, "context_builder.build result concatenation disallowed; pass directly")
+    ]
+
+
+def test_flags_ask_with_memory(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo():\n"
+        "    ask_with_memory('c', 'k', 'p')\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (2, "ask_with_memory disallowed; use ContextBuilder.build_prompt")
     ]

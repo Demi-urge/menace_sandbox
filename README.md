@@ -228,7 +228,10 @@ flags any `_build_prompt`, `build_prompt`, `generate_patch` or `.generate()`
 call on `LLMClient`-like instances missing `context_builder`. Functions that
 invoke `ContextBuilder.build` while allowing a `None` default or fallback
 builder are reported as well. Variables assigned from these classes are
-tracked and aliases such as `llm` or `model` are heuristically inspected:
+tracked and aliases such as `llm` or `model` are heuristically inspected.
+Manual string prompts, direct `Prompt` construction, message lists/dicts,
+concatenating `context_builder.build` results with other strings or lists, and
+direct `ask_with_memory` calls are all flagged:
 
 ```bash
 python scripts/check_context_builder_usage.py
@@ -762,7 +765,10 @@ stop.set()
 Use `memory_aware_gpt_client.ask_with_memory` to automatically prepend past
 feedback, improvement paths and error fixes to a new prompt.  Callers must
 provide a ``key`` identifying the module and action so related interactions can
-be retrieved and logged.  Example:
+be retrieved and logged.  Direct `ask_with_memory` calls are flagged by
+`scripts/check_context_builder_usage.py` since the helper may bypass
+`ContextBuilder.build_prompt`; build prompts via the context builder before
+invoking the wrapper. Example:
 
 ```python
 from memory_aware_gpt_client import ask_with_memory
