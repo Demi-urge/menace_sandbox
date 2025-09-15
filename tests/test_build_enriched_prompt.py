@@ -125,23 +125,57 @@ Prompt = self_coding_engine.Prompt
 
 class DummyBuilder:
     def build_prompt(self, goal: str, **kwargs):
-        return Prompt(user=goal, metadata={"vectors": [("p", 0.5)], "vector_confidences": [0.5]})
+        return Prompt(
+            user=goal,
+            metadata={
+                "vectors": [("p", 0.5), ("p", 0.4)],
+                "vector_confidences": [0.5, 0.4],
+                "intent_tags": ["existing", "existing"],
+                "foo": "bar",
+            },
+        )
 
 
-def test_enriched_prompt_merges_metadata():
+def _make_engine():
     engine = SelfCodingEngine.__new__(SelfCodingEngine)
     engine.context_builder = DummyBuilder()
     engine._last_retry_trace = "trace"
     engine._last_prompt_metadata = {}
-    intent = {"query": "do things", "intent": "meta"}
+    return engine
+
+
+def test_enriched_prompt_merges_metadata():
+    engine = _make_engine()
     prompt = engine.build_enriched_prompt(
-        intent,
+        "do things",
+        intent={"intent_tags": ["meta"]},
         context_builder=engine.context_builder,
     )
-    assert prompt.metadata["intent"]["intent"] == "meta"
     assert prompt.metadata["error_log"] == "trace"
-    assert "vectors" in prompt.metadata
+    assert set(prompt.metadata["intent_tags"]) == {"meta", "existing"}
     assert engine._last_prompt is prompt
+
+
+def test_enriched_prompt_deduplicates():
+    engine = _make_engine()
+    prompt = engine.build_enriched_prompt(
+        "do things",
+        intent={"intent_tags": ["meta", "meta"]},
+        context_builder=engine.context_builder,
+    )
+    assert prompt.metadata["vectors"] == [("p", 0.5)]
+    assert prompt.metadata["vector_confidences"] == [0.5]
+    assert set(prompt.metadata["intent_tags"]) == {"meta", "existing"}
+
+
+def test_enriched_prompt_propagates_metadata():
+    engine = _make_engine()
+    prompt = engine.build_enriched_prompt(
+        "do things",
+        context_builder=engine.context_builder,
+    )
+    assert prompt.metadata["foo"] == "bar"
+    assert engine._last_prompt_metadata["foo"] == "bar"
 
 
 def test_llm_requires_enriched_prompt():
