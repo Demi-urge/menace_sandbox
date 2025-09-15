@@ -5,6 +5,7 @@ from sandbox_settings import SandboxSettings
 from llm_interface import Prompt
 import requests
 import pytest
+import types
 
 
 class DummyResp:
@@ -37,7 +38,10 @@ def test_anthropic_client_via_settings(monkeypatch, tmp_path):
     )
     settings = SandboxSettings(preferred_llm_backend="anthropic")
     client = client_from_settings(settings)
-    res = client.generate(Prompt(text="hi", origin="context_builder"))
+    res = client.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        context_builder=_BUILDER,
+    )
     assert res.text == "ok"
     assert res.prompt_tokens == 1
     assert res.completion_tokens == 2
@@ -52,7 +56,10 @@ def test_mixtral_local_backend(monkeypatch):
     )
     settings = SandboxSettings(preferred_llm_backend="mixtral")
     client = client_from_settings(settings)
-    result = client.generate(Prompt(text="hello", origin="context_builder"))
+    result = client.generate(
+        Prompt(text="hello", vector_confidence=0.5, origin="context_builder"),
+        context_builder=_BUILDER,
+    )
     assert result.text == "local"
     assert client.model == "mixtral"
 
@@ -66,7 +73,10 @@ def test_llama3_local_backend(monkeypatch):
     )
     settings = SandboxSettings(preferred_llm_backend="llama3")
     client = client_from_settings(settings)
-    res = client.generate(Prompt(text="hi", origin="context_builder"))
+    res = client.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        context_builder=_BUILDER,
+    )
     assert res.text == "llama"
     assert client.model == "llama3"
 
@@ -96,7 +106,10 @@ def test_rest_backend_retries_and_latency(monkeypatch):
     monkeypatch.setattr(local_backend.requests.Session, "post", fake_post)
 
     backend = local_backend.OllamaBackend(model="m", base_url="http://x")
-    result = backend.generate(Prompt(text="hi", origin="context_builder"))
+    result = backend.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        context_builder=_BUILDER,
+    )
     assert result.text == "ok"
     assert result.latency_ms == 1000.0
     assert result.prompt_tokens == local_backend.rate_limit.estimate_tokens("hi", model="m")
@@ -122,7 +135,10 @@ def test_rest_backend_propagates_failure(monkeypatch):
 
     backend = local_backend.OllamaBackend(model="m", base_url="http://x")
     with pytest.raises(local_backend._RetryableHTTPError):
-        backend.generate(Prompt(text="hi", origin="context_builder"))
+        backend.generate(
+            Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+            context_builder=_BUILDER,
+        )
 
 
 @pytest.mark.parametrize(
@@ -157,5 +173,9 @@ def test_local_clients_log(monkeypatch, factory, name):
     monkeypatch.setattr(prompt_db, "PromptDB", DummyDB)
 
     client = factory()
-    client.generate(Prompt(text="hi", origin="context_builder"))
+    client.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        context_builder=_BUILDER,
+    )
     assert logged == {"prompt": "hi", "backend": name}
+_BUILDER = types.SimpleNamespace(roi_tracker=None)

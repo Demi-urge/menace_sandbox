@@ -8,6 +8,7 @@ from llm_router import LLMRouter
 from prompt_db import PromptDB
 from completion_parsers import parse_json
 import asyncio
+import pytest
 from context_builder_util import create_context_builder
 
 
@@ -57,7 +58,7 @@ class FailingClient(LLMClient):
     def __init__(self):
         super().__init__("fail", log_prompts=False)
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
         raise RuntimeError("boom")
 
 
@@ -66,14 +67,16 @@ class EchoClient(LLMClient):
         super().__init__("echo", log_prompts=False)
         self.calls = 0
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
         self.calls += 1
         return LLMResult(text="local")
 
 
 def test_router_fallback_on_error():
     router = LLMRouter(remote=FailingClient(), local=EchoClient(), size_threshold=1)
-    res = router.generate(Prompt(text="hi", origin="context_builder"))
+    res = router.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+    )
     assert res.text == "local"
 
 
@@ -177,18 +180,25 @@ def test_router_fallback_logs(monkeypatch):
         def __init__(self):
             super().__init__("boom")
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             raise RuntimeError("fail")
 
     class LocalClient(LLMClient):
         def __init__(self):
             super().__init__("local")
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(text="ok")
 
     router = LLMRouter(remote=BoomClient(), local=LocalClient(), size_threshold=1)
-    res = router.generate(Prompt(text="task", metadata={"tags": ["x"]}, origin="context_builder"))
+    res = router.generate(
+        Prompt(
+            text="task",
+            metadata={"tags": ["x"]},
+            vector_confidence=0.5,
+            origin="context_builder",
+        )
+    )
     assert res.text == "ok"
     assert res.raw["backend"] == "local"
     assert logged == ["local"]
@@ -200,17 +210,19 @@ def test_client_backends_fallback():
     class BoomBackend:
         model = "boom"
 
-        def generate(self, prompt: Prompt) -> LLMResult:
+        def generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             raise RuntimeError("fail")
 
     class LocalBackend:
         model = "local"
 
-        def generate(self, prompt: Prompt) -> LLMResult:
+        def generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(text="local")
 
     client = LLMClient(backends=[BoomBackend(), LocalBackend()], log_prompts=False)
-    res = client.generate(Prompt(text="hi", origin="context_builder"))
+    res = client.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+    )
     assert res.text == "local"
 
 
@@ -220,17 +232,24 @@ def test_client_small_task_uses_local():
     class RemoteBackend:
         model = "remote"
 
-        def generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - should not run
+        def generate(self, prompt: Prompt, *, context_builder) -> LLMResult:  # pragma: no cover - should not run
             raise AssertionError("should not be called")
 
     class LocalBackend:
         model = "local"
 
-        def generate(self, prompt: Prompt) -> LLMResult:
+        def generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(text="ok")
 
     client = LLMClient(backends=[RemoteBackend(), LocalBackend()], log_prompts=False)
-    res = client.generate(Prompt(text="task", metadata={"small_task": True}, origin="context_builder"))
+    res = client.generate(
+        Prompt(
+            text="task",
+            metadata={"small_task": True},
+            vector_confidence=0.5,
+            origin="context_builder",
+        )
+    )
     assert res.text == "ok"
 
 
@@ -245,9 +264,63 @@ def test_generate_applies_parse_fn():
     client = Dummy()
     builder = create_context_builder()
     res = client.generate(
-        Prompt(text="hi", origin="context_builder"), parse_fn=parse_json, context_builder=builder
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        parse_fn=parse_json,
+        context_builder=builder,
     )
     assert res.parsed == {"a": 1}
+
+
+def test_generate_rejects_missing_or_invalid_origin():
+    class Dummy(LLMClient):
+        def __init__(self):
+            super().__init__("dummy", log_prompts=False)
+
+        def _generate(self, prompt: Prompt, *, context_builder):  # type: ignore[override]
+            return LLMResult(text="ok")
+
+    client = Dummy()
+    builder = create_context_builder()
+
+    prompt = Prompt(text="hi", metadata={"vector_confidences": [0.4]})
+    with pytest.raises(ValueError):
+        client.generate(prompt, context_builder=builder)
+
+    bad_origin = Prompt(
+        text="hi",
+        metadata={"vector_confidences": [0.4]},
+        origin="invalid",
+    )
+    with pytest.raises(ValueError):
+        client.generate(bad_origin, context_builder=builder)
+
+
+def test_async_generate_rejects_missing_or_invalid_origin():
+    class DummyAsync(LLMClient):
+        def __init__(self):
+            super().__init__("async", log_prompts=False)
+
+        async def _async_generate(self, prompt, *, context_builder):  # type: ignore[override]
+            yield "ok"
+
+    client = DummyAsync()
+    builder = create_context_builder()
+
+    async def consume(prompt: Prompt):
+        agen = client.async_generate(prompt, context_builder=builder)
+        await agen.__anext__()
+
+    missing_origin = Prompt(text="hi", metadata={"vector_confidences": [0.2]})
+    with pytest.raises(ValueError):
+        asyncio.run(consume(missing_origin))
+
+    invalid_origin = Prompt(
+        text="hi",
+        metadata={"vector_confidences": [0.2]},
+        origin="bogus",
+    )
+    with pytest.raises(ValueError):
+        asyncio.run(consume(invalid_origin))
 
 
 def test_generate_parse_fn_error_ignored():
@@ -255,14 +328,16 @@ def test_generate_parse_fn_error_ignored():
         def __init__(self):
             super().__init__("dummy", log_prompts=False)
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(text="oops")
 
     def bad(_text: str):  # pragma: no cover - intentional failure
         raise ValueError("fail")
 
     client = Dummy()
-    res = client.generate(Prompt(text="hi", origin="context_builder"), parse_fn=bad)
+    res = client.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"), parse_fn=bad
+    )
     assert res.parsed is None
 
 
@@ -286,11 +361,11 @@ def test_successful_call_logs_and_returns_raw_and_parsed(monkeypatch):
         def __init__(self):
             super().__init__("dummy")
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(raw={"x": 1, "backend": "dummy"}, text="{\"a\":1}")
 
     client = DummyClient()
-    prompt = Prompt(text="hi", origin="context_builder")
+    prompt = Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
     result = client.generate(prompt, parse_fn=parse_json)
 
     assert result.raw == {"x": 1, "backend": "dummy"}
@@ -338,7 +413,10 @@ def test_openai_provider_retries_on_server_error(monkeypatch):
     provider = OpenAIProvider(max_retries=2)
     monkeypatch.setattr(provider._session, "post", fake_post)
 
-    result = provider.generate(Prompt(text="hi", origin="context_builder"))
+    result = provider.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        context_builder=create_context_builder(),
+    )
 
     assert result.parsed == {"b": 2}
     assert result.raw["choices"][0]["message"]["content"] == "{\"b\":2}"
@@ -414,7 +492,9 @@ def test_openai_provider_async_stream(monkeypatch):
     chunks: list[str] = []
 
     async def run():
-        async for part in provider.async_generate(Prompt(text="hi", origin="context_builder")):
+        async for part in provider.async_generate(
+            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+        ):
             chunks.append(part)
 
     asyncio.run(run())
@@ -441,7 +521,9 @@ def test_openai_provider_async_logging(monkeypatch):
     provider = OpenAIProvider()
 
     async def run():
-        async for _ in provider.async_generate(Prompt(text="hi", origin="context_builder")):
+        async for _ in provider.async_generate(
+            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+        ):
             pass
 
     asyncio.run(run())
@@ -456,7 +538,10 @@ def test_openai_provider_streaming_sync_wrapper(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     provider = OpenAIProvider()
 
-    result = provider.generate(Prompt(text="hi", origin="context_builder"))
+    result = provider.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        context_builder=create_context_builder(),
+    )
     assert result.text == "Hello"
 
 
@@ -508,7 +593,9 @@ def test_rest_backend_async_stream(monkeypatch):
     chunks: list[str] = []
 
     async def run():
-        async for part in client.async_generate(Prompt(text="hi", origin="context_builder")):
+        async for part in client.async_generate(
+            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+        ):
             chunks.append(part)
 
     asyncio.run(run())
@@ -536,7 +623,9 @@ def test_rest_backend_async_logging(monkeypatch):
     client = LLMClient(model="m", backends=[backend], log_prompts=True)
 
     async def run():
-        async for _ in client.async_generate(Prompt(text="hi", origin="context_builder")):
+        async for _ in client.async_generate(
+            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+        ):
             pass
 
     asyncio.run(run())
@@ -592,7 +681,9 @@ def test_rest_backend_async_stream_sse(monkeypatch):
     chunks: list[str] = []
 
     async def run():
-        async for part in client.async_generate(Prompt(text="hi", origin="context_builder")):
+        async for part in client.async_generate(
+            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+        ):
             chunks.append(part)
 
     asyncio.run(run())

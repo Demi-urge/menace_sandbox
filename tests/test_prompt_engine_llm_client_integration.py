@@ -21,7 +21,7 @@ class CapturingClient(LLMClient):
         super().__init__("capture", log_prompts=False)
         self.seen: list[Prompt] = []
 
-    def _generate(self, prompt: Prompt) -> LLMResult:
+    def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
         self.seen.append(prompt)
         # Return JSON to exercise parsed handling
         return LLMResult(text='{"result": "ok"}', parsed={"result": "ok"})

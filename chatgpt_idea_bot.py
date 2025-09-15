@@ -10,6 +10,7 @@ from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
 from billing.prompt_notice import prepend_payment_notice
 from prompt_types import Prompt
+from llm_interface import LLMClient, LLMResult
 try:  # pragma: no cover - optional billing dependency
     import stripe_billing_router  # noqa: F401
 except Exception:  # pragma: no cover - best effort
@@ -108,7 +109,7 @@ IDEA_DB_PATH = Path(resolve_path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA
 
 
 @dataclass
-class ChatGPTClient:
+class ChatGPTClient(LLMClient):
     """Wrapper for SelfCodingEngine-driven chat completion with offline fallback.
 
     The former OpenAI-based approach is retained for legacy compatibility.
@@ -126,8 +127,10 @@ class ChatGPTClient:
         default_factory=lambda: GPT_MEMORY_MANAGER
     )
     context_builder: ContextBuilder = field(kw_only=True)
+    log_prompts: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
+        LLMClient.__init__(self, model=self.model, log_prompts=self.log_prompts)
         if not self.session:
             if requests is None:
                 raise ImportError("requests library required for ChatGPTClient")
@@ -317,11 +320,13 @@ class ChatGPTClient:
                             if govern_retrieval(text) is None:
                                 continue
                             ctx_parts.append(redact(text))
+                    context_text = ""
                     if ctx_parts:
                         context_text = "\n\n".join(ctx_parts)
-                    if len(context_text) > max_summary_length:
-                        context_text = context_text[:max_summary_length]
-                    messages_for_api[0]["content"] += "\n" + context_text
+                        if len(context_text) > max_summary_length:
+                            context_text = context_text[:max_summary_length]
+                    if context_text:
+                        messages_for_api[0]["content"] += "\n" + context_text
             except Exception:
                 logger.exception("context retrieval failed")
 
@@ -414,6 +419,65 @@ class ChatGPTClient:
         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
         _log(messages_for_api, text)
         return result
+
+    def _generate(
+        self, prompt: Prompt, *, context_builder: ContextBuilder
+    ) -> LLMResult:  # type: ignore[override]
+        """Return an :class:`LLMResult` for ``prompt`` using :meth:`ask`."""
+
+        data = self.ask(prompt)
+        if isinstance(data, LLMResult):
+            return data
+
+        text = ""
+        prompt_tokens = completion_tokens = None
+        input_tokens = output_tokens = None
+        cost = None
+        latency = None
+
+        if isinstance(data, dict):
+            raw: Dict[str, Any] = dict(data)
+            raw.setdefault("backend", "chatgpt_client")
+            raw.setdefault("model", self.model)
+            choices = raw.get("choices")
+            if isinstance(choices, list) and choices:
+                message = choices[0].get("message")
+                if isinstance(message, dict):
+                    text = message.get("content", "") or ""
+            usage = raw.get("usage")
+            if isinstance(usage, dict):
+                prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
+                completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
+                input_tokens = usage.get("input_tokens") or prompt_tokens
+                output_tokens = usage.get("output_tokens") or completion_tokens
+                cost = usage.get("cost") or usage.get("total_cost")
+                latency = usage.get("latency_ms")
+            return LLMResult(
+                raw=raw,
+                text=text,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost=cost,
+                latency_ms=latency,
+            )
+
+        if isinstance(data, str):
+            text = data
+            raw = {
+                "response": data,
+                "backend": "chatgpt_client",
+                "model": self.model,
+            }
+        else:
+            text = str(data)
+            raw = {
+                "response": data,
+                "backend": "chatgpt_client",
+                "model": self.model,
+            }
+        return LLMResult(raw=raw, text=text)
 
     def _valid_schema(self, data: Dict[str, object]) -> bool:
         try:

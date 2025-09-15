@@ -150,38 +150,36 @@ class ConversationManagerBot:
         )
 
         text: str
-        generator = getattr(self.client, "generate", None)
-        if callable(generator):
-            try:
-                result = generator(
-                    prompt_obj, context_builder=self.client.context_builder
-                )
-            except TypeError:
-                result = generator(prompt_obj)
+        builder = getattr(self.client, "context_builder", None)
+        if builder is None:
+            raise ValueError("client is missing required context_builder")
 
-            if isinstance(result, str):
-                text = result
-            elif hasattr(result, "text"):
-                text = getattr(result, "text", "")
-            elif isinstance(result, dict):
-                text = (
-                    result.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                )
-            else:
-                text = ""
-        else:
-            data = self.client.ask(
-                prompt_obj,
-                tags=intent_meta["tags"],
-                memory_manager=self.gpt_memory,
-            )
+        generator = getattr(self.client, "generate", None)
+        if not callable(generator):
+            raise TypeError("client must implement generate()")
+
+        try:
+            result = generator(prompt_obj, context_builder=builder)
+        except TypeError as exc:
+            raise TypeError("client.generate must accept context_builder keyword") from exc
+
+        if isinstance(result, str):
+            text = result
+        elif isinstance(result, dict):
             text = (
-                data.get("choices", [{}])[0]
+                result.get("choices", [{}])[0]
                 .get("message", {})
                 .get("content", "")
             )
+        else:
+            text = getattr(result, "text", "")
+            if not text and isinstance(getattr(result, "raw", None), dict):
+                raw = getattr(result, "raw", {})
+                text = (
+                    raw.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
         self._update_memory(prompt_obj.user, text)
         logger.debug("prompt: %s\nresponse: %s", prompt_obj.user, text)
         self.cache[prompt] = text
