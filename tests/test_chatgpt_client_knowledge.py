@@ -33,10 +33,6 @@ sys.modules.setdefault(
         get_error_fixes=lambda *a, **k: [],
     ),
 )
-sys.modules.setdefault(
-    "governed_retrieval",
-    types.SimpleNamespace(govern_retrieval=lambda *a, **k: None, redact=lambda x: x),
-)
 
 import menace_sandbox.chatgpt_idea_bot as cib
 cib.log_with_tags = _log_with_tags
@@ -93,6 +89,8 @@ def test_ask_injects_context_and_logs(monkeypatch):
             return ""
 
     client = cib.ChatGPTClient(api_key="key", session=session, context_builder=DummyBuilder())
+    monkeypatch.setattr(cib, "govern_retrieval", lambda *a, **k: ({}, None))
+    monkeypatch.setattr(cib, "redact", lambda x: x)
     knowledge = DummyKnowledge(record)
 
     resp = client.ask(

@@ -1105,29 +1105,20 @@ class ChatGPTEnhancementBot:
         ideas: List[Enhancement]
         try:
             generate = getattr(client, "generate", None)
-            if callable(generate):
-                result = generate(
-                    prompt_obj,
-                    parse_fn=parse_enhancements,
-                    context_builder=context_builder,
-                )
-                parsed = getattr(result, "parsed", None)
-                if parsed is None:
-                    payload: Any = getattr(result, "raw", None)
-                    if not payload:
-                        payload = getattr(result, "text", "")
-                    parsed = parse_enhancements(payload)
-                ideas = list(parsed or [])
-            else:
-                base_tags = [IMPROVEMENT_PATH, INSIGHT]
-                if tags:
-                    base_tags.extend(tags)
-                data = client.ask(  # type: ignore[call-arg]
-                    prompt_obj,
-                    tags=base_tags,
-                    memory_manager=self.gpt_memory,
-                )
-                ideas = parse_enhancements(data)
+            if not callable(generate):
+                raise TypeError("client must implement generate()")
+            result = generate(
+                prompt_obj,
+                parse_fn=parse_enhancements,
+                context_builder=context_builder,
+            )
+            parsed = getattr(result, "parsed", None)
+            if parsed is None:
+                payload: Any = getattr(result, "raw", None)
+                if not payload:
+                    payload = getattr(result, "text", "")
+                parsed = parse_enhancements(payload)
+            ideas = list(parsed or [])
         except Exception as exc:
             logger.exception("chatgpt request failed: %s", exc)
             if RAISE_ERRORS:

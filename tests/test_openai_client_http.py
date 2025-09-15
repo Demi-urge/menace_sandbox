@@ -37,6 +37,7 @@ def test_openai_success_logging_and_parsing(monkeypatch, tmp_path):
     prompt = Prompt(
         text="hi",
         metadata={"tags": ["t"], "vector_confidences": [0.9]},
+        origin="context_builder",
     )
     builder = create_context_builder()
     result = client.generate(prompt, parse_fn=json.loads, context_builder=builder)
@@ -72,7 +73,10 @@ def test_openai_rate_limit_retry(monkeypatch, tmp_path):
 
     monkeypatch.setattr(client._session, "post", fake_post)
 
-    res = client.generate(Prompt(text="hi", origin="context_builder"), context_builder=create_context_builder())
+    res = client.generate(
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        context_builder=create_context_builder(),
+    )
     assert res.text == "ok"
     assert sleeps == [1.0]
     assert not responses
@@ -116,7 +120,9 @@ def test_client_fallback_to_local_backend(monkeypatch, tmp_path):
 
     builder = create_context_builder()
     result = client.generate(
-        Prompt(text="hi"), parse_fn=json.loads, context_builder=builder
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        parse_fn=json.loads,
+        context_builder=builder,
     )
     assert result.parsed == {"b": 2}
     expected_prompt_tokens = rate_limit.estimate_tokens("hi", model="local")

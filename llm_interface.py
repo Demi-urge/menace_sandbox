@@ -209,7 +209,7 @@ class LLMClient:
         *,
         parse_fn: Callable[[str], Any] | None = None,
         backend: str | None = None,
-        context_builder: ContextBuilder,
+        context_builder: ContextBuilder | None = None,
     ) -> LLMResult:
         """Generate a completion for *prompt*.
 
@@ -223,11 +223,25 @@ class LLMClient:
         called directly.
         """
 
-        meta = getattr(prompt, "metadata", {})
+        meta = getattr(prompt, "metadata", {}) or {}
+        if (
+            getattr(prompt, "vector_confidence", None) is not None
+            and "vector_confidences" not in meta
+        ):
+            meta = dict(meta)
+            meta["vector_confidences"] = [prompt.vector_confidence]
+            try:
+                prompt.metadata = meta
+            except Exception:
+                pass
         if getattr(prompt, "origin", None) not in VALID_PROMPT_ORIGINS:
             raise ValueError("prompt.origin missing or unrecognized")
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
             raise ValueError("prompt.metadata missing context-builder markers")
+
+        builder = context_builder or getattr(self, "context_builder", None)
+        if builder is None:
+            builder = type("_NullBuilder", (), {"roi_tracker": None})()
 
         # If explicit backends are configured act as a router
         if self.backends:
@@ -240,7 +254,7 @@ class LLMClient:
             for backend_obj in order:
                 try:
                     result = backend_obj.generate(
-                        prompt, context_builder=context_builder
+                        prompt, context_builder=builder  # type: ignore[arg-type]
                     )
                 except Exception as exc:  # pragma: no cover - backend failure
                     last_exc = exc
@@ -257,7 +271,7 @@ class LLMClient:
             raise RuntimeError("no backends configured")
 
         # No explicit backends: delegate to subclass implementation
-        result = self._generate(prompt, context_builder=context_builder)
+        result = self._generate(prompt, context_builder=builder)  # type: ignore[arg-type]
         if parse_fn is not None:
             try:
                 result.parsed = parse_fn(result.text)
@@ -266,21 +280,35 @@ class LLMClient:
         backend_name = backend or (result.raw or {}).get("backend")
         self._log(prompt, result, backend=backend_name)
         try:  # pragma: no cover - ROI tracking is best effort
-            self._track_usage(context_builder, result)
+            self._track_usage(builder, result)
         except Exception:
             pass
         return result
 
     # ------------------------------------------------------------------
     async def async_generate(
-        self, prompt: Prompt, *, context_builder: ContextBuilder
+        self, prompt: Prompt, *, context_builder: ContextBuilder | None = None
     ) -> AsyncGenerator[str, None]:
         """Asynchronously yield completion chunks for *prompt* and log the result."""
-        meta = getattr(prompt, "metadata", {})
+        meta = getattr(prompt, "metadata", {}) or {}
+        if (
+            getattr(prompt, "vector_confidence", None) is not None
+            and "vector_confidences" not in meta
+        ):
+            meta = dict(meta)
+            meta["vector_confidences"] = [prompt.vector_confidence]
+            try:
+                prompt.metadata = meta
+            except Exception:
+                pass
         if getattr(prompt, "origin", None) not in VALID_PROMPT_ORIGINS:
             raise ValueError("prompt.origin missing or unrecognized")
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
             raise ValueError("prompt.metadata missing context-builder markers")
+
+        builder = context_builder or getattr(self, "context_builder", None)
+        if builder is None:
+            builder = type("_NullBuilder", (), {"roi_tracker": None})()
 
         cfg = llm_config.get_config()
 
@@ -360,12 +388,12 @@ class LLMClient:
                 try:
                     backend_name = getattr(backend, "backend_name", getattr(backend, "model", None))
                     model_name = getattr(backend, "model", self.model)
-                    agen = agen_fn(prompt, context_builder=context_builder)
+                    agen = agen_fn(prompt, context_builder=builder)  # type: ignore[arg-type]
                     wrapper = _stream(
                         agen,
                         backend_name=backend_name,
                         model=model_name,
-                        builder=context_builder,
+                        builder=builder,
                     )
                     async for chunk in wrapper:
                         yield chunk
@@ -378,9 +406,9 @@ class LLMClient:
             raise RuntimeError("no backends configured")
 
         backend_name = getattr(self, "backend_name", None)
-        agen = self._async_generate(prompt, context_builder=context_builder)
+        agen = self._async_generate(prompt, context_builder=builder)  # type: ignore[arg-type]
         wrapper = _stream(
-            agen, backend_name=backend_name, model=self.model, builder=context_builder
+            agen, backend_name=backend_name, model=self.model, builder=builder
         )
         async for chunk in wrapper:
             yield chunk
