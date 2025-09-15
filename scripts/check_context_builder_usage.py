@@ -6,10 +6,10 @@ This script scans the repository for calls to ``_build_prompt``,
 ``context_builder`` keyword argument is supplied.  It now also checks *any*
 function call named ``build_prompt`` or ``build_prompt_with_memory`` regardless
 of whether it is accessed as an attribute.  Additionally, direct calls to
-``openai.Completion.create`` and ``openai.ChatCompletion.create`` as well as the
-``chat_completion_create`` wrapper are inspected.  Any invocation missing a
-``context_builder`` keyword or an inline ``# nocb`` comment will be flagged.  The
-check ignores files located in directories named ``tests`` or ``unit_tests``.
+``openai.Completion.create`` and ``openai.ChatCompletion.create`` are
+inspected. The ``chat_completion_create`` wrapper is also scanned, though it no
+longer requires an explicit ``context_builder`` argument. The check ignores
+files located in directories named ``tests`` or ``unit_tests``.
 
 
 Any ``# nocb`` comments found in production modules are likewise reported
@@ -89,7 +89,6 @@ REQUIRED_NAMES = {
     "generate_patch",
     "build_prompt",
     "build_prompt_with_memory",
-    "chat_completion_create",
 }
 
 GENERATE_WRAPPER_SUFFIXES = ("client", "provider", "wrapper")
@@ -604,10 +603,10 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 target = None
                 if name_simple in REQUIRED_NAMES:
                     target = name_simple
-                    if name_simple == "chat_completion_create":
-                        is_llm_call = True
                 elif name_full in OPENAI_NAMES:
                     target = name_full
+                    is_llm_call = True
+                elif name_simple == "chat_completion_create":
                     is_llm_call = True
                 elif name_full and is_generate_wrapper(name_full):
                     target = name_full

@@ -9,17 +9,6 @@ from prompt_types import Prompt
 load_dotenv()
 
 
-def _prompt_to_messages(prompt: Prompt) -> list[dict[str, str]]:
-    """Convert a :class:`Prompt` into chat completion messages."""
-    messages: list[dict[str, str]] = []
-    if prompt.system:
-        messages.append({"role": "system", "content": prompt.system})
-    for ex in getattr(prompt, "examples", []):
-        messages.append({"role": "system", "content": ex})
-    messages.append({"role": "user", "content": prompt.user})
-    return messages
-
-
 def check_openai(cfg: config.ServiceConfig) -> bool:
     if not config.is_openai_enabled(cfg):
         print("OpenAI disabled")
@@ -32,12 +21,7 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
         return False
     try:
         os.environ.setdefault("OPENAI_API_KEY", cfg.openai_key)
-        messages = _prompt_to_messages(prompt)
-        chat_completion_create(
-            messages,
-            model="gpt-3.5-turbo",
-            context_builder=builder,
-        )
+        chat_completion_create(prompt, model="gpt-3.5-turbo")
         print("OpenAI reachable")
         return True
     except Exception as e:

@@ -206,7 +206,13 @@ def test_influence_graph_updater_env(monkeypatch):
 def test_check_external_services_injects_notice(monkeypatch):
     captured: dict[str, Any] = {}
 
-    def fake_chat(messages, *, context_builder, **kwargs):
+    def fake_chat(prompt, **kwargs):
+        content = prompt.user
+        if prompt.examples:
+            content += "\n\n" + "\n".join(prompt.examples)
+        messages = [{"role": "user", "content": content}]
+        if prompt.system:
+            messages.insert(0, {"role": "system", "content": prompt.system})
         captured["messages"] = prepend_payment_notice(messages)
         return {}
 

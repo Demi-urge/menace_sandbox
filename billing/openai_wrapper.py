@@ -6,15 +6,14 @@ SelfCodingEngine now handles all code generation locally, removing the need
 for remote payment notices. This module still exposes
 :func:`chat_completion_create`, which mirrors
 ``openai.ChatCompletion.create`` for components that have not yet migrated.
-It prepends :data:`~stripe_policy.PAYMENT_ROUTER_NOTICE` to the ``messages``
-list and expands the latest user query via ``ContextBuilder.build_prompt``
-before forwarding the request. A ``ContextBuilder`` instance is required and a
-custom ``openai_client`` can be supplied for testing.
+It prepends :data:`~stripe_policy.PAYMENT_ROUTER_NOTICE` to prompts before
+forwarding the request. A :class:`~prompt_types.Prompt` instance is required
+and a custom ``openai_client`` can be supplied for testing.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
-from vector_service.context_builder import ContextBuilder
+from prompt_types import Prompt
 
 from resilience import retry_with_backoff
 from sandbox_settings import SandboxSettings
@@ -27,50 +26,34 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 def chat_completion_create(
-    messages: List[Dict[str, str]],
+    prompt: Prompt,
     *,
     openai_client: Optional[Any] = None,
-    context_builder: ContextBuilder,
     **kwargs: Any,
 ) -> Any:
     """Proxy ``openai.ChatCompletion.create`` for legacy callers.
 
     SelfCodingEngine performs generation locally, but this helper remains for
-    backward compatibility.
+    backward compatibility.  Callers must supply a fully built
+    :class:`~prompt_types.Prompt` to ensure the context engine is exercised.
     """
 
-    if context_builder is None:
-        raise TypeError("context_builder is required for chat_completion_create")
+    if not isinstance(prompt, Prompt):
+        raise TypeError("prompt must be a Prompt")
 
     client = openai_client or openai
     if client is None:  # pragma: no cover - import guard
         raise RuntimeError("openai library not available")
 
-    top_k = int(kwargs.pop("top_k", 5) or 5)
-    intent = kwargs.pop("intent", None)
+    content = prompt.user
+    if prompt.examples:
+        content += "\n\n" + "\n".join(prompt.examples)
 
-    query = ""
-    last_user = None
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") == "user":
-            last_user = i
-            query = messages[i].get("content", "")
-            break
+    msgs = [{"role": "user", "content": content}]
+    if prompt.system:
+        msgs.insert(0, {"role": "system", "content": prompt.system})
 
-    updated_msgs = list(messages)
-    if query.strip():
-        prompt = context_builder.build_prompt(query, top_k=top_k, intent=intent)
-        content = prompt.user
-        if prompt.examples:
-            content += "\n\n" + "\n".join(prompt.examples)
-        if last_user is not None:
-            updated_msgs[last_user]["content"] = content
-        else:
-            updated_msgs.append({"role": "user", "content": content})
-        if prompt.system:
-            updated_msgs.insert(0, {"role": "system", "content": prompt.system})
-
-    msgs = prepend_payment_notice(updated_msgs)
+    msgs = prepend_payment_notice(msgs)
 
     _settings = SandboxSettings()
     delays = list(getattr(_settings, "codex_retry_delays", [2, 5, 10]))
