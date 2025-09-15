@@ -10,6 +10,9 @@ class DummyBuilder:
         self.calls += 1
         return ""
 
+    def build_prompt(self, text, **kwargs):  # pragma: no cover - simple stub
+        return types.SimpleNamespace(user=text, metadata={}, examples=[])
+
 
 def test_summarize_code_micro_model(monkeypatch):
     """Ensure the micro-model path is used and honours token limits."""
