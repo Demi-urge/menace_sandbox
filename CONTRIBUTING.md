@@ -133,15 +133,15 @@ python scripts/check_context_builder_usage.py
 The script prints every violation and exits with a non-zero status when issues
 are found. Continuous integration runs both the pre-commit hook and the
 standalone script, and any emitted output causes the build to fail. The script
-also flags disallowed
-defaults for `context_builder` parameters (including sentinel objects), calls to
-helpers like `generate_candidates` that omit a `context_builder` keyword, or
-imports of `get_default_context_builder`, and CI fails when these patterns
-appear.  Literal prompt strings passed directly to LLM clients are likewise
-rejected unless produced by `ContextBuilder.build_prompt` or
-`SelfCodingEngine.build_enriched_prompt`.  Direct `Prompt(...)` calls are banned
-outside `vector_service/context_builder.py`, and direct calls to
-`PromptEngine.build_prompt` are disallowed.
+also fails fast when it encounters any of the following patterns:
+
+* defaults for `context_builder` parameters (including sentinel objects);
+* helper calls such as `generate_candidates` that omit a `context_builder` keyword;
+* imports of `get_default_context_builder` outside of test directories;
+* literal prompt strings or message lists passed directly to LLM clients instead of
+  the output of `ContextBuilder.build_prompt` or `SelfCodingEngine.build_enriched_prompt`;
+* direct `Prompt(...)` instantiation outside `vector_service/context_builder.py`;
+* direct `PromptEngine.build_prompt` calls that bypass the builder interface.
 
 Results of `ContextBuilder.build(...)` must be sent straight to the LLM client.
 Combining them with additional strings, f-strings or lists before invoking the
