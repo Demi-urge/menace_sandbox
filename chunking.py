@@ -249,7 +249,7 @@ def summarize_snippet(
     text: str,
     llm: LLMClient | None = None,
     *,
-    context_builder: "ContextBuilder",
+    context_builder: "ContextBuilder" | None = None,
 ) -> str:
     """Return a short summary for ``text`` using available helpers with caching."""
 
@@ -273,67 +273,26 @@ def summarize_snippet(
         pass
 
     if not summary and llm is not None:
-        context = ""
-        vectors: List[Tuple[str, str, float]] = []
-        meta: Dict[str, Any] = {}
-        try:
-            ctx_res = context_builder.build(
-                text, include_vectors=True, return_metadata=True
-            )
-            if isinstance(ctx_res, tuple):
-                try:
-                    context, _sid, vectors, meta = ctx_res  # type: ignore[misc]
-                except Exception:
-                    context = ctx_res[0]
-                    vectors = []
-                    meta = {}
-            else:
-                context = ctx_res
-            try:  # pragma: no cover - optional dependency
-                from vector_service.context_builder import (
-                    FallbackResult,
-                    ErrorResult,
-                )
+        if context_builder is None:
+            try:  # pragma: no cover - builder creation best effort
+                from context_builder_util import create_context_builder
 
-                if isinstance(context, (FallbackResult, ErrorResult)):
-                    context = ""
+                context_builder = create_context_builder()
+            except Exception:  # pragma: no cover - builder may be missing
+                context_builder = None
+        if context_builder is not None:
+            try:
+                prompt = context_builder.build_prompt(
+                    text,
+                    intent={
+                        "instruction": "Summarise the following code snippet in one sentence.",
+                    },
+                )
+                result = llm.generate(prompt, context_builder=context_builder)
+                if getattr(result, "text", "").strip():
+                    summary = result.text.strip()
             except Exception:
                 pass
-            if context:
-                from snippet_compressor import compress_snippets
-
-                context = compress_snippets({"snippet": context}).get(
-                    "snippet", context
-                )
-        except Exception:
-            context = ""
-            vectors = []
-            meta = {}
-
-        intent_meta: Dict[str, Any] = {
-            "instruction": "Summarise the following code snippet in one sentence.",
-        }
-        if context:
-            intent_meta["retrieved_context"] = context
-        prompt = context_builder.build_prompt(
-            text,
-            intent=intent_meta,
-            top_k=0,
-        )
-        scores = [float(v[2]) for v in vectors]
-        if scores:
-            prompt.vector_confidence = sum(scores) / len(scores)
-            prompt.metadata.setdefault("vector_confidences", scores)
-        if vectors:
-            prompt.metadata.setdefault("vectors", vectors)
-        if meta:
-            prompt.metadata.setdefault("retrieval_metadata", meta)
-        try:  # pragma: no cover - llm failures
-            result = llm.generate(prompt, context_builder=context_builder)
-            if getattr(result, "text", "").strip():
-                summary = result.text.strip()
-        except Exception:
-            pass
 
     if not summary:
         try:

@@ -16,8 +16,10 @@ class DummyLLM(LLMClient):
 
 
 class DummyBuilder:
-    def build(self, text: str):  # pragma: no cover - simple stub
-        return ""
+    def build_prompt(self, text: str, *, intent=None, top_k=5, **kwargs):  # pragma: no cover - simple stub
+        from prompt_types import Prompt
+
+        return Prompt(user=text, metadata={})
 
 
 def test_summarize_code_uses_cache(monkeypatch, tmp_path):
