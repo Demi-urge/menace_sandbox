@@ -25,6 +25,7 @@ class _StubSettings:
         self.stub_fallback_model = os.getenv("SANDBOX_STUB_FALLBACK_MODEL", "distilgpt2")
         self.sandbox_stub_model = os.getenv("SANDBOX_STUB_MODEL")
         self.llm_backend = os.getenv("LLM_BACKEND", "openai")
+        self.stub_save_timeout = 1.0
 
 
 def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -32,6 +33,11 @@ def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gsp, "_SETTINGS", None)
     monkeypatch.setattr(gsp, "_CONFIG", None)
     monkeypatch.setattr(gsp, "SandboxSettings", _StubSettings)
+
+
+class DummyBuilder:
+    def build_prompt(self, query, *, intent_metadata=None, **kwargs):
+        return query
 
 
 def test_llm_client_used(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,7 +53,7 @@ def test_llm_client_used(monkeypatch: pytest.MonkeyPatch) -> None:
             return LLMResult(text="{\"a\": 1}")
 
     monkeypatch.setattr(gsp, "get_client", lambda name, **kw: DummyClient())
-    result = gsp.generate_stubs([{}], {"target": None})
+    result = gsp.generate_stubs([{}], {"target": None}, context_builder=DummyBuilder())
     assert result == [{"a": 1}]
 
 
@@ -60,5 +66,5 @@ def test_history_fallback_when_no_model(monkeypatch: pytest.MonkeyPatch) -> None
             return [{"x": 1}]
 
     monkeypatch.setattr(gsp, "_get_history_db", lambda: HistDB())
-    result = gsp.generate_stubs([{}], {"target": None})
+    result = gsp.generate_stubs([{}], {"target": None}, context_builder=DummyBuilder())
     assert result == [{"x": 1}]

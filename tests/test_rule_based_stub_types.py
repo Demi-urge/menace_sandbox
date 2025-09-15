@@ -17,6 +17,11 @@ def _disable_generation(monkeypatch):
     gsp._CACHE.clear()
 
 
+class DummyBuilder:
+    def build_prompt(self, query, *, intent_metadata=None, **kwargs):
+        return query
+
+
 def test_docstring_samples(monkeypatch):
     """Values from docstrings are used when available."""
 
@@ -29,7 +34,7 @@ def test_docstring_samples(monkeypatch):
         """
 
     _disable_generation(monkeypatch)
-    stubs = gsp.generate_stubs([{}], {"target": sample})
+    stubs = gsp.generate_stubs([{}], {"target": sample}, context_builder=DummyBuilder())
     assert stubs == [{"name": "widget", "count": 5}]
     assert gsp._type_matches(stubs[0]["name"], str)
     assert gsp._type_matches(stubs[0]["count"], int)
@@ -52,7 +57,7 @@ def test_nested_and_dataclass(monkeypatch):
         """
 
     _disable_generation(monkeypatch)
-    stubs = gsp.generate_stubs([{}], {"target": process})
+    stubs = gsp.generate_stubs([{}], {"target": process}, context_builder=DummyBuilder())
     stub = stubs[0]
     assert isinstance(stub["user"], User)
     assert isinstance(stub["user"].id, int)

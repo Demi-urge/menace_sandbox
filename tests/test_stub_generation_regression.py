@@ -27,7 +27,9 @@ def test_stub_generation_matches_fixture(monkeypatch):
     monkeypatch.setattr(gsp, "_aload_generator", fake_aload_generator)
     gsp._CACHE.clear()
 
-    stubs = gsp.generate_stubs([{}], {"target": sample_func})[0]
+    stubs = gsp.generate_stubs(
+        [{}], {"target": sample_func}, context_builder=types.SimpleNamespace(build_prompt=lambda q, *, intent_metadata=None, **k: q)
+    )[0]
 
     expected = json.loads(
         resolve_path("tests/fixtures/regression/stub_generation.json").read_text()

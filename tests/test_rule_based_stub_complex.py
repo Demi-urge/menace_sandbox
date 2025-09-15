@@ -16,6 +16,11 @@ def _disable_generation(monkeypatch):
     gsp._CACHE.clear()
 
 
+class DummyBuilder:
+    def build_prompt(self, query, *, intent_metadata=None, **kwargs):
+        return query
+
+
 class Config:
     def __init__(self, name: str, thresholds: dict[str, list[int]]):
         self.name = name
@@ -28,7 +33,7 @@ def complex_func(configs: list[Config], mapping: dict[str, tuple[int, float]]) -
 
 def test_custom_class_and_nested(monkeypatch):
     _disable_generation(monkeypatch)
-    stub = gsp.generate_stubs([{}], {"target": complex_func})[0]
+    stub = gsp.generate_stubs([{}], {"target": complex_func}, context_builder=DummyBuilder())[0]
     assert isinstance(stub["configs"], list)
     assert len(stub["configs"]) == 1
     cfg = stub["configs"][0]
@@ -54,5 +59,5 @@ def test_defaults_used(monkeypatch):
     def with_defaults(a: int = 5, flag: bool = False, name: str = "x") -> None:
         pass
 
-    stub = gsp.generate_stubs([{}], {"target": with_defaults})[0]
+    stub = gsp.generate_stubs([{}], {"target": with_defaults}, context_builder=DummyBuilder())[0]
     assert stub == {"a": 5, "flag": False, "name": "x"}

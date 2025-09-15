@@ -80,8 +80,12 @@ def test_stub_cache_persistence(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gsp, "_aload_generator", load)
 
+    builder = types.SimpleNamespace(build_prompt=lambda q, *, intent_metadata=None, **k: q)
+
     async def first():
-        res = await gsp.async_generate_stubs([{}], {"target": _target}, cfg)
+        res = await gsp.async_generate_stubs(
+            [{}], {"target": _target}, cfg, context_builder=builder
+        )
         assert res == [{"x": 1}]
 
     asyncio.run(first())
@@ -91,7 +95,9 @@ def test_stub_cache_persistence(tmp_path, monkeypatch):
         gsp._CACHE.clear()
 
     async def second():
-        res = await gsp.async_generate_stubs([{}], {"target": _target}, cfg)
+        res = await gsp.async_generate_stubs(
+            [{}], {"target": _target}, cfg, context_builder=builder
+        )
         assert res == [{"x": 1}]
 
     asyncio.run(second())
@@ -121,7 +127,9 @@ def test_concurrent_cache_access(tmp_path, monkeypatch):
     monkeypatch.setattr(gsp, "_aload_generator", load)
 
     async def invoke():
-        return await gsp.async_generate_stubs([{}], {"target": _target}, cfg)
+        return await gsp.async_generate_stubs(
+            [{}], {"target": _target}, cfg, context_builder=builder
+        )
 
     async def run():
         return await asyncio.gather(invoke(), invoke())
@@ -148,5 +156,9 @@ def test_signature_validation(tmp_path, monkeypatch):
     monkeypatch.setattr(gsp, "_aload_generator", load)
 
     with pytest.raises(RuntimeError):
-        asyncio.run(gsp.async_generate_stubs([{}], {"target": _target}, cfg))
+        asyncio.run(
+            gsp.async_generate_stubs(
+                [{}], {"target": _target}, cfg, context_builder=builder
+            )
+        )
     gsp.cleanup_cache_files(cfg)
