@@ -24,29 +24,21 @@ class LocalModelWrapper:
 
     def generate(
         self,
-        prompt: Prompt | str,
+        prompt: Prompt,
         *,
         context_builder: ContextBuilder,
-        cb_input: str | None = None,
         **gen_kwargs: Any,
     ) -> str | list[str]:
         """Generate text using a pre-built :class:`Prompt`.
 
-        ``context_builder`` must be supplied as a keyword argument.  When
-        ``prompt`` is provided as a plain string it is first converted into a
-        :class:`Prompt` via :meth:`ContextBuilder.build_prompt`.  ``cb_input``
-        allows supplying a different retrieval query in that case; the final
-        user text remains ``prompt``.
+        ``prompt`` must already be constructed via :meth:`ContextBuilder.build_prompt`
+        by the caller; this wrapper simply forwards the prompt to the underlying
+        model.  The ``context_builder`` argument is retained to satisfy static
+        checks but is otherwise unused.
         """
 
-        if not isinstance(prompt, Prompt):
-            prompt_obj = context_builder.build_prompt(cb_input or prompt)
-            if cb_input:
-                prompt_obj.user = str(prompt)
-        else:
-            prompt_obj = prompt
-
-        self.last_prompt = prompt_obj
+        self.last_prompt = prompt
+        prompt_obj = prompt
 
         pieces: list[str] = []
         if getattr(prompt_obj, "system", None):

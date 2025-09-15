@@ -96,10 +96,10 @@ class UserStyleModel:
             return text
 
         wrapper = LocalModelWrapper(self.model, self.tokenizer)
+        prompt_obj = context_builder.build_prompt(text)
         return wrapper.generate(
-            text,
+            prompt_obj,
             context_builder=context_builder,
-            cb_input=text,
             max_length=50,
             num_return_sequences=1,
         )

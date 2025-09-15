@@ -144,10 +144,11 @@ class ResponseCandidateGenerator:
             try:
                 prompt = " ".join(history + [message, archetype])
                 max_len = len(self.tokenizer.encode(prompt)) + 20
+                prompt_obj = context_builder.build_prompt(message)
+                prompt_obj.user = prompt
                 outputs = self.wrapper.generate(
-                    prompt,
+                    prompt_obj,
                     context_builder=context_builder,
-                    cb_input=message,
                     max_length=max_len,
                     num_return_sequences=n,
                     do_sample=True,
