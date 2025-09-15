@@ -5,7 +5,7 @@ import types
 from pathlib import Path
 import dynamic_path_router
 
-from llm_interface import LLMResult
+from llm_interface import LLMResult, Prompt
 
 # Lightweight stubs to satisfy imports
 vec_mod = types.ModuleType("vector_service")
@@ -93,7 +93,7 @@ sys.modules["code_database"] = code_db_mod
 sys.modules["menace.code_database"] = code_db_mod
 import menace.self_coding_engine as sce
 SelfCodingEngine = sce.SelfCodingEngine
-from menace.coding_bot_interface import manager_generate_helper
+from menace.coding_bot_interface import manager_generate_helper  # noqa: E402
 
 
 class DummyMemory:
@@ -149,6 +149,7 @@ def test_knowledge_service_logging(monkeypatch, caplog):
         context_builder=types.SimpleNamespace(
             build_context=lambda *a, **k: {},
             refresh_db_weights=lambda *a, **k: None,
+            build_prompt=lambda q, intent=None, error_log=None, top_k=5: Prompt(q),
         ),
     )
     monkeypatch.setattr(sce, "get_feedback", lambda *a, **k: [])

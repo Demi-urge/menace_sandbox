@@ -7,8 +7,7 @@ import importlib.util
 import dynamic_path_router
 import pytest
 
-from llm_interface import LLMResult
-from menace.coding_bot_interface import manager_generate_helper
+from llm_interface import LLMResult, Prompt
 
 menace_pkg = types.ModuleType("menace")
 menace_pkg.__path__ = [Path(__file__).resolve().parents[1].as_posix()]
@@ -81,7 +80,11 @@ sys.modules.setdefault("vector_service", vec_mod)
 builder = types.SimpleNamespace(
     build_context=lambda *a, **k: {},
     refresh_db_weights=lambda *a, **k: None,
+    build_prompt=lambda query, intent=None, error_log=None, top_k=5: Prompt(query),
 )
+
+sys.modules.setdefault("safety_monitor", types.SimpleNamespace(SafetyMonitor=object))
+sys.modules.setdefault("menace.safety_monitor", sys.modules["safety_monitor"])
 
 scm_stub = types.ModuleType("menace.self_coding_manager")
 scm_stub.SelfCodingManager = object  # type: ignore[attr-defined]
@@ -96,6 +99,8 @@ chunking_stub._SETTINGS = types.SimpleNamespace(
 )
 sys.modules.setdefault("chunking", chunking_stub)
 
+
+from menace.coding_bot_interface import manager_generate_helper  # noqa: E402
 
 def test_refresh_db_weights_failure(tmp_path):
     import menace.self_coding_engine as sce
@@ -688,8 +693,13 @@ def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
     engine.suggest_snippets = lambda *a, **k: []
     engine._extract_statements = lambda *a, **k: []
     engine._fetch_retry_trace = lambda *a, **k: ""
-    engine.prompt_engine = types.SimpleNamespace(
-        build_prompt=lambda *a, **k: sce.Prompt("code", system="orig", examples=["e1", "e2"])
+    engine.prompt_engine = types.SimpleNamespace()
+    engine.context_builder = types.SimpleNamespace(
+        build_prompt=lambda q, intent=None, error_log=None, top_k=5: sce.Prompt(
+            q, system=intent.get("system", "orig") if intent else "orig", examples=intent.get("examples", ["e1", "e2"]) if intent else ["e1", "e2"]
+        ),
+        build_context=lambda *a, **k: {},
+        refresh_db_weights=lambda *a, **k: None,
     )
     engine.gpt_memory = types.SimpleNamespace(log_interaction=lambda *a, **k: None, store=lambda *a, **k: None)
     engine.memory_mgr = mem

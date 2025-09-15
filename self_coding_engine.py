@@ -22,8 +22,6 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextvars
 
-logger = logging.getLogger(__name__)
-
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
 from .trend_predictor import TrendPredictor
@@ -38,7 +36,6 @@ try:  # pragma: no cover - optional formal verification dependency
 except Exception:  # pragma: no cover - degrade gracefully when missing
     FormalVerifier = object  # type: ignore[misc,assignment]
 from .llm_interface import Prompt, LLMResult, LLMClient
-from vector_service.context_builder import build_prompt as cb_build_prompt
 from .llm_router import client_from_settings
 from .resilience import retry_with_backoff, RetryError
 try:  # shared GPT memory instance
@@ -192,6 +189,9 @@ if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
     from .data_bot import DataBot
 
+# logger is defined after imports to satisfy linting rules
+logger = logging.getLogger(__name__)
+
 # Load prompt configuration from settings instead of environment variables
 _settings = SandboxSettings()
 PROMPT_REPO_LAYOUT_LINES = getattr(_settings, "prompt_repo_layout_lines", 200)
@@ -238,32 +238,33 @@ def call_codex_with_backoff(
     )
 
 
-def strip_prompt_context(prompt_obj: Prompt) -> Prompt:
-    """Return a copy of *prompt_obj* without system or example context."""
+def strip_prompt_context(prompt_obj: Prompt) -> Dict[str, Any]:
+    """Return intent metadata for *prompt_obj* without system or examples."""
 
-    return cb_build_prompt(
-        prompt_obj.text,
-        intent_metadata=getattr(prompt_obj, "metadata", {}),
-        top_k=0,
-    )
+    meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+    meta["query"] = prompt_obj.text
+    meta["top_k"] = 0
+    for key in ("headers", "example_order", "system", "examples"):
+        meta.pop(key, None)
+    meta["system"] = ""
+    meta["examples"] = []
+    return meta
 
 
-def simplify_prompt(prompt_obj: Prompt) -> Prompt:
+def simplify_prompt(prompt_obj: Prompt) -> Dict[str, Any]:
     """Simplify a prompt based on sandbox configuration."""
 
     drop_system = getattr(_settings, "simplify_prompt_drop_system", True)
     example_limit = getattr(_settings, "simplify_prompt_example_limit", 0)
 
-    if drop_system and (example_limit is None or example_limit <= 0):
-        return strip_prompt_context(prompt_obj)
-
-    base = strip_prompt_context(prompt_obj)
-    base.system = "" if drop_system else prompt_obj.system
-    examples = prompt_obj.examples
+    meta = strip_prompt_context(prompt_obj)
+    if not drop_system:
+        meta["system"] = getattr(prompt_obj, "system", "")
+    examples = list(getattr(prompt_obj, "examples", []))
     if example_limit is not None:
         examples = examples[: example_limit]
-    base.examples = examples
-    return base
+    meta["examples"] = examples
+    return meta
 
 
 class SelfCodingEngine:
@@ -733,12 +734,18 @@ class SelfCodingEngine:
         if not self.prompt_evolution_memory:
             return
         prompt = getattr(self, "_last_prompt", None)
-        if not isinstance(prompt, Prompt):
+        meta = dict(getattr(self, "_last_prompt_metadata", {}))
+        meta.update(getattr(self.prompt_engine, "last_metadata", {}))
+        if isinstance(prompt, Prompt):
+            base_meta = dict(getattr(prompt, "metadata", {}) or {})
+            base_meta.update(meta)
+            meta = base_meta
+        else:
+            if not meta.get("query"):
+                meta["query"] = getattr(prompt, "text", str(prompt or ""))
+            meta.setdefault("top_k", 0)
             prompt = self.build_enriched_prompt(
-                {
-                    "query": getattr(prompt, "text", str(prompt or "")),
-                    "top_k": 0,
-                },
+                meta,
                 context_builder=self.context_builder,
             )
         parts = [prompt.system, *prompt.examples, prompt.user]
@@ -765,9 +772,6 @@ class SelfCodingEngine:
             if baseline is not None:
                 runtime_improvement = baseline - runtime
             self._prev_runtime = runtime
-        meta = dict(getattr(prompt, "metadata", {}))
-        meta.update(getattr(self.prompt_engine, "last_metadata", {}))
-        meta.update(getattr(self, "_last_prompt_metadata", {}))
         prompt.metadata = meta
         roi: Dict[str, Any] = {"roi_delta": roi_delta, "coverage": coverage}
         if roi_meta:
@@ -1454,8 +1458,11 @@ class SelfCodingEngine:
                 "llm generation failed after retries; simplifying prompt",
                 extra={"description": description},
             )
-            prompt_obj = self.simplify_prompt(prompt_obj)
-            self._last_prompt = prompt_obj
+            intent = self.simplify_prompt(prompt_obj)
+            prompt_obj = self.build_enriched_prompt(
+                intent,
+                context_builder=self.context_builder,
+            )
             try:
                 result = self._invoke_llm()
             except RetryError as exc:
@@ -1524,8 +1531,12 @@ class SelfCodingEngine:
             self.context_builder.refresh_db_weights()
         except Exception:
             self.logger.exception("context builder refresh failed before fallback")
-        alt = codex_fallback_handler.handle(
+        alt_prompt = self.build_enriched_prompt(
             self.simplify_prompt(prompt),
+            context_builder=self.context_builder,
+        )
+        alt = codex_fallback_handler.handle(
+            alt_prompt,
             reason,
             context_builder=self.context_builder,
             queue_path=queue_path,
@@ -2081,6 +2092,7 @@ class SelfCodingEngine:
         baseline_coverage: float | None = None,
         baseline_runtime: float | None = None,
         target_region: TargetRegion | None = None,
+        lock: FileLock | None = None,
     ) -> tuple[int | None, bool, float]:
         """Patch a file, optionally restricting edits to a target region.
 
