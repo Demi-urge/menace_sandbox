@@ -151,6 +151,7 @@ class ConversationManagerBot:
             memory=self.gpt_memory,
             context_builder=self.client.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+            intent={"query": prompt},
         )
         self.cache[prompt] = text
         return text

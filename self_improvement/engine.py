@@ -1475,10 +1475,11 @@ class SelfImprovementEngine:
                 data = ask_with_memory(
                     client,
                     f"self_improvement.{action}",
-                    f"{action}:{module}",
+                    action,
                     memory=self.local_knowledge,
                     context_builder=client.context_builder,
                     tags=ask_tags,
+                    intent={"module": module},
                 )
                 text = (
                     data.get("choices", [{}])[0]

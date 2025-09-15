@@ -667,6 +667,7 @@ class ChatGPTResearchBot:
                 memory=self.gpt_memory,
                 context_builder=self.context_builder,
                 tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                intent={"instruction": prompt},
             )
             if not isinstance(data, dict):
                 logger.warning("unexpected response type %s", type(data))

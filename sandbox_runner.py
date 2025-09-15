@@ -508,15 +508,6 @@ def build_section_prompt(
         ensure_fresh_weights(context_builder)
         _REFRESHED_BUILDERS.add(id(context_builder))
 
-    vec_ctx = ""
-    try:
-        query = snippet or section
-        vec_ctx_raw = context_builder.build(query)
-        if not isinstance(vec_ctx_raw, (FallbackResult, ErrorResult)):
-            vec_ctx = compress_snippets({"snippet": vec_ctx_raw}).get("snippet", "")
-    except Exception:
-        vec_ctx = ""
-
     hist = tracker.module_deltas.get(section.split(":", 1)[0], [])
     hist_str = ", ".join(f"{v:.2f}" for v in hist[-5:]) if hist else ""
 
@@ -684,11 +675,6 @@ def build_section_prompt(
                 prior=prior,
             )
         if len(prompt) > max_prompt_length:
-            prompt = prompt[:max_prompt_length]
-
-    if vec_ctx:
-        prompt = f"{prompt}\n{vec_ctx}"
-        if max_prompt_length and len(prompt) > max_prompt_length:
             prompt = prompt[:max_prompt_length]
 
     return prompt
@@ -1741,17 +1727,6 @@ def _sandbox_main(
                     )
                     hist = ctx.conversations.get("brainstorm", [])
                     module = _get_local_knowledge()
-                    builder = ctx.context_builder
-                    mem_ctx = ""
-                    cb_session = uuid.uuid4().hex
-                    try:
-                        mem_ctx = builder.build("brainstorm", session_id=cb_session)
-                        if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
-                            mem_ctx = ""
-                    except Exception:
-                        mem_ctx = ""
-                    if mem_ctx:
-                        prompt = mem_ctx + "\n\n" + prompt
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in hist
                     )
@@ -1763,8 +1738,9 @@ def _sandbox_main(
                         "sandbox_runner.brainstorm",
                         prompt_text,
                         memory=getattr(ctx.gpt_client, "gpt_memory", None),
-                        context_builder=builder,
+                        context_builder=ctx.context_builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                        intent={"section": "overall", "summary": summary, "prior": prior},
                     )
                     idea = (
                         resp.get("choices", [{}])[0]

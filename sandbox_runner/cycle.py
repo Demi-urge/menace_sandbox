@@ -1431,16 +1431,6 @@ def _sandbox_cycle_runner(
                     if insight:
                         prompt = f"{insight}\n\n{prompt}"
                     gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
-                    builder = ctx.context_builder
-                    cb_session = uuid.uuid4().hex
-                    try:
-                        mem_ctx = builder.build(memory_key, session_id=cb_session)
-                        if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
-                            mem_ctx = ""
-                    except Exception:
-                        mem_ctx = ""
-                    if mem_ctx:
-                        prompt += "\n\n### Memory\n" + mem_ctx
                     lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
                     history = ctx.conversations.get(memory_key, [])
                     history_text = "\n".join(
@@ -1455,8 +1445,9 @@ def _sandbox_cycle_runner(
                         f"sandbox_runner.cycle.{memory_key}",
                         prompt_text,
                         memory=gpt_mem,
-                        context_builder=builder,
+                        context_builder=ctx.context_builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                        intent={"module": mod, "memory_key": memory_key, "insight": insight},
                     )
                     suggestion = (
                         resp.get("choices", [{}])[0]
@@ -1701,16 +1692,6 @@ def _sandbox_cycle_runner(
                         if insight:
                             prompt = f"{insight}\n\n{prompt}"
                         gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
-                        builder = ctx.context_builder
-                        cb_session = uuid.uuid4().hex
-                        try:
-                            mem_ctx = builder.build("brainstorm", session_id=cb_session)
-                            if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
-                                mem_ctx = ""
-                        except Exception:
-                            mem_ctx = ""
-                        if mem_ctx:
-                            prompt += "\n\n### Memory\n" + mem_ctx
                         hist = ctx.conversations.get("brainstorm", [])
                         lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
                         history_text = "\n".join(
@@ -1725,8 +1706,9 @@ def _sandbox_cycle_runner(
                             "sandbox_runner.cycle.brainstorm",
                             prompt_text,
                             memory=gpt_mem,
-                            context_builder=builder,
+                            context_builder=ctx.context_builder,
                             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                            intent={"section": "overall", "summary": summary, "prior": prior},
                         )
                         idea = (
                             resp.get("choices", [{}])[0]
@@ -1805,16 +1787,7 @@ def _sandbox_cycle_runner(
                     )
                     if insight:
                         prompt = f"{insight}\n\n{prompt}"
-                    builder = ctx.context_builder
-                    cb_session = uuid.uuid4().hex
-                    try:
-                        mem_ctx = builder.build("brainstorm", session_id=cb_session)
-                        if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
-                            mem_ctx = ""
-                    except Exception:
-                        mem_ctx = ""
-                    if mem_ctx:
-                        prompt += "\n\n### Memory\n" + mem_ctx
+                    gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
                     hist = ctx.conversations.get("brainstorm", [])
                     lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
                     history_text = "\n".join(
@@ -1829,8 +1802,9 @@ def _sandbox_cycle_runner(
                         "sandbox_runner.cycle.brainstorm",
                         prompt_text,
                         memory=gpt_mem,
-                        context_builder=builder,
+                        context_builder=ctx.context_builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                        intent={"section": "overall", "summary": summary},
                     )
                     idea = (
                         resp.get("choices", [{}])[0]

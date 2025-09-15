@@ -917,26 +917,7 @@ class ChatGPTPredictionBot:
         client = getattr(self, "client", None)
         if client is not None:
             try:
-                prompt = (
-                    f"Evaluate enhancement '{clean_idea}' with rationale '{clean_rationale}'."
-                    " Provide brief feedback."
-                )
-                vec_ctx = ""
-                try:
-                    ctx_res = self.context_builder.build(
-                        f"{clean_idea} {clean_rationale}"
-                    )
-                    vec_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-                    if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
-                        vec_ctx = ""
-                    elif vec_ctx:
-                        vec_ctx = compress_snippets({"snippet": vec_ctx}).get(
-                            "snippet", vec_ctx
-                        )
-                except Exception:
-                    vec_ctx = ""
-                if vec_ctx:
-                    prompt = f"{vec_ctx}\n\n{prompt}"
+                prompt = "Evaluate the following enhancement and provide brief feedback."
                 ask_with_memory(
                     client,
                     "chatgpt_prediction_bot.evaluate_enhancement",
@@ -944,6 +925,7 @@ class ChatGPTPredictionBot:
                     memory=self.gpt_memory,
                     context_builder=self.context_builder,
                     tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                    intent={"idea": clean_idea, "rationale": clean_rationale},
                 )
             except Exception:
                 logger.debug("ChatGPT evaluation failed", exc_info=True)
