@@ -149,9 +149,9 @@ class ConversationManagerBot:
             prompt_obj = self.client.context_builder.build_prompt(
                 prompt, intent_metadata=intent_meta
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("ContextBuilder.build_prompt failed")
-            raise
+            raise RuntimeError("prompt building failed") from exc
 
         data = self.client.ask(
             prompt_obj,
