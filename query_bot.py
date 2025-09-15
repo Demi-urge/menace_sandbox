@@ -33,10 +33,6 @@ from .chatgpt_idea_bot import ChatGPTClient
 from vector_service.context_builder import ContextBuilder
 from gpt_memory_interface import GPTMemoryInterface
 from . import database_manager
-try:  # memory-aware wrapper
-    from .memory_aware_gpt_client import ask_with_memory
-except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -200,14 +196,32 @@ class QueryBot:
         ents = [t[1] for t in parsed.get("entities", [])]
         data = self.fetcher.fetch(ents)
         self.store.add(context_id, query)
-        text = ask_with_memory(
-            self.client,
-            "query_bot.process",
+        prompt_obj = self.context_builder.build_prompt(
             "Summarize the following data",
-            memory=self.local_knowledge,
-            context_builder=self.context_builder,
-            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             intent={"data": data},
+        )
+        parts = [prompt_obj.user]
+        if getattr(prompt_obj, "examples", None):
+            parts.append("\n".join(prompt_obj.examples))
+        messages: list[dict[str, object]] = []
+        if getattr(prompt_obj, "system", None):
+            messages.append({"role": "system", "content": prompt_obj.system})
+        messages.append(
+            {
+                "role": "user",
+                "content": "\n".join(parts),
+                "metadata": getattr(prompt_obj, "metadata", {}) or {},
+            }
+        )
+        data_resp = self.client.ask(
+            messages,
+            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+            memory_manager=self.gpt_memory,
+        )
+        text = (
+            data_resp.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
         )
         return QueryResult(text=text, data=data)
 
