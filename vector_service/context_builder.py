@@ -1632,7 +1632,10 @@ def build_prompt(
     if intent is None and intent_metadata is not None:
         intent = intent_metadata
 
-    builder = context_builder or ContextBuilder()
+    if context_builder is None:
+        raise ValueError("context_builder is required")
+
+    builder = context_builder
 
     queries: List[str] = [goal]
     if latent_queries:
