@@ -7,7 +7,6 @@ from typing import Tuple, TYPE_CHECKING
 
 from dynamic_path_router import resolve_path
 from context_builder_util import ensure_fresh_weights
-from vector_service.context_builder import build_prompt as _build_prompt
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from vector_service.context_builder import ContextBuilder
@@ -66,12 +65,11 @@ def summarize_diff(
     hint = after.splitlines()[0] if after else (before.splitlines()[0] if before else "")
     top_k = 5 if hint else 0
     intent = {"hint": hint} if hint else None
-    prompt_obj = _build_prompt(
+    prompt_obj = context_builder.build_prompt(
         "Summarize the code change.",
         context=diff,
-        intent=intent,
+        intent_metadata=intent,
         top_k=top_k,
-        context_builder=context_builder,
     )
     prompt_text = ""
     if getattr(prompt_obj, "system", ""):
