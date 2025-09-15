@@ -1079,31 +1079,60 @@ class ChatGPTEnhancementBot:
         }
         if context:
             intent_meta["context"] = context
+
+        client = self.client
+        if client is None:
+            logger.error("ChatGPT client unavailable")
+            return []
+
+        context_builder = self.context_builder
         try:
-            base_tags = [IMPROVEMENT_PATH, INSIGHT]
-            if tags:
-                base_tags.extend(tags)
-
-            context_builder = self.context_builder
-            try:
-                prompt_obj = context_builder.build_prompt(
-                    instruction, intent=intent_meta
-                )
-            except Exception:
-                logger.exception("ContextBuilder.build_prompt failed")
-                raise
-
-            data = self.client.ask(
-                prompt_obj,
-                tags=base_tags,
-                memory_manager=self.gpt_memory,
+            prompt_obj = context_builder.build_prompt(
+                instruction, intent=intent_meta
             )
+        except Exception:
+            logger.exception("ContextBuilder.build_prompt failed")
+            if RAISE_ERRORS:
+                raise
+            return []
+
+        if getattr(prompt_obj, "origin", None) != "context_builder":
+            logger.error("ContextBuilder returned prompt without context origin")
+            if RAISE_ERRORS:
+                raise ValueError("prompt.origin must be 'context_builder'")
+            return []
+
+        ideas: List[Enhancement]
+        try:
+            generate = getattr(client, "generate", None)
+            if callable(generate):
+                result = generate(
+                    prompt_obj,
+                    parse_fn=parse_enhancements,
+                    context_builder=context_builder,
+                )
+                parsed = getattr(result, "parsed", None)
+                if parsed is None:
+                    payload: Any = getattr(result, "raw", None)
+                    if not payload:
+                        payload = getattr(result, "text", "")
+                    parsed = parse_enhancements(payload)
+                ideas = list(parsed or [])
+            else:
+                base_tags = [IMPROVEMENT_PATH, INSIGHT]
+                if tags:
+                    base_tags.extend(tags)
+                data = client.ask(  # type: ignore[call-arg]
+                    prompt_obj,
+                    tags=base_tags,
+                    memory_manager=self.gpt_memory,
+                )
+                ideas = parse_enhancements(data)
         except Exception as exc:
             logger.exception("chatgpt request failed: %s", exc)
             if RAISE_ERRORS:
                 raise
             return []
-        ideas = parse_enhancements(data)
         results: List[Enhancement] = []
         for enh in ideas:
             if not self._feasible(enh):
