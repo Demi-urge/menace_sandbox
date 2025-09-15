@@ -1606,6 +1606,7 @@ def _build_prompt_internal(
         examples=examples,
         vector_confidence=avg_conf,
         metadata=meta_out,
+        origin="context_builder",
     )
     return prompt
 
@@ -1717,6 +1718,7 @@ def build_prompt(
             prompt.vector_confidence = avg_conf
         except Exception:
             prompt.metadata.setdefault("vector_confidence", avg_conf)
+    prompt.origin = "context_builder"
     return prompt
 
 

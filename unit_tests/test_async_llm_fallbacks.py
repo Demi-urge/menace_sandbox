@@ -35,7 +35,7 @@ def test_router_async_fallback():
     chunks: list[str] = []
 
     async def run() -> None:
-        async for part in router.async_generate(Prompt(text="hi")):
+        async for part in router.async_generate(Prompt(text="hi", origin="context_builder")):
             chunks.append(part)
 
     asyncio.run(run())
@@ -100,7 +100,7 @@ def test_local_backend_async_fallback(monkeypatch):
     chunks: list[str] = []
 
     async def run() -> None:
-        async for part in client.async_generate(Prompt(text="hi")):
+        async for part in client.async_generate(Prompt(text="hi", origin="context_builder")):
             chunks.append(part)
 
     asyncio.run(run())
