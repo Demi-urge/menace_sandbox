@@ -1083,8 +1083,9 @@ class ChatGPTEnhancementBot:
             base_tags = [IMPROVEMENT_PATH, INSIGHT]
             if tags:
                 base_tags.extend(tags)
+
+            context_builder = self.context_builder
             try:
-                context_builder = self.context_builder
                 prompt_obj = context_builder.build_prompt(
                     instruction, intent=intent_meta
                 )
@@ -1092,21 +1093,8 @@ class ChatGPTEnhancementBot:
                 logger.exception("ContextBuilder.build_prompt failed")
                 raise
 
-            messages: List[Dict[str, Any]] = []
-            if getattr(prompt_obj, "system", None):
-                messages.append({"role": "system", "content": prompt_obj.system})
-            for ex in getattr(prompt_obj, "examples", []):
-                messages.append({"role": "system", "content": ex})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": prompt_obj.user,
-                    "metadata": getattr(prompt_obj, "metadata", {}) or {},
-                }
-            )
-
             data = self.client.ask(
-                messages,
+                prompt_obj,
                 tags=base_tags,
                 memory_manager=self.gpt_memory,
             )
