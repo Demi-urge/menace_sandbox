@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from filelock import FileLock, Timeout
 
 from logging_utils import get_logger, set_correlation_id, log_record
-from vector_service.context_builder import ContextBuilder
+from vector_service.context_builder import ContextBuilder, build_prompt
 try:  # pragma: no cover - allow flat import
     from metrics_exporter import (
         stub_generation_requests_total,
@@ -938,9 +938,9 @@ async def _async_generate_stubs(
         intent_meta = {"stub_args": dict(stub)}
         query = template.format(name=name, args=args)
 
-        async def _invoke() -> str:
-            prompt_obj = context_builder.build_prompt(
-                query, intent_metadata=intent_meta
+        async def _invoke(context_builder: ContextBuilder) -> str:
+            prompt_obj = build_prompt(
+                query, intent_metadata=intent_meta, context_builder=context_builder
             )
             call = getattr(gen, "generate", gen)
             result = call(prompt_obj)  # type: ignore[attr-defined]
@@ -953,7 +953,7 @@ async def _async_generate_stubs(
             return str(result)
 
         try:
-            text = await _call_with_retry(_invoke, config)
+            text = await _call_with_retry(lambda: _invoke(context_builder), config)
             match = re.search(r"{.*}", text, flags=re.S)
             if match:
                 data = json.loads(match.group(0))
