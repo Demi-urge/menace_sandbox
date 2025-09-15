@@ -14,7 +14,7 @@ import difflib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal
+from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal, Dict
 
 from db_router import DBRouter, GLOBAL_ROUTER, SHARED_TABLES, init_db_router, queue_insert
 from db_dedup import insert_if_unique
@@ -31,11 +31,9 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
 from . import RAISE_ERRORS
-from snippet_compressor import compress_snippets
 from vector_service.context_builder import (
     ContextBuilder,
-    ErrorResult,
-    FallbackResult,
+    build_prompt as cb_build_prompt,
 )
 try:  # canonical tag constants
     from .log_tags import IMPROVEMENT_PATH, INSIGHT
@@ -1082,26 +1080,26 @@ class ChatGPTEnhancementBot:
         *,
         tags: Sequence[str] | None = None,
     ) -> List[Enhancement]:
-        vec_ctx = ""
+        intent_meta: Dict[str, Any] = {
+            "instruction": instruction,
+            "num_ideas": num_ideas,
+        }
+        latent: List[str] | None = None
+        if context:
+            intent_meta["context"] = context
+            latent = [context]
         try:
-            query = f"{instruction} {context}".strip()
-            ctx_res = self.context_builder.build(query)
-            vec_ctx = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
-            if isinstance(vec_ctx, (FallbackResult, ErrorResult)):
-                vec_ctx = ""
-            elif vec_ctx:
-                vec_ctx = compress_snippets({"snippet": vec_ctx}).get(
-                    "snippet", vec_ctx
-                )
+            prompt_obj = self.context_builder.build_prompt(
+                instruction,
+                intent=intent_meta,
+                latent_queries=latent,
+            )
         except Exception:
-            vec_ctx = ""
-        prompt = (
-            f"{instruction} Provide {num_ideas} enhancement ideas as a JSON list with"
-            " fields idea and rationale."
-        )
-        if vec_ctx:
-            prompt = f"{vec_ctx}\n\n{prompt}"
-        logger.debug("sending prompt to ChatGPT: %s", prompt)
+            logger.exception("failed to build prompt from context builder")
+            prompt_obj = cb_build_prompt(
+                instruction, intent_metadata=intent_meta, latent_queries=latent
+            )
+        logger.debug("sending prompt to ChatGPT: %s", prompt_obj.user)
         try:
             base_tags = [IMPROVEMENT_PATH, INSIGHT]
             if tags:
@@ -1109,10 +1107,11 @@ class ChatGPTEnhancementBot:
             data = ask_with_memory(
                 self.client,
                 "chatgpt_enhancement_bot.propose",
-                prompt,
+                prompt_obj,
                 memory=self.gpt_memory,
                 context_builder=self.context_builder,
                 tags=base_tags,
+                intent=intent_meta,
             )
         except Exception as exc:
             logger.exception("chatgpt request failed: %s", exc)
