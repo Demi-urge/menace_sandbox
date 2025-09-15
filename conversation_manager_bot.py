@@ -7,6 +7,7 @@ from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
 import json
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -15,9 +16,6 @@ from typing import Callable, Dict, Optional, List
 from datetime import datetime, timezone
 
 from neurosales import (
-registry = BotRegistry()
-data_bot = DataBot(start_server=False)
-
     add_message as mq_add_message,
     get_recent_messages,
     push_chain,
@@ -30,10 +28,7 @@ from .report_generation_bot import ReportGenerationBot, ReportOptions
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
-try:  # memory-aware wrapper
-    from .memory_aware_gpt_client import ask_with_memory
-except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+from prompt_types import Prompt
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -42,6 +37,11 @@ try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+registry = BotRegistry()
+data_bot = DataBot(start_server=False)
 
 try:
     import speech_recognition as sr  # type: ignore
@@ -144,15 +144,43 @@ class ConversationManagerBot:
     def _chatgpt(self, prompt: str) -> str:
         if prompt in self.cache:
             return self.cache[prompt]
-        text = ask_with_memory(
-            self.client,
-            "conversation_manager_bot._chatgpt",
-            prompt,
-            memory=self.gpt_memory,
-            context_builder=self.client.context_builder,
-            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-            intent={"query": prompt},
+
+        intent_meta = {"query": prompt, "tags": [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]}
+        try:
+            prompt_obj = self.client.context_builder.build_prompt(
+                prompt, intent_metadata=intent_meta
+            )
+        except Exception:
+            logger.exception("ContextBuilder.build_prompt failed")
+            prompt_obj = Prompt(user=prompt)
+
+        parts: List[str] = [prompt_obj.user]
+        if getattr(prompt_obj, "examples", None):
+            parts.append("\n".join(prompt_obj.examples))
+
+        messages: List[Dict[str, object]] = []
+        if getattr(prompt_obj, "system", None):
+            messages.append({"role": "system", "content": prompt_obj.system})
+        messages.append(
+            {
+                "role": "user",
+                "content": "\n".join(parts),
+                "metadata": getattr(prompt_obj, "metadata", {}) or {},
+            }
         )
+
+        data = self.client.ask(
+            messages,
+            tags=intent_meta["tags"],
+            memory_manager=self.gpt_memory,
+        )
+        text = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+        self._update_memory(prompt_obj.user, text)
+        logger.debug("prompt: %s\nresponse: %s", prompt_obj.user, text)
         self.cache[prompt] = text
         return text
 
@@ -162,9 +190,9 @@ class ConversationManagerBot:
         adjusted = self._apply_strategy(query)
         if target_bot and target_bot in self.stage7_bots:
             response = self.stage7_bots[target_bot](adjusted)
+            self._update_memory(query, response)
         else:
             response = self._chatgpt(adjusted)
-        self._update_memory(query, response)
         self._detect_resistance()
         return response
 
