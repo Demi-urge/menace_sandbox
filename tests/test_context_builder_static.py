@@ -65,7 +65,9 @@ def test_flags_chat_completion_wrapper(tmp_path):
     assert check_file(path) == [
         (
             3,
-            "direct message list/dict disallowed; use ContextBuilder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+            "direct message list/dict disallowed; use "
+            "ContextBuilder.build_prompt or "
+            "SelfCodingEngine.build_enriched_prompt",
         )
     ]
 
@@ -98,7 +100,9 @@ def test_allows_context_builder_call(tmp_path):
     code = (
         "from vector_service.context_builder import ContextBuilder\n"
         "def demo():\n"
-        "    ContextBuilder(bots_db='bots.db', code_db='code.db', errors_db='errors.db', workflows_db='workflows.db')\n"
+        "    ContextBuilder("
+        "bots_db='bots.db', code_db='code.db', "
+        "errors_db='errors.db', workflows_db='workflows.db')\n"
     )
     path = tmp_path / "snippet.py"
     path.write_text(code)
@@ -182,7 +186,8 @@ def test_flags_build_with_fallback_builder(tmp_path):
     code = (
         "from vector_service.context_builder import ContextBuilder\n"
         "def demo(builder):\n"
-        "    builder = builder or ContextBuilder('bots.db', 'code.db', 'errors.db', 'workflows.db')\n"
+        "    builder = builder or ContextBuilder("
+        "'bots.db', 'code.db', 'errors.db', 'workflows.db')\n"
         "    builder.build()\n"
     )
     path = tmp_path / "snippet.py"
@@ -219,7 +224,9 @@ def test_flags_manual_string_prompt(tmp_path):
     assert check_file(path) == [
         (
             4,
-            "manual string prompt disallowed; use context_builder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+            "manual string prompt disallowed; use "
+            "context_builder.build_prompt or "
+            "SelfCodingEngine.build_enriched_prompt",
         )
     ]
 
@@ -238,7 +245,9 @@ def test_flags_string_concatenation_prompt(tmp_path):
     assert check_file(path) == [
         (
             4,
-            "manual string prompt disallowed; use context_builder.build_prompt or SelfCodingEngine.build_enriched_prompt",
+            "manual string prompt disallowed; use "
+            "context_builder.build_prompt or "
+            "SelfCodingEngine.build_enriched_prompt",
         )
     ]
 
@@ -298,3 +307,49 @@ def test_flags_ask_with_memory(tmp_path):
     assert check_file(path) == [
         (2, "ask_with_memory disallowed; use ContextBuilder.build_prompt")
     ]
+
+
+def test_flags_builder_build_concat_via_var(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(llm, context_builder):\n"
+        "    prompt = context_builder.build('x') + 'y'\n"
+        "    llm.generate(prompt, context_builder=context_builder)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (3, "context_builder.build result concatenation disallowed; pass directly")
+    ]
+
+
+def test_flags_client_ask_literal_messages(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(client):\n"
+        "    client.ask([{'role': 'user', 'content': 'hi'}])\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (
+            2,
+            "direct message list/dict disallowed; use "
+            "ContextBuilder.build_prompt or "
+            "SelfCodingEngine.build_enriched_prompt",
+        )
+    ]
+
+
+def test_client_ask_literal_messages_nocb(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(client):\n"
+        "    client.ask([{'role': 'user', 'content': 'hi'}])  # nocb\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == []

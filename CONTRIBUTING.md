@@ -135,6 +135,15 @@ rejected unless produced by `ContextBuilder.build_prompt` or
 outside `vector_service/context_builder.py`, and direct calls to
 `PromptEngine.build_prompt` are disallowed.
 
+Results of `ContextBuilder.build(...)` must be sent straight to the LLM client.
+Combining them with additional strings, f-strings or lists before invoking the
+client is flagged; pass the raw builder output to
+`build_prompt`/`build_enriched_prompt` instead.  Calls to
+`chat_completion_create` or `client.ask` that assemble `messages` from literal
+lists or dictionaries are also rejected – construct a `Prompt` object with the
+builder and supply it directly.  Tests that intentionally exercise these
+behaviours may silence the check with a trailing `# nocb` comment.
+
 When `pre-commit run check-context-builder-usage --all-files` reports
 "Prompt instantiation disallowed", replace the `Prompt(...)` constructor with
 `context_builder.build_prompt(...)` or
