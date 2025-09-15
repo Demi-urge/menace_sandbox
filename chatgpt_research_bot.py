@@ -111,10 +111,11 @@ def configure_logging(
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
-try:  # memory-aware wrapper
-    from .memory_aware_gpt_client import ask_with_memory
-except Exception:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+try:  # tag helper
+    from memory_logging import ensure_tags
+except Exception:  # pragma: no cover - fallback when logging unavailable
+    def ensure_tags(key: str, tags=None):  # type: ignore
+        return [key, *(tags or [])]
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -660,14 +661,30 @@ class ChatGPTResearchBot:
 
         def _do() -> str:
             b_prompt = self._budget_prompt(prompt)
-            data = ask_with_memory(
-                self.client,
+            mem_ctx = ""
+            try:
+                mem_ctx = self.gpt_memory.build_context(
+                    "chatgpt_research_bot._ask", limit=5
+                )
+            except Exception:
+                pass
+            intent_meta = {"instruction": prompt}
+            if mem_ctx:
+                intent_meta["memory_context"] = mem_ctx
+            intent_meta.setdefault("user_query", b_prompt)
+            prompt_obj = self.context_builder.build_prompt(
+                b_prompt, intent=intent_meta
+            )
+            if mem_ctx:
+                examples = list(getattr(prompt_obj, "examples", []))
+                examples.append(mem_ctx)
+                prompt_obj.examples = examples
+            full_tags = ensure_tags(
                 "chatgpt_research_bot._ask",
-                b_prompt,
-                memory=self.gpt_memory,
-                context_builder=self.context_builder,
-                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                intent={"instruction": prompt},
+                [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+            )
+            data = self.client.ask(
+                prompt_obj, use_memory=False, memory_manager=None, tags=full_tags
             )
             if not isinstance(data, dict):
                 logger.warning("unexpected response type %s", type(data))
@@ -682,6 +699,15 @@ class ChatGPTResearchBot:
                 if isinstance(message, dict):
                     msg = message.get("content", "")
                     if msg:
+                        try:
+                            log_prompt = "\n\n".join(
+                                prompt_obj.examples + [prompt_obj.user]
+                            )
+                            if prompt_obj.system:
+                                log_prompt = f"{prompt_obj.system}\n\n{log_prompt}"
+                            self.gpt_memory.log(log_prompt, msg, full_tags)
+                        except Exception:
+                            pass
                         return msg
                 else:
                     logger.warning("unexpected message format from API")
