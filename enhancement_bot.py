@@ -175,6 +175,7 @@ class EnhancementBot:
         *,
         hint: str = "",
         confidence: float = 0.0,
+        context_builder: ContextBuilder | None = None,
     ) -> str:
         """Summarise the code change using the internal LLM interface.
 
@@ -186,11 +187,12 @@ class EnhancementBot:
         fetch a broader context window.
         """
 
+        context_builder = context_builder or self.context_builder
         context = ""
         if confidence > 0.0:
             try:  # pragma: no cover - builder failures are non fatal
                 top_k = max(1, int(5 * confidence))
-                retrieved = self.context_builder.build(hint, top_k=top_k)
+                retrieved = context_builder.build(hint, top_k=top_k)
                 context = compress_snippets({"snippet": retrieved}).get("snippet", "")
             except Exception:
                 context = ""
@@ -203,7 +205,7 @@ class EnhancementBot:
             intent_meta["refactor_summary"] = hint
         if context:
             intent_meta["retrieved_context"] = context
-        prompt = self.context_builder.build_prompt(
+        prompt = context_builder.build_prompt(
             "Summarize the code change.",
             intent=intent_meta,
             top_k=0,
@@ -215,7 +217,7 @@ class EnhancementBot:
             return ""
 
         try:
-            result = self.llm_client.generate(prompt, context_builder=self.context_builder)
+            result = self.llm_client.generate(prompt, context_builder=context_builder)
             return result.text.strip()
         except TypeError as exc:
             raise RuntimeError(

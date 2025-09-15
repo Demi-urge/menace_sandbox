@@ -83,7 +83,13 @@ class CortexAwareResponder:
     ) -> str:
         # GPT-4 first pass
         first_pass = "".join(
-            self.client.stream_chat(user_id, [], profile.archetype, text)
+            self.client.stream_chat(
+                user_id,
+                [],
+                profile.archetype,
+                text,
+                context_builder=self.client.context_builder,
+            )
         )
 
         history_texts = [m.content for m in memory.get_recent_messages()]

@@ -120,12 +120,15 @@ class GPT4Client:
         emotion_tensor: List[float],
         objective: str,
         text: str,
+        *,
+        context_builder: "ContextBuilder" | None = None,
     ) -> Iterator[str]:
         if not self.enabled:
             logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
             return
-        prompt = self.context_builder.build_prompt(
+        context_builder = context_builder or self.context_builder
+        prompt = context_builder.build_prompt(
             text,
             intent={
                 "archetype": archetype,
