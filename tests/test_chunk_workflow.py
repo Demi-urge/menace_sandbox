@@ -87,8 +87,13 @@ class DummyLLM:
 
 
 class DummyBuilder:
-    def build(self, text: str):  # pragma: no cover - simple stub
-        return ""
+    def build(self, text: str, include_vectors: bool = False, return_metadata: bool = False):  # pragma: no cover - simple stub
+        return ("", "", [], {})
+
+    def build_prompt(self, text: str, *, intent=None, top_k: int = 0, **_: Any):
+        from prompt_types import Prompt
+
+        return Prompt(user=text, metadata={})
 
 
 def test_summary_cache_reused(tmp_path, monkeypatch):
