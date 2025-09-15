@@ -1429,21 +1429,20 @@ def _sandbox_cycle_runner(
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
                     if insight:
-                        prompt = f"{insight}\n\n{prompt}"
+                        prompt.user = f"{insight}\n\n{prompt.user}"
                     gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
                     lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
                     history = ctx.conversations.get(memory_key, [])
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in history
                     )
-                    prompt_text = (
-                        f"{history_text}\nuser: {prompt}" if history_text else prompt
-                    )
+                    if history_text:
+                        prompt.examples.insert(0, history_text)
                     from memory_aware_gpt_client import ask_with_memory
                     resp = ask_with_memory(
                         ctx.gpt_client,
                         f"sandbox_runner.cycle.{memory_key}",
-                        prompt_text,
+                        prompt,
                         memory=gpt_mem,
                         context_builder=ctx.context_builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
@@ -1455,13 +1454,13 @@ def _sandbox_cycle_runner(
                         .get("content", "")
                         .strip()
                     )
-                    history = history + [{"role": "user", "content": prompt}]
+                    history = history + [{"role": "user", "content": prompt.user}]
                     if suggestion:
                         history.append({"role": "assistant", "content": suggestion})
                         if lkm:
                             try:
                                 lkm.log(
-                                    prompt,
+                                    prompt.user,
                                     suggestion,
                                     tags=[f"sandbox_runner.cycle.{memory_key}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                 )
@@ -1690,21 +1689,20 @@ def _sandbox_cycle_runner(
                             max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                         )
                         if insight:
-                            prompt = f"{insight}\n\n{prompt}"
+                            prompt.user = f"{insight}\n\n{prompt.user}"
                         gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
                         hist = ctx.conversations.get("brainstorm", [])
                         lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
                         history_text = "\n".join(
                             f"{m.get('role')}: {m.get('content')}" for m in hist
                         )
-                        prompt_text = (
-                            f"{history_text}\nuser: {prompt}" if history_text else prompt
-                        )
+                        if history_text:
+                            prompt.examples.insert(0, history_text)
                         from memory_aware_gpt_client import ask_with_memory
                         resp = ask_with_memory(
                             ctx.gpt_client,
                             "sandbox_runner.cycle.brainstorm",
-                            prompt_text,
+                            prompt,
                             memory=gpt_mem,
                             context_builder=ctx.context_builder,
                             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
@@ -1716,7 +1714,7 @@ def _sandbox_cycle_runner(
                             .get("content", "")
                             .strip()
                         )
-                        hist = hist + [{"role": "user", "content": prompt}]
+                        hist = hist + [{"role": "user", "content": prompt.user}]
                         if idea:
                             ctx.brainstorm_history.append(idea)
                             hist.append({"role": "assistant", "content": idea})
@@ -1724,7 +1722,7 @@ def _sandbox_cycle_runner(
                             if lkm:
                                 try:
                                     lkm.log(
-                                        prompt,
+                                        prompt.user,
                                         idea,
                                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                     )
@@ -1786,21 +1784,20 @@ def _sandbox_cycle_runner(
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
                     if insight:
-                        prompt = f"{insight}\n\n{prompt}"
+                        prompt.user = f"{insight}\n\n{prompt.user}"
                     gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
                     hist = ctx.conversations.get("brainstorm", [])
                     lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in hist
                     )
-                    prompt_text = (
-                        f"{history_text}\nuser: {prompt}" if history_text else prompt
-                    )
+                    if history_text:
+                        prompt.examples.insert(0, history_text)
                     from memory_aware_gpt_client import ask_with_memory
                     resp = ask_with_memory(
                         ctx.gpt_client,
                         "sandbox_runner.cycle.brainstorm",
-                        prompt_text,
+                        prompt,
                         memory=gpt_mem,
                         context_builder=ctx.context_builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
@@ -1811,7 +1808,7 @@ def _sandbox_cycle_runner(
                         .get("message", {})
                         .get("content", "")
                     )
-                    hist = hist + [{"role": "user", "content": prompt}]
+                    hist = hist + [{"role": "user", "content": prompt.user}]
                     if idea:
                         ctx.brainstorm_history.append(idea)
                         hist.append({"role": "assistant", "content": idea})
@@ -1819,7 +1816,7 @@ def _sandbox_cycle_runner(
                         if lkm:
                             try:
                                 lkm.log(
-                                    prompt,
+                                    prompt.user,
                                     idea,
                                     tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                 )

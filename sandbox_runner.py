@@ -43,6 +43,7 @@ from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
 from vector_service import FallbackResult, ContextBuilder
+from prompt_types import Prompt
 from snippet_compressor import compress_snippets
 from context_builder_util import ensure_fresh_weights
 try:  # pragma: no cover - optional dependency
@@ -479,7 +480,7 @@ def build_section_prompt(
     max_length: int = 1000,
     max_prompt_length: int | None = GPT_SECTION_PROMPT_MAX_LENGTH,
     summary_depth: int = GPT_SECTION_SUMMARY_DEPTH,
-) -> str:
+) -> Prompt:
     global _TPL, _AUTO_TEMPLATES
 
     if _AUTO_TEMPLATES is None:
@@ -618,7 +619,7 @@ def build_section_prompt(
                 chosen = t
         tpl = chosen
 
-    prompt = tpl.render(
+    intent_text = tpl.render(
         section=section,
         history=hist_str,
         metrics=metric_str,
@@ -632,52 +633,19 @@ def build_section_prompt(
         prior=prior,
     )
 
-    if max_prompt_length and len(prompt) > max_prompt_length:
-        while True:
-            excess = len(prompt) - max_prompt_length
-            if excess <= 0:
-                break
-            if snippet_part:
-                trim = min(excess, len(snippet_part))
-                snippet_part = snippet_part[:-trim]
-                excess -= trim
-            elif metric_str:
-                trim = min(excess, len(metric_str))
-                metric_str = metric_str[:-trim]
-                excess -= trim
-            elif metric_summary_str:
-                trim = min(excess, len(metric_summary_str))
-                metric_summary_str = metric_summary_str[:-trim]
-                excess -= trim
-            elif synergy_str:
-                trim = min(excess, len(synergy_str))
-                synergy_str = synergy_str[:-trim]
-                excess -= trim
-            elif synergy_summary_str:
-                # keep at least the prefix; if cannot trim further break
-                if len(synergy_summary_str) > 10:
-                    trim = min(excess, len(synergy_summary_str) - 10)
-                    synergy_summary_str = synergy_summary_str[:-trim]
-                    excess -= trim
-                else:
-                    break
-            else:
-                break
-            prompt = tpl.render(
-                section=section,
-                history=hist_str,
-                metrics=metric_str,
-                metrics_summary=metric_summary_str,
-                synergy=synergy_str,
-                synergy_summary=synergy_summary_str,
-                summary=comment_summary.strip(),
-                snippet=snippet_part,
-                prior=prior,
-            )
-        if len(prompt) > max_prompt_length:
-            prompt = prompt[:max_prompt_length]
+    if max_prompt_length and len(intent_text) > max_prompt_length:
+        intent_text = intent_text[:max_prompt_length]
 
-    return prompt
+    user_query = f"Suggest a concise improvement:\n{snippet_part}"
+    if max_prompt_length and len(user_query) > max_prompt_length:
+        user_query = user_query[:max_prompt_length]
+
+    prompt_obj = context_builder.build_prompt(
+        user_query,
+        intent={"instruction": intent_text, "section": section},
+        top_k=0,
+    )
+    return prompt_obj
 
 
 
@@ -1730,13 +1698,12 @@ def _sandbox_main(
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in hist
                     )
-                    prompt_text = (
-                        f"{history_text}\nuser: {prompt}" if history_text else prompt
-                    )
+                    if history_text:
+                        prompt.examples.insert(0, history_text)
                     resp = ask_with_memory(
                         ctx.gpt_client,
                         "sandbox_runner.brainstorm",
-                        prompt_text,
+                        prompt,
                         memory=getattr(ctx.gpt_client, "gpt_memory", None),
                         context_builder=ctx.context_builder,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
@@ -1748,7 +1715,7 @@ def _sandbox_main(
                         .get("content", "")
                         .strip()
                     )
-                    hist = hist + [{"role": "user", "content": prompt}]
+                    hist = hist + [{"role": "user", "content": prompt.user}]
                     if idea:
                         ctx.brainstorm_history.append(idea)
                         hist.append({"role": "assistant", "content": idea})
@@ -1756,7 +1723,7 @@ def _sandbox_main(
                     module = _get_local_knowledge()
                     try:
                         module.log(
-                            prompt,
+                            prompt.user,
                             idea,
                             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                         )
