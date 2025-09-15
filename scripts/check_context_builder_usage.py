@@ -41,7 +41,8 @@ considered valid ``ContextBuilder`` instantiations.
 Functions invoking ``ContextBuilder.build`` must accept a non-optional builder
 parameter.  Parameters defaulting to ``None`` or falling back to a new builder
 within the function body are flagged to ensure that callers explicitly inject a
-``ContextBuilder`` instance.
+``ContextBuilder`` instance.  Module-level ``ContextBuilder`` instantiation is
+likewise disallowed.
 
 Manual string prompts sent directly to LLM clients are also detected.  Literal
 strings, f-strings, or concatenated strings passed as ``prompt`` arguments will
@@ -55,7 +56,9 @@ directly to the client.  Lists or dicts supplied directly as ``messages`` to
 ``.generate`` methods are also disallowed; use the canonical builders instead.
 Results of ``context_builder.build(...)`` must be passed directly to the
 client; concatenating them with additional strings or lists is reported.
-Direct ``ask_with_memory`` calls are likewise flagged.
+Direct ``ask_with_memory`` calls are likewise flagged.  ``Prompt``
+instantiations inside exception handlers or fallback branches after
+``build_prompt`` failures are reported.
 """
 from __future__ import annotations
 
@@ -147,6 +150,32 @@ def _is_message_literal_expr(expr: ast.AST) -> bool:
     return False
 
 
+def _contains_build_prompt_call(node: ast.AST) -> bool:
+    for inner in ast.walk(node):
+        if (
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Attribute)
+            and inner.func.attr == "build_prompt"
+        ):
+            return True
+    return False
+
+
+def _find_prompt_calls(node: ast.AST) -> list[ast.Call]:
+    calls: list[ast.Call] = []
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Call):
+            func = inner.func
+            name = None
+            if isinstance(func, ast.Attribute):
+                name = func.attr
+            elif isinstance(func, ast.Name):
+                name = func.id
+            if name == "Prompt":
+                calls.append(inner)
+    return calls
+
+
 def iter_python_files(root: Path):
     for path in root.rglob("*.py"):
         if any(part in {"tests", "unit_tests"} for part in path.parts):
@@ -190,6 +219,23 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 return ".".join(reversed(parts))
         return None
 
+    # Flag module-level ContextBuilder instances
+    for stmt in tree.body:
+        value = getattr(stmt, "value", None)
+        if isinstance(value, ast.Call):
+            name = full_name(value.func)
+            if name and (name == "ContextBuilder" or name.endswith(".ContextBuilder")):
+                line_no = stmt.lineno
+                line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                prev = lines[line_no - 2] if line_no >= 2 else ""
+                if NOCB_MARK not in line and NOCB_MARK not in prev:
+                    errors.append(
+                        (
+                            line_no,
+                            "module-level ContextBuilder disallowed; inject via parameter",
+                        )
+                    )
+
     OPENAI_NAMES = {
         "openai.ChatCompletion.create",
         "openai.Completion.create",
@@ -219,7 +265,15 @@ def check_file(path: Path) -> list[tuple[int, str]]:
 
         @staticmethod
         def _has_default(arg: ast.arg, default: ast.AST | None) -> bool:
-            return bool(default is not None and arg.arg == "context_builder")
+            if default is None:
+                return False
+            if arg.arg == "context_builder":
+                return True
+            return (
+                isinstance(default, ast.Constant)
+                and default.value is None
+                and "builder" in arg.arg
+            )
 
         def _check_args(self, node: ast.AST) -> None:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -537,6 +591,65 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 self._record_prompt_var([target], value)
                 self._record_builder_concat_var([target], value)
                 self._record_message_literal_var([target], value)
+            self.generic_visit(node)
+
+        def visit_Try(self, node: ast.Try) -> None:  # noqa: D401
+            has_build = any(_contains_build_prompt_call(stmt) for stmt in node.body)
+            if has_build:
+                for handler in node.handlers:
+                    for call in _find_prompt_calls(handler):
+                        line_no = call.lineno
+                        line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                        prev = lines[line_no - 2] if line_no >= 2 else ""
+                        if NOCB_MARK not in line and NOCB_MARK not in prev:
+                            errors.append(
+                                (
+                                    line_no,
+                                    "Prompt fallback disallowed; handle build_prompt errors upstream",
+                                )
+                            )
+            self.generic_visit(node)
+
+        def visit_If(self, node: ast.If) -> None:  # noqa: D401
+            var_name: str | None = None
+            target_body: list[ast.stmt] | None = None
+            test = node.test
+            if (
+                isinstance(test, ast.UnaryOp)
+                and isinstance(test.op, ast.Not)
+                and isinstance(test.operand, ast.Name)
+            ):
+                var_name = test.operand.id
+                target_body = node.body
+            elif isinstance(test, ast.Name):
+                var_name = test.id
+                target_body = node.orelse
+            elif (
+                isinstance(test, ast.Compare)
+                and len(test.ops) == 1
+                and isinstance(test.left, ast.Name)
+                and isinstance(test.comparators[0], ast.Constant)
+                and test.comparators[0].value is None
+            ):
+                var_name = test.left.id
+                op = test.ops[0]
+                if isinstance(op, (ast.Is, ast.Eq)):
+                    target_body = node.body
+                elif isinstance(op, (ast.IsNot, ast.NotEq)):
+                    target_body = node.orelse
+            if var_name and target_body is not None and var_name in self.prompt_vars:
+                for stmt in target_body:
+                    for call in _find_prompt_calls(stmt):
+                        line_no = call.lineno
+                        line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+                        prev = lines[line_no - 2] if line_no >= 2 else ""
+                        if NOCB_MARK not in line and NOCB_MARK not in prev:
+                            errors.append(
+                                (
+                                    line_no,
+                                    "Prompt fallback disallowed; handle build_prompt errors upstream",
+                                )
+                            )
             self.generic_visit(node)
 
         def visit_Call(self, node: ast.Call) -> None:  # noqa: D401
