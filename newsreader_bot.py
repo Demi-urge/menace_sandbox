@@ -279,16 +279,7 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
     except Exception:
         logging.getLogger(__name__).exception("failed to build prompt")
         return ""
-
-    messages: List[Dict[str, Any]] = []
-    if getattr(prompt_obj, "system", None):
-        messages.append({"role": "system", "content": prompt_obj.system})
-    content_parts = list(getattr(prompt_obj, "examples", []))
-    content_parts.append(prompt_obj.user)
-    meta = dict(getattr(prompt_obj, "metadata", {}) or {})
-    messages.append({"role": "user", "content": "\n".join(content_parts), "metadata": meta})
-
-    data = client.ask(messages, use_memory=False, memory_manager=None, tags=full_tags)
+    data = client.ask(prompt_obj, use_memory=False, memory_manager=None, tags=full_tags)
     return (
         data.get("choices", [{}])[0]
         .get("message", {})
