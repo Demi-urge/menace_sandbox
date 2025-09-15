@@ -202,13 +202,9 @@ try:  # canonical tag constants
 except ImportError:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # helper for standardised GPT memory logging
-    from ..memory_logging import log_with_tags
+    from ..memory_logging import log_with_tags, ensure_tags
 except ImportError:  # pragma: no cover - fallback for flat layout
-    from memory_logging import log_with_tags  # type: ignore
-try:  # pragma: no cover - allow flat imports
-    from ..memory_aware_gpt_client import ask_with_memory
-except ImportError:  # pragma: no cover - fallback for flat layout
-    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+    from memory_logging import log_with_tags, ensure_tags  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from ..local_knowledge_module import LocalKnowledgeModule
 except ImportError:  # pragma: no cover - fallback for flat layout
@@ -1472,14 +1468,21 @@ class SelfImprovementEngine:
                 ask_tags = [ERROR_FIX, IMPROVEMENT_PATH]
                 if tags:
                     ask_tags.extend(tags)
-                data = ask_with_memory(
-                    client,
-                    f"self_improvement.{action}",
-                    action,
-                    memory=self.local_knowledge,
-                    context_builder=client.context_builder,
-                    tags=ask_tags,
-                    intent={"module": module},
+                key = f"self_improvement.{action}"
+                full_tags = ensure_tags(key, ask_tags)
+                mem_ctx = ""
+                try:
+                    mem_ctx = self.local_knowledge.build_context(key, limit=5)
+                except Exception:
+                    pass
+                intent_meta: dict[str, object] = {"module": module, "user_query": action}
+                if mem_ctx:
+                    intent_meta["memory_context"] = mem_ctx
+                prompt_obj = client.context_builder.build_prompt(
+                    action, intent_metadata=intent_meta, tags=full_tags
+                )
+                data = client.ask(
+                    prompt_obj, use_memory=False, memory_manager=None, tags=full_tags
                 )
                 text = (
                     data.get("choices", [{}])[0]
@@ -1487,6 +1490,15 @@ class SelfImprovementEngine:
                     .get("content", "")
                     .strip()
                 )
+                try:
+                    log_prompt = "\n\n".join(
+                        getattr(prompt_obj, "examples", []) + [prompt_obj.user]
+                    )
+                    if getattr(prompt_obj, "system", ""):
+                        log_prompt = f"{prompt_obj.system}\n\n{log_prompt}"
+                    log_with_tags(self.local_knowledge, log_prompt, text, full_tags)
+                except Exception:
+                    pass
                 if text:
                     self.logger.info(
                         "gpt_suggestion",
