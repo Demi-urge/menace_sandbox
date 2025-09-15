@@ -1,5 +1,4 @@
 import sys
-import sys
 import types
 import importlib.machinery
 
@@ -209,7 +208,7 @@ def test_curriculum_generation_triggers_training(tmp_path):
         {"error_type": "net", "count": 1, "success_rate": 0.0},
     ])
     builder = CurriculumBuilder(err_bot, bus, threshold=2)
-    coord = SelfLearningCoordinator(bus, learning_engine=engine, curriculum_builder=builder)
+    coord = SelfLearningCoordinator(bus, learning_engine=engine, curriculum=builder)
     coord.start()
     builder.publish()
     bus._loop.run_until_complete(asyncio.sleep(0.1))
