@@ -20,9 +20,15 @@ except Exception:  # pragma: no cover - fallback when logging unavailable
         return [key, *(tags or [])]
 
 try:  # pragma: no cover - optional dependency
-    from vector_service.context_builder import ContextBuilder
+    from vector_service.context_builder import (
+        ContextBuilder,
+        build_prompt as build_context_prompt,
+    )
 except Exception:  # pragma: no cover - fallback when vector service missing
     ContextBuilder = Any  # type: ignore
+
+    def build_context_prompt(goal: str, **_: Any) -> "Prompt":  # type: ignore
+        return Prompt(goal)
 
 try:  # pragma: no cover - optional dependency
     from prompt_types import Prompt
@@ -102,19 +108,51 @@ def ask_with_memory(
 
     session_id = uuid.uuid4().hex
     if isinstance(prompt, Prompt):
-        prompt_obj = prompt
+        base_system = prompt.system
+        extra_examples = list(getattr(prompt, "examples", []))
         if intent_payload:
             try:
-                prompt_obj.metadata.update(intent_payload)
+                prompt.metadata.update(intent_payload)
             except Exception:
-                prompt_obj.metadata = dict(intent_payload)
+                prompt.metadata = dict(intent_payload)
+        orig_meta = getattr(prompt, "metadata", {})
+        prompt_text = prompt.user
     else:
-        prompt_obj = context_builder.build_prompt(
-            prompt, intent=intent_payload, session_id=session_id
-        )
+        base_system = ""
+        extra_examples = []
+        orig_meta = {}
+        prompt_text = prompt
 
+    ctx_parts = [ex for ex in extra_examples if ex]
     if mem_ctx:
-        prompt_obj.examples.insert(0, mem_ctx)
+        ctx_parts.append(mem_ctx)
+    context_str = "\n".join(ctx_parts) if ctx_parts else None
+
+    try:
+        prompt_obj = build_context_prompt(
+            prompt_text,
+            intent=intent_payload,
+            session_id=session_id,
+            context_builder=context_builder,
+            context=context_str,
+        )
+    except Exception:
+        if hasattr(context_builder, "build_prompt"):
+            prompt_obj = context_builder.build_prompt(
+                prompt_text, intent=intent_payload, session_id=session_id
+            )
+        else:
+            prompt_obj = Prompt(user=prompt_text)
+        if context_str:
+            prompt_obj.examples.insert(0, context_str)
+
+    if base_system:
+        prompt_obj.system = base_system
+    if orig_meta:
+        try:
+            prompt_obj.metadata.update(orig_meta)
+        except Exception:
+            prompt_obj.metadata = dict(orig_meta)
 
     messages: list[dict[str, str]] = []
     if prompt_obj.system:
