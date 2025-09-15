@@ -50,7 +50,10 @@ export GPT_MEMORY_DB="persistent.db"
 The helper `memory_aware_gpt_client.ask_with_memory` pulls recent context from a
 `LocalKnowledgeModule`, prepends it to the new prompt and logs the response back
 to memory.  Callers must supply a ``key`` in ``module.action`` form so related
-interactions can be grouped, plus a ``tags`` list describing the intent.
+interactions can be grouped, plus a ``tags`` list describing the intent.  Direct
+`ask_with_memory` calls are flagged by `scripts/check_context_builder_usage.py`
+because the helper may bypass `ContextBuilder.build_prompt`; ensure prompts are
+constructed via the builder before invoking it.
 
 ```python
 from memory_aware_gpt_client import ask_with_memory
