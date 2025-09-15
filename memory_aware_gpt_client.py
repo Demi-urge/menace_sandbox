@@ -11,6 +11,7 @@ module.
 """
 
 from typing import Sequence, Any, Dict
+import logging
 import uuid
 
 try:  # pragma: no cover - optional dependency
@@ -21,8 +22,12 @@ except Exception:  # pragma: no cover - fallback when logging unavailable
 
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder
+    from vector_service.exceptions import VectorServiceError
 except Exception:  # pragma: no cover - fallback when vector service missing
     ContextBuilder = Any  # type: ignore
+
+    class VectorServiceError(RuntimeError):
+        pass
 
 try:  # pragma: no cover - optional dependency
     from prompt_types import Prompt
@@ -51,6 +56,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
 __all__ = ["ask_with_memory"]
 
 
+logger = logging.getLogger(__name__)
 def ask_with_memory(
     client: Any,
     key: str,
@@ -126,8 +132,11 @@ def ask_with_memory(
         prompt_obj = context_builder.build_prompt(
             prompt_text, intent_metadata=intent_meta, session_id=session_id
         )
-    except Exception:
-        prompt_obj = Prompt(user=prompt_text)
+    except Exception as exc:
+        logger.exception("ContextBuilder.build_prompt failed")
+        if not isinstance(exc, VectorServiceError):
+            raise VectorServiceError("failed to build prompt") from exc
+        raise
 
     if extra_examples or mem_ctx:
         merged = list(extra_examples)
