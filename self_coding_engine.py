@@ -1026,7 +1026,7 @@ class SelfCodingEngine:
         try:  # pragma: no cover - logging best effort
             log_prompt_attempt(prompt_obj.user, meta)
         except Exception:
-            pass
+            self.logger.exception("log_prompt_attempt failed")
 
         return prompt_obj
 
