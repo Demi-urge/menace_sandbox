@@ -30,8 +30,8 @@ def test_process(monkeypatch):
     client = cib.ChatGPTClient("k", context_builder=builder)
     captured = {}
 
-    def fake_ask(msgs, **_):
-        captured["messages"] = msgs
+    def fake_ask(prompt_obj, **_):
+        captured["prompt"] = prompt_obj
         return {"choices": [{"message": {"content": "ok"}}]}
 
     monkeypatch.setattr(client, "ask", fake_ask)
@@ -41,7 +41,7 @@ def test_process(monkeypatch):
     assert result.data == {"foo": {"val": 1}}
     assert result.text == "ok"
     assert "get foo" in bot.history("cid")
-    assert any("x" in m.get("content", "") for m in captured["messages"])
+    assert captured["prompt"].examples == ["x"]
 
 
 def test_requires_context_builder():

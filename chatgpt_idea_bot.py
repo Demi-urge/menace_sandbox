@@ -619,14 +619,8 @@ def follow_up(
                 "description": idea.description,
             },
         )
-        messages: List[Dict[str, str]] = []
-        if prompt_obj.system:
-            messages.append({"role": "system", "content": prompt_obj.system})
-        for ex in getattr(prompt_obj, "examples", []):
-            messages.append({"role": "system", "content": ex})
-        messages.append({"role": "user", "content": prompt_obj.user})
         data = client.ask(
-            messages,
+            prompt_obj,
             knowledge=LOCAL_KNOWLEDGE_MODULE,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
@@ -658,15 +652,9 @@ def generate_and_filter(
     prompt_obj = context_builder.build_prompt(
         prompt, intent_metadata={"tags": list(tags)}
     )
-    messages: List[Dict[str, str]] = []
-    if prompt_obj.system:
-        messages.append({"role": "system", "content": prompt_obj.system})
-    for ex in getattr(prompt_obj, "examples", []):
-        messages.append({"role": "system", "content": ex})
-    messages.append({"role": "user", "content": prompt_obj.user})
     ideas = parse_ideas(
         client.ask(
-            messages,
+            prompt_obj,
             knowledge=LOCAL_KNOWLEDGE_MODULE,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )

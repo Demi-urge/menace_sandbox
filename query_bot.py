@@ -200,21 +200,8 @@ class QueryBot:
             "Summarize the following data",
             intent={"data": data},
         )
-        parts = [prompt_obj.user]
-        if getattr(prompt_obj, "examples", None):
-            parts.append("\n".join(prompt_obj.examples))
-        messages: list[dict[str, object]] = []
-        if getattr(prompt_obj, "system", None):
-            messages.append({"role": "system", "content": prompt_obj.system})
-        messages.append(
-            {
-                "role": "user",
-                "content": "\n".join(parts),
-                "metadata": getattr(prompt_obj, "metadata", {}) or {},
-            }
-        )
         data_resp = self.client.ask(
-            messages,
+            prompt_obj,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             memory_manager=self.gpt_memory,
         )
