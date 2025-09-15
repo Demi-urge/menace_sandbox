@@ -16,12 +16,15 @@ vector_service_pkg.SharedVectorService = object
 vector_service_pkg.CognitionLayer = object
 
 
+from prompt_types import Prompt
+
+
 class _StubContextBuilder:
     def refresh_db_weights(self):
         pass
 
-    def build(self, *args, **kwargs):
-        return "dbctx"
+    def build_prompt(self, prompt: str, **_: object) -> Prompt:
+        return Prompt(user=prompt, examples=["dbctx"])
 
 
 ctx_mod = types.ModuleType("vector_service.context_builder")
