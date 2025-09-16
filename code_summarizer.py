@@ -48,8 +48,9 @@ def _build_summarisation_prompt(
 ) -> "Prompt":
     """Return an enriched prompt for the summarisation task."""
 
-    from self_coding_engine import SelfCodingEngine
+    from micro_models.diff_summarizer import load_self_coding_engine
 
+    SelfCodingEngine = load_self_coding_engine()
     engine = SelfCodingEngine.__new__(SelfCodingEngine)
     engine.logger = LOGGER
     engine._last_retry_trace = None
