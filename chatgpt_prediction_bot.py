@@ -71,6 +71,11 @@ except Exception:  # pragma: no cover - fallback for flat layout
         ERROR_FIX,
         INSIGHT,
     )
+try:  # tag helper
+    from memory_logging import ensure_tags
+except Exception:  # pragma: no cover - fallback when logging unavailable
+    def ensure_tags(key: str, tags=None):  # type: ignore
+        return [key, *(tags or [])]
 try:  # pragma: no cover - optional dependency
     from sentence_transformers import SentenceTransformer, util as st_util  # noqa: E402
 except Exception:  # pragma: no cover - optional dependency
@@ -928,31 +933,25 @@ class ChatGPTPredictionBot:
                 prompt_obj = self.context_builder.build_prompt(
                     prompt, intent_metadata=intent_meta
                 )
-                if mem_ctx:
-                    examples = list(getattr(prompt_obj, "examples", []))
-                    examples.append(mem_ctx)
-                    prompt_obj.examples = examples
-                resp = client.ask(
+                base_tags = [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]
+                full_tags = ensure_tags(
+                    "chatgpt_prediction_bot.evaluate_enhancement", base_tags
+                )
+                result = client.generate(
                     prompt_obj,
-                    use_memory=False,
-                    memory_manager=None,
-                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                    context_builder=self.context_builder,
+                    tags=full_tags,
                 )
-                text = (
-                    resp.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                )
+                text = result.text
                 if self.gpt_memory is not None:
                     try:
-                        log_prompt = "\n\n".join(prompt_obj.examples + [prompt_obj.user])
-                        if prompt_obj.system:
-                            log_prompt = f"{prompt_obj.system}\n\n{log_prompt}"
-                        self.gpt_memory.log(
-                            log_prompt,
-                            text,
-                            [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                        )
+                        examples = list(getattr(prompt_obj, "examples", []) or [])
+                        log_parts = [*examples, prompt_obj.user]
+                        log_prompt = "\n\n".join(log_parts)
+                        system_msg = getattr(prompt_obj, "system", "")
+                        if system_msg:
+                            log_prompt = f"{system_msg}\n\n{log_prompt}"
+                        self.gpt_memory.log(log_prompt, text, full_tags)
                     except Exception:
                         pass
             except Exception:
