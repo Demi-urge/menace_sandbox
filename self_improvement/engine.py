@@ -545,6 +545,7 @@ class SelfImprovementEngine:
         self.bot_name = bot_name
         self.info_db = info_db or InfoDB()
         builder = create_context_builder()
+        self.context_builder = builder
         try:
             builder.refresh_db_weights()
         except Exception:
@@ -626,6 +627,8 @@ class SelfImprovementEngine:
         self.pass_rate_dev_multiplier = getattr(cfg, "pass_rate_deviation", 1.0)
         self.learning_engine = learning_engine
         self.self_coding_engine = self_coding_engine
+        if getattr(self.self_coding_engine, "context_builder", None):
+            self.context_builder = self.self_coding_engine.context_builder
         self.event_bus = event_bus
         self.evolution_history = evolution_history
         self.data_bot = data_bot
@@ -1481,15 +1484,16 @@ class SelfImprovementEngine:
                 prompt_obj = client.context_builder.build_prompt(
                     action, intent_metadata=intent_meta, tags=full_tags
                 )
-                data = client.ask(
-                    prompt_obj, use_memory=False, memory_manager=None, tags=full_tags
+                result = client.generate(
+                    prompt_obj,
+                    context_builder=self.context_builder,
+                    tags=full_tags,
                 )
-                text = (
-                    data.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                    .strip()
-                )
+                raw_text = getattr(result, "text", result)
+                if isinstance(raw_text, str):
+                    text = raw_text.strip()
+                else:
+                    text = str(raw_text or "").strip()
                 try:
                     log_prompt = "\n\n".join(
                         getattr(prompt_obj, "examples", []) + [prompt_obj.user]
