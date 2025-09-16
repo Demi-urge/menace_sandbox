@@ -29,17 +29,23 @@ def test_clients_share_token_bucket(monkeypatch):
             super().__init__("dummy", log_prompts=False)
             self._tokens = tokens
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             self._rate_limiter.consume(self._tokens)
             return LLMResult(text="", raw={"backend": "dummy"})
 
     c1 = Dummy(30)
     c2 = Dummy(50)
+    builder = types.SimpleNamespace(roi_tracker=None)
 
-    c1.generate(Prompt("hi", origin="context_builder"))
+    meta = {"vector_confidences": [0.5]}
+    c1.generate(
+        Prompt("hi", origin="context_builder", metadata=meta), context_builder=builder
+    )
     assert bucket.tokens == 70
 
-    c2.generate(Prompt("hi", origin="context_builder"))
+    c2.generate(
+        Prompt("hi", origin="context_builder", metadata=meta), context_builder=builder
+    )
     assert bucket.tokens == 20
 
     assert c1._rate_limiter is bucket and c2._rate_limiter is bucket

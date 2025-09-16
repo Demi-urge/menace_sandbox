@@ -2,6 +2,7 @@ def test_rest_backend_propagates_metadata(monkeypatch):
     import local_backend
     from llm_interface import LLMClient, Prompt
     import prompt_db
+    import types
 
     captured_payload = {}
 
@@ -27,8 +28,16 @@ def test_rest_backend_propagates_metadata(monkeypatch):
     backend = local_backend._RESTBackend(model="m", base_url="http://x", endpoint="/gen")
     client = LLMClient(model="m", backends=[backend])
 
-    prompt = Prompt(text="hi", examples=["ex"], outcome_tags=["tag"], vector_confidence=0.5)
-    client.generate(prompt)
+    prompt = Prompt(
+        text="hi",
+        examples=["ex"],
+        outcome_tags=["tag"],
+        vector_confidence=0.5,
+        origin="context_builder",
+        metadata={"vector_confidences": [0.5]},
+    )
+    builder = types.SimpleNamespace(roi_tracker=None)
+    client.generate(prompt, context_builder=builder)
 
     assert captured_payload["tags"] == ["tag"]
     assert captured_payload["vector_confidence"] == 0.5

@@ -17,10 +17,12 @@ class _AsyncStubClient(LLMClient):
         self.text = text
         self.fail = fail
 
-    def _generate(self, prompt: Prompt) -> LLMResult:  # pragma: no cover - unused
+    def _generate(
+        self, prompt: Prompt, *, context_builder
+    ) -> LLMResult:  # pragma: no cover - unused
         raise NotImplementedError
 
-    async def async_generate(self, prompt: Prompt):
+    async def async_generate(self, prompt: Prompt, *, context_builder):
         if self.fail:
             raise RuntimeError("boom")
         yield self.text[: len(self.text) // 2]
@@ -33,9 +35,12 @@ def test_router_async_fallback():
     router = LLMRouter(remote=remote, local=local, size_threshold=5)
 
     chunks: list[str] = []
+    builder = types.SimpleNamespace(roi_tracker=None)
 
     async def run() -> None:
-        async for part in router.async_generate(Prompt(text="hi", origin="context_builder")):
+        async for part in router.async_generate(
+            Prompt(text="hi", origin="context_builder", metadata={"vector_confidences": [0.5]}), context_builder=builder
+        ):
             chunks.append(part)
 
     asyncio.run(run())
@@ -85,7 +90,9 @@ def _setup_fake_local_httpx(monkeypatch):
     monkeypatch.setattr(
         lb.llm_config,
         "get_config",
-        lambda: types.SimpleNamespace(max_retries=1, tokens_per_minute=1000),
+        lambda: types.SimpleNamespace(
+            max_retries=1, tokens_per_minute=1000, pricing={}
+        ),
     )
     return lb
 
@@ -98,9 +105,12 @@ def test_local_backend_async_fallback(monkeypatch):
     client = LLMClient(model="m", backends=[backend1, backend2], log_prompts=False)
 
     chunks: list[str] = []
+    builder = types.SimpleNamespace(roi_tracker=None)
 
     async def run() -> None:
-        async for part in client.async_generate(Prompt(text="hi", origin="context_builder")):
+        async for part in client.async_generate(
+            Prompt(text="hi", origin="context_builder", metadata={"vector_confidences": [0.5]}), context_builder=builder
+        ):
             chunks.append(part)
 
     asyncio.run(run())

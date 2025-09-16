@@ -74,8 +74,15 @@ class EchoClient(LLMClient):
 
 def test_router_fallback_on_error():
     router = LLMRouter(remote=FailingClient(), local=EchoClient(), size_threshold=1)
+    builder = create_context_builder()
     res = router.generate(
-        Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+        Prompt(
+            text="hi",
+            vector_confidence=0.5,
+            origin="context_builder",
+            metadata={"vector_confidences": [0.5]},
+        ),
+        context_builder=builder,
     )
     assert res.text == "local"
 
@@ -145,8 +152,12 @@ def test_openai_provider_retry_and_logging(monkeypatch):
     counter = iter([0.0, 1.0, 2.0, 3.0])
     monkeypatch.setattr(time, "perf_counter", lambda: next(counter))
 
-    prompt = Prompt(text="hi", metadata={"tags": ["t"], "vector_confidences": [0.7]}, origin="context_builder")
-    result = provider.generate(prompt)
+    prompt = Prompt(
+        text="hi",
+        metadata={"tags": ["t"], "vector_confidences": [0.7]},
+        origin="context_builder",
+    )
+    result = provider.generate(prompt, context_builder=create_context_builder())
 
     # Second response consumed and logged
     assert not responses
@@ -191,13 +202,15 @@ def test_router_fallback_logs(monkeypatch):
             return LLMResult(text="ok")
 
     router = LLMRouter(remote=BoomClient(), local=LocalClient(), size_threshold=1)
+    builder = create_context_builder()
     res = router.generate(
         Prompt(
             text="task",
-            metadata={"tags": ["x"]},
+            metadata={"tags": ["x"], "vector_confidences": [0.5]},
             vector_confidence=0.5,
             origin="context_builder",
-        )
+        ),
+        context_builder=builder,
     )
     assert res.text == "ok"
     assert res.raw["backend"] == "local"
@@ -221,7 +234,8 @@ def test_client_backends_fallback():
 
     client = LLMClient(backends=[BoomBackend(), LocalBackend()], log_prompts=False)
     res = client.generate(
-        Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder", metadata={"vector_confidences": [0.5]}),
+        context_builder=create_context_builder(),
     )
     assert res.text == "local"
 
@@ -245,10 +259,11 @@ def test_client_small_task_uses_local():
     res = client.generate(
         Prompt(
             text="task",
-            metadata={"small_task": True},
+            metadata={"small_task": True, "vector_confidences": [0.5]},
             vector_confidence=0.5,
             origin="context_builder",
-        )
+        ),
+        context_builder=create_context_builder(),
     )
     assert res.text == "ok"
 
@@ -264,7 +279,7 @@ def test_generate_applies_parse_fn():
     client = Dummy()
     builder = create_context_builder()
     res = client.generate(
-        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder", metadata={"vector_confidences": [0.5]}),
         parse_fn=parse_json,
         context_builder=builder,
     )
@@ -336,7 +351,9 @@ def test_generate_parse_fn_error_ignored():
 
     client = Dummy()
     res = client.generate(
-        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"), parse_fn=bad
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder", metadata={"vector_confidences": [0.5]}),
+        parse_fn=bad,
+        context_builder=create_context_builder(),
     )
     assert res.parsed is None
 
@@ -365,8 +382,10 @@ def test_successful_call_logs_and_returns_raw_and_parsed(monkeypatch):
             return LLMResult(raw={"x": 1, "backend": "dummy"}, text="{\"a\":1}")
 
     client = DummyClient()
-    prompt = Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
-    result = client.generate(prompt, parse_fn=parse_json)
+    prompt = Prompt(text="hi", vector_confidence=0.5, origin="context_builder", metadata={"vector_confidences": [0.5]})
+    result = client.generate(
+        prompt, parse_fn=parse_json, context_builder=create_context_builder()
+    )
 
     assert result.raw == {"x": 1, "backend": "dummy"}
     assert result.parsed == {"a": 1}
@@ -414,7 +433,7 @@ def test_openai_provider_retries_on_server_error(monkeypatch):
     monkeypatch.setattr(provider._session, "post", fake_post)
 
     result = provider.generate(
-        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder", metadata={"vector_confidences": [0.5]}),
         context_builder=create_context_builder(),
     )
 
@@ -490,10 +509,17 @@ def test_openai_provider_async_stream(monkeypatch):
     provider = OpenAIProvider()
 
     chunks: list[str] = []
+    builder = create_context_builder()
 
     async def run():
         async for part in provider.async_generate(
-            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+            Prompt(
+                text="hi",
+                vector_confidence=0.5,
+                origin="context_builder",
+                metadata={"vector_confidences": [0.5]},
+            ),
+            context_builder=builder,
         ):
             chunks.append(part)
 
@@ -519,10 +545,17 @@ def test_openai_provider_async_logging(monkeypatch):
     monkeypatch.setattr(pdb, "PromptDB", DummyDB)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     provider = OpenAIProvider()
+    builder = create_context_builder()
 
     async def run():
         async for _ in provider.async_generate(
-            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+            Prompt(
+                text="hi",
+                vector_confidence=0.5,
+                origin="context_builder",
+                metadata={"vector_confidences": [0.5]},
+            ),
+            context_builder=builder,
         ):
             pass
 
@@ -539,7 +572,7 @@ def test_openai_provider_streaming_sync_wrapper(monkeypatch):
     provider = OpenAIProvider()
 
     result = provider.generate(
-        Prompt(text="hi", vector_confidence=0.5, origin="context_builder"),
+        Prompt(text="hi", vector_confidence=0.5, origin="context_builder", metadata={"vector_confidences": [0.5]}),
         context_builder=create_context_builder(),
     )
     assert result.text == "Hello"
@@ -591,10 +624,17 @@ def test_rest_backend_async_stream(monkeypatch):
     client = LLMClient(model="m", backends=[backend], log_prompts=False)
 
     chunks: list[str] = []
+    builder = create_context_builder()
 
     async def run():
         async for part in client.async_generate(
-            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+            Prompt(
+                text="hi",
+                vector_confidence=0.5,
+                origin="context_builder",
+                metadata={"vector_confidences": [0.5]},
+            ),
+            context_builder=builder,
         ):
             chunks.append(part)
 
@@ -621,10 +661,17 @@ def test_rest_backend_async_logging(monkeypatch):
 
     monkeypatch.setattr(pdb, "PromptDB", DummyDB)
     client = LLMClient(model="m", backends=[backend], log_prompts=True)
+    builder = create_context_builder()
 
     async def run():
         async for _ in client.async_generate(
-            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+            Prompt(
+                text="hi",
+                vector_confidence=0.5,
+                origin="context_builder",
+                metadata={"vector_confidences": [0.5]},
+            ),
+            context_builder=builder,
         ):
             pass
 
@@ -679,10 +726,17 @@ def test_rest_backend_async_stream_sse(monkeypatch):
     client = LLMClient(model="m", backends=[backend], log_prompts=False)
 
     chunks: list[str] = []
+    builder = create_context_builder()
 
     async def run():
         async for part in client.async_generate(
-            Prompt(text="hi", vector_confidence=0.5, origin="context_builder")
+            Prompt(
+                text="hi",
+                vector_confidence=0.5,
+                origin="context_builder",
+                metadata={"vector_confidences": [0.5]},
+            ),
+            context_builder=builder,
         ):
             chunks.append(part)
 
