@@ -1486,14 +1486,10 @@ class SelfImprovementEngine:
                 )
                 result = client.generate(
                     prompt_obj,
-                    context_builder=self.context_builder,
+                    context_builder=client.context_builder,
                     tags=full_tags,
                 )
-                raw_text = getattr(result, "text", result)
-                if isinstance(raw_text, str):
-                    text = raw_text.strip()
-                else:
-                    text = str(raw_text or "").strip()
+                text = (result.text or "").strip()
                 try:
                     log_prompt = "\n\n".join(
                         getattr(prompt_obj, "examples", []) + [prompt_obj.user]
