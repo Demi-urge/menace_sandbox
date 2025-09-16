@@ -104,7 +104,9 @@ def test_propose(monkeypatch, tmp_path):
     db.add_embedding = lambda *a, **k: None
     bot = ceb.ChatGPTEnhancementBot(client, db=db, context_builder=builder)
     monkeypatch.setattr(bot, "_feasible", lambda e: True)
-    results = bot.propose("Improve", num_ideas=1, context="ctx")
+    results = bot.propose(
+        "Improve", num_ideas=1, context="ctx", context_builder=builder
+    )
     assert results and results[0].context == "ctx"
     assert client.calls == 1
     assert client.last_prompt is builder.last_prompt
@@ -131,7 +133,7 @@ def test_propose_requires_context_builder_origin(monkeypatch, tmp_path):
     db = ceb.EnhancementDB(tmp_path / "enh_bad.db", router=router)
     db.add_embedding = lambda *a, **k: None
     bot = ceb.ChatGPTEnhancementBot(client, db=db, context_builder=builder)
-    results = bot.propose("Improve", num_ideas=1)
+    results = bot.propose("Improve", num_ideas=1, context_builder=builder)
     assert results == []
     assert builder.last_prompt is not None
     assert builder.last_prompt.origin == ""
