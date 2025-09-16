@@ -281,11 +281,16 @@ def self_coding_managed(
                     ) from exc
                 engine = getattr(manager_local, "engine", None)
                 clayer = getattr(engine, "cognition_layer", None)
-                builder = getattr(clayer, "context_builder", None)
-                if builder is None:
+                if clayer is None:
+                    raise RuntimeError(
+                        f"{cls.__name__}: QuickFixEngine requires a cognition_layer with a context_builder"
+                    )
+                try:
+                    builder = clayer.context_builder
+                except AttributeError as exc:
                     raise RuntimeError(
                         f"{cls.__name__}: QuickFixEngine requires a context_builder"
-                    )
+                    ) from exc
                 error_db = getattr(self, "error_db", None) or getattr(
                     manager_local, "error_db", None
                 )
