@@ -7,6 +7,7 @@ import os
 import logging
 import requests
 from billing.openai_wrapper import chat_completion_create
+from self_coding_engine import SelfCodingEngine
 
 try:  # optional dependency
     import pinecone  # type: ignore
@@ -22,6 +23,15 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - hints only
     from vector_service.context_builder import ContextBuilder
+
+
+def _make_prompt_engine() -> SelfCodingEngine:
+    engine = SelfCodingEngine.__new__(SelfCodingEngine)
+    engine.logger = logger
+    engine._last_retry_trace = None
+    engine._last_prompt = None
+    engine._last_prompt_metadata = {}
+    return engine
 
 
 class RedditHarvester:
@@ -108,6 +118,7 @@ class GPT4Client:
         self.api_key = api_key
         self.context_builder = context_builder
         self.enabled = api_key is not None
+        self._prompt_engine = _make_prompt_engine()
         if self.enabled:
             os.environ.setdefault("OPENAI_API_KEY", api_key)
         else:  # pragma: no cover - warning path
@@ -127,17 +138,18 @@ class GPT4Client:
             logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
             return
-        prompt = context_builder.build_prompt(
+        prompt_obj = self._prompt_engine.build_enriched_prompt(
             text,
             intent={
                 "archetype": archetype,
                 "emotion_tensor": emotion_tensor,
                 "objective": objective,
             },
+            context_builder=context_builder,
         )
         try:
             resp = chat_completion_create(
-                prompt, model="gpt-4", context_builder=context_builder
+                prompt_obj, model="gpt-4", context_builder=context_builder
             )
             content = ""
             try:

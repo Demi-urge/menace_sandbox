@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import random
 from typing import Dict, List
 
@@ -29,6 +30,21 @@ except Exception as exc:  # pragma: no cover - explicit failure
     ) from exc
 
 from local_model_wrapper import LocalModelWrapper
+from self_coding_engine import SelfCodingEngine
+
+
+# ---------------------------------------------------------------------------
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _make_prompt_engine() -> SelfCodingEngine:
+    engine = SelfCodingEngine.__new__(SelfCodingEngine)
+    engine.logger = LOGGER
+    engine._last_retry_trace = None
+    engine._last_prompt = None
+    engine._last_prompt_metadata = {}
+    return engine
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +87,7 @@ class ResponseCandidateGenerator:
         self.context_builder = context_builder
         # Ensure ranking weights are loaded before generating any context
         self.context_builder.refresh_db_weights()
+        self._prompt_engine = _make_prompt_engine()
         self.static_scripts: Dict[str, List[str]] = {
             "curiosity": [
                 "Did you know our latest offer?",
@@ -151,9 +168,10 @@ class ResponseCandidateGenerator:
             if archetype:
                 intent_meta["archetype"] = archetype
             try:
-                prompt_obj = context_builder.build_prompt(
+                prompt_obj = self._prompt_engine.build_enriched_prompt(
                     prompt_text,
-                    intent_metadata=intent_meta,
+                    intent=intent_meta,
+                    context_builder=context_builder,
                 )
             except Exception as exc:
                 handle_failure("failed to build response generation prompt", exc)
