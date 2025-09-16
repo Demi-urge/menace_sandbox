@@ -13,7 +13,7 @@ new model providers while still supporting logging and simple response parsing.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Protocol, Sequence, AsyncGenerator, cast
+from typing import Any, Callable, Dict, List, Protocol, Sequence, AsyncGenerator
 
 import asyncio
 import json
@@ -203,29 +203,13 @@ class LLMClient:
         raise NotImplementedError
 
     # ------------------------------------------------------------------
-    def _require_context_builder(
-        self, context_builder: ContextBuilder | None
-    ) -> ContextBuilder:
-        """Return a usable context builder or raise ``TypeError`` if unavailable."""
-
-        if context_builder is not None:
-            return context_builder
-        try:  # pragma: no cover - attribute may be absent on subclasses
-            candidate = getattr(self, "context_builder")
-        except AttributeError as exc:
-            raise TypeError("context_builder is required") from exc
-        if candidate is None:
-            raise TypeError("context_builder is required")
-        return cast(ContextBuilder, candidate)
-
-    # ------------------------------------------------------------------
     def generate(
         self,
         prompt: Prompt,
         *,
         parse_fn: Callable[[str], Any] | None = None,
         backend: str | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> LLMResult:
         """Generate a completion for *prompt*.
 
@@ -238,6 +222,9 @@ class LLMClient:
         For subclassed clients without explicit backends, :meth:`_generate` is
         called directly.
         """
+
+        if context_builder is None:
+            raise TypeError("context_builder is required")
 
         meta = getattr(prompt, "metadata", {}) or {}
         if (
@@ -255,8 +242,6 @@ class LLMClient:
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
             raise ValueError("prompt.metadata missing context-builder markers")
 
-        builder = self._require_context_builder(context_builder)
-
         # If explicit backends are configured act as a router
         if self.backends:
             order = list(self.backends)
@@ -267,7 +252,9 @@ class LLMClient:
             last_exc: Exception | None = None
             for backend_obj in order:
                 try:
-                    result = backend_obj.generate(prompt, context_builder=builder)
+                    result = backend_obj.generate(
+                        prompt, context_builder=context_builder
+                    )
                 except Exception as exc:  # pragma: no cover - backend failure
                     last_exc = exc
                     continue
@@ -283,7 +270,7 @@ class LLMClient:
             raise RuntimeError("no backends configured")
 
         # No explicit backends: delegate to subclass implementation
-        result = self._generate(prompt, context_builder=builder)
+        result = self._generate(prompt, context_builder=context_builder)
         if parse_fn is not None:
             try:
                 result.parsed = parse_fn(result.text)
@@ -292,16 +279,19 @@ class LLMClient:
         backend_name = backend or (result.raw or {}).get("backend")
         self._log(prompt, result, backend=backend_name)
         try:  # pragma: no cover - ROI tracking is best effort
-            self._track_usage(builder, result)
+            self._track_usage(context_builder, result)
         except Exception:
             pass
         return result
 
     # ------------------------------------------------------------------
     async def async_generate(
-        self, prompt: Prompt, *, context_builder: ContextBuilder | None = None
+        self, prompt: Prompt, *, context_builder: ContextBuilder
     ) -> AsyncGenerator[str, None]:
         """Asynchronously yield completion chunks for *prompt* and log the result."""
+        if context_builder is None:
+            raise TypeError("context_builder is required")
+
         meta = getattr(prompt, "metadata", {}) or {}
         if (
             getattr(prompt, "vector_confidence", None) is not None
@@ -317,8 +307,6 @@ class LLMClient:
             raise ValueError("prompt.origin missing or unrecognized")
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
             raise ValueError("prompt.metadata missing context-builder markers")
-
-        builder = self._require_context_builder(context_builder)
 
         cfg = llm_config.get_config()
 
@@ -360,7 +348,7 @@ class LLMClient:
             )
             self._log(prompt, result, backend=backend_name)
             try:  # pragma: no cover - tracker optional
-                self._track_usage(builder, result)
+                self._track_usage(context_builder, result)
             except Exception:
                 pass
             return result
@@ -381,7 +369,12 @@ class LLMClient:
                 parts.append(chunk)
                 yield chunk
             text = "".join(parts)
-            _finalize(text, backend_name=backend_name, model=model, builder=builder)
+            _finalize(
+                text,
+                backend_name=backend_name,
+                model=model,
+                builder=builder,
+            )
 
         if self.backends:
             order = list(self.backends)
@@ -398,12 +391,12 @@ class LLMClient:
                 try:
                     backend_name = getattr(backend, "backend_name", getattr(backend, "model", None))
                     model_name = getattr(backend, "model", self.model)
-                    agen = agen_fn(prompt, context_builder=builder)
+                    agen = agen_fn(prompt, context_builder=context_builder)
                     wrapper = _stream(
                         agen,
                         backend_name=backend_name,
                         model=model_name,
-                        builder=builder,
+                        builder=context_builder,
                     )
                     async for chunk in wrapper:
                         yield chunk
@@ -416,9 +409,12 @@ class LLMClient:
             raise RuntimeError("no backends configured")
 
         backend_name = getattr(self, "backend_name", None)
-        agen = self._async_generate(prompt, context_builder=builder)
+        agen = self._async_generate(prompt, context_builder=context_builder)
         wrapper = _stream(
-            agen, backend_name=backend_name, model=self.model, builder=builder
+            agen,
+            backend_name=backend_name,
+            model=self.model,
+            builder=context_builder,
         )
         async for chunk in wrapper:
             yield chunk
