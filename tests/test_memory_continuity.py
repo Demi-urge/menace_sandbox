@@ -11,6 +11,7 @@ from gpt_memory import (
     INSIGHT,
     _summarise_text,
 )
+from llm_interface import LLMResult
 
 
 class DummyClient:
@@ -18,10 +19,10 @@ class DummyClient:
         self.responses = list(responses)
         self.calls = 0
 
-    def ask(self, messages, **kwargs):
+    def generate(self, prompt, **kwargs):
         resp = self.responses[self.calls]
         self.calls += 1
-        return {"choices": [{"message": {"content": resp}}]}
+        return LLMResult(text=resp)
 
 
 def test_memory_continuity_across_sessions(tmp_path):

@@ -169,14 +169,19 @@ def ask_with_memory(
         meta.setdefault("retrieved_context", retrieved_context)
     prompt_obj.metadata = meta
 
-    data = client.ask(
-        prompt_obj, use_memory=False, memory_manager=None, tags=full_tags
-    )
-    text = (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-    )
+    try:
+        result = client.generate(
+            prompt_obj, context_builder=context_builder, tags=full_tags
+        )
+    except TypeError as exc:
+        if "tags" not in str(exc):
+            raise
+        result = client.generate(
+            prompt_obj, context_builder=context_builder
+        )
+    text = getattr(result, "text", "")
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
     try:
         log_prompt = "\n\n".join(prompt_obj.examples + [prompt_obj.user])
         if prompt_obj.system:
