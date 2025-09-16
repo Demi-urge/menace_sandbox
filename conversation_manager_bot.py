@@ -27,6 +27,7 @@ from neurosales import (
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 
 from .chatgpt_idea_bot import ChatGPTClient
+from context_builder import PromptBuildError, handle_failure
 from gpt_memory_interface import GPTMemoryInterface
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
@@ -144,15 +145,22 @@ class ConversationManagerBot:
         if prompt in self.cache:
             return self.cache[prompt]
 
-        intent_meta = {"query": prompt, "tags": [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]}
-        prompt_obj = self.client.context_builder.build_prompt(
-            prompt, intent_metadata=intent_meta
-        )
-
-        text: str
-        builder = getattr(self.client, "context_builder", None)
+        try:
+            builder = self.client.context_builder
+        except AttributeError as exc:
+            raise ValueError("client is missing required context_builder") from exc
         if builder is None:
             raise ValueError("client is missing required context_builder")
+
+        intent_meta = {"query": prompt, "tags": [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]}
+        try:
+            prompt_obj = builder.build_prompt(prompt, intent_metadata=intent_meta)
+        except PromptBuildError as exc:
+            handle_failure("failed to build conversation prompt", exc, logger=logger)
+        except Exception as exc:
+            handle_failure("failed to build conversation prompt", exc, logger=logger)
+
+        text: str
 
         generator = getattr(self.client, "generate", None)
         if not callable(generator):
