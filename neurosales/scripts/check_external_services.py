@@ -17,10 +17,15 @@ def check_openai(cfg: config.ServiceConfig) -> bool:
     except Exception as e:
         print(f"ContextBuilder error: {e}")
         return False
+    if context_builder is None:
+        print("ContextBuilder error: create_context_builder returned None")
+        return False
     try:
         os.environ.setdefault("OPENAI_API_KEY", cfg.openai_key)
         chat_completion_create(
-            context_builder.build_prompt("ping"), model="gpt-3.5-turbo"
+            context_builder.build_prompt("ping"),
+            model="gpt-3.5-turbo",
+            context_builder=context_builder,
         )
         print("OpenAI reachable")
         return True
