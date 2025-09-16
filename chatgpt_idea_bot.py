@@ -588,37 +588,45 @@ class ChatGPTClient(LLMClient):
                 logger=logger,
             )
 
-        meta = dict(getattr(base_prompt, "metadata", {}) or {})
-        for key, value in intent_meta.items():
-            meta.setdefault(key, value)
-        meta.setdefault("intent_tags", list(tags))
+        metadata_attr = getattr(base_prompt, "metadata", None)
+        if isinstance(metadata_attr, dict):
+            metadata = metadata_attr
+        else:
+            metadata = dict(metadata_attr or {})
 
-        existing_tags = list(getattr(base_prompt, "tags", []) or [])
+        for key, value in intent_meta.items():
+            metadata.setdefault(key, value)
+        metadata.setdefault("intent_tags", list(tags))
+
+        existing_tags_raw = getattr(base_prompt, "tags", []) or []
+        existing_tags = list(existing_tags_raw)
         merged_tags = (
             list(dict.fromkeys([*existing_tags, *tags])) if tags else existing_tags
         )
 
-        user_text = getattr(base_prompt, "user", None)
-        if user_text is None:
-            user_text = getattr(base_prompt, "text", None)
-        if user_text is None:
-            user_text = str(base_prompt)
+        if metadata_attr is not metadata:
+            try:
+                setattr(base_prompt, "metadata", metadata)
+            except Exception:
+                pass
 
-        system_text = getattr(base_prompt, "system", "")
-        examples = list(getattr(base_prompt, "examples", []) or [])
-        vector_confidence = getattr(base_prompt, "vector_confidence", None)
-        origin = getattr(base_prompt, "origin", "") or "context_builder"
+        if merged_tags and metadata.get("tags") is None:
+            metadata.setdefault("tags", list(merged_tags))
 
-        enriched = Prompt(
-            user_text,
-            system=system_text,
-            examples=examples,
-            vector_confidence=vector_confidence,
-            tags=merged_tags,
-            metadata=meta,
-            origin=origin,
-        )
-        return enriched
+        if list(getattr(base_prompt, "tags", []) or []) != list(merged_tags):
+            try:
+                setattr(base_prompt, "tags", list(merged_tags))
+            except Exception:
+                pass
+
+        origin = getattr(base_prompt, "origin", "") or metadata.get("origin") or "context_builder"
+        if getattr(base_prompt, "origin", None) != origin:
+            try:
+                setattr(base_prompt, "origin", origin)
+            except Exception:
+                pass
+
+        return base_prompt
 
 
 def build_prompt(
