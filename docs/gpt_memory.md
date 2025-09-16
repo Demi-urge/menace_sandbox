@@ -45,22 +45,28 @@ environment variable:
 export GPT_MEMORY_DB="persistent.db"
 ```
 
-## Deprecated helper `ask_with_memory`
+## Removed helper `ask_with_memory`
 
-The helper `memory_aware_gpt_client.ask_with_memory` is deprecated. Build
-prompts explicitly via ``ContextBuilder.build_prompt`` and pass the result to
-your client:
+The helper ``memory_aware_gpt_client.ask_with_memory`` has been removed. Build
+prompts explicitly via :meth:`ContextBuilder.build_prompt` and pass the result
+to your client via :meth:`LLMClient.generate`:
 
 ```python
 from vector_service.context_builder import ContextBuilder
 from log_tags import FEEDBACK
 
-prompt = context_builder.build_prompt("How did it go?",
-                                      intent_metadata={"user_query": "How did it go?"})
-resp = client.ask(prompt, use_memory=False, memory_manager=None, tags=[FEEDBACK])
+prompt = context_builder.build_prompt(
+    "How did it go?",
+    intent_metadata={"user_query": "How did it go?"},
+)
+resp = client.generate(
+    prompt,
+    context_builder=context_builder,
+    tags=[FEEDBACK],
+)
 ```
 
-Calls to ``ask_with_memory`` will emit a deprecation warning and are flagged by
+References to ``ask_with_memory`` are flagged by
 ``scripts/check_context_builder_usage.py``. Tags should use the canonical labels
 from ``log_tags.py`` (``FEEDBACK``, ``IMPROVEMENT_PATH``, ``ERROR_FIX``,
 ``INSIGHT``) so other tools can query the history consistently.

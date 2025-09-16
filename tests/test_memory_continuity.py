@@ -1,9 +1,8 @@
 from types import SimpleNamespace
 
-from memory_aware_gpt_client import ask_with_memory
-from local_knowledge_module import LocalKnowledgeModule
 import db_router
 import gpt_memory as gm
+from context_builder import PromptBuildError, handle_failure
 from gpt_memory import (
     FEEDBACK,
     ERROR_FIX,
@@ -12,6 +11,9 @@ from gpt_memory import (
     _summarise_text,
 )
 from llm_interface import LLMResult
+from local_knowledge_module import LocalKnowledgeModule
+from memory_logging import ensure_tags
+from prompt_types import Prompt
 
 
 class DummyClient:
@@ -23,6 +25,57 @@ class DummyClient:
         resp = self.responses[self.calls]
         self.calls += 1
         return LLMResult(text=resp)
+
+
+def _generate_with_memory(
+    client,
+    *,
+    key: str,
+    prompt_text: str,
+    memory: LocalKnowledgeModule,
+    context_builder,
+    tags: list[str] | None = None,
+):
+    try:
+        mem_ctx = memory.build_context(key, limit=5)
+    except Exception:
+        mem_ctx = ""
+
+    intent_meta: dict[str, str] = {"user_query": prompt_text}
+    if mem_ctx:
+        intent_meta["memory_context"] = mem_ctx
+
+    if context_builder is None:
+        handle_failure(
+            "ContextBuilder.build_prompt failed in tests",  # pragma: no cover - defensive
+            AttributeError("context_builder is None"),
+        )
+
+    try:
+        prompt_obj = context_builder.build_prompt(
+            prompt_text,
+            intent_metadata=intent_meta,
+            session_id="session-id",
+        )
+    except PromptBuildError:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        handle_failure(
+            "ContextBuilder.build_prompt failed in tests",
+            exc,
+        )
+
+    full_tags = ensure_tags(key, tags)
+    result = client.generate(
+        prompt_obj,
+        context_builder=context_builder,
+        tags=full_tags,
+    )
+    text = getattr(result, "text", None)
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    memory.log(prompt_text, text, full_tags)
+    return text
 
 
 def test_memory_continuity_across_sessions(tmp_path):
@@ -46,32 +99,39 @@ def test_memory_continuity_across_sessions(tmp_path):
     db_router.GLOBAL_ROUTER = None
     gm.GLOBAL_ROUTER = None
     module_a = LocalKnowledgeModule(db_path=db_file)
-    from prompt_types import Prompt
 
-    builder = SimpleNamespace(
-        build_prompt=lambda q, **k: Prompt(user=q)
-    )
+    def build_prompt(query: str, *, intent_metadata=None, session_id=None):
+        prompt = Prompt(user=query)
+        prompt.metadata.setdefault("session_id", session_id or "")
+        if intent_metadata:
+            prompt.metadata.update(intent_metadata)
+            memory_ctx = intent_metadata.get("memory_context")
+            if memory_ctx:
+                prompt.examples.append(memory_ctx)
+        return prompt
 
-    ask_with_memory(
+    builder = SimpleNamespace(build_prompt=build_prompt)
+
+    _generate_with_memory(
         client,
-        key,
-        prompts[FEEDBACK],
+        key=key,
+        prompt_text=prompts[FEEDBACK],
         memory=module_a,
         context_builder=builder,
         tags=[FEEDBACK],
     )
-    ask_with_memory(
+    _generate_with_memory(
         client,
-        key,
-        prompts[ERROR_FIX],
+        key=key,
+        prompt_text=prompts[ERROR_FIX],
         memory=module_a,
         context_builder=builder,
         tags=[ERROR_FIX],
     )
-    ask_with_memory(
+    _generate_with_memory(
         client,
-        key,
-        prompts[IMPROVEMENT_PATH],
+        key=key,
+        prompt_text=prompts[IMPROVEMENT_PATH],
         memory=module_a,
         context_builder=builder,
         tags=[IMPROVEMENT_PATH],

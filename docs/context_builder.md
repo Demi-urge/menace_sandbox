@@ -124,7 +124,7 @@ Avoid constructing prompt strings inline; always call ``build_prompt`` and run
 ``python scripts/check_context_builder_usage.py`` to statically flag any missing
 ``context_builder`` wiring.  Results from ``context_builder.build(...)`` must be
 passed directly to the client; concatenating them with other strings or lists is
-reported, and ``ask_with_memory`` is deprecated.
+reported, and references to the removed ``ask_with_memory`` helper are blocked.
 
 Configuration knobs controlling this method live under ``context_builder`` in the
 main settings file:

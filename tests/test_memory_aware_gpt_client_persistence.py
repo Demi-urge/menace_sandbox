@@ -16,9 +16,12 @@ from knowledge_retriever import (
 )
 from types import SimpleNamespace
 
-from memory_aware_gpt_client import ask_with_memory
+from context_builder import PromptBuildError, handle_failure
+from llm_interface import LLMResult
 from local_knowledge_module import LocalKnowledgeModule
 from log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH
+from memory_logging import ensure_tags
+from prompt_types import Prompt
 
 
 class DummyModel:
@@ -31,12 +34,63 @@ class DummyModel:
 
 class DummyClient:
     def __init__(self):
-        self.messages = []
+        self.prompts = []
         self.next_response = ""
 
-    def ask(self, messages, **kwargs):
-        self.messages = messages
-        return {"choices": [{"message": {"content": self.next_response}}]}
+    def generate(self, prompt, **kwargs):
+        self.prompts.append(prompt)
+        return LLMResult(text=self.next_response)
+
+
+def _generate_with_memory(
+    client,
+    *,
+    key: str,
+    prompt_text: str,
+    memory: LocalKnowledgeModule,
+    context_builder,
+    tags: list[str] | None = None,
+):
+    try:
+        mem_ctx = memory.build_context(key, limit=5)
+    except Exception:
+        mem_ctx = ""
+
+    intent_meta: dict[str, str] = {"user_query": prompt_text}
+    if mem_ctx:
+        intent_meta["memory_context"] = mem_ctx
+
+    if context_builder is None:
+        handle_failure(
+            "ContextBuilder.build_prompt failed in tests",  # pragma: no cover - defensive
+            AttributeError("context_builder is None"),
+        )
+
+    try:
+        prompt_obj = context_builder.build_prompt(
+            prompt_text,
+            intent_metadata=intent_meta,
+            session_id="session-id",
+        )
+    except PromptBuildError:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        handle_failure(
+            "ContextBuilder.build_prompt failed in tests",
+            exc,
+        )
+
+    full_tags = ensure_tags(key, tags)
+    result = client.generate(
+        prompt_obj,
+        context_builder=context_builder,
+        tags=full_tags,
+    )
+    text = getattr(result, "text", None)
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    memory.log(prompt_text, text, full_tags)
+    return prompt_obj
 
 
 def test_memory_aware_client_persists_across_runs(tmp_path):
@@ -48,37 +102,44 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
     gm.GLOBAL_ROUTER = None
     mgr = GPTMemoryManager(db_path=str(db), embedder=embedder)
     module = LocalKnowledgeModule(manager=mgr)
-    from prompt_types import Prompt
 
-    builder = SimpleNamespace(
-        build_prompt=lambda q, **k: Prompt(user=q)
-    )
+    def build_prompt(query: str, *, intent_metadata=None, session_id=None):
+        prompt = Prompt(user=query)
+        prompt.metadata.setdefault("session_id", session_id or "")
+        if intent_metadata:
+            prompt.metadata.update(intent_metadata)
+            memory_ctx = intent_metadata.get("memory_context")
+            if memory_ctx:
+                prompt.examples.append(memory_ctx)
+        return prompt
+
+    builder = SimpleNamespace(build_prompt=build_prompt)
 
     client.next_response = "Great success"
-    ask_with_memory(
+    _generate_with_memory(
         client,
-        "auth.reset_password",
-        "reset my password",
+        key="auth.reset_password",
+        prompt_text="reset my password",
         memory=module,
         context_builder=builder,
         tags=[FEEDBACK],
     )
 
     client.next_response = "This fixes the error."
-    ask_with_memory(
+    _generate_with_memory(
         client,
-        "auth.reset_password",
-        "credential bug encountered",
+        key="auth.reset_password",
+        prompt_text="credential bug encountered",
         memory=module,
         context_builder=builder,
         tags=[ERROR_FIX],
     )
 
     client.next_response = "An improvement is to apply a patch."
-    ask_with_memory(
+    _generate_with_memory(
         client,
-        "auth.reset_password",
-        "any improvement suggestions?",
+        key="auth.reset_password",
+        prompt_text="any improvement suggestions?",
         memory=module,
         context_builder=builder,
         tags=[IMPROVEMENT_PATH],
@@ -112,17 +173,18 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
 
     client2 = DummyClient()
     client2.next_response = "final"
-    ask_with_memory(
+    _generate_with_memory(
         client2,
-        "auth.reset_password",
-        "what next?",
+        key="auth.reset_password",
+        prompt_text="what next?",
         memory=module2,
         context_builder=builder,
     )
-    sent_prompt = client2.messages[0]["content"]
-    assert "Great success" in sent_prompt
-    assert "This fixes the error." in sent_prompt
-    assert "An improvement is to apply a patch." in sent_prompt
+    sent_prompt = client2.prompts[0]
+    context_blob = "\n".join(sent_prompt.examples)
+    assert "Great success" in context_blob
+    assert "This fixes the error." in context_blob
+    assert "An improvement is to apply a patch." in context_blob
 
     assert mgr2.search_context("what next?", limit=1)
 
