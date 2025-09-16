@@ -956,12 +956,23 @@ class SelfCodingEngine:
         if error_log is None:
             error_log = self._last_retry_trace
 
+        if context_builder is None:
+            raise TypeError("context_builder is required")
+
+        prompt_kwargs: Dict[str, Any] = {
+            "intent": intent,
+            "error_log": error_log,
+        }
+        if isinstance(intent, Mapping) and "top_k" in intent:
+            try:
+                prompt_kwargs["top_k"] = int(intent["top_k"])
+            except (TypeError, ValueError):
+                prompt_kwargs["top_k"] = intent["top_k"]
+
         try:
             prompt_obj = context_builder.build_prompt(
                 query,
-                intent=intent,
-                error_log=error_log,
-                top_k=int(intent.get("top_k", 5)) if isinstance(intent, Mapping) else 5,
+                **prompt_kwargs,
             )
         except Exception as exc:
             if isinstance(exc, PromptBuildError):
