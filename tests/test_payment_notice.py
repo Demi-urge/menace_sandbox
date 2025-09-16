@@ -144,6 +144,7 @@ sys.modules.setdefault(
 )
 
 sce_stub = types.ModuleType("menace_sandbox.self_coding_engine")
+sce_stub.MANAGER_CONTEXT = {}
 
 
 class _DummyEngine:
@@ -153,9 +154,25 @@ class _DummyEngine:
     def generate_helper(self, desc: str) -> str:
         return ""
 
+    def build_enriched_prompt(self, goal, *, intent=None, context_builder, **_):
+        if isinstance(goal, dict):
+            base_intent = dict(goal)
+            query = str(base_intent.get("query", ""))
+            if intent:
+                base_intent.update(intent)
+        else:
+            query = str(goal)
+            base_intent = dict(intent or {})
+        prompt = context_builder.build_prompt(query, intent=base_intent)
+        meta = dict(getattr(prompt, "metadata", {}) or {})
+        meta.setdefault("intent", base_intent)
+        prompt.metadata = meta
+        return prompt
+
 
 sce_stub.SelfCodingEngine = _DummyEngine
 sys.modules.setdefault("menace_sandbox.self_coding_engine", sce_stub)
+sys.modules.setdefault("menace.self_coding_engine", sce_stub)
 sys.modules.setdefault("self_coding_engine", sce_stub)
 
 scm_stub = types.ModuleType("menace_sandbox.self_coding_manager")
