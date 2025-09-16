@@ -89,15 +89,23 @@ class ImplementationOptimiserBot:
         except Exception as exc:
             logger.error("context builder refresh failed: %s", exc)
             raise RuntimeError("context builder refresh failed") from exc
-        try:
-            eng = getattr(manager, "engine", None)
-            if eng is not None:
-                eng.context_builder = context_builder  # type: ignore[attr-defined]
-                cb = getattr(eng, "context_builder", None)
-                if cb and hasattr(cb, "refresh_db_weights"):
+        eng = getattr(manager, "engine", None)
+        if eng is not None:
+            try:
+                existing_cb = eng.context_builder  # type: ignore[attr-defined]
+            except AttributeError as exc:  # pragma: no cover - defensive check
+                raise AttributeError(
+                    "manager.engine must provide a context_builder"
+                ) from exc
+            if existing_cb is None:
+                raise ValueError("manager.engine.context_builder cannot be None")
+            eng.context_builder = context_builder  # type: ignore[attr-defined]
+            cb = eng.context_builder  # type: ignore[attr-defined]
+            if hasattr(cb, "refresh_db_weights"):
+                try:
                     cb.refresh_db_weights()  # type: ignore[attr-defined]
-        except Exception:
-            pass
+                except Exception:  # pragma: no cover - best effort
+                    pass
         self.name = getattr(self, "name", self.__class__.__name__)
         self.data_bot = data_bot
 
