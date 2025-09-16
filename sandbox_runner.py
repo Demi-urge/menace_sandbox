@@ -45,6 +45,7 @@ from vector_service import FallbackResult, ContextBuilder
 from prompt_types import Prompt
 from snippet_compressor import compress_snippets
 from context_builder_util import ensure_fresh_weights
+from context_builder import handle_failure, PromptBuildError
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback
@@ -639,11 +640,20 @@ def build_section_prompt(
     if max_prompt_length and len(user_query) > max_prompt_length:
         user_query = user_query[:max_prompt_length]
 
-    prompt_obj = context_builder.build_prompt(
-        user_query,
-        intent={"instruction": intent_text, "section": section},
-        top_k=0,
-    )
+    try:
+        prompt_obj = context_builder.build_prompt(
+            user_query,
+            intent={"instruction": intent_text, "section": section},
+            top_k=0,
+        )
+    except PromptBuildError:
+        raise
+    except Exception as exc:
+        handle_failure(
+            "failed to build sandbox section prompt",
+            exc,
+            logger=logger,
+        )
     return prompt_obj
 
 
