@@ -8,6 +8,7 @@ requests originate from the orchestrator before proceeding.
 """
 
 from pathlib import Path
+import sys
 
 try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
@@ -81,7 +82,7 @@ except Exception as exc:  # pragma: no cover - fail fast when unavailable
         "QuickFixEngine is required but could not be imported"
     ) from exc
 
-from context_builder_util import ensure_fresh_weights
+from context_builder_util import ensure_fresh_weights, create_context_builder
 
 try:  # pragma: no cover - allow flat and package imports
     from .coding_bot_interface import (
@@ -93,13 +94,29 @@ except Exception:  # pragma: no cover - fallback for flat layout
     )
 
 
+_DEFAULT_CREATE_CONTEXT_BUILDER = create_context_builder
+_DEFAULT_CONTEXT_BUILDER_CLS = ContextBuilder
+
+
 def _manager_generate_helper_with_builder(
     manager, description: str, **kwargs: Any
 ) -> str:
     """Create a fresh ``ContextBuilder`` and invoke the base helper generator."""
 
     # Always create a new builder to avoid stale context and refresh weights.
-    builder = ContextBuilder()
+    factory = create_context_builder
+    if (
+        factory is _DEFAULT_CREATE_CONTEXT_BUILDER
+        and ContextBuilder is not _DEFAULT_CONTEXT_BUILDER_CLS
+    ):
+        builder = ContextBuilder()
+    else:
+        try:
+            builder = factory()
+        except Exception:
+            if factory is not _DEFAULT_CREATE_CONTEXT_BUILDER:
+                raise
+            builder = ContextBuilder()
     ensure_fresh_weights(builder)
     kwargs.setdefault("context_builder", builder)
     try:
@@ -107,6 +124,19 @@ def _manager_generate_helper_with_builder(
     except TypeError:
         kwargs.pop("context_builder", None)
         return _BASE_MANAGER_GENERATE_HELPER(manager, description, **kwargs)
+
+
+for _mod_name in ("quick_fix_engine", "menace.quick_fix_engine"):
+    _module = sys.modules.get(_mod_name)
+    if _module is not None:
+        try:
+            setattr(
+                _module,
+                "manager_generate_helper",
+                _manager_generate_helper_with_builder,
+            )
+        except Exception:
+            pass
 
 
 try:  # pragma: no cover - allow package/flat imports
@@ -601,7 +631,7 @@ class SelfCodingManager:
     def refresh_quick_fix_context(self) -> ContextBuilder:
         """Attach a fresh ``ContextBuilder`` to :class:`QuickFixEngine`."""
 
-        builder = ContextBuilder()
+        builder = create_context_builder()
         ensure_fresh_weights(builder)
         if self.quick_fix is None:
             self._init_quick_fix_engine(builder)
@@ -1151,7 +1181,7 @@ class SelfCodingManager:
                 self.logger.info("patch attempt %s", attempt)
                 # Create a fresh ContextBuilder for each attempt so validation
                 # always runs on a clean context.
-                builder = ContextBuilder()
+                builder = create_context_builder()
                 try:
                     ensure_fresh_weights(builder)
                 except Exception as exc:
