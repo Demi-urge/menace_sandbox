@@ -109,14 +109,14 @@ def _manager_generate_helper_with_builder(
         factory is _DEFAULT_CREATE_CONTEXT_BUILDER
         and ContextBuilder is not _DEFAULT_CONTEXT_BUILDER_CLS
     ):
-        builder = ContextBuilder()
+        builder = create_context_builder()
     else:
         try:
             builder = factory()
         except Exception:
             if factory is not _DEFAULT_CREATE_CONTEXT_BUILDER:
                 raise
-            builder = ContextBuilder()
+            builder = create_context_builder()
     ensure_fresh_weights(builder)
     kwargs.setdefault("context_builder", builder)
     try:
@@ -360,10 +360,26 @@ class SelfCodingManager:
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to register bot in registry")
 
-        clayer = getattr(self.engine, "cognition_layer", None)
-        builder = getattr(clayer, "context_builder", None) if clayer else None
+        try:
+            clayer = self.engine.cognition_layer
+        except AttributeError as exc:
+            raise RuntimeError(
+                "engine must provide a cognition_layer with a context_builder"
+            ) from exc
+        if clayer is None:
+            raise RuntimeError(
+                "engine.cognition_layer must provide a context_builder"
+            )
+        try:
+            builder = clayer.context_builder
+        except AttributeError as exc:
+            raise RuntimeError(
+                "engine.cognition_layer must provide a context_builder"
+            ) from exc
         if builder is None:
-            raise RuntimeError("engine.cognition_layer must provide a context_builder")
+            raise RuntimeError(
+                "engine.cognition_layer must provide a context_builder"
+            )
         self._prepare_context_builder(builder)
         self._init_quick_fix_engine(builder)
 
