@@ -110,7 +110,12 @@ def test_batch_prediction(tmp_path):
 def test_evaluate_enhancement():
     bot = cpb.ChatGPTPredictionBot.__new__(cpb.ChatGPTPredictionBot)
     bot.pipeline = None  # bypass loading
-    ev = bot.evaluate_enhancement("Improve", "Adds more features and efficiency")
+    builder = _StubContextBuilder()
+    ev = bot.evaluate_enhancement(
+        "Improve",
+        "Adds more features and efficiency",
+        context_builder=builder,
+    )
     assert -1.0 <= ev.value <= 1.0
     assert ev.description and ev.reason
 

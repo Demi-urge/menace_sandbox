@@ -75,7 +75,11 @@ def test_enhancement_uses_memory(monkeypatch):
         lambda msgs: {"choices": [{"message": {"content": "resp"}}]},
     )
 
-    bot.evaluate_enhancement("idea", "rationale")
+    bot.evaluate_enhancement(
+        "idea",
+        "rationale",
+        context_builder=bot.context_builder,
+    )
 
     assert mem.context_calls[0] == "chatgpt_prediction_bot.evaluate_enhancement"
     assert mem.logged[0][0].startswith("dbctx")
