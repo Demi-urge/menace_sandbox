@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from typing import Dict, List
 
-from context_builder import handle_failure, PromptBuildError
+from context_builder import handle_failure
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -143,16 +143,21 @@ class ResponseCandidateGenerator:
         context_builder: ContextBuilder,
     ) -> List[str]:
         if self.wrapper and self.tokenizer and torch is not None:
+            prompt_text = " ".join(history + [message, archetype])
+            max_len = len(self.tokenizer.encode(prompt_text)) + 20
+            intent_meta: Dict[str, object] = {"message": message}
+            if history:
+                intent_meta["history"] = list(history)
+            if archetype:
+                intent_meta["archetype"] = archetype
             try:
-                prompt = " ".join(history + [message, archetype])
-                max_len = len(self.tokenizer.encode(prompt)) + 20
-                prompt_obj = context_builder.build_prompt(message)
+                prompt_obj = context_builder.build_prompt(
+                    prompt_text,
+                    intent_metadata=intent_meta,
+                )
             except Exception as exc:
-                if isinstance(exc, PromptBuildError):
-                    raise
                 handle_failure("failed to build response generation prompt", exc)
             else:
-                prompt_obj.user = prompt
                 try:
                     outputs = self.wrapper.generate(
                         prompt_obj,
