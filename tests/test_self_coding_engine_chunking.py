@@ -252,7 +252,7 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
     class DummyLLM:
         gpt_memory = None
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return types.SimpleNamespace(text="")
 
     engine = sce.SelfCodingEngine(
@@ -315,7 +315,7 @@ def test_generate_helper_uses_cached_chunk_summaries(monkeypatch, tmp_path):
     class DummyLLM:
         gpt_memory = None
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return types.SimpleNamespace(text="")
 
     engine = sce.SelfCodingEngine(
@@ -370,7 +370,7 @@ def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
     class DummyLLM:
         gpt_memory = None
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return types.SimpleNamespace(text="")
 
     engine = sce.SelfCodingEngine(
@@ -429,7 +429,7 @@ def test_patch_file_uses_chunk_summaries(monkeypatch, tmp_path):
     class DummyLLM:
         gpt_memory = None
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return types.SimpleNamespace(text="")
 
     engine = sce.SelfCodingEngine(

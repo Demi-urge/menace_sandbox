@@ -192,7 +192,11 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch, tmp_path):
         "SANDBOX_STUB_PLUGINS", "sandbox_runner.generative_stub_provider"
     )
     import importlib
-    import sandbox_runner.generative_stub_provider as gsp
+import sandbox_runner.generative_stub_provider as gsp
+
+gsp.build_prompt = lambda query, *, intent_metadata=None, context_builder, **kwargs: context_builder.build_prompt(  # type: ignore[assignment]
+    query, intent_metadata=intent_metadata, **kwargs
+)
 
     gsp = importlib.reload(gsp)
 
@@ -200,7 +204,9 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch, tmp_path):
         def __init__(self):
             self.prompts = []
 
-        def __call__(self, prompt, max_length=64, num_return_sequences=1):
+        def __call__(
+            self, prompt, max_length=64, num_return_sequences=1, *, context_builder=None
+        ):
             self.prompts.append(prompt)
             return [{"generated_text": '{"foo": 7}'}]
 

@@ -489,7 +489,7 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     engine.context_builder = RecordingBuilder()
 
     class DummyClient:
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             DummyClient.prompt = getattr(prompt, "text", str(prompt))
             return LLMResult(text="def auto_test():\n    pass")
 
@@ -576,7 +576,7 @@ def test_vector_service_metrics_and_fallback(tmp_path, monkeypatch):
     data_bot = db.DataBot(mdb, patch_db=patch_db)
     mem = mm.MenaceMemoryManager(tmp_path / "mem.db")
     class DummyClient2:
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return LLMResult(text="")
 
     engine = sce.SelfCodingEngine(
@@ -604,7 +604,7 @@ def test_call_codex_with_backoff_retries(monkeypatch):
         def __init__(self):
             self.calls = 0
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             self.calls += 1
             raise Exception("boom")
 
@@ -621,7 +621,7 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
     mem = mm.MenaceMemoryManager(tmp_path / "m.db")
 
     class DummyClient:
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return LLMResult(text="")
 
     engine = object.__new__(sce.SelfCodingEngine)
@@ -672,7 +672,7 @@ def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
 
     calls: list[sce.Prompt] = []
 
-    def generate(prompt):
+    def generate(prompt, *, context_builder=None):
         calls.append(prompt)
         if len(calls) == 1:
             raise Exception("fail")

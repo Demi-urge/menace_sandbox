@@ -121,7 +121,7 @@ def test_log_prompt_attempt_logging(monkeypatch, caplog):
             return None
 
     class DummyClient:
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return types.SimpleNamespace(text="ok")
 
     builder = DummyBuilder()

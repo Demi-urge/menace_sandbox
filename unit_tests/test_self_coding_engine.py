@@ -264,7 +264,7 @@ def test_call_codex_with_backoff_retries(monkeypatch):
         def __init__(self):
             self.calls = 0
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             self.calls += 1
             raise Exception("boom")
 
@@ -299,7 +299,7 @@ def test_context_builder_shared(monkeypatch):
         def __init__(self):
             self.last_prompt = ""
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             self.last_prompt = getattr(prompt, "text", str(prompt))
             return types.SimpleNamespace(text="ok")
 

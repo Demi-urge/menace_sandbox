@@ -28,7 +28,7 @@ class DummyGen:
     def __init__(self):
         self.calls = 0
 
-    def __call__(self, prompt, max_length=64, num_return_sequences=1):
+    def __call__(self, prompt, max_length=64, num_return_sequences=1, *, context_builder=None):
         self.calls += 1
         return [{"generated_text": "{\"x\": 1}"}]
 
@@ -36,6 +36,17 @@ class DummyGen:
 class DummyBuilder:
     def build_prompt(self, query, *, intent_metadata=None, **kwargs):
         return query
+
+    def build_context(self, query, *, intent_metadata=None, **kwargs):
+        return {}
+
+
+gsp.build_prompt = lambda query, *, intent_metadata=None, context_builder, **kwargs: context_builder.build_prompt(  # type: ignore[assignment]
+    query, intent_metadata=intent_metadata, **kwargs
+)
+
+    def build_context(self, query, *, intent_metadata=None, **kwargs):
+        return {}
 
 
 def test_generate_stubs_cache(monkeypatch, tmp_path):
@@ -103,7 +114,9 @@ def test_async_generate_returns_json(monkeypatch, tmp_path):
     gsp_mod = importlib.reload(gsp)
 
     class AsyncGen:
-        async def __call__(self, prompt, max_length=64, num_return_sequences=1):
+        async def __call__(
+            self, prompt, max_length=64, num_return_sequences=1, *, context_builder=None
+        ):
             return [{"generated_text": "{\"y\": 2}"}]
 
     dummy = AsyncGen()
@@ -154,7 +167,9 @@ def test_generation_failure_propagates(monkeypatch, tmp_path):
     gsp_mod = importlib.reload(gsp)
 
     class BrokenGen:
-        def __call__(self, prompt, max_length=64, num_return_sequences=1):
+        def __call__(
+            self, prompt, max_length=64, num_return_sequences=1, *, context_builder=None
+        ):
             raise RuntimeError("boom")
 
     async def loader():
@@ -262,7 +277,9 @@ def test_generated_stub_missing_fields(monkeypatch, tmp_path, caplog):
     gsp_mod = importlib.reload(gsp)
 
     class MissingGen:
-        def __call__(self, prompt, max_length=64, num_return_sequences=1):
+        def __call__(
+            self, prompt, max_length=64, num_return_sequences=1, *, context_builder=None
+        ):
             return [{"generated_text": "{\"x\": 1}"}]
 
     dummy = MissingGen()
@@ -291,7 +308,9 @@ def test_generated_stub_bad_type(monkeypatch, tmp_path, caplog):
     gsp_mod = importlib.reload(gsp)
 
     class TypeGen:
-        def __call__(self, prompt, max_length=64, num_return_sequences=1):
+        def __call__(
+            self, prompt, max_length=64, num_return_sequences=1, *, context_builder=None
+        ):
             return [{"generated_text": "{\"x\": \"bad\", \"y\": 2}"}]
 
     dummy = TypeGen()
@@ -409,7 +428,9 @@ def test_cache_persist_after_failure(monkeypatch, tmp_path):
         )
 
         class BrokenGen:
-            def __call__(self, prompt, max_length=64, num_return_sequences=1):
+            def __call__(
+                self, prompt, max_length=64, num_return_sequences=1, *, context_builder=None
+            ):
                 raise RuntimeError("boom")
 
         async def loader_fail():
@@ -445,7 +466,9 @@ async def test_concurrent_stub_generation(monkeypatch, tmp_path):
         def __init__(self):
             self.calls = 0
 
-        async def __call__(self, prompt, max_length=64, num_return_sequences=1):
+        async def __call__(
+            self, prompt, max_length=64, num_return_sequences=1, *, context_builder=None
+        ):
             self.calls += 1
             await asyncio.sleep(0.01)
             return [{"generated_text": "{\"x\": 1}"}]

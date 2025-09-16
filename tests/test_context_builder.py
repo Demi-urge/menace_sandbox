@@ -155,7 +155,7 @@ class DummyClient:
     def __init__(self):
         self.last_prompt = ""
 
-    def generate(self, prompt):
+    def generate(self, prompt, *, context_builder=None):
         self.last_prompt = getattr(prompt, "text", str(prompt))
         return LLMResult(text="pass")
 
