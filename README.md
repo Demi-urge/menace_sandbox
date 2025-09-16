@@ -231,7 +231,7 @@ builder are reported as well. Variables assigned from these classes are
 tracked and aliases such as `llm` or `model` are heuristically inspected.
 Manual string prompts, direct `Prompt` construction, message lists/dicts,
 concatenating `context_builder.build` results with other strings or lists, and
-deprecated `ask_with_memory` calls are all flagged:
+legacy references to the removed ``ask_with_memory`` helper are all flagged:
 
 ```bash
 python scripts/check_context_builder_usage.py
@@ -762,9 +762,9 @@ stop.set()
 
 ### Memory-aware GPT wrapper
 
-The helper `memory_aware_gpt_client.ask_with_memory` is deprecated. Build
-prompts with ``ContextBuilder.build_prompt`` and pass them directly to your
-client. Example:
+The helper ``memory_aware_gpt_client.ask_with_memory`` has been removed. Build
+prompts with :meth:`ContextBuilder.build_prompt` and pass them directly to your
+client via :meth:`LLMClient.generate`. Example:
 
 ```python
 from vector_service.context_builder import ContextBuilder
@@ -773,8 +773,11 @@ from log_tags import ERROR_FIX
 prompt = context_builder.build_prompt(
     "Write tests", intent_metadata={"user_query": "Write tests"}
 )
-result = client.ask(prompt, use_memory=False, memory_manager=None,
-                    tags=[ERROR_FIX], manager=manager)
+result = client.generate(
+    prompt,
+    context_builder=context_builder,
+    tags=[ERROR_FIX],
+)
 ```
 
 If prompt construction fails, call ``context_builder.handle_failure`` from the
