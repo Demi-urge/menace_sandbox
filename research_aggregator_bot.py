@@ -979,17 +979,12 @@ class ResearchAggregatorBot:
                     logger.exception("Video bot failed for %s: %s", topic, exc)
             if self.enhancement_bot and (not missing or "enhancement" in targets):
                 try:
-                    try:
-                        enhs = self.enhancement_bot.propose(
-                            topic,
-                            num_ideas=1,
-                            context=ctx,
-                            context_builder=self.context_builder,
-                        )
-                    except TypeError:
-                        enhs = self.enhancement_bot.propose(
-                            topic, num_ideas=1, context=ctx
-                        )
+                    enhs = self.enhancement_bot.propose(
+                        topic,
+                        num_ideas=1,
+                        context=ctx,
+                        context_builder=self.context_builder,
+                    )
                     for enh in enhs:
                         evaluation = None
                         if self.prediction_bot:
@@ -1099,17 +1094,12 @@ class ResearchAggregatorBot:
         if ctx:
             instruction = f"{ctx}\n\n{instruction}"
         try:
-            try:
-                enhancements = self.enhancement_bot.propose(
-                    instruction,
-                    num_ideas=1,
-                    context=ctx or topic,
-                    context_builder=self.context_builder,
-                )
-            except TypeError:
-                enhancements = self.enhancement_bot.propose(
-                    instruction, num_ideas=1, context=ctx or topic
-                )
+            enhancements = self.enhancement_bot.propose(
+                instruction,
+                num_ideas=1,
+                context=ctx or topic,
+                context_builder=self.context_builder,
+            )
         except Exception:
             return
         for enh in enhancements:

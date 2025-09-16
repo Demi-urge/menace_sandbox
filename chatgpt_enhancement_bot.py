@@ -1073,7 +1073,7 @@ class ChatGPTEnhancementBot:
         ratio: float = DEFAULT_PROPOSE_RATIO,
         *,
         tags: Sequence[str] | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> List[Enhancement]:
         intent_meta: Dict[str, Any] = {
             "instruction": instruction,
@@ -1087,14 +1087,14 @@ class ChatGPTEnhancementBot:
             logger.error("ChatGPT client unavailable")
             return []
 
-        builder = context_builder or self.context_builder
-        if builder is None:
+        if context_builder is None:
             logger.error("ContextBuilder unavailable for enhancement prompt")
             if RAISE_ERRORS:
                 raise ValueError("context_builder is required")
             return []
+
         try:
-            prompt_obj = builder.build_prompt(
+            prompt_obj = context_builder.build_prompt(
                 instruction, intent=intent_meta
             )
         except Exception as exc:
@@ -1120,7 +1120,7 @@ class ChatGPTEnhancementBot:
             result = generate(
                 prompt_obj,
                 parse_fn=parse_enhancements,
-                context_builder=builder,
+                context_builder=context_builder,
             )
             parsed = getattr(result, "parsed", None)
             if parsed is None:
