@@ -121,7 +121,7 @@ def test_enhancement_prediction(monkeypatch, tmp_path):
         ],
     )
     pred_bot = cpb.ChatGPTPredictionBot.__new__(cpb.ChatGPTPredictionBot)
-    pred_bot.evaluate_enhancement = lambda i, r: cpb.EnhancementEvaluation(
+    pred_bot.evaluate_enhancement = lambda i, r, *, context_builder: cpb.EnhancementEvaluation(
         description="d", reason="r", value=0.5
     )
     bot = rab.ResearchAggregatorBot(

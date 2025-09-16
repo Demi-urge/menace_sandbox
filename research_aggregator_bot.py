@@ -994,16 +994,11 @@ class ResearchAggregatorBot:
                         evaluation = None
                         if self.prediction_bot:
                             try:
-                                try:
-                                    evaluation = self.prediction_bot.evaluate_enhancement(
-                                        enh.idea,
-                                        enh.rationale,
-                                        context_builder=self.context_builder,
-                                    )
-                                except TypeError:
-                                    evaluation = self.prediction_bot.evaluate_enhancement(
-                                        enh.idea, enh.rationale
-                                    )
+                                evaluation = self.prediction_bot.evaluate_enhancement(
+                                    enh.idea,
+                                    enh.rationale,
+                                    context_builder=self.context_builder,
+                                )
                                 enh.score = evaluation.value
                             except Exception:
                                 evaluation = None
@@ -1122,16 +1117,11 @@ class ResearchAggregatorBot:
             enh_id = 0
             try:
                 if self.prediction_bot:
-                    try:
-                        evaluation = self.prediction_bot.evaluate_enhancement(
-                            enh.idea,
-                            enh.rationale,
-                            context_builder=self.context_builder,
-                        )
-                    except TypeError:
-                        evaluation = self.prediction_bot.evaluate_enhancement(
-                            enh.idea, enh.rationale
-                        )
+                    evaluation = self.prediction_bot.evaluate_enhancement(
+                        enh.idea,
+                        enh.rationale,
+                        context_builder=self.context_builder,
+                    )
                     enh.score = evaluation.value
                 if getattr(self.info_db, "current_model_id", 0):
                     enh.model_ids = [self.info_db.current_model_id]

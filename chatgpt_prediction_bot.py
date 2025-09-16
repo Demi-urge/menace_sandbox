@@ -17,6 +17,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
+from context_builder import handle_failure, PromptBuildError
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -870,12 +871,21 @@ class ChatGPTPredictionBot:
     def batch_predict(self, ideas: Iterable[IdeaFeatures]) -> List[Tuple[bool, float]]:
         return [self.predict(idea) for idea in ideas]
 
-    def evaluate_enhancement(self, idea: str, rationale: str) -> EnhancementEvaluation:
+    def evaluate_enhancement(
+        self,
+        idea: str,
+        rationale: str,
+        *,
+        context_builder: ContextBuilder,
+    ) -> EnhancementEvaluation:
         """Assess an enhancement's impact using NLP heuristics."""
         logger.debug("evaluating enhancement '%s'", idea)
         clean_idea = redact(idea)
         clean_rationale = redact(rationale)
         alerts: List[str] = []
+
+        if context_builder is None:
+            raise ValueError("context_builder is required")
 
         lic_idea = detect_license(clean_idea)
         lic_rat = detect_license(clean_rationale)
@@ -917,31 +927,44 @@ class ChatGPTPredictionBot:
 
         client = getattr(self, "client", None)
         if client is not None:
+            prompt = "Evaluate the following enhancement and provide brief feedback."
+            mem_ctx = ""
+            if self.gpt_memory is not None:
+                try:
+                    mem_ctx = self.gpt_memory.build_context(
+                        "chatgpt_prediction_bot.evaluate_enhancement", limit=5
+                    )
+                except Exception:
+                    mem_ctx = ""
+            intent_meta = {"idea": clean_idea, "rationale": clean_rationale}
+            if mem_ctx:
+                intent_meta["memory_context"] = mem_ctx
             try:
-                prompt = "Evaluate the following enhancement and provide brief feedback."
-                mem_ctx = ""
-                if self.gpt_memory is not None:
-                    try:
-                        mem_ctx = self.gpt_memory.build_context(
-                            "chatgpt_prediction_bot.evaluate_enhancement", limit=5
-                        )
-                    except Exception:
-                        mem_ctx = ""
-                intent_meta = {"idea": clean_idea, "rationale": clean_rationale}
-                if mem_ctx:
-                    intent_meta["memory_context"] = mem_ctx
-                prompt_obj = self.context_builder.build_prompt(
-                    prompt, intent_metadata=intent_meta
+                prompt_obj = context_builder.build_prompt(
+                    prompt,
+                    intent_metadata=intent_meta,
                 )
-                base_tags = [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]
-                full_tags = ensure_tags(
-                    "chatgpt_prediction_bot.evaluate_enhancement", base_tags
+            except Exception as exc:
+                if isinstance(exc, PromptBuildError):
+                    raise
+                handle_failure(
+                    "failed to build enhancement evaluation prompt",
+                    exc,
+                    logger=logger,
                 )
+            base_tags = [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]
+            full_tags = ensure_tags(
+                "chatgpt_prediction_bot.evaluate_enhancement", base_tags
+            )
+            try:
                 result = client.generate(
                     prompt_obj,
-                    context_builder=self.context_builder,
+                    context_builder=context_builder,
                     tags=full_tags,
                 )
+            except Exception:
+                logger.debug("ChatGPT evaluation failed", exc_info=True)
+            else:
                 text = result.text
                 if self.gpt_memory is not None:
                     try:
@@ -954,8 +977,6 @@ class ChatGPTPredictionBot:
                         self.gpt_memory.log(log_prompt, text, full_tags)
                     except Exception:
                         pass
-            except Exception:
-                logger.debug("ChatGPT evaluation failed", exc_info=True)
         return EnhancementEvaluation(
             description=clean_idea, reason=clean_rationale, value=value, alerts=alerts
         )
