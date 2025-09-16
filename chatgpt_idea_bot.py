@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import List, Dict, Iterable, Any, TYPE_CHECKING
+from typing import List, Dict, Iterable, Any, TYPE_CHECKING, Callable
 from pathlib import Path
 from context_builder import handle_failure, PromptBuildError
 from billing.prompt_notice import prepend_payment_notice
@@ -155,6 +155,31 @@ class ChatGPTClient(LLMClient):
             raise RuntimeError(
                 "provided ContextBuilder cannot query local databases"
             ) from exc
+
+    def generate(
+        self,
+        prompt: Prompt,
+        *,
+        parse_fn: Callable[[str], Any] | None = None,
+        backend: str | None = None,
+        context_builder: ContextBuilder | None = None,
+        tags: Iterable[str] | None = None,
+    ) -> LLMResult:  # type: ignore[override]
+        """Extend :meth:`LLMClient.generate` to accept optional ``tags``."""
+
+        if tags:
+            existing = list(getattr(prompt, "tags", []))
+            merged = list(dict.fromkeys([*existing, *tags]))
+            try:
+                prompt.tags = merged
+            except Exception:
+                pass
+        return super().generate(
+            prompt,
+            parse_fn=parse_fn,
+            backend=backend,
+            context_builder=context_builder,
+        )
 
     def ask(
         self,

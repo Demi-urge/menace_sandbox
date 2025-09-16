@@ -200,16 +200,12 @@ class QueryBot:
             "Summarize the following data",
             intent={"data": data},
         )
-        data_resp = self.client.ask(
+        result = self.client.generate(
             prompt_obj,
+            context_builder=self.context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-            memory_manager=self.gpt_memory,
         )
-        text = (
-            data_resp.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
+        text = result.text
         return QueryResult(text=text, data=data)
 
     def history(self, context_id: str) -> List[str]:
