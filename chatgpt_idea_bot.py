@@ -162,20 +162,39 @@ class ChatGPTClient(LLMClient):
         *,
         parse_fn: Callable[[str], Any] | None = None,
         backend: str | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
         tags: Iterable[str] | None = None,
     ) -> LLMResult:  # type: ignore[override]
         """Extend :meth:`LLMClient.generate` to accept optional ``tags``."""
 
-        if tags:
-            existing = list(getattr(prompt, "tags", []))
-            merged = list(dict.fromkeys([*existing, *tags]))
-            try:
-                prompt.tags = merged
-            except Exception:
-                pass
+        user_text = getattr(prompt, "user", None)
+        if user_text is None:
+            user_text = getattr(prompt, "text", None)
+        if user_text is None:
+            user_text = str(prompt)
+
+        system_text = getattr(prompt, "system", "")
+        examples = list(getattr(prompt, "examples", []) or [])
+        vector_confidence = getattr(prompt, "vector_confidence", None)
+        metadata = dict(getattr(prompt, "metadata", {}) or {})
+        base_tags = list(getattr(prompt, "tags", []) or [])
+        merged_tags = (
+            list(dict.fromkeys([*base_tags, *tags])) if tags else base_tags
+        )
+        if merged_tags and "tags" not in metadata:
+            metadata.setdefault("tags", list(merged_tags))
+        origin = getattr(prompt, "origin", "") or "context_builder"
+        prompt_obj = Prompt(
+            user_text,
+            system=system_text,
+            examples=examples,
+            vector_confidence=vector_confidence,
+            tags=merged_tags,
+            metadata=metadata,
+            origin=origin,
+        )
         return super().generate(
-            prompt,
+            prompt_obj,
             parse_fn=parse_fn,
             backend=backend,
             context_builder=context_builder,
@@ -554,7 +573,7 @@ class ChatGPTClient(LLMClient):
             intent_meta.update(intent_metadata)
 
         try:
-            prompt_obj = context_builder.build_prompt(
+            base_prompt = context_builder.build_prompt(
                 tags,
                 prior=prior,
                 intent_metadata=intent_meta,
@@ -568,31 +587,37 @@ class ChatGPTClient(LLMClient):
                 logger=logger,
             )
 
-        meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+        meta = dict(getattr(base_prompt, "metadata", {}) or {})
         for key, value in intent_meta.items():
             meta.setdefault(key, value)
-        if "intent_tags" not in meta:
-            meta["intent_tags"] = list(tags)
-        try:
-            prompt_obj.metadata = meta  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        meta.setdefault("intent_tags", list(tags))
 
-        existing_tags = list(getattr(prompt_obj, "tags", []) or [])
-        merged_tags = list(dict.fromkeys([*existing_tags, *tags])) if tags else existing_tags
-        if merged_tags:
-            try:
-                prompt_obj.tags = merged_tags  # type: ignore[attr-defined]
-            except Exception:
-                pass
+        existing_tags = list(getattr(base_prompt, "tags", []) or [])
+        merged_tags = (
+            list(dict.fromkeys([*existing_tags, *tags])) if tags else existing_tags
+        )
 
-        if not getattr(prompt_obj, "origin", None):
-            try:
-                prompt_obj.origin = "context_builder"  # type: ignore[attr-defined]
-            except Exception:
-                pass
+        user_text = getattr(base_prompt, "user", None)
+        if user_text is None:
+            user_text = getattr(base_prompt, "text", None)
+        if user_text is None:
+            user_text = str(base_prompt)
 
-        return prompt_obj  # type: ignore[return-value]
+        system_text = getattr(base_prompt, "system", "")
+        examples = list(getattr(base_prompt, "examples", []) or [])
+        vector_confidence = getattr(base_prompt, "vector_confidence", None)
+        origin = getattr(base_prompt, "origin", "") or "context_builder"
+
+        enriched = Prompt(
+            user_text,
+            system=system_text,
+            examples=examples,
+            vector_confidence=vector_confidence,
+            tags=merged_tags,
+            metadata=meta,
+            origin=origin,
+        )
+        return enriched
 
 
 def build_prompt(
@@ -735,27 +760,41 @@ def follow_up(
                 "description": idea.description,
             },
         )
+    except Exception as exc:
+        if isinstance(exc, PromptBuildError):
+            raise
+        handle_failure(
+            "failed to build follow-up prompt",
+            exc,
+            logger=logger,
+        )
+
+    try:
         result = client.generate(
             prompt_obj,
             context_builder=context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
-        text = result.text
-        if not text and isinstance(result.raw, dict):
-            text = (
-                result.raw.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
-        idea.insight = text
+    except PromptBuildError:
+        raise
     except Exception as exc:  # pragma: no cover - network/parse failures
-        logger.exception("follow-up request failed: %s", exc)
-        if RAISE_ERRORS:
-            raise
-        idea.insight = None
+        handle_failure(
+            "follow-up inference failed",
+            exc,
+            logger=logger,
+        )
+
+    text = result.text
+    if not text and isinstance(result.raw, dict):
+        text = (
+            result.raw.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+    idea.insight = text or ""
     if not idea.insight:
         logger.info("no follow-up insight returned for %s", idea.name)
-    return idea.insight or ""
+    return idea.insight
 
 
 def generate_and_filter(
@@ -770,15 +809,26 @@ def generate_and_filter(
         "Suggest five new online business models. "
         "Respond in JSON list format with fields name, description and tags."
     )
-    prompt_obj = context_builder.build_prompt(
-        prompt,
-        intent_metadata={"tags": list(tags)},
-    )
-    result = client.generate(
-        prompt_obj,
-        context_builder=context_builder,
-        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-    )
+    try:
+        prompt_obj = context_builder.build_prompt(
+            prompt,
+            intent_metadata={"tags": list(tags)},
+        )
+    except Exception as exc:
+        if isinstance(exc, PromptBuildError):
+            raise
+        handle_failure("failed to build idea generation prompt", exc, logger=logger)
+
+    try:
+        result = client.generate(
+            prompt_obj,
+            context_builder=context_builder,
+            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+        )
+    except PromptBuildError:
+        raise
+    except Exception as exc:
+        handle_failure("idea generation request failed", exc, logger=logger)
     ideas = parse_ideas(result)
     novel: List[Idea] = []
     for idea in ideas:
@@ -791,10 +841,14 @@ def generate_and_filter(
             continue
         try:
             follow_up(client, idea, context_builder=context_builder)
-        except Exception:
-            logger.exception("failed to enrich idea %s", idea.name)
-            if RAISE_ERRORS:
-                raise
+        except PromptBuildError:
+            raise
+        except Exception as exc:
+            handle_failure(
+                f"failed to enrich idea {idea.name}",
+                exc,
+                logger=logger,
+            )
         novel.append(idea)
     logger.info("generated %d novel ideas", len(novel))
     return novel
