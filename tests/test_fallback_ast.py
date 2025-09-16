@@ -47,7 +47,11 @@ def test_fallback_compiles_and_uses_snippet_context():
     snippet = """total = 0\nfor item in items:\n    total += item\nif total > 0:\n    return total"""
     engine.suggest_snippets = lambda *a, **k: [SimpleNamespace(code=snippet)]
     manager = SimpleNamespace(engine=engine)
-    result = manager_generate_helper(manager, "summation helper")
+    result = manager_generate_helper(
+        manager,
+        "summation helper",
+        context_builder=engine.context_builder,
+    )
     compile(result, "<generated>", "exec")
     assert "for item in items" in result
     assert "total" in result

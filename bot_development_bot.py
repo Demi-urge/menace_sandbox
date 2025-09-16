@@ -785,7 +785,11 @@ class BotDevelopmentBot:
                 code = path.read_text()
             else:
                 code = self.engine_retry.run(
-                    lambda: manager_generate_helper(manager, prompt),
+                    lambda: manager_generate_helper(
+                        manager,
+                        prompt,
+                        context_builder=self.context_builder,
+                    ),
                     logger=self.logger,
                 )
             return EngineResult(True, code, None)

@@ -17,10 +17,11 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
+from .self_coding_engine import SelfCodingEngine
 from context_builder import handle_failure, PromptBuildError
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Any, Iterable, List, Mapping, Tuple
 import json
 import hashlib
 import time
@@ -107,6 +108,26 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when service missing
     class ErrorResult(Exception):
         """Fallback placeholder when vector service is unavailable."""
+
+
+def _build_prediction_prompt(
+    query: str,
+    *,
+    intent: Mapping[str, Any],
+    context_builder: ContextBuilder,
+):
+    """Return an enriched prompt for the enhancement evaluation."""
+
+    engine = SelfCodingEngine.__new__(SelfCodingEngine)
+    engine.logger = logger
+    engine._last_retry_trace = None
+    engine._last_prompt = None
+    engine._last_prompt_metadata = {}
+    return engine.build_enriched_prompt(
+        query,
+        intent=intent,
+        context_builder=context_builder,
+    )
 
 
 def _resolve_model_path(path_str: str) -> Path:
@@ -939,10 +960,16 @@ class ChatGPTPredictionBot:
             intent_meta = {"idea": clean_idea, "rationale": clean_rationale}
             if mem_ctx:
                 intent_meta["memory_context"] = mem_ctx
+            base_tags = [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]
+            full_tags = ensure_tags(
+                "chatgpt_prediction_bot.evaluate_enhancement", base_tags
+            )
+            intent_meta.setdefault("intent_tags", list(full_tags))
             try:
-                prompt_obj = context_builder.build_prompt(
+                prompt_obj = _build_prediction_prompt(
                     prompt,
-                    intent_metadata=intent_meta,
+                    intent=intent_meta,
+                    context_builder=context_builder,
                 )
             except Exception as exc:
                 if isinstance(exc, PromptBuildError):
@@ -952,10 +979,6 @@ class ChatGPTPredictionBot:
                     exc,
                     logger=logger,
                 )
-            base_tags = [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT]
-            full_tags = ensure_tags(
-                "chatgpt_prediction_bot.evaluate_enhancement", base_tags
-            )
             try:
                 result = client.generate(
                     prompt_obj,

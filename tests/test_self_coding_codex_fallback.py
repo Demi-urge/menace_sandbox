@@ -149,7 +149,11 @@ def test_empty_output_triggers_fallback(monkeypatch):
     patch_history(monkeypatch)
 
     manager = types.SimpleNamespace(engine=engine)
-    result = manager_generate_helper(manager, "do something")
+    result = manager_generate_helper(
+        manager,
+        "do something",
+        context_builder=engine.context_builder,
+    )
 
     assert model_used["model"] == fallback_model
     assert result == "print('hi')\n"
@@ -186,7 +190,11 @@ def test_malformed_output_triggers_fallback(monkeypatch):
     patch_history(monkeypatch)
 
     manager = types.SimpleNamespace(engine=engine)
-    result = manager_generate_helper(manager, "do something")
+    result = manager_generate_helper(
+        manager,
+        "do something",
+        context_builder=engine.context_builder,
+    )
 
     assert model_used["model"] == fallback_model
     assert result == "print('fixed')\n"
@@ -206,5 +214,9 @@ def test_fallback_uses_existing_context_builder(monkeypatch):
         self_coding_engine.codex_fallback_handler, "handle", handle
     )
     patch_history(monkeypatch)
-    manager_generate_helper(types.SimpleNamespace(engine=engine), "do something")
+    manager_generate_helper(
+        types.SimpleNamespace(engine=engine),
+        "do something",
+        context_builder=engine.context_builder,
+    )
 

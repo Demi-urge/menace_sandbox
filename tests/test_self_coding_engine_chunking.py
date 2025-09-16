@@ -272,7 +272,12 @@ def test_generate_helper_injects_chunk_summaries(monkeypatch, tmp_path):
     target = tmp_path / "big.py"  # path-ignore
     target.write_text("print('hi')\n")
 
-    manager_generate_helper(types.SimpleNamespace(engine=engine), "do something", path=target)
+    manager_generate_helper(
+        types.SimpleNamespace(engine=engine),
+        "do something",
+        context_builder=engine.context_builder,
+        path=target,
+    )
 
     assert called["limit"] == engine.chunk_token_threshold
     assert "Chunk 0: sum1" in captured["context"]
@@ -334,8 +339,18 @@ def test_generate_helper_uses_cached_chunk_summaries(monkeypatch, tmp_path):
     target.write_text("print('hi')\n")
 
     mgr = types.SimpleNamespace(engine=engine)
-    manager_generate_helper(mgr, "do something", path=target)
-    manager_generate_helper(mgr, "do something", path=target)
+    manager_generate_helper(
+        mgr,
+        "do something",
+        context_builder=engine.context_builder,
+        path=target,
+    )
+    manager_generate_helper(
+        mgr,
+        "do something",
+        context_builder=engine.context_builder,
+        path=target,
+    )
 
     assert calls["n"] == 2  # summaries computed once and then served from cache
 
@@ -394,6 +409,7 @@ def test_generate_helper_builds_line_range_prompt(monkeypatch, tmp_path):
     manager_generate_helper(
         types.SimpleNamespace(engine=engine),
         "do something",
+        context_builder=engine.context_builder,
         path=target,
         target_region=region,
     )

@@ -1631,6 +1631,7 @@ class SelfCodingEngine:
             code = manager_generate_helper(
                 manager,
                 description,
+                context_builder=self.context_builder,
                 path=path,
                 metadata=context_meta,
                 chunk_index=chunk_index,
@@ -1638,7 +1639,12 @@ class SelfCodingEngine:
                 strategy=strategy,
             )
         except TypeError:
-            code = manager_generate_helper(manager, description, strategy=strategy)
+            code = manager_generate_helper(
+                manager,
+                description,
+                context_builder=self.context_builder,
+                strategy=strategy,
+            )
         self.logger.info(
             "patch file",
             extra={
@@ -1898,6 +1904,7 @@ class SelfCodingEngine:
             generated = manager_generate_helper(
                 manager,
                 description,
+                context_builder=self.context_builder,
                 path=path,
                 metadata=context_meta,
                 target_region=target_region,
@@ -1919,6 +1926,7 @@ class SelfCodingEngine:
                     generated = manager_generate_helper(
                         manager,
                         description,
+                        context_builder=self.context_builder,
                         path=path,
                         metadata=context_meta,
                         target_region=func_region,
@@ -1939,6 +1947,7 @@ class SelfCodingEngine:
                 generated = manager_generate_helper(
                     manager,
                     description,
+                    context_builder=self.context_builder,
                     path=path,
                     metadata=context_meta,
                     target_region=func_region,
@@ -2016,6 +2025,7 @@ class SelfCodingEngine:
                 return manager_generate_helper(
                     manager,
                     description,
+                    context_builder=self.context_builder,
                     path=path,
                     metadata=context_meta,
                     chunk_index=idx,

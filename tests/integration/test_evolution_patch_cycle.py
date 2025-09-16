@@ -76,7 +76,7 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
 
     cbi.self_coding_managed = self_coding_managed
 
-    def _manager_generate_helper(self, description, path=None):
+    def _manager_generate_helper(self, description, *, context_builder, path=None):
         return self.engine.generate_helper(description)
 
     cbi.manager_generate_helper = _manager_generate_helper
@@ -252,7 +252,12 @@ def test_evolution_orchestrator_patch_cycle(tmp_path, monkeypatch):
         def generate_and_patch(self, path, description, *, context_meta=None, context_builder=None):
             context_builder.build(description)
             self.engine.cognition_layer.context_builder = context_builder
-            code = manager_generate_helper(self, description, path=str(path))
+            code = manager_generate_helper(
+                self,
+                description,
+                context_builder=context_builder,
+                path=str(path),
+            )
             self.quick_fix.validate_patch(str(path), code)
             patch_id = self.quick_fix.apply_patch(str(path), code)
             self._last_patch_id = patch_id

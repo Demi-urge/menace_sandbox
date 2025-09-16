@@ -497,7 +497,11 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "suggest_snippets", lambda d, limit=3: [])
 
     manager = types.SimpleNamespace(engine=engine)
-    code = manager_generate_helper(manager, "test helper")
+    code = manager_generate_helper(
+        manager,
+        "test helper",
+        context_builder=engine.context_builder,
+    )
     assert engine.context_builder.calls, "context_builder.build was not invoked"
     assert "### Retrieval context" in DummyClient.prompt
     assert context_json in DummyClient.prompt
@@ -509,8 +513,8 @@ def test_generate_helper_requires_context_builder(tmp_path):
     engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem, context_builder=builder)
     engine.context_builder = None
     manager = types.SimpleNamespace(engine=engine)
-    with pytest.raises(RuntimeError):
-        manager_generate_helper(manager, "demo task")
+    with pytest.raises(TypeError):
+        manager_generate_helper(manager, "demo task", context_builder=None)
 
 
 def test_patch_logger_vector_service_error(tmp_path):
@@ -588,7 +592,11 @@ def test_vector_service_metrics_and_fallback(tmp_path, monkeypatch):
         llm_client=DummyClient2(),
     )
     manager = types.SimpleNamespace(engine=engine)
-    code = manager_generate_helper(manager, "demo task")
+    code = manager_generate_helper(
+        manager,
+        "demo task",
+        context_builder=engine.context_builder,
+    )
     assert builder.calls == ["demo task"]
     assert g1.inc_calls == 1
     assert "sentinel_fallback" not in code
@@ -662,7 +670,11 @@ def test_codex_fallback_handler_invoked(monkeypatch, tmp_path):
         types.SimpleNamespace(codex_retry_delays=[2, 5, 10], codex_retry_queue_path=str(qpath)),
     )
     manager = types.SimpleNamespace(engine=engine)
-    code = manager_generate_helper(manager, "demo")
+    code = manager_generate_helper(
+        manager,
+        "demo",
+        context_builder=engine.context_builder,
+    )
     assert "def good" in code
     assert calls == [qpath]
 
@@ -712,7 +724,11 @@ def test_simplified_prompt_after_failure(monkeypatch, tmp_path):
     engine.simplify_prompt = sce.simplify_prompt
 
     manager = types.SimpleNamespace(engine=engine)
-    code = manager_generate_helper(manager, "demo")
+    code = manager_generate_helper(
+        manager,
+        "demo",
+        context_builder=engine.context_builder,
+    )
     assert "def ok" in code
     assert len(calls) == 2
     assert calls[0].system == "orig" and len(calls[0].examples) == 2
@@ -733,8 +749,12 @@ def test_generate_helper_requires_manager_token(tmp_path):
         context_builder=builder,
     )
 
-    with pytest.raises(RuntimeError):
-        manager_generate_helper(types.SimpleNamespace(engine=engine), "demo")
+    with pytest.raises(TypeError):
+        manager_generate_helper(
+            types.SimpleNamespace(engine=engine),
+            "demo",
+            context_builder=None,
+        )
 
     mgr_mod = types.ModuleType("menace.self_coding_manager")
     mgr_mod.SelfCodingManager = DummyManager
@@ -743,5 +763,9 @@ def test_generate_helper_requires_manager_token(tmp_path):
     from menace.coding_bot_interface import manager_generate_helper
 
     manager = DummyManager(engine)
-    code = manager_generate_helper(manager, "demo")
+    code = manager_generate_helper(
+        manager,
+        "demo",
+        context_builder=engine.context_builder,
+    )
     assert "def" in code

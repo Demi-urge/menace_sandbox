@@ -272,9 +272,17 @@ def test_patch_uses_refreshed_weights(monkeypatch: pytest.MonkeyPatch) -> None:
     import menace.quick_fix_engine as qfe
 
     weights["value"] = 1
-    qfe.manager_generate_helper(mgr, "first")
+    qfe.manager_generate_helper(
+        mgr,
+        "first",
+        context_builder=mgr.engine.cognition_layer.context_builder,
+    )
     weights["value"] = 2
-    qfe.manager_generate_helper(mgr, "second")
+    qfe.manager_generate_helper(
+        mgr,
+        "second",
+        context_builder=mgr.engine.cognition_layer.context_builder,
+    )
 
     assert seen == [1, 2]
 
@@ -313,8 +321,16 @@ def test_manager_helper_gets_new_builder_each_call(
     sys.modules.pop("quick_fix_engine", None)
     import menace.quick_fix_engine as qfe
 
-    qfe.manager_generate_helper(object(), "first")
-    qfe.manager_generate_helper(object(), "second")
+    qfe.manager_generate_helper(
+        object(),
+        "first",
+        context_builder=scm.ContextBuilder(),
+    )
+    qfe.manager_generate_helper(
+        object(),
+        "second",
+        context_builder=scm.ContextBuilder(),
+    )
 
     assert seen == [0, 1]
     sys.modules["quick_fix_engine"] = qfe_stub

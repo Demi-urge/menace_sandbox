@@ -135,7 +135,11 @@ def test_timeout_error_prompts_simplified_and_builtin_fallback(monkeypatch):
     patch_history(monkeypatch)
 
     manager = types.SimpleNamespace(engine=engine)
-    result = manager_generate_helper(manager, 'do something')
+    result = manager_generate_helper(
+        manager,
+        'do something',
+        context_builder=engine.context_builder,
+    )
 
     assert len(calls) == 2
     assert calls[1].system == ''
@@ -179,7 +183,11 @@ def test_empty_completion_reroutes_and_queues(monkeypatch):
     patch_history(monkeypatch)
 
     manager = types.SimpleNamespace(engine=engine)
-    result = manager_generate_helper(manager, 'do something')
+    result = manager_generate_helper(
+        manager,
+        'do something',
+        context_builder=engine.context_builder,
+    )
 
     q_mock.assert_called_once()
     assert result == _expected_fallback('do something')
@@ -201,7 +209,11 @@ def test_handle_returns_llmresult_used_by_engine(monkeypatch):
     patch_history(monkeypatch)
 
     manager = types.SimpleNamespace(engine=engine)
-    result = manager_generate_helper(manager, 'do something')
+    result = manager_generate_helper(
+        manager,
+        'do something',
+        context_builder=engine.context_builder,
+    )
 
     handle_mock.assert_called_once()
     assert isinstance(handle_mock.return_value, LLMResult)

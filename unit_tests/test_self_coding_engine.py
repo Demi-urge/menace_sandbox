@@ -318,7 +318,7 @@ def test_context_builder_shared(monkeypatch):
     assert builder is engine.cognition_layer.context_builder
 
     manager = types.SimpleNamespace(engine=engine)
-    manager_generate_helper(manager, "alpha issue")
+    manager_generate_helper(manager, "alpha issue", context_builder=builder)
     assert "### Retrieval context" in client.last_prompt
     assert "ctx:alpha issue" in client.last_prompt
 
