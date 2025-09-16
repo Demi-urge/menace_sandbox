@@ -777,6 +777,13 @@ result = client.ask(prompt, use_memory=False, memory_manager=None,
                     tags=[ERROR_FIX], manager=manager)
 ```
 
+If prompt construction fails, call ``context_builder.handle_failure`` from the
+shared :mod:`context_builder` helper. The utility logs the error and raises a
+``PromptBuildError`` so callers observe a consistent failure type instead of
+falling back to ad-hoc prompt creation. New modules must rely on this helper
+rather than writing bespoke ``try``/``except`` blocks around
+``ContextBuilder.build_prompt``.
+
 For a deeper overview of the `LocalKnowledgeModule`, required tags, environment
 variables and multi-run examples see
 [docs/gpt_memory.md](docs/gpt_memory.md).

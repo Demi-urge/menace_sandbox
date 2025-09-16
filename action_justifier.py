@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 from string import Template
 from pydantic import BaseModel, ValidationError
+from context_builder import handle_failure, PromptBuildError
 
 from dynamic_path_router import resolve_dir, resolve_path
 from local_model_wrapper import LocalModelWrapper
@@ -175,8 +176,20 @@ def _llm_justification(
             logger.exception("failed reading justification cache")
     try:
         wrapper = LocalModelWrapper(model, tokenizer)
+    except Exception:
+        return None
+    try:
         prompt_obj = context_builder.build_prompt(payload)
-        prompt_obj.user = base_prompt
+    except Exception as exc:
+        if isinstance(exc, PromptBuildError):
+            raise
+        handle_failure(
+            "failed to build action justification prompt",
+            exc,
+            logger=logger,
+        )
+    prompt_obj.user = base_prompt
+    try:
         explanation = wrapper.generate(
             prompt_obj,
             context_builder=context_builder,

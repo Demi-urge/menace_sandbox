@@ -8,6 +8,7 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Any, TYPE_CHECKING
 from pathlib import Path
+from context_builder import handle_failure, PromptBuildError
 from billing.prompt_notice import prepend_payment_notice
 from prompt_types import Prompt
 from llm_interface import LLMClient, LLMResult
@@ -530,9 +531,14 @@ class ChatGPTClient(LLMClient):
                 prior=prior,
                 intent_metadata=intent_meta,
             )
-        except Exception:
-            logger.exception("failed to build prompt from context builder")
-            raise
+        except Exception as exc:
+            if isinstance(exc, PromptBuildError):
+                raise
+            handle_failure(
+                "failed to build prompt from context builder",
+                exc,
+                logger=logger,
+            )
 
         parts: List[str] = [prompt_obj.user]
         if getattr(prompt_obj, "examples", None):
@@ -564,9 +570,10 @@ def build_prompt(
             prior=prior,
             context_builder=context_builder,
         )
-    except Exception:
-        logger.exception("prompt construction failed")
-        return []
+    except PromptBuildError:
+        raise
+    except Exception as exc:
+        handle_failure("prompt construction failed", exc, logger=logger)
 
 
 @dataclass

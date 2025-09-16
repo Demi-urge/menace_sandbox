@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, TYPE_CHECKING
 
+from context_builder import handle_failure, PromptBuildError
+
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from llm_interface import LLMClient
     from vector_service.context_builder import ContextBuilder
@@ -288,11 +290,17 @@ def summarize_snippet(
                         "instruction": "Summarise the following code snippet in one sentence.",
                     },
                 )
-                result = llm.generate(prompt, context_builder=context_builder)
-                if getattr(result, "text", "").strip():
-                    summary = result.text.strip()
-            except Exception:
-                pass
+            except Exception as exc:
+                if isinstance(exc, PromptBuildError):
+                    raise
+                handle_failure("failed to build snippet summary prompt", exc)
+            else:
+                try:
+                    result = llm.generate(prompt, context_builder=context_builder)
+                    if getattr(result, "text", "").strip():
+                        summary = result.text.strip()
+                except Exception:
+                    pass
 
     if not summary:
         try:

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Iterator, Sequence, Literal, Dict
+from context_builder import handle_failure, PromptBuildError
 
 from db_router import DBRouter, GLOBAL_ROUTER, SHARED_TABLES, init_db_router, queue_insert
 from db_dedup import insert_if_unique
@@ -1090,11 +1091,14 @@ class ChatGPTEnhancementBot:
             prompt_obj = context_builder.build_prompt(
                 instruction, intent=intent_meta
             )
-        except Exception:
-            logger.exception("ContextBuilder.build_prompt failed")
-            if RAISE_ERRORS:
+        except Exception as exc:
+            if isinstance(exc, PromptBuildError):
                 raise
-            return []
+            handle_failure(
+                "ContextBuilder.build_prompt failed in enhancement bot",
+                exc,
+                logger=logger,
+            )
 
         if getattr(prompt_obj, "origin", None) != "context_builder":
             logger.error("ContextBuilder returned prompt without context origin")

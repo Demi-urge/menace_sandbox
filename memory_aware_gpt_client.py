@@ -15,6 +15,8 @@ import logging
 import uuid
 import warnings
 
+from context_builder import handle_failure, PromptBuildError
+
 try:  # pragma: no cover - optional dependency
     from memory_logging import ensure_tags
 except Exception:  # pragma: no cover - fallback when logging unavailable
@@ -137,9 +139,14 @@ def ask_with_memory(
         prompt_obj = context_builder.build_prompt(
             prompt_text, intent_metadata=intent_meta, session_id=session_id
         )
-    except Exception:
-        logger.exception("ContextBuilder.build_prompt failed")
-        raise
+    except Exception as exc:
+        if isinstance(exc, PromptBuildError):
+            raise
+        handle_failure(
+            "ContextBuilder.build_prompt failed in memory_aware_gpt_client",
+            exc,
+            logger=logger,
+        )
 
     if extra_examples or mem_ctx:
         merged = list(extra_examples)

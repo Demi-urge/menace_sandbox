@@ -13,6 +13,8 @@ import logging
 from pathlib import Path
 from typing import Optional, Any
 
+from context_builder import handle_failure, PromptBuildError
+
 try:  # pragma: no cover - allow flat imports
     from .llm_interface import LLMClient, Prompt, LLMResult
 except Exception:  # pragma: no cover - fallback for direct execution
@@ -84,8 +86,14 @@ class _ContextClient:
                 examples=examples,
                 tags=tags,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            if isinstance(exc, PromptBuildError):
+                raise
+            handle_failure(
+                "failed to rebuild prompt for fallback model",
+                exc,
+                logger=logger,
+            )
         return self._client.generate(prompt, context_builder=self._builder)
 
 
