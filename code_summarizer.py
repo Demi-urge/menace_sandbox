@@ -18,11 +18,48 @@ outputs when model limits are ignored or unavailable.
 
 from __future__ import annotations
 
+import logging
+
 from typing import TYPE_CHECKING
 
+from context_builder import PromptBuildError, handle_failure
+
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
-    from llm_interface import LLMClient  # noqa: F401
+    from llm_interface import LLMClient, Prompt  # noqa: F401
     from vector_service.context_builder import ContextBuilder  # noqa: F401
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _emit_prompt_failure(message: str, exc: BaseException) -> None:
+    """Log prompt construction errors in a consistent manner."""
+
+    try:
+        handle_failure(message, exc, logger=LOGGER)
+    except PromptBuildError:
+        # ``handle_failure`` always raises ``PromptBuildError``; swallow it so
+        # the summariser can fall back to heuristic behaviour when possible.
+        pass
+
+
+def _build_summarisation_prompt(
+    code: str, *, context_builder: "ContextBuilder"
+) -> "Prompt":
+    """Return an enriched prompt for the summarisation task."""
+
+    from self_coding_engine import SelfCodingEngine
+
+    engine = SelfCodingEngine.__new__(SelfCodingEngine)
+    engine.logger = LOGGER
+    engine._last_retry_trace = None
+    engine._last_prompt = None
+    engine._last_prompt_metadata = {}
+    return engine.build_enriched_prompt(
+        code,
+        intent={"task": "summarize_code", "small_task": True},
+        context_builder=context_builder,
+    )
 
 
 def _truncate_tokens(text: str, limit: int) -> str:
@@ -105,16 +142,35 @@ def summarize_code(
     if OllamaClient is not None:
         try:  # pragma: no cover - defensive against runtime failures
             client = OllamaClient()  # type: ignore[call-arg]
-            prompt = context_builder.build_prompt(
-                code,
-                intent={"task": "summarize_code", "small_task": True},
-            )
-            result = client.generate(prompt, context_builder=context_builder)
-            summary = getattr(result, "text", "").strip()
-            if summary:
-                return _truncate_tokens(summary, max_summary_tokens)
         except Exception:
             pass
+        else:
+            try:
+                prompt_obj = _build_summarisation_prompt(
+                    code, context_builder=context_builder
+                )
+            except PromptBuildError as exc:
+                _emit_prompt_failure(
+                    "failed to build summarisation prompt", exc
+                )
+            except Exception as exc:
+                _emit_prompt_failure(
+                    "unexpected error while building summarisation prompt",
+                    exc,
+                )
+            else:
+                try:
+                    result = client.generate(
+                        prompt_obj, context_builder=context_builder
+                    )
+                    summary = getattr(result, "text", "").strip()
+                except Exception as exc:
+                    _emit_prompt_failure(
+                        "local client failed to generate code summary", exc
+                    )
+                else:
+                    if summary:
+                        return _truncate_tokens(summary, max_summary_tokens)
 
     # ------------------------------------------------------------------
     # 3) Heuristic fallback
