@@ -269,8 +269,9 @@ def test_call_codex_with_backoff_retries(monkeypatch):
             raise Exception("boom")
 
     client = FailClient()
+    builder = object()
     with pytest.raises(sce.RetryError):
-        sce.call_codex_with_backoff(client, sce.Prompt("x"))
+        sce.call_codex_with_backoff(client, sce.Prompt("x"), context_builder=builder)
 
     assert sleeps == delays
     assert client.calls == len(delays) + 1
