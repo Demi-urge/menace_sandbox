@@ -329,6 +329,26 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                     self.generate_aliases.update(names)
             elif isinstance(value, ast.Call):
                 call_name = full_name(value.func)
+                if call_name == "getattr":
+                    attr_name: str | None = None
+                    if len(value.args) >= 2:
+                        second = value.args[1]
+                        if (
+                            isinstance(second, ast.Constant)
+                            and isinstance(second.value, str)
+                        ):
+                            attr_name = second.value
+                    else:
+                        for kw in value.keywords:
+                            if (
+                                kw.arg == "name"
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                attr_name = kw.value.value
+                                break
+                    if attr_name in GENERATE_METHODS:
+                        self.generate_aliases.update(names)
                 if call_name in PARTIAL_NAMES and value.args:
                     first = value.args[0]
                     gen_name = full_name(first)
@@ -821,10 +841,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                         target = f"{base_name}.{node.func.attr}"
                         is_llm_call = True
 
-            if (
-                isinstance(node.func, ast.Name)
-                and node.func.id in self.generate_aliases
-            ) or (target and not has_kw):
+            if target and not has_kw:
                 line_no = node.lineno
                 line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                 prev = lines[line_no - 2] if line_no >= 2 else ""
