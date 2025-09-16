@@ -276,7 +276,7 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
     full_tags = ensure_tags("newsreader_bot.monetise_event", base_tags)
     intent = {"title": event.title, "summary": event.summary}
     try:
-        prompt_obj = client.context_builder.build_prompt(
+        built_prompt = client.context_builder.build_prompt(
             prompt, intent_metadata=intent, tags=full_tags
         )
     except Exception as exc:
@@ -287,7 +287,9 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
             exc,
             logger=logger,
         )
-    result = client.generate(prompt_obj, context_builder=client.context_builder)
+        return ""
+
+    result = client.generate(built_prompt, context_builder=client.context_builder)
     return result.text
 
 
