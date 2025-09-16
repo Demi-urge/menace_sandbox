@@ -47,6 +47,7 @@ def test_twitter_tracker_refresh():
 
 def test_gpt4_client_stream(monkeypatch):
     captured: dict[str, Any] = {}
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def fake_chat(prompt: Prompt, **kwargs):
         captured["prompt_user"] = prompt.user
@@ -64,7 +65,15 @@ def test_gpt4_client_stream(monkeypatch):
             return Prompt(user=query)
 
     client = GPT4Client("k", context_builder=DummyBuilder())
-    out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
+    out = list(
+        client.stream_chat(
+            "user",
+            [0.1],
+            "persuade",
+            "hello",
+            context_builder=client.context_builder,
+        )
+    )
     assert "".join(out) == "Hi!"
     assert captured["query"] == "hello"
     assert captured["intent_called"]["objective"] == "persuade"
@@ -72,6 +81,7 @@ def test_gpt4_client_stream(monkeypatch):
 
 def test_gpt4_client_stream_with_context_builder(monkeypatch):
     captured: dict[str, str] = {}
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     class DummyBuilder:
         def build_prompt(self, query: str, *, intent=None, **kwargs):
@@ -86,7 +96,15 @@ def test_gpt4_client_stream_with_context_builder(monkeypatch):
     )
 
     client = GPT4Client("k", context_builder=DummyBuilder())
-    out = list(client.stream_chat("user", [0.1], "persuade", "hello"))
+    out = list(
+        client.stream_chat(
+            "user",
+            [0.1],
+            "persuade",
+            "hello",
+            context_builder=client.context_builder,
+        )
+    )
     assert "".join(out) == "Hi!"
     assert captured["query"] == "hello"
 
@@ -98,6 +116,7 @@ def test_gpt4_client_requires_context_builder():
 
 def test_gpt4_client_env(monkeypatch, caplog):
     caplog.set_level("WARNING")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     class DummyBuilder:
         def build_prompt(self, query: str, *, intent=None, **kwargs):  # pragma: no cover - simple stub
@@ -108,6 +127,7 @@ def test_gpt4_client_env(monkeypatch, caplog):
     assert client.api_key == "env-k"
     assert client.enabled
     monkeypatch.delenv("NEURO_OPENAI_KEY")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     caplog.clear()
     client2 = GPT4Client(None, context_builder=DummyBuilder())
     assert not client2.enabled
@@ -155,6 +175,8 @@ def test_pinecone_logger_missing_conf(monkeypatch, caplog):
 
 
 def test_gpt4_client_stream_warns_when_unavailable(monkeypatch, caplog):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
     class DummyBuilder:
         def build_prompt(self, query: str, *, intent=None, **kwargs):  # pragma: no cover - simple stub
             return Prompt(user="CTX")
@@ -162,7 +184,15 @@ def test_gpt4_client_stream_warns_when_unavailable(monkeypatch, caplog):
     client = GPT4Client(None, context_builder=DummyBuilder())
     caplog.set_level("WARNING")
     caplog.clear()
-    out = list(client.stream_chat("user", [0.1], "persuade", "hi"))
+    out = list(
+        client.stream_chat(
+            "user",
+            [0.1],
+            "persuade",
+            "hi",
+            context_builder=client.context_builder,
+        )
+    )
     assert out == [""]
     assert any("unavailable" in r.getMessage() for r in caplog.records)
 
