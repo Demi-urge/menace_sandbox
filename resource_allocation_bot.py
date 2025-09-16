@@ -333,6 +333,7 @@ class ResourceAllocationBot:
             self.logger.error("context_builder is required for improvement prompts")
             return "upgrade"
         session_id = uuid.uuid4().hex
+        context = ""
         try:
             ctx_res = builder.build(bot, session_id=session_id)
             context = ctx_res[0] if isinstance(ctx_res, tuple) else ctx_res
@@ -344,7 +345,27 @@ class ResourceAllocationBot:
             self.logger.exception("Context build failed for %s", bot)
             return "upgrade"
         try:
-            from prompt_engine import PromptEngine
+            prompt_obj = builder.build_prompt(
+                f"Improve {bot}",
+                intent_metadata={"bot": bot},
+                retrieval_context=context,
+                session_id=session_id,
+            )
+        except Exception:  # pragma: no cover - prompt build issues
+            self.logger.exception("Improvement prompt build failed for %s", bot)
+            return "upgrade"
+        prompt_meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+        if context and "retrieval_context" not in prompt_meta:
+            prompt_meta["retrieval_context"] = context
+        prompt_meta["retrieval_session_id"] = session_id
+        try:
+            prompt_obj.metadata = prompt_meta
+        except Exception:
+            try:
+                prompt_obj.metadata.update(prompt_meta)
+            except Exception:
+                pass
+        try:
             from local_backend import mixtral_client
         except Exception:  # pragma: no cover - dependencies missing
             return "upgrade"
@@ -353,17 +374,10 @@ class ResourceAllocationBot:
             llm = mixtral_client()
         except Exception:
             pass
-        engine = PromptEngine(context_builder=builder, llm=llm)
-        prompt = engine.build_prompt(
-            f"Improve {bot}",
-            retrieval_context=context,
-            context_builder=builder,
-        )
-        prompt.metadata["retrieval_session_id"] = session_id
-        if engine.llm is None:
+        if llm is None:
             return "upgrade"
         try:
-            result = engine.llm.generate(prompt, context_builder=builder)
+            result = llm.generate(prompt_obj, context_builder=builder)
             return (getattr(result, "text", "") or "").strip()
         except Exception:  # pragma: no cover - local LLM failures
             self.logger.exception("Improvement suggestion failed for %s", bot)
