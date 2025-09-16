@@ -772,10 +772,9 @@ class PromptEngine:
 
         if context_builder is None:
             raise ValueError("context_builder is required")
-        builder = context_builder
 
         def _count(text: str) -> int:
-            counter = getattr(builder, "_count_tokens", None)
+            counter = getattr(context_builder, "_count_tokens", None)
             if counter is None:
                 if _ENCODER is not None:
                     def _token_counter(s: Any) -> int:
@@ -790,7 +789,7 @@ class PromptEngine:
             return counter(text)
 
         def _trim(text: str, limit: int) -> str:
-            counter = getattr(builder, "_count_tokens", None)
+            counter = getattr(context_builder, "_count_tokens", None)
             if counter is None:
                 if _ENCODER is not None:
                     def _token_counter(s: Any) -> int:
@@ -826,7 +825,7 @@ class PromptEngine:
         if retriever is None:
             logging.info("No retriever available; falling back to static template")
             self._optimizer_applied = False
-            prompt_obj = builder.build_prompt(self._static_prompt(), top_k=0)
+            prompt_obj = context_builder.build_prompt(self._static_prompt(), top_k=0)
             prompt_obj.system = SYSTEM_NOTICE
             return prompt_obj
 
@@ -839,7 +838,7 @@ class PromptEngine:
                 {"goal": task, "reason": "retrieval_error", "error": str(exc)},
             )
             self._optimizer_applied = False
-            prompt_obj = builder.build_prompt(self._static_prompt(), top_k=0)
+            prompt_obj = context_builder.build_prompt(self._static_prompt(), top_k=0)
             prompt_obj.system = SYSTEM_NOTICE
             return prompt_obj
 
@@ -857,7 +856,7 @@ class PromptEngine:
                 },
             )
             self._optimizer_applied = False
-            prompt_obj = builder.build_prompt(self._static_prompt(), top_k=0)
+            prompt_obj = context_builder.build_prompt(self._static_prompt(), top_k=0)
             prompt_obj.system = SYSTEM_NOTICE
             return prompt_obj
 
@@ -901,7 +900,7 @@ class PromptEngine:
                 },
             )
             self._optimizer_applied = False
-            prompt_obj = builder.build_prompt(self._static_prompt(), top_k=0)
+            prompt_obj = context_builder.build_prompt(self._static_prompt(), top_k=0)
             prompt_obj.system = SYSTEM_NOTICE
             return prompt_obj
 
@@ -1016,7 +1015,7 @@ class PromptEngine:
             except Exception:
                 self.last_metadata = {"target_region": region_meta}
         meta["vector_confidences"] = scores
-        prompt_obj = builder.build_prompt(
+        prompt_obj = context_builder.build_prompt(
             text,
             intent_metadata=meta,
             top_k=0,
