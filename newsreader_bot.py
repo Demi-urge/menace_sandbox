@@ -287,12 +287,8 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
             exc,
             logger=logger,
         )
-    data = client.ask(prompt_obj, use_memory=False, memory_manager=None, tags=full_tags)
-    return (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-    )
+    result = client.generate(prompt_obj, context_builder=client.context_builder)
+    return result.text
 
 
 def send_to_evaluation_bot(event: Event, strategy: str) -> None:
