@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 import memory_aware_gpt_client as magc
+from context_builder import PromptBuildError
+from llm_interface import LLMResult
 from prompt_types import Prompt
 
 
@@ -23,11 +25,12 @@ def test_context_injection_and_logging():
     client = SimpleNamespace()
     recorded = {}
 
-    def fake_ask(prompt, **kw):
+    def fake_generate(prompt, **kwargs):
         recorded["prompt"] = prompt
-        return {"choices": [{"message": {"content": "response"}}]}
+        recorded["kwargs"] = kwargs
+        return LLMResult(text="response")
 
-    client.ask = fake_ask
+    client.generate = fake_generate
     knowledge = DummyKnowledge()
 
     builder = SimpleNamespace(
@@ -50,6 +53,7 @@ def test_context_injection_and_logging():
     assert "fix1" in joined
     assert "imp1" in joined
     assert knowledge.logged and knowledge.logged[0][0].endswith("Do it")
+    assert recorded["kwargs"]["tags"] == ["feedback", "module:mod", "action:act"]
 
 
 def test_context_builder_failure_raises_and_no_call():
@@ -60,11 +64,11 @@ def test_context_builder_failure_raises_and_no_call():
     knowledge = DummyKnowledge()
     called = False
 
-    def fake_ask(*a, **k):
+    def fake_generate(*a, **k):
         nonlocal called
         called = True
 
-    client = SimpleNamespace(ask=fake_ask)
+    client = SimpleNamespace(generate=fake_generate)
     builder = FailingBuilder()
 
     with pytest.raises(RuntimeError):
@@ -83,13 +87,13 @@ def test_missing_context_builder_raises():
     knowledge = DummyKnowledge()
     called = False
 
-    def fake_ask(*a, **k):
+    def fake_generate(*a, **k):
         nonlocal called
         called = True
 
-    client = SimpleNamespace(ask=fake_ask)
+    client = SimpleNamespace(generate=fake_generate)
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(PromptBuildError) as exc_info:
         magc.ask_with_memory(
             client,
             "mod.act",
@@ -99,3 +103,4 @@ def test_missing_context_builder_raises():
         )
 
     assert not called
+    assert isinstance(exc_info.value.__cause__, AttributeError)
