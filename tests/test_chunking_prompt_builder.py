@@ -1,5 +1,8 @@
 import types
 import sys
+
+import pytest
+
 import chunking as pc
 
 
@@ -38,3 +41,8 @@ def test_summarize_snippet_invokes_build_prompt(monkeypatch):
     assert result == "summary"
     assert "built" in prompts, "context_builder.build_prompt was not invoked"
     assert called["prompt"] is prompts["built"], "llm.generate did not receive built prompt"
+
+
+def test_summarize_snippet_requires_context_builder():
+    with pytest.raises(ValueError, match="context_builder is required"):
+        pc.summarize_snippet("example", context_builder=None)
