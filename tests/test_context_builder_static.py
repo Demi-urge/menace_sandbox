@@ -1,6 +1,8 @@
 import subprocess
 import sys
 from pathlib import Path
+import shutil
+import pytest
 
 
 def test_context_builder_static_analysis_runs():
@@ -15,7 +17,10 @@ def test_check_external_services_passes_linter():
         / "scripts"
         / "check_external_services.py"
     )
-    subprocess.run(["flake8", str(path)], check=True)
+    flake8 = shutil.which("flake8")
+    if not flake8:
+        pytest.skip("flake8 not available")
+    subprocess.run([flake8, str(path)], check=True)
 
 
 def test_flags_missing_context_builder(tmp_path):
@@ -482,3 +487,44 @@ def test_allows_getattr_generate_wrapper_with_context_builder(tmp_path):
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == []
+
+
+def test_flags_direct_prompt_instantiation(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from prompt_types import Prompt\n"
+        "def demo():\n"
+        "    return Prompt('hi')\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (
+            3,
+            "direct Prompt instantiation disallowed; use context_builder.build_prompt",
+        )
+    ]
+
+
+def test_flags_manual_string_prompt_in_generate(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "from menace_sandbox.chatgpt_idea_bot import ChatGPTClient\n"
+        "def demo():\n"
+        "    client = ChatGPTClient('key', context_builder=None)\n"
+        "    client.generate('hi')\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    errors = check_file(path)
+    assert (
+        4,
+        "client.generate disallowed or missing context_builder",
+    ) in errors
+    assert (
+        4,
+        "manual string prompt disallowed; use context_builder.build_prompt or "
+        "SelfCodingEngine.build_enriched_prompt",
+    ) in errors
