@@ -121,13 +121,12 @@ class GPT4Client:
         objective: str,
         text: str,
         *,
-        context_builder: "ContextBuilder" | None = None,
+        context_builder: "ContextBuilder",
     ) -> Iterator[str]:
         if not self.enabled:
             logger.warning("GPT4Client disabled: backend unavailable")
             yield ""
             return
-        context_builder = context_builder or self.context_builder
         prompt = context_builder.build_prompt(
             text,
             intent={
@@ -137,7 +136,9 @@ class GPT4Client:
             },
         )
         try:
-            resp = chat_completion_create(prompt, model="gpt-4")
+            resp = chat_completion_create(
+                prompt, model="gpt-4", context_builder=context_builder
+            )
             content = ""
             try:
                 content = resp["choices"][0]["message"]["content"]
