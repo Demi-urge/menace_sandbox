@@ -115,6 +115,26 @@ def test_propose(monkeypatch, tmp_path):
     assert client.last_builder is builder
 
 
+def test_propose_requires_explicit_context_builder(monkeypatch, tmp_path):
+    response_text = json.dumps([{"idea": "New", "rationale": "More efficient"}])
+    builder = DummyBuilder()
+    client = RecordingLLM(response_text)
+    client.context_builder = builder
+
+    router = ceb.init_db_router(
+        "enhprop_missing",
+        str(tmp_path / "local.db"),
+        str(tmp_path / "shared.db"),
+    )
+    monkeypatch.setattr(ceb, "SHARED_TABLES", [])
+    db = ceb.EnhancementDB(tmp_path / "enh_missing.db", router=router)
+    db.add_embedding = lambda *a, **k: None
+    bot = ceb.ChatGPTEnhancementBot(client, db=db, context_builder=builder)
+
+    with pytest.raises(ValueError, match="context_builder is required"):
+        bot.propose("Improve", num_ideas=1, context_builder=None)
+
+
 def test_propose_requires_context_builder_origin(monkeypatch, tmp_path):
     response_text = json.dumps([{"idea": "New", "rationale": "More efficient"}])
 
