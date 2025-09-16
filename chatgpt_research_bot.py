@@ -691,13 +691,9 @@ class ChatGPTResearchBot:
                 "chatgpt_research_bot._ask",
                 [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
-            builder = getattr(self.client, "context_builder", None)
-            if builder is None:
-                raise ValueError("client is missing required context_builder")
-
             result = self.client.generate(
                 prompt_obj,
-                context_builder=builder,
+                context_builder=context_builder,
                 tags=full_tags,
             )
 
