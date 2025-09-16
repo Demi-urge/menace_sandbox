@@ -134,11 +134,13 @@ consume this projection to prioritise follow‑up cycles:
 from unified_event_bus import UnifiedEventBus
 from workflow_graph import WorkflowGraph
 from self_improvement.api import SelfImprovementEngine
+from context_builder_util import create_context_builder
 
 bus = UnifiedEventBus()
 graph = WorkflowGraph()
 graph.attach_event_bus(bus)
-engine = SelfImprovementEngine(event_bus=bus)
+builder = create_context_builder()
+engine = SelfImprovementEngine(context_builder=builder, event_bus=bus)
 
 projection = graph.simulate_impact_wave("42", 1.0, 0.0)
 # use `projection` to decide which dependant workflow to schedule next

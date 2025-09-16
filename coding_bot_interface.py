@@ -24,6 +24,8 @@ import logging
 from typing import Any, Callable, TypeVar, TYPE_CHECKING
 import time
 
+from context_builder_util import create_context_builder
+
 from .self_coding_thresholds import update_thresholds, _load_config
 
 try:  # pragma: no cover - optional self-coding dependency
@@ -263,7 +265,12 @@ def self_coding_managed(
                     from .evolution_orchestrator import EvolutionOrchestrator as _EO
 
                     capital = CapitalManagementBot(data_bot=d_bot)
-                    improv = SelfImprovementEngine(data_bot=d_bot, bot_name=name_local)
+                    builder = create_context_builder()
+                    improv = SelfImprovementEngine(
+                        context_builder=builder,
+                        data_bot=d_bot,
+                        bot_name=name_local,
+                    )
                     bot_list: list[str] = []
                     try:
                         bot_list = list(getattr(registry, "graph", {}).keys())

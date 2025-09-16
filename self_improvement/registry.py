@@ -228,9 +228,18 @@ def auto_x(
         for idx, eng in enumerate(engines):
             registry.register_engine(f"engine{idx}", eng)
     else:
-        registry.register_engine("default", SelfImprovementEngine())
+        registry.register_engine(
+            "default",
+            SelfImprovementEngine(context_builder=_auto_context_builder()),
+        )
     results = registry.run_all_cycles(energy=energy)
     return results
 
 
 __all__ = ["ImprovementEngineRegistry", "auto_x"]
+
+
+def _auto_context_builder():
+    from context_builder_util import create_context_builder
+
+    return create_context_builder()

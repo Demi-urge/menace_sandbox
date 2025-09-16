@@ -21,6 +21,12 @@ class _StubBuilder:
         pass
 
 
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: _StubBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
+
 vs.ContextBuilder = _StubBuilder
 vs.CognitionLayer = object
 sys.modules["vector_service"] = vs
@@ -320,6 +326,7 @@ for name in [
     "implementation_optimiser_bot",
     "self_coding_engine",
     "error_bot",
+    "data_bot",
 ]:
     mod = types.ModuleType(name)
     if name == "local_knowledge_module":
@@ -333,6 +340,10 @@ for name in [
             pass
 
         mod.SelfCodingEngine = SelfCodingEngine
+        mod.MANAGER_CONTEXT = types.SimpleNamespace(
+            set=lambda *_a, **_k: None,
+            reset=lambda _token: None,
+        )
     if name == "error_bot":
         class ErrorDB:
             def __init__(self, *a, **k):
@@ -344,6 +355,12 @@ for name in [
 
         mod.ErrorDB = ErrorDB
         mod.ErrorBot = ErrorBot
+    if name == "data_bot":
+        class DataBot:
+            def __init__(self, *a, **k):
+                pass
+
+        mod.DataBot = DataBot
     sys.modules[name] = mod
     sys.modules[f"menace.{name}"] = mod
 
@@ -467,7 +484,13 @@ def test_run_cycle(tmp_path, monkeypatch):
 
     pipe = StubPipeline()
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
-    engine = sie.SelfImprovementEngine(interval=0, pipeline=pipe, diagnostics=diag, info_db=info)
+    engine = sie.SelfImprovementEngine(
+        context_builder=builder,
+        interval=0,
+        pipeline=pipe,
+        diagnostics=diag,
+        info_db=info,
+    )
     mdb.add(db.MetricRecord("bot", 5.0, 10.0, 3.0, 1.0, 1.0, 1))
     edb.log_discrepancy("fail")
     res = engine.run_cycle()
@@ -489,7 +512,14 @@ def test_run_cycle_triggers_workflow_evolution(tmp_path, monkeypatch):
 
     pipe = StubPipeline()
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
-    engine = sie.SelfImprovementEngine(interval=0, pipeline=pipe, diagnostics=diag, info_db=info)
+    builder = DummyBuilder()
+    engine = sie.SelfImprovementEngine(
+        context_builder=builder,
+        interval=0,
+        pipeline=pipe,
+        diagnostics=diag,
+        info_db=info,
+    )
     monkeypatch.setattr(engine, "_should_trigger", lambda: True)
     monkeypatch.setattr(engine.pathway_db, "top_sequences", lambda limit=3: [])
 
@@ -590,7 +620,9 @@ def test_schedule_baseline_deviation(tmp_path, monkeypatch):
             return self.energy
 
     pipe = StubPipeline()
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=pipe,
         diagnostics=diag,
@@ -650,7 +682,9 @@ def test_schedule_deviation_autoruns(tmp_path, monkeypatch):
             return self.energy
 
     pipe = StubPipeline()
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=pipe,
         diagnostics=diag,
@@ -690,7 +724,9 @@ def test_policy_state_with_patch_metrics(tmp_path):
         def run(self, model: str, energy: int = 1):
             return mp.AutomationResult(package=None, roi=None)
 
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,
@@ -763,7 +799,9 @@ def test_pre_roi_energy_scaling(tmp_path, monkeypatch):
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
 
     pipe_high = StubPipeline()
+    builder_high = DummyBuilder()
     eng_high = sie.SelfImprovementEngine(
+        context_builder=builder_high,
         interval=0,
         pipeline=pipe_high,
         diagnostics=diag,
@@ -774,7 +812,9 @@ def test_pre_roi_energy_scaling(tmp_path, monkeypatch):
     eng_high.run_cycle()
 
     pipe_low = StubPipeline()
+    builder_low = DummyBuilder()
     eng_low = sie.SelfImprovementEngine(
+        context_builder=builder_low,
         interval=0,
         pipeline=pipe_low,
         diagnostics=diag,
@@ -797,7 +837,9 @@ def test_policy_state_includes_synergy(tmp_path):
         def run(self, model: str, energy: int = 1):
             return mp.AutomationResult(package=None, roi=None)
 
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,
@@ -835,7 +877,9 @@ def test_engine_policy_persistence(tmp_path, monkeypatch):
     path = tmp_path / "policy.pkl"
     policy = sip.SelfImprovementPolicy(path=path)
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,
@@ -849,7 +893,9 @@ def test_engine_policy_persistence(tmp_path, monkeypatch):
     val = engine.policy.score(state)
 
     policy2 = sip.SelfImprovementPolicy(path=path)
+    builder2 = DummyBuilder()
     engine2 = sie.SelfImprovementEngine(
+        context_builder=builder2,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,
@@ -893,7 +939,9 @@ def test_synergy_energy_scaling(tmp_path, monkeypatch):
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
 
     base_pipe = StubPipeline()
+    base_builder = DummyBuilder()
     base_engine = sie.SelfImprovementEngine(
+        context_builder=base_builder,
         interval=0,
         pipeline=base_pipe,
         diagnostics=diag,
@@ -905,7 +953,9 @@ def test_synergy_energy_scaling(tmp_path, monkeypatch):
     base_energy = base_pipe.energy
 
     pos_pipe = StubPipeline()
+    pos_builder = DummyBuilder()
     pos_engine = sie.SelfImprovementEngine(
+        context_builder=pos_builder,
         interval=0,
         pipeline=pos_pipe,
         diagnostics=diag,
@@ -938,7 +988,9 @@ def test_synergy_energy_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
 
     pipe = StubPipeline()
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=pipe,
         diagnostics=diag,
@@ -988,7 +1040,9 @@ def test_policy_update_receives_synergy_deltas(tmp_path, monkeypatch):
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
 
     policy = DummyPolicy()
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,
@@ -1052,7 +1106,9 @@ def test_roi_history_group_ids(tmp_path, monkeypatch):
 
     module_index = ModuleIndexDB(tmp_path / "map.json")
 
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,
@@ -1138,7 +1194,9 @@ def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
             self.val += 1.0
             return v
 
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,
@@ -1194,7 +1252,9 @@ def test_init_refresh_called_for_unknown_patches(tmp_path, monkeypatch):
     class StubPipeline:
         def run(self, model: str, energy: int = 1):
             return mp.AutomationResult(package=None, roi=prb.ROIResult(0.0, 0.0, 0.0, 0.0, 0.0))
+    builder = DummyBuilder()
     sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,
@@ -1265,7 +1325,9 @@ def test_init_discovers_module_groups(tmp_path, monkeypatch):
             self.val += 1.0
             return v
 
+    builder = DummyBuilder()
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,

@@ -14,6 +14,12 @@ class _StubBuilder:
         return {}
 
 
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: _StubBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
+
 vc.ContextBuilder = _StubBuilder
 vs.context_builder = vc
 vs.EmbeddableDBMixin = object
@@ -97,6 +103,7 @@ def _make_engine(tmp_path, name: str, monkeypatch):
     pipe = StubPipeline()
     monkeypatch.setattr(sie, "bootstrap", lambda: 0)
     engine = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=pipe,
         diagnostics=diag,

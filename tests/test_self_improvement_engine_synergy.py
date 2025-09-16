@@ -157,6 +157,17 @@ ps_mod.BaseSettings = object
 ps_mod.SettingsConfigDict = dict
 sys.modules.setdefault("pydantic_settings", ps_mod)
 
+
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: DummyContextBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
 pytest.importorskip("pandas")
 import pandas
 
@@ -276,7 +287,11 @@ def test_weighted_synergy_adjustment():
         "synergy_maintainability": [0.0, 0.0, 0.0, 0.0],
         "synergy_throughput": [0.0, 0.0, 0.0, 0.0],
     }
-    engine = sie.SelfImprovementEngine(interval=0, patch_db=_DummyDB(records))
+    engine = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
+        interval=0,
+        patch_db=_DummyDB(records),
+    )
     engine.tracker = _DummyTracker(metrics)
     expected, weights = _expected(records, metrics)
     result = engine._weighted_synergy_adjustment()
@@ -309,7 +324,11 @@ def test_synergy_weight_cache():
         "synergy_throughput": [0.0, 0.0, 0.0, 0.0],
     }
     db = _DummyDB(rec_a)
-    engine = sie.SelfImprovementEngine(interval=0, patch_db=db)
+    engine = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
+        interval=0,
+        patch_db=db,
+    )
     engine.tracker = _DummyTracker(metrics)
     first = engine._weighted_synergy_adjustment()
     db._recs = list(rec_b)
@@ -318,7 +337,11 @@ def test_synergy_weight_cache():
 
 
 def test_synergy_history_parse_error():
-    engine = sie.SelfImprovementEngine(interval=0, patch_db=_BadDB())
+    engine = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
+        interval=0,
+        patch_db=_BadDB(),
+    )
     engine.tracker = _DummyTracker({})
     with pytest.raises(shd.HistoryParseError):
         engine._weighted_synergy_adjustment()
@@ -397,6 +420,7 @@ def test_energy_scaling_with_synergy_weights(tmp_path):
 
     pipe = Pipe()
     engine = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         pipeline=pipe,
         diagnostics=DummyDiag(),
@@ -464,6 +488,7 @@ def test_synergy_weight_learning(tmp_path, monkeypatch):
     gen = Gen(seq)
     path = tmp_path / "weights.json"
     eng = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         pipeline=Pipe(),
         diagnostics=DummyDiag(),
@@ -484,6 +509,7 @@ def test_synergy_weight_learning(tmp_path, monkeypatch):
     assert second > first
 
     eng2 = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         pipeline=Pipe(),
         diagnostics=DummyDiag(),
@@ -547,6 +573,7 @@ def test_synergy_weight_multi_cycle(tmp_path, monkeypatch):
     gen = Gen(seq)
     path = tmp_path / "weights2.json"
     eng = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         pipeline=Pipe(),
         diagnostics=DummyDiag(),
@@ -569,6 +596,7 @@ def test_synergy_weight_multi_cycle(tmp_path, monkeypatch):
     assert vals[2] > vals[1]
 
     eng2 = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         pipeline=Pipe(),
         diagnostics=DummyDiag(),

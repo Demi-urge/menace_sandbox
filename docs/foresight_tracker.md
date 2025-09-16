@@ -23,9 +23,11 @@ Any additional numeric metrics can be supplied; they are included in the stabili
 ```python
 from menace_sandbox.foresight_tracker import ForesightTracker
 from menace_sandbox.self_improvement import SelfImprovementEngine
+from context_builder_util import create_context_builder
 
 tracker = ForesightTracker(max_cycles=5, volatility_threshold=2.0)
-engine = SelfImprovementEngine(foresight_tracker=tracker)
+builder = create_context_builder()
+engine = SelfImprovementEngine(context_builder=builder, foresight_tracker=tracker)
 
 # within the improvement loop the engine will record metrics automatically
 engine.run_once()

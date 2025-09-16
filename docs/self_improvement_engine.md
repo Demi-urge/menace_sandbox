@@ -11,6 +11,7 @@ from vector_service.context_builder import ContextBuilder
 
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
 engine = SelfImprovementEngine(
+    context_builder=builder,
     bot_name="alpha",
     pipeline=ModelAutomationPipeline(context_builder=builder),
     state_path=resolve_path(f"{os.getenv('SANDBOX_DATA_DIR', 'sandbox_data')}/alpha_state.json"),
@@ -566,6 +567,7 @@ from vector_service.context_builder import ContextBuilder
 def factory(name: str) -> SelfImprovementEngine:
     builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
     return SelfImprovementEngine(
+        context_builder=builder,
         bot_name=name,
         pipeline=ModelAutomationPipeline(context_builder=builder),
     )
@@ -642,8 +644,10 @@ Example using ``TD3SynergyLearner`` and a custom weight file:
 
 ```python
 from menace.self_improvement.api import SelfImprovementEngine, TD3SynergyLearner
+from context_builder_util import create_context_builder
 
 engine = SelfImprovementEngine(
+    context_builder=create_context_builder(),
     synergy_learner_cls=TD3SynergyLearner,
     synergy_weights_path="synergy_weights.json",
 )

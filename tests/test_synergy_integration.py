@@ -86,6 +86,17 @@ def _load_engine():
     env_mod.PRE_ROI_BIAS = 0.0
     env_mod.PRE_ROI_CAP = 1.0
 
+
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: DummyContextBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
     jinja_mod = types.ModuleType("jinja2")
     jinja_mod.Template = lambda *a, **k: None
     sys.modules.setdefault("jinja2", jinja_mod)
@@ -161,7 +172,12 @@ def test_synergy_integration(monkeypatch, tmp_path):
         sie.shd.insert_entry(conn, {"synergy_roi": 0.2})
         conn.close()
         weights_path = data_dir / "synergy_weights.json"
-        engine = sie.SelfImprovementEngine(interval=0, synergy_weights_path=weights_path, synergy_weights_lr=1.0)
+        engine = sie.SelfImprovementEngine(
+            context_builder=DummyContextBuilder(),
+            interval=0,
+            synergy_weights_path=weights_path,
+            synergy_weights_lr=1.0,
+        )
         engine.tracker = types.SimpleNamespace(metrics_history={"synergy_roi": [0.0]}, roi_history=[0.0])
         monkeypatch.setattr(engine, "_metric_delta", lambda name, window=3: 0.1 if name == "synergy_roi" else 0.0)
         start = engine.synergy_weight_roi

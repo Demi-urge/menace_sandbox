@@ -193,7 +193,11 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sie_tests.sie, "bootstrap", lambda: 0)
     engine = sie_tests.sie.SelfImprovementEngine(
-        interval=0, pipeline=StubPipeline(), diagnostics=diag, info_db=info
+        context_builder=builder,
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
     )
     mdb.add(sie_tests.db.MetricRecord("bot", 5.0, 10.0, 3.0, 1.0, 1.0, 1))
     edb.log_discrepancy("fail")

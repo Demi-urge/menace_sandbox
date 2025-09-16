@@ -122,6 +122,17 @@ env_mod.PRE_ROI_BIAS = 0.0
 env_mod.PRE_ROI_CAP = 1.0
 
 
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: DummyContextBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
+
 
 jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None
@@ -334,7 +345,12 @@ def test_weights_influence_roi(monkeypatch, tmp_path):
     path = tmp_path / "w.json"
     recs = [_Rec(0.5, 0.1), _Rec(0.6, 0.2)]
     metrics = {"synergy_roi": [0.1, 0.2]}
-    engine = sie.SelfImprovementEngine(interval=0, patch_db=_DummyDB(recs), synergy_weights_path=path)
+    engine = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
+        interval=0,
+        patch_db=_DummyDB(recs),
+        synergy_weights_path=path,
+    )
     engine.tracker = _DummyTracker(metrics)
     adj_before = engine._weighted_synergy_adjustment()
     engine._update_synergy_weights(1.0)
