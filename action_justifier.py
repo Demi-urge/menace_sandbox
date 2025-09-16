@@ -179,7 +179,10 @@ def _llm_justification(
     except Exception:
         return None
     try:
-        prompt_obj = context_builder.build_prompt(payload)
+        prompt_obj = context_builder.build_prompt(
+            base_prompt,
+            intent_metadata={"payload": payload},
+        )
     except Exception as exc:
         if isinstance(exc, PromptBuildError):
             raise
@@ -188,7 +191,6 @@ def _llm_justification(
             exc,
             logger=logger,
         )
-    prompt_obj.user = base_prompt
     try:
         explanation = wrapper.generate(
             prompt_obj,
