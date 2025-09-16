@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Train a lightweight language model mirroring the user's style."""
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .mirror_bot import MirrorDB
 from local_model_wrapper import LocalModelWrapper
+from context_builder import handle_failure, PromptBuildError
 
 try:  # pragma: no cover - optional dependency
     from vector_service.context_builder import ContextBuilder
@@ -39,6 +41,9 @@ class StyleModelConfig:
     base_model: str = "distilgpt2"
     epochs: int = 1
     batch_size: int = 2
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class UserStyleModel:
@@ -96,7 +101,16 @@ class UserStyleModel:
             return text
 
         wrapper = LocalModelWrapper(self.model, self.tokenizer)
-        prompt_obj = context_builder.build_prompt(text)
+        try:
+            prompt_obj = context_builder.build_prompt(text)
+        except PromptBuildError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive logging
+            handle_failure(
+                "failed to build style generation prompt",
+                exc,
+                logger=LOGGER,
+            )
         return wrapper.generate(
             prompt_obj,
             context_builder=context_builder,
