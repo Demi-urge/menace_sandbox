@@ -135,10 +135,10 @@ class BotRegistry:
                         from .data_bot import DataBot
                         from .code_database import CodeDB
                         from .gpt_memory import GPTMemoryManager
-                        from vector_service.context_builder import ContextBuilder
+                        from context_builder_util import create_context_builder
                         from .self_coding_thresholds import get_thresholds
 
-                        ctx = ContextBuilder()
+                        ctx = create_context_builder()
                         engine = SelfCodingEngine(
                             CodeDB(), GPTMemoryManager(), context_builder=ctx
                         )
