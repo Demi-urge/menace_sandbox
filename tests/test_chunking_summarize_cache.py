@@ -1,6 +1,7 @@
 import hashlib
 
 from llm_interface import LLMClient, LLMResult
+from prompt_types import Prompt
 
 import chunking as pc
 
@@ -17,9 +18,11 @@ class DummyLLM(LLMClient):
 
 class DummyBuilder:
     def build_prompt(self, text: str, *, intent=None, top_k=5, **kwargs):  # pragma: no cover - simple stub
-        from prompt_types import Prompt
-
-        return Prompt(user=text, metadata={})
+        metadata = {
+            "vector_confidences": [0.5],
+            "retrieval_metadata": {"code": [{"desc": "ctx", "score": 0.5}]},
+        }
+        return Prompt(user=text, metadata=metadata, origin="context_builder")
 
 
 def test_summarize_code_uses_cache(monkeypatch, tmp_path):

@@ -255,6 +255,9 @@ def summarize_snippet(
 ) -> str:
     """Return a short summary for ``text`` using available helpers with caching."""
 
+    if context_builder is None:
+        raise ValueError("context_builder is required")
+
     text = text.strip()
     if not text:
         return ""
@@ -275,32 +278,24 @@ def summarize_snippet(
         pass
 
     if not summary and llm is not None:
-        if context_builder is None:
-            try:  # pragma: no cover - builder creation best effort
-                from context_builder_util import create_context_builder
-
-                context_builder = create_context_builder()
-            except Exception:  # pragma: no cover - builder may be missing
-                context_builder = None
-        if context_builder is not None:
+        try:
+            prompt = context_builder.build_prompt(
+                text,
+                intent={
+                    "instruction": "Summarise the following code snippet in one sentence.",
+                },
+            )
+        except Exception as exc:
+            if isinstance(exc, PromptBuildError):
+                raise
+            handle_failure("failed to build snippet summary prompt", exc)
+        else:
             try:
-                prompt = context_builder.build_prompt(
-                    text,
-                    intent={
-                        "instruction": "Summarise the following code snippet in one sentence.",
-                    },
-                )
-            except Exception as exc:
-                if isinstance(exc, PromptBuildError):
-                    raise
-                handle_failure("failed to build snippet summary prompt", exc)
-            else:
-                try:
-                    result = llm.generate(prompt, context_builder=context_builder)
-                    if getattr(result, "text", "").strip():
-                        summary = result.text.strip()
-                except Exception:
-                    pass
+                result = llm.generate(prompt, context_builder=context_builder)
+                if getattr(result, "text", "").strip():
+                    summary = result.text.strip()
+            except Exception:
+                pass
 
     if not summary:
         try:
