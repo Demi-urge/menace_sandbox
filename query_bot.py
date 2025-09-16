@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - optional
 
 from .chatgpt_idea_bot import ChatGPTClient
 from vector_service.context_builder import ContextBuilder
+from context_builder import handle_failure, PromptBuildError
 from gpt_memory_interface import GPTMemoryInterface
 from . import database_manager
 try:  # canonical tag constants
@@ -196,10 +197,19 @@ class QueryBot:
         ents = [t[1] for t in parsed.get("entities", [])]
         data = self.fetcher.fetch(ents)
         self.store.add(context_id, query)
-        prompt_obj = self.context_builder.build_prompt(
-            "Summarize the following data",
-            intent={"data": data},
-        )
+        try:
+            prompt_obj = self.context_builder.build_prompt(
+                "Summarize the following data",
+                intent={"data": data},
+            )
+        except PromptBuildError:
+            raise
+        except Exception as exc:
+            handle_failure(
+                "failed to build query prompt",
+                exc,
+                logger=logger,
+            )
         result = self.client.generate(
             prompt_obj,
             context_builder=self.context_builder,

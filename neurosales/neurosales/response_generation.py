@@ -5,6 +5,7 @@ import random
 from typing import Dict, List
 
 from context_builder import handle_failure
+from prompt_types import Prompt
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -176,9 +177,15 @@ class ResponseCandidateGenerator:
             except Exception as exc:
                 handle_failure("failed to build response generation prompt", exc)
             else:
+                enriched_prompt = prompt_obj
+                if not isinstance(enriched_prompt, Prompt):
+                    handle_failure(
+                        "SelfCodingEngine.build_enriched_prompt must return a Prompt instance",
+                        TypeError(f"unexpected prompt type: {type(enriched_prompt)!r}"),
+                    )
                 try:
                     outputs = self.wrapper.generate(
-                        prompt_obj,
+                        enriched_prompt,
                         context_builder=context_builder,
                         max_length=max_len,
                         num_return_sequences=n,
