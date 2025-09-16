@@ -186,7 +186,8 @@ def test_flags_build_with_optional_builder(tmp_path):
     path = tmp_path / "snippet.py"
     path.write_text(code)
     assert check_file(path) == [
-        (3, "builder.build disallowed or missing context_builder")
+        (2, "context_builder default disallowed or missing context_builder"),
+        (3, "builder.build disallowed or missing context_builder"),
     ]
 
 
@@ -453,3 +454,31 @@ def test_flags_builder_default_none(tmp_path):
     assert check_file(path) == [
         (1, "context_builder default disallowed or missing context_builder")
     ]
+
+
+def test_flags_getattr_generate_wrapper(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(client, prompt):\n"
+        "    handler = getattr(client, 'generate', client)\n"
+        "    handler(prompt)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == [
+        (3, "handler disallowed or missing context_builder")
+    ]
+
+
+def test_allows_getattr_generate_wrapper_with_context_builder(tmp_path):
+    from scripts.check_context_builder_usage import check_file
+
+    code = (
+        "def demo(client, prompt, builder):\n"
+        "    handler = getattr(client, 'generate', client)\n"
+        "    handler(prompt, context_builder=builder)\n"
+    )
+    path = tmp_path / "snippet.py"
+    path.write_text(code)
+    assert check_file(path) == []
