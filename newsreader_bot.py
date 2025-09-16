@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from context_builder import handle_failure, PromptBuildError
 
 try:
     import requests  # type: ignore
@@ -42,6 +43,8 @@ try:  # helper for tagging log entries
     from .memory_logging import ensure_tags
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_logging import ensure_tags  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 from db_router import GLOBAL_ROUTER, init_db_router
 from scope_utils import Scope, build_scope_clause, apply_scope
@@ -276,9 +279,14 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
         prompt_obj = client.context_builder.build_prompt(
             prompt, intent_metadata=intent, tags=full_tags
         )
-    except Exception:
-        logging.getLogger(__name__).exception("failed to build prompt")
-        return ""
+    except Exception as exc:
+        if isinstance(exc, PromptBuildError):
+            raise
+        handle_failure(
+            "failed to build monetisation prompt",
+            exc,
+            logger=logger,
+        )
     data = client.ask(prompt_obj, use_memory=False, memory_manager=None, tags=full_tags)
     return (
         data.get("choices", [{}])[0]
@@ -294,7 +302,7 @@ def send_to_evaluation_bot(event: Event, strategy: str) -> None:
     try:
         requests.post(url, json=payload, timeout=5)
     except Exception:  # pragma: no cover - network
-        logging.getLogger(__name__).warning("Failed to send data to evaluation bot")
+        logger.warning("Failed to send data to evaluation bot")
 
 
 __all__ = [

@@ -160,6 +160,13 @@ directly to the client. Only modules listed in the hook's whitelist may build
 `Prompt` objects directly. In exceptional cases the warning can be suppressed
 with `# nocb`, but refactoring to use the standard builders is preferred.
 
+When ``ContextBuilder.build_prompt`` raises an exception, log and re-raise it
+via :func:`context_builder.handle_failure`. The helper emits a
+``PromptBuildError`` so call sites observe a consistent failure signal instead
+of constructing raw prompts or silently ignoring the issue. New modules should
+avoid bespoke ``try``/``except`` wrappers around prompt creation and rely on
+the helper for error reporting.
+
 ## Coding bot registration
 
 All new coding bots must be created via the `@self_coding_managed` decorator

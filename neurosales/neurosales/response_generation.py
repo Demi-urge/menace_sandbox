@@ -3,6 +3,8 @@ from __future__ import annotations
 import random
 from typing import Dict, List
 
+from context_builder import handle_failure, PromptBuildError
+
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -145,19 +147,25 @@ class ResponseCandidateGenerator:
                 prompt = " ".join(history + [message, archetype])
                 max_len = len(self.tokenizer.encode(prompt)) + 20
                 prompt_obj = context_builder.build_prompt(message)
+            except Exception as exc:
+                if isinstance(exc, PromptBuildError):
+                    raise
+                handle_failure("failed to build response generation prompt", exc)
+            else:
                 prompt_obj.user = prompt
-                outputs = self.wrapper.generate(
-                    prompt_obj,
-                    context_builder=context_builder,
-                    max_length=max_len,
-                    num_return_sequences=n,
-                    do_sample=True,
-                    top_k=50,
-                    top_p=0.95,
-                )
-                return outputs if isinstance(outputs, list) else [outputs]
-            except Exception:
-                pass
+                try:
+                    outputs = self.wrapper.generate(
+                        prompt_obj,
+                        context_builder=context_builder,
+                        max_length=max_len,
+                        num_return_sequences=n,
+                        do_sample=True,
+                        top_k=50,
+                        top_p=0.95,
+                    )
+                    return outputs if isinstance(outputs, list) else [outputs]
+                except Exception:
+                    pass
         base = f"{archetype}: " if archetype else ""
         return [f"{base}{message} ..." for _ in range(n)]
 

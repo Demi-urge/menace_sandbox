@@ -22,6 +22,8 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextvars
 
+from context_builder import handle_failure, PromptBuildError
+
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
 from .trend_predictor import TrendPredictor
@@ -962,8 +964,13 @@ class SelfCodingEngine:
                 top_k=int(intent.get("top_k", 5)) if isinstance(intent, Mapping) else 5,
             )
         except Exception as exc:
-            self.logger.exception("context builder failed")
-            raise exc
+            if isinstance(exc, PromptBuildError):
+                raise
+            handle_failure(
+                "context builder failed while creating enriched prompt",
+                exc,
+                logger=self.logger,
+            )
 
         meta = dict(getattr(prompt_obj, "metadata", {}) or {})
 
