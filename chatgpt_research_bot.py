@@ -22,7 +22,7 @@ _deps = DependencyManager()
 
 requests = _deps.load("requests", lambda: __import__("requests"))  # type: ignore
 from dataclasses import dataclass, asdict, field
-from typing import Iterable, List, Optional, Callable, Any
+from typing import Iterable, List, Optional, Callable, Any, Dict
 import re
 from collections import Counter
 np = _deps.load("numpy", lambda: __import__("numpy"))  # type: ignore
@@ -110,6 +110,7 @@ def configure_logging(
 
 
 from .chatgpt_idea_bot import ChatGPTClient
+from llm_interface import LLMResult
 from gpt_memory_interface import GPTMemoryInterface
 try:  # tag helper
     from memory_logging import ensure_tags
@@ -690,37 +691,52 @@ class ChatGPTResearchBot:
                 "chatgpt_research_bot._ask",
                 [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
-            data = self.client.ask(
-                prompt_obj, use_memory=False, memory_manager=None, tags=full_tags
+            builder = getattr(self.client, "context_builder", None)
+            if builder is None:
+                raise ValueError("client is missing required context_builder")
+
+            result = self.client.generate(
+                prompt_obj,
+                context_builder=builder,
+                tags=full_tags,
             )
-            if not isinstance(data, dict):
-                logger.warning("unexpected response type %s", type(data))
-                return ""
-            if data.get("error"):
-                err = data["error"]
+
+            raw_payload: Dict[str, Any] | None = None
+            if isinstance(result, LLMResult):
+                msg = result.text or ""
+                raw_payload = result.raw if isinstance(result.raw, dict) else None
+            else:
+                msg = getattr(result, "text", "") or ""
+                raw_payload = (
+                    result.raw
+                    if hasattr(result, "raw") and isinstance(result.raw, dict)
+                    else None
+                )
+
+            if not msg and raw_payload:
+                choices = raw_payload.get("choices")
+                if isinstance(choices, list) and choices:
+                    message = choices[0].get("message", {})
+                    if isinstance(message, dict):
+                        msg = message.get("content", "") or ""
+
+            if raw_payload and raw_payload.get("error"):
+                err = raw_payload["error"]
                 logger.warning("api error: %s", err)
                 raise RuntimeError("api_error")
-            choices = data.get("choices")
-            if isinstance(choices, list) and choices:
-                message = choices[0].get("message", {})
-                if isinstance(message, dict):
-                    msg = message.get("content", "")
-                    if msg:
-                        try:
-                            log_prompt = "\n\n".join(
-                                prompt_obj.examples + [prompt_obj.user]
-                            )
-                            if prompt_obj.system:
-                                log_prompt = f"{prompt_obj.system}\n\n{log_prompt}"
-                            self.gpt_memory.log(log_prompt, msg, full_tags)
-                        except Exception:
-                            pass
-                        return msg
-                else:
-                    logger.warning("unexpected message format from API")
-            else:
+
+            if not msg:
                 logger.warning("missing 'choices' in API response")
-            return ""
+                return ""
+
+            try:
+                log_prompt = "\n\n".join(prompt_obj.examples + [prompt_obj.user])
+                if prompt_obj.system:
+                    log_prompt = f"{prompt_obj.system}\n\n{log_prompt}"
+                self.gpt_memory.log(log_prompt, msg, full_tags)
+            except Exception:
+                pass
+            return msg
 
         try:
             return with_retry(_do, attempts=attempts, delay=delay, logger=logger)

@@ -2,6 +2,7 @@ import pytest
 pytest.skip("optional dependencies not installed", allow_module_level=True)
 import menace.chatgpt_research_bot as crb  # noqa: E402
 import menace.chatgpt_idea_bot as cib  # noqa: E402
+from menace.llm_interface import LLMResult  # noqa: E402
 
 
 def test_summarise_text():
@@ -21,18 +22,18 @@ def test_process(monkeypatch):
     builder = DummyBuilder()
     client = cib.ChatGPTClient(api_key="key", context_builder=builder)
     responses = [
-        {"choices": [{"message": {"content": "Answer one."}}]},
-        {"choices": [{"message": {"content": "Answer two."}}]},
+        LLMResult(raw={"choices": [{"message": {"content": "Answer one."}}]}, text="Answer one."),
+        LLMResult(raw={"choices": [{"message": {"content": "Answer two."}}]}, text="Answer two."),
     ]
     count = 0
 
-    def fake_ask(messages, **kw):
+    def fake_generate(prompt, **kw):
         nonlocal count
         resp = responses[count]
         count += 1
         return resp
 
-    monkeypatch.setattr(client, "ask", fake_ask)
+    monkeypatch.setattr(client, "generate", fake_generate)
     sent = {}
 
     def fake_send(conv, summary):
