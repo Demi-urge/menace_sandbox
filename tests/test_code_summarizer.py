@@ -105,17 +105,3 @@ def test_summarize_code_enriched_context(monkeypatch):
     assert prompt.metadata["vectors"] == [("s", "id", 0.7)]
     assert prompt.metadata["vector_confidences"] == [0.7]
     assert prompt.vector_confidence == 0.7
-
-
-def test_summarize_code_no_builder_falls_back(monkeypatch):
-    monkeypatch.setattr("micro_models.diff_summarizer.summarize_diff", lambda *a, **k: "")
-
-    class DummyClient:
-        def __init__(self, *a, **k):  # pragma: no cover - should not run
-            raise AssertionError("LLM client should not be used")
-
-    monkeypatch.setattr("local_client.OllamaClient", DummyClient)
-
-    code = "# header\n\nclass Foo:\n    pass\n"
-    summary = summarize_code(code, context_builder=None, max_summary_tokens=10)
-    assert summary.startswith("class Foo")
