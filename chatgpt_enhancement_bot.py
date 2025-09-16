@@ -1075,6 +1075,10 @@ class ChatGPTEnhancementBot:
         tags: Sequence[str] | None = None,
         context_builder: ContextBuilder,
     ) -> List[Enhancement]:
+        if context_builder is None:
+            logger.error("ContextBuilder unavailable for enhancement prompt")
+            raise ValueError("context_builder is required")
+
         intent_meta: Dict[str, Any] = {
             "instruction": instruction,
             "num_ideas": num_ideas,
@@ -1085,12 +1089,6 @@ class ChatGPTEnhancementBot:
         client = self.client
         if client is None:
             logger.error("ChatGPT client unavailable")
-            return []
-
-        if context_builder is None:
-            logger.error("ContextBuilder unavailable for enhancement prompt")
-            if RAISE_ERRORS:
-                raise ValueError("context_builder is required")
             return []
 
         try:
