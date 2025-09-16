@@ -13,7 +13,7 @@ new model providers while still supporting logging and simple response parsing.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Protocol, Sequence, AsyncGenerator
+from typing import Any, Callable, Dict, List, Protocol, Sequence, AsyncGenerator, cast
 
 import asyncio
 import json
@@ -203,13 +203,29 @@ class LLMClient:
         raise NotImplementedError
 
     # ------------------------------------------------------------------
+    def _require_context_builder(
+        self, context_builder: ContextBuilder | None
+    ) -> ContextBuilder:
+        """Return a usable context builder or raise ``TypeError`` if unavailable."""
+
+        if context_builder is not None:
+            return context_builder
+        try:  # pragma: no cover - attribute may be absent on subclasses
+            candidate = getattr(self, "context_builder")
+        except AttributeError as exc:
+            raise TypeError("context_builder is required") from exc
+        if candidate is None:
+            raise TypeError("context_builder is required")
+        return cast(ContextBuilder, candidate)
+
+    # ------------------------------------------------------------------
     def generate(
         self,
         prompt: Prompt,
         *,
         parse_fn: Callable[[str], Any] | None = None,
         backend: str | None = None,
-        context_builder: ContextBuilder,
+        context_builder: ContextBuilder | None = None,
     ) -> LLMResult:
         """Generate a completion for *prompt*.
 
@@ -239,15 +255,7 @@ class LLMClient:
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
             raise ValueError("prompt.metadata missing context-builder markers")
 
-        if context_builder is None:
-            try:
-                builder = getattr(self, "context_builder")
-            except AttributeError as exc:  # pragma: no cover - attribute missing
-                raise TypeError("context_builder is required") from exc
-        else:
-            builder = context_builder
-        if builder is None:
-            raise TypeError("context_builder is required")
+        builder = self._require_context_builder(context_builder)
 
         # If explicit backends are configured act as a router
         if self.backends:
@@ -259,9 +267,7 @@ class LLMClient:
             last_exc: Exception | None = None
             for backend_obj in order:
                 try:
-                    result = backend_obj.generate(
-                        prompt, context_builder=builder  # type: ignore[arg-type]
-                    )
+                    result = backend_obj.generate(prompt, context_builder=builder)
                 except Exception as exc:  # pragma: no cover - backend failure
                     last_exc = exc
                     continue
@@ -277,7 +283,7 @@ class LLMClient:
             raise RuntimeError("no backends configured")
 
         # No explicit backends: delegate to subclass implementation
-        result = self._generate(prompt, context_builder=builder)  # type: ignore[arg-type]
+        result = self._generate(prompt, context_builder=builder)
         if parse_fn is not None:
             try:
                 result.parsed = parse_fn(result.text)
@@ -293,7 +299,7 @@ class LLMClient:
 
     # ------------------------------------------------------------------
     async def async_generate(
-        self, prompt: Prompt, *, context_builder: ContextBuilder
+        self, prompt: Prompt, *, context_builder: ContextBuilder | None = None
     ) -> AsyncGenerator[str, None]:
         """Asynchronously yield completion chunks for *prompt* and log the result."""
         meta = getattr(prompt, "metadata", {}) or {}
@@ -312,15 +318,7 @@ class LLMClient:
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
             raise ValueError("prompt.metadata missing context-builder markers")
 
-        if context_builder is None:
-            try:
-                builder = getattr(self, "context_builder")
-            except AttributeError as exc:  # pragma: no cover - attribute missing
-                raise TypeError("context_builder is required") from exc
-        else:
-            builder = context_builder
-        if builder is None:
-            raise TypeError("context_builder is required")
+        builder = self._require_context_builder(context_builder)
 
         cfg = llm_config.get_config()
 
@@ -400,7 +398,7 @@ class LLMClient:
                 try:
                     backend_name = getattr(backend, "backend_name", getattr(backend, "model", None))
                     model_name = getattr(backend, "model", self.model)
-                    agen = agen_fn(prompt, context_builder=builder)  # type: ignore[arg-type]
+                    agen = agen_fn(prompt, context_builder=builder)
                     wrapper = _stream(
                         agen,
                         backend_name=backend_name,
@@ -418,7 +416,7 @@ class LLMClient:
             raise RuntimeError("no backends configured")
 
         backend_name = getattr(self, "backend_name", None)
-        agen = self._async_generate(prompt, context_builder=builder)  # type: ignore[arg-type]
+        agen = self._async_generate(prompt, context_builder=builder)
         wrapper = _stream(
             agen, backend_name=backend_name, model=self.model, builder=builder
         )

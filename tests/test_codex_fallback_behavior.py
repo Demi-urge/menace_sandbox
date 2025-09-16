@@ -118,7 +118,7 @@ def test_timeout_error_prompts_simplified_and_builtin_fallback(monkeypatch):
 
     calls = []
 
-    def fake_call(client, prompt, *, logger=None, timeout=30.0):
+    def fake_call(client, prompt, *, context_builder=None, logger=None, timeout=30.0):
         calls.append(prompt)
         delays = list(self_coding_engine._settings.codex_retry_delays)
         for _ in delays:
@@ -163,7 +163,9 @@ def test_empty_completion_reroutes_and_queues(monkeypatch):
         codex_fallback_strategy="reroute"
     )
 
-    def simple_call(client, prompt, *, logger=None, timeout=30.0):
+    def simple_call(
+        client, prompt, *, context_builder=None, logger=None, timeout=30.0
+    ):
         return client.generate(prompt)
 
     monkeypatch.setattr(self_coding_engine, 'call_codex_with_backoff', simple_call)
@@ -197,7 +199,9 @@ def test_handle_returns_llmresult_used_by_engine(monkeypatch):
     mock_llm = MagicMock(return_value=LLMResult(text=''))
     engine = make_engine(mock_llm, monkeypatch)
 
-    def simple_call(client, prompt, *, logger=None, timeout=30.0):
+    def simple_call(
+        client, prompt, *, context_builder=None, logger=None, timeout=30.0
+    ):
         return client.generate(prompt)
 
     monkeypatch.setattr(self_coding_engine, 'call_codex_with_backoff', simple_call)

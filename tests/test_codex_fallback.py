@@ -116,7 +116,7 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
 
     call_delays = []
 
-    def fake_call(client, prompt, *, logger=None, timeout=30.0):
+    def fake_call(client, prompt, *, context_builder=None, logger=None, timeout=30.0):
         delays = list(self_coding_engine._settings.codex_retry_delays)
         call_delays.append(delays)
         for _ in delays:

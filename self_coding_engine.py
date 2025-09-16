@@ -217,17 +217,22 @@ def call_codex_with_backoff(
     llm_client: LLMClient,
     prompt: Prompt,
     *,
+    context_builder: ContextBuilder,
     logger: logging.Logger | None = None,
     timeout: float | None = None,
 ) -> LLMResult:
     """Invoke ``llm_client.generate`` with retries and fixed backoff delays.
 
     Each attempt enforces a timeout and exceptions are logged before sleeping
-    for the configured delays (defaulting to ``[2, 5, 10]``). A
+    for the configured delays (defaulting to ``[2, 5, 10]``).  The provided
+    ``context_builder`` is forwarded to :meth:`LLMClient.generate` and must be
+    a valid builder.  A
     :class:`RetryError` is raised when all retries fail.
     """
 
     delays = list(getattr(_settings, "codex_retry_delays", [2, 5, 10]))
+    if context_builder is None:  # pragma: no cover - defensive
+        raise TypeError("context_builder is required")
     log = logger or logging.getLogger(__name__)
     timeout_val = timeout if timeout is not None else getattr(
         _settings, "codex_timeout", 30.0
@@ -235,7 +240,9 @@ def call_codex_with_backoff(
 
     def _attempt() -> LLMResult:
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(llm_client.generate, prompt)
+            future = executor.submit(
+                llm_client.generate, prompt, context_builder=context_builder
+            )
             return future.result(timeout=timeout_val)
 
     return retry_with_backoff(
@@ -1073,6 +1080,7 @@ class SelfCodingEngine:
         return call_codex_with_backoff(
             self.llm_client,
             self._last_prompt,
+            context_builder=self.context_builder,
             logger=self.logger,
         )
 
