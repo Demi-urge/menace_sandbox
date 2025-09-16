@@ -69,17 +69,17 @@ class _ContextClient:
 
     def __init__(self, *, model: str, context_builder: ContextBuilder) -> None:
         self._client = LLMClient(model=model)
-        self._builder = context_builder
+        self.context_builder = context_builder
 
-    def generate(self, prompt: Prompt) -> LLMResult:
-        """Generate a completion with vector-enriched context."""
+    def generate(self, prompt: Prompt) -> Prompt:
+        """Build ``prompt`` enriched with vector-based context."""
 
         system_msg = getattr(prompt, "system", "")
         examples = getattr(prompt, "examples", [])
         tags = getattr(prompt, "tags", [])
         intent = dict(getattr(prompt, "metadata", {}) or {})
         try:
-            prompt = self._builder.build_prompt(
+            prompt = self.context_builder.build_prompt(
                 prompt.user,
                 intent=intent,
                 system=system_msg,
@@ -94,7 +94,7 @@ class _ContextClient:
                 exc,
                 logger=logger,
             )
-        return self._client.generate(prompt, context_builder=self._builder)
+        return prompt
 
 
 def reroute_to_fallback_model(prompt: Prompt, *, context_builder: ContextBuilder) -> LLMResult:
@@ -108,7 +108,10 @@ def reroute_to_fallback_model(prompt: Prompt, *, context_builder: ContextBuilder
 
     model = getattr(_settings, "codex_fallback_model", "gpt-3.5-turbo")
     client = _ContextClient(model=model, context_builder=context_builder)
-    return client.generate(prompt)
+    enriched_prompt = client.generate(prompt)
+    return client._client.generate(
+        enriched_prompt, context_builder=client.context_builder
+    )
 
 
 def handle(

@@ -27,11 +27,16 @@ def test_fallback_generation_requires_context_builder(monkeypatch):
     prompt = Prompt("hi")
     client = cf._ContextClient(model="m", context_builder=builder)
 
-    # Omitting the context builder should raise.
-    with pytest.raises(RuntimeError):
-        client._client.generate(prompt)
+    # The wrapper should return the enriched prompt from the builder.
+    enriched_prompt = client.generate(prompt)
+    assert isinstance(enriched_prompt, Prompt)
+    assert enriched_prompt is not prompt
 
-    # The wrapper must forward the builder to the client.
-    result = client.generate(prompt)
+    # Omitting the context builder should raise when calling the LLM directly.
+    with pytest.raises(RuntimeError):
+        client._client.generate(enriched_prompt)
+
+    # Rerouting via the handler must forward the context builder to the client.
+    result = cf.reroute_to_fallback_model(prompt, context_builder=builder)
     assert result.text == "ok"
     assert calls["ctx"] is builder
