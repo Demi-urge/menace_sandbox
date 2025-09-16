@@ -92,12 +92,11 @@ def test_build_prompt_with_memory():
     builder = DummyBuilder()
     builder.memory = mem
     client = cib.ChatGPTClient(gpt_memory=mem, context_builder=builder)
-    msgs = client.build_prompt_with_memory(
+    prompt = client.build_prompt_with_memory(
         ["ai"], prior="hello", context_builder=builder
     )
-    assert msgs[0]["role"] == "user"
-    assert "hello" in msgs[0]["content"]
-    assert "ctx:ai" in msgs[0]["content"]
+    assert "hello" in prompt.user
+    assert "ctx:ai" in prompt.user
 
 
 def test_ask_logs_interaction(monkeypatch):

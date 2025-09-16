@@ -198,10 +198,13 @@ class ChatGPTClient(LLMClient):
     ) -> Dict[str, object]:
         # Normalize messages to OpenAI chat format, accepting Prompt objects.
         prompt_obj: Prompt | None
-        if isinstance(messages, Prompt):
+        if isinstance(messages, Prompt) or (
+            hasattr(messages, "user") and hasattr(messages, "metadata")
+        ):
             prompt_obj = messages
-            if tags is None and prompt_obj.tags:
-                tags = list(prompt_obj.tags)
+            prompt_tags = list(getattr(prompt_obj, "tags", []) or [])
+            if tags is None and prompt_tags:
+                tags = prompt_tags
             norm_messages: List[Dict[str, str]] = []
             if prompt_obj.system:
                 norm_messages.append({"role": "system", "content": prompt_obj.system})
@@ -538,7 +541,7 @@ class ChatGPTClient(LLMClient):
         prior: str | None = None,
         context_builder: ContextBuilder,
         intent_metadata: Dict[str, Any] | None = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Prompt:
         """Build a :class:`Prompt` via ``context_builder`` including memory."""
 
         if context_builder is None:
@@ -565,18 +568,31 @@ class ChatGPTClient(LLMClient):
                 logger=logger,
             )
 
-        parts: List[str] = [prompt_obj.user]
-        if getattr(prompt_obj, "examples", None):
-            parts.append("\n".join(prompt_obj.examples))
+        meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+        for key, value in intent_meta.items():
+            meta.setdefault(key, value)
+        if "intent_tags" not in meta:
+            meta["intent_tags"] = list(tags)
+        try:
+            prompt_obj.metadata = meta  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
-        messages: List[Dict[str, Any]] = []
-        if getattr(prompt_obj, "system", None):
-            messages.append({"role": "system", "content": prompt_obj.system})
-        msg_meta = dict(getattr(prompt_obj, "metadata", {}) or {})
-        messages.append(
-            {"role": "user", "content": "\n".join(parts), "metadata": msg_meta}
-        )
-        return messages
+        existing_tags = list(getattr(prompt_obj, "tags", []) or [])
+        merged_tags = list(dict.fromkeys([*existing_tags, *tags])) if tags else existing_tags
+        if merged_tags:
+            try:
+                prompt_obj.tags = merged_tags  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+        if not getattr(prompt_obj, "origin", None):
+            try:
+                prompt_obj.origin = "context_builder"  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+        return prompt_obj  # type: ignore[return-value]
 
 
 def build_prompt(
@@ -584,8 +600,8 @@ def build_prompt(
     context_builder: ContextBuilder,
     tags: Iterable[str],
     prior: str | None = None,
-) -> List[Dict[str, Any]]:
-    """Construct a prompt and fetch memory-aware messages via ``client``."""
+) -> Prompt:
+    """Construct a prompt via ``client`` and ``context_builder``."""
     if context_builder is None:
         raise ValueError("context_builder is required")
     base_tags = [IMPROVEMENT_PATH, *tags]
@@ -669,8 +685,12 @@ class SocialValidator:
         return self._twitter_search(idea_name) and self._reddit_search(idea_name)
 
 
-def parse_ideas(data: Dict[str, object] | str) -> List[Idea]:
+def parse_ideas(data: Dict[str, object] | str | LLMResult) -> List[Idea]:
     """Parse JSON ideas from ChatGPT response."""
+    if isinstance(data, LLMResult):
+        if data.raw is not None:
+            return parse_ideas(data.raw)
+        return parse_ideas(data.text)
     if isinstance(data, str):
         text = data
     else:
@@ -715,14 +735,19 @@ def follow_up(
                 "description": idea.description,
             },
         )
-        data = client.ask(
+        result = client.generate(
             prompt_obj,
-            knowledge=LOCAL_KNOWLEDGE_MODULE,
+            context_builder=context_builder,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
-        idea.insight = (
-            data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        )
+        text = result.text
+        if not text and isinstance(result.raw, dict):
+            text = (
+                result.raw.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+        idea.insight = text
     except Exception as exc:  # pragma: no cover - network/parse failures
         logger.exception("follow-up request failed: %s", exc)
         if RAISE_ERRORS:
@@ -746,15 +771,15 @@ def generate_and_filter(
         "Respond in JSON list format with fields name, description and tags."
     )
     prompt_obj = context_builder.build_prompt(
-        prompt, intent_metadata={"tags": list(tags)}
+        prompt,
+        intent_metadata={"tags": list(tags)},
     )
-    ideas = parse_ideas(
-        client.ask(
-            prompt_obj,
-            knowledge=LOCAL_KNOWLEDGE_MODULE,
-            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-        )
+    result = client.generate(
+        prompt_obj,
+        context_builder=context_builder,
+        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
     )
+    ideas = parse_ideas(result)
     novel: List[Idea] = []
     for idea in ideas:
         if not validator.is_unique_online(idea.name):

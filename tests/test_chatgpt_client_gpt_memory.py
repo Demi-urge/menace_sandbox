@@ -139,13 +139,16 @@ def test_build_prompt_injects_summary_and_logs(monkeypatch):
         ),
     )
 
-    msgs = client.build_prompt_with_memory(
+    prompt = client.build_prompt_with_memory(
         ["topic"], prior="new question", context_builder=client.context_builder
     )
-    assert msgs[0]["role"] == "user"
-    assert "early prompt" in msgs[0]["content"]
+    assert "early prompt" in prompt.user
 
-    client.ask(msgs)
+    client.generate(
+        prompt,
+        context_builder=client.context_builder,
+        tags=["topic"],
+    )
     entries = mem.search_context("new question")
     assert any(e.response == "later resp" for e in entries)
 

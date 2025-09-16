@@ -97,9 +97,9 @@ def test_prompts_embed_local_db_data(tmp_path):
 
     builder = DBContextBuilder(paths)
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(["x"], prior="y", context_builder=builder)
+    prompt = client.build_prompt_with_memory(["x"], prior="y", context_builder=builder)
 
-    content = msgs[0]["content"]
+    content = prompt.user
     for text in db_contents.values():
         assert text in content
 
