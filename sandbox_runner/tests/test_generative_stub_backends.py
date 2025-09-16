@@ -33,11 +33,21 @@ def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gsp, "_SETTINGS", None)
     monkeypatch.setattr(gsp, "_CONFIG", None)
     monkeypatch.setattr(gsp, "SandboxSettings", _StubSettings)
+    monkeypatch.setattr(
+        gsp,
+        "build_prompt",
+        lambda query, *, intent_metadata=None, context_builder, **kwargs: context_builder.build_prompt(
+            query, intent_metadata=intent_metadata, **kwargs
+        ),
+    )
 
 
 class DummyBuilder:
     def build_prompt(self, query, *, intent_metadata=None, **kwargs):
         return query
+
+    def build_context(self, query, *, intent_metadata=None, **kwargs):
+        return {}
 
 
 def test_llm_client_used(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,7 +57,7 @@ def test_llm_client_used(monkeypatch: pytest.MonkeyPatch) -> None:
     class DummyClient:
         model = "foo"
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             from llm_interface import LLMResult
 
             return LLMResult(text="{\"a\": 1}")

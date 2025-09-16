@@ -943,7 +943,7 @@ async def _async_generate_stubs(
                 query, intent_metadata=intent_meta, context_builder=context_builder
             )
             call = getattr(gen, "generate", gen)
-            result = call(prompt_obj)  # type: ignore[attr-defined]
+            result = call(prompt_obj, context_builder=context_builder)  # type: ignore[attr-defined]
             if isinstance(result, asyncio.Task):
                 result = await result
             if hasattr(result, "text"):

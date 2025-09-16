@@ -45,7 +45,7 @@ def test_summarize_code_llm_client(monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def generate(self, prompt, context_builder=None):  # pragma: no cover - trivial
+        def generate(self, prompt, *, context_builder=None):  # pragma: no cover - trivial
             return DummyResult()
 
     monkeypatch.setattr("local_client.OllamaClient", DummyClient)
@@ -61,7 +61,7 @@ def test_summarize_code_heuristic(monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return types.SimpleNamespace(text="")
 
     monkeypatch.setattr("local_client.OllamaClient", DummyClient)
@@ -80,7 +80,7 @@ def test_summarize_code_enriched_context(monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def generate(self, prompt, context_builder=None):
+        def generate(self, prompt, *, context_builder=None):
             captured["prompt"] = prompt
             return types.SimpleNamespace(text="summary")
 

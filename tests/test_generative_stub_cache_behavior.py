@@ -61,15 +61,30 @@ def _target(x: int) -> None:
     return None
 
 
+class _Builder:
+    def build_prompt(self, query, *, intent_metadata=None, **kwargs):
+        return query
+
+    def build_context(self, query, *, intent_metadata=None, **kwargs):
+        return {}
+
+
 def test_stub_cache_persistence(tmp_path, monkeypatch):
     cfg = _make_cfg(tmp_path)
     _reset(cfg)
+    monkeypatch.setattr(
+        gsp,
+        "build_prompt",
+        lambda query, *, intent_metadata=None, context_builder, **kwargs: context_builder.build_prompt(
+            query, intent_metadata=intent_metadata, **kwargs
+        ),
+    )
 
     class Gen:
         def __init__(self):
             self.calls = 0
 
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             self.calls += 1
             return types.SimpleNamespace(text=json.dumps({"x": 1}))
 
@@ -80,7 +95,7 @@ def test_stub_cache_persistence(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gsp, "_aload_generator", load)
 
-    builder = types.SimpleNamespace(build_prompt=lambda q, *, intent_metadata=None, **k: q)
+    builder = _Builder()
 
     async def first():
         res = await gsp.async_generate_stubs(
@@ -109,12 +124,19 @@ def test_stub_cache_persistence(tmp_path, monkeypatch):
 def test_concurrent_cache_access(tmp_path, monkeypatch):
     cfg = _make_cfg(tmp_path)
     _reset(cfg)
+    monkeypatch.setattr(
+        gsp,
+        "build_prompt",
+        lambda query, *, intent_metadata=None, context_builder, **kwargs: context_builder.build_prompt(
+            query, intent_metadata=intent_metadata, **kwargs
+        ),
+    )
 
     class Gen:
         def __init__(self):
             self.calls = 0
 
-        async def generate(self, prompt):
+        async def generate(self, prompt, *, context_builder=None):
             self.calls += 1
             await asyncio.sleep(0.05)
             return types.SimpleNamespace(text=json.dumps({"x": 1}))
@@ -125,6 +147,8 @@ def test_concurrent_cache_access(tmp_path, monkeypatch):
         return gen
 
     monkeypatch.setattr(gsp, "_aload_generator", load)
+
+    builder = _Builder()
 
     async def invoke():
         return await gsp.async_generate_stubs(
@@ -145,9 +169,16 @@ def test_concurrent_cache_access(tmp_path, monkeypatch):
 def test_signature_validation(tmp_path, monkeypatch):
     cfg = _make_cfg(tmp_path)
     _reset(cfg)
+    monkeypatch.setattr(
+        gsp,
+        "build_prompt",
+        lambda query, *, intent_metadata=None, context_builder, **kwargs: context_builder.build_prompt(
+            query, intent_metadata=intent_metadata, **kwargs
+        ),
+    )
 
     class Gen:
-        def generate(self, prompt):
+        def generate(self, prompt, *, context_builder=None):
             return types.SimpleNamespace(text=json.dumps({"x": "bad"}))
 
     async def load():
@@ -158,7 +189,7 @@ def test_signature_validation(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError):
         asyncio.run(
             gsp.async_generate_stubs(
-                [{}], {"target": _target}, cfg, context_builder=builder
+                [{}], {"target": _target}, cfg, context_builder=_Builder()
             )
         )
     gsp.cleanup_cache_files(cfg)

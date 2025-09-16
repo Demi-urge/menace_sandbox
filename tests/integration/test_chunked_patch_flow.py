@@ -147,7 +147,7 @@ import ast  # noqa: E402
 class DummyLLM:
     gpt_memory = None
 
-    def generate(self, prompt):
+    def generate(self, prompt, *, context_builder=None):
         return types.SimpleNamespace(text="")
 
 
