@@ -111,11 +111,15 @@ def test_memory_based_context(monkeypatch):
 
     monkeypatch.setattr(client, "_offline_response", offline_response)
 
-    messages = client.build_prompt_with_memory(
+    prompt = client.build_prompt_with_memory(
         [IMPROVEMENT_PATH], prior="What's next?", context_builder=builder
     )
-    result = client.ask(messages, use_memory=False)
-    text = result["choices"][0]["message"]["content"]
+    result = client.generate(
+        prompt,
+        context_builder=builder,
+        tags=[IMPROVEMENT_PATH],
+    )
+    text = result.text or result.raw["choices"][0]["message"]["content"]
 
     assert mem.fetch_calls, "memory context was not retrieved"
     assert "Improve caching strategy" in text

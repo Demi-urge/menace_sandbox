@@ -84,18 +84,17 @@ class DummyBuilder:
 def test_builder_context_included():
     builder = DummyBuilder()
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(
+    prompt = client.build_prompt_with_memory(
         ["alpha", "beta"], prior="hi", context_builder=builder
     )
     assert builder.calls == ["alpha beta"]
     assert "session_id" in builder.kwargs[0]
     assert (
         builder.kwargs[0]["session_id"]
-        == msgs[0]["metadata"]["retrieval_session_id"]
+        == prompt.metadata["retrieval_session_id"]
     )
-    assert msgs[0]["role"] == "user"
-    assert msgs[0]["content"].startswith("hi")
-    assert "vector:alpha beta" in msgs[0]["content"]
+    assert prompt.user.startswith("hi")
+    assert "vector:alpha beta" in prompt.user
 
 
 def test_fallback_result_empty_context():
@@ -106,14 +105,13 @@ def test_fallback_result_empty_context():
 
     builder = FB()
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(
+    prompt = client.build_prompt_with_memory(
         ["alpha"], prior="hi", context_builder=builder
     )
     assert builder.calls == ["alpha"]
     assert "session_id" in builder.kwargs[0]
-    assert msgs[0]["role"] == "user"
-    assert msgs[0]["content"] == "hi"
-    assert msgs[0]["metadata"]["retrieval_session_id"]
+    assert prompt.user == "hi"
+    assert prompt.metadata["retrieval_session_id"]
 
 
 def test_requires_context_builder():
@@ -133,9 +131,9 @@ def test_builder_context_compressed():
 
     builder = LongBuilder()
     client = cib.ChatGPTClient(context_builder=builder)
-    msgs = client.build_prompt_with_memory(
+    prompt = client.build_prompt_with_memory(
         ["alpha"], prior="hi", context_builder=builder
     )
-    content = msgs[0]["content"].split("\n", 1)[1]
+    content = prompt.user.split("\n", 1)[1]
     assert len(content) <= 200
     assert content.endswith("...")

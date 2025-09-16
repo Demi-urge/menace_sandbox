@@ -26,16 +26,16 @@ def test_build_prompt():
 
     builder = DummyBuilder()
     client = cib.ChatGPTClient("key", context_builder=builder, gpt_memory=FakeMemory())
-    msg = cib.build_prompt(client, builder, ["ai", "fintech"], prior="e-commerce")
+    prompt = cib.build_prompt(client, builder, ["ai", "fintech"], prior="e-commerce")
 
     intent, kwargs = builder.last_kwargs
-    assert kwargs["intent_metadata"]["tags"] == ["ai", "fintech"]
+    assert intent == [cib.IMPROVEMENT_PATH, "ai", "fintech"]
+    assert kwargs["intent_metadata"]["tags"] == [cib.IMPROVEMENT_PATH, "ai", "fintech"]
     assert kwargs["intent_metadata"]["prior_ideas"] == "e-commerce"
-    assert kwargs["snippets"] == ["P R"]
-    assert "ctx" in msg[-1]["content"]
-    assert "P R" in msg[-1]["content"]
-    assert msg[-1]["metadata"]["tags"] == ["ai", "fintech"]
-    assert msg[-1]["metadata"]["prior_ideas"] == "e-commerce"
+    assert prompt.user == intent
+    assert "ctx" in getattr(prompt, "examples", [])
+    assert prompt.metadata["tags"] == [cib.IMPROVEMENT_PATH, "ai", "fintech"]
+    assert prompt.metadata["prior_ideas"] == "e-commerce"
 
 
 def test_parse_ideas():
@@ -68,7 +68,12 @@ def test_generate_and_filter(monkeypatch):
             return Prompt(user=query)
     builder = DummyBuilder()
     client = cib.ChatGPTClient("key", context_builder=builder)
-    monkeypatch.setattr(client, "ask", lambda msgs, **kw: fake_resp)
+
+    def fake_generate(prompt_obj, *, context_builder, tags):
+        assert context_builder is builder
+        return cib.LLMResult(raw=fake_resp, text=fake_resp["choices"][0]["message"]["content"])
+
+    monkeypatch.setattr(client, "generate", fake_generate)
     validator = cib.SocialValidator()
     monkeypatch.setattr(validator, "is_unique_online", lambda name: name == "Idea1")
     monkeypatch.setattr(cib.database_manager, "search_models", lambda name: [])
