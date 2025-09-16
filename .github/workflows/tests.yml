@@ -143,6 +143,8 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: bash ./setup_env.sh
+      - name: Run context builder usage script
+        run: python scripts/check_context_builder_usage.py
       - name: Run workflow and policy integration tests
         run: pytest tests/integration/test_workflow_policy_integration.py -q
 
@@ -158,5 +160,7 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: bash ./setup_env.sh
+      - name: Run context builder usage script
+        run: python scripts/check_context_builder_usage.py
       - name: Run stress tests
         run: RUN_STRESS_TESTS=1 pytest tests/stress

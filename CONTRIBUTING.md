@@ -124,7 +124,9 @@ The pre-commit hook `check-context-builder-usage` wraps
 pre-commit run check-context-builder-usage --all-files
 ```
 
-For the most thorough signal, run the standalone script as well:
+Continuous integration executes the standalone script directly and fails the
+build on any reported violation. Run it locally before committing to catch
+issues early:
 
 ```bash
 python scripts/check_context_builder_usage.py
