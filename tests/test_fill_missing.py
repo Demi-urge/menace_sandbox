@@ -57,13 +57,17 @@ def test_fill_missing_provides_default():
 
 
 class DummyEngine:
+    def __init__(self, *, context_builder):
+        self.context_builder = context_builder
+
     def generate_helper(self, desc: str) -> str:
         return "def helper():\n    pass\n"
 
 
 def test_fill_missing_uses_engine():
     builder = types.SimpleNamespace(refresh_db_weights=lambda *a, **k: None)
-    bot = iob.ImplementationOptimiserBot(engine=DummyEngine(), context_builder=builder)
+    engine = DummyEngine(context_builder=builder)
+    bot = iob.ImplementationOptimiserBot(engine=engine, context_builder=builder)
     pkg = bot.fill_missing(_package())
     code = pkg.tasks[0].code
     assert code.startswith("def helper():")
