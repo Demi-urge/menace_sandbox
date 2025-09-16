@@ -167,34 +167,35 @@ class ChatGPTClient(LLMClient):
     ) -> LLMResult:  # type: ignore[override]
         """Extend :meth:`LLMClient.generate` to accept optional ``tags``."""
 
-        user_text = getattr(prompt, "user", None)
-        if user_text is None:
-            user_text = getattr(prompt, "text", None)
-        if user_text is None:
-            user_text = str(prompt)
-
-        system_text = getattr(prompt, "system", "")
-        examples = list(getattr(prompt, "examples", []) or [])
-        vector_confidence = getattr(prompt, "vector_confidence", None)
-        metadata = dict(getattr(prompt, "metadata", {}) or {})
+        metadata_attr = getattr(prompt, "metadata", None)
+        if isinstance(metadata_attr, dict):
+            metadata = metadata_attr
+        else:
+            metadata = dict(metadata_attr or {})
         base_tags = list(getattr(prompt, "tags", []) or [])
         merged_tags = (
             list(dict.fromkeys([*base_tags, *tags])) if tags else base_tags
         )
         if merged_tags and "tags" not in metadata:
             metadata.setdefault("tags", list(merged_tags))
-        origin = getattr(prompt, "origin", "") or "context_builder"
-        prompt_obj = Prompt(
-            user_text,
-            system=system_text,
-            examples=examples,
-            vector_confidence=vector_confidence,
-            tags=merged_tags,
-            metadata=metadata,
-            origin=origin,
-        )
+        if not isinstance(metadata_attr, dict):
+            try:
+                setattr(prompt, "metadata", metadata)
+            except Exception:
+                pass
+        if merged_tags and list(getattr(prompt, "tags", []) or []) != list(merged_tags):
+            try:
+                setattr(prompt, "tags", list(merged_tags))
+            except Exception:
+                pass
+        origin = getattr(prompt, "origin", "") or metadata.get("origin") or "context_builder"
+        if getattr(prompt, "origin", None) != origin:
+            try:
+                setattr(prompt, "origin", origin)
+            except Exception:
+                pass
         return super().generate(
-            prompt_obj,
+            prompt,
             parse_fn=parse_fn,
             backend=backend,
             context_builder=context_builder,
