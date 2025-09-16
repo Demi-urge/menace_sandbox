@@ -2,6 +2,8 @@ import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import asyncio
+import types
+
 import requests
 import pytest
 
@@ -9,6 +11,13 @@ import llm_config
 from llm_interface import LLMClient, LLMResult, Prompt, OpenAIProvider, rate_limit
 from anthropic_client import AnthropicClient
 from local_backend import OllamaBackend, VLLMBackend
+
+
+def _builder():
+    return types.SimpleNamespace(roi_tracker=None)
+
+
+PROMPT_META = {"vector_confidences": [0.5]}
 
 
 @pytest.fixture(autouse=True)
@@ -23,31 +32,43 @@ def test_requires_origin():
         def __init__(self):
             super().__init__("dummy", log_prompts=False)
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(text="ok", raw={"backend": "dummy"})
 
     client = Dummy()
     with pytest.raises(ValueError):
-        client.generate(Prompt("hi"))
+        client.generate(Prompt("hi"), context_builder=_builder())
     with pytest.raises(ValueError):
-        client.generate(Prompt("hi", origin="unknown"))
-    assert client.generate(Prompt("hi", origin="context_builder")).text == "ok"
+        client.generate(Prompt("hi", origin="unknown"), context_builder=_builder())
+    assert (
+        client.generate(
+            Prompt(
+                "hi",
+                origin="context_builder",
+                metadata=PROMPT_META,
+            ),
+            context_builder=_builder(),
+        ).text
+        == "ok"
+    )
 
 def test_parse_fn_handling():
     class Dummy(LLMClient):
         def __init__(self):
             super().__init__("dummy", log_prompts=False)
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(text="123", raw={"backend": "dummy"})
 
     client = Dummy()
-    prompt = Prompt("hello", origin="context_builder")
+    prompt = Prompt("hello", origin="context_builder", metadata=PROMPT_META)
 
-    res = client.generate(prompt, parse_fn=int)
+    res = client.generate(prompt, parse_fn=int, context_builder=_builder())
     assert res.parsed == 123
 
-    res_err = client.generate(prompt, parse_fn=lambda x: int("bad"))
+    res_err = client.generate(
+        prompt, parse_fn=lambda x: int("bad"), context_builder=_builder()
+    )
     assert res_err.parsed is None
 
 
@@ -58,7 +79,7 @@ def test_backend_retry_fallback():
         def __init__(self):
             self.calls = 0
 
-        def generate(self, prompt: Prompt) -> LLMResult:
+        def generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             self.calls += 1
             raise RuntimeError("boom")
 
@@ -68,14 +89,16 @@ def test_backend_retry_fallback():
         def __init__(self):
             self.calls = 0
 
-        def generate(self, prompt: Prompt) -> LLMResult:
+        def generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             self.calls += 1
             return LLMResult(text="ok")
 
     b1 = FailBackend()
     b2 = OkBackend()
     client = LLMClient(model="router", backends=[b1, b2], log_prompts=False)
-    result = client.generate(Prompt("hi", origin="context_builder"))
+    result = client.generate(
+        Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=_builder()
+    )
     assert result.text == "ok"
     assert b1.calls == 1 and b2.calls == 1
 
@@ -100,11 +123,11 @@ def test_promptdb_logging(monkeypatch):
         def __init__(self):
             super().__init__("dummy")
 
-        def _generate(self, prompt: Prompt) -> LLMResult:
+        def _generate(self, prompt: Prompt, *, context_builder) -> LLMResult:
             return LLMResult(text="txt", raw={"backend": "dummy"})
 
     client = Dummy()
-    client.generate(Prompt("x", origin="context_builder"))
+    client.generate(Prompt("x", origin="context_builder", metadata=PROMPT_META), context_builder=_builder())
     assert logged and logged[0][2] == "dummy"
 
 
@@ -142,7 +165,9 @@ def test_openai_provider_retries(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(provider._session, "post", fake_post)
-    result = provider._generate(Prompt("hi", origin="context_builder"))
+    result = provider._generate(
+        Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=_builder()
+    )
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
@@ -184,7 +209,9 @@ def test_anthropic_client_retries(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(ac.requests, "post", fake_post)
-    result = client.generate(Prompt("hi", origin="context_builder"))
+    result = client.generate(
+        Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=_builder()
+    )
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
@@ -217,7 +244,9 @@ def test_openai_cost_calculation(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(provider._session, "post", fake_post)
-    res = provider._generate(Prompt("hi", origin="context_builder"))
+    res = provider._generate(
+        Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=_builder()
+    )
     assert res.cost == pytest.approx(2 * 0.1 + 3 * 0.2)
 
 
@@ -250,7 +279,9 @@ def test_anthropic_cost_calculation(monkeypatch):
         return Resp()
 
     monkeypatch.setattr(ac.requests, "post", fake_post)
-    res = client.generate(Prompt("hi", origin="context_builder"))
+    res = client.generate(
+        Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=_builder()
+    )
     assert res.cost == pytest.approx(2 * 0.1 + 3 * 0.2)
 
 
@@ -271,7 +302,9 @@ def test_ollama_backend_retries(monkeypatch):
         return {"text": "ok"}
 
     monkeypatch.setattr(backend, "_post", fake_post)
-    result = backend.generate(Prompt("hi", origin="context_builder"))
+    result = backend.generate(
+        Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=_builder()
+    )
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
@@ -294,7 +327,9 @@ def test_vllm_backend_retries(monkeypatch):
         return {"text": "ok"}
 
     monkeypatch.setattr(backend, "_post", fake_post)
-    result = backend.generate(Prompt("hi", origin="context_builder"))
+    result = backend.generate(
+        Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=_builder()
+    )
     assert result.text == "ok"
     assert len(calls) == 2
     assert backoff == [0]
@@ -360,9 +395,13 @@ def test_local_weights_streaming(monkeypatch):
     monkeypatch.setattr(pb, "torch", None)
     client = pb.local_weights_client(model="m")
 
+    builder = _builder()
+
     async def collect():
         parts = []
-        async for part in client.async_generate(Prompt("hi", origin="context_builder")):
+        async for part in client.async_generate(
+            Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=builder
+        ):
             parts.append(part)
         return "".join(parts)
 
@@ -374,13 +413,15 @@ def test_openai_generate_inside_running_loop(monkeypatch):
     provider = OpenAIProvider(model="gpt", api_key="k")
     monkeypatch.setattr(OpenAIProvider, "_log", lambda *a, **k: None)
 
-    async def fake_async_gen(self, prompt):
+    async def fake_async_gen(self, prompt, *, context_builder):
         yield "hi"
 
     monkeypatch.setattr(OpenAIProvider, "_async_generate", fake_async_gen)
 
     async def run():
-        return await provider.generate(Prompt("hi", origin="context_builder"))
+        return await provider.generate(
+            Prompt("hi", origin="context_builder", metadata=PROMPT_META), context_builder=_builder()
+        )
 
     result = asyncio.run(run())
     assert result.text == "hi"

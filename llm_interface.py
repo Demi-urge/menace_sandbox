@@ -209,7 +209,7 @@ class LLMClient:
         *,
         parse_fn: Callable[[str], Any] | None = None,
         backend: str | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_builder: ContextBuilder,
     ) -> LLMResult:
         """Generate a completion for *prompt*.
 
@@ -239,9 +239,15 @@ class LLMClient:
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
             raise ValueError("prompt.metadata missing context-builder markers")
 
-        builder = context_builder or getattr(self, "context_builder", None)
+        if context_builder is None:
+            try:
+                builder = getattr(self, "context_builder")
+            except AttributeError as exc:  # pragma: no cover - attribute missing
+                raise TypeError("context_builder is required") from exc
+        else:
+            builder = context_builder
         if builder is None:
-            builder = type("_NullBuilder", (), {"roi_tracker": None})()
+            raise TypeError("context_builder is required")
 
         # If explicit backends are configured act as a router
         if self.backends:
@@ -287,7 +293,7 @@ class LLMClient:
 
     # ------------------------------------------------------------------
     async def async_generate(
-        self, prompt: Prompt, *, context_builder: ContextBuilder | None = None
+        self, prompt: Prompt, *, context_builder: ContextBuilder
     ) -> AsyncGenerator[str, None]:
         """Asynchronously yield completion chunks for *prompt* and log the result."""
         meta = getattr(prompt, "metadata", {}) or {}
@@ -306,9 +312,15 @@ class LLMClient:
         if not any(k in meta for k in ("vector_confidences", "intent_tags")):
             raise ValueError("prompt.metadata missing context-builder markers")
 
-        builder = context_builder or getattr(self, "context_builder", None)
+        if context_builder is None:
+            try:
+                builder = getattr(self, "context_builder")
+            except AttributeError as exc:  # pragma: no cover - attribute missing
+                raise TypeError("context_builder is required") from exc
+        else:
+            builder = context_builder
         if builder is None:
-            builder = type("_NullBuilder", (), {"roi_tracker": None})()
+            raise TypeError("context_builder is required")
 
         cfg = llm_config.get_config()
 

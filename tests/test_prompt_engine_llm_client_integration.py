@@ -27,18 +27,28 @@ class CapturingClient(LLMClient):
         return LLMResult(text='{"result": "ok"}', parsed={"result": "ok"})
 
 
+class DummyBuilder:
+    def build_prompt(self, text: str, *, intent_metadata=None, **kwargs):
+        return Prompt(
+            text,
+            metadata={"vector_confidences": [0.5]},
+            origin="context_builder",
+        )
+
+
 def test_prompt_engine_to_llm_client_flow():
+    builder = DummyBuilder()
     engine = PromptEngine(
         retriever=SimpleRetriever(),
         patch_retriever=SimpleRetriever(),
         top_n=1,
         confidence_threshold=0,
-        context_builder=object(),
+        context_builder=builder,
     )
 
-    prompt = engine.build_prompt("do things", context_builder=engine.context_builder)
+    prompt = engine.build_prompt("do things", context_builder=builder)
     client = CapturingClient()
-    result = client.generate(prompt)
+    result = client.generate(prompt, context_builder=builder)
 
     assert isinstance(prompt, Prompt)
     assert client.seen == [prompt]
