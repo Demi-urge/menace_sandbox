@@ -187,7 +187,12 @@ def test_knowledge_service_logging(monkeypatch, caplog):
     caplog.set_level(logging.WARNING)
     caplog.clear()
     target = dynamic_path_router.resolve_path("tests/fixtures/semantic/a.py")  # path-ignore
-    manager_generate_helper(types.SimpleNamespace(engine=engine), "desc", path=target)
+    manager_generate_helper(
+        types.SimpleNamespace(engine=engine),
+        "desc",
+        context_builder=engine.context_builder,
+        path=target,
+    )
     messages = [record.message for record in caplog.records]
     assert any("recent_feedback" in m for m in messages)
     assert any("recent_improvement_path" in m for m in messages)

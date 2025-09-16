@@ -130,7 +130,11 @@ def test_codex_fallback_retries_and_simplified_prompt(monkeypatch):
     patch_history(monkeypatch)
 
     manager = types.SimpleNamespace(engine=engine)
-    result = manager_generate_helper(manager, "do something")
+    result = manager_generate_helper(
+        manager,
+        "do something",
+        context_builder=engine.context_builder,
+    )
 
     assert call_delays == [[2, 5, 10], [2, 5, 10]]
     assert mock_llm.generate.call_count == 6
@@ -163,5 +167,9 @@ def test_codex_fallback_queue_on_malformed(monkeypatch):
     )
     patch_history(monkeypatch)
 
-    manager_generate_helper(types.SimpleNamespace(engine=engine), "do something")
+    manager_generate_helper(
+        types.SimpleNamespace(engine=engine),
+        "do something",
+        context_builder=engine.context_builder,
+    )
     queue_mock.assert_called_once()

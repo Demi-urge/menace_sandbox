@@ -1481,8 +1481,11 @@ class SelfImprovementEngine:
                 intent_meta: dict[str, object] = {"module": module, "user_query": action}
                 if mem_ctx:
                     intent_meta["memory_context"] = mem_ctx
-                prompt_obj = client.context_builder.build_prompt(
-                    action, intent_metadata=intent_meta, tags=full_tags
+                intent_meta.setdefault("intent_tags", list(full_tags))
+                prompt_obj = self.self_coding_engine.build_enriched_prompt(
+                    action,
+                    intent=intent_meta,
+                    context_builder=client.context_builder,
                 )
                 result = client.generate(
                     prompt_obj,

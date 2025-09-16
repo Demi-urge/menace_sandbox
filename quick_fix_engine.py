@@ -464,13 +464,18 @@ def generate_patch(
                         return helper(
                             manager,
                             desc,
+                            context_builder=builder,
                             path=path,
                             metadata=context_meta,
                             target_region=target_region,
                         )
                     except TypeError:
                         try:
-                            return helper(manager, desc)
+                            return helper(
+                                manager,
+                                desc,
+                                context_builder=builder,
+                            )
                         except Exception as exc2:  # fall through to logging
                             err: Exception = exc2
                     except Exception as exc:

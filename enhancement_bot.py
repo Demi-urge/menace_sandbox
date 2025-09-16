@@ -224,17 +224,19 @@ class EnhancementBot:
             intent_meta["refactor_summary"] = hint
         if context:
             intent_meta["retrieved_context"] = context
+        intent_payload = dict(intent_meta)
+        intent_payload.setdefault("top_k", 0)
         try:
-            prompt = context_builder.build_prompt(
+            prompt = engine.build_enriched_prompt(
                 "Summarize the code change.",
-                intent=intent_meta,
-                top_k=0,
+                intent=intent_payload,
+                context_builder=context_builder,
             )
         except Exception as exc:
             if isinstance(exc, PromptBuildError):
                 raise
             handle_failure(
-                "ContextBuilder.build_prompt failed for codex summary prompt",
+                "build_enriched_prompt failed for codex summary prompt",
                 exc,
                 logger=logger,
             )

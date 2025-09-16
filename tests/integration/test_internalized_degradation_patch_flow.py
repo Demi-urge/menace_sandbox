@@ -30,7 +30,7 @@ sys.modules.setdefault("menace.sandbox_runner.test_harness", th)
 
 # Stub coding bot interface before importing helper
 cbi_stub = types.ModuleType("menace.coding_bot_interface")
-def manager_generate_helper(manager, description, path=None):
+def manager_generate_helper(manager, description, *, context_builder, path=None):
     return manager.engine.generate_helper(description)
 cbi_stub.manager_generate_helper = manager_generate_helper
 cbi_stub.self_coding_managed = lambda cls: cls
@@ -137,7 +137,12 @@ class SelfCodingManager:
         **kwargs,
     ):
         self.gen_calls.append((path, description))
-        manager_generate_helper(self, description, path=str(path))
+        manager_generate_helper(
+            self,
+            description,
+            context_builder=context_builder,
+            path=str(path),
+        )
         if self.quick_fix:
             self.quick_fix.apply_validated_patch(str(path), description, context_meta or {})
         self._last_patch_id = 123

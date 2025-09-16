@@ -6,6 +6,7 @@ from .bot_registry import BotRegistry
 from .data_bot import DataBot
 
 from .coding_bot_interface import self_coding_managed
+from .self_coding_engine import SelfCodingEngine
 import json
 import os
 import logging
@@ -22,7 +23,7 @@ _deps = DependencyManager()
 
 requests = _deps.load("requests", lambda: __import__("requests"))  # type: ignore
 from dataclasses import dataclass, asdict, field
-from typing import Iterable, List, Optional, Callable, Any, Dict
+from typing import Iterable, List, Optional, Callable, Any, Dict, Mapping
 import re
 from collections import Counter
 np = _deps.load("numpy", lambda: __import__("numpy"))  # type: ignore
@@ -130,6 +131,27 @@ try:  # optional context builder
     from vector_service.context_builder import ContextBuilder
 except Exception:  # pragma: no cover - fallback when service unavailable
     ContextBuilder = Any  # type: ignore
+
+
+def _build_research_prompt(
+    query: str,
+    *,
+    intent: Mapping[str, Any],
+    context_builder: ContextBuilder,
+):
+    """Construct an enriched prompt for ChatGPT interactions."""
+
+    engine = SelfCodingEngine.__new__(SelfCodingEngine)
+    engine.logger = logger
+    engine._last_retry_trace = None
+    engine._last_prompt = None
+    engine._last_prompt_metadata = {}
+    return engine.build_enriched_prompt(
+        query,
+        intent=intent,
+        context_builder=context_builder,
+    )
+
 
 DBRouter = _deps.load(
     "DBRouter", lambda: __import__("menace.db_router", fromlist=["DBRouter"]).DBRouter
@@ -680,17 +702,20 @@ class ChatGPTResearchBot:
             if mem_ctx:
                 intent_meta["memory_context"] = mem_ctx
             intent_meta.setdefault("user_query", b_prompt)
-            prompt_obj = context_builder.build_prompt(
-                b_prompt, intent=intent_meta
+            full_tags = ensure_tags(
+                "chatgpt_research_bot._ask",
+                [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+            )
+            intent_meta.setdefault("intent_tags", list(full_tags))
+            prompt_obj = _build_research_prompt(
+                b_prompt,
+                intent=intent_meta,
+                context_builder=context_builder,
             )
             if mem_ctx:
                 examples = list(getattr(prompt_obj, "examples", []))
                 examples.append(mem_ctx)
                 prompt_obj.examples = examples
-            full_tags = ensure_tags(
-                "chatgpt_research_bot._ask",
-                [FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-            )
             result = self.client.generate(
                 prompt_obj,
                 context_builder=context_builder,

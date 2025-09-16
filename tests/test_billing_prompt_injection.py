@@ -69,5 +69,9 @@ def test_billing_instructions_in_prompt(monkeypatch):
         sce, "fetch_recent_billing_issues", lambda limit=5: ["invoice overdue"]
     )
 
-    manager_generate_helper(types.SimpleNamespace(engine=engine), "demo task")
+    manager_generate_helper(
+        types.SimpleNamespace(engine=engine),
+        "demo task",
+        context_builder=engine.context_builder,
+    )
     assert "invoice overdue" in engine._last_prompt.text

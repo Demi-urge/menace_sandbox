@@ -121,7 +121,12 @@ class SelfCodingManager:
         return 123, "deadbeef"
 
     def run_patch(self, path: Path, description: str, *, context_meta=None, context_builder=None):
-        manager_generate_helper(self, description, path=str(path))
+        manager_generate_helper(
+            self,
+            description,
+            context_builder=context_builder,
+            path=str(path),
+        )
         self.quick_fix.apply_validated_patch(str(path), description, context_meta or {})
         self._last_patch_id = 123
         self._last_commit_hash = "deadbeef"

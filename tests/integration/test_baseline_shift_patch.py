@@ -121,7 +121,7 @@ sys.modules["menace_sandbox.patch_provenance"] = pp_mod
 
 # Stub coding bot interface and thresholds
 cbi_mod = types.ModuleType("menace_sandbox.coding_bot_interface")
-def manager_generate_helper(manager, description, **kwargs):
+def manager_generate_helper(manager, description, *, context_builder, **kwargs):
     return ""
 cbi_mod.manager_generate_helper = manager_generate_helper
 sys.modules["menace_sandbox.coding_bot_interface"] = cbi_mod

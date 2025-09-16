@@ -50,14 +50,35 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
+    from vector_service.context_builder import ContextBuilder
+else:  # pragma: no cover - runtime placeholder avoids hard dependency
+    ContextBuilder = Any  # type: ignore
+
+
 def manager_generate_helper(
-    manager: SelfCodingManager, description: str, **kwargs: Any
+    manager: SelfCodingManager,
+    description: str,
+    *,
+    context_builder: "ContextBuilder",
+    **kwargs: Any,
 ) -> str:
     """Invoke :meth:`SelfCodingEngine.generate_helper` under a manager token."""
+
+    if context_builder is None:  # pragma: no cover - defensive
+        raise TypeError("context_builder is required")
+
+    engine = getattr(manager, "engine", None)
+    if engine is None:  # pragma: no cover - defensive guard
+        raise RuntimeError("manager must provide an engine for helper generation")
+
     token = MANAGER_CONTEXT.set(manager)
+    previous_builder = getattr(engine, "context_builder", None)
     try:
-        return manager.engine.generate_helper(description, **kwargs)
+        engine.context_builder = context_builder
+        return engine.generate_helper(description, **kwargs)
     finally:
+        engine.context_builder = previous_builder
         MANAGER_CONTEXT.reset(token)
 
 

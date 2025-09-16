@@ -279,7 +279,7 @@ def test_self_coding_engine_includes_context(monkeypatch):
         gpt_memory=gpt_mem,
     )
     manager = types.SimpleNamespace(engine=engine)
-    manager_generate_helper(manager, "alpha issue")
+    manager_generate_helper(manager, "alpha issue", context_builder=builder)
     assert "### Retrieval context" in client.last_prompt
     assert pretty in client.last_prompt
 

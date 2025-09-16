@@ -180,7 +180,11 @@ class AutomatedReviewer:
                 ctx = ""
                 vectors = []
             try:
-                manager_generate_helper(self.manager, f"review for bot {bot_id}")
+                manager_generate_helper(
+                    self.manager,
+                    f"review for bot {bot_id}",
+                    context_builder=self.context_builder,
+                )
             except Exception:
                 self.logger.exception("helper generation failed")
             try:
