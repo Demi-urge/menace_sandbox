@@ -111,6 +111,17 @@ pyd_settings_mod.BaseSettings = object
 pyd_settings_mod.SettingsConfigDict = dict
 sys.modules.setdefault("pydantic_settings", pyd_settings_mod)
 
+
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: DummyContextBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
 import menace.self_improvement as sie
 
 class _Rec:
@@ -149,6 +160,7 @@ class DummyTracker:
 
 def _make_engine(path: os.PathLike, learner_cls: type) -> sie.SelfImprovementEngine:
     engine = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         patch_db=_DummyDB([]),
         synergy_weights_path=path,
@@ -167,6 +179,7 @@ def _train_cycles(engine: sie.SelfImprovementEngine, cycles: int = 5) -> None:
 
 def _reload_engine(path: os.PathLike, learner_cls: type) -> sie.SelfImprovementEngine:
     return sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         patch_db=_DummyDB([]),
         synergy_weights_path=path,

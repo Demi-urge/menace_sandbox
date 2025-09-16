@@ -73,6 +73,17 @@ class DummyPipeline:
         return types.SimpleNamespace(package=None, roi=None)
 
 
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: DummyContextBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
+
 def test_self_improvement_logs_capital(monkeypatch, tmp_path):
     stub = _setup_stubs(monkeypatch)
     import menace.self_improvement as sie
@@ -88,6 +99,7 @@ def test_self_improvement_logs_capital(monkeypatch, tmp_path):
     cap_bot.log_evolution_event = lambda *a, **k: cap_calls.append(a)
     data_stub = types.SimpleNamespace(db=mdb, log_evolution_cycle=lambda *a, **k: None)
     engine = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         pipeline=DummyPipeline(),
         diagnostics=diag,

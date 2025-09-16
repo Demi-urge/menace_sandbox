@@ -890,6 +890,7 @@ def _sandbox_init(
             logger.exception("patch score backend init failed")
     gpt_memory = _get_local_knowledge().memory
     improver = SelfImprovementEngine(
+        context_builder=context_builder,
         meta_logger=meta_log,
         module_index=module_index,
         patch_db=patch_db,

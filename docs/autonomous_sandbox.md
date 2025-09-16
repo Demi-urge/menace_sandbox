@@ -69,8 +69,13 @@ are blocked when the forecast reports a high risk or brittleness:
 ```python
 from menace_sandbox.foresight_tracker import ForesightTracker
 from menace_sandbox.self_improvement import SelfImprovementEngine
+from context_builder_util import create_context_builder
 
-engine = SelfImprovementEngine(foresight_tracker=ForesightTracker())
+builder = create_context_builder()
+engine = SelfImprovementEngine(
+    context_builder=builder,
+    foresight_tracker=ForesightTracker(),
+)
 wf = "workflow-1"
 risk = engine.foresight_tracker.predict_roi_collapse(wf)
 if risk["risk"] in {"Immediate collapse risk", "Volatile"} or risk["brittle"]:
@@ -123,8 +128,10 @@ from menace_sandbox.self_improvement import (
     SelfImprovementEngine,
     ImprovementEngineRegistry,
 )
+from context_builder_util import create_context_builder
 
-engine = SelfImprovementEngine(bot_name="alpha")
+builder = create_context_builder()
+engine = SelfImprovementEngine(context_builder=builder, bot_name="alpha")
 registry = ImprovementEngineRegistry()
 registry.register_engine("alpha", engine)
 results = registry.run_all_cycles()
@@ -1196,8 +1203,10 @@ reinforcement learning you can instantiate `SelfImprovementEngine` with
 
 ```python
 from menace.self_improvement.api import SelfImprovementEngine, DQNSynergyLearner
+from context_builder_util import create_context_builder
 
 engine = SelfImprovementEngine(
+    context_builder=create_context_builder(),
     synergy_learner_cls=DQNSynergyLearner,
     synergy_weights_path="sandbox_data/synergy_weights.json",
 )

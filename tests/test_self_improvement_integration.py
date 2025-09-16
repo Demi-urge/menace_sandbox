@@ -222,6 +222,7 @@ def test_self_improvement_integration(monkeypatch, tmp_path):
     sie.AutomationResult = lambda package=None, roi=None: types.SimpleNamespace(package=package, roi=roi)
     sie.ROIResult = lambda *a, **k: types.SimpleNamespace(roi=0.0)
     eng = sie.SelfImprovementEngine(
+        context_builder=DummyBuilder(),
         interval=0,
         pipeline=DummyPipe(),
         diagnostics=DummyDiag(),

@@ -97,8 +97,12 @@ export ROI_EMA_ALPHA=0.1
 
 ```python
 from menace.self_improvement.api import SelfImprovementEngine, ImprovementEngineRegistry
+from context_builder_util import create_context_builder
 
-engine = SelfImprovementEngine(bot_name="alpha")
+engine = SelfImprovementEngine(
+    context_builder=create_context_builder(),
+    bot_name="alpha",
+)
 registry = ImprovementEngineRegistry()
 registry.register_engine("alpha", engine)
 registry.run_all_cycles()

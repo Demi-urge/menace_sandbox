@@ -27,6 +27,17 @@ sys.modules.setdefault("menace.module_index_db", mid_mod)
 from tests.test_self_improvement_logging import _load_engine
 
 
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: DummyContextBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
+
 def test_proactive_auto_patch(monkeypatch, tmp_path, caplog):
     sie = _load_engine()
     sys.modules["menace"].RAISE_ERRORS = False
@@ -106,6 +117,7 @@ def test_proactive_auto_patch(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(sie.SelfImprovementEngine, "_record_state", lambda self: None)
 
     eng = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         pipeline=DummyPipe(),
         diagnostics=DummyDiag(),

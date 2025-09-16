@@ -389,7 +389,9 @@ class SelfCodingManager:
 
                 capital = CapitalManagementBot(data_bot=self.data_bot)
                 improv = SelfImprovementEngine(
-                    data_bot=self.data_bot, bot_name=self.bot_name
+                    context_builder=builder,
+                    data_bot=self.data_bot,
+                    bot_name=self.bot_name,
                 )
                 bots = list(getattr(self.bot_registry, "graph", {}).keys())
                 evol_mgr = SystemEvolutionManager(bots)

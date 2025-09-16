@@ -82,15 +82,16 @@ def test_full_self_optimisation(tmp_path, monkeypatch):
     info_db = rab.InfoDB(tmp_path / "i.db")
     data_bot = db.DataBot(mdb, patch_db=patch_db, evolution_db=hist)
 
+    builder = types.SimpleNamespace(
+        build_context=lambda *a, **k: {},
+        refresh_db_weights=lambda *a, **k: None,
+    )
     engine = sce.SelfCodingEngine(
         cd.CodeDB(tmp_path / "c.db"),
         mm.MenaceMemoryManager(tmp_path / "mem.db"),
         data_bot=data_bot,
         patch_db=patch_db,
-        context_builder=types.SimpleNamespace(
-            build_context=lambda *a, **k: {},
-            refresh_db_weights=lambda *a, **k: None,
-        ),
+        context_builder=builder,
     )
     monkeypatch.setattr(engine, "_run_ci", lambda: True)
     monkeypatch.setattr(engine, "generate_helper", lambda d: "def auto_x():\n    pass\n")
@@ -109,6 +110,7 @@ def test_full_self_optimisation(tmp_path, monkeypatch):
     )
 
     improver = sie.SelfImprovementEngine(
+        context_builder=builder,
         interval=0,
         pipeline=StubPipeline(),
         diagnostics=diag,

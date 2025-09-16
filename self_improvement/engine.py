@@ -132,7 +132,7 @@ import ast
 import yaml
 import traceback
 from pathlib import Path
-from typing import Mapping, Callable, Iterable, Dict, Any, Sequence, List
+from typing import Mapping, Callable, Iterable, Dict, Any, Sequence, List, TYPE_CHECKING
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 try:  # pragma: no cover - allow flat imports
@@ -368,6 +368,9 @@ from ..model_automation_pipeline import (
     AutomationResult,
 )
 from context_builder_util import create_context_builder
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
+    from vector_service.context_builder import ContextBuilder
 from ..diagnostic_manager import DiagnosticManager
 from ..error_bot import ErrorBot, ErrorDB
 from ..data_bot import MetricsDB, DataBot
@@ -472,6 +475,7 @@ class SelfImprovementEngine:
     def __init__(
         self,
         *,
+        context_builder: ContextBuilder,
         interval: int = 3600,
         pipeline: ModelAutomationPipeline | None = None,
         bot_name: str = "menace",
@@ -544,25 +548,24 @@ class SelfImprovementEngine:
         self.interval = interval
         self.bot_name = bot_name
         self.info_db = info_db or InfoDB()
-        builder = create_context_builder()
-        self.context_builder = builder
+        self.context_builder = context_builder
         try:
-            builder.refresh_db_weights()
+            context_builder.refresh_db_weights()
         except Exception:
             pass
         self.aggregator = ResearchAggregatorBot(
-            [bot_name], info_db=self.info_db, context_builder=builder
+            [bot_name], info_db=self.info_db, context_builder=context_builder
         )
         self.pipeline = pipeline or ModelAutomationPipeline(
             aggregator=self.aggregator,
             action_planner=action_planner,
-            context_builder=builder,
+            context_builder=context_builder,
         )
         self.action_planner = action_planner
-        err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=builder)
+        err_bot = ErrorBot(ErrorDB(), MetricsDB(), context_builder=context_builder)
         self.error_bot = err_bot
         self.diagnostics = diagnostics or DiagnosticManager(
-            MetricsDB(), err_bot, context_builder=builder
+            MetricsDB(), err_bot, context_builder=context_builder
         )
         self._alignment_agent: AlignmentReviewAgent | None = None
         self.last_run = 0.0
@@ -627,8 +630,6 @@ class SelfImprovementEngine:
         self.pass_rate_dev_multiplier = getattr(cfg, "pass_rate_deviation", 1.0)
         self.learning_engine = learning_engine
         self.self_coding_engine = self_coding_engine
-        if getattr(self.self_coding_engine, "context_builder", None):
-            self.context_builder = self.self_coding_engine.context_builder
         self.event_bus = event_bus
         self.evolution_history = evolution_history
         self.data_bot = data_bot
@@ -1485,11 +1486,11 @@ class SelfImprovementEngine:
                 prompt_obj = self.self_coding_engine.build_enriched_prompt(
                     action,
                     intent=intent_meta,
-                    context_builder=client.context_builder,
+                    context_builder=self.context_builder,
                 )
                 result = client.generate(
                     prompt_obj,
-                    context_builder=client.context_builder,
+                    context_builder=self.context_builder,
                     tags=full_tags,
                 )
                 text = (result.text or "").strip()
@@ -8599,7 +8600,7 @@ def cli(argv: list[str] | None = None) -> None:
         shadow = np.load(args.shadow)
         X = np.vstack([live["X"], shadow["X"]])
         y = np.concatenate([live["y"], shadow["y"]])
-        engine = SelfImprovementEngine()
+        engine = SelfImprovementEngine(context_builder=create_context_builder())
         engine.fit_truth_adapter(X, y)
         return
 
@@ -8608,7 +8609,7 @@ def cli(argv: list[str] | None = None) -> None:
         shadow = np.load(args.shadow)
         X = np.vstack([live["X"], shadow["X"]])
         y = np.concatenate([live["y"], shadow["y"]])
-        engine = SelfImprovementEngine()
+        engine = SelfImprovementEngine(context_builder=create_context_builder())
         adapter = engine.truth_adapter
         if adapter.metadata.get("retraining_required"):
             adapter.reset()

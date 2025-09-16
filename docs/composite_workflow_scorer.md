@@ -137,8 +137,10 @@ from menace_sandbox.self_improvement import (
     SelfImprovementEngine,
     ImprovementEngineRegistry,
 )
+from context_builder_util import create_context_builder
 
-engine = SelfImprovementEngine(bot_name="alpha")
+builder = create_context_builder()
+engine = SelfImprovementEngine(context_builder=builder, bot_name="alpha")
 registry = ImprovementEngineRegistry()
 registry.register_engine("alpha", engine)
 result = registry.run_all_cycles()

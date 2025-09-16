@@ -20,6 +20,7 @@ from menace.metrics_exporter import (
 )
 from alert_dispatcher import dispatch_alert
 from dynamic_path_router import resolve_path
+from context_builder_util import create_context_builder
 
 LOG_PATH = resolve_path("sandbox_data/synergy_weights.log")
 
@@ -46,8 +47,12 @@ def _load_engine(path: str | None):
     env_name = os.getenv("SYNERGY_LEARNER", "").lower()
     cls = mapping.get(env_name, SynergyWeightLearner)
 
+    builder = create_context_builder()
     return SelfImprovementEngine(
-        interval=0, synergy_weights_path=path, synergy_learner_cls=cls
+        context_builder=builder,
+        interval=0,
+        synergy_weights_path=path,
+        synergy_learner_cls=cls,
     )
 
 

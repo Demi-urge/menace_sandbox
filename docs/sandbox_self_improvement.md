@@ -51,8 +51,11 @@ from model_automation_pipeline import ModelAutomationPipeline
 from vector_service.context_builder import ContextBuilder
 
 builder = ContextBuilder("bots.db", "code.db", "errors.db", "workflows.db")
-engine = SelfImprovementEngine(bot_name="alpha",
-                               pipeline=ModelAutomationPipeline(context_builder=builder))
+engine = SelfImprovementEngine(
+    context_builder=builder,
+    bot_name="alpha",
+    pipeline=ModelAutomationPipeline(context_builder=builder),
+)
 engine.run_cycle()
 ```
 

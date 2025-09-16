@@ -291,8 +291,12 @@ candidate actions:
 
 ```python
 from menace_sandbox.self_improvement import SelfImprovementEngine
+from context_builder_util import create_context_builder
 
-engine = SelfImprovementEngine(bot_name="alpha")
+engine = SelfImprovementEngine(
+    context_builder=create_context_builder(),
+    bot_name="alpha",
+)
 roi_seq, growth, *_ = engine.roi_predictor.predict([[0.1, 0.2, 0.0]])
 if growth == "exponential":
     print("scale up the improvement plan")

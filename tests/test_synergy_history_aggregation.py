@@ -88,6 +88,18 @@ sys.modules["menace.research_aggregator_bot"].InfoDB = lambda *a, **k: object()
 sys.modules["menace.patch_score_backend"] = types.ModuleType("menace.patch_score_backend")
 sys.modules["menace.patch_score_backend"].PatchScoreBackend = object
 sys.modules["menace.patch_score_backend"].backend_from_url = lambda *a, **k: object()
+
+
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: DummyContextBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
 pyd_dc = types.ModuleType("dataclasses")
 pyd_mod.Field = lambda default=None, **k: default
 pyd_dc.dataclass = lambda *a, **k: (lambda cls: cls)
@@ -203,7 +215,11 @@ def test_synergy_history_and_weight_update():
         "synergy_maintainability": [0.0, 0.0, 0.0, 0.0],
         "synergy_throughput": [0.0, 0.0, 0.0, 0.0],
     }
-    engine = sie.SelfImprovementEngine(interval=0, patch_db=_DummyDB(records))
+    engine = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
+        interval=0,
+        patch_db=_DummyDB(records),
+    )
     engine.tracker = _DummyTracker(metrics)
 
     expected_adj, weights, stats = _expected(records, metrics)

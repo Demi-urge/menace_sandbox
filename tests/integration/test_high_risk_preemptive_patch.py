@@ -26,6 +26,17 @@ mid_mod.ModuleIndexDB = type(
 sys.modules.setdefault("module_index_db", mid_mod)
 sys.modules.setdefault("menace.module_index_db", mid_mod)
 
+
+class DummyContextBuilder:
+    def refresh_db_weights(self):
+        pass
+
+
+context_builder_util = types.ModuleType("context_builder_util")
+context_builder_util.create_context_builder = lambda: DummyContextBuilder()
+context_builder_util.ensure_fresh_weights = lambda builder: None
+sys.modules.setdefault("context_builder_util", context_builder_util)
+
 log_stub = types.ModuleType("menace_sandbox.logging_utils")
 log_stub.get_logger = lambda *a, **k: types.SimpleNamespace(
     info=lambda *a, **k: None, warning=lambda *a, **k: None, exception=lambda *a, **k: None
@@ -147,6 +158,7 @@ def test_high_risk_prediction_triggers_patch(monkeypatch, tmp_path):
     sie.ErrorBot = lambda *a, **k: DummyErrorBot()
 
     eng = sie.SelfImprovementEngine(
+        context_builder=DummyContextBuilder(),
         interval=0,
         pipeline=DummyPipe(),
         diagnostics=DummyDiag(),
