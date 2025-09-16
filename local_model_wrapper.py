@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from context_builder import handle_failure, PromptBuildError
+
 from snippet_compressor import compress_snippets  # noqa: F401 - retained for tests
 
 try:  # pragma: no cover - optional dependency
@@ -24,21 +26,30 @@ class LocalModelWrapper:
 
     def generate(
         self,
-        prompt: Prompt,
+        prompt: Prompt | Any,
         *,
         context_builder: ContextBuilder,
         **gen_kwargs: Any,
     ) -> str | list[str]:
-        """Generate text using a pre-built :class:`Prompt`.
+        """Generate text using a prompt built via :class:`ContextBuilder`."""
 
-        ``prompt`` must already be constructed via :meth:`ContextBuilder.build_prompt`
-        by the caller; this wrapper simply forwards the prompt to the underlying
-        model.  The ``context_builder`` argument is retained to satisfy static
-        checks but is otherwise unused.
-        """
+        if isinstance(prompt, Prompt):
+            prompt_obj = prompt
+        else:
+            try:
+                prompt_obj = context_builder.build_prompt(prompt)
+            except PromptBuildError:
+                raise
+            except Exception as exc:
+                handle_failure(
+                    "LocalModelWrapper failed to build prompt from input", exc
+                )
+            if not isinstance(prompt_obj, Prompt):
+                raise TypeError(
+                    "ContextBuilder.build_prompt must return a Prompt instance"
+                )
 
-        self.last_prompt = prompt
-        prompt_obj = prompt
+        self.last_prompt = prompt_obj
 
         pieces: list[str] = []
         if getattr(prompt_obj, "system", None):
