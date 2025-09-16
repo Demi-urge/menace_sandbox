@@ -246,6 +246,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 if TYPE_CHECKING:  # pragma: no cover
     from menace.roi_tracker import ROITracker
+    from self_coding_engine import SelfCodingEngine
 
 __path__ = [resolve_path("sandbox_runner").as_posix()]
 logger = get_logger(__name__)
@@ -475,6 +476,7 @@ def build_section_prompt(
     tracker: "ROITracker",
     *,
     context_builder: ContextBuilder,
+    engine: "SelfCodingEngine",
     snippet: str | None = None,
     prior: str | None = None,
     max_length: int = 1000,
@@ -640,12 +642,36 @@ def build_section_prompt(
     if max_prompt_length and len(user_query) > max_prompt_length:
         user_query = user_query[:max_prompt_length]
 
+    if engine is None:
+        raise ValueError("engine is required for build_section_prompt")
+
+    session_id = uuid.uuid4().hex
+    intent_payload: dict[str, Any] = {
+        "instruction": intent_text,
+        "section": section,
+        "sample_limit": 0,
+        "top_k": 0,
+        "session_id": session_id,
+        "session_ids": [session_id],
+    }
+    if prior:
+        intent_payload["prior"] = prior
+
+    build_fn = getattr(engine, "build_enriched_prompt", None)
     try:
-        prompt_obj = context_builder.build_prompt(
-            user_query,
-            intent={"instruction": intent_text, "section": section},
-            top_k=0,
-        )
+        if callable(build_fn):
+            prompt_obj = build_fn(
+                user_query,
+                intent=intent_payload,
+                context_builder=context_builder,
+            )
+        else:
+            prompt_obj = context_builder.build_prompt(
+                user_query,
+                intent=intent_payload,
+                top_k=0,
+                session_id=session_id,
+            )
     except PromptBuildError:
         raise
     except Exception as exc:
@@ -654,6 +680,18 @@ def build_section_prompt(
             exc,
             logger=logger,
         )
+        raise
+
+    meta = dict(getattr(prompt_obj, "metadata", {}) or {})
+    meta.setdefault("instruction", intent_text)
+    meta.setdefault("section", section)
+    meta.setdefault("sample_limit", 0)
+    existing_sessions = meta.setdefault("session_ids", [])
+    for sid in intent_payload["session_ids"]:
+        if sid not in existing_sessions:
+            existing_sessions.append(sid)
+    meta.setdefault("sample_context", list(getattr(prompt_obj, "examples", [])))
+    prompt_obj.metadata = meta
     return prompt_obj
 
 
@@ -1698,6 +1736,7 @@ def _sandbox_main(
                         "overall",
                         ctx.tracker,
                         context_builder=ctx.context_builder,
+                        engine=ctx.engine,
                         snippet=f"Brainstorm improvements. Current metrics: {summary}",
                         prior=prior if prior else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,

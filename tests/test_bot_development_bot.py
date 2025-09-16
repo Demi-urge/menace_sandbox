@@ -69,8 +69,33 @@ class _SCM:
     def run_patch(self, path, prompt):
         path.write_text("")
 scm_stub.SelfCodingManager = _SCM
+scm_stub.internalize_coding_bot = lambda *a, **k: None
+scm_stub._manager_generate_helper_with_builder = lambda *a, **k: ""
 sys.modules.setdefault("self_coding_manager", scm_stub)
 sys.modules.setdefault("menace.self_coding_manager", scm_stub)
+
+map_stub = ModuleType("model_automation_pipeline")
+
+
+class _DummyPipeline:
+    def __init__(self, *a, **k):
+        pass
+
+
+map_stub.ModelAutomationPipeline = _DummyPipeline
+sys.modules.setdefault("model_automation_pipeline", map_stub)
+sys.modules.setdefault("menace.model_automation_pipeline", map_stub)
+
+ra_stub = ModuleType("research_aggregator_bot")
+ra_stub.ResearchAggregatorBot = object
+ra_stub.ResearchItem = object
+sys.modules.setdefault("research_aggregator_bot", ra_stub)
+sys.modules.setdefault("menace.research_aggregator_bot", ra_stub)
+
+seo_stub = ModuleType("shared_evolution_orchestrator")
+seo_stub.get_orchestrator = lambda *a, **k: None
+sys.modules.setdefault("shared_evolution_orchestrator", seo_stub)
+sys.modules.setdefault("menace.shared_evolution_orchestrator", seo_stub)
 
 sys.modules.setdefault("error_vectorizer", types.SimpleNamespace(ErrorVectorizer=object))
 sys.modules.setdefault("failure_fingerprint", types.SimpleNamespace(FailureFingerprint=object))
@@ -89,6 +114,7 @@ sys.modules["menace_memory_manager"] = mm_stub
 sys.modules["menace.menace_memory_manager"] = mm_stub
 
 sce_stub = ModuleType("self_coding_engine")
+sce_stub.MANAGER_CONTEXT = {}
 
 
 class _DummyEngine:
@@ -99,6 +125,21 @@ class _DummyEngine:
         self.calls.append(desc)
         return "def run():\n    return None\n"
 
+    def build_enriched_prompt(self, goal, *, intent=None, context_builder, **_):
+        if isinstance(goal, dict):
+            base_intent = dict(goal)
+            query = str(base_intent.get("query", ""))
+            if intent:
+                base_intent.update(intent)
+        else:
+            query = str(goal)
+            base_intent = dict(intent or {})
+        prompt = context_builder.build_prompt(query, intent=base_intent)
+        meta = dict(getattr(prompt, "metadata", {}) or {})
+        meta.setdefault("intent", base_intent)
+        prompt.metadata = meta
+        return prompt
+
 
 def _engine() -> _DummyEngine:
     return _DummyEngine()
@@ -107,6 +148,7 @@ def _engine() -> _DummyEngine:
 sce_stub.SelfCodingEngine = _DummyEngine
 sys.modules.setdefault("self_coding_engine", sce_stub)
 sys.modules.setdefault("menace.self_coding_engine", sce_stub)
+sys.modules.setdefault("self_coding_engine", sce_stub)
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]  # path-ignore

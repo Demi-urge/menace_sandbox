@@ -963,11 +963,21 @@ class SelfCodingEngine:
             "intent": intent,
             "error_log": error_log,
         }
-        if isinstance(intent, Mapping) and "top_k" in intent:
-            try:
-                prompt_kwargs["top_k"] = int(intent["top_k"])
-            except (TypeError, ValueError):
-                prompt_kwargs["top_k"] = intent["top_k"]
+        if isinstance(intent, Mapping):
+            if "top_k" in intent:
+                try:
+                    prompt_kwargs["top_k"] = int(intent["top_k"])
+                except (TypeError, ValueError):
+                    prompt_kwargs["top_k"] = intent["top_k"]
+            session_id = intent.get("session_id")
+            if not session_id and intent.get("session_ids"):
+                try:
+                    sessions = list(intent.get("session_ids") or [])
+                    session_id = sessions[-1] if sessions else None
+                except Exception:
+                    session_id = None
+            if session_id:
+                prompt_kwargs["session_id"] = session_id
 
         try:
             prompt_obj = context_builder.build_prompt(

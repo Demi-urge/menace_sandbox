@@ -193,6 +193,21 @@ class DummyEngine:
     def rollback_patch(self, patch_id):
         pass
 
+    def build_enriched_prompt(self, goal, *, intent=None, context_builder, **_):
+        if isinstance(goal, dict):
+            base_intent = dict(goal)
+            query = str(base_intent.get("query", ""))
+            if intent:
+                base_intent.update(intent)
+        else:
+            query = str(goal)
+            base_intent = dict(intent or {})
+        prompt = context_builder.build_prompt(query, intent=base_intent)
+        meta = dict(getattr(prompt, "metadata", {}) or {})
+        meta.setdefault("intent", base_intent)
+        prompt.metadata = meta
+        return prompt
+
 
 class DummyImprover:
     def run_cycle(self):
@@ -1078,20 +1093,29 @@ def test_auto_prompt_selection(monkeypatch):
 
     importlib.reload(sandbox_runner)
     prompt = sandbox_runner.build_section_prompt(
-        "a", T(sec_drop=True), context_builder=DummyBuilder()
+        "a",
+        T(sec_drop=True),
+        context_builder=DummyBuilder(),
+        engine=DummyEngine(),
     )
     assert "SECURITY FOCUS" in prompt.metadata.get("instruction", "")
     assert len(sandbox_runner._AUTO_TEMPLATES) >= 3
     cached = sandbox_runner._AUTO_TEMPLATES
 
     prompt = sandbox_runner.build_section_prompt(
-        "a", T(eff_drop=True), context_builder=DummyBuilder()
+        "a",
+        T(eff_drop=True),
+        context_builder=DummyBuilder(),
+        engine=DummyEngine(),
     )
     assert "EFFICIENCY FOCUS" in prompt.metadata.get("instruction", "")
     assert sandbox_runner._AUTO_TEMPLATES is cached
 
     prompt = sandbox_runner.build_section_prompt(
-        "a", T(), context_builder=DummyBuilder()
+        "a",
+        T(),
+        context_builder=DummyBuilder(),
+        engine=DummyEngine(),
     )
     assert "ROI IMPROVEMENT" in prompt.metadata.get("instruction", "")
 
@@ -1169,6 +1193,7 @@ def test_prompt_truncation_and_metrics(monkeypatch):
         "mod:sec",
         T(),
         context_builder=DummyBuilder(),
+        engine=DummyEngine(),
         snippet=snippet,
         max_length=50,
         summary_depth=1,
@@ -1256,6 +1281,7 @@ def test_prompt_synergy_and_length(monkeypatch):
         "mod:sec",
         T(),
         context_builder=DummyBuilder(""),
+        engine=DummyEngine(),
         snippet=snippet,
         max_length=50,
         summary_depth=1,
@@ -1280,7 +1306,7 @@ def test_build_section_prompt_vector_context():
 
     builder = DummyBuilder("vector ctx")
     prompt = sandbox_runner.build_section_prompt(
-        "mod", T(), context_builder=builder
+        "mod", T(), context_builder=builder, engine=DummyEngine()
     )
     assert any("vector ctx" in ex for ex in prompt.examples)
 

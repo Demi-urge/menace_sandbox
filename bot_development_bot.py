@@ -6,7 +6,7 @@ import json
 import os
 import time
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import List, Dict, Any, Iterable, Callable, Type
 import importlib.util
@@ -205,6 +205,11 @@ class BotSpec:
     description: str = ""
     function_docs: Dict[str, str] = field(default_factory=dict)
     capabilities: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a serialisable representation of the spec."""
+
+        return asdict(self)
 
 
 @dataclass
@@ -802,7 +807,7 @@ class BotDevelopmentBot:
                 raise
             return EngineResult(False, None, msg)
 
-    def _build_prompt(
+    def build_training_prompt(
         self,
         spec: BotSpec,
         *,
@@ -828,6 +833,8 @@ class BotDevelopmentBot:
 
         if context_builder is None:
             raise ValueError("context_builder is required")
+        if self.engine is None:
+            raise RuntimeError("SelfCodingEngine is required for prompt generation")
 
         problem_lines: list[str] = [
             f"# Bot specification: {spec.name}",
@@ -895,18 +902,63 @@ class BotDevelopmentBot:
             "Return only the complete Python code without explanations or markdown."
         )
         session_id = uuid.uuid4().hex
-        prompt_obj = context_builder.build_prompt(
-            intent_text,
-            intent_metadata=spec.to_dict(),
-            top_k=sample_limit,
-            session_id=session_id,
+        spec_meta = (
+            spec.to_dict() if hasattr(spec, "to_dict") else asdict(spec)
         )
+        intent_payload: Dict[str, Any] = {
+            "instruction": intent_text,
+            "sample_limit": sample_limit,
+            "top_k": sample_limit,
+            "session_id": session_id,
+            "session_ids": [session_id],
+        }
+        if isinstance(spec_meta, dict):
+            intent_payload.update(spec_meta)
+
+        build_fn = getattr(self.engine, "build_enriched_prompt", None)
+        if callable(build_fn):
+            prompt_obj = build_fn(
+                intent_text,
+                intent=intent_payload,
+                context_builder=context_builder,
+            )
+        else:
+            prompt_obj = context_builder.build_prompt(
+                intent_text,
+                intent=intent_payload,
+                top_k=sample_limit,
+                session_id=session_id,
+            )
 
         meta = dict(getattr(prompt_obj, "metadata", {}) or {})
-        meta.setdefault("session_ids", []).append(session_id)
+        meta.setdefault("instruction", intent_text)
+        meta.setdefault("sample_limit", sample_limit)
+        existing_sessions = meta.setdefault("session_ids", [])
+        for sid in intent_payload["session_ids"]:
+            if sid not in existing_sessions:
+                existing_sessions.append(sid)
         meta.setdefault("sample_context", list(prompt_obj.examples))
         prompt_obj.metadata = meta
         return prompt_obj
+
+    def _build_prompt(
+        self,
+        spec: BotSpec,
+        *,
+        context_builder: ContextBuilder,
+        sample_limit: int = 5,
+        _sample_sort_by: str = "confidence",
+        _sample_with_vectors: bool = True,
+    ) -> Prompt:
+        """Backward compatible alias for :meth:`build_training_prompt`."""
+
+        return self.build_training_prompt(
+            spec,
+            context_builder=context_builder,
+            sample_limit=sample_limit,
+            _sample_sort_by=_sample_sort_by,
+            _sample_with_vectors=_sample_with_vectors,
+        )
 
     def build_bot(
         self,

@@ -118,6 +118,7 @@ menace_pkg = importlib.util.module_from_spec(pkg_spec)
 sys.modules["menace"] = menace_pkg
 pkg_spec.loader.exec_module(menace_pkg)
 sce_stub = types.ModuleType("menace.self_coding_engine")
+sce_stub.MANAGER_CONTEXT = {}
 
 
 class _DummyEngine:
@@ -128,6 +129,21 @@ class _DummyEngine:
         self.calls.append(desc)
         return ""
 
+    def build_enriched_prompt(self, goal, *, intent=None, context_builder, **_):
+        if isinstance(goal, dict):
+            base_intent = dict(goal)
+            query = str(base_intent.get("query", ""))
+            if intent:
+                base_intent.update(intent)
+        else:
+            query = str(goal)
+            base_intent = dict(intent or {})
+        prompt = context_builder.build_prompt(query, intent=base_intent)
+        meta = dict(getattr(prompt, "metadata", {}) or {})
+        meta.setdefault("intent", base_intent)
+        prompt.metadata = meta
+        return prompt
+
 
 def _engine() -> _DummyEngine:
     return _DummyEngine()
@@ -135,6 +151,7 @@ def _engine() -> _DummyEngine:
 
 sce_stub.SelfCodingEngine = _DummyEngine
 sys.modules.setdefault("menace.self_coding_engine", sce_stub)
+sys.modules.setdefault("self_coding_engine", sce_stub)
 stub = types.ModuleType("db_router")
 stub.DBRouter = object
 stub.GLOBAL_ROUTER = None
