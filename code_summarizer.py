@@ -65,16 +65,16 @@ def _heuristic_summary(code: str, limit: int) -> str:
 def summarize_code(
     code: str,
     *,
-    context_builder: "ContextBuilder" | None,
+    context_builder: "ContextBuilder",
     max_summary_tokens: int = 128,
 ) -> str:
     """Return a short description of ``code``.
 
     The function attempts several local summarisation strategies before falling
     back to a simple heuristic based on the first line of the snippet.  When the
-    micro-model path is unavailable a provided :class:`ContextBuilder` is used to
-    build an enriched prompt with vector context and metadata.  If the builder is
-    missing or fails, a simple heuristic is used as a last resort.
+    micro-model path is unavailable the provided :class:`ContextBuilder` is used
+    to build an enriched prompt with vector context and metadata.  If prompt
+    generation fails, a simple heuristic is used as a last resort.
     """
 
     code = code.strip()
@@ -102,15 +102,7 @@ def summarize_code(
     except Exception:  # pragma: no cover - client may be missing
         OllamaClient = None  # type: ignore[assignment]
 
-    if context_builder is None:
-        try:  # pragma: no cover - builder creation best effort
-            from context_builder_util import create_context_builder
-
-            context_builder = create_context_builder()
-        except Exception:  # pragma: no cover - builder may be unavailable
-            context_builder = None
-
-    if OllamaClient is not None and context_builder is not None:
+    if OllamaClient is not None:
         try:  # pragma: no cover - defensive against runtime failures
             client = OllamaClient()  # type: ignore[call-arg]
             prompt = context_builder.build_prompt(
