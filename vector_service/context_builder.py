@@ -22,6 +22,7 @@ from filelock import FileLock
 
 from redaction_utils import redact_text
 from snippet_compressor import compress_snippets
+from context_builder import handle_failure, PromptBuildError
 
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
@@ -1420,15 +1421,24 @@ class ContextBuilder:
 
         if intent is None and intent_metadata is not None:
             intent = intent_metadata
-        return _build_prompt_internal(
-            query,
-            intent,
-            latent_queries=latent_queries,
-            top_k=top_k,
-            error_log=error_log,
-            context_builder=self,
-            **kwargs,
-        )
+        try:
+            return _build_prompt_internal(
+                query,
+                intent,
+                latent_queries=latent_queries,
+                top_k=top_k,
+                error_log=error_log,
+                context_builder=self,
+                **kwargs,
+            )
+        except PromptBuildError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive wrapper
+            handle_failure(
+                f"failed to build prompt for {query!r}",
+                exc,
+                logger=logger,
+            )
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -1599,7 +1609,10 @@ def _build_prompt_internal(
         "vectors": vectors,
     }
     if intent_meta:
-        meta_out["intent"] = intent_meta
+        if isinstance(intent_meta, dict):
+            meta_out["intent"] = dict(intent_meta)
+        else:
+            meta_out["intent"] = intent_meta
     if error_log:
         meta_out["error_log"] = error_log
 
@@ -1707,19 +1720,42 @@ def build_prompt(
     )
 
     avg_conf = sum(scores) / len(scores) if scores else None
-    meta_out: Dict[str, Any] = {"vector_confidences": scores, "vectors": vectors}
+    existing_meta = dict(getattr(prompt, "metadata", {}) or {})
+    meta_out: Dict[str, Any] = {
+        "vector_confidences": scores,
+        "vectors": vectors,
+    }
+    combined_meta = dict(meta_out)
+    combined_meta.update(existing_meta)
+
     if intent:
-        meta_out["intent"] = intent
-    if prompt.metadata:
-        prompt.metadata.update(meta_out)
-    else:
-        prompt.metadata = meta_out
+        merged_intent: Dict[str, Any] = {}
+        existing_intent = existing_meta.get("intent")
+        if isinstance(existing_intent, dict):
+            merged_intent.update(existing_intent)
+        elif existing_intent is not None:
+            merged_intent["original"] = existing_intent
+        merged_intent.update(intent)
+        combined_meta["intent"] = merged_intent
+    elif "intent" in existing_meta:
+        combined_meta["intent"] = existing_meta["intent"]
+
+    prompt.metadata = combined_meta
+
     if avg_conf is not None:
-        try:
-            prompt.vector_confidence = avg_conf
-        except Exception:
+        current_conf = getattr(prompt, "vector_confidence", None)
+        if current_conf is None:
+            try:
+                prompt.vector_confidence = avg_conf
+            except Exception:
+                prompt.metadata.setdefault("vector_confidence", avg_conf)
+        else:
             prompt.metadata.setdefault("vector_confidence", avg_conf)
-    prompt.origin = "context_builder"
+
+    if not getattr(prompt, "origin", None):
+        prompt.origin = "context_builder"
+    else:
+        prompt.metadata.setdefault("origin", prompt.origin)
     return prompt
 
 
