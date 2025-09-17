@@ -14,6 +14,10 @@ try:  # pragma: no cover - allow flat imports
     from .dynamic_path_router import resolve_path, path_for_prompt
 except Exception:  # pragma: no cover - fallback for flat layout
     from dynamic_path_router import resolve_path, path_for_prompt  # type: ignore
+try:  # pragma: no cover - import module for cache management
+    from . import dynamic_path_router as _path_router
+except Exception:  # pragma: no cover - fallback for flat layout
+    import dynamic_path_router as _path_router  # type: ignore
 import logging
 import subprocess
 import tempfile
@@ -23,8 +27,10 @@ import re
 import json
 import uuid
 import os
+import importlib
 from dataclasses import asdict
-from typing import Dict, Any, TYPE_CHECKING, Callable
+from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator
+from contextlib import contextmanager
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
 from .failure_fingerprint_store import (
@@ -659,6 +665,231 @@ class SelfCodingManager:
                 )
                 raise
         return builder
+
+    @contextmanager
+    def _temporary_repo_root(self, root: Path) -> Iterator[None]:
+        """Temporarily redirect dynamic path resolution to *root*."""
+
+        cache_lock = getattr(_path_router, "_CACHE_LOCK", None)
+        path_cache = getattr(_path_router, "_PATH_CACHE", None)
+        prev_root = getattr(_path_router, "_PROJECT_ROOT", None)
+        prev_roots = getattr(_path_router, "_PROJECT_ROOTS", None)
+        prev_cache: dict[str, Path] = {}
+        env_keys = (
+            "MENACE_ROOT",
+            "MENACE_ROOTS",
+            "SANDBOX_REPO_PATH",
+            "SANDBOX_REPO_PATHS",
+        )
+        prev_env = {key: os.environ.get(key) for key in env_keys}
+        if cache_lock and path_cache is not None:
+            with cache_lock:
+                try:
+                    prev_cache = dict(path_cache)
+                except Exception:
+                    prev_cache = {}
+                setattr(_path_router, "_PROJECT_ROOT", root)
+                setattr(_path_router, "_PROJECT_ROOTS", [root])
+                try:
+                    path_cache.clear()
+                except Exception:
+                    pass
+        for key in env_keys:
+            os.environ[key] = str(root)
+        try:
+            yield
+        finally:
+            for key, value in prev_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            if cache_lock and path_cache is not None:
+                with cache_lock:
+                    setattr(_path_router, "_PROJECT_ROOT", prev_root)
+                    setattr(_path_router, "_PROJECT_ROOTS", prev_roots)
+                    try:
+                        path_cache.clear()
+                        path_cache.update(prev_cache)
+                    except Exception:
+                        pass
+
+    def _workflow_test_service_args(self) -> tuple[str | None, dict[str, Any]]:
+        """Resolve pytest arguments and kwargs for post-patch self tests."""
+
+        def _resolve(source: Any) -> Any:
+            if source is None:
+                return None
+            if callable(source):
+                try:
+                    return source(self.bot_name)
+                except TypeError:
+                    return source()
+                except Exception:
+                    self.logger.exception("workflow test args callable failed")
+                    return None
+            if isinstance(source, dict):
+                return source.get(self.bot_name) or source.get("default")
+            return source
+
+        args = None
+        for provider in (
+            getattr(self.pipeline, "workflow_test_args", None),
+            getattr(self.engine, "workflow_test_args", None),
+            getattr(self.data_bot, "workflow_test_args", None),
+        ):
+            candidate = _resolve(provider)
+            if candidate:
+                args = candidate
+                break
+        if args is None and self.bot_registry and self.bot_name in getattr(
+            self.bot_registry, "graph", {}
+        ):
+            node = self.bot_registry.graph.nodes[self.bot_name]
+            for key in ("workflow_tests", "workflow_pytest_args", "pytest_args"):
+                candidate = node.get(key)
+                if candidate:
+                    args = candidate
+                    break
+        if isinstance(args, (list, tuple, set)):
+            args = " ".join(str(a) for a in args if a)
+        elif args is not None:
+            args = str(args)
+
+        kwargs: dict[str, Any] = {}
+        worker_src = _resolve(getattr(self.pipeline, "workflow_test_workers", None))
+        if worker_src is not None:
+            try:
+                kwargs["workers"] = int(worker_src)
+            except Exception:
+                self.logger.debug("invalid workflow_test_workers value: %s", worker_src)
+        extra_opts = _resolve(getattr(self.pipeline, "workflow_test_kwargs", None))
+        if isinstance(extra_opts, dict):
+            kwargs.update(extra_opts)
+        return args, kwargs
+
+    def run_post_patch_cycle(
+        self,
+        module_path: Path | str,
+        description: str,
+        *,
+        provenance_token: str,
+        context_meta: Dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Validate the updated module and execute workflow self tests."""
+
+        self.validate_provenance(provenance_token)
+        if self.quick_fix is None:
+            raise RuntimeError("QuickFixEngine validation unavailable")
+        repo_root = Path.cwd().resolve()
+        module = Path(module_path)
+        if not module.is_absolute():
+            module = (repo_root / module).resolve()
+        if not module.exists():
+            raise FileNotFoundError(f"module path not found: {module}")
+        self.refresh_quick_fix_context()
+        summary: dict[str, Any] = {}
+        ctx_meta = dict(context_meta or {})
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                subprocess.run(["git", "clone", str(repo_root), tmp_dir], check=True)
+                clone_root = Path(tmp_dir).resolve()
+                try:
+                    rel = module.relative_to(repo_root)
+                except ValueError:
+                    rel = module.name
+                cloned_module = clone_root / rel
+                if not cloned_module.exists():
+                    raise FileNotFoundError(
+                        f"cloned module path not found: {cloned_module}"
+                    )
+                with self._temporary_repo_root(clone_root):
+                    prev_cwd = os.getcwd()
+                    os.chdir(str(clone_root))
+                    try:
+                        valid, flags = self.quick_fix.validate_patch(
+                            str(cloned_module),
+                            description,
+                            repo_root=clone_root,
+                            provenance_token=provenance_token,
+                        )
+                        summary["quick_fix"] = {
+                            "validation_flags": list(flags),
+                        }
+                        if not valid or flags:
+                            raise RuntimeError(
+                                "quick fix validation failed"
+                            )
+                        passed, _pid, apply_flags = self.quick_fix.apply_validated_patch(
+                            str(cloned_module),
+                            description,
+                            ctx_meta,
+                            provenance_token=provenance_token,
+                        )
+                        summary["quick_fix"].update(
+                            {
+                                "apply_flags": list(apply_flags),
+                                "passed": bool(passed),
+                            }
+                        )
+                        if not passed or apply_flags:
+                            raise RuntimeError("quick fix application failed")
+                    finally:
+                        os.chdir(prev_cwd)
+            builder = create_context_builder()
+            ensure_fresh_weights(builder)
+            pytest_args, svc_kwargs = self._workflow_test_service_args()
+            svc_kwargs = dict(svc_kwargs)
+            svc_kwargs.setdefault("pytest_args", pytest_args)
+            svc_kwargs.setdefault("data_bot", self.data_bot)
+            svc_kwargs.setdefault("context_builder", builder)
+            try:
+                from .self_test_service import SelfTestService as _SelfTestService
+            except Exception:
+                try:
+                    from self_test_service import SelfTestService as _SelfTestService  # type: ignore
+                except Exception as exc:
+                    raise RuntimeError("SelfTestService unavailable") from exc
+            try:
+                service = _SelfTestService(**svc_kwargs)
+            except FileNotFoundError as exc:
+                raise RuntimeError("SelfTestService initialization failed") from exc
+            results, passed_modules = service.run_once()
+            summary["self_tests"] = {
+                "passed": int(results.get("passed", 0)),
+                "failed": int(results.get("failed", 0)),
+                "coverage": float(results.get("coverage", 0.0)),
+                "runtime": float(results.get("runtime", 0.0)),
+                "pytest_args": pytest_args,
+                "passed_modules": passed_modules,
+            }
+        except Exception as exc:
+            if self.data_bot:
+                try:
+                    self.data_bot.collect(
+                        self.bot_name,
+                        post_patch_cycle_success=0.0,
+                        post_patch_cycle_error=str(exc),
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to record post patch failure metrics"
+                    )
+            raise
+        else:
+            if self.data_bot:
+                try:
+                    failed_tests = float(summary.get("self_tests", {}).get("failed", 0))
+                    self.data_bot.collect(
+                        self.bot_name,
+                        post_patch_cycle_success=1.0,
+                        post_patch_cycle_failed_tests=failed_tests,
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "failed to record post patch success metrics"
+                    )
+            return summary
 
     def generate_patch(
         self,
@@ -2292,6 +2523,119 @@ def internalize_coding_bot(
             except Exception:  # pragma: no cover - best effort
                 manager.logger.exception(
                     "failed to subscribe degradation events for %s", bot_name
+                )
+    event_bus = (
+        getattr(manager, "event_bus", None)
+        or getattr(evolution_orchestrator, "event_bus", None)
+        or getattr(data_bot, "event_bus", None)
+    )
+    module_path: Path | None = None
+    try:
+        node = bot_registry.graph.nodes.get(bot_name) if bot_registry else None
+        if node:
+            module_str = node.get("module")
+            if module_str:
+                module_path = Path(module_str)
+    except Exception:
+        module_path = None
+    if (module_path is None or not module_path.exists()) and bot_name in getattr(bot_registry, "modules", {}):
+        try:
+            module_entry = bot_registry.modules.get(bot_name)
+            if module_entry:
+                module_path = Path(module_entry)
+        except Exception:
+            module_path = None
+    if module_path is None or not (module_path and module_path.exists()):
+        try:
+            module = importlib.import_module(bot_name)
+        except Exception:
+            module = None
+        if module is not None:
+            module_file = getattr(module, "__file__", "")
+            if module_file:
+                candidate = Path(module_file)
+                if candidate.exists():
+                    module_path = candidate
+    if module_path is not None and module_path.exists():
+        module_path = module_path.resolve()
+    provenance_token = None
+    if getattr(manager, "evolution_orchestrator", None) is not None:
+        provenance_token = getattr(manager.evolution_orchestrator, "provenance_token", None)
+    if provenance_token is None and evolution_orchestrator is not None:
+        provenance_token = getattr(evolution_orchestrator, "provenance_token", None)
+    description = f"internalize:{bot_name}"
+
+    def _emit_failure(reason: str) -> None:
+        if manager.data_bot:
+            try:
+                manager.data_bot.collect(
+                    bot_name,
+                    post_patch_cycle_success=0.0,
+                    post_patch_cycle_error=reason,
+                )
+            except Exception:
+                manager.logger.exception(
+                    "failed to record post patch failure metrics"
+                )
+        if event_bus:
+            payload = {
+                "bot": bot_name,
+                "description": description,
+                "path": str(module_path) if module_path else None,
+                "severity": 0.0,
+                "success": False,
+                "post_validation_success": False,
+                "post_validation_error": reason,
+            }
+            try:
+                event_bus.publish("self_coding:patch_attempt", payload)
+            except Exception:
+                manager.logger.exception(
+                    "failed to publish internalize patch_attempt for %s",
+                    bot_name,
+                )
+
+    if module_path is None or not module_path.exists():
+        _emit_failure("module_path_missing")
+        raise RuntimeError("module path unavailable for internalization")
+    if provenance_token is None:
+        _emit_failure("missing_provenance")
+        raise PermissionError("missing provenance token for post patch validation")
+    try:
+        post_details = manager.run_post_patch_cycle(
+            module_path,
+            description,
+            provenance_token=provenance_token,
+            context_meta={"reason": "internalize"},
+        )
+    except Exception as exc:
+        if RollbackManager is not None:
+            try:
+                RollbackManager().rollback("internalize", requesting_bot=bot_name)
+            except Exception:
+                manager.logger.exception("rollback failed for %s", bot_name)
+        _emit_failure(str(exc))
+        raise
+    else:
+        if event_bus:
+            payload = {
+                "bot": bot_name,
+                "description": description,
+                "path": str(module_path),
+                "severity": 0.0,
+                "success": True,
+                "post_validation_success": True,
+                "post_validation_details": post_details,
+            }
+            tests_failed = post_details.get("self_tests", {}).get("failed")
+            if tests_failed is not None:
+                payload["post_validation_tests_failed"] = tests_failed
+            try:
+                event_bus.publish("self_coding:patch_attempt", payload)
+            except Exception:
+                manager.logger.exception(
+                    "failed to publish internalize patch_attempt for %s",
+                    bot_name,
                 )
     return manager
 
