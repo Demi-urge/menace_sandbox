@@ -380,7 +380,7 @@ class ChatGPTClient(LLMClient):
 
     def ask(
         self,
-        messages: Prompt | List[Dict[str, str]],
+        messages: Prompt,
         *,
         timeout: int | None = None,
         max_retries: int | None = None,
@@ -399,127 +399,16 @@ class ChatGPTClient(LLMClient):
 
         provided_tags = list(tags) if tags is not None else None
 
-        def _coerce_prompt(candidate: Any, *, default_user: str = "") -> Prompt:
-            if isinstance(candidate, Prompt):
-                return candidate
-
-            metadata_attr = getattr(candidate, "metadata", None)
-            if isinstance(metadata_attr, dict):
-                metadata = dict(metadata_attr)
-            else:
-                metadata = dict(metadata_attr or {})
-
-            candidate_tags = list(getattr(candidate, "tags", []) or [])
-            meta_tags = list(metadata.get("tags", []) or [])
-            canonical_tags: List[str] = []
-            for tag in [*candidate_tags, *meta_tags]:
-                text = str(tag)
-                if text and text not in canonical_tags:
-                    canonical_tags.append(text)
-
-            intent_tags_meta: List[str] = []
-            for tag in list(metadata.get("intent_tags", []) or []):
-                text = str(tag)
-                if text and text not in intent_tags_meta:
-                    intent_tags_meta.append(text)
-
-            prompt_user = getattr(candidate, "user", default_user) or default_user
-            if not isinstance(prompt_user, str):
-                prompt_user = str(prompt_user)
-            prompt_user = prompt_user.strip()
-            if not prompt_user:
-                raise ValueError(
-                    "ChatGPTClient.ask cannot build a prompt from an empty candidate"
-                )
-
-            intent_meta: Dict[str, Any] = {}
-            if canonical_tags:
-                intent_meta["tags"] = list(canonical_tags)
-            if intent_tags_meta:
-                intent_meta["intent_tags"] = list(intent_tags_meta)
-            elif canonical_tags:
-                intent_meta["intent_tags"] = list(canonical_tags)
-
-            if "prior_ideas" in metadata and metadata["prior_ideas"]:
-                intent_meta.setdefault("prior_ideas", metadata["prior_ideas"])
-
-            origin = getattr(candidate, "origin", None) or metadata.get("origin")
-
-            try:
-                base_prompt = builder.build_prompt(
-                    prompt_user,
-                    intent_metadata=intent_meta or None,
-                )
-            except PromptBuildError:
-                raise
-            except Exception as exc:
-                handle_failure(
-                    "failed to build prompt from structured candidate",
-                    exc,
-                    logger=logger,
-                )
-                raise
-
-            metadata_payload = dict(metadata)
-            if canonical_tags and "tags" not in metadata_payload:
-                metadata_payload["tags"] = list(canonical_tags)
-            if intent_tags_meta:
-                metadata_payload.setdefault("intent_tags", list(intent_tags_meta))
-            elif canonical_tags:
-                metadata_payload.setdefault("intent_tags", list(canonical_tags))
-            if origin:
-                metadata_payload.setdefault("origin", origin)
-
-            return self._enrich_prompt_via_context(
-                base_prompt,
-                context_builder=builder,
-                tags=canonical_tags or None,
-                metadata=metadata_payload or None,
-                origin=origin,
-            )
-
         # Normalize messages to OpenAI chat format, requiring Prompt objects.
-        prompt_obj: Prompt
         if isinstance(messages, list):
-            logger.warning(
-                "list inputs to ChatGPTClient.ask are deprecated; "
-                "building a prompt via context_builder"
+            raise ValueError(
+                "ChatGPTClient.ask requires a Prompt instance; "
+                "rebuild chat history via context_builder.build_prompt()"
             )
-            if not messages:
-                raise ValueError("ChatGPTClient.ask requires at least one message")
-            user_entry: Dict[str, Any] | None = None
-            for entry in reversed(messages):
-                if entry.get("role") == "user":
-                    user_entry = entry
-                    break
-            if user_entry is None:
-                raise ValueError(
-                    "ChatGPTClient.ask requires a user message to build a prompt"
-                )
-            goal = str(user_entry.get("content", "") or "").strip()
-            if not goal:
-                raise ValueError(
-                    "ChatGPTClient.ask cannot build a prompt from an empty user message"
-                )
-            user_meta = user_entry.get("metadata")
-            intent_meta = dict(user_meta) if isinstance(user_meta, dict) else {}
-            if provided_tags is not None:
-                intent_meta.setdefault("tags", list(provided_tags))
-            try:
-                built = builder.build_prompt(goal, intent_metadata=intent_meta or None)
-            except PromptBuildError:
-                raise
-            except Exception as exc:
-                handle_failure(
-                    "failed to build prompt from chat history", exc, logger=logger
-                )
-            prompt_obj = _coerce_prompt(built, default_user=goal)
-        elif isinstance(messages, Prompt) or (
-            hasattr(messages, "user") and hasattr(messages, "metadata")
-        ):
-            prompt_obj = _coerce_prompt(messages)
-        else:
-            raise TypeError("ChatGPTClient.ask expects a Prompt or message list")
+        if not isinstance(messages, Prompt):
+            raise TypeError("ChatGPTClient.ask expects a Prompt instance")
+
+        prompt_obj = messages
 
         final_prompt, final_meta, final_tags, _final_intent_tags, final_origin = (
             self._prepare_prompt(
@@ -547,7 +436,7 @@ class ChatGPTClient(LLMClient):
                 text = str(tag)
                 if text and text not in log_tags_list:
                     log_tags_list.append(text)
-        tags = log_tags_list or None
+        log_tags = log_tags_list or None
 
         norm_messages: List[Dict[str, Any]] = []
         if getattr(final_prompt, "system", None):
@@ -558,16 +447,17 @@ class ChatGPTClient(LLMClient):
         if final_meta:
             user_msg["metadata"] = dict(final_meta)
         norm_messages.append(user_msg)
-        messages = norm_messages
+
+        messages_for_api = prepend_payment_notice(list(norm_messages))
 
         memory: Any | None = memory_manager or knowledge or self.gpt_memory
         use_mem = use_memory if use_memory is not None else memory is not None
 
-        def _log(request: List[Dict[str, str]], response: str) -> None:
-            prompt_str = request[-1].get("content", "") if request else ""
-            if tags is not None:
-                mem_tags = list(tags)
-                global_tags = list(tags)
+        def _log(prompt_value: Prompt, response: str) -> None:
+            prompt_str = getattr(prompt_value, "user", "") or ""
+            if log_tags is not None:
+                mem_tags = list(log_tags)
+                global_tags = list(log_tags)
             elif memory is knowledge:
                 mem_tags = []
                 global_tags = [IMPROVEMENT_PATH, INSIGHT]
@@ -592,8 +482,7 @@ class ChatGPTClient(LLMClient):
             except Exception:
                 logger.exception("failed to log interaction")
 
-        user_prompt = messages[-1].get("content", "") if messages else ""
-        messages_for_api = prepend_payment_notice(list(messages))
+        user_prompt = str(getattr(final_prompt, "user", "") or "")
         if use_mem:
             try:
                 ctx_parts: List[str] = []
@@ -705,7 +594,7 @@ class ChatGPTClient(LLMClient):
             logger.error("HTTP session unavailable, using offline response")
             result = self._offline_response(messages_for_api)
             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            _log(messages_for_api, text)
+            _log(final_prompt, text)
             return result
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -731,7 +620,7 @@ class ChatGPTClient(LLMClient):
                         raise
                     result = self._offline_response(messages_for_api)
                     text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    _log(messages_for_api, text)
+                    _log(final_prompt, text)
                     return result
                 continue
             except requests.RequestException as exc:
@@ -741,7 +630,7 @@ class ChatGPTClient(LLMClient):
                         raise
                     result = self._offline_response(messages_for_api)
                     text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    _log(messages_for_api, text)
+                    _log(final_prompt, text)
                     return result
                 continue
 
@@ -755,7 +644,7 @@ class ChatGPTClient(LLMClient):
                             raise
                         result = self._offline_response(messages_for_api)
                         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        _log(messages_for_api, text)
+                        _log(final_prompt, text)
                         return result
                     continue
                 if validate and not self._valid_schema(data):
@@ -763,11 +652,11 @@ class ChatGPTClient(LLMClient):
                     if attempt >= attempts - 1:
                         result = self._offline_response(messages_for_api)
                         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        _log(messages_for_api, text)
+                        _log(final_prompt, text)
                         return result
                     continue
                 text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                _log(messages_for_api, text)
+                _log(final_prompt, text)
                 return data
             elif resp.status_code in (401, 403):
                 logger.error("authorization error with OpenAI API (status %s)", resp.status_code)
@@ -775,7 +664,7 @@ class ChatGPTClient(LLMClient):
                     raise RuntimeError("unauthorized")
                 result = self._offline_response(messages_for_api)
                 text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                _log(messages_for_api, text)
+                _log(final_prompt, text)
                 return result
             elif resp.status_code == 429:
                 logger.warning("rate limited by OpenAI (attempt %s)", attempt + 1)
@@ -788,7 +677,7 @@ class ChatGPTClient(LLMClient):
                     break
         result = self._offline_response(messages_for_api)
         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-        _log(messages_for_api, text)
+        _log(final_prompt, text)
         return result
 
     def _generate(
