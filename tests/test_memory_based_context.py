@@ -37,6 +37,7 @@ sys.modules.setdefault(
 )
 
 import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
+from prompt_types import Prompt  # noqa: E402
 from log_tags import IMPROVEMENT_PATH  # noqa: E402
 
 
@@ -67,9 +68,18 @@ def test_memory_based_context(monkeypatch):
         def build(self, query, **_):
             return ""
 
-        def build_prompt(self, tags, prior=None, intent_metadata=None):
+        def build_prompt(self, query, *, intent_metadata=None, prior=None, **_):
             session_id = "sid"
-            context = self.build(" ".join(tags), session_id=session_id)
+            tags = list((intent_metadata or {}).get("tags", []) or [])
+            if isinstance(query, (list, tuple)):
+                query_text = " ".join(str(q) for q in query)
+            else:
+                query_text = str(query)
+            context_raw = self.build(
+                " ".join(tags) if tags else query_text,
+                session_id=session_id,
+            )
+            context = context_raw if isinstance(context_raw, str) else ""
             memory_ctx = ""
             mem = getattr(self, "memory", None)
             if mem:
@@ -83,13 +93,23 @@ def test_memory_based_context(monkeypatch):
                         if entries:
                             first = entries[0]
                             memory_ctx = getattr(first, "prompt", "") or getattr(first, "response", "")
-            parts = [prior, memory_ctx, context]
+            parts = [prior, memory_ctx, context, query_text]
             user = "\n".join(p for p in parts if p)
-            return types.SimpleNamespace(
-                user=user,
-                examples=None,
-                system=None,
-                metadata={"retrieval_session_id": session_id},
+            meta = {"retrieval_session_id": session_id, "origin": "context_builder"}
+            if tags:
+                meta["tags"] = list(tags)
+                meta["intent_tags"] = list(tags)
+            if intent_metadata:
+                extra_meta = dict(intent_metadata)
+                extra_meta.pop("tags", None)
+                meta.update(extra_meta)
+            return Prompt(
+                user,
+                system="",
+                examples=[],
+                tags=list(tags),
+                metadata=meta,
+                origin="context_builder",
             )
 
     builder = DummyBuilder()

@@ -38,6 +38,7 @@ sys.modules.setdefault(
 )
 
 import menace_sandbox.chatgpt_idea_bot as cib  # noqa: E402
+from prompt_types import Prompt  # noqa: E402
 
 
 class DummyBuilder:
@@ -53,9 +54,18 @@ class DummyBuilder:
         self.kwargs.append(kwargs)
         return "vector:" + query
 
-    def build_prompt(self, tags, prior=None, intent_metadata=None):
+    def build_prompt(self, query, *, intent_metadata=None, prior=None, **_):
         session_id = "sid"
-        context = self.build(" ".join(tags), session_id=session_id)
+        tags = list((intent_metadata or {}).get("tags", []) or [])
+        if isinstance(query, (list, tuple)):
+            query_text = " ".join(str(q) for q in query)
+        else:
+            query_text = str(query)
+        context_raw = self.build(
+            " ".join(tags) if tags else query_text,
+            session_id=session_id,
+        )
+        context = context_raw if isinstance(context_raw, str) else ""
         if context and len(context) > 200:
             context = context[:197] + "..."
         memory_ctx = ""
@@ -71,13 +81,23 @@ class DummyBuilder:
                     if entries:
                         first = entries[0]
                         memory_ctx = getattr(first, "prompt", "") or getattr(first, "response", "")
-        parts = [prior, memory_ctx, context]
+        parts = [prior, memory_ctx, context, query_text]
         user = "\n".join(p for p in parts if p)
-        return types.SimpleNamespace(
-            user=user,
-            examples=None,
-            system=None,
-            metadata={"retrieval_session_id": session_id},
+        meta = {"retrieval_session_id": session_id, "origin": "context_builder"}
+        if tags:
+            meta["tags"] = list(tags)
+            meta["intent_tags"] = list(tags)
+        if intent_metadata:
+            extra_meta = dict(intent_metadata)
+            extra_meta.pop("tags", None)
+            meta.update(extra_meta)
+        return Prompt(
+            user,
+            system="",
+            examples=[],
+            tags=list(tags),
+            metadata=meta,
+            origin="context_builder",
         )
 
 
@@ -110,7 +130,8 @@ def test_fallback_result_empty_context():
     )
     assert builder.calls == ["alpha"]
     assert "session_id" in builder.kwargs[0]
-    assert prompt.user == "hi"
+    assert prompt.user.splitlines()[0] == "hi"
+    assert "alpha" in prompt.user
     assert prompt.metadata["retrieval_session_id"]
 
 
@@ -134,6 +155,8 @@ def test_builder_context_compressed():
     prompt = client.build_prompt_with_memory(
         ["alpha"], prior="hi", context_builder=builder
     )
-    content = prompt.user.split("\n", 1)[1]
-    assert len(content) <= 200
-    assert content.endswith("...")
+    lines = prompt.user.splitlines()
+    assert len(lines) >= 3
+    # Second line contains the compressed context
+    assert len(lines[1]) <= 200
+    assert lines[1].endswith("...")

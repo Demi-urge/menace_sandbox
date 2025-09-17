@@ -77,7 +77,12 @@ class DummyKnowledge:
 def test_ask_injects_context_and_logs(monkeypatch):
     record = {}
     # stub requests module so ChatGPTClient doesn't require real dependency
-    cib.requests = type("R", (), {"Timeout": Exception, "RequestException": Exception})
+    stub_requests = types.SimpleNamespace(
+        Timeout=Exception,
+        RequestException=Exception,
+        Session=lambda: DummySession({}),
+    )
+    monkeypatch.setattr(cib, "requests", stub_requests)
 
     session = DummySession(record)
 
@@ -87,6 +92,21 @@ def test_ask_injects_context_and_logs(monkeypatch):
 
         def build(self, query, **_):
             return ""
+
+        def build_prompt(self, goal, *, intent_metadata=None, **_):
+            meta = dict(intent_metadata or {})
+            tags = list(meta.get("tags", []) or [])
+            if tags and not meta.get("intent_tags"):
+                meta["intent_tags"] = list(tags)
+            meta.setdefault("origin", "context_builder")
+            return Prompt(
+                goal,
+                system="",
+                examples=[],
+                tags=tags,
+                metadata=meta,
+                origin=meta.get("origin"),
+            )
 
     client = cib.ChatGPTClient(api_key="key", session=session, context_builder=DummyBuilder())
     monkeypatch.setattr(cib, "govern_retrieval", lambda *a, **k: ({}, None))
@@ -113,7 +133,12 @@ def test_ask_injects_context_and_logs(monkeypatch):
 
 def test_prompt_equivalence(monkeypatch):
     record = {}
-    cib.requests = type("R", (), {"Timeout": Exception, "RequestException": Exception})
+    stub_requests = types.SimpleNamespace(
+        Timeout=Exception,
+        RequestException=Exception,
+        Session=lambda: DummySession({}),
+    )
+    monkeypatch.setattr(cib, "requests", stub_requests)
     session = DummySession(record)
 
     class DummyBuilder:
@@ -127,7 +152,9 @@ def test_prompt_equivalence(monkeypatch):
         system="sys",
         user="hello",
         examples=["ex"],
-        metadata={"m": 1},
+        tags=["alpha"],
+        metadata={"m": 1, "intent_tags": ["alpha"], "origin": "context_builder"},
+        origin="context_builder",
     )
     resp = client.ask(prompt_obj, use_memory=False)
 
@@ -135,8 +162,14 @@ def test_prompt_equivalence(monkeypatch):
         [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "ex"},
-            {"role": "user", "content": "hello", "metadata": {"m": 1}},
         ]
     )
-    assert record["messages"] == expected
+    actual = record["messages"]
+    assert actual[:2] == expected
+    assert actual[2]["role"] == "user"
+    assert actual[2]["content"] == "hello"
+    meta = actual[2].get("metadata", {})
+    assert meta.get("m") == 1
+    assert set(meta.get("intent_tags", [])) == {"alpha"}
+    assert meta.get("origin") == "context_builder"
     assert resp["choices"][0]["message"]["content"] == "ok"
