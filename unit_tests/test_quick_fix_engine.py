@@ -1,6 +1,8 @@
 import sys
 import types
 import contextvars
+from pathlib import Path
+
 import pytest
 
 
@@ -68,9 +70,15 @@ def qfe(monkeypatch):
     monkeypatch.setitem(sys.modules, "patch_provenance", patch_mod)
 
     cb_util_mod = types.ModuleType("context_builder_util")
+
     def ensure_fresh_weights(builder):
         builder.refresh_db_weights()
+
+    def create_context_builder(*a, **k):
+        return ContextBuilder()
+
     cb_util_mod.ensure_fresh_weights = ensure_fresh_weights
+    cb_util_mod.create_context_builder = create_context_builder
     monkeypatch.setitem(sys.modules, "context_builder_util", cb_util_mod)
 
     data_bot_mod = types.ModuleType("menace_sandbox.data_bot")
@@ -383,3 +391,93 @@ def test_high_risk_aborts_patch(qfe, monkeypatch):
 
     assert res == (None, ["danger"])
     assert patch_logger.flags == ["danger"]
+
+
+def test_static_analysis_context_reaches_helper(qfe, tmp_path, monkeypatch):
+    source = """\
+def process(items):
+    for i in range(len(items)):
+        print(i)
+"""
+    module_path = tmp_path / "range_module.py"
+    module_path.write_text(source, encoding="utf-8")
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, description, session_id=None, include_vectors=False):
+            return "", "", []
+
+    class DummyEngine:
+        def __init__(self):
+            self.helper_calls: list[str] = []
+            self.helper_kwargs: list[dict[str, object]] = []
+            self.last_context_meta: dict[str, object] | None = None
+
+        def generate_helper(self, desc, **kwargs):
+            self.helper_calls.append(desc)
+            self.helper_kwargs.append(kwargs)
+            return "helper"
+
+        def apply_patch_with_retry(self, path, helper, **kwargs):
+            self.last_context_meta = kwargs.get("context_meta")
+            return 1, "", ""
+
+    builder = DummyBuilder()
+    engine = DummyEngine()
+    manager = qfe.SelfCodingManager()
+    manager.engine = engine
+    manager.register_patch_cycle = lambda *a, **k: None
+
+    monkeypatch.setattr(qfe, "resolve_path", lambda name: module_path)
+    monkeypatch.setattr(qfe, "path_for_prompt", lambda p: Path(p).as_posix())
+
+    qfe.generate_patch(
+        module="range_module",
+        manager=manager,
+        engine=engine,
+        context_builder=builder,
+        provenance_token="tok",
+        description="desc",
+    )
+
+    assert any("Static analysis findings" in call for call in engine.helper_calls)
+    helper_meta = engine.helper_kwargs[0]["metadata"]  # type: ignore[index]
+    assert helper_meta["static_analysis"]["findings"]  # type: ignore[index]
+    assert engine.last_context_meta["static_analysis"]["findings"]  # type: ignore[index]
+
+
+def test_static_analysis_blockers_abort(qfe, tmp_path, monkeypatch):
+    source = """\
+import definitely_missing_package
+
+value = 1
+"""
+    module_path = tmp_path / "missing_import.py"
+    module_path.write_text(source, encoding="utf-8")
+
+    class DummyBuilder:
+        def refresh_db_weights(self):
+            pass
+
+        def build(self, *a, **k):
+            return "", "", []
+
+    manager = qfe.SelfCodingManager()
+    manager.engine = object()
+    manager.register_patch_cycle = lambda *a, **k: None
+
+    monkeypatch.setattr(qfe, "resolve_path", lambda name: module_path)
+    monkeypatch.setattr(qfe, "path_for_prompt", lambda p: Path(p).as_posix())
+
+    result = qfe.generate_patch(
+        module="missing_import",
+        manager=manager,
+        context_builder=DummyBuilder(),
+        provenance_token="tok",
+        return_flags=True,
+    )
+
+    assert result[0] is None
+    assert any(flag.startswith("static_blocker:") for flag in result[1])
