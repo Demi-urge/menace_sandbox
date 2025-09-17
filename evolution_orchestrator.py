@@ -38,6 +38,11 @@ except Exception as exc:  # pragma: no cover - missing dependency
         "mutation_logger is required for EvolutionOrchestrator"
     ) from exc
 
+try:  # pragma: no cover - optional dependency
+    from .rollback_manager import RollbackManager
+except Exception:  # pragma: no cover - fallback when unavailable
+    RollbackManager = None  # type: ignore
+
 try:  # pragma: no cover - allow flat imports
     from .unified_event_bus import UnifiedEventBus
 except Exception as exc:  # pragma: no cover - missing dependency
@@ -311,6 +316,7 @@ class EvolutionOrchestrator:
                 "success": False,
                 "error": "module_path_missing",
                 "severity": severity,
+                "post_validation_success": None,
             }
             if bus:
                 try:
@@ -334,6 +340,8 @@ class EvolutionOrchestrator:
             except Exception:
                 self.logger.exception("failed to record patch attempt")
             return
+        post_details: dict[str, Any] | None = None
+        post_error: str | None = None
         try:
             builder = create_context_builder()
             try:
@@ -368,16 +376,46 @@ class EvolutionOrchestrator:
             patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
             commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
             success = False
+        if success:
+            try:
+                post_details = self.selfcoding_manager.run_post_patch_cycle(
+                    module_path,
+                    desc,
+                    context_meta=context,
+                    provenance_token=self.provenance_token,
+                )
+            except Exception as exc:
+                post_error = str(exc)
+                self.logger.exception(
+                    "post patch validation failed for %s",
+                    bot or self.selfcoding_manager.bot_name,
+                )
+                success = False
+                if RollbackManager is not None and patch_id is not None:
+                    try:
+                        RollbackManager().rollback(
+                            str(patch_id),
+                            requesting_bot=bot or self.selfcoding_manager.bot_name,
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "rollback failed for %s",
+                            bot or self.selfcoding_manager.bot_name,
+                        )
         roi_before = float(context.get("roi_baseline", 0.0))
         err_before = float(context.get("errors_baseline", 0.0))
-        roi_after = (
-            self.data_bot.roi(bot) if hasattr(self.data_bot, "roi") else roi_before
-        )
-        err_after = (
-            self.data_bot.average_errors(bot)
-            if hasattr(self.data_bot, "average_errors")
-            else err_before
-        )
+        if success:
+            roi_after = (
+                self.data_bot.roi(bot) if hasattr(self.data_bot, "roi") else roi_before
+            )
+            err_after = (
+                self.data_bot.average_errors(bot)
+                if hasattr(self.data_bot, "average_errors")
+                else err_before
+            )
+        else:
+            roi_after = roi_before
+            err_after = err_before
         roi_delta = roi_after - roi_before
         err_delta = err_after - err_before
         try:
@@ -390,7 +428,7 @@ class EvolutionOrchestrator:
                     patch_id=patch_id,
                     reason=desc,
                     trigger="degradation",
-                    performance=roi_delta,
+                    performance=roi_delta if success else 0.0,
                     bottleneck=err_delta,
                 )
             )
@@ -411,6 +449,18 @@ class EvolutionOrchestrator:
             "severity": severity,
             "success": success,
         }
+        if post_details is None and post_error is None:
+            payload["post_validation_success"] = None
+        else:
+            payload["post_validation_success"] = post_error is None
+        if post_error is not None:
+            payload["post_validation_error"] = post_error
+            payload["rolled_back"] = True
+        if post_details is not None:
+            payload["post_validation_details"] = post_details
+            tests_failed = post_details.get("self_tests", {}).get("failed")
+            if tests_failed is not None:
+                payload["post_validation_tests_failed"] = tests_failed
         if bus:
             try:
                 bus.publish("self_coding:patch_attempt", payload)
@@ -990,6 +1040,11 @@ class EvolutionOrchestrator:
                 return
             if not self.selfcoding_manager.should_refactor():
                 return
+            bus = (
+                getattr(self.selfcoding_manager, "event_bus", None)
+                or self.event_bus
+                or getattr(self.data_bot, "event_bus", None)
+            )
             try:
                 mod = inspect.getmodule(module.__class__)
                 path = Path(getattr(mod, "__file__", "")) if mod else None
@@ -1007,21 +1062,94 @@ class EvolutionOrchestrator:
                     reason,
                     context_meta=meta,
                 )
-                after = self._latest_roi()
                 patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
-                self.history.add(
-                    EvolutionEvent(
-                        action=f"patch:{path.name}",
-                        before_metric=before_roi,
-                        after_metric=after,
-                        roi=after - before_roi,
-                        patch_id=patch_id,
-                        reason=reason,
-                        trigger=trigger,
-                        performance=delta_roi,
-                        bottleneck=delta_err,
+                commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
+                success = bool(patch_id and commit)
+                post_details: dict[str, Any] | None = None
+                post_error: str | None = None
+                if success:
+                    try:
+                        post_details = self.selfcoding_manager.run_post_patch_cycle(
+                            path,
+                            reason,
+                            context_meta=meta,
+                            provenance_token=self.provenance_token,
+                        )
+                    except Exception as exc:
+                        post_error = str(exc)
+                        self.logger.exception(
+                            "post patch validation failed for %s",
+                            self.selfcoding_manager.bot_name,
+                        )
+                        success = False
+                        if RollbackManager is not None and patch_id is not None:
+                            try:
+                                RollbackManager().rollback(
+                                    str(patch_id),
+                                    requesting_bot=self.selfcoding_manager.bot_name,
+                                )
+                            except Exception:
+                                self.logger.exception(
+                                    "rollback failed for %s",
+                                    self.selfcoding_manager.bot_name,
+                                )
+                before = before_roi
+                after = self._latest_roi() if success else before
+                roi_delta_local = after - before
+                err_before_local = (error_rate - delta_err)
+                err_after_local = self._error_rate() if success else err_before_local
+                err_delta_local = err_after_local - err_before_local
+                try:
+                    self.history.add(
+                        EvolutionEvent(
+                            action=f"patch:{path.name}" if success else "patch_failed",
+                            before_metric=before,
+                            after_metric=after if success else before,
+                            roi=roi_delta_local if success else 0.0,
+                            patch_id=patch_id,
+                            reason=reason,
+                            trigger=trigger,
+                            performance=roi_delta_local if success else 0.0,
+                            bottleneck=err_delta_local,
+                        )
                     )
-                )
+                except Exception:
+                    self.logger.exception("failed to record patch result")
+                payload = {
+                    "bot": self.selfcoding_manager.bot_name,
+                    "patch_id": patch_id,
+                    "commit": commit,
+                    "roi_before": before,
+                    "roi_after": after if success else before,
+                    "roi_delta": roi_delta_local if success else 0.0,
+                    "errors_before": err_before_local,
+                    "errors_after": err_after_local,
+                    "error_delta": err_delta_local,
+                    "description": reason,
+                    "path": str(path),
+                    "severity": float(meta.get("delta_roi", 0.0)),
+                    "success": success,
+                }
+                if post_details is None and post_error is None:
+                    payload["post_validation_success"] = None
+                else:
+                    payload["post_validation_success"] = post_error is None
+                if post_error is not None:
+                    payload["post_validation_error"] = post_error
+                    payload["rolled_back"] = True
+                if post_details is not None:
+                    payload["post_validation_details"] = post_details
+                    tests_failed = post_details.get("self_tests", {}).get("failed")
+                    if tests_failed is not None:
+                        payload["post_validation_tests_failed"] = tests_failed
+                if bus:
+                    try:
+                        bus.publish("self_coding:patch_attempt", payload)
+                    except Exception:
+                        self.logger.exception(
+                            "failed to publish patch_attempt for %s",
+                            self.selfcoding_manager.bot_name,
+                        )
             except Exception:
                 self.logger.exception("self coding patch failed")
 
