@@ -1827,7 +1827,8 @@ class SelfTestService:
             self._prompt_snippets = {}
 
         other_args = [a for a in self.pytest_args if a.startswith("-")]
-        paths = [a for a in self.pytest_args if not a.startswith("-")]
+        requested_paths = [a for a in self.pytest_args if not a.startswith("-")]
+        paths = list(requested_paths)
         if not paths:
             paths = [None]
 
@@ -2459,6 +2460,7 @@ class SelfTestService:
                 "runtime": runtime_avg,
                 "total_runtime": runtime_total,
                 "suite_metrics": suite_metrics,
+                "workflow_tests": list(requested_paths),
             }
             if retry_errors:
                 self.results["retry_errors"] = retry_errors

@@ -5,6 +5,7 @@ pytest.importorskip("networkx")
 pytest.importorskip("pandas")
 
 import sys
+import json
 import types
 stub_env = types.ModuleType("environment_bootstrap")
 stub_env.EnvironmentBootstrapper = object
@@ -128,6 +129,7 @@ code_db_stub.CodeDB = CodeDB
 sys.modules["menace.code_database"] = code_db_stub
 sys.modules["code_database"] = code_db_stub
 import menace.self_coding_manager as scm
+from sandbox_settings import normalize_workflow_tests as real_normalize
 import menace.model_automation_pipeline as mapl
 import menace.pre_execution_roi_bot as prb
 from menace.evolution_history_db import EvolutionHistoryDB
@@ -215,6 +217,124 @@ class DummyDataBot:
 
     def log_evolution_cycle(self, *a, **k) -> None:  # pragma: no cover - simple
         pass
+
+
+def _make_manager(bot_name: str = "bot") -> scm.SelfCodingManager:
+    manager = object.__new__(scm.SelfCodingManager)
+    manager.pipeline = types.SimpleNamespace(
+        workflow_test_args=None,
+        workflow_test_workers=None,
+        workflow_test_kwargs=None,
+    )
+    manager.engine = types.SimpleNamespace(workflow_test_args=None)
+    manager.data_bot = types.SimpleNamespace(workflow_test_args=None)
+    manager.bot_name = bot_name
+    manager.logger = logging.getLogger(f"workflow-test-{bot_name}")
+
+    class _Graph:
+        def __init__(self) -> None:
+            self.nodes: dict[str, dict[str, object]] = {}
+
+        def __contains__(self, name: str) -> bool:
+            return name in self.nodes
+
+    manager.bot_registry = types.SimpleNamespace(
+        graph=_Graph(),
+        modules={},
+        _lock=None,
+        register_bot=lambda *a, **k: None,
+    )
+    return manager
+
+
+def test_workflow_args_registry_fallback(monkeypatch):
+    manager = _make_manager("registry_bot")
+    manager.bot_registry.graph.nodes["registry_bot"] = {
+        "workflow_tests": ["tests/test_registry_path.py"],
+    }
+    monkeypatch.setattr(
+        scm,
+        "get_bot_workflow_tests",
+        lambda name, registry=None, **_: list(
+            registry.graph.nodes.get(name, {}).get("workflow_tests", [])
+        ),
+    )
+    pytest_args, kwargs, tests, sources = manager._workflow_test_service_args()
+    assert pytest_args == "tests/test_registry_path.py"
+    assert kwargs == {}
+    assert tests == ["tests/test_registry_path.py"]
+    assert sources == {"registry": ["tests/test_registry_path.py"]}
+
+
+def test_workflow_args_summary_fallback(tmp_path, monkeypatch):
+    manager = _make_manager("summary_bot")
+    manager._historical_workflow_tests = ["tests/test_summary_selection.py"]
+    normalize_calls: list[tuple[object, list[str]]] = []
+    original_normalize = real_normalize
+
+    def _track_normalize(value):
+        result = original_normalize(value)
+        normalize_calls.append((value, list(result)))
+        return result
+
+    monkeypatch.setattr(scm, "normalize_workflow_tests", _track_normalize)
+    monkeypatch.setattr(scm, "resolve_path", lambda value: tmp_path / value)
+    monkeypatch.setattr(
+        scm,
+        "get_bot_workflow_tests",
+        lambda *_a, **_k: [],
+    )
+    try:
+        pytest_args, kwargs, tests, sources = manager._workflow_test_service_args()
+    except RuntimeError as exc:  # pragma: no cover - debug aid
+        pytest.fail(f"summary fallback failed: {exc}; normalize_calls={normalize_calls}")
+    assert pytest_args == "tests/test_summary_selection.py"
+    assert kwargs == {}
+    assert tests == ["tests/test_summary_selection.py"]
+    assert sources == {"summary": ["tests/test_summary_selection.py"]}
+
+
+def test_workflow_args_heuristic_fallback(tmp_path, monkeypatch):
+    manager = _make_manager("alpha_bot")
+    project_root = tmp_path
+    tests_dir = project_root / "tests"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test_alpha_bot.py"
+    test_file.write_text("def test_placeholder():\n    assert True\n")
+    module_dir = project_root / "src"
+    module_dir.mkdir()
+    module_path = module_dir / "alpha_bot.py"
+    module_path.write_text("value = 1\n")
+    manager.bot_registry.graph.nodes["alpha_bot"] = {
+        "module": str(module_path),
+    }
+    monkeypatch.chdir(project_root)
+    monkeypatch.setattr(scm, "resolve_path", lambda value: project_root / value)
+    monkeypatch.setattr(
+        scm,
+        "get_bot_workflow_tests",
+        lambda *_a, **_k: [],
+    )
+    pytest_args, kwargs, tests, sources = manager._workflow_test_service_args()
+    expected_path = str(test_file.resolve())
+    assert pytest_args == expected_path
+    assert kwargs == {}
+    assert tests == [expected_path]
+    assert sources == {"heuristic": [expected_path]}
+
+
+def test_workflow_args_failure_when_no_tests(tmp_path, monkeypatch):
+    manager = _make_manager("ghost_bot")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(scm, "resolve_path", lambda value: tmp_path / value)
+    monkeypatch.setattr(
+        scm,
+        "get_bot_workflow_tests",
+        lambda *_a, **_k: [],
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        manager._workflow_test_service_args()
+    assert "no workflow tests resolved" in str(excinfo.value)
 
 
 def test_run_patch_logs_evolution(monkeypatch, tmp_path):
