@@ -11,7 +11,7 @@ from pathlib import Path
 from context_builder import handle_failure, PromptBuildError
 from billing.prompt_notice import prepend_payment_notice
 from prompt_types import Prompt
-from llm_interface import LLMClient, LLMResult
+from llm_interface import LLMClient, LLMResult, VALID_PROMPT_ORIGINS
 try:  # pragma: no cover - optional billing dependency
     import stripe_billing_router  # noqa: F401
 except Exception:  # pragma: no cover - best effort
@@ -229,14 +229,56 @@ class ChatGPTClient(LLMClient):
         canonical_tags = [str(tag) for tag in raw_tags if str(tag)]
         unique_tags = list(dict.fromkeys(canonical_tags)) if canonical_tags else []
 
-        enriched = False
-        enrich_fn = getattr(context_builder, "enrich_prompt", None)
-        if callable(enrich_fn) and unique_tags:
+        metadata_attr = getattr(prompt, "metadata", None)
+        if isinstance(metadata_attr, dict):
+            metadata_snapshot = dict(metadata_attr)
+        else:
+            metadata_snapshot = dict(metadata_attr or {})
+
+        origin = getattr(prompt, "origin", "") or metadata_snapshot.get("origin")
+        if origin not in VALID_PROMPT_ORIGINS:
+            raise ValueError("ChatGPTClient requires prompts built by context_builder")
+        if getattr(prompt, "origin", None) != origin and origin:
             try:
-                result = enrich_fn(prompt, tags=unique_tags)
+                setattr(prompt, "origin", origin)
+            except Exception:
+                pass
+
+        prompt_tags = list(getattr(prompt, "tags", []) or [])
+        metadata_tags = list(metadata_snapshot.get("tags", []) or [])
+        metadata_intent_tags = list(metadata_snapshot.get("intent_tags", []) or [])
+
+        merged_tags = (
+            list(dict.fromkeys([*prompt_tags, *metadata_tags, *unique_tags]))
+            if (prompt_tags or metadata_tags or unique_tags)
+            else []
+        )
+        merged_intent_tags = list(
+            dict.fromkeys([*metadata_intent_tags, *unique_tags])
+        )
+        if not merged_intent_tags and merged_tags:
+            merged_intent_tags = list(merged_tags)
+
+        metadata_payload: Dict[str, Any] = dict(metadata_snapshot)
+        if merged_tags:
+            metadata_payload["tags"] = list(merged_tags)
+        if merged_intent_tags:
+            metadata_payload["intent_tags"] = list(merged_intent_tags)
+        if origin:
+            metadata_payload["origin"] = origin
+
+        final_prompt = prompt
+        enrich_fn = getattr(context_builder, "enrich_prompt", None)
+        if callable(enrich_fn):
+            try:
+                result = enrich_fn(
+                    prompt,
+                    tags=list(merged_tags) or None,
+                    metadata=dict(metadata_payload),
+                    origin=origin,
+                )
                 if result is not None:
-                    prompt = result
-                enriched = True
+                    final_prompt = result
             except PromptBuildError:
                 raise
             except Exception:
@@ -244,42 +286,70 @@ class ChatGPTClient(LLMClient):
                 if RAISE_ERRORS:
                     raise
 
-        if not enriched:
-            metadata_attr = getattr(prompt, "metadata", None)
-            if isinstance(metadata_attr, dict):
-                metadata = metadata_attr
+        def _ensure_prompt_fields(target: Prompt) -> Prompt:
+            meta_attr = getattr(target, "metadata", None)
+            if isinstance(meta_attr, dict):
+                meta_dict = meta_attr
             else:
-                metadata = dict(metadata_attr or {})
-            base_tags = list(getattr(prompt, "tags", []) or [])
-            merged_tags = (
-                list(dict.fromkeys([*base_tags, *unique_tags]))
-                if unique_tags
-                else base_tags
-            )
-            if merged_tags and "tags" not in metadata:
-                metadata.setdefault("tags", list(merged_tags))
-            if not isinstance(metadata_attr, dict):
+                meta_dict = dict(meta_attr or {})
+
+            if merged_tags:
+                existing_meta_tags = list(meta_dict.get("tags", []) or [])
+                combined_meta_tags = list(
+                    dict.fromkeys([*existing_meta_tags, *merged_tags])
+                )
+                if combined_meta_tags:
+                    meta_dict["tags"] = combined_meta_tags
+
+            if merged_intent_tags:
+                existing_intent = list(meta_dict.get("intent_tags", []) or [])
+                combined_intent = list(
+                    dict.fromkeys([*existing_intent, *merged_intent_tags])
+                )
+                if combined_intent:
+                    meta_dict["intent_tags"] = combined_intent
+
+            if origin and meta_dict.get("origin") != origin:
+                meta_dict["origin"] = origin
+
+            if not isinstance(meta_attr, dict):
                 try:
-                    setattr(prompt, "metadata", metadata)
+                    setattr(target, "metadata", meta_dict)
                 except Exception:
                     pass
-            if merged_tags and list(getattr(prompt, "tags", []) or []) != list(merged_tags):
+
+            if merged_tags:
+                current_tags = list(getattr(target, "tags", []) or [])
+                combined_tags = list(
+                    dict.fromkeys([*current_tags, *merged_tags])
+                )
+                if combined_tags and combined_tags != current_tags:
+                    try:
+                        setattr(target, "tags", combined_tags)
+                    except Exception:
+                        pass
+
+            if origin and getattr(target, "origin", None) != origin:
                 try:
-                    setattr(prompt, "tags", list(merged_tags))
+                    setattr(target, "origin", origin)
                 except Exception:
                     pass
-            origin = (
-                getattr(prompt, "origin", "")
-                or metadata.get("origin")
-                or "context_builder"
-            )
-            if getattr(prompt, "origin", None) != origin:
-                try:
-                    setattr(prompt, "origin", origin)
-                except Exception:
-                    pass
+
+            return target
+
+        final_prompt = _ensure_prompt_fields(final_prompt)
+
+        final_meta_attr = getattr(final_prompt, "metadata", None)
+        if isinstance(final_meta_attr, dict):
+            final_meta = final_meta_attr
+        else:
+            final_meta = dict(final_meta_attr or {})
+        final_origin = getattr(final_prompt, "origin", "") or final_meta.get("origin")
+        if final_origin not in VALID_PROMPT_ORIGINS:
+            raise ValueError("context builder returned unexpected prompt origin")
+
         return super().generate(
-            prompt,
+            final_prompt,
             parse_fn=parse_fn,
             backend=backend,
             context_builder=context_builder,
