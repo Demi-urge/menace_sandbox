@@ -146,6 +146,22 @@ sys.modules["code_database"] = code_db_stub
 
 import menace.self_coding_manager as scm
 
+def _quick_fix_helper(manager, description, **kwargs):
+    create = getattr(scm, "create_context_builder", lambda: None)
+    builder = create()
+    ensure = getattr(scm, "ensure_fresh_weights", lambda *_a, **_k: None)
+    if builder is not None:
+        ensure(builder)
+    helper = getattr(scm, "_BASE_MANAGER_GENERATE_HELPER", lambda *_a, **_k: "")
+    call_kwargs = {k: v for k, v in kwargs.items() if k != "context_builder"}
+    try:
+        return helper(manager, description, context_builder=builder, **call_kwargs)
+    except TypeError:
+        return helper(manager, description, **call_kwargs)
+
+
+qfe_stub.manager_generate_helper = _quick_fix_helper
+
 
 class DummyBuilder:
     def refresh_db_weights(self) -> None:
