@@ -195,7 +195,10 @@ def test_summarize_and_prune_via_client(monkeypatch):
     )
 
     for i in range(3):
-        client.ask([{"role": "user", "content": f"ask{i}"}], tags=["insight"])
+        prompt_obj = builder.build_prompt(
+            f"ask{i}", intent_metadata={"tags": ["insight"]}
+        )
+        client.ask(prompt_obj, tags=["insight"])
 
     assert len(mem.search_context("", tags=["insight"])) == 3
     mem.compact({"insight": 1})

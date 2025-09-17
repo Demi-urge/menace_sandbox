@@ -113,8 +113,12 @@ def test_ask_injects_context_and_logs(monkeypatch):
     monkeypatch.setattr(cib, "redact", lambda x: x)
     knowledge = DummyKnowledge(record)
 
+    prompt_obj = client.context_builder.build_prompt(
+        "hello", intent_metadata={"tags": ["t"]}
+    )
+
     resp = client.ask(
-        [{"role": "user", "content": "hello"}],
+        prompt_obj,
         knowledge=knowledge,
         use_memory=True,
         relevance_threshold=0.5,

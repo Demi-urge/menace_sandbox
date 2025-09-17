@@ -191,7 +191,8 @@ def test_ask_logs_interaction(monkeypatch):
         "log_with_tags",
         lambda mem, prompt, response, tags: logged.append((prompt, response, tags)),
     )
-    client.ask([{"role": "user", "content": "hi"}], use_memory=False)
+    prompt_obj = builder.build_prompt("hi")
+    client.ask(prompt_obj, use_memory=False)
     assert "hi" in logged[0][0]
     assert logged[0][1] == "resp"
     assert cib.INSIGHT in logged[0][2]
