@@ -30,7 +30,7 @@ import os
 import importlib
 import shlex
 from dataclasses import asdict
-from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator
+from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator, Iterable
 from contextlib import contextmanager
 
 from .error_parser import FailureCache, ErrorReport, ErrorParser
@@ -71,7 +71,7 @@ except Exception:  # pragma: no cover - provide stub when unavailable
     RollbackManager = None  # type: ignore
 from .self_improvement.baseline_tracker import BaselineTracker
 from .self_improvement.target_region import TargetRegion
-from .sandbox_settings import SandboxSettings
+from .sandbox_settings import SandboxSettings, normalize_workflow_tests
 from .patch_attempt_tracker import PatchAttemptTracker
 from .threshold_service import (
     ThresholdService,
@@ -740,7 +740,7 @@ class SelfCodingManager:
 
     def _workflow_test_service_args(
         self,
-    ) -> tuple[str | None, dict[str, Any], list[str]]:
+    ) -> tuple[str | None, dict[str, Any], list[str], dict[str, list[str]]]:
         """Resolve pytest arguments, kwargs and selected workflow tests."""
 
         def _resolve(source: Any) -> Any:
@@ -758,34 +758,252 @@ class SelfCodingManager:
                 return source.get(self.bot_name) or source.get("default")
             return source
 
-        args: Any = None
+        def _normalise_tokens(candidate: Any) -> list[str]:
+            if candidate is None:
+                return []
+            if isinstance(candidate, str):
+                candidate = candidate.strip()
+                if not candidate:
+                    return []
+                try:
+                    return [token for token in shlex.split(candidate) if token]
+                except ValueError:
+                    return [candidate]
+            if isinstance(candidate, (list, tuple, set)):
+                tokens: list[str] = []
+                for item in candidate:
+                    if item is None:
+                        continue
+                    if isinstance(item, str) and " " in item.strip():
+                        try:
+                            tokens.extend(token for token in shlex.split(item) if token)
+                        except ValueError:
+                            tokens.append(item.strip())
+                    else:
+                        text = str(item).strip()
+                        if text:
+                            tokens.append(text)
+                return tokens
+            text = str(candidate).strip()
+            return [text] if text else []
+
+        def _is_selector(token: str) -> bool:
+            if not token or token.startswith("-"):
+                return False
+            lowered = token.lower()
+            if lowered in {"python", "pytest", "py.test", sys.executable.lower()}:
+                return False
+            return True
+
         workflow_tests: list[str] = []
-        for provider in (
-            getattr(self.pipeline, "workflow_test_args", None),
-            getattr(self.engine, "workflow_test_args", None),
-            getattr(self.data_bot, "workflow_test_args", None),
-        ):
+        workflow_sources: dict[str, list[str]] = {}
+        seen: set[str] = set()
+        pytest_tokens: list[str] | None = None
+
+        def _record(source: str, tokens: Iterable[str]) -> list[str]:
+            added: list[str] = []
+            for token in tokens:
+                tok = str(token).strip()
+                if not _is_selector(tok):
+                    continue
+                if tok not in seen:
+                    seen.add(tok)
+                    workflow_tests.append(tok)
+                    added.append(tok)
+            if added:
+                dest = workflow_sources.setdefault(source, [])
+                for tok in added:
+                    if tok not in dest:
+                        dest.append(tok)
+            return added
+
+        def _extend_pytest(tokens: Iterable[str]) -> None:
+            nonlocal pytest_tokens
+            if pytest_tokens is None:
+                pytest_tokens = []
+            for token in tokens:
+                tok = str(token).strip()
+                if not tok:
+                    continue
+                if tok not in pytest_tokens:
+                    pytest_tokens.append(tok)
+
+        provider_sources = (
+            ("pipeline", getattr(self.pipeline, "workflow_test_args", None)),
+            ("engine", getattr(self.engine, "workflow_test_args", None)),
+            ("data_bot", getattr(self.data_bot, "workflow_test_args", None)),
+        )
+        for source_name, provider in provider_sources:
             candidate = _resolve(provider)
-            if candidate:
-                args = candidate
-                if isinstance(candidate, (list, tuple, set)):
-                    workflow_tests = [str(a) for a in candidate if a]
-                break
-        if args is None:
+            if not candidate:
+                continue
+            tokens = _normalise_tokens(candidate)
+            if not tokens:
+                continue
+            _extend_pytest(tokens)
+            _record(source_name, tokens)
+
+        def _registry_workflow_tests() -> list[str]:
+            tests: list[str] = []
+            if not self.bot_registry:
+                return tests
             try:
-                workflow_tests = get_bot_workflow_tests(
+                tests = get_bot_workflow_tests(
                     self.bot_name, registry=self.bot_registry
                 )
             except Exception:
                 self.logger.exception("failed to resolve default workflow tests")
-                workflow_tests = []
-            if workflow_tests:
-                args = list(workflow_tests)
-        if isinstance(args, (list, tuple, set)):
-            workflow_tests = [str(a) for a in args if a]
-            args = " ".join(workflow_tests)
-        elif args is not None:
-            args = str(args)
+                return []
+            return list(tests or [])
+
+        def _summary_workflow_tests() -> list[str]:
+            summary_tests: list[str] = []
+            overrides = getattr(self, "_historical_workflow_tests", None)
+            if overrides:
+                summary_tests.extend(normalize_workflow_tests(overrides))
+            summary_dirs: list[Path] = []
+            try:
+                from . import workflow_run_summary as _wrs
+
+                store = getattr(_wrs, "_SUMMARY_STORE", None)
+                if store:
+                    summary_dirs.append(Path(store))
+            except Exception:
+                self.logger.debug("workflow summary store unavailable", exc_info=True)
+            try:
+                data_root = Path(resolve_path("sandbox_data"))
+                summary_dirs.extend([data_root, data_root / "workflows"])
+            except Exception:
+                summary_dirs.extend([Path("sandbox_data"), Path("sandbox_data") / "workflows"])
+
+            seen_dirs: set[Path] = set()
+            for directory in summary_dirs:
+                directory = Path(directory)
+                if not directory.exists() or directory in seen_dirs:
+                    continue
+                seen_dirs.add(directory)
+                for summary_path in directory.glob("*.summary.json"):
+                    try:
+                        data = json.loads(summary_path.read_text())
+                    except Exception:
+                        continue
+                    metadata = data.get("metadata")
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                    targeted = False
+                    for key in ("bot", "bot_name", "target_bot", "owner"):
+                        value = metadata.get(key)
+                        if value and str(value) == self.bot_name:
+                            targeted = True
+                            break
+                    if not targeted:
+                        bots = normalize_workflow_tests(metadata.get("bots"))
+                        if bots and self.bot_name in bots:
+                            targeted = True
+                    if not targeted and metadata:
+                        continue
+                    for key in (
+                        "workflow_tests",
+                        "pytest_args",
+                        "tests",
+                        "selectors",
+                        "test_paths",
+                    ):
+                        summary_tests.extend(normalize_workflow_tests(metadata.get(key)))
+                        summary_tests.extend(normalize_workflow_tests(data.get(key)))
+            return summary_tests
+
+        def _heuristic_workflow_tests() -> list[str]:
+            selectors: list[str] = []
+            module_path: Path | None = None
+            if self.bot_registry:
+                try:
+                    graph = getattr(self.bot_registry, "graph", None)
+                    if graph is not None and self.bot_name in getattr(graph, "nodes", {}):
+                        node = graph.nodes[self.bot_name]
+                        module_val = node.get("module")
+                        if module_val:
+                            module_path = Path(module_val)
+                except Exception:
+                    module_path = None
+                if (module_path is None or not module_path.exists()) and hasattr(
+                    self.bot_registry, "modules"
+                ):
+                    try:
+                        module_entry = self.bot_registry.modules.get(self.bot_name)  # type: ignore[arg-type]
+                        if module_entry:
+                            module_path = Path(module_entry)
+                    except Exception:
+                        module_path = None
+            if (module_path is None) or not module_path.exists():
+                try:
+                    module = importlib.import_module(self.bot_name)
+                except Exception:
+                    module = None
+                if module is not None:
+                    module_file = getattr(module, "__file__", "")
+                    if module_file:
+                        candidate = Path(module_file)
+                        if candidate.exists():
+                            module_path = candidate
+            identifiers: set[str] = {self.bot_name}
+            if module_path and module_path.exists():
+                identifiers.add(module_path.stem)
+                if module_path.parent.name:
+                    identifiers.add(module_path.parent.name)
+            test_roots = [Path("tests"), Path("tests") / "integration", Path("unit_tests")]
+            candidates: list[Path] = []
+            for ident in {slug.replace("-", "_") for slug in identifiers if slug}:
+                for root in test_roots:
+                    base = root / f"test_{ident}.py"
+                    if base.exists():
+                        candidates.append(base)
+                    workflow_variant = root / f"test_{ident}_workflow.py"
+                    if workflow_variant.exists():
+                        candidates.append(workflow_variant)
+                    dir_candidate = root / ident
+                    if dir_candidate.exists():
+                        candidates.append(dir_candidate)
+            if module_path and module_path.exists():
+                local_dir = module_path.parent
+                local_candidate = local_dir / f"test_{module_path.stem}.py"
+                if local_candidate.exists():
+                    candidates.append(local_candidate)
+            selectors.extend(str(path.resolve()) for path in candidates if path.exists())
+            return selectors
+
+        if not workflow_tests:
+            registry_tokens = _registry_workflow_tests()
+            added = _record("registry", registry_tokens)
+            if added:
+                _extend_pytest(added)
+
+        if not workflow_tests:
+            summary_tokens = _summary_workflow_tests()
+            added = _record("summary", summary_tokens)
+            if added:
+                _extend_pytest(added)
+
+        if not workflow_tests:
+            heuristic_tokens = _heuristic_workflow_tests()
+            added = _record("heuristic", heuristic_tokens)
+            if added:
+                _extend_pytest(added)
+
+        if not workflow_tests:
+            self.logger.error(
+                "no workflow tests resolved for bot %s", self.bot_name
+            )
+            raise RuntimeError(
+                f"no workflow tests resolved for {self.bot_name}; cannot run validation"
+            )
+
+        args: str | None = None
+        if pytest_tokens:
+            try:
+                args = shlex.join(pytest_tokens)
+            except AttributeError:
+                args = " ".join(pytest_tokens)
 
         kwargs: dict[str, Any] = {}
         worker_src = _resolve(getattr(self.pipeline, "workflow_test_workers", None))
@@ -797,7 +1015,7 @@ class SelfCodingManager:
         extra_opts = _resolve(getattr(self.pipeline, "workflow_test_kwargs", None))
         if isinstance(extra_opts, dict):
             kwargs.update(extra_opts)
-        return args, kwargs, workflow_tests
+        return args, kwargs, workflow_tests, workflow_sources
 
     @staticmethod
     def _truncate(text: str, *, limit: int = 2000) -> str:
@@ -1046,7 +1264,12 @@ class SelfCodingManager:
                         os.chdir(prev_cwd)
             builder = create_context_builder()
             ensure_fresh_weights(builder)
-            pytest_args, svc_kwargs, workflow_tests = self._workflow_test_service_args()
+            (
+                pytest_args,
+                svc_kwargs,
+                workflow_tests,
+                workflow_sources,
+            ) = self._workflow_test_service_args()
             svc_kwargs = dict(svc_kwargs)
             if pytest_args is not None:
                 svc_kwargs["pytest_args"] = pytest_args
@@ -1087,7 +1310,15 @@ class SelfCodingManager:
                     "passed_modules": passed_modules,
                 }
                 if workflow_tests:
-                    summary["self_tests"]["workflow_tests"] = workflow_tests
+                    summary["self_tests"]["workflow_tests"] = list(workflow_tests)
+                if workflow_sources:
+                    summary["self_tests"]["workflow_sources"] = {
+                        key: list(values)
+                        for key, values in workflow_sources.items()
+                    }
+                executed = results.get("workflow_tests")
+                if executed:
+                    summary["self_tests"]["executed_workflows"] = list(executed)
                 diagnostics = self._collect_test_diagnostics(results)
                 if diagnostics:
                     summary["self_tests"]["diagnostics"] = diagnostics
