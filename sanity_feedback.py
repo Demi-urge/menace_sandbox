@@ -120,12 +120,13 @@ class SanityFeedback:
         if path:
             try:
                 path_obj = resolve_path(path if path.endswith(".py") else f"{path}.py")
-                summary = self.manager.auto_run_patch(
+                outcome = self.manager.auto_run_patch(
                     path_obj,
                     desc,
                     context_meta={"reason": desc, "trigger": "sanity_feedback"},
                 )
-                patch_id = getattr(self.manager, "_last_patch_id", None)
+                summary = outcome.get("summary") if outcome else None
+                patch_id = outcome.get("patch_id") if outcome else None
                 failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
                 success = bool(patch_id) and summary is not None and failed_tests == 0
                 if summary is None and patch_id is not None:

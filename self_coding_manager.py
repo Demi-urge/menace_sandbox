@@ -1298,7 +1298,7 @@ class SelfCodingManager:
         *,
         run_post_validation: bool = True,
         **kwargs: Any,
-    ) -> Dict[str, Any] | None:
+    ) -> Dict[str, Any]:
         """Run :meth:`run_patch` using the orchestrator's provenance token.
 
         ``run_post_validation`` controls whether :meth:`run_post_patch_cycle`
@@ -1307,6 +1307,10 @@ class SelfCodingManager:
         event bus and metrics collectors.  Callers that perform their own
         orchestration can disable the automatic validation to avoid duplicate
         runs.
+
+        The returned dictionary always includes the automation ``result``
+        alongside the generated ``commit`` hash, ``patch_id`` and any post
+        validation ``summary`` gathered from :class:`SelfTestService`.
         """
 
         orchestrator = getattr(self, "evolution_orchestrator", None)
@@ -1316,7 +1320,7 @@ class SelfCodingManager:
 
         context_meta: Dict[str, Any] | None = kwargs.get("context_meta")
         summary: Dict[str, Any] | None = None
-        self.run_patch(path, description, provenance_token=token, **kwargs)
+        result = self.run_patch(path, description, provenance_token=token, **kwargs)
         commit = getattr(self, "_last_commit_hash", None)
         patch_id = getattr(self, "_last_patch_id", None)
         if run_post_validation and commit:
@@ -1326,6 +1330,13 @@ class SelfCodingManager:
                 provenance_token=token,
                 context_meta=context_meta,
             )
+
+        outcome: Dict[str, Any] = {
+            "result": result,
+            "commit": commit,
+            "patch_id": patch_id,
+            "summary": summary,
+        }
 
         self._last_validation_summary = summary
         if summary is not None:
@@ -1354,7 +1365,7 @@ class SelfCodingManager:
                     )
                 except Exception:
                     self.logger.exception("failed to record post validation metrics")
-        return summary
+        return outcome
 
     # ------------------------------------------------------------------
     def run_patch(

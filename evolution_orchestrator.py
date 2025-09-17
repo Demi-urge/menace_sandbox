@@ -1062,21 +1062,25 @@ class EvolutionOrchestrator:
                 post_details: dict[str, Any] | None = None
                 post_error: str | None = None
                 summary: dict[str, Any] | None = None
+                patch_id: int | None = None
+                commit: str | None = None
+                success = False
                 try:
-                    summary = self.selfcoding_manager.auto_run_patch(
+                    outcome = self.selfcoding_manager.auto_run_patch(
                         path,
                         reason,
                         context_meta=meta,
                     )
+                    summary = outcome.get("summary") if outcome else None
+                    patch_id = outcome.get("patch_id") if outcome else None
+                    commit = outcome.get("commit") if outcome else None
+                    success = bool(patch_id and commit)
                 except Exception as exc:
                     post_error = str(exc)
                     self.logger.exception(
                         "post patch validation failed for %s",
                         self.selfcoding_manager.bot_name,
                     )
-                patch_id = getattr(self.selfcoding_manager, "_last_patch_id", None)
-                commit = getattr(self.selfcoding_manager, "_last_commit_hash", None)
-                success = bool(patch_id and commit)
                 if summary is None and patch_id is not None and post_error is None:
                     post_error = "post validation summary unavailable"
                     success = False

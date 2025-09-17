@@ -5,6 +5,8 @@ import os
 import logging
 from pathlib import Path
 
+import pytest
+
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import sandbox_runner
 
@@ -443,3 +445,80 @@ def test_sandbox_skipped_on_run_once_error(monkeypatch, tmp_path, caplog):
     assert not called
     assert not flag.exists()
     assert "run_once failed" in caplog.text
+
+
+def test_deploy_patch_requires_self_test_summary(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"  # path-ignore
+    spec = importlib.util.spec_from_file_location("menace_master", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["menace_master"] = module
+    spec.loader.exec_module(module)
+
+    class DummyEngine:
+        def __init__(self) -> None:
+            self.last_added_modules: list[str] = []
+            self.added_modules: list[str] = []
+
+    class DummyManager:
+        def __init__(self) -> None:
+            self.summary_payload: dict[str, object] = {}
+            self.bot_name = "MenaceMaster"
+            self.context_builder = None
+            self.engine = DummyEngine()
+
+        def auto_run_patch(self, path, description):
+            return {
+                "summary": self.summary_payload,
+                "patch_id": 1,
+                "commit": "abc123",
+                "result": None,
+            }
+
+    manager = DummyManager()
+
+    monkeypatch.setattr(module, "SelfCodingEngine", lambda *a, **k: manager.engine, raising=False)
+    monkeypatch.setattr(module, "ModelAutomationPipeline", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "DataBot", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "CapitalManagementBot", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "SystemEvolutionManager", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "UnifiedEventBus", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(module, "BotRegistry", lambda *a, **k: types.SimpleNamespace(), raising=False)
+    monkeypatch.setattr(
+        module,
+        "EvolutionOrchestrator",
+        lambda *a, **k: types.SimpleNamespace(provenance_token="token"),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "internalize_coding_bot", lambda *a, **k: manager, raising=False)
+    monkeypatch.setattr(
+        module,
+        "get_thresholds",
+        lambda name: types.SimpleNamespace(
+            roi_drop=0.0, error_increase=0.0, test_failure_increase=0.0
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "persist_sc_thresholds", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(
+        module,
+        "AutomatedRollbackManager",
+        lambda *a, **k: types.SimpleNamespace(auto_rollback=lambda *a, **k: None),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sandbox_runner,
+        "try_integrate_into_workflows",
+        lambda *a, **k: None,
+        raising=False,
+    )
+
+    builder = types.SimpleNamespace(refresh_db_weights=lambda: None)
+    file_path = tmp_path / "module.py"  # path-ignore
+    file_path.write_text("print('hi')\n")
+
+    with pytest.raises(RuntimeError, match="self test summary unavailable"):
+        module.deploy_patch(file_path, "desc", builder)
+
+    manager.summary_payload = {"self_tests": {"failed": 0}}
+    module.deploy_patch(file_path, "desc", builder)
