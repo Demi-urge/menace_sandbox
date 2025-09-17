@@ -1,3 +1,4 @@
+import importlib
 import sys
 import types
 import logging
@@ -405,4 +406,188 @@ def test_run_patch_without_quick_fix_engine_errors(
         mgr.run_patch(file_path, "add", provenance_token="token")
 
     assert "QuickFixEngine is required" in str(exc.value)
+
+
+def _load_real_quick_fix_engine(monkeypatch: pytest.MonkeyPatch):
+    """Import quick_fix_engine with dependencies stubbed for unit testing."""
+
+    def _add_stub(name: str, attrs: dict[str, object]) -> types.ModuleType:
+        mod = types.ModuleType(name)
+        for key, value in attrs.items():
+            setattr(mod, key, value)
+        monkeypatch.setitem(sys.modules, name, mod)
+        return mod
+
+    pkg = types.ModuleType("menace_sandbox")
+    pkg.__path__ = []  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "menace_sandbox", pkg)
+
+    _add_stub(
+        "menace_sandbox.snippet_compressor",
+        {"compress_snippets": lambda data: data},
+    )
+    _add_stub(
+        "menace_sandbox.codebase_diff_checker",
+        {
+            "generate_code_diff": lambda _a, _b: {},
+            "flag_risky_changes": lambda _diff: [],
+        },
+    )
+    _add_stub(
+        "menace_sandbox.sandbox_settings",
+        {"SandboxSettings": type("SandboxSettings", (), {"diff_risk_threshold": 1.0})},
+    )
+    _add_stub(
+        "context_builder_util",
+        {
+            "ensure_fresh_weights": lambda _b: None,
+            "create_context_builder": lambda: None,
+        },
+    )
+    _add_stub(
+        "menace_sandbox.dynamic_path_router",
+        {
+            "resolve_path": lambda p: Path(p),
+            "path_for_prompt": lambda p: str(p),
+        },
+    )
+    _add_stub("menace_sandbox.error_bot", {"ErrorDB": type("ErrorDB", (), {})})
+    _add_stub(
+        "menace_sandbox.self_coding_manager",
+        {
+            "SelfCodingManager": type("SelfCodingManager", (), {}),
+            "_manager_generate_helper_with_builder": None,
+        },
+    )
+    _add_stub(
+        "menace_sandbox.knowledge_graph",
+        {"KnowledgeGraph": type("KnowledgeGraph", (), {"related": lambda self, _k: []})},
+    )
+    _add_stub(
+        "menace_sandbox.coding_bot_interface",
+        {"manager_generate_helper": lambda *_a, **_k: ""},
+    )
+    _add_stub("menace_sandbox.data_bot", {"DataBot": type("DataBot", (), {})})
+    _add_stub(
+        "menace_sandbox.resilience",
+        {"retry_with_backoff": lambda fn, **_k: fn()},
+    )
+
+    class _DummyVectorizer:
+        def fit_transform(self, traces):  # pragma: no cover - simple stub
+            return traces
+
+    class _DummyKMeans:
+        def __init__(self, *a, **k):  # pragma: no cover - simple stub
+            pass
+
+        def fit_predict(self, matrix):  # pragma: no cover - simple stub
+            return [0 for _ in matrix]
+
+    sklearn = types.ModuleType("sklearn")
+    cluster = types.ModuleType("sklearn.cluster")
+    cluster.KMeans = _DummyKMeans
+    feature = types.ModuleType("sklearn.feature_extraction")
+    text = types.ModuleType("sklearn.feature_extraction.text")
+    text.TfidfVectorizer = _DummyVectorizer
+    feature.text = text
+    sklearn.cluster = cluster
+    sklearn.feature_extraction = feature
+    monkeypatch.setitem(sys.modules, "sklearn", sklearn)
+    monkeypatch.setitem(sys.modules, "sklearn.cluster", cluster)
+    monkeypatch.setitem(sys.modules, "sklearn.feature_extraction", feature)
+    monkeypatch.setitem(sys.modules, "sklearn.feature_extraction.text", text)
+
+    class _ContextBuilder:
+        def refresh_db_weights(self) -> None:  # pragma: no cover - simple stub
+            pass
+
+        def build(
+            self, _desc: str, session_id: str | None = None, include_vectors: bool = False
+        ):
+            if include_vectors:
+                return "", [], []
+            return ""
+
+    _add_stub(
+        "vector_service.context_builder",
+        {
+            "ContextBuilder": _ContextBuilder,
+            "Retriever": type("Retriever", (), {}),
+            "FallbackResult": type("FallbackResult", (), {}),
+            "EmbeddingBackfill": type(
+                "EmbeddingBackfill", (), {"watch_events": lambda self: None}
+            ),
+        },
+    )
+    _add_stub("patch_provenance", {"PatchLogger": type("PatchLogger", (), {})})
+    _add_stub("chunking", {"get_chunk_summaries": lambda *_a, **_k: []})
+    _add_stub("menace_sandbox.target_region", {"extract_target_region": lambda *_a, **_k: None})
+    _add_stub(
+        "self_improvement.prompt_strategies",
+        {
+            "PromptStrategy": type("PromptStrategy", (), {}),
+            "render_prompt": lambda *_a, **_k: "",
+        },
+    )
+    _add_stub("vector_service", {"ErrorResult": type("ErrorResult", (), {})})
+    _add_stub("menace_sandbox.human_alignment_flagger", {"_collect_diff_data": lambda *_a, **_k: {}})
+    _add_stub("menace_sandbox.human_alignment_agent", {"HumanAlignmentAgent": type("HumanAlignmentAgent", (), {})})
+    _add_stub("menace_sandbox.violation_logger", {"log_violation": lambda *_a, **_k: None})
+    _add_stub(
+        "menace_sandbox.advanced_error_management",
+        {"AutomatedRollbackManager": type("AutomatedRollbackManager", (), {})},
+    )
+    _add_stub("menace_sandbox.code_database", {"PatchHistoryDB": type("PatchHistoryDB", (), {})})
+
+    path = Path(__file__).resolve().parents[1] / "quick_fix_engine.py"
+    spec = importlib.util.spec_from_file_location(
+        "menace_sandbox.quick_fix_engine_static",
+        path,
+    )
+    assert spec and spec.loader  # pragma: no cover - safety check
+    module = importlib.util.module_from_spec(spec)
+    module.__package__ = "menace_sandbox"
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_static_pass_applies_missing_import_and_flags_off_by_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_real_quick_fix_engine(monkeypatch)
+    target = tmp_path / "module_under_test.py"
+    target.write_text(
+        """
+def adjust(values):
+    total = 0
+    for idx in range(len(values)):
+        total += values[idx]
+    return math.ceil(total)
+""".strip()
+    )
+
+    analysis = module._collect_static_analysis(target)
+    missing_hint = next(
+        hint
+        for hint in analysis.hints
+        if hint.get("type") == "missing_symbol" and hint.get("symbol") == "math"
+    )
+    assert missing_hint.get("auto_fix") is True
+
+    summary_before = module._summarize_static_analysis(analysis)
+    assert "range(len" in summary_before
+
+    applied = module._apply_static_auto_fixes(target, analysis)
+    assert any("math" in msg for msg in applied)
+    assert "import math" in target.read_text()
+    assert missing_hint.get("applied") is True
+
+    flags = module._pending_hint_flags(analysis.hints)
+    assert any(flag.startswith("static_hint:boundary_condition") for flag in flags)
+    assert module._requires_helper(analysis.hints)
+
+    summary_after = module._summarize_static_analysis(analysis, applied)
+    assert "auto-applied" in summary_after or "[resolved]" in summary_after
 

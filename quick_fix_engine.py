@@ -11,6 +11,7 @@ retrieval.
 __version__ = "1.0.0"
 
 import ast
+import builtins
 from pathlib import Path
 import logging
 import subprocess
@@ -23,6 +24,8 @@ import py_compile
 import shlex
 import importlib.util
 import sys
+import symtable
+from dataclasses import dataclass, field
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
 
 from .snippet_compressor import compress_snippets
@@ -119,11 +122,24 @@ def _is_len_call(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len"
 
 
-def _iter_issues_from_ast(tree: ast.AST) -> tuple[list[str], list[str]]:
+BUILTIN_NAMES = set(dir(builtins))
+
+
+@dataclass
+class StaticAnalysisResult:
+    source: str = ""
+    tree: ast.AST | None = None
+    findings: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    hints: list[Dict[str, Any]] = field(default_factory=list)
+    auto_fixes: list[Dict[str, Any]] = field(default_factory=list)
+
+
+def _iter_issues_from_ast(tree: ast.AST) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
     """Return ``(warnings, blockers)`` detected by lightweight heuristics."""
 
-    findings: list[str] = []
-    blockers: list[str] = []
+    findings: list[Dict[str, Any]] = []
+    blockers: list[Dict[str, Any]] = []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.For):
@@ -134,7 +150,13 @@ def _iter_issues_from_ast(tree: ast.AST) -> tuple[list[str], list[str]]:
                     args = call.args
                     if len(args) == 1 and _is_len_call(args[0]):
                         findings.append(
-                            "Loop iterates over range(len(...)); consider enumerate to avoid off-by-one mistakes."
+                            {
+                                "type": "boundary_condition",
+                                "message": "Loop iterates over range(len(...)); consider enumerate to avoid off-by-one mistakes.",
+                                "lineno": getattr(node, "lineno", None),
+                                "col_offset": getattr(node, "col_offset", None),
+                                "severity": "warning",
+                            }
                         )
                     elif (
                         len(args) == 2
@@ -143,13 +165,25 @@ def _iter_issues_from_ast(tree: ast.AST) -> tuple[list[str], list[str]]:
                         and _is_len_call(args[1])
                     ):
                         findings.append(
-                            "Loop iterates from 0 to len(...); double-check inclusive/exclusive bounds."
+                            {
+                                "type": "boundary_condition",
+                                "message": "Loop iterates from 0 to len(...); double-check inclusive/exclusive bounds.",
+                                "lineno": getattr(node, "lineno", None),
+                                "col_offset": getattr(node, "col_offset", None),
+                                "severity": "warning",
+                            }
                         )
         elif isinstance(node, ast.Compare) and _is_len_call(node.left):
             for op in node.ops:
                 if isinstance(op, (ast.LtE, ast.Gt)):
                     findings.append(
-                        "Comparison against len(...) uses >= or <=; verify boundary conditions."
+                        {
+                            "type": "boundary_condition",
+                            "message": "Comparison against len(...) uses >= or <=; verify boundary conditions.",
+                            "lineno": getattr(node, "lineno", None),
+                            "col_offset": getattr(node, "col_offset", None),
+                            "severity": "warning",
+                        }
                     )
                     break
 
@@ -190,59 +224,363 @@ def _module_exists(module: str, current_path: Path) -> bool:
     return False
 
 
-def _collect_static_analysis(path: Path) -> tuple[str, list[str], list[str]]:
-    """Analyze ``path`` and return ``(summary, warnings, blockers)``."""
+def _collect_static_analysis(path: Path) -> StaticAnalysisResult:
+    """Analyze ``path`` and return structured static analysis results."""
 
-    findings: list[str] = []
-    blockers: list[str] = []
+    result = StaticAnalysisResult()
     try:
         source = path.read_text(encoding="utf-8")
     except Exception as exc:
-        blockers.append(f"Unable to read module: {exc}")
-        source = ""
+        result.blockers.append(f"Unable to read module: {exc}")
+        return result
 
-    tree: ast.AST | None = None
-    if source:
+    result.source = source
+    if not source.strip():
+        return result
+
+    try:
+        tree = ast.parse(source)
+        result.tree = tree
+    except SyntaxError as exc:
+        result.blockers.append(f"Syntax error at line {exc.lineno}: {exc.msg}")
+        return result
+    except Exception as exc:  # pragma: no cover - extremely rare
+        result.blockers.append(f"Failed to parse module: {exc}")
+        return result
+
+    warn_entries, block_entries = _iter_issues_from_ast(tree)
+    for entry in warn_entries:
+        message = entry.get("message", "")
+        if message:
+            result.findings.append(message)
+        hint = {
+            "type": entry.get("type", "analysis"),
+            "message": message,
+            "severity": entry.get("severity", "warning"),
+            "lineno": entry.get("lineno"),
+            "col_offset": entry.get("col_offset"),
+            "auto_fix": False,
+            "applied": False,
+        }
+        result.hints.append(hint)
+    for entry in block_entries:
+        message = entry.get("message", "")
+        if message:
+            result.blockers.append(message)
+        hint = {
+            "type": entry.get("type", "analysis"),
+            "message": message,
+            "severity": entry.get("severity", "error"),
+            "lineno": entry.get("lineno"),
+            "col_offset": entry.get("col_offset"),
+            "auto_fix": False,
+            "applied": False,
+        }
+        result.hints.append(hint)
+
+    unresolved_imports: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_name = alias.name
+                if not _module_exists(module_name, path):
+                    if module_name not in unresolved_imports:
+                        message = f"Import '{module_name}' cannot be resolved."
+                        result.blockers.append(message)
+                        result.hints.append(
+                            {
+                                "type": "unresolved_import",
+                                "symbol": module_name,
+                                "message": message,
+                                "severity": "error",
+                                "lineno": getattr(node, "lineno", None),
+                                "col_offset": getattr(node, "col_offset", None),
+                                "auto_fix": False,
+                                "applied": False,
+                            }
+                        )
+                        unresolved_imports.add(module_name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level and not node.module:
+                continue
+            module_name = node.module or ""
+            if node.level:
+                # Skip relative imports where the parent package may not yet exist.
+                continue
+            if module_name and not _module_exists(module_name, path):
+                if module_name not in unresolved_imports:
+                    message = f"Import '{module_name}' cannot be resolved."
+                    result.blockers.append(message)
+                    result.hints.append(
+                        {
+                            "type": "unresolved_import",
+                            "symbol": module_name,
+                            "message": message,
+                            "severity": "error",
+                            "lineno": getattr(node, "lineno", None),
+                            "col_offset": getattr(node, "col_offset", None),
+                            "auto_fix": False,
+                            "applied": False,
+                        }
+                    )
+                    unresolved_imports.add(module_name)
+
+    try:
+        table = symtable.symtable(source, str(path), "exec")
+    except SyntaxError:
+        return result
+
+    undefined_names: set[str] = set()
+    unused_imports: set[str] = set()
+    unused_symbols: set[str] = set()
+    module_defined: set[str] = set()
+
+    for name in table.get_identifiers():
+        symbol = table.lookup(name)
+        if symbol.is_imported() or symbol.is_assigned() or symbol.is_namespace():
+            module_defined.add(name)
+
+    def _walk(table_obj: symtable.SymbolTable, module_defs: set[str]) -> None:
+        for name in table_obj.get_identifiers():
+            symbol = table_obj.lookup(name)
+            if symbol.is_namespace():
+                for child in symbol.get_namespaces():
+                    _walk(child, module_defs)
+            is_import = symbol.is_imported()
+            is_assigned = symbol.is_assigned()
+            is_referenced = symbol.is_referenced()
+
+            if is_import and not is_referenced:
+                unused_imports.add(name)
+            if (
+                is_assigned
+                and not is_referenced
+                and not is_import
+                and not symbol.is_parameter()
+                and not symbol.is_namespace()
+                and not name.startswith("_")
+            ):
+                unused_symbols.add(name)
+            if is_referenced and not (
+                is_import
+                or is_assigned
+                or symbol.is_parameter()
+                or (symbol.is_global() and name in module_defs)
+                or symbol.is_nonlocal()
+            ):
+                if name not in BUILTIN_NAMES:
+                    undefined_names.add(name)
+
+    _walk(table, module_defined)
+
+    for name in sorted(unused_imports):
+        message = f"Import '{name}' is never used."
+        result.findings.append(message)
+        result.hints.append(
+            {
+                "type": "unused_import",
+                "symbol": name,
+                "message": message,
+                "severity": "info",
+                "lineno": None,
+                "col_offset": None,
+                "auto_fix": False,
+                "applied": False,
+            }
+        )
+
+    for name in sorted(unused_symbols):
+        message = f"Symbol '{name}' is assigned but never used."
+        result.findings.append(message)
+        result.hints.append(
+            {
+                "type": "unused_symbol",
+                "symbol": name,
+                "message": message,
+                "severity": "warning",
+                "lineno": None,
+                "col_offset": None,
+                "auto_fix": False,
+                "applied": False,
+            }
+        )
+
+    for name in sorted(undefined_names):
+        message = f"Name '{name}' is referenced but not defined."
+        hint = {
+            "type": "missing_symbol",
+            "symbol": name,
+            "message": message,
+            "severity": "error",
+            "lineno": None,
+            "col_offset": None,
+            "auto_fix": False,
+            "applied": False,
+        }
+        result.findings.append(message)
+        result.hints.append(hint)
+
+        spec = None
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, AttributeError, ValueError):
+            spec = None
+        if spec is None and not _module_exists(name, path):
+            continue
+        statement = f"import {name}"
+        result.auto_fixes.append(
+            {
+                "type": "add_import",
+                "symbol": name,
+                "statement": statement,
+                "hint": hint,
+            }
+        )
+        hint["auto_fix"] = True
+
+    return result
+
+
+def _find_import_insertion_index(lines: list[str], tree: ast.AST | None) -> int:
+    """Return a sensible insertion index for a new import statement."""
+
+    if not lines:
+        return 0
+    index = 0
+    if lines[0].startswith("#!"):
+        index += 1
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped.startswith("#") and "coding" in stripped:
+            index += 1
+            continue
+        break
+    if tree and getattr(tree, "body", None):
+        body = list(tree.body)
+        start_idx = 0
+        if body and isinstance(body[0], ast.Expr):
+            value = getattr(body[0], "value", None)
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                index = max(index, getattr(body[0], "end_lineno", body[0].lineno))
+                start_idx = 1
+        for node in body[start_idx:]:
+            if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+                index = max(index, getattr(node, "end_lineno", node.lineno))
+                continue
+            break
+    return min(index, len(lines))
+
+
+def _apply_static_auto_fixes(path: Path, analysis: StaticAnalysisResult) -> list[str]:
+    """Apply deterministic fixes surfaced by static analysis."""
+
+    if not analysis.auto_fixes:
+        return []
+    source = analysis.source
+    if not source:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except Exception:
+            return []
+    lines = source.splitlines()
+    trailing_newline = source.endswith("\n")
+    tree = analysis.tree
+    if tree is None:
         try:
             tree = ast.parse(source)
-        except SyntaxError as exc:
-            blockers.append(f"Syntax error at line {exc.lineno}: {exc.msg}")
-        except Exception as exc:  # pragma: no cover - extremely rare
-            blockers.append(f"Failed to parse module: {exc}")
+        except Exception:
+            tree = None
 
-    if tree is not None:
-        warn, block = _iter_issues_from_ast(tree)
-        findings.extend(warn)
-        blockers.extend(block)
-        missing_imports: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    name = alias.name
-                    if not _module_exists(name, path):
-                        missing_imports.append(name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.level and not node.module:
-                    continue
-                module_name = node.module or ""
-                if node.level:
-                    # Skip relative imports where the parent package may not yet exist.
-                    continue
-                if module_name and not _module_exists(module_name, path):
-                    missing_imports.append(module_name)
-        for name in missing_imports:
-            blockers.append(f"Missing import: {name}")
+    applied_messages: list[str] = []
+    changed = False
+    for fix in analysis.auto_fixes:
+        if fix.get("type") != "add_import":
+            continue
+        statement = fix.get("statement")
+        symbol = fix.get("symbol")
+        hint = fix.get("hint")
+        if not statement:
+            continue
+        if any(line.strip() == statement for line in lines):
+            if isinstance(hint, dict):
+                hint["applied"] = True
+                hint.setdefault("auto_applied", False)
+            continue
+        insert_at = _find_import_insertion_index(lines, tree)
+        lines.insert(insert_at, statement)
+        applied_messages.append(
+            f"Added missing import for '{symbol}'" if symbol else f"Applied: {statement}"
+        )
+        if isinstance(hint, dict):
+            hint["applied"] = True
+            hint["auto_applied"] = True
+        changed = True
 
-    summary_lines: list[str] = []
-    if blockers:
-        summary_lines.append("Static analysis blockers detected:")
-        summary_lines.extend(f"- {msg}" for msg in blockers)
-    if findings:
-        summary_lines.append("Static analysis findings:")
-        summary_lines.extend(f"- {msg}" for msg in findings)
+    if not changed:
+        return applied_messages
 
-    summary = "\n".join(summary_lines)
-    return summary, findings, blockers
+    new_text = "\n".join(lines)
+    if trailing_newline:
+        new_text += "\n"
+    path.write_text(new_text, encoding="utf-8")
+    analysis.source = new_text
+    try:
+        analysis.tree = ast.parse(new_text)
+    except Exception:
+        analysis.tree = None
+    return applied_messages
+
+
+def _summarize_static_analysis(
+    analysis: StaticAnalysisResult, applied: list[str] | None = None
+) -> str:
+    """Render a human-readable summary of static analysis results."""
+
+    lines: list[str] = []
+    if analysis.blockers:
+        lines.append("Static analysis blockers detected:")
+        lines.extend(f"- {msg}" for msg in analysis.blockers)
+    if analysis.hints:
+        lines.append("Static analysis hints:")
+        for hint in analysis.hints:
+            label = hint.get("type", "issue")
+            message = hint.get("message", "")
+            lineno = hint.get("lineno")
+            line_info = f" (line {lineno})" if lineno else ""
+            status = " [resolved]" if hint.get("applied") else ""
+            lines.append(f"- ({label}) {message}{line_info}{status}")
+    if applied:
+        lines.append("Static analysis auto-fixes:")
+        lines.extend(f"- {msg}" for msg in applied)
+    return "\n".join(lines)
+
+
+def _pending_hint_flags(hints: list[Dict[str, Any]]) -> list[str]:
+    """Convert outstanding hints into risk flag identifiers."""
+
+    flags: list[str] = []
+    for hint in hints:
+        if hint.get("applied"):
+            continue
+        severity = hint.get("severity", "warning")
+        if severity not in {"warning", "error"}:
+            continue
+        hint_type = hint.get("type", "issue")
+        symbol = hint.get("symbol")
+        lineno = hint.get("lineno")
+        suffix = symbol or (f"line{lineno}" if lineno is not None else "unknown")
+        flags.append(f"static_hint:{hint_type}:{suffix}")
+    return flags
+
+
+def _requires_helper(hints: list[Dict[str, Any]]) -> bool:
+    """Return ``True`` if unresolved hints warrant invoking the helper."""
+
+    for hint in hints:
+        severity = hint.get("severity", "warning")
+        if severity in {"warning", "error"} and not hint.get("applied"):
+            return True
+    return False
 
 
 from .error_bot import ErrorDB  # noqa: E402
@@ -507,20 +845,24 @@ def generate_patch(
                     target_region = region
         except Exception:
             logger.exception("failed to incorporate cluster trace")
-    static_summary, static_findings, static_blockers = _collect_static_analysis(path)
-    if static_summary or static_findings or static_blockers:
-        context_meta["static_analysis"] = {
-            "summary": static_summary,
-            "findings": static_findings,
-            "blockers": static_blockers,
-        }
+    analysis = _collect_static_analysis(path)
+    static_summary = _summarize_static_analysis(analysis)
+    static_meta = {
+        "summary": static_summary,
+        "findings": list(analysis.findings),
+        "blockers": list(analysis.blockers),
+        "hints": analysis.hints,
+    }
+    context_meta["static_analysis"] = static_meta
     if static_summary:
         description += "\n\n" + static_summary
-    if static_blockers:
-        blocker_flags = [f"static_blocker:{msg}" for msg in static_blockers]
+    if analysis.blockers:
+        blocker_flags = [f"static_blocker:{msg}" for msg in analysis.blockers]
         risk_flags.extend(blocker_flags)
         logger.error(
-            "static analysis blockers detected for %s: %s", prompt_path, static_blockers
+            "static analysis blockers detected for %s: %s",
+            prompt_path,
+            analysis.blockers,
         )
         return (None, risk_flags) if return_flags else None
     context_block = ""
@@ -588,8 +930,27 @@ def generate_patch(
             before_target = Path(before_dir) / rel
             before_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, before_target)
+            applied_fixes = _apply_static_auto_fixes(path, analysis)
+            if applied_fixes:
+                static_meta["applied_fixes"] = applied_fixes
+                auto_section = "Static analysis auto-applied fixes:\n" + "\n".join(
+                    f"- {msg}" for msg in applied_fixes
+                )
+                base_description = f"{base_description}\n\n{auto_section}"
+            static_meta["summary"] = _summarize_static_analysis(
+                analysis, applied_fixes if applied_fixes else None
+            )
+            pending_hints = [hint for hint in analysis.hints if not hint.get("applied")]
+            if pending_hints:
+                static_meta["pending_hints"] = pending_hints
+            hint_flags = _pending_hint_flags(analysis.hints)
+            if hint_flags:
+                risk_flags.extend(hint_flags)
+
+            needs_helper = _requires_helper(analysis.hints)
+
             chunks: List[Any] = []
-            if get_chunk_summaries is not None:
+            if needs_helper and get_chunk_summaries is not None:
                 token_limit = getattr(engine, "prompt_chunk_token_threshold", 1000)
                 try:
                     chunks = get_chunk_summaries(
@@ -599,84 +960,132 @@ def generate_patch(
                     chunks = []
             patch_ids: List[int | None] = []
 
-            def _gen(desc: str) -> str:
-                """Generate helper code for *desc* using the current context."""
-                owner = getattr(manager, "engine", manager)
-                attempts = int(getattr(owner, "helper_retry_attempts", 3))
-                delay = float(getattr(owner, "helper_retry_delay", 1.0))
-                event_bus = getattr(owner, "event_bus", None)
-                data_bot: DataBot | None = getattr(owner, "data_bot", None)
-                bot_name = getattr(owner, "bot_name", "quick_fix_engine")
-                module_name = Path(context_meta.get("module", path.name)).name
-                for i in range(attempts):
-                    try:
-                        return helper(
-                            manager,
-                            desc,
-                            context_builder=builder,
-                            path=path,
-                            metadata=context_meta,
-                            target_region=target_region,
-                        )
-                    except TypeError:
+            if needs_helper:
+
+                def _gen(desc: str) -> str:
+                    """Generate helper code for *desc* using the current context."""
+
+                    owner = getattr(manager, "engine", manager)
+                    attempts = int(getattr(owner, "helper_retry_attempts", 3))
+                    delay = float(getattr(owner, "helper_retry_delay", 1.0))
+                    event_bus = getattr(owner, "event_bus", None)
+                    data_bot: DataBot | None = getattr(owner, "data_bot", None)
+                    bot_name = getattr(owner, "bot_name", "quick_fix_engine")
+                    module_name = Path(context_meta.get("module", path.name)).name
+                    for i in range(attempts):
                         try:
                             return helper(
                                 manager,
                                 desc,
                                 context_builder=builder,
+                                path=path,
+                                metadata=context_meta,
+                                target_region=target_region,
                             )
-                        except Exception as exc2:  # fall through to logging
-                            err: Exception = exc2
-                    except Exception as exc:
-                        err = exc
-                    logger.exception("helper generation failed", exc_info=err)
-                    if event_bus:
-                        payload = {
-                            "module": module_name,
-                            "description": desc,
-                            "error": str(err),
-                            "attempt": i + 1,
-                        }
+                        except TypeError:
+                            try:
+                                return helper(
+                                    manager,
+                                    desc,
+                                    context_builder=builder,
+                                )
+                            except Exception as exc2:  # fall through to logging
+                                err: Exception = exc2
+                        except Exception as exc:
+                            err = exc
+                        logger.exception("helper generation failed", exc_info=err)
+                        if event_bus:
+                            payload = {
+                                "module": module_name,
+                                "description": desc,
+                                "error": str(err),
+                                "attempt": i + 1,
+                            }
+                            try:
+                                event_bus.publish("bot:helper_failed", payload)
+                            except Exception:
+                                logger.exception("event bus publish failed")
+                        if i < attempts - 1:
+                            time.sleep(delay)
+                            delay *= 2
+                    if data_bot:
                         try:
-                            event_bus.publish("bot:helper_failed", payload)
+                            data_bot.record_validation(
+                                bot_name,
+                                module_name,
+                                False,
+                                ["helper_generation_failed"],
+                            )
                         except Exception:
-                            logger.exception("event bus publish failed")
-                    if i < attempts - 1:
-                        time.sleep(delay)
-                        delay *= 2
-                if data_bot:
-                    try:
-                        data_bot.record_validation(
-                            bot_name,
-                            module_name,
-                            False,
-                            ["helper_generation_failed"],
+                            logger.exception(
+                                "failed to record validation in DataBot"
+                            )
+                    return ""
+
+                if chunks and target_region is None:
+                    for chunk in chunks:
+                        summary = (
+                            chunk.get("summary", "")
+                            if isinstance(chunk, dict)
+                            else str(chunk)
                         )
-                    except Exception:
-                        logger.exception(
-                            "failed to record validation in DataBot"
-                        )
-                return ""
-            if chunks and target_region is None:
-                for chunk in chunks:
-                    summary = (
-                        chunk.get("summary", "")
-                        if isinstance(chunk, dict)
-                        else str(chunk)
-                    )
-                    chunk_desc = base_description
-                    if summary:
-                        chunk_desc = f"{base_description}\n\n{summary}"
+                        chunk_desc = base_description
+                        if summary:
+                            chunk_desc = f"{base_description}\n\n{summary}"
+                        try:
+                            apply = getattr(engine, "apply_patch_with_retry")
+                        except AttributeError:
+                            apply = getattr(engine, "apply_patch")
+                        helper = _gen(chunk_desc)
+                        try:
+                            pid, _, _ = apply(
+                                path,
+                                helper,
+                                description=chunk_desc,
+                                reason="preemptive_fix",
+                                trigger="quick_fix_engine",
+                                context_meta=context_meta,
+                                target_region=target_region,
+                            )
+                        except TypeError:
+                            try:
+                                pid, _, _ = apply(
+                                    path,
+                                    chunk_desc,
+                                    reason="preemptive_fix",
+                                    trigger="quick_fix_engine",
+                                    context_meta=context_meta,
+                                    target_region=target_region,
+                                )
+                            except AttributeError:
+                                engine.patch_file(
+                                    path,
+                                    "preemptive_fix",
+                                    context_meta=context_meta,
+                                    target_region=target_region,
+                                )
+                                pid = None
+                        except AttributeError:
+                            engine.patch_file(
+                                path,
+                                "preemptive_fix",
+                                context_meta=context_meta,
+                                target_region=target_region,
+                            )
+                            pid = None
+                        patch_ids.append(pid)
+                    patch_id = patch_ids[-1] if patch_ids else None
+                else:
                     try:
                         apply = getattr(engine, "apply_patch_with_retry")
                     except AttributeError:
                         apply = getattr(engine, "apply_patch")
-                    helper = _gen(chunk_desc)
+                    helper = _gen(base_description)
                     try:
-                        pid, _, _ = apply(
+                        patch_id, _, _ = apply(
                             path,
                             helper,
-                            description=chunk_desc,
+                            description=base_description,
                             reason="preemptive_fix",
                             trigger="quick_fix_engine",
                             context_meta=context_meta,
@@ -684,9 +1093,9 @@ def generate_patch(
                         )
                     except TypeError:
                         try:
-                            pid, _, _ = apply(
+                            patch_id, _, _ = apply(
                                 path,
-                                chunk_desc,
+                                base_description,
                                 reason="preemptive_fix",
                                 trigger="quick_fix_engine",
                                 context_meta=context_meta,
@@ -699,43 +1108,7 @@ def generate_patch(
                                 context_meta=context_meta,
                                 target_region=target_region,
                             )
-                            pid = None
-                    except AttributeError:
-                        engine.patch_file(
-                            path,
-                            "preemptive_fix",
-                            context_meta=context_meta,
-                            target_region=target_region,
-                        )
-                        pid = None
-                    patch_ids.append(pid)
-                patch_id = patch_ids[-1] if patch_ids else None
-            else:
-                try:
-                    apply = getattr(engine, "apply_patch_with_retry")
-                except AttributeError:
-                    apply = getattr(engine, "apply_patch")
-                helper = _gen(base_description)
-                try:
-                    patch_id, _, _ = apply(
-                        path,
-                        helper,
-                        description=base_description,
-                        reason="preemptive_fix",
-                        trigger="quick_fix_engine",
-                        context_meta=context_meta,
-                        target_region=target_region,
-                    )
-                except TypeError:
-                    try:
-                        patch_id, _, _ = apply(
-                            path,
-                            base_description,
-                            reason="preemptive_fix",
-                            trigger="quick_fix_engine",
-                            context_meta=context_meta,
-                            target_region=target_region,
-                        )
+                            patch_id = None
                     except AttributeError:
                         engine.patch_file(
                             path,
@@ -744,14 +1117,8 @@ def generate_patch(
                             target_region=target_region,
                         )
                         patch_id = None
-                except AttributeError:
-                    engine.patch_file(
-                        path,
-                        "preemptive_fix",
-                        context_meta=context_meta,
-                        target_region=target_region,
-                    )
-                    patch_id = None
+            else:
+                patch_id = None
             after_target = Path(after_dir) / rel
             after_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, after_target)
