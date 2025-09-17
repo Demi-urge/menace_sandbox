@@ -209,16 +209,14 @@ class ChatGPTClient(LLMClient):
                 "provided ContextBuilder cannot query local databases"
             ) from exc
 
-    def generate(
+    def _prepare_prompt(
         self,
         prompt: Prompt,
         *,
-        parse_fn: Callable[[str], Any] | None = None,
-        backend: str | None = None,
         context_builder: ContextBuilder,
         tags: Iterable[str] | None = None,
-    ) -> LLMResult:  # type: ignore[override]
-        """Extend :meth:`LLMClient.generate` to accept optional ``tags``."""
+    ) -> tuple[Prompt, Dict[str, Any], List[str], List[str], str]:
+        """Return a canonical prompt plus merged metadata and tag information."""
 
         raw_tags: List[Any]
         if tags is not None:
@@ -348,6 +346,51 @@ class ChatGPTClient(LLMClient):
         if final_origin not in VALID_PROMPT_ORIGINS:
             raise ValueError("context builder returned unexpected prompt origin")
 
+        # Ensure metadata contains canonical context markers for downstream checks.
+        if merged_intent_tags and (
+            not isinstance(final_meta.get("intent_tags"), list)
+            or not final_meta.get("intent_tags")
+        ):
+            final_meta["intent_tags"] = list(merged_intent_tags)
+            try:
+                setattr(final_prompt, "metadata", final_meta)
+            except Exception:
+                pass
+        elif (
+            not merged_intent_tags
+            and isinstance(final_meta.get("intent_tags"), list)
+            and final_meta.get("intent_tags")
+        ):
+            merged_intent_tags = list(final_meta.get("intent_tags") or [])
+
+        # Collect tags from both prompt fields and metadata for logging purposes.
+        final_tags: List[str] = []
+        meta_tags = list(final_meta.get("tags", []) or [])
+        prompt_level_tags = list(getattr(final_prompt, "tags", []) or [])
+        for candidate in [*meta_tags, *prompt_level_tags]:
+            text = str(candidate)
+            if text and text not in final_tags:
+                final_tags.append(text)
+        if not final_tags:
+            final_tags = list(merged_tags)
+
+        return final_prompt, final_meta, final_tags, list(merged_intent_tags), final_origin
+
+    def generate(
+        self,
+        prompt: Prompt,
+        *,
+        parse_fn: Callable[[str], Any] | None = None,
+        backend: str | None = None,
+        context_builder: ContextBuilder,
+        tags: Iterable[str] | None = None,
+    ) -> LLMResult:  # type: ignore[override]
+        """Extend :meth:`LLMClient.generate` to accept optional ``tags``."""
+
+        final_prompt, _, _, _, _ = self._prepare_prompt(
+            prompt, context_builder=context_builder, tags=tags
+        )
+
         return super().generate(
             final_prompt,
             parse_fn=parse_fn,
@@ -370,27 +413,106 @@ class ChatGPTClient(LLMClient):
         relevance_threshold: float = 0.0,
         max_summary_length: int = 500,
     ) -> Dict[str, object]:
-        # Normalize messages to OpenAI chat format, accepting Prompt objects.
-        prompt_obj: Prompt | None
-        if isinstance(messages, Prompt) or (
+        builder = self.context_builder
+        if builder is None:
+            raise ValueError("context_builder is required")
+
+        provided_tags = list(tags) if tags is not None else None
+
+        def _coerce_prompt(candidate: Any, *, default_user: str = "") -> Prompt:
+            if isinstance(candidate, Prompt):
+                return candidate
+            metadata = dict(getattr(candidate, "metadata", {}) or {})
+            return Prompt(
+                getattr(candidate, "user", default_user),
+                system=getattr(candidate, "system", ""),
+                examples=list(getattr(candidate, "examples", []) or []),
+                tags=list(getattr(candidate, "tags", []) or metadata.get("tags", []) or []),
+                metadata=metadata,
+                origin=getattr(candidate, "origin", None),
+            )
+
+        # Normalize messages to OpenAI chat format, requiring Prompt objects.
+        prompt_obj: Prompt
+        if isinstance(messages, list):
+            logger.warning(
+                "list inputs to ChatGPTClient.ask are deprecated; "
+                "building a prompt via context_builder"
+            )
+            if not messages:
+                raise ValueError("ChatGPTClient.ask requires at least one message")
+            user_entry: Dict[str, Any] | None = None
+            for entry in reversed(messages):
+                if entry.get("role") == "user":
+                    user_entry = entry
+                    break
+            if user_entry is None:
+                raise ValueError(
+                    "ChatGPTClient.ask requires a user message to build a prompt"
+                )
+            goal = str(user_entry.get("content", "") or "").strip()
+            if not goal:
+                raise ValueError(
+                    "ChatGPTClient.ask cannot build a prompt from an empty user message"
+                )
+            user_meta = user_entry.get("metadata")
+            intent_meta = dict(user_meta) if isinstance(user_meta, dict) else {}
+            if provided_tags is not None:
+                intent_meta.setdefault("tags", list(provided_tags))
+            try:
+                built = builder.build_prompt(goal, intent_metadata=intent_meta or None)
+            except PromptBuildError:
+                raise
+            except Exception as exc:
+                handle_failure(
+                    "failed to build prompt from chat history", exc, logger=logger
+                )
+            prompt_obj = _coerce_prompt(built, default_user=goal)
+        elif isinstance(messages, Prompt) or (
             hasattr(messages, "user") and hasattr(messages, "metadata")
         ):
-            prompt_obj = messages
-            prompt_tags = list(getattr(prompt_obj, "tags", []) or [])
-            if tags is None and prompt_tags:
-                tags = prompt_tags
-            norm_messages: List[Dict[str, str]] = []
-            if prompt_obj.system:
-                norm_messages.append({"role": "system", "content": prompt_obj.system})
-            for ex in getattr(prompt_obj, "examples", []) or []:
-                norm_messages.append({"role": "user", "content": ex})
-            user_msg: Dict[str, Any] = {"role": "user", "content": prompt_obj.user}
-            if getattr(prompt_obj, "metadata", None):
-                user_msg["metadata"] = dict(prompt_obj.metadata)
-            norm_messages.append(user_msg)
-            messages = norm_messages
+            prompt_obj = _coerce_prompt(messages)
         else:
-            prompt_obj = None
+            raise TypeError("ChatGPTClient.ask expects a Prompt or message list")
+
+        final_prompt, final_meta, final_tags, _final_intent_tags, final_origin = (
+            self._prepare_prompt(
+                prompt_obj,
+                context_builder=builder,
+                tags=provided_tags,
+            )
+        )
+
+        if final_origin not in VALID_PROMPT_ORIGINS:
+            raise ValueError("context builder returned unexpected prompt origin")
+        if not any(
+            key in final_meta and final_meta[key]
+            for key in ("intent_tags", "vector_confidences")
+        ):
+            raise ValueError("prompt.metadata missing context-builder markers")
+
+        log_tags_list: List[str] = []
+        for candidate in final_tags:
+            text = str(candidate)
+            if text and text not in log_tags_list:
+                log_tags_list.append(text)
+        if provided_tags is not None:
+            for tag in provided_tags:
+                text = str(tag)
+                if text and text not in log_tags_list:
+                    log_tags_list.append(text)
+        tags = log_tags_list or None
+
+        norm_messages: List[Dict[str, Any]] = []
+        if getattr(final_prompt, "system", None):
+            norm_messages.append({"role": "system", "content": final_prompt.system})
+        for ex in getattr(final_prompt, "examples", []) or []:
+            norm_messages.append({"role": "user", "content": ex})
+        user_msg: Dict[str, Any] = {"role": "user", "content": final_prompt.user}
+        if final_meta:
+            user_msg["metadata"] = dict(final_meta)
+        norm_messages.append(user_msg)
+        messages = norm_messages
 
         memory: Any | None = memory_manager or knowledge or self.gpt_memory
         use_mem = use_memory if use_memory is not None else memory is not None
