@@ -339,15 +339,36 @@ class BotRegistry:
                                     patch_id, commit = (None, None)
                                 module = self.graph.nodes[_bot].get("module")
                                 result = None
-                                if module and hasattr(_mgr, "generate_and_patch"):
+                                post_validation: Dict[str, Any] | None = None
+                                post_validation_error: str | None = None
+                                module_path = Path(module) if module else None
+                                if module_path and hasattr(_mgr, "generate_and_patch"):
                                     result, new_commit = _mgr.generate_and_patch(
-                                        Path(module),
+                                        module_path,
                                         desc,
                                         context_meta=event,
                                         context_builder=_mgr.refresh_quick_fix_context(),
                                         provenance_token=token,
                                     )
                                     commit = commit or new_commit
+                                    if (
+                                        commit
+                                        and hasattr(_mgr, "run_post_patch_cycle")
+                                    ):
+                                        try:
+                                            post_validation = _mgr.run_post_patch_cycle(
+                                                module_path,
+                                                desc,
+                                                provenance_token=token,
+                                                context_meta=event,
+                                            )
+                                        except Exception as exc:  # pragma: no cover - best effort
+                                            post_validation_error = str(exc)
+                                            logger.error(
+                                                "post patch self-test failed for %s: %s",
+                                                _bot,
+                                                exc,
+                                            )
                                 try:
                                     ph = self.graph.nodes[_bot].setdefault(
                                         "patch_history", []
@@ -364,24 +385,38 @@ class BotRegistry:
                                         "failed to record patch history for %s",
                                         _bot,
                                     )
-                                if result is not None and self.event_bus:
+                                if self.event_bus:
                                     try:
+                                        converted_result: Any | None = None
+                                        if result is not None:
+                                            converted_result = (
+                                                asdict(result)
+                                                if is_dataclass(result)
+                                                else getattr(result, "__dict__", result)
+                                            )
                                         payload: Dict[str, Any] = {
                                             "bot": _bot,
                                             "patch_id": patch_id,
                                             "commit": commit,
-                                            "result": (
-                                                asdict(result)
-                                                if is_dataclass(result)
-                                                else getattr(result, "__dict__", result)
-                                            ),
                                         }
-                                        self.event_bus.publish(
-                                            "bot:patch_applied", payload
-                                        )
+                                        if converted_result is not None:
+                                            payload["result"] = converted_result
+                                        if post_validation is not None:
+                                            payload["post_validation"] = post_validation
+                                        if post_validation_error is not None:
+                                            payload["post_validation_error"] = (
+                                                post_validation_error
+                                            )
+                                            self.event_bus.publish(
+                                                "bot:patch_failed", payload
+                                            )
+                                        elif converted_result is not None:
+                                            self.event_bus.publish(
+                                                "bot:patch_applied", payload
+                                            )
                                     except Exception as exc:
                                         logger.error(
-                                            "Failed to publish bot:patch_applied event: %s",
+                                            "Failed to publish bot patch event: %s",
                                             exc,
                                         )
                             except Exception as exc:  # pragma: no cover - best effort
