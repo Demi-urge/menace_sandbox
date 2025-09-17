@@ -28,6 +28,7 @@ import json
 import uuid
 import os
 import importlib
+import shlex
 from dataclasses import asdict
 from typing import Dict, Any, TYPE_CHECKING, Callable, Iterator
 from contextlib import contextmanager
@@ -324,6 +325,28 @@ class SelfCodingManager:
         self.baseline_tracker = BaselineTracker(
             window=int(baseline_window), metrics=["confidence"]
         )
+        try:
+            settings = SandboxSettings()
+            configured_retries = getattr(
+                settings, "self_test_repair_retries", None
+            )
+            if configured_retries is None:
+                configured_retries = getattr(
+                    settings, "post_patch_repair_attempts", None
+                )
+        except Exception:
+            configured_retries = None
+        env_retries = os.getenv("SELF_TEST_REPAIR_RETRIES")
+        retry_candidate: int | None = None
+        for candidate in (env_retries, configured_retries):
+            if candidate is None:
+                continue
+            try:
+                retry_candidate = int(candidate)
+                break
+            except (TypeError, ValueError):
+                continue
+        self.post_patch_repair_retries = max(int(retry_candidate or 0), 0)
         # ``_forecast_history`` stores predicted metrics so threshold updates
         # can adapt based on recent trends.
         self._forecast_history: Dict[str, list[float]] = {
@@ -776,6 +799,183 @@ class SelfCodingManager:
             kwargs.update(extra_opts)
         return args, kwargs, workflow_tests
 
+    @staticmethod
+    def _truncate(text: str, *, limit: int = 2000) -> str:
+        """Return ``text`` truncated to ``limit`` characters."""
+
+        if text is None:
+            return ""
+        if len(text) <= limit:
+            return text
+        return text[:limit] + f"… ({len(text) - limit} bytes truncated)"
+
+    @staticmethod
+    def _pytest_failures(stdout: str) -> list[str]:
+        """Extract pytest node ids from ``stdout``."""
+
+        node_ids: list[str] = []
+        if not stdout:
+            return node_ids
+        patterns = [
+            re.compile(r"^(FAILED|ERROR)\s+([\w./:-]+::[^\s]+)", re.MULTILINE),
+            re.compile(r"^([\w./:-]+::[^\s]+)\s+(FAILED|ERROR)$", re.MULTILINE),
+        ]
+        seen: set[str] = set()
+        for pattern in patterns:
+            for match in pattern.finditer(stdout):
+                node = match.group(2 if pattern is patterns[0] else 1)
+                if node and node not in seen:
+                    seen.add(node)
+                    node_ids.append(node)
+        if seen:
+            return node_ids
+        summary_line = re.compile(r"^(FAILED|ERROR)\s+([\w./:-]+::[^\s]+)")
+        for line in stdout.splitlines():
+            line = line.strip()
+            if "::" not in line:
+                continue
+            match = summary_line.match(line)
+            if match:
+                node = match.group(2)
+            elif line.endswith("FAILED") or line.endswith("ERROR"):
+                node = line.split()[0]
+            else:
+                continue
+            if node and node not in seen:
+                seen.add(node)
+                node_ids.append(node)
+        return node_ids
+
+    def _collect_test_diagnostics(self, results: dict[str, Any]) -> dict[str, Any]:
+        """Return structured diagnostics extracted from ``results``."""
+
+        diagnostics: dict[str, Any] = {}
+        stdout = str(results.get("stdout", "") or "")
+        stderr = str(results.get("stderr", "") or "")
+        logs = str(results.get("logs", "") or "")
+        if stdout:
+            diagnostics["stdout"] = self._truncate(stdout)
+        if stderr:
+            diagnostics["stderr"] = self._truncate(stderr)
+        if logs:
+            diagnostics["logs"] = self._truncate(logs)
+        combined = stdout or stderr
+        if combined:
+            failure = ErrorParser.parse_failure(combined)
+            trace = failure.get("stack") or combined
+            diagnostics["trace"] = self._truncate(trace, limit=4000)
+            if failure.get("strategy_tag"):
+                diagnostics["failure_tag"] = failure.get("strategy_tag")
+            if failure.get("signature"):
+                diagnostics["failure_signature"] = failure.get("signature")
+            if failure.get("file"):
+                diagnostics["failure_file"] = failure.get("file")
+        node_ids = self._pytest_failures(stdout)
+        if node_ids:
+            diagnostics["node_ids"] = node_ids
+        modules: list[str] = []
+        metrics = results.get("module_metrics") or {}
+        if isinstance(metrics, dict):
+            for module, info in metrics.items():
+                categories = {str(cat) for cat in info.get("categories", [])}
+                if categories.intersection({"failed", "error"}):
+                    modules.append(str(module))
+        if modules:
+            diagnostics["failed_modules"] = modules
+        retry_errors = results.get("retry_errors")
+        if retry_errors:
+            diagnostics["retry_errors"] = retry_errors
+        return diagnostics
+
+    def _select_repair_pytest_args(
+        self,
+        base_args: str | None,
+        diagnostics: dict[str, Any],
+    ) -> str | None:
+        """Return pytest arguments targeting the failing subset of tests."""
+
+        node_ids = diagnostics.get("node_ids") or []
+        failed_modules = diagnostics.get("failed_modules") or []
+        selectors: list[str] = []
+        sources = node_ids if node_ids else failed_modules
+        for item in sources:
+            if not item:
+                continue
+            if item not in selectors:
+                selectors.append(item)
+        if not selectors:
+            return base_args
+        base_parts = shlex.split(base_args) if base_args else []
+        options = [part for part in base_parts if part.startswith("-")]
+        new_args = options + selectors
+        return " ".join(new_args) if new_args else base_args
+
+    def _synthesise_repair_description(
+        self,
+        base_description: str,
+        diagnostics: dict[str, Any],
+        *,
+        attempt: int,
+        failed_tests: int,
+    ) -> str:
+        """Create a repair prompt that includes failing test context."""
+
+        lines = [base_description.strip() or "Self-test repair"]
+        lines.append(
+            f"Repair attempt {attempt} addressing {failed_tests} failing test(s)."
+        )
+        node_ids = diagnostics.get("node_ids") or []
+        if node_ids:
+            lines.append("Failing tests:")
+            lines.extend(f"- {node}" for node in node_ids[:10])
+        trace = diagnostics.get("trace") or diagnostics.get("stdout") or ""
+        if trace:
+            lines.append("Failure context:")
+            lines.append(self._truncate(str(trace), limit=1200))
+        return "\n".join(lines)
+
+    def _record_repair_outcome(
+        self,
+        module: Path,
+        *,
+        attempt: int,
+        success: bool,
+        patch_id: int | None = None,
+        flags: list[str] | None = None,
+        error: str | None = None,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit telemetry for a repair attempt."""
+
+        payload: dict[str, Any] = {
+            "bot": self.bot_name,
+            "module": str(module),
+            "attempt": attempt,
+            "success": bool(success),
+        }
+        if patch_id is not None:
+            payload["patch_id"] = patch_id
+        if flags:
+            payload["flags"] = list(flags)
+        if error:
+            payload["error"] = error
+        if diagnostics and diagnostics.get("node_ids"):
+            payload["node_ids"] = list(diagnostics["node_ids"])
+        if diagnostics and diagnostics.get("failed_modules"):
+            payload["failed_modules"] = list(diagnostics["failed_modules"])
+        if self.event_bus:
+            try:
+                self.event_bus.publish("self_coding:repair_attempt", payload)
+            except Exception:
+                self.logger.exception("failed to publish repair attempt event")
+        if self.data_bot and hasattr(self.data_bot, "record_validation"):
+            try:
+                self.data_bot.record_validation(
+                    self.bot_name, str(module), bool(success), list(flags or [])
+                )
+            except Exception:
+                self.logger.exception("failed to record repair validation")
+
     def run_post_patch_cycle(
         self,
         module_path: Path | str,
@@ -848,7 +1048,8 @@ class SelfCodingManager:
             ensure_fresh_weights(builder)
             pytest_args, svc_kwargs, workflow_tests = self._workflow_test_service_args()
             svc_kwargs = dict(svc_kwargs)
-            svc_kwargs.setdefault("pytest_args", pytest_args)
+            if pytest_args is not None:
+                svc_kwargs["pytest_args"] = pytest_args
             svc_kwargs.setdefault("data_bot", self.data_bot)
             svc_kwargs.setdefault("context_builder", builder)
             try:
@@ -858,21 +1059,144 @@ class SelfCodingManager:
                     from self_test_service import SelfTestService as _SelfTestService  # type: ignore
                 except Exception as exc:
                     raise RuntimeError("SelfTestService unavailable") from exc
-            try:
-                service = _SelfTestService(**svc_kwargs)
-            except FileNotFoundError as exc:
-                raise RuntimeError("SelfTestService initialization failed") from exc
-            results, passed_modules = service.run_once()
-            summary["self_tests"] = {
-                "passed": int(results.get("passed", 0)),
-                "failed": int(results.get("failed", 0)),
-                "coverage": float(results.get("coverage", 0.0)),
-                "runtime": float(results.get("runtime", 0.0)),
-                "pytest_args": pytest_args,
-                "passed_modules": passed_modules,
-            }
-            if workflow_tests:
-                summary["self_tests"]["workflow_tests"] = workflow_tests
+            base_kwargs = dict(svc_kwargs)
+            base_pytest_args = base_kwargs.get("pytest_args")
+            attempt_records: list[dict[str, Any]] = []
+            attempt_count = 0
+            current_pytest_args = base_pytest_args
+            results: dict[str, Any] = {}
+            passed_modules: list[str] = []
+            while True:
+                run_kwargs = dict(base_kwargs)
+                if current_pytest_args is None:
+                    run_kwargs.pop("pytest_args", None)
+                else:
+                    run_kwargs["pytest_args"] = current_pytest_args
+                try:
+                    service = _SelfTestService(**run_kwargs)
+                except FileNotFoundError as exc:
+                    raise RuntimeError("SelfTestService initialization failed") from exc
+                results, passed_modules = service.run_once()
+                failed_count = int(results.get("failed", 0))
+                summary["self_tests"] = {
+                    "passed": int(results.get("passed", 0)),
+                    "failed": failed_count,
+                    "coverage": float(results.get("coverage", 0.0)),
+                    "runtime": float(results.get("runtime", 0.0)),
+                    "pytest_args": current_pytest_args,
+                    "passed_modules": passed_modules,
+                }
+                if workflow_tests:
+                    summary["self_tests"]["workflow_tests"] = workflow_tests
+                diagnostics = self._collect_test_diagnostics(results)
+                if diagnostics:
+                    summary["self_tests"]["diagnostics"] = diagnostics
+                else:
+                    summary["self_tests"].pop("diagnostics", None)
+                summary["self_tests"]["attempts"] = attempt_count + 1
+                summary_attempts = [dict(record) for record in attempt_records]
+                summary["self_tests"]["repair_attempts"] = summary_attempts
+                summary.setdefault("quick_fix", {})["repair_attempts"] = list(
+                    summary_attempts
+                )
+                if failed_count == 0:
+                    break
+                if attempt_count >= self.post_patch_repair_retries:
+                    self._last_validation_summary = summary
+                    raise RuntimeError(
+                        f"self tests failed ({failed_count}) after {attempt_count} repair attempts"
+                    )
+                attempt_index = attempt_count + 1
+                repair_desc = self._synthesise_repair_description(
+                    description,
+                    diagnostics,
+                    attempt=attempt_index,
+                    failed_tests=failed_count,
+                )
+                ctx_meta_attempt = dict(ctx_meta)
+                ctx_meta_attempt.update(
+                    {
+                        "repair_attempt": attempt_index,
+                        "repair_failed_tests": failed_count,
+                    }
+                )
+                if diagnostics.get("node_ids"):
+                    ctx_meta_attempt["repair_node_ids"] = list(diagnostics["node_ids"])
+                if diagnostics.get("failed_modules"):
+                    ctx_meta_attempt["repair_failed_modules"] = list(
+                        diagnostics["failed_modules"]
+                    )
+                next_pytest_args = self._select_repair_pytest_args(
+                    base_pytest_args, diagnostics
+                )
+                attempt_record: dict[str, Any] = {
+                    "attempt": attempt_index,
+                    "failed_tests": failed_count,
+                    "pytest_args": current_pytest_args,
+                    "description": self._truncate(repair_desc, limit=800),
+                }
+                if diagnostics.get("node_ids"):
+                    attempt_record["node_ids"] = list(diagnostics["node_ids"])
+                if diagnostics.get("failed_modules"):
+                    attempt_record["failed_modules"] = list(
+                        diagnostics["failed_modules"]
+                    )
+                if next_pytest_args is not None:
+                    attempt_record["next_pytest_args"] = next_pytest_args
+                try:
+                    self.refresh_quick_fix_context()
+                    passed, patch_id, apply_flags = self.quick_fix.apply_validated_patch(
+                        str(module),
+                        repair_desc,
+                        ctx_meta_attempt,
+                        provenance_token=provenance_token,
+                    )
+                except Exception as exc:
+                    attempt_record["error"] = str(exc)
+                    attempt_records.append(attempt_record)
+                    summary_attempts = [dict(record) for record in attempt_records]
+                    summary["self_tests"]["repair_attempts"] = summary_attempts
+                    summary.setdefault("quick_fix", {})["repair_attempts"] = list(
+                        summary_attempts
+                    )
+                    self._record_repair_outcome(
+                        module,
+                        attempt=attempt_index,
+                        success=False,
+                        error=str(exc),
+                        diagnostics=diagnostics,
+                    )
+                    self._last_validation_summary = summary
+                    raise
+                attempt_record.update(
+                    {
+                        "patch_id": patch_id,
+                        "apply_flags": list(apply_flags),
+                        "patch_passed": bool(passed) and not apply_flags,
+                    }
+                )
+                attempt_records.append(attempt_record)
+                summary_attempts = [dict(record) for record in attempt_records]
+                summary["self_tests"]["repair_attempts"] = summary_attempts
+                summary.setdefault("quick_fix", {})["repair_attempts"] = list(
+                    summary_attempts
+                )
+                success = bool(passed) and not apply_flags
+                self._record_repair_outcome(
+                    module,
+                    attempt=attempt_index,
+                    success=success,
+                    patch_id=patch_id,
+                    flags=list(apply_flags),
+                    diagnostics=diagnostics,
+                )
+                if not success:
+                    self._last_validation_summary = summary
+                    raise RuntimeError("quick fix repair failed")
+                current_pytest_args = (
+                    next_pytest_args if next_pytest_args is not None else base_pytest_args
+                )
+                attempt_count = attempt_index
         except Exception as exc:
             if self.data_bot:
                 try:
@@ -887,6 +1211,7 @@ class SelfCodingManager:
                     )
             raise
         else:
+            self._last_validation_summary = summary
             if self.data_bot:
                 try:
                     failed_tests = float(summary.get("self_tests", {}).get("failed", 0))
