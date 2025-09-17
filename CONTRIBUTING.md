@@ -142,7 +142,8 @@ also fails fast when it encounters any of the following patterns:
 * imports of `get_default_context_builder` outside of test directories;
 * literal prompt strings or message lists passed directly to LLM clients instead of
   the output of `ContextBuilder.build_prompt` or `SelfCodingEngine.build_enriched_prompt`;
-* direct `Prompt(...)` instantiation outside `vector_service/context_builder.py`;
+* direct `Prompt(...)` instantiation outside `vector_service/context_builder.py`
+  (renaming or aliasing the import does not bypass the check);
 * direct `PromptEngine.build_prompt` calls that bypass the builder interface.
 
 Results of `ContextBuilder.build(...)` must be sent straight to the LLM client.
