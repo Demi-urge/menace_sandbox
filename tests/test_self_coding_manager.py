@@ -1786,3 +1786,329 @@ def test_update_blocked_event_when_provenance_missing(monkeypatch, tmp_path):
     assert not registry.health_checked
     event = next((p for n, p in bus.events if n == "bot:update_blocked"), None)
     assert event is not None and event["bot"] == "bot"
+
+def test_run_post_patch_cycle_attempts_repair(monkeypatch, tmp_path):
+    monkeypatch.setenv("SELF_TEST_REPAIR_RETRIES", "1")
+
+    class DummySelfTestService:
+        call_kwargs = []
+        results_sequence = []
+        call_index = 0
+
+        def __init__(self, **kwargs):
+            DummySelfTestService.call_kwargs.append(dict(kwargs))
+
+        def run_once(self):
+            idx = DummySelfTestService.call_index
+            DummySelfTestService.call_index += 1
+            return DummySelfTestService.results_sequence[idx]
+
+    stub_module = types.ModuleType("menace.self_test_service")
+    stub_module.SelfTestService = DummySelfTestService
+    monkeypatch.setitem(sys.modules, "menace.self_test_service", stub_module)
+    monkeypatch.setitem(sys.modules, "self_test_service", stub_module)
+
+    class DummyQuickFix:
+        def __init__(self):
+            self.context_builder = None
+            self.apply_calls = []
+            self.validate_calls = []
+
+        def validate_patch(self, module_name, description, **_kw):
+            self.validate_calls.append({"module": module_name, "description": description})
+            return True, []
+
+        def apply_validated_patch(self, module_name, description, ctx_meta=None, provenance_token=None):
+            self.apply_calls.append(
+                {
+                    "module": module_name,
+                    "description": description,
+                    "ctx_meta": dict(ctx_meta or {}),
+                    "token": provenance_token,
+                }
+            )
+            return True, 321, []
+
+    quick_fix = DummyQuickFix()
+
+    def make_manager():
+        builder = types.SimpleNamespace(refresh_db_weights=lambda: None, session_id=None)
+
+        class Engine:
+            def __init__(self):
+                self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+                self.patch_db = None
+
+        class Pipeline:
+            workflow_test_args = ["tests/test_mod.py"]
+
+        class DataBot:
+            def __init__(self):
+                self.collect_calls = []
+                self.validation_calls = []
+
+            def collect(self, bot, **metrics):
+                self.collect_calls.append((bot, dict(metrics)))
+
+            def record_validation(self, bot, module, passed, flags=None):
+                self.validation_calls.append((bot, module, passed, list(flags or [])))
+
+            def roi(self, _bot):
+                return 0.0
+
+            def average_errors(self, _bot):
+                return 0.0
+
+        class Registry:
+            def register_bot(self, *args, **kwargs):
+                return None
+
+        data_bot = DataBot()
+        engine = Engine()
+        pipeline = Pipeline()
+        registry = Registry()
+        monkeypatch.setattr(
+            scm,
+            "SandboxSettings",
+            lambda: types.SimpleNamespace(
+                baseline_window=5,
+                self_test_repair_retries=None,
+                post_patch_repair_attempts=None,
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            scm,
+            "create_context_builder",
+            lambda: types.SimpleNamespace(refresh_db_weights=lambda: None, session_id=None),
+        )
+        monkeypatch.setattr(scm, "ensure_fresh_weights", lambda builder: None)
+        orchestrator = types.SimpleNamespace(provenance_token="token")
+        manager = scm.SelfCodingManager(
+            engine,
+            pipeline,
+            bot_name="bot",
+            data_bot=data_bot,
+            bot_registry=registry,
+            quick_fix=quick_fix,
+            evolution_orchestrator=orchestrator,
+        )
+        return manager, data_bot
+
+    manager, data_bot = make_manager()
+    module_path = tmp_path / "module.py"
+    module_path.write_text("value = 1\n")
+    monkeypatch.chdir(tmp_path)
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(module_path, dst / module_path.name)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    DummySelfTestService.results_sequence = [
+        (
+            {
+                "passed": 0,
+                "failed": 1,
+                "coverage": 0.0,
+                "runtime": 1.0,
+                "stdout": "FAILED tests/test_mod.py::test_feature - AssertionError\n",
+                "module_metrics": {"tests/test_mod.py": {"categories": ["failed"]}},
+            },
+            [],
+        ),
+        (
+            {
+                "passed": 1,
+                "failed": 0,
+                "coverage": 1.0,
+                "runtime": 0.5,
+            },
+            [],
+        ),
+    ]
+    DummySelfTestService.call_kwargs = []
+    DummySelfTestService.call_index = 0
+
+    summary = manager.run_post_patch_cycle(
+        module_path,
+        "initial change",
+        provenance_token="token",
+    )
+
+    assert summary["self_tests"]["failed"] == 0
+    assert summary["self_tests"]["attempts"] == 2
+    assert "diagnostics" not in summary["self_tests"]
+    attempts = summary["self_tests"]["repair_attempts"]
+    assert len(attempts) == 1
+    assert attempts[0]["node_ids"] == ["tests/test_mod.py::test_feature"]
+    assert DummySelfTestService.call_kwargs[0]["pytest_args"] == "tests/test_mod.py"
+    assert DummySelfTestService.call_kwargs[1]["pytest_args"] == "tests/test_mod.py::test_feature"
+    assert len(quick_fix.apply_calls) == 2
+    repair_call = quick_fix.apply_calls[1]
+    assert "Repair attempt 1" in repair_call["description"]
+    assert "test_feature" in repair_call["description"]
+    assert repair_call["ctx_meta"]["repair_attempt"] == 1
+    assert repair_call["ctx_meta"]["repair_node_ids"] == ["tests/test_mod.py::test_feature"]
+    assert data_bot.validation_calls[-1][2] is True
+    assert summary["quick_fix"]["repair_attempts"] == attempts
+    assert manager._last_validation_summary == summary
+
+
+def test_run_post_patch_cycle_escalates_after_budget(monkeypatch, tmp_path):
+    monkeypatch.setenv("SELF_TEST_REPAIR_RETRIES", "0")
+
+    class DummySelfTestService:
+        call_kwargs = []
+        results_sequence = []
+        call_index = 0
+
+        def __init__(self, **kwargs):
+            DummySelfTestService.call_kwargs.append(dict(kwargs))
+
+        def run_once(self):
+            idx = DummySelfTestService.call_index
+            DummySelfTestService.call_index += 1
+            return DummySelfTestService.results_sequence[idx]
+
+    stub_module = types.ModuleType("menace.self_test_service")
+    stub_module.SelfTestService = DummySelfTestService
+    monkeypatch.setitem(sys.modules, "menace.self_test_service", stub_module)
+    monkeypatch.setitem(sys.modules, "self_test_service", stub_module)
+
+    class DummyQuickFix:
+        def __init__(self):
+            self.context_builder = None
+            self.apply_calls = []
+
+        def validate_patch(self, *_a, **_k):
+            return True, []
+
+        def apply_validated_patch(self, module_name, description, ctx_meta=None, provenance_token=None):
+            self.apply_calls.append(
+                {
+                    "module": module_name,
+                    "description": description,
+                    "ctx_meta": dict(ctx_meta or {}),
+                    "token": provenance_token,
+                }
+            )
+            return True, 654, []
+
+    quick_fix = DummyQuickFix()
+
+    def make_manager():
+        builder = types.SimpleNamespace(refresh_db_weights=lambda: None, session_id=None)
+
+        class Engine:
+            def __init__(self):
+                self.cognition_layer = types.SimpleNamespace(context_builder=builder)
+                self.patch_db = None
+
+        class Pipeline:
+            workflow_test_args = ["tests/test_mod.py"]
+
+        class DataBot:
+            def __init__(self):
+                self.collect_calls = []
+                self.validation_calls = []
+
+            def collect(self, bot, **metrics):
+                self.collect_calls.append((bot, dict(metrics)))
+
+            def record_validation(self, bot, module, passed, flags=None):
+                self.validation_calls.append((bot, module, passed, list(flags or [])))
+
+            def roi(self, _bot):
+                return 0.0
+
+            def average_errors(self, _bot):
+                return 0.0
+
+        class Registry:
+            def register_bot(self, *args, **kwargs):
+                return None
+
+        data_bot = DataBot()
+        engine = Engine()
+        pipeline = Pipeline()
+        registry = Registry()
+        monkeypatch.setattr(
+            scm,
+            "SandboxSettings",
+            lambda: types.SimpleNamespace(
+                baseline_window=5,
+                self_test_repair_retries=None,
+                post_patch_repair_attempts=None,
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            scm,
+            "create_context_builder",
+            lambda: types.SimpleNamespace(refresh_db_weights=lambda: None, session_id=None),
+        )
+        monkeypatch.setattr(scm, "ensure_fresh_weights", lambda builder: None)
+        orchestrator = types.SimpleNamespace(provenance_token="token")
+        manager = scm.SelfCodingManager(
+            engine,
+            pipeline,
+            bot_name="bot",
+            data_bot=data_bot,
+            bot_registry=registry,
+            quick_fix=quick_fix,
+            evolution_orchestrator=orchestrator,
+        )
+        return manager, data_bot
+
+    manager, data_bot = make_manager()
+    module_path = tmp_path / "module.py"
+    module_path.write_text("value = 1\n")
+    monkeypatch.chdir(tmp_path)
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[:2] == ["git", "clone"]:
+            dst = Path(cmd[3])
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(module_path, dst / module_path.name)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(scm.subprocess, "run", fake_run)
+
+    DummySelfTestService.results_sequence = [
+        (
+            {
+                "passed": 0,
+                "failed": 1,
+                "coverage": 0.0,
+                "runtime": 1.0,
+                "stdout": "FAILED tests/test_mod.py::test_feature - AssertionError\n",
+                "module_metrics": {"tests/test_mod.py": {"categories": ["failed"]}},
+            },
+            [],
+        )
+    ]
+    DummySelfTestService.call_kwargs = []
+    DummySelfTestService.call_index = 0
+
+    with pytest.raises(RuntimeError) as excinfo:
+        manager.run_post_patch_cycle(
+            module_path,
+            "initial change",
+            provenance_token="token",
+        )
+
+    assert "self tests failed (1)" in str(excinfo.value)
+    summary = manager._last_validation_summary
+    assert summary["self_tests"]["failed"] == 1
+    diagnostics = summary["self_tests"].get("diagnostics")
+    assert diagnostics
+    assert diagnostics["node_ids"] == ["tests/test_mod.py::test_feature"]
+    assert summary["self_tests"]["repair_attempts"] == []
+    assert len(quick_fix.apply_calls) == 1
+    assert DummySelfTestService.call_kwargs[0]["pytest_args"] == "tests/test_mod.py"
+    assert data_bot.validation_calls == []
