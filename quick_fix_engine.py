@@ -10,6 +10,7 @@ retrieval.
 
 __version__ = "1.0.0"
 
+import ast
 from pathlib import Path
 import logging
 import subprocess
@@ -20,6 +21,8 @@ import uuid
 import time
 import py_compile
 import shlex
+import importlib.util
+import sys
 from typing import Tuple, Iterable, Dict, Any, List, TYPE_CHECKING, Callable
 
 from .snippet_compressor import compress_snippets
@@ -110,6 +113,136 @@ class ErrorClusterPredictor:
         cluster_id, count = Counter(labels).most_common(1)[0]
         cluster_traces = [t for t, lbl in zip(traces, labels) if lbl == cluster_id]
         return int(cluster_id), cluster_traces, int(count)
+
+
+def _is_len_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len"
+
+
+def _iter_issues_from_ast(tree: ast.AST) -> tuple[list[str], list[str]]:
+    """Return ``(warnings, blockers)`` detected by lightweight heuristics."""
+
+    findings: list[str] = []
+    blockers: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For):
+            call = node.iter
+            if isinstance(call, ast.Call):
+                func = call.func
+                if isinstance(func, ast.Name) and func.id == "range":
+                    args = call.args
+                    if len(args) == 1 and _is_len_call(args[0]):
+                        findings.append(
+                            "Loop iterates over range(len(...)); consider enumerate to avoid off-by-one mistakes."
+                        )
+                    elif (
+                        len(args) == 2
+                        and isinstance(args[0], ast.Constant)
+                        and args[0].value == 0
+                        and _is_len_call(args[1])
+                    ):
+                        findings.append(
+                            "Loop iterates from 0 to len(...); double-check inclusive/exclusive bounds."
+                        )
+        elif isinstance(node, ast.Compare) and _is_len_call(node.left):
+            for op in node.ops:
+                if isinstance(op, (ast.LtE, ast.Gt)):
+                    findings.append(
+                        "Comparison against len(...) uses >= or <=; verify boundary conditions."
+                    )
+                    break
+
+    return findings, blockers
+
+
+def _module_exists(module: str, current_path: Path) -> bool:
+    if not module:
+        return True
+    if module in sys.builtin_module_names:
+        return True
+    try:
+        spec = importlib.util.find_spec(module)
+    except (ImportError, ValueError):
+        spec = None
+    if spec is not None:
+        return True
+    relative = module.replace(".", "/")
+    local_file = current_path.parent / f"{relative}.py"
+    if local_file.exists():
+        return True
+    local_pkg = current_path.parent / relative
+    if (local_pkg / "__init__.py").exists():
+        return True
+    target_name = module.split(".")[-1]
+    try:
+        resolved = resolve_path(f"{relative}.py")
+    except Exception:
+        resolved = None
+    if resolved is not None and resolved.name == f"{target_name}.py":
+        return True
+    try:
+        package_init = resolve_path(f"{relative}/__init__.py")
+    except Exception:
+        package_init = None
+    if package_init is not None and package_init.name == "__init__.py":
+        return True
+    return False
+
+
+def _collect_static_analysis(path: Path) -> tuple[str, list[str], list[str]]:
+    """Analyze ``path`` and return ``(summary, warnings, blockers)``."""
+
+    findings: list[str] = []
+    blockers: list[str] = []
+    try:
+        source = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        blockers.append(f"Unable to read module: {exc}")
+        source = ""
+
+    tree: ast.AST | None = None
+    if source:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as exc:
+            blockers.append(f"Syntax error at line {exc.lineno}: {exc.msg}")
+        except Exception as exc:  # pragma: no cover - extremely rare
+            blockers.append(f"Failed to parse module: {exc}")
+
+    if tree is not None:
+        warn, block = _iter_issues_from_ast(tree)
+        findings.extend(warn)
+        blockers.extend(block)
+        missing_imports: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    name = alias.name
+                    if not _module_exists(name, path):
+                        missing_imports.append(name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level and not node.module:
+                    continue
+                module_name = node.module or ""
+                if node.level:
+                    # Skip relative imports where the parent package may not yet exist.
+                    continue
+                if module_name and not _module_exists(module_name, path):
+                    missing_imports.append(module_name)
+        for name in missing_imports:
+            blockers.append(f"Missing import: {name}")
+
+    summary_lines: list[str] = []
+    if blockers:
+        summary_lines.append("Static analysis blockers detected:")
+        summary_lines.extend(f"- {msg}" for msg in blockers)
+    if findings:
+        summary_lines.append("Static analysis findings:")
+        summary_lines.extend(f"- {msg}" for msg in findings)
+
+    summary = "\n".join(summary_lines)
+    return summary, findings, blockers
 
 
 from .error_bot import ErrorDB  # noqa: E402
@@ -374,6 +507,22 @@ def generate_patch(
                     target_region = region
         except Exception:
             logger.exception("failed to incorporate cluster trace")
+    static_summary, static_findings, static_blockers = _collect_static_analysis(path)
+    if static_summary or static_findings or static_blockers:
+        context_meta["static_analysis"] = {
+            "summary": static_summary,
+            "findings": static_findings,
+            "blockers": static_blockers,
+        }
+    if static_summary:
+        description += "\n\n" + static_summary
+    if static_blockers:
+        blocker_flags = [f"static_blocker:{msg}" for msg in static_blockers]
+        risk_flags.extend(blocker_flags)
+        logger.error(
+            "static analysis blockers detected for %s: %s", prompt_path, static_blockers
+        )
+        return (None, risk_flags) if return_flags else None
     context_block = ""
     cb_session = uuid.uuid4().hex
     context_meta["context_session_id"] = cb_session
