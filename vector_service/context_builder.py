@@ -1495,6 +1495,106 @@ class ContextBuilder:
 
         return await asyncio.to_thread(self.build_context, query, **kwargs)
 
+    # ------------------------------------------------------------------
+    def enrich_prompt(
+        self,
+        prompt: Prompt,
+        *,
+        tags: Iterable[str] | None = None,
+        metadata: Dict[str, Any] | None = None,
+        origin: str | None = None,
+    ) -> Prompt:
+        """Merge ``tags`` and ``metadata`` into ``prompt`` in place.
+
+        Parameters
+        ----------
+        prompt:
+            Prompt instance to enrich.
+        tags:
+            Iterable of tags that should be merged with any existing tags on the
+            prompt as well as those stored in metadata.  Values are normalised to
+            ``str`` and deduplicated while preserving order.
+        metadata:
+            Optional metadata to merge into the prompt's metadata dictionary.
+            Existing keys are preserved; only missing entries are added.
+        origin:
+            Optional origin string forced onto the prompt when provided.  When
+            omitted the prompt's origin or metadata derived origin is retained
+            with a default of ``"context_builder"``.
+        """
+
+        if prompt is None:
+            raise ValueError("prompt is required for enrichment")
+
+        meta_attr = getattr(prompt, "metadata", None)
+        if isinstance(meta_attr, dict):
+            meta: Dict[str, Any] = meta_attr
+        else:
+            meta = dict(meta_attr or {})
+
+        additional_meta = dict(metadata or {})
+
+        def _normalise_tags(source: Any) -> List[str]:
+            if not source:
+                return []
+            if isinstance(source, dict):
+                source = source.get("tags", [])
+            if isinstance(source, str):
+                source_iter: Iterable[Any] = [source]
+            elif isinstance(source, Iterable) and not isinstance(source, (bytes, bytearray, str)):
+                source_iter = source
+            else:
+                source_iter = [source]
+            values: List[str] = []
+            for item in source_iter:
+                if isinstance(item, str):
+                    text = item.strip()
+                else:
+                    text = str(item).strip()
+                if text and text not in values:
+                    values.append(text)
+            return values
+
+        base_tags = _normalise_tags(getattr(prompt, "tags", []))
+        existing_meta_tags = _normalise_tags(meta.get("tags"))
+        new_meta_tags = _normalise_tags(additional_meta.get("tags"))
+        extra_tags = _normalise_tags(tags)
+        combined_tags = list(
+            dict.fromkeys([*base_tags, *existing_meta_tags, *new_meta_tags, *extra_tags])
+        )
+
+        for key, value in additional_meta.items():
+            if key == "tags":
+                continue
+            meta.setdefault(key, value)
+
+        if combined_tags or "tags" in meta or "tags" in additional_meta:
+            meta["tags"] = list(combined_tags)
+            try:
+                setattr(prompt, "tags", list(combined_tags))
+            except Exception:  # pragma: no cover - defensive assignment
+                pass
+
+        try:
+            setattr(prompt, "metadata", meta)
+        except Exception:  # pragma: no cover - defensive assignment
+            pass
+
+        resolved_origin = (
+            origin
+            or getattr(prompt, "origin", "")
+            or meta.get("origin")
+            or "context_builder"
+        )
+        meta.setdefault("origin", resolved_origin)
+        if getattr(prompt, "origin", None) != resolved_origin:
+            try:
+                setattr(prompt, "origin", resolved_origin)
+            except Exception:  # pragma: no cover - defensive assignment
+                pass
+
+        return prompt
+
 
 @log_and_measure
 def _build_prompt_internal(

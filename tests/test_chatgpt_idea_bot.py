@@ -15,14 +15,44 @@ def test_build_prompt():
     class DummyBuilder:
         def __init__(self):
             self.last_kwargs = None
+            self.enrich_calls = []
 
         def refresh_db_weights(self):
             pass
 
         def build_prompt(self, intent, **kwargs):
             self.last_kwargs = (intent, kwargs)
-            Prompt = types.SimpleNamespace
             return Prompt(user=intent, examples=["ctx"], metadata={"m": 1})
+
+        def enrich_prompt(self, prompt, *, tags=None, metadata=None, origin=None):
+            record = (
+                prompt,
+                list(tags or []),
+                dict(metadata or {}),
+                origin,
+            )
+            self.enrich_calls.append(record)
+            meta = dict(getattr(prompt, "metadata", {}) or {})
+            extra_meta = dict(metadata or {})
+            for key, value in extra_meta.items():
+                if key == "tags":
+                    continue
+                meta.setdefault(key, value)
+            existing_tags = list(getattr(prompt, "tags", []) or [])
+            meta_tags = list(meta.get("tags", []) or [])
+            requested = [str(tag) for tag in (tags or []) if str(tag)]
+            meta_requested = [
+                str(tag) for tag in extra_meta.get("tags", []) or [] if str(tag)
+            ]
+            merged = list(
+                dict.fromkeys([*existing_tags, *meta_tags, *meta_requested, *requested])
+            )
+            if merged:
+                meta["tags"] = list(merged)
+                prompt.tags = list(merged)
+            prompt.metadata = meta
+            prompt.origin = origin or prompt.origin or "context_builder"
+            return prompt
 
     builder = DummyBuilder()
     client = cib.ChatGPTClient("key", context_builder=builder, gpt_memory=FakeMemory())
@@ -34,6 +64,12 @@ def test_build_prompt():
     assert kwargs["intent_metadata"]["prior_ideas"] == "e-commerce"
     assert prompt.user == intent
     assert "ctx" in getattr(prompt, "examples", [])
+    assert builder.enrich_calls
+    _, tags_used, meta_used, origin_used = builder.enrich_calls[0]
+    assert tags_used == [cib.IMPROVEMENT_PATH, "ai", "fintech"]
+    assert meta_used["tags"] == [cib.IMPROVEMENT_PATH, "ai", "fintech"]
+    assert meta_used["prior_ideas"] == "e-commerce"
+    assert origin_used == "context_builder"
     assert prompt.metadata["tags"] == [cib.IMPROVEMENT_PATH, "ai", "fintech"]
     assert prompt.metadata["prior_ideas"] == "e-commerce"
 
