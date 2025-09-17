@@ -1017,19 +1017,16 @@ class QuickFixEngine:
                 )
             except Exception:
                 self.logger.exception("failed to publish patch_start event")
+        orchestrator = getattr(self.manager, "evolution_orchestrator", None)
+        provenance_token = getattr(orchestrator, "provenance_token", None)
         patch_fn = getattr(self.manager, "auto_run_patch", None)
         if patch_fn is None:
-            token = getattr(
-                getattr(self.manager, "evolution_orchestrator", None),
-                "provenance_token",
-                None,
-            )
-
+            
             def patch_fn(path: Path, desc: str, **kw):
                 result = self.manager.run_patch(
                     path,
                     desc,
-                    provenance_token=token,
+                    provenance_token=provenance_token,
                     **kw,
                 )
                 commit_hash = getattr(self.manager, "_last_commit_hash", None)
@@ -1040,7 +1037,7 @@ class QuickFixEngine:
                     summary = self.manager.run_post_patch_cycle(
                         path,
                         desc,
-                        provenance_token=token,
+                        provenance_token=provenance_token,
                         context_meta=ctx_meta,
                     )
                 return {
@@ -1070,6 +1067,19 @@ class QuickFixEngine:
             else:
                 summary = result
                 patch_id = getattr(self.manager, "_last_patch_id", None)
+            commit_hash = getattr(self.manager, "_last_commit_hash", None)
+            if (
+                summary is None
+                and commit_hash
+                and provenance_token
+                and hasattr(self.manager, "run_post_patch_cycle")
+            ):
+                summary = self.manager.run_post_patch_cycle(
+                    path,
+                    desc,
+                    provenance_token=provenance_token,
+                    context_meta=context_meta,
+                )
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.error("quick fix failed for %s: %s", bot, exc)
             if event_bus:
@@ -1091,6 +1101,11 @@ class QuickFixEngine:
             summary = getattr(self.manager, "_last_validation_summary", None)
         if patch_id is None:
             patch_id = getattr(self.manager, "_last_patch_id", None)
+        if summary is not None:
+            try:
+                setattr(self.manager, "_last_validation_summary", summary)
+            except Exception:
+                self.logger.debug("failed to store validation summary", exc_info=True)
         failed_tests = int(summary.get("self_tests", {}).get("failed", 0)) if summary else 0
         tests_ok = bool(summary) and failed_tests == 0
         if not tests_ok:
@@ -1114,6 +1129,7 @@ class QuickFixEngine:
                             "description": desc,
                             "error": "self tests failed",
                             "failed_tests": failed_tests,
+                            "summary": summary,
                         },
                     )
                 except Exception:
