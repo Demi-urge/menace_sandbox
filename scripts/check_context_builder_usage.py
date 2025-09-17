@@ -261,6 +261,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             self.prompt_vars: set[str] = set()
             self.builder_concat_vars: set[str] = set()
             self.literal_message_vars: set[str] = set()
+            self.prompt_aliases: set[str] = {"Prompt"}
             self._checked_builder_nodes: set[int] = set()
 
         @staticmethod
@@ -388,6 +389,19 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             for target in targets:
                 if isinstance(target, ast.Name):
                     self.prompt_vars.add(target.id)
+
+        def _record_prompt_alias_assignment(
+            self, targets: list[ast.expr], value: ast.AST
+        ) -> None:
+            if isinstance(value, (ast.Name, ast.Attribute)):
+                name = full_name(value)
+                if not name:
+                    return
+                base = name.split(".")[-1]
+                if base in self.prompt_aliases:
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            self.prompt_aliases.add(target.id)
 
         def _record_builder_concat_var(
             self, targets: list[ast.expr], value: ast.AST
@@ -600,6 +614,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             self._record_prompt_var(node.targets, node.value)
             self._record_builder_concat_var(node.targets, node.value)
             self._record_message_literal_var(node.targets, node.value)
+            self._record_prompt_alias_assignment(node.targets, node.value)
             self.generic_visit(node)
 
         def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # noqa: D401
@@ -611,6 +626,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 self._record_prompt_var([target], value)
                 self._record_builder_concat_var([target], value)
                 self._record_message_literal_var([target], value)
+                self._record_prompt_alias_assignment([target], value)
             self.generic_visit(node)
 
         def visit_Try(self, node: ast.Try) -> None:  # noqa: D401
@@ -676,7 +692,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             name_full = full_name(node.func)
             name_simple = name_full.split(".")[-1] if name_full else None
 
-            if name_simple == "Prompt" and rel not in PROMPT_WHITELIST:
+            if name_simple in self.prompt_aliases and rel not in PROMPT_WHITELIST:
                 line_no = node.lineno
                 line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
                 prev = lines[line_no - 2] if line_no >= 2 else ""
@@ -908,6 +924,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                                 "ask_with_memory disallowed; use ContextBuilder.build_prompt",
                             )
                         )
+                if alias.name.split(".")[-1] == "Prompt":
+                    self.prompt_aliases.add(alias.asname or alias.name)
             self.generic_visit(node)
 
         def visit_Name(self, node: ast.Name) -> None:  # noqa: D401
