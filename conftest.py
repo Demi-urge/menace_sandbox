@@ -30,7 +30,10 @@ sys.modules.setdefault("metrics_exporter", metrics_stub)
 sys.modules.setdefault("menace.metrics_exporter", metrics_stub)
 sys.modules.setdefault(
     "menace.sandbox_settings",
-    types.SimpleNamespace(SandboxSettings=lambda: types.SimpleNamespace()),
+    types.SimpleNamespace(
+        SandboxSettings=lambda: types.SimpleNamespace(),
+        normalize_workflow_tests=lambda value=None: [],
+    ),
 )
 
 # Stub neurosales package and optional billing dependencies

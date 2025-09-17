@@ -177,8 +177,10 @@ from the active ``threshold_service`` or per-bot configuration.  The default
 environment variable or `SandboxSettings.self_coding_test_command`.  Per-bot
 commands are specified with a `test_command` entry in
 `config/self_coding_thresholds.yaml` or within `SandboxSettings.bot_thresholds`.
-The active command may be refreshed at runtime using
-``policy.update_test_command([...])``.
+Workflow suites executed during post-patch validation can be declared with the
+matching `workflow_tests` field and resolved at runtime through
+``menace_sandbox.bot_registry.get_bot_workflow_tests``. The active command may
+be refreshed at runtime using ``policy.update_test_command([...])``.
 
 ### SelfCodingEngine
 

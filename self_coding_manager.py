@@ -148,9 +148,9 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from patch_suggestion_db import PatchSuggestionDB  # type: ignore
 
 try:  # pragma: no cover - allow package/flat imports
-    from .bot_registry import BotRegistry
+    from .bot_registry import BotRegistry, get_bot_workflow_tests
 except Exception:  # pragma: no cover - fallback for flat layout
-    from bot_registry import BotRegistry  # type: ignore
+    from bot_registry import BotRegistry, get_bot_workflow_tests  # type: ignore
 
 try:  # pragma: no cover - allow package/flat imports
     from .patch_provenance import record_patch_metadata, get_patch_by_commit
@@ -714,8 +714,10 @@ class SelfCodingManager:
                     except Exception:
                         pass
 
-    def _workflow_test_service_args(self) -> tuple[str | None, dict[str, Any]]:
-        """Resolve pytest arguments and kwargs for post-patch self tests."""
+    def _workflow_test_service_args(
+        self,
+    ) -> tuple[str | None, dict[str, Any], list[str]]:
+        """Resolve pytest arguments, kwargs and selected workflow tests."""
 
         def _resolve(source: Any) -> Any:
             if source is None:
@@ -732,7 +734,8 @@ class SelfCodingManager:
                 return source.get(self.bot_name) or source.get("default")
             return source
 
-        args = None
+        args: Any = None
+        workflow_tests: list[str] = []
         for provider in (
             getattr(self.pipeline, "workflow_test_args", None),
             getattr(self.engine, "workflow_test_args", None),
@@ -741,18 +744,22 @@ class SelfCodingManager:
             candidate = _resolve(provider)
             if candidate:
                 args = candidate
+                if isinstance(candidate, (list, tuple, set)):
+                    workflow_tests = [str(a) for a in candidate if a]
                 break
-        if args is None and self.bot_registry and self.bot_name in getattr(
-            self.bot_registry, "graph", {}
-        ):
-            node = self.bot_registry.graph.nodes[self.bot_name]
-            for key in ("workflow_tests", "workflow_pytest_args", "pytest_args"):
-                candidate = node.get(key)
-                if candidate:
-                    args = candidate
-                    break
+        if args is None:
+            try:
+                workflow_tests = get_bot_workflow_tests(
+                    self.bot_name, registry=self.bot_registry
+                )
+            except Exception:
+                self.logger.exception("failed to resolve default workflow tests")
+                workflow_tests = []
+            if workflow_tests:
+                args = list(workflow_tests)
         if isinstance(args, (list, tuple, set)):
-            args = " ".join(str(a) for a in args if a)
+            workflow_tests = [str(a) for a in args if a]
+            args = " ".join(workflow_tests)
         elif args is not None:
             args = str(args)
 
@@ -766,7 +773,7 @@ class SelfCodingManager:
         extra_opts = _resolve(getattr(self.pipeline, "workflow_test_kwargs", None))
         if isinstance(extra_opts, dict):
             kwargs.update(extra_opts)
-        return args, kwargs
+        return args, kwargs, workflow_tests
 
     def run_post_patch_cycle(
         self,
@@ -838,7 +845,7 @@ class SelfCodingManager:
                         os.chdir(prev_cwd)
             builder = create_context_builder()
             ensure_fresh_weights(builder)
-            pytest_args, svc_kwargs = self._workflow_test_service_args()
+            pytest_args, svc_kwargs, workflow_tests = self._workflow_test_service_args()
             svc_kwargs = dict(svc_kwargs)
             svc_kwargs.setdefault("pytest_args", pytest_args)
             svc_kwargs.setdefault("data_bot", self.data_bot)
@@ -863,6 +870,8 @@ class SelfCodingManager:
                 "pytest_args": pytest_args,
                 "passed_modules": passed_modules,
             }
+            if workflow_tests:
+                summary["self_tests"]["workflow_tests"] = workflow_tests
         except Exception as exc:
             if self.data_bot:
                 try:

@@ -5,11 +5,15 @@ default:
   patch_success_drop: -0.2
   model: exponential
   confidence: 0.95
+  workflow_tests:
+  - tests/workflows/test_smoke.py::test_default_workflow
 bots:
   AICounterBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    workflow_tests:
+    - tests/workflows/test_ai_counter.py::test_metrics_cycle
   AntifragilityPredictionBot:
     roi_drop: -0.1
     error_increase: 1.0

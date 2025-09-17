@@ -30,8 +30,8 @@ advice for common setup problems.
 ## Self-coding thresholds
 Per-bot regression limits are stored in `config/self_coding_thresholds.yaml`.
 Each entry defines the maximum allowed ROI drop, error increase and test
-failure increase before a bot is considered degraded. A custom test command can
-also be provided. Example:
+failure increase before a bot is considered degraded. Custom test commands and
+workflow suites can also be provided. Example:
 
 ```yaml
 default:
@@ -39,16 +39,22 @@ default:
   error_increase: 1.0
   test_failure_increase: 0.0
   test_command: ["pytest", "-q"]
+  workflow_tests:
+    - tests/workflows/test_default.py::test_smoke
 bots:
   QuickFixEngine:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
     test_command: ["pytest", "tests/quickfix", "-q"]
+    workflow_tests:
+      - tests/workflows/test_quickfix.py::test_happy_path
   BotDevelopmentBot:
     roi_drop: -0.1
     error_increase: 1.0
     test_failure_increase: 0.0
+    workflow_tests:
+      - scripts/run_botdev_workflow.py
   ImplementationOptimiserBot:
     roi_drop: -0.1
     error_increase: 1.0
@@ -63,6 +69,10 @@ it queries the active ``threshold_service`` and falls back to
 ``SandboxSettings.bot_thresholds`` for per-bot overrides.  The selected
 command can be changed on a running policy via
 ``PatchApprovalPolicy.update_test_command``.
+
+Workflow suites declared via the ``workflow_tests`` field are discovered using
+``menace_sandbox.bot_registry.get_bot_workflow_tests`` and automatically passed
+to post-patch validation in :class:`SelfCodingManager`.
 
 ## Security considerations
 - Resource and network limits are controlled through environment variables.

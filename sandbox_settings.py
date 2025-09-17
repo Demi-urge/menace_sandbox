@@ -48,6 +48,38 @@ DEFAULT_SEVERITY_SCORE_MAP: dict[str, float] = {
 }
 
 
+def normalize_workflow_tests(value: Any) -> list[str]:
+    """Coerce arbitrary input into a list of workflow test selectors."""
+
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return []
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            parts = [item.strip() for item in candidate.split(",") if item.strip()]
+            if len(parts) > 1:
+                return parts
+            return [candidate]
+        if isinstance(parsed, str):
+            parsed = parsed.strip()
+            return [parsed] if parsed else []
+        if isinstance(parsed, (list, tuple, set)):
+            return [
+                str(item).strip()
+                for item in parsed
+                if str(item).strip()
+            ]
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    coerced = str(value).strip()
+    return [coerced] if coerced else []
+
+
 class AlignmentRules(BaseModel):
     """Thresholds for human-alignment checks."""
 
@@ -142,6 +174,19 @@ class BotThresholds(BaseModel):
     test_failure_threshold: float | None = None
     patch_success_drop: float | None = None
     test_command: list[str] | None = None
+    workflow_tests: list[str] = Field(default_factory=list)
+
+    if PYDANTIC_V2:
+
+        @field_validator("workflow_tests", mode="before")
+        def _validate_workflow_tests(cls, value: Any) -> list[str]:
+            return normalize_workflow_tests(value)
+
+    else:  # pragma: no cover - compatibility for pydantic<2
+
+        @field_validator("workflow_tests", pre=True)
+        def _validate_workflow_tests(cls, value: Any) -> list[str]:
+            return normalize_workflow_tests(value)
 
 
 class SynergySettings(BaseModel):
@@ -2471,4 +2516,5 @@ __all__ = [
     "BotThresholds",
     "AlignmentSettings",
     "load_sandbox_settings",
+    "normalize_workflow_tests",
 ]

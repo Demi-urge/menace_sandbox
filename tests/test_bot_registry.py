@@ -7,8 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 import menace_sandbox.patch_provenance as patch_provenance
-from menace_sandbox.bot_registry import BotRegistry
+from menace_sandbox.bot_registry import BotRegistry, get_bot_workflow_tests
 from menace_sandbox.override_validator import generate_signature
+from menace_sandbox.sandbox_settings import BotThresholds, SandboxSettings
 
 
 class DummyService:
@@ -146,4 +147,51 @@ def test_update_bot_verification_failure(monkeypatch, tmp_path):
         registry.update_bot("bot", str(module), patch_id=1, commit="abc")
     assert bus.events[-1][0] == "bot:update_blocked"
     assert bus.events[-1][1]["reason"] == "unverified_provenance"
+
+
+def test_get_bot_workflow_tests_combines_sources(monkeypatch):
+    registry = BotRegistry()
+    registry.graph.add_node("ExampleBot")
+    registry.graph.nodes["ExampleBot"]["workflow_pytest_args"] = [
+        "tests/from_registry.py::test_flow"
+    ]
+    settings = SandboxSettings(
+        bot_thresholds={
+            "ExampleBot": BotThresholds(
+                workflow_tests=["tests/from_settings.py::test_primary"]
+            ),
+            "default": BotThresholds(
+                workflow_tests=["tests/from_settings_default.py::test_sanity"]
+            ),
+        }
+    )
+
+    import menace_sandbox.bot_registry as br
+
+    def fake_load(bot: str | None, _settings=None):
+        if bot == "ExampleBot":
+            return SimpleNamespace(workflow_tests=["tests/from_thresholds.py"])
+        return SimpleNamespace(workflow_tests=["tests/from_thresholds_default.py"])
+
+    monkeypatch.setattr(br.threshold_service, "load", fake_load)
+
+    combined = registry.get_workflow_tests("ExampleBot", settings=settings)
+    assert combined == [
+        "tests/from_registry.py::test_flow",
+        "tests/from_settings.py::test_primary",
+        "tests/from_settings_default.py::test_sanity",
+        "tests/from_thresholds.py",
+        "tests/from_thresholds_default.py",
+    ]
+
+    via_helper = get_bot_workflow_tests("ExampleBot", registry=registry, settings=settings)
+    assert via_helper == combined
+
+    without_registry = get_bot_workflow_tests("ExampleBot", settings=settings)
+    assert without_registry == [
+        "tests/from_settings.py::test_primary",
+        "tests/from_settings_default.py::test_sanity",
+        "tests/from_thresholds.py",
+        "tests/from_thresholds_default.py",
+    ]
 

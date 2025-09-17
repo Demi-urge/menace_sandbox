@@ -44,6 +44,7 @@ except Exception:  # pragma: no cover - flat layout fallback
 import db_router
 from db_router import DBRouter, init_db_router
 
+from .sandbox_settings import SandboxSettings, normalize_workflow_tests
 from .threshold_service import threshold_service
 from .retry_utils import with_retry
 
@@ -69,6 +70,79 @@ except Exception:  # pragma: no cover - optional dependency
     RollbackManager = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def _extend_workflow_tests(target: list[str], seen: set[str], value: Any) -> None:
+    for item in normalize_workflow_tests(value):
+        if item and item not in seen:
+            target.append(item)
+            seen.add(item)
+
+
+def _collect_workflow_tests(
+    bot_name: str,
+    *,
+    registry: "BotRegistry | None" = None,
+    settings: SandboxSettings | None = None,
+) -> list[str]:
+    tests: list[str] = []
+    seen: set[str] = set()
+
+    if registry is not None:
+        graph = getattr(registry, "graph", None)
+        lock = getattr(registry, "_lock", None)
+        if lock is not None:
+            try:
+                with lock:
+                    if graph is not None and bot_name in graph:
+                        node = graph.nodes[bot_name]
+                        for key in (
+                            "workflow_tests",
+                            "workflow_pytest_args",
+                            "pytest_args",
+                        ):
+                            _extend_workflow_tests(tests, seen, node.get(key))
+            except Exception:
+                logger.debug("workflow test lookup failed for bot %s", bot_name, exc_info=True)
+        elif graph is not None and bot_name in graph:
+            node = graph.nodes[bot_name]
+            for key in ("workflow_tests", "workflow_pytest_args", "pytest_args"):
+                _extend_workflow_tests(tests, seen, node.get(key))
+
+    resolved_settings = settings
+    if resolved_settings is None:
+        try:
+            resolved_settings = SandboxSettings()
+        except Exception:
+            resolved_settings = None
+
+    if resolved_settings:
+        thresholds = getattr(resolved_settings, "bot_thresholds", {})
+        if isinstance(thresholds, dict):
+            bot_cfg = thresholds.get(bot_name)
+            if bot_cfg is not None:
+                _extend_workflow_tests(tests, seen, getattr(bot_cfg, "workflow_tests", None))
+            default_cfg = thresholds.get("default")
+            if default_cfg is not None:
+                _extend_workflow_tests(
+                    tests,
+                    seen,
+                    getattr(default_cfg, "workflow_tests", None),
+                )
+
+    for key in (bot_name, None):
+        try:
+            cfg = threshold_service.load(key, resolved_settings)
+        except Exception:
+            cfg = None
+        if cfg is not None:
+            _extend_workflow_tests(
+                tests,
+                seen,
+                getattr(cfg, "workflow_tests", None),
+            )
+
+    return tests
 
 
 class BotRegistry:
@@ -383,6 +457,17 @@ class BotRegistry:
                     logger.error(
                         "Failed to save bot registry to %s: %s", self.persist_path, exc
                     )
+
+    # ------------------------------------------------------------------
+    def get_workflow_tests(
+        self,
+        bot_name: str,
+        *,
+        settings: SandboxSettings | None = None,
+    ) -> list[str]:
+        """Return configured workflow tests for ``bot_name``."""
+
+        return _collect_workflow_tests(bot_name, registry=self, settings=settings)
 
     def schedule_unmanaged_scan(self, interval: float = 3600.0) -> None:
         """Periodically scan for unmanaged coding bots and register them."""
@@ -1160,4 +1245,15 @@ class BotRegistry:
             conn.close()
 
 
-__all__ = ["BotRegistry"]
+def get_bot_workflow_tests(
+    bot_name: str,
+    *,
+    registry: "BotRegistry | None" = None,
+    settings: SandboxSettings | None = None,
+) -> list[str]:
+    """Return workflow tests from registry, settings or threshold config."""
+
+    return _collect_workflow_tests(bot_name, registry=registry, settings=settings)
+
+
+__all__ = ["BotRegistry", "get_bot_workflow_tests"]
