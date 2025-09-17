@@ -1460,6 +1460,11 @@ class SelfImprovementEngine:
         error_trace: str | None = None
         failure_reason: str | None = None
         sandbox_metrics: dict[str, float] | None = None
+        validation_summary: Dict[str, Any] = {}
+        validation_failed = False
+        tests_failed = False
+        self._last_validation_summary = {}
+        patch_record = None
         history = self._memory_summaries(module)
         if history:
             self.logger.info(
@@ -1601,6 +1606,19 @@ class SelfImprovementEngine:
                     ),
                 )
                 commit_hash = ""
+                previous_head = ""
+                try:
+                    previous_head = (
+                        subprocess.run(
+                            ["git", "rev-parse", "HEAD"],
+                            cwd=str(_repo_path()),
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        ).stdout.strip()
+                    )
+                except Exception:
+                    previous_head = ""
                 try:
                     commit_hash, patch_diff = apply_patch(patch_id, _repo_path())
                 except RuntimeError:
@@ -1694,6 +1712,261 @@ class SelfImprovementEngine:
                                 patch_diff=patch_diff,
                             ),
                         )
+                    repo_root = Path(_repo_path()).resolve()
+                    if self.patch_db is not None and patch_record is None:
+                        try:
+                            patch_record = self.patch_db.get(patch_id)
+                        except Exception:
+                            patch_record = None
+                    module_rel_path: Path | None = None
+                    description_text = action
+                    if patch_record is not None:
+                        try:
+                            if getattr(patch_record, "filename", None):
+                                module_rel_path = Path(patch_record.filename)
+                                if module_rel_path.is_absolute():
+                                    try:
+                                        module_rel_path = module_rel_path.relative_to(repo_root)
+                                    except ValueError:
+                                        module_rel_path = Path(module_rel_path.name)
+                        except Exception:
+                            module_rel_path = None
+                        description_text = patch_record.description or description_text
+                    if module_rel_path is None:
+                        try:
+                            candidate = Path(module)
+                            if candidate.suffix:
+                                if candidate.is_absolute():
+                                    try:
+                                        module_rel_path = candidate.relative_to(repo_root)
+                                    except ValueError:
+                                        module_rel_path = Path(candidate.name)
+                                else:
+                                    module_rel_path = candidate
+                            else:
+                                module_rel_path = Path(module.replace(".", "/") + ".py")
+                        except Exception:
+                            module_rel_path = None
+                    quick_fix_summary: Dict[str, Any] | None = None
+                    quick_fix_engine = getattr(self, "quick_fix", None) or getattr(
+                        self.self_coding_engine, "quick_fix", None
+                    )
+                    if quick_fix_engine is None:
+                        validation_summary.setdefault(
+                            "quick_fix",
+                            {"skipped": True, "reason": "unavailable"},
+                        )
+                    else:
+                        cloned_summary: Dict[str, Any] = {
+                            "module": str(module_rel_path) if module_rel_path else module,
+                            "description": description_text,
+                        }
+                        if module_rel_path is None:
+                            cloned_summary["skipped"] = True
+                            cloned_summary["reason"] = "module_unresolved"
+                        else:
+                            try:
+                                with tempfile.TemporaryDirectory() as tmp_dir:
+                                    try:
+                                        subprocess.run(
+                                            ["git", "clone", str(repo_root), tmp_dir],
+                                            check=True,
+                                            capture_output=True,
+                                            text=True,
+                                        )
+                                    except Exception:
+                                        raise RuntimeError("clone_failed")
+                                    clone_root = Path(tmp_dir).resolve()
+                                    cloned_module = clone_root / module_rel_path
+                                    if not cloned_module.exists():
+                                        cloned_summary["skipped"] = True
+                                        cloned_summary["reason"] = "module_missing"
+                                    else:
+                                        prev_cwd = os.getcwd()
+                                        os.chdir(str(clone_root))
+                                        try:
+                                            apply_kwargs: dict[str, Any] = {}
+                                            try:
+                                                sig = inspect.signature(
+                                                    quick_fix_engine.apply_validated_patch
+                                                )
+                                                if "provenance_token" in sig.parameters:
+                                                    provenance_token = (
+                                                        getattr(self, "_provenance_token", None)
+                                                        or getattr(
+                                                            self.self_coding_engine,
+                                                            "_provenance_token",
+                                                            None,
+                                                        )
+                                                        or getattr(
+                                                            self.self_coding_engine,
+                                                            "provenance_token",
+                                                            None,
+                                                        )
+                                                        or getattr(self, "bot_name", "self_improvement")
+                                                    )
+                                                    apply_kwargs["provenance_token"] = provenance_token
+                                            except Exception:
+                                                pass
+                                            passed, validated_patch_id, flags = (
+                                                quick_fix_engine.apply_validated_patch(
+                                                    str(cloned_module),
+                                                    description_text,
+                                                    {
+                                                        "trigger": action,
+                                                        "module": str(module_rel_path),
+                                                    },
+                                                    **apply_kwargs,
+                                                )
+                                            )
+                                        finally:
+                                            os.chdir(prev_cwd)
+                                        cloned_summary.update(
+                                            {
+                                                "passed": bool(passed),
+                                                "flags": list(flags),
+                                                "patch_id": validated_patch_id,
+                                            }
+                                        )
+                                        if not passed or flags:
+                                            validation_failed = True
+                                            failure_reason = failure_reason or (
+                                                "quick_fix_generation_error"
+                                                if not passed
+                                                else "quick_fix_flags"
+                                            )
+                            except RuntimeError:
+                                validation_failed = True
+                                cloned_summary["error"] = "clone_failed"
+                                failure_reason = failure_reason or "quick_fix_error"
+                            except Exception:
+                                validation_failed = True
+                                cloned_summary["error"] = traceback.format_exc()
+                                failure_reason = failure_reason or "quick_fix_error"
+                                self.logger.exception(
+                                    "quick fix validation failed",
+                                    extra=log_record(module=module, patch_id=patch_id),
+                                )
+                        quick_fix_summary = cloned_summary
+                        validation_summary["quick_fix"] = cloned_summary
+                    passed_modules: list[str] = []
+                    if not validation_failed:
+                        pytest_args: str | None = None
+                        svc_kwargs: dict[str, Any] = {}
+                        workflow_tests: list[str] = []
+                        workflow_sources: dict[str, list[str]] = {}
+                        resolver = None
+                        if self.self_coding_engine is not None:
+                            resolver = getattr(
+                                self.self_coding_engine, "_workflow_test_service_args", None
+                            )
+                        if resolver is None:
+                            resolver = getattr(self, "_workflow_test_service_args", None)
+                        if callable(resolver):
+                            try:
+                                (
+                                    pytest_args,
+                                    svc_kwargs,
+                                    workflow_tests,
+                                    workflow_sources,
+                                ) = resolver()
+                            except Exception:
+                                self.logger.exception(
+                                    "workflow test args resolution failed",
+                                    extra=log_record(module=module, patch_id=patch_id),
+                                )
+                                pytest_args, svc_kwargs, workflow_tests, workflow_sources = (
+                                    None,
+                                    {},
+                                    [],
+                                    {},
+                                )
+                        svc_kwargs = dict(svc_kwargs or {})
+                        if pytest_args is not None:
+                            svc_kwargs["pytest_args"] = pytest_args
+                        builder = getattr(self.self_coding_engine, "context_builder", None)
+                        if builder is not None:
+                            svc_kwargs.setdefault("context_builder", builder)
+                        if "context_builder" not in svc_kwargs:
+                            svc_kwargs["context_builder"] = getattr(
+                                self, "context_builder", None
+                            )
+                        data_bot_candidate = getattr(
+                            self.self_coding_engine, "data_bot", None
+                        ) or self.data_bot
+                        if data_bot_candidate is not None:
+                            svc_kwargs.setdefault("data_bot", data_bot_candidate)
+                        try:
+                            service = SelfTestService(**svc_kwargs)
+                        except Exception:
+                            validation_failed = True
+                            failure_reason = failure_reason or "self_test_init_failed"
+                            validation_summary["self_tests"] = {
+                                "error": "initialization_failed",
+                                "pytest_args": svc_kwargs.get("pytest_args"),
+                            }
+                        else:
+                            results, passed_modules = service.run_once()
+                            failed_count = int(results.get("failed", 0))
+                            tests_summary = {
+                                "passed": int(results.get("passed", 0)),
+                                "failed": failed_count,
+                                "coverage": float(results.get("coverage", 0.0)),
+                                "runtime": float(results.get("runtime", 0.0)),
+                                "pytest_args": svc_kwargs.get("pytest_args"),
+                                "passed_modules": passed_modules,
+                            }
+                            if workflow_tests:
+                                tests_summary["workflow_tests"] = list(workflow_tests)
+                            if workflow_sources:
+                                tests_summary["workflow_sources"] = {
+                                    key: list(values)
+                                    for key, values in workflow_sources.items()
+                                }
+                            executed = results.get("workflow_tests")
+                            if executed:
+                                tests_summary["executed_workflows"] = list(executed)
+                            if results.get("retry_errors"):
+                                tests_summary["retry_errors"] = results["retry_errors"]
+                            if results.get("module_metrics"):
+                                tests_summary["module_metrics"] = results["module_metrics"]
+                            failed_modules = results.get("orphan_failed_modules") or []
+                            if failed_modules:
+                                tests_summary["failed_modules"] = list(failed_modules)
+                            validation_summary["self_tests"] = tests_summary
+                            tests_failed = failed_count > 0
+                            if tests_failed:
+                                validation_failed = True
+                                failure_reason = failure_reason or "tests_failed"
+                    if validation_summary:
+                        self._last_validation_summary = dict(validation_summary)
+                        if sandbox_metrics is None:
+                            sandbox_metrics = {}
+                        sandbox_metrics.setdefault("validation", validation_summary)
+                        if "self_tests" in validation_summary:
+                            sandbox_metrics["tests_passed"] = not tests_failed
+                        elif validation_failed:
+                            sandbox_metrics["tests_passed"] = False
+                    if validation_failed:
+                        if sandbox_metrics is None:
+                            sandbox_metrics = {}
+                        sandbox_metrics["reverted"] = True
+                        if previous_head:
+                            try:
+                                subprocess.run(
+                                    ["git", "reset", "--hard", previous_head],
+                                    cwd=str(_repo_path()),
+                                    check=True,
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                commit_hash = previous_head
+                            except Exception:
+                                self.logger.exception(
+                                    "failed to revert patch after validation",
+                                    extra=log_record(module=module, patch_id=patch_id),
+                                )
+                        patch_id = None
         elapsed = time.perf_counter() - start
         if self.metrics_db:
             try:
@@ -1731,6 +2004,21 @@ class SelfImprovementEngine:
         success = False
         roi_meta: Dict[str, Any] = {"roi_delta": 0.0}
         exec_res: Dict[str, Any] = {"patch_id": patch_id}
+        if validation_summary:
+            exec_res["validation"] = dict(validation_summary)
+            roi_meta.setdefault("validation", dict(validation_summary))
+            if "self_tests" in validation_summary:
+                tests_meta = validation_summary["self_tests"]
+                tests_passed_flag = bool(tests_meta.get("failed", 0) == 0)
+                roi_meta["tests_passed"] = tests_passed_flag
+                if not tests_passed_flag:
+                    failed_modules = tests_meta.get("failed_modules")
+                    if failed_modules:
+                        roi_meta["failed_tests"] = list(failed_modules)
+            elif validation_failed:
+                roi_meta.setdefault("tests_passed", False)
+        if validation_failed:
+            exec_res.setdefault("reverted", True)
         if patch_id is not None and self.patch_db is not None:
             try:
                 rec = self.patch_db.get(patch_id)
@@ -1747,7 +2035,7 @@ class SelfImprovementEngine:
                         (patch_id,),
                     ).fetchone()
                     if row:
-                        roi_meta["tests_passed"] = bool(row[0])
+                        roi_meta.setdefault("tests_passed", bool(row[0]))
                 except Exception:
                     self.logger.exception(
                         "failed to fetch patch test result",
